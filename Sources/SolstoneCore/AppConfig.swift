@@ -52,15 +52,11 @@ public struct AppEntry: Codable, Equatable, Sendable {
 public struct AppConfig: Sendable {
     // MARK: - UserDefaults Keys
 
-    public enum Defaults {
-        public static let cacheRetentionDays = 7
-    }
-
     public static let knownKeys: [String] = [
         "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled",
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
         "excludePrivateBrowsing", "serverURL", "serverKey",
-        "cacheRetentionDays", "syncPaused", "debugSegments",
+        "syncPaused", "debugSegments",
         "debugKeepRejectedAudio", "microphoneGain", "silenceMusic",
         "serviceMode", "journalPath",
         "observerName"
@@ -74,7 +70,6 @@ public struct AppConfig: Sendable {
         static let excludedTitlePatterns = "excludedTitlePatterns"
         static let excludePrivateBrowsing = "excludePrivateBrowsing"
         static let serverURL = "serverURL"
-        static let cacheRetentionDays = "cacheRetentionDays"
         static let syncPaused = "syncPaused"
         static let debugSegments = "debugSegments"
         static let serverKey = "serverKey"
@@ -87,10 +82,6 @@ public struct AppConfig: Sendable {
         static let didMigrateFromJSON = "didMigrateFromJSON"
         static let didReseedOptInMicrophones = "didReseedOptInMicrophones"
         static let didReseedCaptureSourcesOn = "didReseedCaptureSourcesOn"
-    }
-
-    private enum LegacyKeys {
-        static let localRetentionMB = "localRetentionMB"
     }
 
     // MARK: - Properties
@@ -135,9 +126,6 @@ public struct AppConfig: Sendable {
     /// API key for observer server authentication
     public var serverKey: String?
 
-    /// Days to keep synced segments locally. 7 = keep 7 days. 0 = delete after confirmed sync. -1 = keep forever.
-    public var cacheRetentionDays: Int
-
     /// When true, syncing is paused (uploads skipped, but segments still recorded locally)
     public var syncPaused: Bool
 
@@ -178,7 +166,6 @@ public struct AppConfig: Sendable {
         excludePrivateBrowsing: Bool = true,
         serverURL: String? = nil,
         serverKey: String? = nil,
-        cacheRetentionDays: Int = Defaults.cacheRetentionDays,
         syncPaused: Bool = false,
         debugSegments: Bool = false,
         debugKeepRejectedAudio: Bool = false,
@@ -196,7 +183,6 @@ public struct AppConfig: Sendable {
         self.excludePrivateBrowsing = excludePrivateBrowsing
         self.serverURL = serverURL
         self.serverKey = serverKey
-        self.cacheRetentionDays = cacheRetentionDays
         self.syncPaused = syncPaused
         self.debugSegments = debugSegments
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
@@ -226,18 +212,6 @@ public struct AppConfig: Sendable {
             excludedApps = (try? JSONDecoder().decode([AppEntry].self, from: data)) ?? []
         }
 
-        var cacheRetentionDays: Int
-        if let existing = defaults.object(forKey: Keys.cacheRetentionDays) as? Int {
-            cacheRetentionDays = existing
-        } else if let oldMB = defaults.object(forKey: LegacyKeys.localRetentionMB) as? Int {
-            cacheRetentionDays = (oldMB == 2048) ? 7 : -1
-            defaults.set(cacheRetentionDays, forKey: Keys.cacheRetentionDays)
-            defaults.removeObject(forKey: LegacyKeys.localRetentionMB)
-            Logger.general.info("Migrated legacy cache retention setting to \(cacheRetentionDays, privacy: .public) days")
-        } else {
-            cacheRetentionDays = Defaults.cacheRetentionDays
-        }
-
         let serverURL = defaults.string(forKey: Keys.serverURL)
         let serviceMode: ServiceMode?
         if let raw = defaults.string(forKey: Keys.serviceMode), let parsed = ServiceMode(rawValue: raw) {
@@ -255,7 +229,6 @@ public struct AppConfig: Sendable {
             excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool ?? true,
             serverURL: serverURL,
             serverKey: defaults.string(forKey: Keys.serverKey),
-            cacheRetentionDays: cacheRetentionDays,
             syncPaused: defaults.bool(forKey: Keys.syncPaused),
             debugSegments: defaults.bool(forKey: Keys.debugSegments),
             debugKeepRejectedAudio: defaults.bool(forKey: Keys.debugKeepRejectedAudio),
@@ -339,7 +312,6 @@ public struct AppConfig: Sendable {
         } else {
             defaults.removeObject(forKey: Keys.observerName)
         }
-        defaults.set(cacheRetentionDays, forKey: Keys.cacheRetentionDays)
         defaults.set(syncPaused, forKey: Keys.syncPaused)
         defaults.set(debugSegments, forKey: Keys.debugSegments)
         defaults.set(debugKeepRejectedAudio, forKey: Keys.debugKeepRejectedAudio)
@@ -387,7 +359,6 @@ public struct AppConfig: Sendable {
                     excludePrivateBrowsing: legacyConfig.excludePrivateBrowsing ?? true,
                     serverURL: legacyConfig.serverURL,
                     serverKey: legacyConfig.serverKey,
-                    cacheRetentionDays: legacyConfig.resolvedCacheRetentionDays(defaultDays: Defaults.cacheRetentionDays),
                     syncPaused: legacyConfig.syncPaused ?? false,
                     debugSegments: legacyConfig.debugSegments ?? false,
                     debugKeepRejectedAudio: legacyConfig.debugKeepRejectedAudio ?? false,
@@ -591,21 +562,9 @@ private struct LegacyJSONConfig: Codable {
     var excludePrivateBrowsing: Bool?
     var serverURL: String?
     var serverKey: String?
-    var localRetentionMB: Int?
-    var cacheRetentionDays: Int?
     var syncPaused: Bool?
     var debugSegments: Bool?
     var debugKeepRejectedAudio: Bool?
     var microphoneGain: Float?
     var silenceMusic: Bool?
-
-    func resolvedCacheRetentionDays(defaultDays: Int) -> Int {
-        if let cacheRetentionDays {
-            return cacheRetentionDays
-        }
-        guard let localRetentionMB else {
-            return defaultDays
-        }
-        return localRetentionMB == 2048 ? 7 : -1
-    }
 }

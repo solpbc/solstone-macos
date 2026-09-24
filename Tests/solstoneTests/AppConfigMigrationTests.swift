@@ -76,7 +76,8 @@ struct AppConfigMigrationTests {
           "serverURL": "https://example.com",
           "serverKey": "key",
           "excludePrivateBrowsing": false,
-          "cacheRetentionDays": 14
+          "cacheRetentionDays": 14,
+          "localRetentionMB": 500
         }
         """.utf8).write(to: configURL)
 
@@ -84,10 +85,23 @@ struct AppConfigMigrationTests {
 
         #expect(migrated.serverURL == "https://example.com")
         #expect(migrated.serverKey == "key")
-        #expect(migrated.cacheRetentionDays == 14)
         #expect(UserDefaults.standard.bool(forKey: "didMigrateFromJSON"))
         #expect(!FileManager.default.fileExists(atPath: configURL.path))
         #expect(FileManager.default.fileExists(atPath: configURL.appendingPathExtension("migrated").path))
+    }
+
+    @Test func userDefaultsHoldingLegacyRetentionKeysLoadsAndAppliesOtherFieldsWhileLeavingRetentionKeyUntouched() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        UserDefaults.standard.set(14, forKey: "cacheRetentionDays")
+        UserDefaults.standard.set(500, forKey: "localRetentionMB")
+        UserDefaults.standard.set("https://example.com/custom", forKey: "serverURL")
+
+        let loaded = AppConfig.load()
+        #expect(loaded.serverURL == "https://example.com/custom")
+        #expect(UserDefaults.standard.integer(forKey: "cacheRetentionDays") == 14)
+        #expect(UserDefaults.standard.integer(forKey: "localRetentionMB") == 500)
     }
 
     @Test func migrateLogsFilenameWithoutAccountPathComponent() throws {

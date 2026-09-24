@@ -307,19 +307,6 @@ struct SettingsView: View {
         self._pairingMismatch = State(initialValue: initialPairingMismatch)
     }
 
-    // MARK: - Auto-saving Bindings
-
-    private var cacheRetentionBinding: Binding<Int> {
-        Binding(
-            get: { appState.config.cacheRetentionDays },
-            set: { newValue in
-                var config = appState.config
-                config.cacheRetentionDays = newValue
-                appState.updateConfig(config)
-            }
-        )
-    }
-
     var body: some View {
         NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: $selectedTab) {
@@ -1569,50 +1556,27 @@ struct SettingsView: View {
     private var externalJournalStorageSection: some View {
         GroupBox("kept on this Mac") {
             VStack(alignment: .leading) {
-                LabeledContent("currently using") {
-                    if let used = storageUsedMB {
-                        Text("\(used) MB")
-                    } else {
-                        ProgressView()
-                            .scaleEffect(0.5)
-                    }
-                    AXStateCompanion(
-                        id: AXID.Settings.Observer.storageUsedState,
-                        value: storageUsedMB.map(axIntegerString) ?? ""
-                    )
-                }
-                .padding(.vertical, 4)
+                 LabeledContent("currently using") {
+                     if let used = storageUsedMB {
+                         Text("\(used) MB")
+                     } else {
+                         ProgressView()
+                             .scaleEffect(0.5)
+                     }
+                     AXStateCompanion(
+                         id: AXID.Settings.Observer.storageUsedState,
+                         value: storageUsedMB.map(axIntegerString) ?? ""
+                     )
+                 }
+                 .padding(.vertical, 4)
 
-                LabeledContent("keep on this Mac for") {
-                    Picker("", selection: cacheRetentionBinding) {
-                        Text("don't keep").tag(0)
-                        Text("7 days").tag(7)
-                        Text("14 days").tag(14)
-                        Text("30 days").tag(30)
-                        Text("60 days").tag(60)
-                        Text("forever").tag(-1)
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Observer.cacheRetentionPicker)
-                    .frame(width: 120)
-                    AXStateCompanion(
-                        id: AXID.Settings.Observer.cacheRetentionState,
-                        value: axIntegerString(appState.config.cacheRetentionDays)
-                    )
-                }
-                .padding(.vertical, 4)
-
-                LabeledContent("storage folder") {
-                    Button("open in Finder") {
-                        NSWorkspace.shared.open(appState.storageManager.baseDirectory)
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Observer.cacheFolderOpen)
-                }
-                .padding(.vertical, 4)
-
-                Text("synced segments older than the retention period are removed from your Mac. unsynced segments are never deleted.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 4)
+                 LabeledContent("storage folder") {
+                     Button("open in Finder") {
+                         NSWorkspace.shared.open(appState.storageManager.baseDirectory)
+                     }
+                     .accessibilityIdentifier(AXID.Settings.Observer.cacheFolderOpen)
+                 }
+                 .padding(.vertical, 4)
             }
         }
     }
@@ -2640,20 +2604,11 @@ struct SettingsView: View {
         return renderedObservationAXState.headline
     }
 
-    private func retentionGlanceLabel(_ days: Int) -> String {
-        if days == -1 { return "keeping forever" }
-        if days == 0 { return "not keeping" }
-        return "keeping \(days) days"
-    }
-
     private var storageGlanceText: String {
-        let retentionDays = appState.config.cacheRetentionDays
-        let retention = retentionGlanceLabel(retentionDays)
-        let retentionClause = retentionDays > 0 ? "\(retention), then removed" : retention
         if let storageUsedMB {
-            return "\(storageUsedMB) MB · \(retentionClause)"
+            return "\(storageUsedMB) MB"
         }
-        return "calculating · \(retentionClause)"
+        return "calculating"
     }
 
     private var statusFooterText: String {

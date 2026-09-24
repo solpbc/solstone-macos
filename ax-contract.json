@@ -146,8 +146,6 @@
       "settings.observer.general.startAtLogin",
       "settings.observer.notifications.denied.state",
       "settings.observer.storage.cacheFolder.open",
-      "settings.observer.storage.cacheRetention",
-      "settings.observer.storage.cacheRetention.state",
       "settings.observer.storage.used.state",
       "settings.permissions.microphone.grantAccess",
       "settings.permissions.microphone.state",
@@ -342,9 +340,6 @@
     },
     "settings.observer.notifications.denied.state" : {
       "kind" : "freeform"
-    },
-    "settings.observer.storage.cacheRetention.state" : {
-      "kind" : "numeric"
     },
     "settings.observer.storage.used.state" : {
       "kind" : "numeric"

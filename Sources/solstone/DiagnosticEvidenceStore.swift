@@ -31,6 +31,7 @@ internal enum DiagnosticEvidenceCode: String, Codable, Equatable, Sendable, Case
     case terminationDrainTimeout = "termination.drain_timeout"
     case deliveryWriteFailed = "delivery.write_failed"
     case syncSegmentUnprovable = "sync.segment_unprovable"
+    // Retained only so diagnostic histories written by older releases still decode.
     case syncKeptUnproven = "sync.kept_unproven"
     case syncKeptListingFailed = "sync.kept_listing_failed"
     case syncKeptSegmentRemoved = "sync.kept_segment_removed"

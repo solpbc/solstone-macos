@@ -9,12 +9,6 @@ import SolstoneCore
 /// Background sync service that walks days and uploads missing segments
 /// All operations run off the main actor
 public actor SyncService {
-    public enum SyncKeepReason: Sendable, Equatable {
-        case unproven
-        case listingFailed
-        case segmentRemoved
-    }
-
     /// Progress event for UI updates
     public enum ProgressEvent: Sendable {
         case syncStarted
@@ -31,7 +25,6 @@ public actor SyncService {
         /// changed metadata after media offload, or unreadable metadata. Independent
         /// segments can still sync.
         case segmentUnprovable(segment: String)
-        case segmentKept(SyncKeepReason)
     }
 
     internal enum DiscoveredEntryKind: Sendable, Equatable {
@@ -40,13 +33,19 @@ public actor SyncService {
         case unsupported
     }
 
-    private struct DiscoveredCandidate: Sendable {
+    private enum ConfirmedSegmentRemoval: Sendable, Equatable {
+        case finished
+        case failed
+        case stopped
+    }
+
+    internal struct DiscoveredCandidate: Sendable {
         let day: String
         let segmentURL: URL
         let media: [URL]
     }
 
-    private struct DiscoverySnapshot: Sendable {
+    internal struct DiscoverySnapshot: Sendable {
         var candidatesByDay: [String: [DiscoveredCandidate]]
         var failure: Error?
     }
@@ -72,11 +71,6 @@ public actor SyncService {
         let segment: String
     }
 
-    private struct DayAddress: Hashable, Sendable {
-        let fingerprint: String
-        let day: String
-    }
-
     private enum SegmentBoundKind: Sendable, Equatable {
         case deterministic(status: Int, reasonCode: String?)
         case receivedNotWritten
@@ -94,6 +88,7 @@ public actor SyncService {
     private let resolver: HomeBaseURLResolver
     private let storageManager: StorageManager
     private let now: @Sendable () -> Date
+    private let beforeRemovalStep: @Sendable () async -> Void
     private let persistAcknowledgment: @Sendable (IngestAcknowledgment, URL) throws -> Void
     private let removeItem: @Sendable (URL) throws -> Void
     private let listDirectory: @Sendable (URL) throws -> [URL]
@@ -102,16 +97,12 @@ public actor SyncService {
     // MARK: - Configuration
 
     private var journalContext: JournalUploadContext?
-    private var cacheRetentionDays: Int = AppConfig.Defaults.cacheRetentionDays
     private var syncPaused: Bool = false
 
     // MARK: - Actor Memory (keyed by context)
 
     private var deviceQuietUntil: Date?
     private var segmentBounds: [SegmentAddress: SegmentBound] = [:]
-    private var segmentRemoved: Set<SegmentAddress> = []
-    private var keepThrottle: [SegmentAddress: Date] = [:]
-    private var dayListingThrottle: [DayAddress: Date] = [:]
 
     // MARK: - State
 
@@ -138,6 +129,7 @@ public actor SyncService {
         now: @escaping @Sendable () -> Date = Date.init,
         retryDelays: [TimeInterval] = [5, 30, 120, 300],
         maxAttemptsPerPass: Int = 3,
+        beforeRemovalStep: @escaping @Sendable () async -> Void = {},
         persistAcknowledgment: @escaping @Sendable (IngestAcknowledgment, URL) throws -> Void = IngestAcknowledgmentStore.write,
         removeItem: @escaping @Sendable (URL) throws -> Void = { url in
             guard Darwin.unlink(url.path) == 0 else {
@@ -172,6 +164,7 @@ public actor SyncService {
         self.now = now
         self.retryDelays = retryDelays
         self.maxAttemptsPerPass = max(maxAttemptsPerPass, 1)
+        self.beforeRemovalStep = beforeRemovalStep
         self.persistAcknowledgment = persistAcknowledgment
         self.removeItem = removeItem
         self.listDirectory = listDirectory
@@ -189,7 +182,6 @@ public actor SyncService {
     func configure(
         pairingIdentity: TunnelPairingIdentity?,
         journalFingerprint: JournalConnectionFingerprint?,
-        cacheRetentionDays: Int,
         syncPaused: Bool
     ) {
         let newContext = JournalUploadContext(
@@ -199,12 +191,8 @@ public actor SyncService {
         if newContext != self.journalContext {
             self.deviceQuietUntil = nil
             self.segmentBounds.removeAll()
-            self.segmentRemoved.removeAll()
-            self.keepThrottle.removeAll()
-            self.dayListingThrottle.removeAll()
         }
         self.journalContext = newContext
-        self.cacheRetentionDays = cacheRetentionDays
         self.syncPaused = syncPaused
     }
 
@@ -262,7 +250,137 @@ public actor SyncService {
         }
 
         let snapshot = discover()
-        let totalSegments = snapshot.candidatesByDay.values.reduce(0) { $0 + $1.count }
+
+        // Local Finish: process already-confirmed segments before tunnel/probe checks
+        var candidatesByDay = snapshot.candidatesByDay
+        for (day, candidates) in candidatesByDay {
+            var remainingCandidates: [DiscoveredCandidate] = []
+            for candidate in candidates {
+                guard !syncPaused, journalContext == context else { return }
+                let segmentURL = candidate.segmentURL
+                let (_, segment) = convertSegmentPath(segmentURL)
+                let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
+                let ackFileExists = FileManager.default.fileExists(atPath: ackURL.path)
+                let maybeAck = ackFileExists ? IngestAcknowledgmentStore.read(from: ackURL) : nil
+
+                if candidate.media.isEmpty {
+                    if !ackFileExists {
+                        let entries = (try? FileManager.default.contentsOfDirectory(
+                            at: segmentURL,
+                            includingPropertiesForKeys: nil,
+                            options: []
+                        )) ?? []
+                        let isAllBookkeeping = entries.allSatisfy { url in
+                            let name = url.lastPathComponent
+                            return name == ".DS_Store" ||
+                                   Self.isStagingAckTmp(name: name, segment: segment) ||
+                                   Self.isRemixerTemp(name: name)
+                        }
+                        if isAllBookkeeping {
+                            let removal = await removeConfirmedSegment(
+                                segmentURL: segmentURL,
+                                day: day,
+                                segment: segment,
+                                context: context,
+                                mode: .remnant(unreadableSourceIDs: [])
+                            )
+                            switch removal {
+                            case .finished, .failed:
+                                continue
+                            case .stopped:
+                                return
+                            }
+                        } else {
+                            remainingCandidates.append(candidate)
+                        }
+                    } else {
+                        let unreadableIDs: [String] = {
+                            if let ack = maybeAck,
+                               case .object(let dict) = ack.payload.meta["unreadable_audio_sources"],
+                               case .array(let sourceArray) = dict["source_ids"] {
+                                return sourceArray.compactMap { item in
+                                    if case .string(let s) = item { return s }
+                                    return nil
+                                }
+                            }
+                            return []
+                        }()
+                        let removal = await removeConfirmedSegment(
+                            segmentURL: segmentURL,
+                            day: day,
+                            segment: segment,
+                            context: context,
+                            mode: .remnant(unreadableSourceIDs: unreadableIDs)
+                        )
+                        switch removal {
+                        case .finished, .failed:
+                            continue
+                        case .stopped:
+                            return
+                        }
+                    }
+                } else {
+                    if let ack = maybeAck,
+                       ack.journalFingerprint == context.fingerprint.value,
+                       ack.day == day,
+                       ack.submittedSegment == segment {
+                        var allMatched = true
+                        for uploadURL in candidate.media {
+                            let fileName = uploadURL.lastPathComponent
+                            guard let proof = ack.payload.files.first(where: { $0.submitted == fileName }) else {
+                                allMatched = false
+                                break
+                            }
+                            guard let values = try? uploadURL.resourceValues(forKeys: [URLResourceKey.fileSizeKey]),
+                                  let size = values.fileSize,
+                                  UInt64(size) == proof.size else {
+                                allMatched = false
+                                break
+                            }
+                            guard let localSHA = client.sha256(of: uploadURL),
+                                  localSHA == proof.sha256 else {
+                                allMatched = false
+                                break
+                            }
+                        }
+
+                        if allMatched {
+                            let removal = await removeConfirmedSegment(
+                                segmentURL: segmentURL,
+                                day: day,
+                                segment: segment,
+                                context: context,
+                                mode: .acknowledged(ack)
+                            )
+                            switch removal {
+                            case .finished, .failed:
+                                continue
+                            case .stopped:
+                                return
+                            }
+                        } else {
+                            await beforeRemovalStep()
+                            guard !syncPaused, journalContext == context else { return }
+                            do {
+                                try removeItem(ackURL)
+                            } catch {
+                                Logger.upload.error("Failed to remove mismatched ack for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                            }
+                            remainingCandidates.append(candidate)
+                        }
+                    } else {
+                        remainingCandidates.append(candidate)
+                    }
+                }
+            }
+            if remainingCandidates.isEmpty {
+                candidatesByDay.removeValue(forKey: day)
+            } else {
+                candidatesByDay[day] = remainingCandidates
+            }
+        }
+
+        let totalSegments = candidatesByDay.values.reduce(0) { $0 + $1.count }
 
         if let failure = snapshot.failure, totalSegments == 0 {
             Logger.upload.info("Discovery incomplete: \(failure.localizedDescription, privacy: .public)")
@@ -290,7 +408,7 @@ public actor SyncService {
         // A prior pass's response is not custody after the journal may have changed.
         var passDayReads: [String: Result<IngestProtocolV3.SegmentsDay, DayReadClass>] = [:]
 
-        // Device-quiet window active: skip upload walk and cleanup, probe today only
+        // Device-quiet window active: skip upload walk, probe today only
         if let quietUntil = self.deviceQuietUntil, currentTime < quietUntil {
             Logger.upload.info("Device quiet until \(quietUntil, privacy: .public), probing today only")
             let probeResult = await self.readDayCached(day: today, serverURL: serverURL, client: client, cache: &passDayReads)
@@ -309,7 +427,7 @@ public actor SyncService {
         var hasYieldedContact = false
 
         // Walk candidates newest day to oldest day, newest segment to oldest segment
-        for (day, localCandidates) in snapshot.candidatesByDay.sorted(by: { $0.key > $1.key }) {
+        for (day, localCandidates) in candidatesByDay.sorted(by: { $0.key > $1.key }) {
             progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
 
             for candidate in localCandidates {
@@ -320,27 +438,6 @@ public actor SyncService {
                 let filesToUpload = candidate.media
 
                 if filesToUpload.isEmpty {
-                    if metaState != .unreadable {
-                        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
-                        if let ack = IngestAcknowledgmentStore.read(from: ackURL),
-                           ack.journalFingerprint == context.fingerprint.value,
-                           ack.day == day,
-                           ack.submittedSegment == segment {
-                            let expectedMeta: [String: IngestJSONValue]
-                            if case .present(let m) = metaState {
-                                expectedMeta = m
-                            } else {
-                                expectedMeta = [:]
-                            }
-                            if ack.payload.meta == expectedMeta {
-                                // Settled remnant
-                                checked += 1
-                                progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
-                                continue
-                            }
-                        }
-                    }
-
                     Logger.upload.info("Segment \(segment, privacy: .public): no files available to establish a hold")
                     progressContinuation.yield(.segmentUnprovable(segment: segment))
                     checked += 1
@@ -366,13 +463,6 @@ public actor SyncService {
                 )
 
                 if needsUpload {
-                    if self.segmentRemoved.contains(address) {
-                        Logger.upload.info("Segment \(segment, privacy: .public): skipped (segment_removed)")
-                        checked += 1
-                        progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
-                        continue
-                    }
-
                     if let bound = self.segmentBounds[address], bound.quietUntil > self.now() {
                         Logger.upload.info("Segment \(segment, privacy: .public): skipped (bound active)")
                         checked += 1
@@ -395,6 +485,19 @@ public actor SyncService {
                     case .succeeded:
                         progressContinuation.yield(.journalContactSucceeded)
                         hasYieldedContact = true
+                        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
+                        if let ack = IngestAcknowledgmentStore.read(from: ackURL) {
+                            let removal = await removeConfirmedSegment(
+                                segmentURL: segmentURL,
+                                day: day,
+                                segment: segment,
+                                context: context,
+                                mode: .acknowledged(ack)
+                            )
+                            if removal == .stopped {
+                                return
+                            }
+                        }
 
                     case .held:
                         progressContinuation.yield(.awaitingTunnel)
@@ -435,9 +538,28 @@ public actor SyncService {
                         let nowTime = self.now()
                         switch scope {
                         case .segmentRemoved:
-                            self.segmentRemoved.insert(address)
                             Logger.upload.notice("Segment \(segment, privacy: .public) day=\(day, privacy: .public): segment_removed")
-                            progressContinuation.yield(.segmentKept(.segmentRemoved))
+                            let unreadableIDs: [String] = {
+                                if case .present(let m) = metaState,
+                                   case .object(let dict) = m["unreadable_audio_sources"],
+                                   case .array(let sourceArray) = dict["source_ids"] {
+                                    return sourceArray.compactMap { item in
+                                        if case .string(let s) = item { return s }
+                                        return nil
+                                    }
+                                }
+                                return []
+                            }()
+                            let removal = await removeConfirmedSegment(
+                                segmentURL: segmentURL,
+                                day: day,
+                                segment: segment,
+                                context: context,
+                                mode: .segmentRemoved(unreadableSourceIDs: unreadableIDs)
+                            )
+                            if removal == .stopped {
+                                return
+                            }
 
                         case .receivedNotWritten:
                             self.segmentBounds[address] = SegmentBound(
@@ -511,18 +633,6 @@ public actor SyncService {
                 healthReason: .uploadFailed,
                 requestedPath: ""
             ))
-            return
-        }
-
-        // Storage cleanup
-        let cleanupOutcome = await cleanupSyncedSegments(
-            context: context,
-            serverURL: serverURL,
-            candidatesByDay: snapshot.candidatesByDay,
-            client: client,
-            cache: &passDayReads
-        )
-        guard cleanupOutcome == .finished else {
             return
         }
 
@@ -835,7 +945,7 @@ public actor SyncService {
     // MARK: - Discovery
 
     /// Perform a single non-following discovery walk of the capture hierarchy.
-    private func discover() -> DiscoverySnapshot {
+    internal func discover() -> DiscoverySnapshot {
         var candidatesByDay: [String: [DiscoveredCandidate]] = [:]
         var firstFailure: Error?
 
@@ -891,6 +1001,7 @@ public actor SyncService {
                 guard segmentKind == .directory else { continue }
 
                 let dirName = segmentURL.lastPathComponent
+                // A .failed folder can also be a delivered segment that still holds a leftover file. Discovery still does not enter it.
                 if dirName.hasSuffix(".incomplete") || dirName.hasSuffix(".failed") {
                     continue
                 }
@@ -963,231 +1074,338 @@ public actor SyncService {
         }
     }
 
-    // MARK: - Storage Cleanup
+    // MARK: - Confirmed Segment Removal
 
-    private enum CleanupOutcome {
-        case finished
-        case stoppedForConfigChange
-        case deviceScopedError
+    private enum ConfirmedSegmentRemovalMode: Sendable {
+        case acknowledged(IngestAcknowledgment)
+        case remnant(unreadableSourceIDs: [String])
+        case segmentRemoved(unreadableSourceIDs: [String])
     }
 
-    /// Delete media files from acknowledged segments older than cacheRetentionDays.
-    private func cleanupSyncedSegments(
+    private static func isStagingAckTmp(name: String, segment: String) -> Bool {
+        let prefix = ".\(segment)_ingest_ack.json."
+        let suffix = ".tmp"
+        guard name.hasPrefix(prefix), name.hasSuffix(suffix), name.count > prefix.count + suffix.count else { return false }
+        let captured = String(name.dropFirst(prefix.count).dropLast(suffix.count))
+        guard let uuid = UUID(uuidString: captured), uuid.uuidString == captured else { return false }
+        return true
+    }
+
+    private static func isRemixerTemp(name: String) -> Bool {
+        guard name.hasSuffix(".m4a"), name.count > 4 else { return false }
+        let captured = String(name.dropLast(4))
+        guard let uuid = UUID(uuidString: captured), uuid.uuidString == captured else { return false }
+        return true
+    }
+
+    private func removeConfirmedSegment(
+        segmentURL: URL,
+        day: String,
+        segment: String,
         context: JournalUploadContext,
-        serverURL: String,
-        candidatesByDay: [String: [DiscoveredCandidate]],
-        client: UploadClient,
-        cache: inout [String: Result<IngestProtocolV3.SegmentsDay, DayReadClass>]
-    ) async -> CleanupOutcome {
-        guard cacheRetentionDays >= 0 else {
-            Logger.upload.info("Cache retention: keep forever, skipping cleanup")
-            return .finished
+        mode: ConfirmedSegmentRemovalMode
+    ) async -> ConfirmedSegmentRemoval {
+        let allEntries: [URL]
+        do {
+            allEntries = try FileManager.default.contentsOfDirectory(
+                at: segmentURL,
+                includingPropertiesForKeys: nil,
+                options: []
+            )
+        } catch {
+            Logger.upload.error("Failed to list entries in segment directory \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return .failed
         }
 
-        guard !candidatesByDay.isEmpty else { return .finished }
+        let address = SegmentAddress(fingerprint: context.fingerprint.value, day: day, segment: segment)
+        let ackFileName = "\(segment)_ingest_ack.json"
 
-        let calendar = IngestDayKey.calendar
-        let todayDate = IngestDayKey.startOfDay(self.now())
-
-        for (day, candidates) in candidatesByDay.sorted(by: { $0.key < $1.key }) {
-            // Gate 1: age check
-            guard let dayDate = IngestDayKey.startOfDay(dayKey: day) else {
-                Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - cannot parse date")
-                continue
-            }
-            let age = calendar.dateComponents([.day], from: dayDate, to: todayDate).day ?? 0
-            guard cacheRetentionDays == 0 || age > cacheRetentionDays else {
-                Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - within retention window (\(age, privacy: .public)d <= \(self.cacheRetentionDays, privacy: .public)d)")
-                continue
+        switch mode {
+        case .acknowledged(let ack):
+            guard ack.journalFingerprint == context.fingerprint.value,
+                  ack.day == day,
+                  ack.submittedSegment == segment else {
+                Logger.upload.error("Acknowledgment validation failed for segment \(segment, privacy: .public)")
+                return .failed
             }
 
-            let dayAddress = DayAddress(fingerprint: context.fingerprint.value, day: day)
-            if let quietUntil = self.dayListingThrottle[dayAddress], quietUntil > self.now() {
-                Logger.upload.info("Cleanup: skipping day \(day, privacy: .public) - dayListingThrottle active")
-                continue
-            }
+            let unreadableIDs: [String] = {
+                if case .object(let dict) = ack.payload.meta["unreadable_audio_sources"],
+                   case .array(let sourceArray) = dict["source_ids"] {
+                    return sourceArray.compactMap { item in
+                        if case .string(let s) = item { return s }
+                        return nil
+                    }
+                }
+                return []
+            }()
+            // Sanitization: : -> _, / -> _ (same replacement as PerSourceAudioManager.makeURL)
+            let safeUnreadableAudioNames = Set(unreadableIDs.map { id in
+                let safeID = id.replacingOccurrences(of: ":", with: "_").replacingOccurrences(of: "/", with: "_")
+                return "\(segment)_audio_\(safeID).m4a"
+            })
 
-            // Pre-filter eligible segments on this day
-            var eligibleCandidates: [(candidate: DiscoveredCandidate, segment: String, ack: IngestAcknowledgment)] = []
-            for candidate in candidates {
-                let segmentURL = candidate.segmentURL
-                let (_, segment) = convertSegmentPath(segmentURL)
-                let address = SegmentAddress(fingerprint: context.fingerprint.value, day: day, segment: segment)
+            var nonAckConfirmedURLs: [URL] = []
+            var keepers: [URL] = []
 
-                if self.segmentRemoved.contains(address) {
+            for entry in allEntries {
+                let fileType: DiscoveredEntryKind
+                do {
+                    fileType = try classifyEntry(entry)
+                } catch {
+                    Logger.upload.error("Failed to classify entry \(entry.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    return .failed
+                }
+
+                guard fileType == .regularFile else {
+                    keepers.append(entry)
                     continue
                 }
-                if let quietUntil = self.keepThrottle[address], quietUntil > self.now() {
+
+                let name = entry.lastPathComponent
+                if name == ackFileName {
                     continue
                 }
+                if IngestAcknowledgment.isUploadMediaName(name, segment: segment) ||
+                   name == "\(segment)_meta.json" ||
+                   safeUnreadableAudioNames.contains(name) ||
+                   name == ".DS_Store" ||
+                   Self.isStagingAckTmp(name: name, segment: segment) ||
+                   Self.isRemixerTemp(name: name) {
+                    nonAckConfirmedURLs.append(entry)
+                } else {
+                    keepers.append(entry)
+                }
+            }
 
+            await beforeRemovalStep()
+            guard !syncPaused, journalContext == context else { return .stopped }
+            self.segmentBounds.removeValue(forKey: address)
+
+            for url in nonAckConfirmedURLs {
+                await beforeRemovalStep()
+                guard !syncPaused, journalContext == context else { return .stopped }
+                do {
+                    try removeItem(url)
+                } catch {
+                    Logger.upload.error("Failed to remove \(url.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    return .failed
+                }
+            }
+
+            if keepers.isEmpty {
+                // Sequence A: no keepers -> remove ack, rmdir segment directory
                 let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
-                guard let ack = IngestAcknowledgmentStore.read(from: ackURL),
-                      ack.journalFingerprint == context.fingerprint.value,
-                      ack.day == day,
-                      ack.submittedSegment == segment else {
+                if FileManager.default.fileExists(atPath: ackURL.path) {
+                    await beforeRemovalStep()
+                    guard !syncPaused, journalContext == context else { return .stopped }
+                    do {
+                        try removeItem(ackURL)
+                    } catch {
+                        Logger.upload.error("Failed to remove ack for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        return .failed
+                    }
+                }
+                await beforeRemovalStep()
+                guard !syncPaused, journalContext == context else { return .stopped }
+                guard Darwin.rmdir(segmentURL.path) == 0 else {
+                    Logger.upload.error("Failed to rmdir segment directory \(segment, privacy: .public): \(errno)")
+                    return .failed
+                }
+                return .finished
+            } else {
+                // Sequence B: keepers remain -> rename directory to .failed
+                let failedURL = segmentURL.deletingLastPathComponent().appendingPathComponent("\(segment).failed")
+                await beforeRemovalStep()
+                guard !syncPaused, journalContext == context else { return .stopped }
+                guard Darwin.rename(segmentURL.path, failedURL.path) == 0 else {
+                    Logger.upload.error("Failed to rename segment directory \(segment, privacy: .public) to .failed: \(errno)")
+                    return .failed
+                }
+                return .finished
+            }
+
+        case .remnant(let unreadableSourceIDs):
+            // Sanitization: : -> _, / -> _ (same replacement as PerSourceAudioManager.makeURL)
+            let safeUnreadableAudioNames = Set(unreadableSourceIDs.map { id in
+                let safeID = id.replacingOccurrences(of: ":", with: "_").replacingOccurrences(of: "/", with: "_")
+                return "\(segment)_audio_\(safeID).m4a"
+            })
+
+            var nonAckConfirmedURLs: [URL] = []
+            var keepers: [URL] = []
+
+            for entry in allEntries {
+                let fileType: DiscoveredEntryKind
+                do {
+                    fileType = try classifyEntry(entry)
+                } catch {
+                    Logger.upload.error("Failed to classify entry \(entry.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    return .failed
+                }
+
+                guard fileType == .regularFile else {
+                    keepers.append(entry)
                     continue
                 }
 
-                let metadataState = readSegmentMetadata(segmentURL: segmentURL, segment: segment)
-                let localMedia = candidate.media
-                guard metadataState != .unreadable,
-                      !localMedia.isEmpty,
-                      !segmentNeedsUpload(
-                        segmentURL: segmentURL, day: day, segment: segment,
-                        filesToUpload: localMedia, metadataState: metadataState, context: context
-                      ) else {
+                let name = entry.lastPathComponent
+                if name == ackFileName {
                     continue
                 }
-
-                eligibleCandidates.append((candidate, segment, ack))
-            }
-
-            guard !eligibleCandidates.isEmpty else {
-                continue
-            }
-
-            // Query day listing
-            guard !syncPaused, journalContext == context else { return .stoppedForConfigChange }
-            let dayResult = await self.readDayCached(day: day, serverURL: serverURL, client: client, cache: &cache)
-
-            let segmentsDay: IngestProtocolV3.SegmentsDay
-            switch dayResult {
-            case .success(let s):
-                segmentsDay = s
-            case .failure(let classification):
-                switch classification {
-                case .transport:
-                    // A cleanup transport failure sets no quiet-until, deletes nothing further, stops the rest of cleanup, and does not end the pass.
-                    Logger.upload.info("Cleanup: transport failure reading day \(day, privacy: .public), stopping cleanup for this pass")
-                    return .finished
-                case .notServing:
-                    self.deviceQuietUntil = self.now().addingTimeInterval(3600)
-                    progressContinuation.yield(.offline(
-                        error: "not serving",
-                        healthReason: .journalNotServing,
-                        requestedPath: IngestProtocolV3.segmentsDayPath(day)
-                    ))
-                    return .deviceScopedError
-                case .revoked:
-                    self.deviceQuietUntil = self.now().addingTimeInterval(3600)
-                    progressContinuation.yield(.offline(
-                        error: "revoked",
-                        healthReason: .pairingRevoked,
-                        requestedPath: IngestProtocolV3.segmentsDayPath(day)
-                    ))
-                    return .deviceScopedError
-                case .journalRefused(let reason):
-                    if reason == "pairing_identity_unavailable" || reason == "foreign_stream_binding" {
-                        self.deviceQuietUntil = self.now().addingTimeInterval(3600)
-                    }
-                    progressContinuation.yield(.offline(
-                        error: "journal refused",
-                        healthReason: .journalRefused(reasonCode: reason),
-                        requestedPath: IngestProtocolV3.segmentsDayPath(day)
-                    ))
-                    return .deviceScopedError
-                case .listingFailed, .undecoded, .journalRejectedDay:
-                    self.dayListingThrottle[dayAddress] = self.now().addingTimeInterval(86400)
-                    for _ in eligibleCandidates {
-                        progressContinuation.yield(.segmentKept(.listingFailed))
-                    }
-                    continue
+                if name == "\(segment)_meta.json" ||
+                   safeUnreadableAudioNames.contains(name) ||
+                   name == ".DS_Store" ||
+                   Self.isStagingAckTmp(name: name, segment: segment) ||
+                   Self.isRemixerTemp(name: name) {
+                    nonAckConfirmedURLs.append(entry)
+                } else {
+                    keepers.append(entry)
                 }
             }
 
-            let segmentsByKey = Dictionary(uniqueKeysWithValues: segmentsDay.items.map { ($0.key, $0) })
+            await beforeRemovalStep()
+            guard !syncPaused, journalContext == context else { return .stopped }
+            self.segmentBounds.removeValue(forKey: address)
 
-            for (candidate, segment, ack) in eligibleCandidates {
-                guard !syncPaused, journalContext == context else { return .stoppedForConfigChange }
-                let segmentURL = candidate.segmentURL
-                let address = SegmentAddress(fingerprint: context.fingerprint.value, day: day, segment: segment)
+            for url in nonAckConfirmedURLs {
+                await beforeRemovalStep()
+                guard !syncPaused, journalContext == context else { return .stopped }
+                do {
+                    try removeItem(url)
+                } catch {
+                    Logger.upload.error("Failed to remove \(url.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    return .failed
+                }
+            }
 
-                guard let serverSegment = segmentsByKey[ack.storedSegmentKey] else {
-                    Logger.upload.info("Cleanup: keeping \(segment, privacy: .public) - stored segment key \(ack.storedSegmentKey, privacy: .public) not found on server")
-                    self.keepThrottle[address] = self.now().addingTimeInterval(86400)
-                    progressContinuation.yield(.segmentKept(.unproven))
+            if keepers.isEmpty {
+                // Sequence A: no keepers -> remove ack, rmdir segment directory
+                let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
+                if FileManager.default.fileExists(atPath: ackURL.path) {
+                    await beforeRemovalStep()
+                    guard !syncPaused, journalContext == context else { return .stopped }
+                    do {
+                        try removeItem(ackURL)
+                    } catch {
+                        Logger.upload.error("Failed to remove ack for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        return .failed
+                    }
+                }
+                await beforeRemovalStep()
+                guard !syncPaused, journalContext == context else { return .stopped }
+                guard Darwin.rmdir(segmentURL.path) == 0 else {
+                    Logger.upload.error("Failed to rmdir segment directory \(segment, privacy: .public): \(errno)")
+                    return .failed
+                }
+                return .finished
+            } else {
+                // Sequence B: keepers remain -> rename directory to .failed
+                let failedURL = segmentURL.deletingLastPathComponent().appendingPathComponent("\(segment).failed")
+                await beforeRemovalStep()
+                guard !syncPaused, journalContext == context else { return .stopped }
+                guard Darwin.rename(segmentURL.path, failedURL.path) == 0 else {
+                    Logger.upload.error("Failed to rename segment directory \(segment, privacy: .public) to .failed: \(errno)")
+                    return .failed
+                }
+                return .finished
+            }
+
+        case .segmentRemoved(let unreadableSourceIDs):
+            // Sanitization: : -> _, / -> _ (same replacement as PerSourceAudioManager.makeURL)
+            let safeUnreadableAudioNames = Set(unreadableSourceIDs.map { id in
+                let safeID = id.replacingOccurrences(of: ":", with: "_").replacingOccurrences(of: "/", with: "_")
+                return "\(segment)_audio_\(safeID).m4a"
+            })
+
+            var nonUploadConfirmedURLs: [URL] = []
+            var uploadMediaURLs: [URL] = []
+            var keepers: [URL] = []
+
+            for entry in allEntries {
+                let fileType: DiscoveredEntryKind
+                do {
+                    fileType = try classifyEntry(entry)
+                } catch {
+                    Logger.upload.error("Failed to classify entry \(entry.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    return .failed
+                }
+
+                guard fileType == .regularFile else {
+                    keepers.append(entry)
                     continue
                 }
 
-                let localMedia = candidate.media
-                let localNames = Set(localMedia.map(\.lastPathComponent))
-
-                // Pre-check dispositions across all ack files before any hashing:
-                let hasInvalidDisposition = ack.payload.files.contains { fileProof in
-                    if let disp = fileProof.disposition, disp != .written && disp != .alreadyHeld {
-                        return true
-                    }
-                    return false
+                let name = entry.lastPathComponent
+                if IngestAcknowledgment.isUploadMediaName(name, segment: segment) {
+                    uploadMediaURLs.append(entry)
+                } else if name == "\(segment)_meta.json" ||
+                            name == ".DS_Store" ||
+                            safeUnreadableAudioNames.contains(name) ||
+                            Self.isStagingAckTmp(name: name, segment: segment) ||
+                            Self.isRemixerTemp(name: name) {
+                    nonUploadConfirmedURLs.append(entry)
+                } else {
+                    // Includes {segment}_ingest_ack.json and any other stray files as keepers
+                    keepers.append(entry)
                 }
-                if hasInvalidDisposition {
-                    self.keepThrottle[address] = self.now().addingTimeInterval(86400)
-                    progressContinuation.yield(.segmentKept(.unproven))
-                    continue
+            }
+
+            await beforeRemovalStep()
+            guard !syncPaused, journalContext == context else { return .stopped }
+            self.segmentBounds.removeValue(forKey: address)
+
+            for url in nonUploadConfirmedURLs {
+                await beforeRemovalStep()
+                guard !syncPaused, journalContext == context else { return .stopped }
+                do {
+                    try removeItem(url)
+                } catch {
+                    Logger.upload.error("Failed to remove \(url.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    return .failed
                 }
+            }
 
-                var allFilesProven = true
-
-                for fileProof in ack.payload.files {
-                    guard localNames.contains(fileProof.submitted) else { continue }
-
-                    guard !fileProof.submitted.isEmpty,
-                          !fileProof.submitted.contains("/"),
-                          fileProof.submitted != ".",
-                          fileProof.submitted != "..",
-                          (fileProof.submitted as NSString).lastPathComponent == fileProof.submitted else {
-                        allFilesProven = false
-                        break
-                    }
-
-                    let targetURL = segmentURL.appendingPathComponent(fileProof.submitted)
-                    guard let values = try? targetURL.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey]),
-                          values.isSymbolicLink != true,
-                          values.isRegularFile == true,
-                          let size = values.fileSize,
-                          UInt64(size) == fileProof.size else {
-                        allFilesProven = false
-                        break
-                    }
-
-                    guard let localSHA = client.sha256(of: targetURL),
-                          localSHA == fileProof.sha256 else {
-                        allFilesProven = false
-                        break
-                    }
-
-                    guard let serverFile = serverSegment.files.first(where: {
-                        $0.name == fileProof.written
-                    }),
-                          serverFile.sha256 == fileProof.sha256,
-                          serverFile.size == fileProof.size,
-                          serverFile.status.provesHold else {
-                        allFilesProven = false
-                        break
+            if keepers.isEmpty {
+                for url in uploadMediaURLs {
+                    await beforeRemovalStep()
+                    guard !syncPaused, journalContext == context else { return .stopped }
+                    do {
+                        try removeItem(url)
+                    } catch {
+                        Logger.upload.error("Failed to remove upload media \(url.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        return .failed
                     }
                 }
-
-                if !allFilesProven {
-                    self.keepThrottle[address] = self.now().addingTimeInterval(86400)
-                    progressContinuation.yield(.segmentKept(.unproven))
-                    continue
+                await beforeRemovalStep()
+                guard !syncPaused, journalContext == context else { return .stopped }
+                guard Darwin.rmdir(segmentURL.path) == 0 else {
+                    Logger.upload.error("Failed to rmdir segment directory \(segment, privacy: .public): \(errno)")
+                    return .failed
                 }
-
-                // Delete proven media files
-                for fileProof in ack.payload.files {
-                    guard localNames.contains(fileProof.submitted) else { continue }
-                    let targetURL = segmentURL.appendingPathComponent(fileProof.submitted)
-                    guard !syncPaused, journalContext == context else { return .stoppedForConfigChange }
+                return .finished
+            } else {
+                let failedURL = segmentURL.deletingLastPathComponent().appendingPathComponent("\(segment).failed")
+                await beforeRemovalStep()
+                guard !syncPaused, journalContext == context else { return .stopped }
+                guard Darwin.rename(segmentURL.path, failedURL.path) == 0 else {
+                    Logger.upload.error("Failed to rename segment directory \(segment, privacy: .public) to .failed: \(errno)")
+                    return .failed
+                }
+                for mediaURL in uploadMediaURLs {
+                    let targetURL = failedURL.appendingPathComponent(mediaURL.lastPathComponent)
+                    await beforeRemovalStep()
+                    guard !syncPaused, journalContext == context else { return .stopped }
                     do {
                         try removeItem(targetURL)
-                        Logger.upload.info("Cleanup: deleted media file \(fileProof.submitted, privacy: .public) from \(segment, privacy: .public)")
                     } catch {
-                        Logger.upload.info("Cleanup: failed to delete \(fileProof.submitted, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        Logger.upload.error("Failed to remove upload media \(mediaURL.lastPathComponent, privacy: .public) from failed dir for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        return .failed
                     }
                 }
+                return .finished
             }
         }
-        return .finished
     }
 
 #if DEBUG

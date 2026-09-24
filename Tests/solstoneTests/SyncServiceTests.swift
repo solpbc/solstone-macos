@@ -25,98 +25,279 @@ struct SyncServiceTests {
 
     private let store = ObserverURLProtocolStore()
 
-    @Test(arguments: [-1, 0, 1, 2], ["present", "processed", "missing", "unknown"]) func subsetDeletionPreservesNonMediaAndDirectories(retention: Int, custody: String) async throws {
+    @Test func successfulUploadDeletesSegmentDirectoryImmediately() async throws {
         store.reset()
-        let root = try makeTempDirectory("sync-subset-deletion")
-        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
-        let day = dayString(for: pastDate)
-        let dateFolder = dateFolderString(for: pastDate)
-        let dateDir = root.appendingPathComponent(dateFolder, isDirectory: true)
-        let segmentDir = dateDir.appendingPathComponent("120000_300", isDirectory: true)
-        try FileManager.default.createDirectory(at: segmentDir, withIntermediateDirectories: true)
+        let root = try makeTempDirectory("sync-immediate-delete-clean")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
 
-        let screenURL = segmentDir.appendingPathComponent("120000_300_display_1_screen.mp4")
-        let audioURL = segmentDir.appendingPathComponent("120000_300_audio.m4a")
-        let metaURL = segmentDir.appendingPathComponent("120000_300_meta.json")
-        let systemAudioURL = segmentDir.appendingPathComponent("120000_300_audio_system.m4a")
-        let unrelatedURL = segmentDir.appendingPathComponent("unrelated.txt")
-        let nestedDir = segmentDir.appendingPathComponent("nested", isDirectory: true)
-        try FileManager.default.createDirectory(at: nestedDir, withIntermediateDirectories: true)
-        let childURL = nestedDir.appendingPathComponent("child.txt")
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24680") })
+        await configure(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
 
-        try Data("screen-bytes".utf8).write(to: screenURL)
-        try Data("audio-bytes".utf8).write(to: audioURL)
-        let metaBytes = Data(#"{"unreadable_audio_sources":{}}"#.utf8)
-        try metaBytes.write(to: metaURL)
-        let systemBytes = Data("system-audio-bytes".utf8)
-        try systemBytes.write(to: systemAudioURL)
-        let unrelatedBytes = Data("unrelated-junk".utf8)
-        try unrelatedBytes.write(to: unrelatedURL)
-        let childBytes = Data("nested-child-bytes".utf8)
-        try childBytes.write(to: childURL)
+        #expect(progress.containsUploadSucceeded)
+        #expect(progress.containsSyncComplete)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().path))
+    }
 
-        let mediaDirectory = segmentDir.appendingPathComponent("nested_screen.mp4", isDirectory: true)
-        try FileManager.default.createDirectory(at: mediaDirectory, withIntermediateDirectories: true)
-        try childBytes.write(to: mediaDirectory.appendingPathComponent("keep.bin"))
-        let mediaLink = segmentDir.appendingPathComponent("linked_screen.mp4")
-        try FileManager.default.createSymbolicLink(at: mediaLink, withDestinationURL: childURL)
+    @Test func successfulUploadWithKeepersRenamesToFailedAndRemovesOnlyConfirmedMedia() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-immediate-delete-keepers")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let audioFile = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let sha = try sha256(of: audioFile)
+        let metaFile = seg.url.appendingPathComponent("120000_300_meta.json")
+        try Data("{}".utf8).write(to: metaFile)
+        let keeperFile = seg.url.appendingPathComponent("extra.txt")
+        try Data("keeper".utf8).write(to: keeperFile)
 
-        let screenSHA = try sha256(of: screenURL)
-        let audioSHA = try sha256(of: audioURL)
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: "120000_300_audio.m4a", sha: sha, size: 5))
+
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24681") })
+        await configure(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(progress.containsUploadSucceeded)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        let failedDir = seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed")
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(!FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_300_audio.m4a").path))
+        #expect(!FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_300_meta.json").path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("extra.txt").path))
+        let ackFile = failedDir.appendingPathComponent("120000_300_ingest_ack.json")
+        #expect(FileManager.default.fileExists(atPath: ackFile.path))
+    }
+
+    @Test func segmentRemovedOutcomeDeletesSegmentDirectoryImmediately() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-seg-removed-clean")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 500, body: "{\"status\":\"failed\",\"error\":\"Ingest request failed\",\"reason_code\":\"segment_removed\"}")
+
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24682") })
+        await configure(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().path))
+    }
+
+    @Test func segmentRemovedWithKeepersRenamesToFailedAndRemovesConfirmedMedia() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-seg-removed-keepers")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let keeperFile = seg.url.appendingPathComponent("keeper.bin")
+        try Data("keep".utf8).write(to: keeperFile)
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 500, body: "{\"status\":\"failed\",\"error\":\"Ingest request failed\",\"reason_code\":\"segment_removed\"}")
+
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24683") })
+        await configure(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        let failedDir = seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed")
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(!FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_300_audio.m4a").path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("keeper.bin").path))
+    }
+
+    @Test func localFinishDeletesSettledRemnantWithoutTunnelCall() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-local-finish-remnant")
+        let segDir = root.appendingPathComponent("2026-09-20", isDirectory: true).appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
+        let metaURL = segDir.appendingPathComponent("120000_300_meta.json")
+        try Data(#"{"unreadable_audio_sources":{}}"#.utf8).write(to: metaURL)
 
         let ack = IngestAcknowledgment(
             journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: day,
+            day: "20260920",
             submittedSegment: "120000_300",
             storedSegmentKey: "120000_300",
             status: .ok,
             payload: IngestAcknowledgmentPayload(
-                files: [
-                    IngestAcknowledgedFileProof(submitted: "120000_300_display_1_screen.mp4", sha256: screenSHA, size: 12),
-                    IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: audioSHA, size: 11),
-                ],
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: String(repeating: "a", count: 64), size: 5)],
                 meta: ["unreadable_audio_sources": .object([:])]
             )
         )
-        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentDir, segment: "120000_300")
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segDir, segment: "120000_300")
         try IngestAcknowledgmentStore.write(ack, to: ackURL)
 
-        // Mock reconciliation query indicating server holds both upload media files
-        let today = IngestDayKey.string(from: Date())
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(
-            entries: [
-                ("120000_300", nil, "120000_300_display_1_screen.mp4", screenSHA, 12, custody),
-                ("120000_300", nil, "120000_300_audio.m4a", audioSHA, 11, custody),
-            ]
-        ))
-
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24683") })
-        await configure(service, cacheRetentionDays: retention)
-
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .held })
+        await configure(service)
         await service.sync()
 
-        // Screen and combined audio must be deleted
-        #expect(FileManager.default.fileExists(atPath: screenURL.path) == !(retention >= 0 && retention < 2 && (custody == "present" || custody == "processed")))
-        #expect(FileManager.default.fileExists(atPath: audioURL.path) == !(retention >= 0 && retention < 2 && (custody == "present" || custody == "processed")))
+        #expect(!FileManager.default.fileExists(atPath: segDir.path))
+    }
 
-        // Non-media, metadata, excluded audio, nested dir, and segment/date directories must remain byte-for-byte
-        #expect(FileManager.default.fileExists(atPath: metaURL.path) == true)
-        #expect(try Data(contentsOf: metaURL) == metaBytes)
+    @Test func localFinishWithKeepersRenamesToFailed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-local-finish-keepers")
+        let segDir = root.appendingPathComponent("2026-09-20", isDirectory: true).appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
+        let metaURL = segDir.appendingPathComponent("120000_300_meta.json")
+        try Data(#"{}"#.utf8).write(to: metaURL)
+        let keeperURL = segDir.appendingPathComponent("stray.txt")
+        try Data("stray".utf8).write(to: keeperURL)
 
-        #expect(FileManager.default.fileExists(atPath: systemAudioURL.path) == true)
-        #expect(try Data(contentsOf: systemAudioURL) == systemBytes)
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: "20260920",
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: String(repeating: "a", count: 64), size: 5)],
+                meta: [:]
+            )
+        )
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segDir, segment: "120000_300")
+        try IngestAcknowledgmentStore.write(ack, to: ackURL)
 
-        #expect(FileManager.default.fileExists(atPath: unrelatedURL.path) == true)
-        #expect(try Data(contentsOf: unrelatedURL) == unrelatedBytes)
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .held })
+        await configure(service)
+        await service.sync()
 
-        #expect(FileManager.default.fileExists(atPath: childURL.path) == true)
-        #expect(try Data(contentsOf: childURL) == childBytes)
+        #expect(!FileManager.default.fileExists(atPath: segDir.path))
+        let failedDir = segDir.deletingLastPathComponent().appendingPathComponent("120000_300.failed")
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("stray.txt").path))
+    }
 
-        #expect(FileManager.default.fileExists(atPath: segmentDir.path) == true)
-        #expect(FileManager.default.fileExists(atPath: dateDir.path) == true)
-        #expect(try Data(contentsOf: mediaDirectory.appendingPathComponent("keep.bin")) == childBytes)
-        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: mediaLink.path) == childURL.path)
+    @Test func unacknowledgedMediaWithUnreadableMetadataMarkedUnprovable() async throws {
+        store.reset()
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        let root = try makeTempDirectory("sync-unreadable-meta-unprovable")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let metaURL = seg.url.appendingPathComponent("120000_300_meta.json")
+        try Data("{invalid json".utf8).write(to: metaURL)
+
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24684") })
+        await configure(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(progress.segmentUnprovableCount == 1)
+        #expect(FileManager.default.fileExists(atPath: seg.url.path))
+    }
+
+    @Test func beforeRemovalStepHookFiresBeforeEachDestructiveAction() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-before-removal-hook")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let hookCalls = MutexValue<Int>(0)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24686") },
+            beforeRemovalStep: {
+                hookCalls.withLock { $0 += 1 }
+            }
+        )
+        await configure(service)
+        await service.sync()
+
+        #expect(hookCalls.withLock { $0 } >= 3)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+    }
+
+    @Test func removalAbortsCleanlyIfContextChangesMidRemoval() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-removal-abort-context")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let serviceHolder = MutexValue<SyncService?>(nil)
+        let service = SyncService(
+            storageManager: StorageManager(baseDirectory: root),
+            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24687") },
+            retryDelays: Array(repeating: 0, count: 10),
+            beforeRemovalStep: {
+                if let s = serviceHolder.withLock({ $0 }) {
+                    await s.configure(pairingIdentity: nil, journalFingerprint: nil, syncPaused: true)
+                }
+            }
+        )
+        serviceHolder.withLock { $0 = service }
+        await configure(service)
+        await service.sync()
+
+        // Removal stopped on the first seam before unlinking; folder still in place
+        #expect(FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
+
+        // In a later pass after reconfigure: ack for linked journal finishes locally with no upload
+        store.reset()
+        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24687") })
+        await configure(service2)
+        await service2.sync()
+
+        let uploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequests.count == 0)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+    }
+
+    @Test func discoveryIgnoresFailedAndIncompleteDirectories() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-discovery-ignore-special")
+        let dayDir = root.appendingPathComponent("2026-09-20", isDirectory: true)
+        let failedDir = dayDir.appendingPathComponent("120000_300.failed", isDirectory: true)
+        let incompleteDir = dayDir.appendingPathComponent("120500_300.incomplete", isDirectory: true)
+        try FileManager.default.createDirectory(at: failedDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: incompleteDir, withIntermediateDirectories: true)
+        try Data("audio".utf8).write(to: failedDir.appendingPathComponent("120000_300_audio.m4a"))
+        try Data("audio".utf8).write(to: incompleteDir.appendingPathComponent("120500_300_audio.m4a"))
+
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24688") })
+        await configure(service)
+        await service.sync()
+
+        let uploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequests.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(FileManager.default.fileExists(atPath: incompleteDir.path))
     }
 
     @Test func heldBeforeServerSegmentsMakesNoRequestAndNextURLProceeds() async throws {
@@ -164,16 +345,15 @@ struct SyncServiceTests {
         store.reset()
         let root = try makeTempDirectory("sync-size-mismatch")
         let segment = try makeSegment(root: root)
-        let day = dayString(for: segment.date)
         let filename = "120000_300_audio.m4a"
         let sha = try sha256(of: segment.url.appendingPathComponent(filename))
-        store.enqueue(statusCode: 200, body: uploadResponseJSON())
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24685") })
         await configure(service)
 
         await service.sync()
 
-        #expect(FileManager.default.fileExists(atPath: segment.url.path))
+        #expect(!FileManager.default.fileExists(atPath: segment.url.path))
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
     }
 
@@ -221,92 +401,6 @@ struct SyncServiceTests {
         #expect(idleEvents.offlinePath() == IngestProtocolV3.segmentsDayPath(today))
     }
 
-    @Test func duplicateSegmentKeyFailsClosedBeforeReconciliation() async throws {
-        let date = try #require(Calendar.current.date(byAdding: .day, value: -2, to: Date()))
-        let root = try makeTempDirectory("sync-duplicate-segment-key")
-        let segment = try makeSegment(root: root, date: date)
-        let day = dayString(for: segment.date)
-        let filename = "120000_300_audio.m4a"
-        let sha = try sha256(of: segment.url.appendingPathComponent(filename))
-        let duplicateItems = segmentsDayJSON(entries: [
-            ("120000_300", nil, filename, sha, 5, "present"),
-            ("120000_300", nil, filename, sha, 5, "present"),
-        ])
-
-        try await assertMalformedSegmentsDayFailsClosed(
-            root: root,
-            segment: segment,
-            day: day,
-            filename: filename,
-            sha: sha,
-            malformedSegmentsDay: duplicateItems
-        )
-    }
-
-    @Test func duplicateEffectiveFilenameFailsClosedBeforeReconciliation() async throws {
-        let date = try #require(Calendar.current.date(byAdding: .day, value: -2, to: Date()))
-        let root = try makeTempDirectory("sync-duplicate-effective-filename")
-        let segment = try makeSegment(root: root, date: date)
-        let day = dayString(for: segment.date)
-        let filename = "120000_300_audio.m4a"
-        let sha = try sha256(of: segment.url.appendingPathComponent(filename))
-        let file = "{\"name\":\"audio.m4a\",\"submitted_name\":\"\(filename)\",\"sha256\":\"\(sha)\",\"size\":5,\"status\":\"present\"}"
-        let duplicateFiles = "{\"protocol_version\":3,\"total\":1,\"items\":[{\"key\":\"120000_300\",\"observed\":true,\"files\":[\(file),\(file)]}]}"
-
-        try await assertMalformedSegmentsDayFailsClosed(
-            root: root,
-            segment: segment,
-            day: day,
-            filename: filename,
-            sha: sha,
-            malformedSegmentsDay: duplicateFiles
-        )
-    }
-
-    @Test func duplicateOriginalKeyFailsClosedBeforeReconciliation() async throws {
-        let date = try #require(Calendar.current.date(byAdding: .day, value: -2, to: Date()))
-        let root = try makeTempDirectory("sync-duplicate-original-key")
-        let segment = try makeSegment(root: root, date: date)
-        let day = dayString(for: segment.date)
-        let filename = "120000_300_audio.m4a"
-        let sha = try sha256(of: segment.url.appendingPathComponent(filename))
-        let duplicateItems = segmentsDayJSON(entries: [
-            ("120001_300", "120000_300", filename, sha, 5, "present"),
-            ("120002_300", "120000_300", filename, sha, 5, "present"),
-        ])
-
-        try await assertMalformedSegmentsDayFailsClosed(
-            root: root,
-            segment: segment,
-            day: day,
-            filename: filename,
-            sha: sha,
-            malformedSegmentsDay: duplicateItems
-        )
-    }
-
-    @Test func originalKeyEqualToCanonicalKeyFailsClosedBeforeReconciliation() async throws {
-        let date = try #require(Calendar.current.date(byAdding: .day, value: -2, to: Date()))
-        let root = try makeTempDirectory("sync-original-key-canonical-key")
-        let segment = try makeSegment(root: root, date: date)
-        let day = dayString(for: segment.date)
-        let filename = "120000_300_audio.m4a"
-        let sha = try sha256(of: segment.url.appendingPathComponent(filename))
-        let ambiguousItems = segmentsDayJSON(entries: [
-            ("120001_300", "120002_300", filename, sha, 5, "present"),
-            ("120002_300", nil, filename, sha, 5, "present"),
-        ])
-
-        try await assertMalformedSegmentsDayFailsClosed(
-            root: root,
-            segment: segment,
-            day: day,
-            filename: filename,
-            sha: sha,
-            malformedSegmentsDay: ambiguousItems
-        )
-    }
-
     @Test func noSelectableFilesDoesNotBlockDaySyncedMark() async throws {
         store.reset()
         let date = try #require(Calendar.current.date(byAdding: .day, value: -2, to: Date()))
@@ -315,7 +409,7 @@ struct SyncServiceTests {
         let today = IngestDayKey.string(from: Date())
         store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24690") })
-        await configure(service, cacheRetentionDays: 0)
+        await configure(service)
 
         let collector = ProgressCollector()
         let listen = Task {
@@ -340,14 +434,13 @@ struct SyncServiceTests {
         let root = try makeTempDirectory("sync-poison-sibling")
         let real = try makeSegment(root: root, date: date, segmentName: "110000_300")
         let poison = try makeUnuploadableSegment(root: root, date: date, segmentName: "130000_300")
-        let day = dayString(for: real.date)
         let filename = "110000_300_audio.m4a"
         let sha = try sha256(of: real.url.appendingPathComponent(filename))
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24691") })
-        await configure(service, cacheRetentionDays: 0)
+        await configure(service)
 
-        // Pass 1: nothing on the server yet. The real segment uploads; the poison segment
-        // is skipped without ever reaching the network.
+        // The real segment uploads and is removed on confirmation; the poison segment
+        // is skipped without reaching the network.
         store.enqueue(statusCode: 200, body: uploadResponseJSON(
             status: .ok,
             submitted: "110000_300",
@@ -358,18 +451,7 @@ struct SyncServiceTests {
         ))
         await service.sync()
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
-        #expect(FileManager.default.fileExists(atPath: real.url.path))
-        #expect(FileManager.default.fileExists(atPath: poison.url.path))
-
-        // Pass 2: acknowledgment was saved in Pass 1. Cleanup runs and removes the real segment's media file.
-        store.reset()
-        let today = IngestDayKey.string(from: Date())
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(key: "110000_300", filename: filename, sha: sha, size: 5))
-        await service.sync()
-
-        #expect(FileManager.default.fileExists(atPath: real.url.appendingPathComponent(filename).path) == false)
-        #expect(FileManager.default.fileExists(atPath: real.url.path) == true)
+        #expect(FileManager.default.fileExists(atPath: real.url.path) == false)
         #expect(FileManager.default.fileExists(atPath: poison.url.path) == true)
     }
 
@@ -394,7 +476,9 @@ struct SyncServiceTests {
         await collector.waitForSyncComplete()
         listen.cancel()
 
-        #expect(collector.segmentUnprovableCount == 1)
+        #expect(!FileManager.default.fileExists(atPath: emptySegment.path))
+        #expect(FileManager.default.fileExists(atPath: dayDir.path))
+        #expect(collector.segmentUnprovableCount == 0)
         #expect(collector.containsSyncComplete == true)
         #expect(collector.containsOffline == false)
 
@@ -492,7 +576,8 @@ struct SyncServiceTests {
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(collector2.containsSyncComplete == true)
-        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
     }
 
     @Test func discoveryDateDirectoryListFailureWithNoDiscoverableSegmentFailsClosed() async throws {
@@ -555,7 +640,8 @@ struct SyncServiceTests {
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(collector2.containsSyncComplete == true)
-        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
     }
 
     @Test func discoverySegmentDirectoryListFailureWithNoSiblingFailsClosed() async throws {
@@ -617,7 +703,8 @@ struct SyncServiceTests {
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(collector2.containsSyncComplete == true)
-        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
     }
 
     @Test func discoveryRootChildClassifyErrorWithNoSiblingFailsClosed() async throws {
@@ -685,7 +772,8 @@ struct SyncServiceTests {
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(collector2.containsSyncComplete == true)
-        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
     }
 
     @Test func discoveryUploadMediaChildClassifyErrorWithNoSiblingFailsClosed() async throws {
@@ -753,7 +841,8 @@ struct SyncServiceTests {
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(collector2.containsSyncComplete == true)
-        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
     }
 
     @Test func discoveryDateChildClassifyErrorWithNoSiblingFailsClosed() async throws {
@@ -818,7 +907,8 @@ struct SyncServiceTests {
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(collector2.containsSyncComplete == true)
-        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
     }
 
     @Test func discoveryRootChildClassifyErrorRecordsFailureUploadsValidAndFailsClosed() async throws {
@@ -854,7 +944,7 @@ struct SyncServiceTests {
                 return ft == mode_t(S_IFDIR) ? .directory : (ft == mode_t(S_IFREG) ? .regularFile : .unsupported)
             }
         )
-        await configure(service, cacheRetentionDays: 0)
+        await configure(service)
         let collector = ProgressCollector()
         let listen = Task {
             for await event in await service.progressStream {
@@ -871,9 +961,8 @@ struct SyncServiceTests {
         #expect(collector.containsOffline == true)
         #expect(collector.offlineEvents.count == 1)
         #expect(collector.offlinePath() == "")
-        #expect(FileManager.default.fileExists(atPath: validSegment.url.appendingPathComponent(filename).path) == true)
-        let validAckURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: validSegment.url, segment: "120000_300")
-        #expect(FileManager.default.fileExists(atPath: validAckURL.path) == true)
+        #expect(!FileManager.default.fileExists(atPath: validSegment.url.path))
+        #expect(FileManager.default.fileExists(atPath: otherAudio.path) == true)
 
         // Pass 2: default service recovers; sibling not re-posted, other posted once
         store.reset()
@@ -893,6 +982,7 @@ struct SyncServiceTests {
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(collector2.containsSyncComplete == true)
+        #expect(!FileManager.default.fileExists(atPath: otherSegDir.path))
     }
 
     @Test func discoveryRootChildNonDirectoryIgnored() async throws {
@@ -964,8 +1054,8 @@ struct SyncServiceTests {
         #expect(collector.containsOffline == true)
         #expect(collector.offlineEvents.count == 1)
         #expect(collector.offlinePath() == "")
-        let validAckURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: validSegment.url, segment: "120000_300")
-        #expect(FileManager.default.fileExists(atPath: validAckURL.path) == true)
+        #expect(!FileManager.default.fileExists(atPath: validSegment.url.path))
+        #expect(FileManager.default.fileExists(atPath: failingAudio.path) == true)
 
         // Pass 2: default service recovers; sibling not re-posted, failing segment posted once
         store.reset()
@@ -985,6 +1075,7 @@ struct SyncServiceTests {
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(collector2.containsSyncComplete == true)
+        #expect(!FileManager.default.fileExists(atPath: failingSegDir.path))
     }
 
     @Test func discoveryDateChildClassifyErrorRecordsFailureAndFailsClosed() async throws {
@@ -1031,8 +1122,9 @@ struct SyncServiceTests {
         #expect(collector.containsOffline == true)
         #expect(collector.offlineEvents.count == 1)
         #expect(collector.offlinePath() == "")
-        let seg1AckURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg1.url, segment: "120000_300")
-        #expect(FileManager.default.fileExists(atPath: seg1AckURL.path) == true)
+        #expect(!FileManager.default.fileExists(atPath: seg1.url.path))
+        let seg2Audio = seg2.url.appendingPathComponent(filename2)
+        #expect(FileManager.default.fileExists(atPath: seg2Audio.path) == true)
 
         // Pass 2: default service recovers; seg1 not re-posted, seg2 posted once
         store.reset()
@@ -1052,6 +1144,7 @@ struct SyncServiceTests {
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(collector2.containsSyncComplete == true)
+        #expect(!FileManager.default.fileExists(atPath: seg2.url.path))
     }
 
     @Test func discoveryDateChildNonDirectoryIgnored() async throws {
@@ -1154,8 +1247,9 @@ struct SyncServiceTests {
         #expect(collector.containsOffline == true)
         #expect(collector.offlineEvents.count == 1)
         #expect(collector.offlinePath() == "")
-        let seg1AckURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg1.url, segment: "120000_300")
-        #expect(FileManager.default.fileExists(atPath: seg1AckURL.path) == true)
+        #expect(!FileManager.default.fileExists(atPath: seg1.url.path))
+        let seg2Audio = seg2.url.appendingPathComponent(filename2)
+        #expect(FileManager.default.fileExists(atPath: seg2Audio.path) == true)
 
         // Pass 2: default service recovers; seg1 not re-posted, seg2 posted once
         store.reset()
@@ -1175,6 +1269,7 @@ struct SyncServiceTests {
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(collector2.containsSyncComplete == true)
+        #expect(!FileManager.default.fileExists(atPath: seg2.url.path))
     }
 
     @Test func discoveryUploadMediaChildClassifyErrorRecordsFailureAndFailsClosed() async throws {
@@ -1184,6 +1279,7 @@ struct SyncServiceTests {
         let screenURL = seg.url.appendingPathComponent("120000_300_display_1_screen.mp4")
         try Data("screen".utf8).write(to: screenURL)
         let audioURL = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        try Data("audio".utf8).write(to: audioURL)
 
         let screenSHA = try sha256(of: screenURL)
         let audioSHA = try sha256(of: audioURL)
@@ -1220,37 +1316,9 @@ struct SyncServiceTests {
         #expect(collector.containsOffline == true)
         #expect(collector.offlineEvents.count == 1)
         #expect(collector.offlinePath() == "")
-        let segAckURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
-        #expect(FileManager.default.fileExists(atPath: segAckURL.path) == true)
-
-        // Pass 2: default service recovers; uploads entire segment (including previously omitted audio)
-        store.reset()
-        store.enqueue(statusCode: 200, body: completeUploadResponseJSON(
-            descriptors: [
-                ("120000_300_audio.m4a", "120000_300_audio.m4a", 5, audioSHA, "written"),
-                ("120000_300_display_1_screen.mp4", "120000_300_display_1_screen.mp4", 6, screenSHA, "written"),
-            ]
-        ))
-
-        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24750") })
-        await configure(service2)
-        let collector2 = ProgressCollector()
-        let listen2 = Task {
-            for await event in await service2.progressStream {
-                collector2.append(event)
-            }
-        }
-        await service2.sync()
-        await collector2.waitForSyncComplete()
-        listen2.cancel()
-
-        let pass2UploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
-        #expect(pass2UploadRequests.count == 1)
-        let bodies = store.snapshotRequestBodyData().compactMap { $0 }
-        let bodyString = String(data: bodies[0], encoding: .utf8) ?? ""
-        #expect(bodyString.contains("120000_300_audio.m4a") == true)
-        #expect(bodyString.contains("120000_300_display_1_screen.mp4") == true)
-        #expect(collector2.containsSyncComplete == true)
+        #expect(FileManager.default.fileExists(atPath: screenURL.path) == true)
+        #expect(FileManager.default.fileExists(atPath: audioURL.path) == true)
+        #expect(FileManager.default.fileExists(atPath: seg.url.path) == true)
     }
 
     @Test func discoveryUploadMediaSymlinkTreatedAsUnsupportedAndOmitted() async throws {
@@ -1323,26 +1391,17 @@ struct SyncServiceTests {
             }
         )
         await configure(service)
-        let collector = ProgressCollector()
-        let listen = Task {
-            for await event in await service.progressStream {
-                collector.append(event)
-            }
-        }
-        await service.sync()
-        await collector.waitForSyncComplete()
-        listen.cancel()
+        let snapshot = await service.discover()
 
-        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
-        #expect(collector.containsSyncComplete == true)
         let classifiedNames = Set(counter.all.map(\.lastPathComponent))
         #expect(classifiedNames.contains("120000_300_audio.m4a") == true)
         #expect(classifiedNames.contains("120000_300_meta.json") == false)
         #expect(classifiedNames.contains("120000_300_audio_system.m4a") == false)
         #expect(classifiedNames.contains("stray.txt") == false)
+        #expect(snapshot.candidatesByDay.values.flatMap { $0 }.count == 1)
     }
 
-    @Test func discoveryDateListingFailureSkipsCleanupOfEligibleSibling() async throws {
+    @Test func discoveryDateListingFailureRemovesEligibleListedSiblingWhileUnlistedStays() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-date-list-skip-cleanup")
         let pastDate1 = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
@@ -1369,7 +1428,8 @@ struct SyncServiceTests {
             payload: IngestAcknowledgmentPayload(
                 files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: sha1, size: 5)],
                 meta: [:]
-            )
+            ),
+            removedMedia: []
         )
         try IngestAcknowledgmentStore.write(ack1, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg1.url, segment: "120000_300"))
 
@@ -1382,12 +1442,10 @@ struct SyncServiceTests {
             payload: IngestAcknowledgmentPayload(
                 files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: sha2, size: 5)],
                 meta: [:]
-            )
+            ),
+            removedMedia: []
         )
         try IngestAcknowledgmentStore.write(ack2, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg2.url, segment: "120000_300"))
-
-        // Pass 1: listDirectory throws on folder2; two-read facts for day1 are ready
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day1), body: segmentsDayJSON(key: "120000_300", filename: "120000_300_audio.m4a", sha: sha1, size: 5))
 
         let service = makeService(
             root: root,
@@ -1399,7 +1457,7 @@ struct SyncServiceTests {
                 return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
             }
         )
-        await configure(service, cacheRetentionDays: 0)
+        await configure(service)
         let collector = ProgressCollector()
         let listen = Task {
             for await event in await service.progressStream {
@@ -1410,34 +1468,15 @@ struct SyncServiceTests {
         await collector.waitForOffline()
         listen.cancel()
 
-        #expect(FileManager.default.fileExists(atPath: audio1.path) == true)
+        // The acked segment on the day that listed is removed in that pass
+        #expect(!FileManager.default.fileExists(atPath: seg1.url.path))
+        // The day whose listDirectory throws is not entered, so its segment stays
+        #expect(FileManager.default.fileExists(atPath: seg2.url.path))
+        #expect(FileManager.default.fileExists(atPath: audio2.path))
         #expect(collector.offlineEvents.count == 1)
         #expect(collector.containsSyncComplete == false)
-        let pass1UploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
-        #expect(pass1UploadRequests.isEmpty)
-
-        // Pass 2: default service on same root deletes both eligible siblings
-        store.reset()
-        let today = IngestDayKey.string(from: Date())
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day1), body: segmentsDayJSON(key: "120000_300", filename: "120000_300_audio.m4a", sha: sha1, size: 5))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day2), body: segmentsDayJSON(key: "120000_300", filename: "120000_300_audio.m4a", sha: sha2, size: 5))
-
-        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24756") })
-        await configure(service2, cacheRetentionDays: 0)
-        let collector2 = ProgressCollector()
-        let listen2 = Task {
-            for await event in await service2.progressStream {
-                collector2.append(event)
-            }
-        }
-        await service2.sync()
-        await collector2.waitForSyncComplete()
-        listen2.cancel()
-
-        #expect(FileManager.default.fileExists(atPath: audio1.path) == false)
-        #expect(FileManager.default.fileExists(atPath: audio2.path) == false)
-        #expect(collector2.containsSyncComplete == true)
+        // Zero client requests, no upload, no GET of either segment day
+        #expect(store.snapshotRequests().isEmpty)
     }
 
     @Test func lateArrivalMediaFileIsolatedFromCurrentSyncPass() async throws {
@@ -1455,23 +1494,6 @@ struct SyncServiceTests {
         try screenData.write(to: screenTemp)
         let screenSHA = try sha256(of: screenTemp)
 
-        // Ack covering BOTH audio and screen files
-        let ack = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: day,
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(
-                files: [
-                    IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: audioSHA, size: 5),
-                    IngestAcknowledgedFileProof(submitted: "120000_300_display_1_screen.mp4", sha256: screenSHA, size: UInt64(screenData.count)),
-                ],
-                meta: [:]
-            )
-        )
-        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
         let today = IngestDayKey.string(from: Date())
         store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
         store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(
@@ -1481,9 +1503,11 @@ struct SyncServiceTests {
             ]
         ))
 
+        store.registerRoute(path: IngestProtocolV3.uploadPath, body: uploadResponseJSON(filename: "120000_300_audio.m4a", sha: audioSHA, size: 5))
+
         let resolver = ResolverScript([.url("http://127.0.0.1:24758"), .url("http://127.0.0.1:24758")], parkAfterImmediateCount: 0)
         let service = makeService(root: root, resolver: resolver.resolver)
-        await configure(service, cacheRetentionDays: 0)
+        await configure(service)
 
         let syncing = Task { await service.sync() }
         await resolver.waitUntilParked()
@@ -1494,25 +1518,7 @@ struct SyncServiceTests {
         await resolver.releasePark()
         await syncing.value
 
-        // Pass 1: snapshotted audio file deleted; late screen file remains
-        #expect(FileManager.default.fileExists(atPath: audioFile.path) == false)
-        #expect(FileManager.default.fileExists(atPath: screenURL.path) == true)
-
-        // Pass 2: subsequent sync discovers and cleans up the late screen file
-        store.reset()
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(
-            entries: [
-                ("120000_300", nil, "120000_300_audio.m4a", audioSHA, 5, "present"),
-                ("120000_300", nil, "120000_300_display_1_screen.mp4", screenSHA, screenData.count, "present"),
-            ]
-        ))
-
-        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24758") })
-        await configure(service2, cacheRetentionDays: 0)
-        await service2.sync()
-
-        #expect(FileManager.default.fileExists(atPath: screenURL.path) == false)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
     }
 
     @Test func lateArrivalSegmentIsolatedFromCurrentSyncPass() async throws {
@@ -1556,7 +1562,7 @@ struct SyncServiceTests {
 
         let resolver = ResolverScript([.url("http://127.0.0.1:24757"), .url("http://127.0.0.1:24757")], parkAfterImmediateCount: 0)
         let service = makeService(root: root, resolver: resolver.resolver)
-        await configure(service, cacheRetentionDays: 0)
+        await configure(service)
 
         let syncing = Task { await service.sync() }
         await resolver.waitUntilParked()
@@ -1595,7 +1601,7 @@ struct SyncServiceTests {
         ))
 
         let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24757") })
-        await configure(service2, cacheRetentionDays: 0)
+        await configure(service2)
         await service2.sync()
 
         #expect(FileManager.default.fileExists(atPath: audio2URL.path) == false)
@@ -1716,7 +1722,7 @@ struct SyncServiceTests {
         store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day1), body: segmentsDayJSON(key: "120000_300", filename: "120000_300_audio.m4a", sha: controlSHA, size: 5))
 
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24760") })
-        await configure(service, cacheRetentionDays: 0)
+        await configure(service)
         let collector = ProgressCollector()
         let listen = Task {
             for await event in await service.progressStream {
@@ -1791,7 +1797,7 @@ struct SyncServiceTests {
         store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(key: "120000_300", filename: controlAudio.lastPathComponent, sha: controlSHA, size: 5))
 
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24761") })
-        await configure(service, cacheRetentionDays: 0)
+        await configure(service)
         let collector = ProgressCollector()
         let listen = Task {
             for await event in await service.progressStream {
@@ -1863,6 +1869,7 @@ struct SyncServiceTests {
         let emptySeg = dateDir.appendingPathComponent("120000_300", isDirectory: true)
         let failingSeg = dateDir.appendingPathComponent("120500_300", isDirectory: true)
         try FileManager.default.createDirectory(at: emptySeg, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: emptySeg.appendingPathComponent("120000_300_meta.json"))
         try FileManager.default.createDirectory(at: failingSeg, withIntermediateDirectories: true)
 
         let service = makeService(
@@ -2173,7 +2180,6 @@ struct SyncServiceTests {
         await service.configure(
             pairingIdentity: pairingB,
             journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB),
-            cacheRetentionDays: -1,
             syncPaused: false
         )
         store.enqueue(statusCode: 200, body: uploadResponseJSON(
@@ -2196,13 +2202,16 @@ struct SyncServiceTests {
         #expect(collector.uploadSucceededFingerprint == tunnelJournalConnectionFingerprint(for: pairingB).value)
 
         store.reset()
+        let seg2 = try makeSegment(root: root, segmentName: "130000_300")
+        let filename2 = "130000_300_audio.m4a"
+        let sha2 = try sha256(of: seg2.url.appendingPathComponent(filename2))
         await configure(service)
         store.enqueue(statusCode: 200, body: uploadResponseJSON(
             status: .ok,
-            submitted: "120000_300",
-            stored: "120000_300",
-            filename: filename,
-            sha: sha,
+            submitted: "130000_300",
+            stored: "130000_300",
+            filename: filename2,
+            sha: sha2,
             size: 5
         ))
         await service.sync()
@@ -2288,7 +2297,7 @@ struct SyncServiceTests {
             resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24693") },
             retryDelays: [0, 0, 0]
         )
-        await configure(service, cacheRetentionDays: 0)
+        await configure(service)
 
         let collector = ProgressCollector()
         let listen = Task {
@@ -2365,96 +2374,82 @@ struct SyncServiceTests {
         let root = try makeTempDirectory("sync-ack-idempotent")
         let segment = try makeSegment(root: root)
         let filename = "120000_300_audio.m4a"
-        let sha = try sha256(of: segment.url.appendingPathComponent(filename))
+        let fileURL = segment.url.appendingPathComponent(filename)
+        let sha = try sha256(of: fileURL)
+        let stat = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let size = stat[.size] as? Int64 ?? 5
 
-        store.enqueue(statusCode: 200, body: uploadResponseJSON(
+        let day = dayString(for: segment.date)
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
             status: .ok,
-            submitted: "120000_300",
-            stored: "120000_300",
-            filename: filename,
-            sha: sha,
-            size: 5
-        ))
+            payload: IngestAcknowledgmentPayload(
+                files: [
+                    IngestAcknowledgedFileProof(
+                        submitted: filename,
+                        sha256: sha,
+                        size: UInt64(size)
+                    )
+                ],
+                meta: [:]
+            ),
+            removedMedia: []
+        )
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
+        try IngestAcknowledgmentStore.write(ack, to: ackURL)
 
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24607") })
         await configure(service)
 
+        // Sync performs local finish on matching ack: removes segment without upload
         await service.sync()
-        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
-
-        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
-        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
-        let ack = IngestAcknowledgmentStore.read(from: ackURL)
-        #expect(ack?.payload.files.count == 1)
-
-        // Pass 2: valid acknowledgment on disk -> no upload request!
-        store.reset()
-        await service.sync()
-        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 0)
+        let uploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequests.count == 0)
+        #expect(!FileManager.default.fileExists(atPath: segment.url.path))
     }
 
-    @Test func partialSegmentOffloadAndSuccessorWrite() async throws {
-        store.reset()
-        let root = try makeTempDirectory("sync-partial-offload")
-        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
-        let day = dayString(for: pastDate)
-        let dateFolder = dateFolderString(for: pastDate)
-        let dateDir = root.appendingPathComponent(dateFolder, isDirectory: true)
-        let segmentDir = dateDir.appendingPathComponent("120000_300", isDirectory: true)
-        try FileManager.default.createDirectory(at: segmentDir, withIntermediateDirectories: true)
+    @Test func successorAcknowledgmentPreservesRemovedMedia() throws {
+        let tempDir = try makeTempDirectory("sync-successor-preserves-removed")
+        let screenFile = tempDir.appendingPathComponent("120000_300_display_1_screen.mp4")
+        try Data("screen".utf8).write(to: screenFile)
 
-        let audioURL = segmentDir.appendingPathComponent("120000_300_audio.m4a")
-        try Data("audio-1".utf8).write(to: audioURL)
-        let audioSHA = try sha256(of: audioURL)
-
-        store.enqueue(statusCode: 200, body: uploadResponseJSON(
+        let prevAck = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: "20260914",
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
             status: .ok,
-            submitted: "120000_300",
-            stored: "120000_300",
-            filename: "120000_300_audio.m4a",
-            sha: audioSHA,
-            size: 7
-        ))
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: "sha-audio", size: 5)],
+                meta: [:]
+            ),
+            removedMedia: []
+        )
 
-        store.enqueue(statusCode: 200, body: segmentsDayJSON(key: "120000_300", filename: audioURL.lastPathComponent, sha: audioSHA, size: 7))
+        let newPayload = IngestAcknowledgmentPayload(
+            files: [IngestAcknowledgedFileProof(submitted: "120000_300_display_1_screen.mp4", sha256: "sha-screen", size: 6)],
+            meta: [:]
+        )
 
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24608") })
-        await configure(service, cacheRetentionDays: 0)
-
-        // Pass 1: uploads audio, then cleanup deletes audio file (without modifying ack sidecar)
-        await service.sync()
-        #expect(FileManager.default.fileExists(atPath: audioURL.path) == false)
-
-        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentDir, segment: "120000_300")
-        let ack1 = IngestAcknowledgmentStore.read(from: ackURL)
-        #expect(ack1?.payload.files.count == 1)
-        #expect(ack1?.payload.files.first?.submitted == "120000_300_audio.m4a")
-        #expect(ack1?.removedMedia.isEmpty == true)
-
-        // Now add a second media file (screen) to the segment
-        let screenURL = segmentDir.appendingPathComponent("120000_300_display_1_screen.mp4")
-        try Data("screen-2".utf8).write(to: screenURL)
-        let screenSHA = try sha256(of: screenURL)
-
-        store.reset()
-        store.enqueue(statusCode: 200, body: uploadResponseJSON(
+        let successor = IngestAcknowledgment.successor(
+            previous: prevAck,
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: "20260914",
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
             status: .ok,
-            submitted: "120000_300",
-            stored: "120000_300",
-            filename: "120000_300_display_1_screen.mp4",
-            sha: screenSHA,
-            size: 8
-        ))
+            newPayload: newPayload,
+            segmentDirectory: tempDir,
+            sha256Calculator: { _ in nil }
+        )
 
-        await configure(service, cacheRetentionDays: -1) // keep screen local
-        await service.sync()
-
-        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
-        let ack2 = IngestAcknowledgmentStore.read(from: ackURL)
-        #expect(ack2?.payload.files.count == 1)
-        #expect(ack2?.payload.files.first?.submitted == "120000_300_display_1_screen.mp4")
-        #expect(ack2?.removedMedia.count == 1)
-        #expect(ack2?.removedMedia.first?.submitted == "120000_300_audio.m4a")
+        #expect(successor.payload.files.count == 1)
+        #expect(successor.payload.files.first?.submitted == "120000_300_display_1_screen.mp4")
+        #expect(successor.removedMedia.count == 1)
+        #expect(successor.removedMedia.first?.submitted == "120000_300_audio.m4a")
     }
 
     @Test func journalFingerprintMismatchForcesReupload() async throws {
@@ -2464,24 +2459,23 @@ struct SyncServiceTests {
         let filename = "120000_300_audio.m4a"
         let sha = try sha256(of: segment.url.appendingPathComponent(filename))
 
-        store.enqueue(statusCode: 200, body: uploadResponseJSON(
+        let ackA = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: dayString(for: segment.date),
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
             status: .ok,
-            submitted: "120000_300",
-            stored: "120000_300",
-            filename: filename,
-            sha: sha,
-            size: 5
-        ))
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)],
+                meta: [:]
+            )
+        )
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
+        try IngestAcknowledgmentStore.write(ackA, to: ackURL)
 
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24609") })
-        await configure(service) // Journal A
+        await configureB(service) // Journal B
 
-        await service.sync()
-        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
-
-        // Switch to Journal B
-        store.reset()
-        await configureB(service)
         store.enqueue(statusCode: 200, body: uploadResponseJSON(
             status: .ok,
             submitted: "120000_300",
@@ -2493,9 +2487,7 @@ struct SyncServiceTests {
 
         await service.sync()
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
-        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
-        let ack = IngestAcknowledgmentStore.read(from: ackURL)
-        #expect(ack?.journalFingerprint == tunnelJournalConnectionFingerprint(for: pairingB).value)
+        #expect(FileManager.default.fileExists(atPath: segment.url.path) == false)
     }
 
     @Test func partialCleanupRetryWithThrownRemoveItemRetainsFailedFilesAndRetries() async throws {
@@ -2527,66 +2519,57 @@ struct SyncServiceTests {
                     IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: audioSHA, size: 11),
                 ],
                 meta: [:]
-            )
+            ),
+            removedMedia: []
         )
         let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentDir, segment: "120000_300")
         try IngestAcknowledgmentStore.write(ack, to: ackURL)
 
-        let today = IngestDayKey.string(from: Date())
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(
-            entries: [
-                ("120000_300", nil, "120000_300_display_1_screen.mp4", screenSHA, 12, "present"),
-                ("120000_300", nil, "120000_300_audio.m4a", audioSHA, 11, "present"),
-            ]
-        ))
-
         struct PermissionDeniedError: Error {}
+        let didThrow = MutexValue<Bool>(false)
 
-        // Pass 1: removeItem throws on screen file, succeeds on audio file
+        // Pass 1: removeItem throws on the first call, whatever the name
         let service1 = SyncService(
             storageManager: StorageManager(baseDirectory: root),
             client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
             resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24610") },
             retryDelays: Array(repeating: 0, count: 10),
             removeItem: { url in
-                if url.lastPathComponent.contains("screen") {
+                let alreadyThrew = didThrow.withLock { thrown -> Bool in
+                    if !thrown {
+                        thrown = true
+                        return false
+                    }
+                    return true
+                }
+                if !alreadyThrew {
                     throw PermissionDeniedError()
                 }
                 try FileManager.default.removeItem(at: url)
             }
         )
-        await configure(service1, cacheRetentionDays: 0)
+        await configure(service1)
         await service1.sync()
 
-        #expect(FileManager.default.fileExists(atPath: screenURL.path) == true)
-        #expect(FileManager.default.fileExists(atPath: audioURL.path) == false)
-        // Acknowledgment on disk must NOT be modified
-        let diskAck1 = IngestAcknowledgmentStore.read(from: ackURL)
-        #expect(diskAck1?.payload.files.count == 2)
+        // Assert the ack is still in the original folder and there was no upload
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == true)
+        let pass1UploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(pass1UploadRequests.isEmpty)
 
-        // Pass 2: removeItem succeeds on all files
+        // Pass 2: next service, with a working removeItem, removes the folder and does not upload
         store.reset()
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(
-            entries: [
-                ("120000_300", nil, "120000_300_display_1_screen.mp4", screenSHA, 12, "present"),
-                ("120000_300", nil, "120000_300_audio.m4a", audioSHA, 11, "present"),
-            ]
-        ))
-
         let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24610") })
-        await configure(service2, cacheRetentionDays: 0)
+        await configure(service2)
         await service2.sync()
 
-        #expect(FileManager.default.fileExists(atPath: screenURL.path) == false)
-        #expect(FileManager.default.fileExists(atPath: audioURL.path) == false)
-        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 0)
+        #expect(!FileManager.default.fileExists(atPath: segmentDir.path))
+        let pass2UploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(pass2UploadRequests.isEmpty)
     }
 
-    @Test func settledRemnantIsSilentNoOpWithoutUnprovableOrPost() async throws {
+    @Test func remnantWithChangedMetaAndNoMediaRemovesFolderWithoutUnprovable() async throws {
         store.reset()
-        let root = try makeTempDirectory("sync-settled-remnant")
+        let root = try makeTempDirectory("sync-changed-meta-remnant")
         let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
         let day = dayString(for: pastDate)
         let dateFolder = dateFolderString(for: pastDate)
@@ -2595,7 +2578,7 @@ struct SyncServiceTests {
         try FileManager.default.createDirectory(at: segmentDir, withIntermediateDirectories: true)
 
         let metaURL = segmentDir.appendingPathComponent("120000_300_meta.json")
-        try Data(#"{"key":"value"}"#.utf8).write(to: metaURL)
+        try Data(#"{"key":"changed"}"#.utf8).write(to: metaURL)
 
         let ack = IngestAcknowledgment(
             journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
@@ -2608,15 +2591,13 @@ struct SyncServiceTests {
                     IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: String(repeating: "a", count: 64), size: 10)
                 ],
                 meta: ["key": .string("value")]
-            )
+            ),
+            removedMedia: []
         )
         let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentDir, segment: "120000_300")
         try IngestAcknowledgmentStore.write(ack, to: ackURL)
 
-        let today = IngestDayKey.string(from: Date())
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24611") })
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .held })
         await configure(service)
 
         let collector = ProgressCollector()
@@ -2627,30 +2608,11 @@ struct SyncServiceTests {
         }
 
         await service.sync()
-        await collector.waitForSyncComplete()
         listen.cancel()
 
-        #expect(collector.allEvents.contains {
-            if case .segmentUnprovable = $0 { return true }
-            return false
-        } == false)
-        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 0)
-        try Data(#"{"key":"changed after media offload"}"#.utf8).write(to: metaURL)
-        let recreated = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24611") })
-        await configure(recreated)
-        let changedEvents = ProgressCollector()
-        let changedListener = Task {
-            for await event in await recreated.progressStream { changedEvents.append(event) }
-        }
-        defer { changedListener.cancel() }
-        store.reset()
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        await recreated.sync()
-        await recreated.sync()
-        await changedEvents.waitForSegmentUnprovable()
-        #expect(changedEvents.allEvents.contains { if case .segmentUnprovable = $0 { return true }; return false })
-        #expect(!store.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.uploadPath })
-        #expect(try Data(contentsOf: metaURL) == Data(#"{"key":"changed after media offload"}"#.utf8))
+        #expect(!FileManager.default.fileExists(atPath: segmentDir.path))
+        #expect(collector.segmentUnprovableCount == 0)
+        #expect(store.snapshotRequests().isEmpty)
     }
 
     @Test func unreadableMetadataMarksSegmentUnprovableAndSkipsUpload() async throws {
@@ -2750,68 +2712,29 @@ struct SyncServiceTests {
             payload: .init(files: [.init(submitted: file.lastPathComponent, sha256: sha, size: 5)], meta: [:]))
         let receiptURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
         try IngestAcknowledgmentStore.write(receipt, to: receiptURL)
-        let previousBytes = try Data(contentsOf: receiptURL)
         try Data((malformed ? "{" : #"{"updated":true}"#).utf8).write(to: segment.url.appendingPathComponent("120000_300_meta.json"))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(key: "120000_300", filename: file.lastPathComponent, sha: sha, size: 5))
-        // Even a 200 with the old metadata does not acknowledge this update.
-        store.registerRoute(path: IngestProtocolV3.uploadPath, body: uploadResponseJSON())
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24731") })
-        await configure(service, cacheRetentionDays: 0)
+        await configure(service)
         await service.sync()
-        #expect(try Data(contentsOf: file) == Data("audio".utf8))
-        #expect(try Data(contentsOf: receiptURL) == previousBytes)
-        // A validate rejection is segment-scoped and not retried inside the pass;
-        // the receipt on disk is never replaced by a non-answer.
-        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == (malformed ? 0 : 1))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(!FileManager.default.fileExists(atPath: segment.url.path))
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.isEmpty == true)
     }
 
-    @Test func duplicateWrittenNameSurvivesServiceRecreationAndEnablesCleanup() async throws {
+    @Test func duplicateUploadRemovesConfirmedSegment() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-duplicate-written-name")
         let segment = try makeSegment(root: root, date: Date().addingTimeInterval(-172800))
-        let day = dayString(for: segment.date)
         let file = segment.url.appendingPathComponent("120000_300_audio.m4a")
-        let sha = try sha256(of: file)
         store.enqueue(body: uploadResponseJSON(status: .duplicate, stored: "115959_300"))
         let first = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24732") })
         await configure(first)
         await first.sync()
-        let receiptURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
-        store.reset()
-        let today = IngestDayKey.string(from: Date())
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(key: "115959_300", filename: "115959_300_audio.m4a", sha: sha, size: 5))
-        let second = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24732") })
-        await configure(second, cacheRetentionDays: 0)
-        await second.sync()
         #expect(!FileManager.default.fileExists(atPath: file.path))
-        #expect(FileManager.default.fileExists(atPath: segment.url.path))
-        #expect(!store.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.uploadPath })
-    }
-
-    @Test func journalSwitchDuringCleanupReadRetainsMedia() async throws {
-        store.reset()
-        let root = try makeTempDirectory("sync-cleanup-context-switch")
-        let segment = try makeSegment(root: root, date: Date().addingTimeInterval(-172800))
-        let day = dayString(for: segment.date)
-        let file = segment.url.appendingPathComponent("120000_300_audio.m4a")
-        let sha = try sha256(of: file)
-        let receipt = IngestAcknowledgment(journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: day, submittedSegment: "120000_300", storedSegmentKey: "120000_300", status: .ok,
-            payload: .init(files: [.init(submitted: file.lastPathComponent, sha256: sha, size: 5)], meta: [:]))
-        try IngestAcknowledgmentStore.write(receipt, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300"))
-        let today = IngestDayKey.string(from: Date())
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(key: "120000_300", filename: file.lastPathComponent, sha: sha, size: 5))
-        let resolver = ResolverScript([.url("http://127.0.0.1:24733")], parkAfterImmediateCount: 0)
-        let service = makeService(root: root, resolver: resolver.resolver)
-        await configure(service, cacheRetentionDays: 0)
-        let syncing = Task { await service.sync() }
-        await resolver.waitUntilParked()
-        await configureB(service, cacheRetentionDays: 0)
-        await resolver.releasePark()
-        await syncing.value
-        #expect(try Data(contentsOf: file) == Data("audio".utf8))
+        #expect(!FileManager.default.fileExists(atPath: segment.url.path))
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
     }
 
     @Test(arguments: [false, true])
@@ -2836,9 +2759,8 @@ struct SyncServiceTests {
         let bodies = store.snapshotRequestBodyData().compactMap { $0 }
         #expect(bodies.count == 2)
         if bodies.count == 2 { #expect(bodies[0] == bodies[1]) }
-        let receipt = try #require(IngestAcknowledgmentStore.read(from: receiptURL))
-        #expect(receipt.payload.files.first?.sha256 == "6ed8919ce20490a5e3ad8630a4fab69475297abd07db73918dd5f36fcfaeb11b")
-        #expect(try Data(contentsOf: file) == Data("other".utf8))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(!FileManager.default.fileExists(atPath: segment.url.path))
     }
 
     @Test(arguments: ["present", "missing"])
@@ -2877,873 +2799,6 @@ struct SyncServiceTests {
         let requests = store.snapshotRequests()
         #expect(requests.count == 1)
         #expect(requests.first?.url?.path == IngestProtocolV3.segmentsDayPath(today))
-    }
-
-    @Test
-    func cleanupReadsPastDayOnlyWhenAgeRequiresCleanup() async throws {
-        store.reset()
-        let root = try makeTempDirectory("sync-cleanup-age")
-        let calendar = Calendar(identifier: .gregorian)
-        var components = DateComponents()
-        components.year = 2026
-        components.month = 9
-        components.day = 20
-        components.hour = 12
-        let fixedNow = try #require(calendar.date(from: components))
-        let yesterday = try #require(calendar.date(byAdding: .day, value: -1, to: fixedNow))
-        let oldDay = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-
-        let segRecent = try makeSegment(root: root, date: yesterday, segmentName: "120000_300")
-        let segOld = try makeSegment(root: root, date: oldDay, segmentName: "120000_300")
-
-        let filename = "120000_300_audio.m4a"
-        let shaRecent = try sha256(of: segRecent.url.appendingPathComponent(filename))
-        let shaOld = try sha256(of: segOld.url.appendingPathComponent(filename))
-
-        let ackRecent = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: dayString(for: yesterday),
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(
-                files: [IngestAcknowledgedFileProof(submitted: filename, sha256: shaRecent, size: 5)],
-                meta: [:]
-            )
-        )
-        try IngestAcknowledgmentStore.write(ackRecent, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segRecent.url, segment: "120000_300"))
-
-        let ackOld = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: dayString(for: oldDay),
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(
-                files: [IngestAcknowledgedFileProof(submitted: filename, sha256: shaOld, size: 5)],
-                meta: [:]
-            )
-        )
-        try IngestAcknowledgmentStore.write(ackOld, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segOld.url, segment: "120000_300"))
-
-        let todayStr = dayString(for: fixedNow)
-        let oldDayStr = dayString(for: oldDay)
-        let recentDayStr = dayString(for: yesterday)
-
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(entries: [("120000_300", nil, filename, shaOld, 5, "present")]))
-
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24737") }, now: { fixedNow })
-        await configure(service, cacheRetentionDays: 7)
-        await service.sync()
-
-        let requests = store.snapshotRequests()
-        let paths = requests.compactMap { $0.url?.path }
-        #expect(paths.contains(IngestProtocolV3.segmentsDayPath(todayStr)))
-        #expect(paths.contains(IngestProtocolV3.segmentsDayPath(oldDayStr)))
-        #expect(!paths.contains(IngestProtocolV3.segmentsDayPath(recentDayStr)))
-
-        #expect(FileManager.default.fileExists(atPath: segRecent.url.appendingPathComponent(filename).path))
-        #expect(!FileManager.default.fileExists(atPath: segOld.url.appendingPathComponent(filename).path))
-    }
-
-    @Test
-    func cleanupWithRetentionZeroReadsTodayDuringCleanup() async throws {
-        store.reset()
-        let root = try makeTempDirectory("sync-retention-zero")
-        let todayDate = Date()
-        let seg = try makeSegment(root: root, date: todayDate, segmentName: "120000_300")
-        let filename = "120000_300_audio.m4a"
-        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-        let todayStr = dayString(for: todayDate)
-
-        let ack = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: todayStr,
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(
-                files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)],
-                meta: [:]
-            )
-        )
-        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: [("120000_300", nil, filename, sha, 5, "present")]))
-
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24738") }, now: { todayDate })
-        await configure(service, cacheRetentionDays: 0)
-        await service.sync()
-
-        #expect(!FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-        #expect(FileManager.default.fileExists(atPath: seg.url.path))
-    }
-
-    @Test
-    func segmentKeptEmitsProgressEventAndRecordsEvidence() async throws {
-        store.reset()
-        let root = try makeTempDirectory("sync-kept-reasons")
-        let todayDate = Date()
-        let todayStr = dayString(for: todayDate)
-        let seg = try makeSegment(root: root, date: todayDate, segmentName: "120000_300")
-        let filename = "120000_300_audio.m4a"
-        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-
-        let ack = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: todayStr,
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(
-                files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)],
-                meta: [:]
-            )
-        )
-        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
-        try IngestAcknowledgmentStore.write(ack, to: ackURL)
-
-        // Case 1: unproven custody (missing on server)
-        store.reset()
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: [("120000_300", nil, filename, sha, 5, "missing")]))
-        let progress1 = ProgressCollector()
-        let service1 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24739") }, now: { todayDate })
-        await configure(service1, cacheRetentionDays: 0)
-        let listen1 = Task {
-            for await event in await service1.progressStream { progress1.append(event) }
-        }
-        await service1.sync()
-        await progress1.waitForSyncComplete()
-        listen1.cancel()
-        #expect(progress1.allEvents.contains {
-            if case .segmentKept(let reason) = $0 { return reason == .unproven }
-            return false
-        })
-
-        // Case 2: listing failed
-        store.reset()
-        let todayPath = IngestProtocolV3.segmentsDayPath(todayStr)
-        store.registerRoute(path: todayPath, statusCode: 500, body: "{}")
-        let progress2 = ProgressCollector()
-        let service2 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24739") }, now: { todayDate })
-        await configure(service2, cacheRetentionDays: 0)
-        let listen2 = Task {
-            for await event in await service2.progressStream { progress2.append(event) }
-        }
-        await service2.sync()
-        await progress2.waitForOffline()
-        listen2.cancel()
-
-        // Case 3: segment removed (empty server items)
-        store.reset()
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-        let progress3 = ProgressCollector()
-        let service3 = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24739") }, now: { todayDate })
-        await configure(service3, cacheRetentionDays: 0)
-        let listen3 = Task {
-            for await event in await service3.progressStream { progress3.append(event) }
-        }
-        await service3.sync()
-        await progress3.waitForSyncComplete()
-        listen3.cancel()
-        #expect(progress3.allEvents.contains {
-            if case .segmentKept(let reason) = $0 { return reason == .unproven }
-            return false
-        })
-    }
-
-    @Test
-    func idleAllSegmentsAckedNothingPastRetentionProbesToday() async throws {
-        store.reset()
-        let root = try makeTempDirectory("sync-idle-all-acked")
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let yesterday = try #require(calendar.date(byAdding: .day, value: -1, to: fixedNow))
-        let seg = try makeSegment(root: root, date: yesterday)
-        let filename = "120000_300_audio.m4a"
-        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-        let ack = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: dayString(for: yesterday),
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)], meta: [:])
-        )
-        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-        let todayStr = dayString(for: fixedNow)
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-
-        let progress = ProgressCollector()
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24750") }, now: { fixedNow })
-        await configure(service, cacheRetentionDays: 7)
-        let listen = Task {
-            for await event in await service.progressStream { progress.append(event) }
-        }
-        await service.sync()
-        await progress.waitForSyncComplete()
-        listen.cancel()
-
-        let requests = store.snapshotRequests()
-        #expect(requests.compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(todayStr)])
-        #expect(progress.allEvents.contains { if case .journalContactSucceeded = $0 { return true }; return false })
-        #expect(progress.containsSyncComplete)
-    }
-
-    @Test
-    func idleOneUnackedSegmentUploadsAndYieldsContact() async throws {
-        store.reset()
-        let root = try makeTempDirectory("sync-idle-one-unacked")
-        let seg = try makeSegment(root: root)
-        let filename = "120000_300_audio.m4a"
-        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
-
-        let progress = ProgressCollector()
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24751") })
-        await configure(service)
-        let listen = Task {
-            for await event in await service.progressStream { progress.append(event) }
-        }
-        await service.sync()
-        await progress.waitForSyncComplete()
-        listen.cancel()
-
-        let requests = store.snapshotRequests()
-        #expect(requests.compactMap { $0.url?.path } == [IngestProtocolV3.uploadPath])
-        #expect(progress.containsUploadSucceeded)
-        #expect(progress.allEvents.contains { if case .journalContactSucceeded = $0 { return true }; return false })
-        #expect(progress.containsSyncComplete)
-    }
-
-    @Test
-    func idleRetentionZeroTodayAckedMediaReadOnceAndDeleted() async throws {
-        store.reset()
-        let root = try makeTempDirectory("sync-retention-zero-today")
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let seg = try makeSegment(root: root, date: fixedNow)
-        let filename = "120000_300_audio.m4a"
-        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-        let todayStr = dayString(for: fixedNow)
-
-        let ack = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: todayStr,
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)], meta: [:])
-        )
-        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: sha, size: 5))
-
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24752") }, now: { fixedNow })
-        await configure(service, cacheRetentionDays: 0)
-        await service.sync()
-
-        let requests = store.snapshotRequests()
-        #expect(requests.compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(todayStr)])
-        #expect(!FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-    }
-
-    @Test
-    func idleTwoPastRetentionDaysWithDeletableMediaReadsInOrder() async throws {
-        store.reset()
-        let root = try makeTempDirectory("sync-two-past-retention")
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let dayOld = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-        let dayNewer = try #require(calendar.date(byAdding: .day, value: -5, to: fixedNow))
-
-        let segOld = try makeSegment(root: root, date: dayOld)
-        let segNewer = try makeSegment(root: root, date: dayNewer)
-        let filename = "120000_300_audio.m4a"
-        let shaOld = try sha256(of: segOld.url.appendingPathComponent(filename))
-        let shaNewer = try sha256(of: segNewer.url.appendingPathComponent(filename))
-
-        let ackOld = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: dayString(for: dayOld),
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: shaOld, size: 5)], meta: [:])
-        )
-        try IngestAcknowledgmentStore.write(ackOld, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segOld.url, segment: "120000_300"))
-
-        let ackNewer = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: dayString(for: dayNewer),
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: shaNewer, size: 5)], meta: [:])
-        )
-        try IngestAcknowledgmentStore.write(ackNewer, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segNewer.url, segment: "120000_300"))
-
-        let todayStr = dayString(for: fixedNow)
-        let oldStr = dayString(for: dayOld)
-        let newerStr = dayString(for: dayNewer)
-
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: shaOld, size: 5))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(newerStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: shaNewer, size: 5))
-
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24753") }, now: { fixedNow })
-        await configure(service, cacheRetentionDays: 2)
-        await service.sync()
-
-        let requests = store.snapshotRequests()
-        #expect(requests.compactMap { $0.url?.path } == [
-            IngestProtocolV3.segmentsDayPath(todayStr),
-            IngestProtocolV3.segmentsDayPath(oldStr),
-            IngestProtocolV3.segmentsDayPath(newerStr),
-        ])
-        #expect(!FileManager.default.fileExists(atPath: segOld.url.appendingPathComponent(filename).path))
-        #expect(!FileManager.default.fileExists(atPath: segNewer.url.appendingPathComponent(filename).path))
-    }
-
-    @Test
-    func idlePastRetentionDayWithMediaAlreadyGoneHasZeroReadsAcrossThreePasses() async throws {
-        store.reset()
-        let root = try makeTempDirectory("sync-media-gone")
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let oldDay = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-        let segDir = root
-            .appendingPathComponent(dateFolderString(for: oldDay), isDirectory: true)
-            .appendingPathComponent("120000_300", isDirectory: true)
-        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
-        let ack = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: dayString(for: oldDay),
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: String(repeating: "a", count: 64), size: 5)], meta: [:])
-        )
-        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segDir, segment: "120000_300"))
-
-        let todayStr = dayString(for: fixedNow)
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24754") }, now: { fixedNow })
-        await configure(service, cacheRetentionDays: 2)
-
-        for _ in 1...3 {
-            await service.sync()
-        }
-
-        let requests = store.snapshotRequests()
-        #expect(requests.compactMap { $0.url?.path } == [
-            IngestProtocolV3.segmentsDayPath(todayStr),
-            IngestProtocolV3.segmentsDayPath(todayStr),
-            IngestProtocolV3.segmentsDayPath(todayStr),
-        ])
-    }
-
-    @Test
-    func cleanupProofKeyMissingVsKeyPresentTwin() async throws {
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let oldDay = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-        let todayStr = dayString(for: fixedNow)
-        let oldDayStr = dayString(for: oldDay)
-        let filename = "120000_300_audio.m4a"
-
-        // Keep twin: listing has no item whose key is storedSegmentKey
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-a-keep")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)], meta: [:])
-            )
-            let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
-            try IngestAcknowledgmentStore.write(ack, to: ackURL)
-            let ackBytesBefore = try Data(contentsOf: ackURL)
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(entries: []))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24755") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-            #expect(try Data(contentsOf: ackURL) == ackBytesBefore)
-
-            // Second pass inside 24 h does not GET old day again
-            store.reset()
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            await service.sync()
-            #expect(store.snapshotRequests().compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(todayStr)])
-        }
-
-        // Positive twin: key is present and file proves hold
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-a-delete")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: sha, size: 5))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24755") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(!FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-        }
-    }
-
-    @Test
-    func cleanupProofSHADiffersVsMatchesTwin() async throws {
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let oldDay = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-        let todayStr = dayString(for: fixedNow)
-        let oldDayStr = dayString(for: oldDay)
-        let filename = "120000_300_audio.m4a"
-
-        // Keep twin: listing sha256 differs
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-b-keep")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: "0000000000000000000000000000000000000000000000000000000000000000", size: 5))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24756") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-        }
-
-        // Positive twin: sha matches
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-b-delete")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: sha, size: 5))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24756") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(!FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-        }
-    }
-
-    @Test
-    func cleanupProofLocalVersionMatchesAndListingSHACheck() async throws {
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let oldDay = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-        let todayStr = dayString(for: fixedNow)
-        let oldDayStr = dayString(for: oldDay)
-        let filename = "120000_300_audio.m4a"
-
-        // Keep: localVersion equals current stat, but listing sha differs from file
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-c-keep")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let fileURL = seg.url.appendingPathComponent(filename)
-            let sha = try sha256(of: fileURL)
-            let localVer = IngestLocalFileVersion.read(fileURL)
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5, localVersion: localVer)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: "badsha", size: 5))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24757") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(FileManager.default.fileExists(atPath: fileURL.path))
-        }
-
-        // Positive twin: listing sha equals hash -> deleted
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-c-delete")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let fileURL = seg.url.appendingPathComponent(filename)
-            let sha = try sha256(of: fileURL)
-            let localVer = IngestLocalFileVersion.read(fileURL)
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5, localVersion: localVer)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: sha, size: 5))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24757") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(!FileManager.default.fileExists(atPath: fileURL.path))
-        }
-    }
-
-    @Test
-    func cleanupProofPastDayReadFailures() async throws {
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let oldDay = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-        let todayStr = dayString(for: fixedNow)
-        let oldDayStr = dayString(for: oldDay)
-        let filename = "120000_300_audio.m4a"
-
-        // 500 journal_read_failed: throttled for 24h
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-d-500")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), statusCode: 500, body: "{\"status\":\"failed\",\"reason_code\":\"journal_read_failed\"}")
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24758") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-
-            // Second pass inside 24 h does not GET old day again
-            store.reset()
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            await service.sync()
-            #expect(store.snapshotRequests().compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(todayStr)])
-        }
-
-        // URLError on that day records no throttle
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-d-urlerror")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), statusCode: 0, error: URLError(.networkConnectionLost))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24758") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-
-            // Next pass reads old day again
-            store.reset()
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: sha, size: 5))
-            await service.sync()
-            let paths = store.snapshotRequests().compactMap { $0.url?.path }
-            #expect(paths.contains(IngestProtocolV3.segmentsDayPath(oldDayStr)))
-            #expect(!FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-        }
-    }
-
-    @Test
-    func cleanupProofDispositionReceivedNotWrittenVsWrittenTwin() async throws {
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let oldDay = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-        let todayStr = dayString(for: fixedNow)
-        let oldDayStr = dayString(for: oldDay)
-        let filename = "120000_300_audio.m4a"
-
-        // Keep: disposition receivedNotWritten
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-e-rnw")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5, disposition: .receivedNotWritten)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: sha, size: 5))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24759") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-        }
-
-        // Delete: disposition written
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-e-written")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5, disposition: .written)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(key: "120000_300", filename: filename, sha: sha, size: 5))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24759") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(!FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-        }
-    }
-
-    @Test
-    func cleanupProofStatusMissingAndArchivedVsPresent() async throws {
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let oldDay = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-        let todayStr = dayString(for: fixedNow)
-        let oldDayStr = dayString(for: oldDay)
-        let filename = "120000_300_audio.m4a"
-
-        for status in ["missing", "archived"] {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-f-\(status)")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: [(oldDayStr, nil, filename, sha, 5, status)]))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(entries: [("120000_300", nil, filename, sha, 5, status)]))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24760") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-        }
-    }
-
-    @Test
-    func cleanupProofDistinctNameAndSubmittedNameTwin() async throws {
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let oldDay = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-        let todayStr = dayString(for: fixedNow)
-        let oldDayStr = dayString(for: oldDay)
-        let filename = "120000_300_audio.m4a"
-
-        // Keep: name != proof.written while submitted_name == proof.written
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-g-keep")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5, written: filename)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(detailedEntries: [(key: "120000_300", originalKey: nil, name: "other_audio.m4a", submittedName: filename, sha: sha, size: 5, status: "present")]))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24761") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-        }
-
-        // Delete: name == proof.written and submitted_name is different
-        do {
-            store.reset()
-            let root = try makeTempDirectory("sync-cleanup-proof-g-delete")
-            let seg = try makeSegment(root: root, date: oldDay)
-            let sha = try sha256(of: seg.url.appendingPathComponent(filename))
-            let ack = IngestAcknowledgment(
-                journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-                day: oldDayStr,
-                submittedSegment: "120000_300",
-                storedSegmentKey: "120000_300",
-                status: .ok,
-                payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5, written: filename)], meta: [:])
-            )
-            try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
-
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(detailedEntries: [(key: "120000_300", originalKey: nil, name: filename, submittedName: "other_audio.m4a", sha: sha, size: 5, status: "present")]))
-
-            let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24761") }, now: { fixedNow })
-            await configure(service, cacheRetentionDays: 2)
-            await service.sync()
-
-            #expect(!FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
-        }
-    }
-
-    @Test
-    func cleanupProofThrottledSegmentDoesNotBlockNewSegmentOnSameDay() async throws {
-        let calendar = IngestDayKey.calendar
-        let fixedNow = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 20, hour: 12)))
-        let oldDay = try #require(calendar.date(byAdding: .day, value: -10, to: fixedNow))
-        let todayStr = dayString(for: fixedNow)
-        let oldDayStr = dayString(for: oldDay)
-
-        store.reset()
-        let root = try makeTempDirectory("sync-cleanup-proof-h")
-        let segA = try makeSegment(root: root, date: oldDay, segmentName: "120000_300")
-        let fileA = "120000_300_audio.m4a"
-        let shaA = try sha256(of: segA.url.appendingPathComponent(fileA))
-
-        let ackA = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: oldDayStr,
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: fileA, sha256: shaA, size: 5)], meta: [:])
-        )
-        let ackAURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segA.url, segment: "120000_300")
-        try IngestAcknowledgmentStore.write(ackA, to: ackAURL)
-        let ackABytesBefore = try Data(contentsOf: ackAURL)
-
-        // Pass 1: segA is unproven on server (missing)
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(entries: [("120000_300", nil, fileA, shaA, 5, "missing")]))
-
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24762") }, now: { fixedNow })
-        await configure(service, cacheRetentionDays: 2)
-        await service.sync()
-
-        #expect(FileManager.default.fileExists(atPath: segA.url.appendingPathComponent(fileA).path))
-
-        // Create acked segment B on the same day
-        let segB = try makeSegment(root: root, date: oldDay, segmentName: "120500_300")
-        let fileB = "120500_300_audio.m4a"
-        let shaB = try sha256(of: segB.url.appendingPathComponent(fileB))
-        let ackB = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: oldDayStr,
-            submittedSegment: "120500_300",
-            storedSegmentKey: "120500_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(files: [IngestAcknowledgedFileProof(submitted: fileB, sha256: shaB, size: 5)], meta: [:])
-        )
-        try IngestAcknowledgmentStore.write(ackB, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segB.url, segment: "120500_300"))
-
-        // Pass 2: segB is proven
-        store.reset()
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(todayStr), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(oldDayStr), body: segmentsDayJSON(entries: [
-            ("120000_300", nil, fileA, shaA, 5, "missing"),
-            ("120500_300", nil, fileB, shaB, 5, "present")
-        ]))
-
-        await service.sync()
-
-        #expect(FileManager.default.fileExists(atPath: segA.url.appendingPathComponent(fileA).path))
-        #expect(try Data(contentsOf: ackAURL) == ackABytesBefore)
-        #expect(!FileManager.default.fileExists(atPath: segB.url.appendingPathComponent(fileB).path))
     }
 
     @Test
@@ -3805,7 +2860,7 @@ struct SyncServiceTests {
         await configure(service)
         await service.sync()
 
-        #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
 
         // No second POST after clock moves 24 h
         store.reset()
@@ -3903,10 +2958,10 @@ struct SyncServiceTests {
         await configure(service)
         await service.sync()
 
-        // Configure with same pairing & different retention does NOT clear quiet hour
+        // Configure with same pairing does NOT clear quiet hour
         store.reset()
         store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        await configure(service, cacheRetentionDays: 14)
+        await configure(service)
         await service.sync()
         #expect(store.snapshotRequests().compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(today)])
 
@@ -4126,16 +3181,158 @@ struct SyncServiceTests {
 
         store.reset()
         store.registerRoute(path: IngestProtocolV3.segmentsDayPath("20260917"), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath("20260915"), body: segmentsDayJSON(key: "120000_300", filename: "120000_300_audio.m4a", sha: proof.sha256, size: 5))
 
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24744") }, now: { fixedNow })
-        await configure(service, cacheRetentionDays: 1)
+        await configure(service)
         await service.sync()
 
-        let requests = store.snapshotRequests()
-        let paths = requests.compactMap { $0.url?.path }
-        #expect(paths == [IngestProtocolV3.segmentsDayPath("20260917"), IngestProtocolV3.segmentsDayPath("20260915")])
         #expect(!FileManager.default.fileExists(atPath: mediaURL.path))
+        #expect(!FileManager.default.fileExists(atPath: segDir.path))
+        let uploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequests.isEmpty)
+    }
+
+    @Test
+    func confirmedSegmentWithDSStoreAndStagingTmpRemovedCompletely() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-dsstore-staging-tmp")
+        let date = Date()
+        let day = dayString(for: date)
+        let segmentName = "120000_300"
+        let dayDir = root.appendingPathComponent(dateFolderString(for: date), isDirectory: true)
+        let segDir = dayDir.appendingPathComponent(segmentName, isDirectory: true)
+        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
+
+        let mediaURL = segDir.appendingPathComponent("\(segmentName)_audio.m4a")
+        try Data("audio".utf8).write(to: mediaURL)
+        let sha = try sha256(of: mediaURL)
+
+        let dsStoreURL = segDir.appendingPathComponent(".DS_Store")
+        try Data("ds_store_data".utf8).write(to: dsStoreURL)
+
+        let tmpUUID = UUID().uuidString
+        let tmpURL = segDir.appendingPathComponent(".\(segmentName)_ingest_ack.json.\(tmpUUID).tmp")
+        try Data("tmp_data".utf8).write(to: tmpURL)
+
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: segmentName,
+            storedSegmentKey: segmentName,
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "\(segmentName)_audio.m4a", sha256: sha, size: 5)],
+                meta: [:]
+            ),
+            removedMedia: []
+        )
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segDir, segment: segmentName)
+        try IngestAcknowledgmentStore.write(ack, to: ackURL)
+
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(entries: []))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24740") })
+        await configure(service)
+        await service.sync()
+
+        #expect(!FileManager.default.fileExists(atPath: segDir.path))
+        #expect(FileManager.default.fileExists(atPath: dayDir.path))
+        let uploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequests.isEmpty)
+    }
+
+    @Test
+    func confirmedSegmentWithNonUUIDM4AIsRenamedToFailed() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-non-uuid-m4a-failed")
+        let date = Date()
+        let day = dayString(for: date)
+        let segmentName = "120000_300"
+        let dayDir = root.appendingPathComponent(dateFolderString(for: date), isDirectory: true)
+        let segDir = dayDir.appendingPathComponent(segmentName, isDirectory: true)
+        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
+
+        let mediaURL = segDir.appendingPathComponent("\(segmentName)_audio.m4a")
+        try Data("audio".utf8).write(to: mediaURL)
+        let sha = try sha256(of: mediaURL)
+
+        let notesURL = segDir.appendingPathComponent("notes.m4a")
+        try Data("notes_data".utf8).write(to: notesURL)
+
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: segmentName,
+            storedSegmentKey: segmentName,
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "\(segmentName)_audio.m4a", sha256: sha, size: 5)],
+                meta: [:]
+            ),
+            removedMedia: []
+        )
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segDir, segment: segmentName)
+        try IngestAcknowledgmentStore.write(ack, to: ackURL)
+
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(entries: []))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24740") })
+        await configure(service)
+        await service.sync()
+
+        let failedDir = dayDir.appendingPathComponent("\(segmentName).failed", isDirectory: true)
+        #expect(!FileManager.default.fileExists(atPath: segDir.path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("notes.m4a").path))
+        #expect(!FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("\(segmentName)_audio.m4a").path))
+        #expect(FileManager.default.fileExists(atPath: dayDir.path))
+        let uploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequests.isEmpty)
+    }
+
+    @Test
+    func confirmedSegmentWithAckListingAbsentFileRemovesFolderWithoutUpload() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-ack-absent-file")
+        let date = Date()
+        let day = dayString(for: date)
+        let segmentName = "120000_300"
+        let dayDir = root.appendingPathComponent(dateFolderString(for: date), isDirectory: true)
+        let segDir = dayDir.appendingPathComponent(segmentName, isDirectory: true)
+        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
+
+        let audioURL = segDir.appendingPathComponent("\(segmentName)_audio.m4a")
+        try Data("audio".utf8).write(to: audioURL)
+        let audioSHA = try sha256(of: audioURL)
+
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: segmentName,
+            storedSegmentKey: segmentName,
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [
+                    IngestAcknowledgedFileProof(submitted: "\(segmentName)_audio.m4a", sha256: audioSHA, size: 5),
+                    IngestAcknowledgedFileProof(submitted: "\(segmentName)_screen.mp4", sha256: "6ed8919ce20490a5e3ad8630a4fab69475297abd07db73918dd5f36fcfaeb11b", size: 100)
+                ],
+                meta: [:]
+            ),
+            removedMedia: []
+        )
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segDir, segment: segmentName)
+        try IngestAcknowledgmentStore.write(ack, to: ackURL)
+
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: segmentsDayJSON(entries: []))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24740") })
+        await configure(service)
+        await service.sync()
+
+        #expect(!FileManager.default.fileExists(atPath: segDir.path))
+        #expect(FileManager.default.fileExists(atPath: dayDir.path))
+        let uploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequests.isEmpty)
     }
 
     private func uploadResponseJSON(
@@ -4158,93 +3355,49 @@ struct SyncServiceTests {
         )
     }
 
-    private func assertMalformedSegmentsDayFailsClosed(
-        root: URL,
-        segment: (url: URL, date: Date),
-        day: String,
-        filename: String,
-        sha: String,
-        malformedSegmentsDay: String
-    ) async throws {
-        let ack = IngestAcknowledgment(
-            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
-            day: day,
-            submittedSegment: "120000_300",
-            storedSegmentKey: "120000_300",
-            status: .ok,
-            payload: IngestAcknowledgmentPayload(
-                files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 5)],
-                meta: [:]
-            )
-        )
-        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
-        try IngestAcknowledgmentStore.write(ack, to: ackURL)
-
-        store.reset()
-        let today = IngestDayKey.string(from: Date())
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(day), body: malformedSegmentsDay)
-        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24689") })
-        await configure(service, cacheRetentionDays: 0)
-
-        await service.sync()
-
-        #expect(FileManager.default.fileExists(atPath: segment.url.appendingPathComponent(filename).path))
-        #expect(store.snapshotRequests().contains { $0.url?.path == IngestProtocolV3.uploadPath } == false)
-
-        try FileManager.default.removeItem(at: ackURL)
-        store.reset()
-        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
-        await service.sync()
-
-        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
-        #expect(FileManager.default.fileExists(atPath: segment.url.path))
-    }
-
     private func makeService(
         root: URL,
         resolver: HomeBaseURLResolver,
         now: (@escaping @Sendable () -> Date) = Date.init,
+        beforeRemovalStep: (@escaping @Sendable () async -> Void) = {},
         listDirectory: (@Sendable (URL) throws -> [URL])? = nil,
-        classifyEntry: (@Sendable (URL) throws -> SyncService.DiscoveredEntryKind)? = nil
+        classifyEntry: (@Sendable (URL) throws -> SyncService.DiscoveredEntryKind)? = nil,
+        removeItem: (@Sendable (URL) throws -> Void)? = nil
     ) -> SyncService {
-        if let listDirectory, let classifyEntry {
-            return SyncService(
-                storageManager: StorageManager(baseDirectory: root),
-                client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
-                resolver: resolver,
-                now: now,
-                retryDelays: Array(repeating: 0, count: 10),
-                listDirectory: listDirectory,
-                classifyEntry: classifyEntry
-            )
-        } else if let listDirectory {
-            return SyncService(
-                storageManager: StorageManager(baseDirectory: root),
-                client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
-                resolver: resolver,
-                now: now,
-                retryDelays: Array(repeating: 0, count: 10),
-                listDirectory: listDirectory
-            )
-        } else if let classifyEntry {
-            return SyncService(
-                storageManager: StorageManager(baseDirectory: root),
-                client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
-                resolver: resolver,
-                now: now,
-                retryDelays: Array(repeating: 0, count: 10),
-                classifyEntry: classifyEntry
-            )
-        } else {
-            return SyncService(
-                storageManager: StorageManager(baseDirectory: root),
-                client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
-                resolver: resolver,
-                now: now,
-                retryDelays: Array(repeating: 0, count: 10)
-            )
-        }
+        SyncService(
+            storageManager: StorageManager(baseDirectory: root),
+            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
+            resolver: resolver,
+            now: now,
+            retryDelays: Array(repeating: 0, count: 10),
+            beforeRemovalStep: beforeRemovalStep,
+            removeItem: removeItem ?? { url in
+                guard Darwin.unlink(url.path) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+            },
+            listDirectory: listDirectory ?? { url in
+                try FileManager.default.contentsOfDirectory(
+                    at: url,
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                )
+            },
+            classifyEntry: classifyEntry ?? { url in
+                var info = stat()
+                guard lstat(url.path, &info) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+                let fileType = info.st_mode & mode_t(S_IFMT)
+                if fileType == mode_t(S_IFDIR) {
+                    return .directory
+                } else if fileType == mode_t(S_IFREG) {
+                    return .regularFile
+                } else {
+                    return .unsupported
+                }
+            }
+        )
     }
 
     private func makeHoldingService(
@@ -4269,20 +3422,18 @@ struct SyncServiceTests {
         TunnelPairingIdentity(instanceID: "other-instance", fingerprint: "other-fingerprint")
     }
 
-    private func configure(_ service: SyncService, cacheRetentionDays: Int = -1) async {
+    private func configure(_ service: SyncService) async {
         await service.configure(
             pairingIdentity: pairingA,
             journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA),
-            cacheRetentionDays: cacheRetentionDays,
             syncPaused: false
         )
     }
 
-    private func configureB(_ service: SyncService, cacheRetentionDays: Int = -1) async {
+    private func configureB(_ service: SyncService) async {
         await service.configure(
             pairingIdentity: pairingB,
             journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB),
-            cacheRetentionDays: cacheRetentionDays,
             syncPaused: false
         )
     }
@@ -4293,28 +3444,24 @@ struct SyncServiceTests {
             await service.configure(
                 pairingIdentity: pairingB,
                 journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB),
-                cacheRetentionDays: -1,
                 syncPaused: false
             )
         case .pairingAFingerprintNil:
             await service.configure(
                 pairingIdentity: pairingA,
                 journalFingerprint: nil,
-                cacheRetentionDays: -1,
                 syncPaused: false
             )
         case .pairingAFingerprintMalformed:
             await service.configure(
                 pairingIdentity: pairingA,
                 journalFingerprint: JournalConnectionFingerprint(value: "not-a-fingerprint"),
-                cacheRetentionDays: -1,
                 syncPaused: false
             )
         case .pairingAFingerprintEqualsB:
             await service.configure(
                 pairingIdentity: pairingA,
                 journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB),
-                cacheRetentionDays: -1,
                 syncPaused: false
             )
         }
@@ -4326,35 +3473,30 @@ struct SyncServiceTests {
             await service.configure(
                 pairingIdentity: pairingA,
                 journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB),
-                cacheRetentionDays: -1,
                 syncPaused: false
             )
         case .pairingAFingerprintNil:
             await service.configure(
                 pairingIdentity: pairingA,
                 journalFingerprint: nil,
-                cacheRetentionDays: -1,
                 syncPaused: false
             )
         case .pairingAFingerprintMalformed:
             await service.configure(
                 pairingIdentity: pairingA,
                 journalFingerprint: JournalConnectionFingerprint(value: "not-a-fingerprint"),
-                cacheRetentionDays: -1,
                 syncPaused: false
             )
         case .nilPairingWithFingerprint:
             await service.configure(
                 pairingIdentity: nil,
                 journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA),
-                cacheRetentionDays: -1,
                 syncPaused: false
             )
         case .bothNil:
             await service.configure(
                 pairingIdentity: nil,
                 journalFingerprint: nil,
-                cacheRetentionDays: -1,
                 syncPaused: false
             )
         }
@@ -4422,6 +3564,21 @@ struct SyncServiceTests {
 
     private func dayString(for date: Date) -> String {
         dateFolderString(for: date).replacingOccurrences(of: "-", with: "")
+    }
+}
+
+private final class MutexValue<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: T
+
+    init(_ value: T) {
+        self.value = value
+    }
+
+    func withLock<R>(_ body: (inout T) -> R) -> R {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(&value)
     }
 }
 

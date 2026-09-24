@@ -178,7 +178,6 @@ public final class UploadCoordinator {
             await syncService.configure(
                 pairingIdentity: pairedIngestIdentity,
                 journalFingerprint: initialFingerprint,
-                cacheRetentionDays: config.cacheRetentionDays,
                 syncPaused: config.syncPaused
             )
         }
@@ -239,7 +238,6 @@ public final class UploadCoordinator {
             await syncService.configure(
                 pairingIdentity: pairedIngestIdentity,
                 journalFingerprint: fingerprint,
-                cacheRetentionDays: newConfig.cacheRetentionDays,
                 syncPaused: newConfig.syncPaused
             )
 
@@ -266,7 +264,6 @@ public final class UploadCoordinator {
             await syncService.configure(
                 pairingIdentity: identity,
                 journalFingerprint: fingerprint,
-                cacheRetentionDays: config.cacheRetentionDays,
                 syncPaused: config.syncPaused
             )
         }
@@ -360,7 +357,6 @@ public final class UploadCoordinator {
         await syncService.configure(
             pairingIdentity: pairedIngestIdentity,
             journalFingerprint: journalIdentityProvider().fingerprint,
-            cacheRetentionDays: config.cacheRetentionDays,
             syncPaused: config.syncPaused
         )
         return try await syncService.runLiveProbe(segmentURL: segmentURL, day: day, segment: segment)
@@ -439,16 +435,6 @@ public final class UploadCoordinator {
 
         case .segmentUnprovable:
             recorder.enqueue(.syncSegmentUnprovable)
-
-        case .segmentKept(let keepReason):
-            switch keepReason {
-            case .unproven:
-                recorder.enqueue(.syncKeptUnproven)
-            case .listingFailed:
-                recorder.enqueue(.syncKeptListingFailed)
-            case .segmentRemoved:
-                recorder.enqueue(.syncKeptSegmentRemoved)
-            }
         }
     }
 

@@ -34,21 +34,45 @@ struct UploadCoordinatorTests {
         #expect(entries.first?.repeatCount == 2)
     }
 
-    @Test func segmentKeptRecordsEvidenceOnceThenCoalescesOnRepeat() async throws {
-        let fixed = Date(timeIntervalSince1970: 1_700_000_000)
-        let harness = DiagnosticEvidenceHarness()
-        let coordinator = try makeCoordinator(now: fixed, recorder: harness.recorder)
+    @Test func legacySyncKeptEvidenceCodesDecodeAndCoalesce() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("solstone-diag-legacy-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        coordinator.handleProgressEvent(.segmentKept(.unproven))
-        coordinator.handleProgressEvent(.segmentKept(.unproven))
-        coordinator.handleProgressEvent(.segmentKept(.listingFailed))
-        coordinator.handleProgressEvent(.segmentKept(.segmentRemoved))
+        let fileURL = FileDiagnosticEvidenceBytesStore.fileURL(applicationSupportBaseURL: tempDir)
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
 
-        let entries = await harness.entries()
-        #expect(evidenceCodes(entries) == [.syncKeptUnproven, .syncKeptListingFailed, .syncKeptSegmentRemoved])
+        let json = """
+        {
+            "schemaVersion": 1,
+            "entries": [
+                {"code":"sync.kept_unproven","firstAt":1700000000,"lastAt":1700000000,"repeatCount":2},
+                {"code":"sync.kept_listing_failed","firstAt":1700000000,"lastAt":1700000000,"repeatCount":1},
+                {"code":"sync.kept_segment_removed","firstAt":1700000000,"lastAt":1700000000,"repeatCount":1}
+            ]
+        }
+        """
+        try Data(json.utf8).write(to: fileURL)
+
+        let store = DiagnosticEvidenceStore(
+            applicationSupportBaseURL: tempDir,
+            now: { Date(timeIntervalSince1970: 1_700_000_050) }
+        )
+        let recordResult = await store.record(.captureOn, at: Date(timeIntervalSince1970: 1_700_000_050))
+        #expect(recordResult == .recorded)
+
+        let readResult = await store.read()
+        guard case .available(let envelope) = readResult else {
+            Issue.record("Expected available envelope")
+            return
+        }
+        let entries = envelope.entries
+        #expect(entries.map(\.code) == [.syncKeptUnproven, .syncKeptListingFailed, .syncKeptSegmentRemoved, .captureOn])
         #expect(entries[0].repeatCount == 2)
         #expect(entries[1].repeatCount == 1)
         #expect(entries[2].repeatCount == 1)
+        #expect(entries[3].repeatCount == 1)
     }
 
     @Test func journalContactSucceededUpdatesLastSyncedAtAndResetsHealthErrors() throws {
@@ -702,7 +726,6 @@ struct UploadCoordinatorTests {
             healthReason: .urlErrorCode(-1009),
             requestedPath: IngestProtocolV3.segmentsDayPath("20260703")
         ),
-        .segmentKept(.unproven),
         .awaitingTunnel
     ]
 

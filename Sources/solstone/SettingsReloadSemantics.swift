@@ -13,7 +13,6 @@ public enum SettingsReloadSemantics {
         "serverKey": .live,
         "serviceMode": .live,
         "journalPath": .live,
-        "cacheRetentionDays": .live,
         "microphoneGain": .live,
         "microphoneGranted": .live,
         "silenceMusic": .live,

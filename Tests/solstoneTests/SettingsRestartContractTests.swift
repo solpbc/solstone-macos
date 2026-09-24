@@ -19,7 +19,6 @@ struct SettingsRestartContractTests {
 
     @Test func registryPinsLiveKeys() {
         let keys = [
-            "cacheRetentionDays",
             "microphoneGain",
             "silenceMusic",
             "microphonePriority",

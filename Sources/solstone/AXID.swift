@@ -70,8 +70,6 @@ enum AXID {
             static let startAtLogin = "settings.observer.general.startAtLogin"
             static let notificationDeniedState = "settings.observer.notifications.denied.state"
             static let storageUsedState = "settings.observer.storage.used.state"
-            static let cacheRetentionPicker = "settings.observer.storage.cacheRetention"
-            static let cacheRetentionState = "settings.observer.storage.cacheRetention.state"
             static let cacheFolderOpen = "settings.observer.storage.cacheFolder.open"
         }
 
