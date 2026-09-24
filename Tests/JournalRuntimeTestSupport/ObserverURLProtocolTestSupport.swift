@@ -166,7 +166,12 @@ private final class ObserverURLProtocolStoreRegistry: @unchecked Sendable {
     }
 }
 
-final class ObserverURLProtocol: URLProtocol {
+// Each request owns its blocking fixture work. URLProtocol's callback thread is
+// shared across sessions, so blocking it makes unrelated fixtures time out.
+// The lock serializes cancellation with delivery; fixture waits never hold it.
+final class ObserverURLProtocol: URLProtocol, @unchecked Sendable {
+    private let deliveryLock = NSRecursiveLock()
+    private var stopped = false
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -180,30 +185,36 @@ final class ObserverURLProtocol: URLProtocol {
         }
 
         let next = store.next(for: request)
-        next.beforeReply?()
-        if next.delay > .zero {
-            let seconds = Double(next.delay.components.seconds) + Double(next.delay.components.attoseconds) * 1e-18
-            Thread.sleep(forTimeInterval: seconds)
+        Thread.detachNewThread { [self] in
+            next.beforeReply?()
+            if next.delay > .zero {
+                let seconds = Double(next.delay.components.seconds) + Double(next.delay.components.attoseconds) * 1e-18
+                Thread.sleep(forTimeInterval: seconds)
+            }
+            deliveryLock.withLock {
+                guard !stopped else { return }
+                if let error = next.error {
+                    client?.urlProtocol(self, didFailWithError: error)
+                    return
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: next.statusCode,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                if !next.data.isEmpty {
+                    client?.urlProtocol(self, didLoad: next.data)
+                }
+                client?.urlProtocolDidFinishLoading(self)
+            }
         }
-        if let error = next.error {
-            client?.urlProtocol(self, didFailWithError: error)
-            return
-        }
-
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: next.statusCode,
-            httpVersion: nil,
-            headerFields: ["Content-Type": "application/json"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        if !next.data.isEmpty {
-            client?.urlProtocol(self, didLoad: next.data)
-        }
-        client?.urlProtocolDidFinishLoading(self)
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        deliveryLock.withLock { stopped = true }
+    }
 }
 
 public func observerURLProtocolConfiguration(store: ObserverURLProtocolStore) -> URLSessionConfiguration {

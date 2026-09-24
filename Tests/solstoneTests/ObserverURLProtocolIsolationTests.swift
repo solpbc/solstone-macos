@@ -7,6 +7,27 @@ import Testing
 
 @Suite("ObserverURLProtocol isolation")
 struct ObserverURLProtocolIsolationTests {
+    @Test func delayedRequestDoesNotBlockAnotherSession() async throws {
+        let slow = ObserverURLProtocolStore()
+        let fast = ObserverURLProtocolStore()
+        slow.enqueue(body: "slow", delay: .seconds(3))
+        fast.enqueue(body: "fast")
+        let slowSession = URLSession(configuration: observerURLProtocolConfiguration(store: slow))
+        let fastSession = URLSession(configuration: observerURLProtocolConfiguration(store: fast))
+        defer {
+            slowSession.invalidateAndCancel()
+            fastSession.invalidateAndCancel()
+        }
+        async let slowResult = slowSession.data(from: URL(string: "http://slow.test/")!)
+        await slow.waitForRequestCount(1)
+        #expect(slow.snapshotRequests().count == 1)
+        let start = ContinuousClock.now
+        let (data, _) = try await fastSession.data(from: URL(string: "http://fast.test/")!)
+        #expect(ContinuousClock.now - start < .seconds(2))
+        #expect(data == Data("fast".utf8))
+        _ = try await slowResult
+    }
+
     @Test func storesAreBoundPerSessionAndResetDoesNotBleed() async throws {
         let storeA = ObserverURLProtocolStore()
         let storeB = ObserverURLProtocolStore()
