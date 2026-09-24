@@ -341,12 +341,26 @@ struct SyncServiceTests {
         }
     }
 
-    @Test func sizeMismatchRetainsSegmentAndUploads() async throws {
+    @Test func ackSizeMismatchUploadsBeforeRemovingSegment() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-size-mismatch")
         let segment = try makeSegment(root: root)
         let filename = "120000_300_audio.m4a"
         let sha = try sha256(of: segment.url.appendingPathComponent(filename))
+        // The ack's size does not match the local file, so it does not confirm it.
+        let staleAck = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: dayString(for: segment.date),
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: filename, sha256: sha, size: 4)],
+                meta: [:]
+            )
+        )
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
+        try IngestAcknowledgmentStore.write(staleAck, to: ackURL)
         store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
         let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24685") })
         await configure(service)
@@ -1518,6 +1532,21 @@ struct SyncServiceTests {
         await resolver.releasePark()
         await syncing.value
 
+        // The late screen was not in this pass's upload, so the receipt does not confirm it: nothing is removed.
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(FileManager.default.fileExists(atPath: screenURL.path))
+        #expect(FileManager.default.fileExists(atPath: audioFile.path))
+
+        // The next pass uploads the screen with the audio, then removes the segment.
+        store.reset()
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, body: completeUploadResponseJSON(descriptors: [
+            ("120000_300_audio.m4a", "120000_300_audio.m4a", 5, audioSHA, "written"),
+            ("120000_300_display_1_screen.mp4", "120000_300_display_1_screen.mp4", UInt64(screenData.count), screenSHA, "written"),
+        ]))
+        await service.sync()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(!FileManager.default.fileExists(atPath: seg.url.path))
     }
 
@@ -2367,6 +2396,17 @@ struct SyncServiceTests {
         #expect(collector.containsUploadSucceeded == false)
         let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
         #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: segment.url.appendingPathComponent(filename).path))
+
+        // Next pass, with the ack persisting: the segment uploads again and is removed.
+        store.reset()
+        store.enqueue(statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+        let next = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24606") })
+        await configure(next)
+        await next.sync()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: segment.url.path))
     }
 
     @Test func idempotencyWithAcknowledgedReceiptsSkipsUpload() async throws {
@@ -2759,6 +2799,13 @@ struct SyncServiceTests {
         let bodies = store.snapshotRequestBodyData().compactMap { $0 }
         #expect(bodies.count == 2)
         if bodies.count == 2 { #expect(bodies[0] == bodies[1]) }
+        // The receipt confirms the staged bytes, not the file as it is now: the changed file stays.
+        #expect(try Data(contentsOf: file) == Data("other".utf8))
+
+        // The next pass uploads the changed file and removes the segment.
+        store.enqueue(body: uploadResponseJSON(status: .duplicate, sha: try sha256(of: file)))
+        await service.sync()
+        #expect(store.snapshotRequestBodyData().compactMap { $0 }.count == 3)
         #expect(!FileManager.default.fileExists(atPath: file.path))
         #expect(!FileManager.default.fileExists(atPath: segment.url.path))
     }
@@ -2895,7 +2942,7 @@ struct SyncServiceTests {
     func post500JournalWriteFailedIsExactlyOnePOST() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-post-jw-failed")
-        _ = try makeSegment(root: root)
+        let seg = try makeSegment(root: root)
         store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 500, body: "{\"reason_code\":\"journal_write_failed\"}")
         let today = IngestDayKey.string(from: Date())
         store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
@@ -2905,6 +2952,8 @@ struct SyncServiceTests {
         await service.sync()
 
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent("120000_300_audio.m4a").path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
     }
 
     @Test(arguments: [
@@ -3335,6 +3384,648 @@ struct SyncServiceTests {
         #expect(uploadRequests.isEmpty)
     }
 
+    // MARK: - Confirmed removal: coverage, quarantine and retry
+
+    @Test func transientClassifyErrorUploadsUncoveredAudioInsteadOfRemovingIt() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-transient-classify-receipt")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let audioURL = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let screenURL = seg.url.appendingPathComponent("120000_300_display_1_screen.mp4")
+        try Data("screen".utf8).write(to: screenURL)
+        let audioSHA = try sha256(of: audioURL)
+        let screenSHA = try sha256(of: screenURL)
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        store.enqueue(body: completeUploadResponseJSON(descriptors: [
+            (screenURL.lastPathComponent, screenURL.lastPathComponent, 6, screenSHA, "written"),
+        ]))
+        store.enqueue(body: completeUploadResponseJSON(descriptors: [
+            (audioURL.lastPathComponent, audioURL.lastPathComponent, 5, audioSHA, "written"),
+            (screenURL.lastPathComponent, screenURL.lastPathComponent, 6, screenSHA, "written"),
+        ]))
+
+        // Discovery fails to classify the audio once; at removal it classifies normally.
+        let audioFailedOnce = MutexValue<Bool>(false)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24790") },
+            classifyEntry: { url in
+                if url.lastPathComponent == "120000_300_audio.m4a" {
+                    let fail = audioFailedOnce.withLock { failed -> Bool in
+                        if failed { return false }
+                        failed = true
+                        return true
+                    }
+                    if fail { throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO)) }
+                }
+                return try syncTestClassifyByLstat(url)
+            }
+        )
+        await configure(service)
+        await service.sync()
+
+        // Only the screen went up; the unsent audio is neither removed nor quarantined.
+        let firstBodies = store.snapshotRequestBodyData().compactMap { $0 }
+        #expect(firstBodies.count == 1)
+        #expect(firstBodies.first.map { !String(decoding: $0, as: UTF8.self).contains("120000_300_audio.m4a") } == true)
+        #expect(FileManager.default.fileExists(atPath: audioURL.path))
+        #expect(FileManager.default.fileExists(atPath: screenURL.path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+
+        // The next pass uploads the audio with the screen, then removes the segment.
+        await service.sync()
+        let uploads = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploads.count == 2)
+        let bodies = store.snapshotRequestBodyData().compactMap { $0 }
+        #expect(bodies.last.map { String(decoding: $0, as: UTF8.self).contains("120000_300_audio.m4a") } == true)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+    }
+
+    @Test func transientClassifyErrorOnSoleAudioIsNotQuarantinedAsRemnant() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-transient-classify-remnant")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let audioURL = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let audioSHA = try sha256(of: audioURL)
+        // A valid ack from the linked journal that does not name the audio.
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: dayString(for: seg.date),
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_display_1_screen.mp4", sha256: String(repeating: "b", count: 64), size: 6)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
+        store.enqueue(body: uploadResponseJSON(filename: audioURL.lastPathComponent, sha: audioSHA, size: 5))
+
+        let audioFailedOnce = MutexValue<Bool>(false)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24791") },
+            classifyEntry: { url in
+                if url.lastPathComponent == "120000_300_audio.m4a" {
+                    let fail = audioFailedOnce.withLock { failed -> Bool in
+                        if failed { return false }
+                        failed = true
+                        return true
+                    }
+                    if fail { throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO)) }
+                }
+                return try syncTestClassifyByLstat(url)
+            }
+        )
+        await configure(service)
+        await service.sync()
+
+        #expect(FileManager.default.fileExists(atPath: audioURL.path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.isEmpty == true)
+
+        await service.sync()
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+    }
+
+    @Test func perSourceAudioListedAsUnreadableIsRemovedWithTheFolder() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-listed-per-source")
+        let segDir = root.appendingPathComponent("2026-09-20", isDirectory: true).appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
+        let audioURL = segDir.appendingPathComponent("120000_300_audio.m4a")
+        try Data("audio".utf8).write(to: audioURL)
+        let perSourceURL = segDir.appendingPathComponent("120000_300_audio_AppleUSBAudioEngine_Vendor_Mic_123_1.m4a")
+        try Data("per-source".utf8).write(to: perSourceURL)
+        let meta: [String: IngestJSONValue] = [
+            "unreadable_audio_sources": .object(["source_ids": .array([.string("AppleUSBAudioEngine:Vendor:Mic:123:1")])]),
+        ]
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: "20260920",
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: try sha256(of: audioURL), size: 5)],
+                meta: meta
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segDir, segment: "120000_300"))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .held })
+        await configure(service)
+        await service.sync()
+
+        #expect(!FileManager.default.fileExists(atPath: segDir.path))
+        #expect(!FileManager.default.fileExists(atPath: segDir.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+        #expect(store.snapshotRequests().isEmpty)
+    }
+
+    @Test func readableUnlistedPerSourceAudioIsQuarantinedAndLeftAlone() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-unlisted-per-source")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let perSourceName = "120000_300_audio_AppleUSBAudioEngine_Vendor_Mic_123_1.m4a"
+        try Data("per-source".utf8).write(to: seg.url.appendingPathComponent(perSourceName))
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        store.enqueue(body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24792") })
+        await configure(service)
+        await service.sync()
+
+        let failedDir = seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed")
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(perSourceName).path))
+        #expect(!FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(filename).path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_300_ingest_ack.json").path))
+
+        // The next pass neither uploads, retries nor calls the quarantined segment unprovable.
+        store.reset()
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        let next = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24792") })
+        await configure(next)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await next.progressStream { collector.append(event) }
+        }
+        await next.sync()
+        await collector.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.isEmpty == true)
+        #expect(collector.segmentUnprovableCount == 0)
+        let uploadAttempted = collector.allEvents.contains {
+            switch $0 {
+            case .uploadStarted, .uploadRetrying, .uploadFailed: return true
+            default: return false
+            }
+        }
+        #expect(!uploadAttempted)
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(perSourceName).path))
+    }
+
+    @Test func rejectedSubfolderIsQuarantined() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-rejected-subfolder")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let rejectedDir = seg.url.appendingPathComponent("rejected", isDirectory: true)
+        try FileManager.default.createDirectory(at: rejectedDir, withIntermediateDirectories: true)
+        try Data("rejected".utf8).write(to: rejectedDir.appendingPathComponent("silent_120000_300_audio_mic.m4a"))
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.enqueue(body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24793") })
+        await configure(service)
+        await service.sync()
+
+        let failedDir = seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed")
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("rejected/silent_120000_300_audio_mic.m4a").path))
+        #expect(!FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(filename).path))
+    }
+
+    @Test func renameFailureLeavesTheAckAndTheNextPassCompletes() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-rename-failure")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        try Data("keeper".utf8).write(to: seg.url.appendingPathComponent("extra.txt"))
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        store.enqueue(body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24794") },
+            renameItem: { _, _ in throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES)) }
+        )
+        await configure(service)
+        await service.sync()
+
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
+        let failedDir = seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed")
+        #expect(FileManager.default.fileExists(atPath: ackURL.path))
+        #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent("extra.txt").path))
+        #expect(!FileManager.default.fileExists(atPath: failedDir.path))
+
+        store.reset()
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        let next = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24794") })
+        await configure(next)
+        await next.sync()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.isEmpty == true)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("extra.txt").path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_300_ingest_ack.json").path))
+    }
+
+    @Test func shaMismatchedReceiptKeepsTheSegment() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-sha-mismatch-receipt")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        store.enqueue(body: uploadResponseJSON(filename: filename, sha: String(repeating: "c", count: 64), size: 5))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24795") })
+        await configure(service)
+        await service.sync()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
+        #expect(IngestAcknowledgmentStore.read(from: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")) == nil)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+    }
+
+    @Test func segmentRemovedWithListedPerSourceAudioRemovesTheFolder() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-seg-removed-per-source")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        try Data(#"{"unreadable_audio_sources":{"source_ids":["AppleUSBAudioEngine:Vendor:Mic:123:1"]}}"#.utf8)
+            .write(to: seg.url.appendingPathComponent("120000_300_meta.json"))
+        try Data("per-source".utf8).write(to: seg.url.appendingPathComponent("120000_300_audio_AppleUSBAudioEngine_Vendor_Mic_123_1.m4a"))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 500, body: "{\"status\":\"failed\",\"error\":\"Ingest request failed\",\"reason_code\":\"segment_removed\"}")
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24796") })
+        await configure(service)
+        await service.sync()
+
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+    }
+
+    @Test func segmentRemovedRemovesItsAckWithTheFolder() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-seg-removed-ack")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        // An ack from another journal is not a confirmation here, so the segment uploads.
+        let otherAck = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB).value,
+            day: dayString(for: seg.date),
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: filename, sha256: try sha256(of: seg.url.appendingPathComponent(filename)), size: 5)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(otherAck, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 500, body: "{\"status\":\"failed\",\"error\":\"Ingest request failed\",\"reason_code\":\"segment_removed\"}")
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24797") })
+        await configure(service)
+        await service.sync()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+    }
+
+    @Test func segmentRemovedWithKeepersRemovesMediaBeforeTheRename() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-seg-removed-order")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let audioURL = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        try Data("keep".utf8).write(to: seg.url.appendingPathComponent("keeper.bin"))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 500, body: "{\"status\":\"failed\",\"error\":\"Ingest request failed\",\"reason_code\":\"segment_removed\"}")
+
+        // The media removal fails once: the folder keeps its name and a later pass retries.
+        let mediaFailedOnce = MutexValue<Bool>(false)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24798") },
+            removeItem: { url in
+                if url.lastPathComponent == "120000_300_audio.m4a" {
+                    let fail = mediaFailedOnce.withLock { failed -> Bool in
+                        if failed { return false }
+                        failed = true
+                        return true
+                    }
+                    if fail { throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES)) }
+                }
+                guard Darwin.unlink(url.path) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+            }
+        )
+        await configure(service)
+        await service.sync()
+
+        let failedDir = seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed")
+        #expect(FileManager.default.fileExists(atPath: audioURL.path))
+        #expect(!FileManager.default.fileExists(atPath: failedDir.path))
+
+        await service.sync()
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 2)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("keeper.bin").path))
+        #expect(!FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_300_audio.m4a").path))
+    }
+
+    @Test func segmentRemovedWhenMetadataRemovalFailsKeepsMediaForTheNextPass() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-seg-removed-meta-throws")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let audioURL = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        try Data("{}".utf8).write(to: seg.url.appendingPathComponent("120000_300_meta.json"))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 500, body: "{\"status\":\"failed\",\"error\":\"Ingest request failed\",\"reason_code\":\"segment_removed\"}")
+
+        let metaFailedOnce = MutexValue<Bool>(false)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24799") },
+            removeItem: { url in
+                if url.lastPathComponent == "120000_300_meta.json" {
+                    let fail = metaFailedOnce.withLock { failed -> Bool in
+                        if failed { return false }
+                        failed = true
+                        return true
+                    }
+                    if fail { throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES)) }
+                }
+                guard Darwin.unlink(url.path) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+            }
+        )
+        await configure(service)
+        await service.sync()
+
+        #expect(FileManager.default.fileExists(atPath: audioURL.path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+
+        await service.sync()
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 2)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+    }
+
+    @Test func failedAnswerWithoutReasonCodeKeepsTheSegment() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-500-failed-no-reason")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 500, body: "{\"status\":\"failed\",\"error\":\"Ingest request failed\"}")
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24800") })
+        await configure(service)
+        await service.sync()
+
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count >= 1)
+        #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent("120000_300_audio.m4a").path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+    }
+
+    @Test func resolverHeldStillRemovesAnAckedMatchingSegment() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-held-acked")
+        let seg = try makeSegment(root: root, date: Date().addingTimeInterval(-172800), segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: dayString(for: seg.date),
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: filename, sha256: try sha256(of: seg.url.appendingPathComponent(filename)), size: 5)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .held })
+        await configure(service)
+        await service.sync()
+
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(store.snapshotRequests().isEmpty)
+    }
+
+    @Test func deviceQuietWindowStillRemovesAnAckedMatchingSegment() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-quiet-acked")
+        _ = try makeSegment(root: root, segmentName: "121000_300")
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 403, body: "{\"reason_code\":\"linked_device_required\"}")
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+
+        let requestsAtRemoval = MutexValue<Int?>(nil)
+        let store = self.store
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24801") },
+            beforeRemovalStep: {
+                let count = store.snapshotRequests().count
+                requestsAtRemoval.withLock { if $0 == nil { $0 = count } }
+            }
+        )
+        await configure(service)
+        await service.sync()  // 403: the device-quiet window starts
+
+        let seg = try makeSegment(root: root, date: Date().addingTimeInterval(-172800), segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: dayString(for: seg.date),
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: filename, sha256: try sha256(of: seg.url.appendingPathComponent(filename)), size: 5)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300"))
+
+        store.reset()
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        await service.sync()
+
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        // The removal needs no request; the only request of the pass is the quiet window's probe of today.
+        #expect(requestsAtRemoval.withLock { $0 } == 0)
+        #expect(store.snapshotRequests().compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(today)])
+    }
+
+    @Test func upgradeNoMediaFolderWithUnreadableAckIsRemovedWithoutNetwork() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-upgrade-unreadable-ack")
+        let segDir = root.appendingPathComponent("2026-09-10", isDirectory: true).appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: segDir.appendingPathComponent("120000_300_meta.json"))
+        try Data("{not json".utf8).write(to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segDir, segment: "120000_300"))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .held })
+        await configure(service)
+        await service.sync()
+
+        #expect(!FileManager.default.fileExists(atPath: segDir.path))
+        #expect(!FileManager.default.fileExists(atPath: segDir.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+        #expect(store.snapshotRequests().isEmpty)
+    }
+
+    @Test func upgradeNoMediaFolderWithAnotherJournalsAckIsRemovedWithoutNetwork() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-upgrade-other-journal-ack")
+        let segDir = root.appendingPathComponent("2026-09-10", isDirectory: true).appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: segDir.appendingPathComponent("120000_300_meta.json"))
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingB).value,
+            day: "20260910",
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: String(repeating: "a", count: 64), size: 5)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segDir, segment: "120000_300"))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .held })
+        await configure(service)
+        await service.sync()
+
+        #expect(!FileManager.default.fileExists(atPath: segDir.path))
+        #expect(!FileManager.default.fileExists(atPath: segDir.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+        #expect(store.snapshotRequests().isEmpty)
+    }
+
+    @Test func upgradeAckedFolderWithUnlistedPerSourceAudioIsQuarantined() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-upgrade-unlisted-per-source")
+        let segDir = root.appendingPathComponent("2026-09-10", isDirectory: true).appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: segDir, withIntermediateDirectories: true)
+        let audioURL = segDir.appendingPathComponent("120000_300_audio.m4a")
+        try Data("audio".utf8).write(to: audioURL)
+        let perSourceName = "120000_300_audio_BuiltInMicrophoneDevice.m4a"
+        try Data("per-source".utf8).write(to: segDir.appendingPathComponent(perSourceName))
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: "20260910",
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: try sha256(of: audioURL), size: 5)],
+                meta: [:]
+            )
+        )
+        try IngestAcknowledgmentStore.write(ack, to: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segDir, segment: "120000_300"))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .held })
+        await configure(service)
+        await service.sync()
+
+        let failedDir = segDir.deletingLastPathComponent().appendingPathComponent("120000_300.failed")
+        #expect(!FileManager.default.fileExists(atPath: segDir.path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(perSourceName).path))
+        #expect(!FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_300_audio.m4a").path))
+        #expect(store.snapshotRequests().isEmpty)
+    }
+
+    @Test func journalSwitchMidRemovalReuploadsToTheLinkedJournal() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-switch-mid-removal")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let pairing = pairingB
+        let fingerprint = tunnelJournalConnectionFingerprint(for: pairingB)
+        let serviceHolder = MutexValue<SyncService?>(nil)
+        let switched = MutexValue<Bool>(false)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24802") },
+            beforeRemovalStep: {
+                let shouldSwitch = switched.withLock { done -> Bool in
+                    if done { return false }
+                    done = true
+                    return true
+                }
+                if shouldSwitch, let s = serviceHolder.withLock({ $0 }) {
+                    await s.configure(pairingIdentity: pairing, journalFingerprint: fingerprint, syncPaused: false)
+                }
+            }
+        )
+        serviceHolder.withLock { $0 = service }
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream { collector.append(event) }
+        }
+        await service.sync()
+
+        // The switch stopped the removal: the segment and the first journal's ack remain.
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent(filename).path))
+        #expect(IngestAcknowledgmentStore.read(from: ackURL)?.journalFingerprint == tunnelJournalConnectionFingerprint(for: pairingA).value)
+
+        // The ack is not the linked journal's, so the next pass uploads to it before removing.
+        await service.sync()
+        listen.cancel()
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 2)
+        #expect(collector.uploadSucceededFingerprints.last == fingerprint.value)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+    }
+
+    @Test func failedFolderCollisionPicksAnUnusedNameAndKeepsExistingOnes() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-failed-collision")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let dayDir = seg.url.deletingLastPathComponent()
+        // An earlier quarantine of the same clock hour: one empty, one holding a file.
+        let existingEmpty = dayDir.appendingPathComponent("120000_300.failed", isDirectory: true)
+        try FileManager.default.createDirectory(at: existingEmpty, withIntermediateDirectories: true)
+        let existingFull = dayDir.appendingPathComponent("120000_300.2.failed", isDirectory: true)
+        try FileManager.default.createDirectory(at: existingFull, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: existingFull.appendingPathComponent("old.txt"))
+        try Data("keeper".utf8).write(to: seg.url.appendingPathComponent("extra.txt"))
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        store.enqueue(body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24803") })
+        await configure(service)
+        await service.sync()
+
+        let newFailed = dayDir.appendingPathComponent("120000_300.3.failed", isDirectory: true)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(FileManager.default.fileExists(atPath: newFailed.appendingPathComponent("extra.txt").path))
+        #expect(FileManager.default.fileExists(atPath: newFailed.appendingPathComponent("120000_300_ingest_ack.json").path))
+        #expect((try? FileManager.default.contentsOfDirectory(atPath: existingEmpty.path))?.isEmpty == true)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: existingFull.path) == ["old.txt"])
+
+        // Discovery skips the numbered quarantine folder: the next pass uploads nothing.
+        store.reset()
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        await service.sync()
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.isEmpty == true)
+        #expect(FileManager.default.fileExists(atPath: newFailed.appendingPathComponent("extra.txt").path))
+    }
+
     private func uploadResponseJSON(
         status: IngestProtocolV3.UploadStatus = .ok,
         submitted: String = "120000_300",
@@ -3362,7 +4053,8 @@ struct SyncServiceTests {
         beforeRemovalStep: (@escaping @Sendable () async -> Void) = {},
         listDirectory: (@Sendable (URL) throws -> [URL])? = nil,
         classifyEntry: (@Sendable (URL) throws -> SyncService.DiscoveredEntryKind)? = nil,
-        removeItem: (@Sendable (URL) throws -> Void)? = nil
+        removeItem: (@Sendable (URL) throws -> Void)? = nil,
+        renameItem: (@Sendable (URL, URL) throws -> Void)? = nil
     ) -> SyncService {
         SyncService(
             storageManager: StorageManager(baseDirectory: root),
@@ -3376,6 +4068,11 @@ struct SyncServiceTests {
                     throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
                 }
             },
+            renameItem: renameItem ?? { source, destination in
+                guard Darwin.renamex_np(source.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+            },
             listDirectory: listDirectory ?? { url in
                 try FileManager.default.contentsOfDirectory(
                     at: url,
@@ -3383,20 +4080,7 @@ struct SyncServiceTests {
                     options: [.skipsHiddenFiles]
                 )
             },
-            classifyEntry: classifyEntry ?? { url in
-                var info = stat()
-                guard lstat(url.path, &info) == 0 else {
-                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-                }
-                let fileType = info.st_mode & mode_t(S_IFMT)
-                if fileType == mode_t(S_IFDIR) {
-                    return .directory
-                } else if fileType == mode_t(S_IFREG) {
-                    return .regularFile
-                } else {
-                    return .unsupported
-                }
-            }
+            classifyEntry: classifyEntry ?? syncTestClassifyByLstat
         )
     }
 
@@ -3564,6 +4248,21 @@ struct SyncServiceTests {
 
     private func dayString(for date: Date) -> String {
         dateFolderString(for: date).replacingOccurrences(of: "-", with: "")
+    }
+}
+
+@Sendable private func syncTestClassifyByLstat(_ url: URL) throws -> SyncService.DiscoveredEntryKind {
+    var info = stat()
+    guard lstat(url.path, &info) == 0 else {
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
+    let fileType = info.st_mode & mode_t(S_IFMT)
+    if fileType == mode_t(S_IFDIR) {
+        return .directory
+    } else if fileType == mode_t(S_IFREG) {
+        return .regularFile
+    } else {
+        return .unsupported
     }
 }
 

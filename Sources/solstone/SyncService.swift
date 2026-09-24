@@ -91,6 +91,7 @@ public actor SyncService {
     private let beforeRemovalStep: @Sendable () async -> Void
     private let persistAcknowledgment: @Sendable (IngestAcknowledgment, URL) throws -> Void
     private let removeItem: @Sendable (URL) throws -> Void
+    private let renameItem: @Sendable (URL, URL) throws -> Void
     private let listDirectory: @Sendable (URL) throws -> [URL]
     private let classifyEntry: @Sendable (URL) throws -> DiscoveredEntryKind
 
@@ -136,6 +137,12 @@ public actor SyncService {
                 throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
             }
         },
+        renameItem: @escaping @Sendable (URL, URL) throws -> Void = { source, destination in
+            // RENAME_EXCL: an existing destination is never replaced.
+            guard Darwin.renamex_np(source.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+        },
         listDirectory: @escaping @Sendable (URL) throws -> [URL] = { url in
             try FileManager.default.contentsOfDirectory(
                 at: url,
@@ -167,6 +174,7 @@ public actor SyncService {
         self.beforeRemovalStep = beforeRemovalStep
         self.persistAcknowledgment = persistAcknowledgment
         self.removeItem = removeItem
+        self.renameItem = renameItem
         self.listDirectory = listDirectory
         self.classifyEntry = classifyEntry
 
@@ -1001,7 +1009,7 @@ public actor SyncService {
                 guard segmentKind == .directory else { continue }
 
                 let dirName = segmentURL.lastPathComponent
-                // A .failed folder can also be a delivered segment that still holds a leftover file. Discovery still does not enter it.
+                // A .failed folder (also a numbered {segment}.{n}.failed) can be a delivered segment that still holds a leftover file. Discovery still does not enter it.
                 if dirName.hasSuffix(".incomplete") || dirName.hasSuffix(".failed") {
                     continue
                 }
@@ -1098,6 +1106,28 @@ public actor SyncService {
         return true
     }
 
+    /// Rename a confirmed segment folder that still holds files the journal never received to
+    /// `{segment}.failed`, or to `{segment}.{n}.failed` (n from 2) when that name is taken, so a repeated
+    /// clock hour never collides. Discovery skips every `.failed` suffix. An existing quarantine folder
+    /// is never replaced.
+    private func quarantineSegmentDirectory(_ segmentURL: URL, segment: String) -> Bool {
+        let parent = segmentURL.deletingLastPathComponent()
+        var failedURL = parent.appendingPathComponent("\(segment).failed")
+        var suffix = 1
+        var info = stat()
+        while lstat(failedURL.path, &info) == 0 {
+            suffix += 1
+            failedURL = parent.appendingPathComponent("\(segment).\(suffix).failed")
+        }
+        do {
+            try renameItem(segmentURL, failedURL)
+        } catch {
+            Logger.upload.error("Failed to rename segment directory \(segment, privacy: .public) to \(failedURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        return true
+    }
+
     private func removeConfirmedSegment(
         segmentURL: URL,
         day: String,
@@ -1119,6 +1149,40 @@ public actor SyncService {
 
         let address = SegmentAddress(fingerprint: context.fingerprint.value, day: day, segment: segment)
         let ackFileName = "\(segment)_ingest_ack.json"
+
+        // Upload media the journal has not confirmed is never removed or renamed: the folder stays
+        // untouched so a later pass uploads it. An acknowledgment confirms an upload-media file only
+        // when it names that file and still matches it. A remnant has no media the journal confirmed.
+        // segment_removed confirms all of the segment's upload media.
+        let coveringProofs: [IngestAcknowledgedFileProof]?
+        switch mode {
+        case .acknowledged(let ack):
+            coveringProofs = ack.payload.files
+        case .remnant:
+            coveringProofs = []
+        case .segmentRemoved:
+            coveringProofs = nil
+        }
+        if let coveringProofs {
+            for entry in allEntries {
+                let name = entry.lastPathComponent
+                guard IngestAcknowledgment.isUploadMediaName(name, segment: segment) else { continue }
+                let fileType: DiscoveredEntryKind
+                do {
+                    fileType = try classifyEntry(entry)
+                } catch {
+                    Logger.upload.error("Failed to classify entry \(name, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    return .failed
+                }
+                guard fileType == .regularFile else { continue }
+                let covered = coveringProofs.first(where: { $0.submitted == name })?
+                    .matchesLocalFileForUpload(entry, sha256Calculator: client.sha256) ?? false
+                guard covered else {
+                    Logger.upload.info("Segment \(segment, privacy: .public): \(name, privacy: .public) is not confirmed by the journal; the segment stays for a later upload")
+                    return .failed
+                }
+            }
+        }
 
         switch mode {
         case .acknowledged(let ack):
@@ -1194,7 +1258,7 @@ public actor SyncService {
             }
 
             if keepers.isEmpty {
-                // Sequence A: no keepers -> remove ack, rmdir segment directory
+                // Nothing the journal did not receive remains: remove the ack, then the folder.
                 let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
                 if FileManager.default.fileExists(atPath: ackURL.path) {
                     await beforeRemovalStep()
@@ -1214,12 +1278,10 @@ public actor SyncService {
                 }
                 return .finished
             } else {
-                // Sequence B: keepers remain -> rename directory to .failed
-                let failedURL = segmentURL.deletingLastPathComponent().appendingPathComponent("\(segment).failed")
+                // Files the journal never received remain: quarantine the folder, ack included.
                 await beforeRemovalStep()
                 guard !syncPaused, journalContext == context else { return .stopped }
-                guard Darwin.rename(segmentURL.path, failedURL.path) == 0 else {
-                    Logger.upload.error("Failed to rename segment directory \(segment, privacy: .public) to .failed: \(errno)")
+                guard quarantineSegmentDirectory(segmentURL, segment: segment) else {
                     return .failed
                 }
                 return .finished
@@ -1280,7 +1342,7 @@ public actor SyncService {
             }
 
             if keepers.isEmpty {
-                // Sequence A: no keepers -> remove ack, rmdir segment directory
+                // Nothing the journal did not receive remains: remove the ack, then the folder.
                 let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
                 if FileManager.default.fileExists(atPath: ackURL.path) {
                     await beforeRemovalStep()
@@ -1300,12 +1362,10 @@ public actor SyncService {
                 }
                 return .finished
             } else {
-                // Sequence B: keepers remain -> rename directory to .failed
-                let failedURL = segmentURL.deletingLastPathComponent().appendingPathComponent("\(segment).failed")
+                // Files the journal never received remain: quarantine the folder, ack included.
                 await beforeRemovalStep()
                 guard !syncPaused, journalContext == context else { return .stopped }
-                guard Darwin.rename(segmentURL.path, failedURL.path) == 0 else {
-                    Logger.upload.error("Failed to rename segment directory \(segment, privacy: .public) to .failed: \(errno)")
+                guard quarantineSegmentDirectory(segmentURL, segment: segment) else {
                     return .failed
                 }
                 return .finished
@@ -1321,6 +1381,7 @@ public actor SyncService {
             var nonUploadConfirmedURLs: [URL] = []
             var uploadMediaURLs: [URL] = []
             var keepers: [URL] = []
+            var ackURL: URL?
 
             for entry in allEntries {
                 let fileType: DiscoveredEntryKind
@@ -1337,7 +1398,10 @@ public actor SyncService {
                 }
 
                 let name = entry.lastPathComponent
-                if IngestAcknowledgment.isUploadMediaName(name, segment: segment) {
+                if name == ackFileName {
+                    // Bookkeeping: removed after the upload media, immediately before the folder itself.
+                    ackURL = entry
+                } else if IngestAcknowledgment.isUploadMediaName(name, segment: segment) {
                     uploadMediaURLs.append(entry)
                 } else if name == "\(segment)_meta.json" ||
                             name == ".DS_Store" ||
@@ -1346,7 +1410,6 @@ public actor SyncService {
                             Self.isRemixerTemp(name: name) {
                     nonUploadConfirmedURLs.append(entry)
                 } else {
-                    // Includes {segment}_ingest_ack.json and any other stray files as keepers
                     keepers.append(entry)
                 }
             }
@@ -1355,6 +1418,8 @@ public actor SyncService {
             guard !syncPaused, journalContext == context else { return .stopped }
             self.segmentBounds.removeValue(forKey: address)
 
+            // Every confirmed file goes before any rename, so a failed removal leaves the folder under
+            // its own name for a later pass instead of stranding confirmed media in a quarantine folder.
             for url in nonUploadConfirmedURLs {
                 await beforeRemovalStep()
                 guard !syncPaused, journalContext == context else { return .stopped }
@@ -1366,14 +1431,25 @@ public actor SyncService {
                 }
             }
 
+            for url in uploadMediaURLs {
+                await beforeRemovalStep()
+                guard !syncPaused, journalContext == context else { return .stopped }
+                do {
+                    try removeItem(url)
+                } catch {
+                    Logger.upload.error("Failed to remove upload media \(url.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    return .failed
+                }
+            }
+
             if keepers.isEmpty {
-                for url in uploadMediaURLs {
+                if let ackURL {
                     await beforeRemovalStep()
                     guard !syncPaused, journalContext == context else { return .stopped }
                     do {
-                        try removeItem(url)
+                        try removeItem(ackURL)
                     } catch {
-                        Logger.upload.error("Failed to remove upload media \(url.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        Logger.upload.error("Failed to remove ack for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
                         return .failed
                     }
                 }
@@ -1385,23 +1461,11 @@ public actor SyncService {
                 }
                 return .finished
             } else {
-                let failedURL = segmentURL.deletingLastPathComponent().appendingPathComponent("\(segment).failed")
+                // Files the journal never received remain: quarantine the folder, ack included.
                 await beforeRemovalStep()
                 guard !syncPaused, journalContext == context else { return .stopped }
-                guard Darwin.rename(segmentURL.path, failedURL.path) == 0 else {
-                    Logger.upload.error("Failed to rename segment directory \(segment, privacy: .public) to .failed: \(errno)")
+                guard quarantineSegmentDirectory(segmentURL, segment: segment) else {
                     return .failed
-                }
-                for mediaURL in uploadMediaURLs {
-                    let targetURL = failedURL.appendingPathComponent(mediaURL.lastPathComponent)
-                    await beforeRemovalStep()
-                    guard !syncPaused, journalContext == context else { return .stopped }
-                    do {
-                        try removeItem(targetURL)
-                    } catch {
-                        Logger.upload.error("Failed to remove upload media \(mediaURL.lastPathComponent, privacy: .public) from failed dir for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                        return .failed
-                    }
                 }
                 return .finished
             }
