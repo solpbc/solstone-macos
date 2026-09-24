@@ -1,6 +1,6 @@
 .PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal assemble-journal-app journal-app-unsigned bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
-        supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime journal-native-runtime-accepted brand-sync \
+        supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime journal-native-fetch-accepted journal-native-runtime-accepted brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
 
 # Default goal when running bare `make` — build the project. brand-sync is
@@ -83,6 +83,25 @@ JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE ?=
 JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT ?=
 JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT ?=
 JOURNAL_NATIVE_MINISIGN ?= /opt/homebrew/bin/minisign
+# Or name the release and let the compose fetch its five signed inputs from the
+# published origin: JOURNAL_NATIVE_ACCEPTED_VERSION=<version> with the accepted
+# JOURNAL_NATIVE_ACCEPTED_SHA256 replaces the five paths above. The manifest is
+# trusted only once its minisign signature verifies against the pinned release
+# key, and each other input only if it matches the signed manifest's digest.
+JOURNAL_NATIVE_ACCEPTED_VERSION ?=
+JOURNAL_NATIVE_ORIGIN ?= https://updates.solstone.app/solstone-journal
+JOURNAL_NATIVE_FETCH_DIR ?= .build/journal-native-accepted
+ifneq ($(strip $(JOURNAL_NATIVE_ACCEPTED_VERSION)),)
+ifneq ($(strip $(JOURNAL_NATIVE_ACCEPTED_ARCHIVE)$(JOURNAL_NATIVE_ACCEPTED_MANIFEST)$(JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE)$(JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT)$(JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT)),)
+$(error JOURNAL_NATIVE_ACCEPTED_VERSION fetches the signed journal inputs; do not also pass their paths)
+endif
+JOURNAL_NATIVE_ACCEPTED_STEM := $(JOURNAL_NATIVE_FETCH_DIR)/solstone-journal-$(JOURNAL_NATIVE_ACCEPTED_VERSION)-$(JOURNAL_NATIVE_TARGET)
+JOURNAL_NATIVE_ACCEPTED_ARCHIVE := $(JOURNAL_NATIVE_ACCEPTED_STEM).tar.gz
+JOURNAL_NATIVE_ACCEPTED_MANIFEST := $(JOURNAL_NATIVE_ACCEPTED_STEM).manifest.json
+JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE := $(JOURNAL_NATIVE_ACCEPTED_STEM).manifest.json.minisig
+JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT := $(JOURNAL_NATIVE_ACCEPTED_STEM).release
+JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT := $(JOURNAL_NATIVE_ACCEPTED_STEM).signing.json
+endif
 JOURNAL_NATIVE_RUNTIME_TREE_MAP ?= .build/journal-native-runtime-tree.map
 JOURNAL_NATIVE_RUNTIME_ENTRY_PROVENANCE := journal.app/Contents/Resources/solstone_journal.bundle/Contents/Resources/Resources/runtime-entry-candidate-provenance.json
 
@@ -162,10 +181,24 @@ journal-native-runtime:
 		--runtime-dir "$(abspath $(JOURNAL_NATIVE_RUNTIME_DIR))" \
 		--receipt "$(abspath $(JOURNAL_NATIVE_PROVENANCE_RECEIPT))"
 
+# With JOURNAL_NATIVE_ACCEPTED_VERSION set, fetch the release's signed inputs from
+# the published origin first; with explicit paths instead, this does nothing.
+journal-native-fetch-accepted:
+	@if [ -n "$(strip $(JOURNAL_NATIVE_ACCEPTED_VERSION))" ]; then \
+		test -n "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" || { echo "error: JOURNAL_NATIVE_ACCEPTED_SHA256=<sha256> required"; exit 1; }; \
+		python3 scripts/journal_native_provenance.py fetch-accepted \
+			--version "$(JOURNAL_NATIVE_ACCEPTED_VERSION)" \
+			--target "$(JOURNAL_NATIVE_TARGET)" \
+			--expected-sha256 "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" \
+			--origin "$(JOURNAL_NATIVE_ORIGIN)" \
+			--minisign "$(JOURNAL_NATIVE_MINISIGN)" \
+			--output-dir "$(abspath $(JOURNAL_NATIVE_FETCH_DIR))"; \
+	fi
+
 # Shipping consumes the journal lane's already-produced, accepted archive. The
 # source-build target above remains available for local development, but release
 # packaging must not silently rebuild a payload with different bytes.
-journal-native-runtime-accepted:
+journal-native-runtime-accepted: journal-native-fetch-accepted
 	@test -n "$(JOURNAL_NATIVE_ACCEPTED_ARCHIVE)" || { echo "error: JOURNAL_NATIVE_ACCEPTED_ARCHIVE=/absolute/path required"; exit 1; }
 	@test -n "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" || { echo "error: JOURNAL_NATIVE_ACCEPTED_SHA256=<sha256> required"; exit 1; }
 	@test -n "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" || { echo "error: JOURNAL_NATIVE_EXPECTED_COMMIT=<accepted-sha40> required"; exit 1; }
@@ -376,7 +409,7 @@ bump-release-journal:
 	@echo "  3. git add Sources/journal/Info.plist CHANGELOG-journal.md"
 	@echo "  4. git commit -m 'release: bump journal to $(VERSION) (build $(BUILD))'"
 	@echo "  5. git push origin main"
-	@echo "  6. make release-preflight && make release-dmg-journal JOURNAL_NATIVE_ACCEPTED_ARCHIVE=/absolute/path JOURNAL_NATIVE_ACCEPTED_SHA256=<sha256> JOURNAL_NATIVE_EXPECTED_COMMIT=<accepted-sha40> JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE=<receipt-or-record>"
+	@echo "  6. make release-preflight && make release-dmg-journal JOURNAL_NATIVE_ACCEPTED_VERSION=<version> JOURNAL_NATIVE_ACCEPTED_SHA256=<sha256> JOURNAL_NATIVE_EXPECTED_COMMIT=<accepted-sha40> JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE=<receipt-or-record>"
 
 # Unlock the sol-signing keychain and add it to the session search list.
 # Fresh SSH sessions don't always inherit the user-domain search list, so

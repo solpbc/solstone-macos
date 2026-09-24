@@ -354,6 +354,210 @@ class JournalNativeProvenanceTest(unittest.TestCase):
         ):
             self.assertIn(variable, bundle_recipe)
 
+    def origin_fixture(self, version="2.0.16"):
+        """A published origin laid out like updates.solstone.app, served as file://."""
+        origin = self.root / "origin"
+        release_dir = origin / "release" / version
+        release_dir.mkdir(parents=True)
+        stem = f"solstone-journal-{version}-macos-arm64"
+        payloads = {
+            f"{stem}.tar.gz": b"published archive bytes",
+            f"{stem}.release": (
+                f"product=solstone-journal\nversion={version}\n"
+                f"target=macos-arm64\ncommit={self.commit}\n"
+            ).encode("utf-8"),
+            f"{stem}.signing.json": b'{"developer_id": "test"}\n',
+        }
+        for name, payload in payloads.items():
+            (release_dir / name).write_bytes(payload)
+        digests = {name: hashlib.sha256(payload).hexdigest() for name, payload in payloads.items()}
+        manifest = release_dir / f"{stem}.manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "product": "solstone-journal",
+                    "version": version,
+                    "target": "macos-arm64",
+                    "files": {**digests, f"{stem}.pkg": "5" * 64},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (release_dir / f"{manifest.name}.minisig").write_text("test signature\n", encoding="utf-8")
+        minisign = self.root / "fetch-minisign"
+        minisign.write_text(
+            "#!/bin/sh\n"
+            "test \"$1\" = -Vm || exit 91\n"
+            "test \"$5\" = -P || exit 93\n"
+            "test \"$6\" = RWRE2eBJv3NAtN0mF5+kqygYyP/ocYNw1Ng9yJhAKgyTflNV9NabMMjq || exit 94\n",
+            encoding="utf-8",
+        )
+        minisign.chmod(0o755)
+        names = [
+            f"{stem}.manifest.json",
+            f"{stem}.manifest.json.minisig",
+            f"{stem}.tar.gz",
+            f"{stem}.release",
+            f"{stem}.signing.json",
+        ]
+        return {
+            "origin": origin,
+            "release_dir": release_dir,
+            "stem": stem,
+            "archive_sha256": digests[f"{stem}.tar.gz"],
+            "minisign": minisign,
+            "names": names,
+            "output": self.root / "fetched",
+        }
+
+    def run_fetch(self, fixture, expected_sha256=None, version="2.0.16"):
+        return self.run_script(
+            "fetch-accepted",
+            "--version",
+            version,
+            "--target",
+            "macos-arm64",
+            "--expected-sha256",
+            expected_sha256 or fixture["archive_sha256"],
+            "--origin",
+            fixture["origin"].as_uri(),
+            "--minisign",
+            str(fixture["minisign"]),
+            "--output-dir",
+            str(fixture["output"]),
+        )
+
+    def test_fetch_accepted_fetches_the_signed_set_by_digest(self):
+        fixture = self.origin_fixture()
+        result = self.run_fetch(fixture)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("accepted journal inputs fetched: 2.0.16 macos-arm64", result.stdout)
+        self.assertIn(f"release-commit={self.commit}", result.stdout)
+        self.assertEqual(sorted(p.name for p in fixture["output"].iterdir()), sorted(fixture["names"]))
+        for name in fixture["names"]:
+            self.assertEqual(
+                (fixture["output"] / name).read_bytes(),
+                (fixture["release_dir"] / name).read_bytes(),
+                name,
+            )
+
+    def test_fetch_accepted_refuses_before_writing_anything(self):
+        def refused(fixture, result, message):
+            self.assertEqual(result.returncode, 1, result.stdout)
+            self.assertIn(message, result.stderr)
+            present = [p.name for p in fixture["output"].iterdir()] if fixture["output"].exists() else []
+            self.assertEqual(present, [], "a refused fetch left inputs behind")
+
+        fixture = self.origin_fixture()
+        fixture["minisign"].write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+        refused(fixture, self.run_fetch(fixture), "native manifest signature verification failed")
+
+        for case, mutate, message in (
+            (
+                "tampered archive",
+                lambda f: (f["release_dir"] / f"{f['stem']}.tar.gz").write_bytes(b"tampered"),
+                ".tar.gz has SHA-256",
+            ),
+            (
+                "tampered release receipt",
+                lambda f: (f["release_dir"] / f"{f['stem']}.release").write_bytes(b"commit=0\n"),
+                ".release has SHA-256",
+            ),
+            (
+                "missing signing receipt",
+                lambda f: (f["release_dir"] / f"{f['stem']}.signing.json").unlink(),
+                "cannot fetch",
+            ),
+        ):
+            with self.subTest(case):
+                self.temporary_directory.cleanup()
+                self.setUp()
+                fixture = self.origin_fixture()
+                mutate(fixture)
+                refused(fixture, self.run_fetch(fixture), message)
+
+        with self.subTest("archive digest the lane did not accept"):
+            self.temporary_directory.cleanup()
+            self.setUp()
+            fixture = self.origin_fixture()
+            refused(
+                fixture,
+                self.run_fetch(fixture, expected_sha256="6" * 64),
+                "does not list solstone-journal-2.0.16-macos-arm64.tar.gz with the accepted SHA-256",
+            )
+        with self.subTest("version the signed manifest does not name"):
+            self.temporary_directory.cleanup()
+            self.setUp()
+            # 2.0.17's path serves a validly signed manifest that names 2.0.16.
+            fixture = self.origin_fixture(version="2.0.16")
+            other = fixture["origin"] / "release" / "2.0.17"
+            other.mkdir()
+            for name in fixture["names"]:
+                (other / name.replace("2.0.16", "2.0.17")).write_bytes(
+                    (fixture["release_dir"] / name).read_bytes()
+                )
+            refused(
+                fixture,
+                self.run_fetch(fixture, version="2.0.17"),
+                "published journal manifest product/version/target mismatch",
+            )
+        with self.subTest("malformed version"):
+            fixture = self.origin_fixture(version="2.0.18")
+            refused(fixture, self.run_fetch(fixture, version="latest"), "exact released version")
+
+    def test_makefile_version_mode_fetches_the_five_inputs_and_refuses_paths(self):
+        common = [
+            "JOURNAL_NATIVE_ACCEPTED_SHA256=" + "7" * 64,
+            "JOURNAL_NATIVE_EXPECTED_COMMIT=" + "8" * 40,
+            "JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE=test",
+        ]
+        dry_run = subprocess.run(
+            ["make", "-n", "journal-native-runtime-accepted", "JOURNAL_NATIVE_ACCEPTED_VERSION=2.0.16", *common],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(dry_run.returncode, 0, dry_run.stderr)
+        self.assertLess(dry_run.stdout.index("fetch-accepted"), dry_run.stdout.index("stage-accepted"))
+        self.assertIn('--origin "https://updates.solstone.app/solstone-journal"', dry_run.stdout)
+        self.assertIn(
+            ".build/journal-native-accepted/solstone-journal-2.0.16-macos-arm64.tar.gz",
+            dry_run.stdout.split("stage-accepted", 1)[1],
+        )
+        conflict = subprocess.run(
+            [
+                "make",
+                "-n",
+                "journal-native-runtime-accepted",
+                "JOURNAL_NATIVE_ACCEPTED_VERSION=2.0.16",
+                "JOURNAL_NATIVE_ACCEPTED_ARCHIVE=/tmp/hand-copied.tar.gz",
+                *common,
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(conflict.returncode, 0)
+        self.assertIn("do not also pass their paths", conflict.stderr)
+        paths_mode = subprocess.run(
+            [
+                "make",
+                "-n",
+                "journal-native-runtime-accepted",
+                "JOURNAL_NATIVE_ACCEPTED_ARCHIVE=/tmp/hand-copied.tar.gz",
+                *common,
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(paths_mode.returncode, 0, paths_mode.stderr)
+        self.assertIn("/tmp/hand-copied.tar.gz", paths_mode.stdout)
+
     def test_candidate_provenance_binds_exact_accepted_set_and_tree_map(self):
         fixture = self.candidate_fixture()
         placeholder_refusal = self.run_script(

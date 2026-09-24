@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+TARGET_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MINISIGN_PUBLIC_KEY = "RWRE2eBJv3NAtN0mF5+kqygYyP/ocYNw1Ng9yJhAKgyTflNV9NabMMjq"
 PLACEHOLDER_DIGESTS = {character * 64 for character in "0123456789abcdef"}
 
@@ -645,6 +647,122 @@ def stage_accepted(args: argparse.Namespace) -> None:
     )
 
 
+def accepted_input_names(version: str, target: str) -> dict[str, str]:
+    """The published file names of one release target's signed inputs."""
+    stem = f"solstone-journal-{version}-{target}"
+    return {
+        "manifest": f"{stem}.manifest.json",
+        "manifest_signature": f"{stem}.manifest.json.minisig",
+        "archive": f"{stem}.tar.gz",
+        "release_receipt": f"{stem}.release",
+        "signing_receipt": f"{stem}.signing.json",
+    }
+
+
+def download(url: str, destination: pathlib.Path) -> None:
+    # curl, not urllib: the origin refuses urllib's default User-Agent. Transport
+    # is not the trust anchor (the minisign signature and digests below are), so
+    # file:// origins are accepted for local mirrors and tests.
+    try:
+        result = subprocess.run(
+            [
+                "curl",
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--location",
+                "--proto",
+                "=https,file",
+                "--proto-redir",
+                "=https",
+                "--retry",
+                "2",
+                "--output",
+                str(destination),
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        die(f"cannot run curl to fetch {url}: {exc}")
+    if result.returncode != 0:
+        die(f"cannot fetch {url}: {result.stderr.strip()}")
+
+
+def fetch_accepted(args: argparse.Namespace) -> None:
+    """Fetch one published release target's signed inputs by digest.
+
+    The manifest is trusted only once its minisign signature verifies against
+    the pinned release key; every other input is trusted only if its SHA-256
+    equals the signed manifest's entry, and the archive's must also equal the
+    digest the journal lane accepted. Nothing reaches the output directory
+    until all five verify.
+    """
+    if not VERSION_RE.fullmatch(args.version):
+        die("JOURNAL_NATIVE_ACCEPTED_VERSION must be an exact released version such as 2.0.16")
+    if not TARGET_RE.fullmatch(args.target):
+        die(f"native journal target is malformed: {args.target!r}")
+    if not SHA256_RE.fullmatch(args.expected_sha256):
+        die("JOURNAL_NATIVE_ACCEPTED_SHA256 must be an exact lowercase SHA-256")
+    minisign = pathlib.Path(args.minisign).resolve()
+    names = accepted_input_names(args.version, args.target)
+    base = f"{args.origin.rstrip('/')}/release/{args.version}"
+
+    output_input = pathlib.Path(args.output_dir)
+    if output_input.is_symlink():
+        die(f"accepted journal input directory must not be a symlink: {output_input}")
+    output_dir = output_input.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    staged_dir = pathlib.Path(tempfile.mkdtemp(prefix=".fetch.", dir=output_dir))
+    try:
+        for key in ("manifest", "manifest_signature"):
+            download(f"{base}/{names[key]}", staged_dir / names[key])
+        manifest_path = staged_dir / names["manifest"]
+        verify_minisign(minisign, manifest_path, staged_dir / names["manifest_signature"])
+
+        manifest = json_object(manifest_path, "published journal manifest")
+        if set(manifest) != {"product", "version", "target", "files"}:
+            die("published journal manifest has an unexpected schema")
+        if (
+            manifest.get("product") != "solstone-journal"
+            or manifest.get("version") != args.version
+            or manifest.get("target") != args.target
+        ):
+            die("published journal manifest product/version/target mismatch")
+        files = manifest.get("files")
+        if not isinstance(files, dict):
+            die("published journal manifest files are malformed")
+        if files.get(names["archive"]) != args.expected_sha256:
+            die(
+                f"the signed {args.version} manifest does not list {names['archive']} "
+                f"with the accepted SHA-256 {args.expected_sha256}"
+            )
+
+        for key in ("archive", "release_receipt", "signing_receipt"):
+            name = names[key]
+            expected = files.get(name)
+            if not isinstance(expected, str) or not SHA256_RE.fullmatch(expected):
+                die(f"the signed manifest carries no SHA-256 for {name}")
+            download(f"{base}/{name}", staged_dir / name)
+            actual = sha256(staged_dir / name)
+            if actual != expected:
+                die(f"fetched {name} has SHA-256 {actual}, the signed manifest says {expected}")
+
+        release = release_fields(staged_dir / names["release_receipt"])
+        for name in names.values():
+            os.replace(staged_dir / name, output_dir / name)
+    finally:
+        if staged_dir.exists():
+            shutil.rmtree(staged_dir)
+    print(
+        f"accepted journal inputs fetched: {args.version} {args.target} "
+        f"archive={args.expected_sha256} manifest={sha256(output_dir / names['manifest'])} "
+        f"release-commit={release.get('commit', '')} from {base}/ into {output_dir}"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -670,6 +788,14 @@ def main() -> None:
     accepted.add_argument("--workspace-root", required=True)
     accepted.add_argument("--runtime-dir", required=True)
     accepted.add_argument("--receipt", required=True)
+
+    fetch = subparsers.add_parser("fetch-accepted")
+    fetch.add_argument("--version", required=True)
+    fetch.add_argument("--target", required=True)
+    fetch.add_argument("--expected-sha256", required=True)
+    fetch.add_argument("--origin", required=True)
+    fetch.add_argument("--minisign", required=True)
+    fetch.add_argument("--output-dir", required=True)
 
     def add_candidate_arguments(candidate: argparse.ArgumentParser) -> None:
         candidate.add_argument("--archive", required=True)
@@ -700,6 +826,8 @@ def main() -> None:
         write_receipt(args)
     elif args.command == "stage-accepted":
         stage_accepted(args)
+    elif args.command == "fetch-accepted":
+        fetch_accepted(args)
     elif args.command == "write-candidate":
         write_candidate_provenance(args)
     else:
