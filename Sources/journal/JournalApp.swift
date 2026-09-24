@@ -237,6 +237,10 @@ private struct JournalWindowSceneRoot: View {
                 JournalFirstRunView(model: firstRunModel)
             }
         }
+        // Fill the window before drawing the sun arc: the first-run view keeps a 720-pt
+        // minimum and never grows, so a background sized to it left the window's own
+        // ground showing as bands either side.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(SunArcBackgroundView())
         .onReceive(NotificationCenter.default.publisher(for: .openJournalWindow)) { _ in
             model.prepareForWindowOpen()

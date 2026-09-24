@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
 
+### Fixed
+- while you set up your journal, the time-of-day background now fills the whole window. it used to stop short of the edges, leaving a plain band down each side.
+
 ## [2.0.20 (build 54)] - 2026-09-24
 
 ### Changed
