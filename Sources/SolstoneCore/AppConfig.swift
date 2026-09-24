@@ -124,7 +124,7 @@ public struct AppConfig: Sendable {
     public var excludedTitlePatterns: [String]
 
     /// Exclude private browser windows, detected by a marker in the window title.
-    /// No browser has been confirmed to show one on the Mac, so owner copy names none.
+    /// Only Firefox shows one on the Mac (measured), so owner copy names only Firefox.
     public var excludePrivateBrowsing: Bool
 
     // MARK: - Server Upload Configuration

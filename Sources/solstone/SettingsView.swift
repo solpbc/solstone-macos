@@ -2555,10 +2555,10 @@ struct SettingsView: View {
 
             GroupBox("private browsing") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Toggle("keep browser windows with words like private or incognito in the title out of your journal", isOn: excludePrivateBrowsingBinding)
-                        .help("reads the window title. no browser has been confirmed to show private mode in the title, so a private window may reach your journal. an ordinary window with words like private or incognito in its title can also be kept out. to keep every window of a browser out of your journal, add that browser to the excluded apps.")
+                    Toggle("keep private windows out of your journal: Firefox set to English", isOn: excludePrivateBrowsingBinding)
+                        .help("reads the window title and matches private windows in Firefox set to English. Safari, Chrome, Edge and Brave don't show private mode in the title it reads, and other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps.")
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsing)
-                    Text("this reads the titles of Safari, Chrome and Firefox windows, and no other browser's. no browser has been confirmed to show private mode in the title, so a private window may reach your journal. it can also keep out an ordinary window whose title has words like private or incognito. to keep every window of a browser out of your journal, add that browser to the excluded apps above.")
+                    Text("this reads the window title and matches private windows in Firefox. that was checked on Firefox 156 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. Safari 27, Chrome 154, Edge 153 and Brave 153 don't show private mode in the window title this setting reads, and other browsers are not matched, so their private windows reach your journal. a web page can end its own title the way Firefox marks a private window, and then an ordinary Firefox window showing it is kept out too. to keep every window of a browser out of your journal, add that browser to the excluded apps above.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -17,15 +17,17 @@ public final class WindowExclusionDetector: @unchecked Sendable {
     private var lastLogTime: Date = .distantPast
     private let logInterval: TimeInterval = 10.0
 
-    /// Browsers the title check looks at. Unmeasured: no private window of any of them has been
-    /// read on a Mac, so the markers below are expectations, not observations, and owner copy
-    /// names none of them as covered. A row is kept only once a real private window shows it.
-    private static let browserNames: Set<String> = ["safari", "google chrome", "firefox"]
+    /// The one private-window form measured on a Mac: Firefox 156 (English) ends a private
+    /// window's title with this, after the page title. Safari 27, Chrome 154, Edge 153 and
+    /// Brave 1.95 were measured too and put no private marker in the title, so they have no row.
+    /// An ordinary Firefox window shows the bare page title, so a page whose own title ends with
+    /// this exact text is also matched; nothing in the title can tell the two apart.
+    static let firefoxPrivateTitleSuffix = " \u{2014} Private Browsing"
 
     /// Creates a detector for the specified app names
     /// - Parameters:
     ///   - appNames: Application names to match (case-insensitive, exact match)
-    ///   - detectPrivateBrowsing: Whether to also detect private/incognito browser windows
+    ///   - detectPrivateBrowsing: Whether to also detect private browser windows by title (Firefox only, see `firefoxPrivateTitleSuffix`)
     ///   - titlePatterns: Patterns to match in any window title - exclude window if any pattern matches
     ///   - windowRecordProvider: Provider of on-screen layer-0 window records
     public init(
@@ -116,33 +118,12 @@ public final class WindowExclusionDetector: @unchecked Sendable {
         return excludedIDs
     }
 
-    /// Checks if a window looks like a private browser window by its title (unmeasured, see `browserNames`)
+    /// Checks if a window is a private browser window by its title
     /// - Parameters:
     ///   - ownerName: The application name (lowercase)
     ///   - windowTitle: The window title
     /// - Returns: True if this is a private browsing window
     static func isPrivateBrowserWindow(ownerName: String, windowTitle: String) -> Bool {
-        guard browserNames.contains(ownerName) else {
-            return false
-        }
-
-        let titleLower = windowTitle.lowercased()
-
-        switch ownerName {
-        case "safari":
-            // Expected, not measured: a bare substring, so an ordinary window whose page title says "private" also matches
-            return titleLower.contains("private")
-
-        case "google chrome":
-            // Expected, not measured: current Chromium puts the private annotation in the accessibility name, not the caption
-            return titleLower.contains("(incognito)") || titleLower.contains("incognito")
-
-        case "firefox":
-            // Expected, not measured: on Windows, Firefox writes "Mozilla Firefox Private Browsing" at the end of the title
-            return titleLower.contains("(private browsing)") || titleLower.contains("private browsing")
-
-        default:
-            return false
-        }
+        ownerName == "firefox" && windowTitle.hasSuffix(firefoxPrivateTitleSuffix)
     }
 }

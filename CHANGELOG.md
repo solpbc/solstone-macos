@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- the private-browsing setting now names the one browser whose private windows showed private mode in the title this setting reads on the mac: Firefox 156, set to English. Safari 27, Chrome 154, Edge 153 and Brave 153 don't show it there, and other browsers are not matched, so private windows in those reach your journal. the match uses English wording, so Firefox set to another language may not match. private windows you opened in Safari, Chrome, Edge, Brave or another browser, or in Firefox set to another language, may already be in your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps in privacy settings.
+
+### Fixed
+- the private-browsing setting no longer keeps an ordinary window out of your journal just because its page title contains "private" in Safari, "incognito" in Chrome or "private browsing" in Firefox, as in a page about private equity. those windows were kept out even though they were not private.
+
 ## [2.0.15] - 2026-09-24
 
 ### Fixed
