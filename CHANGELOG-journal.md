@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-<!-- make bump-release-journal scaffolds a dated block above the first ## [ and does not read [Unreleased], so the release cut must fold these bullets into that scaffold. -->
+## [2.0.21 (build 55)] - 2026-09-24
+
+### Changed
+- updated the bundled journal to [2.0.17](https://solstone.app/releases#v2.0.17) →
 
 ### Fixed
 - while you set up your journal, the time-of-day background now fills the whole window. it used to stop short of the edges, leaving a plain band down each side.
