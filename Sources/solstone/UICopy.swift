@@ -177,6 +177,21 @@ public enum UICopy {
     public static let SETTINGS_DIAGNOSTICS_ERROR = "error"
     public static let SETTINGS_DIAGNOSTICS_NO_CONNECTION = "no connection yet"
     public static let SETTINGS_DIAGNOSTICS_NO_RECENT_CODES = "no recent state codes"
+    public static let JOURNAL_ADDRESSES_LABEL = "addresses"
+    public static let JOURNAL_RELAY_LABEL = "relay"
+    public static let JOURNAL_RELAY_OFF = "off"
+    public static func journalRelayOn(host: String) -> String {
+        "on \u{00B7} \(host)"
+    }
+    public static let JOURNAL_CONNECTED_THROUGH_LABEL = "connected through"
+    public static let JOURNAL_CONNECTED_THROUGH_RELAY = "the relay"
+    public static let JOURNAL_ADDRESSES_TRIED_LABEL = "addresses tried"
+    /// `tried A` · `tried A and B` · `tried A, B and C`
+    public static func journalTriedAddresses(_ addresses: [String]) -> String? {
+        guard let last = addresses.last else { return nil }
+        guard addresses.count > 1 else { return "tried \(last)" }
+        return "tried \(addresses.dropLast().joined(separator: ", ")) and \(last)"
+    }
     public static let SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT = "if solstone is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old solstone entry and try enabling screen recording again."
     public static let SETTINGS_NEXT_GRANT_PERMISSIONS = "next: grant permissions →"
     public static let SETTINGS_PERMISSIONS_SCREEN_EXPLAINER = "macOS lists this as Screen & System Audio Recording. grant it so what you share can go into your journal."

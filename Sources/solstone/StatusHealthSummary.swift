@@ -48,7 +48,17 @@ internal struct StatusHealthSummary: Equatable, Sendable {
     }
 }
 
-internal func journalHost(_ serverURL: String?) -> String {
+/// The address a paired journal is named by on the status card: its first
+/// paired address. Never the relay's host, which is not where the journal
+/// lives. A same-Mac pairing keeps its own wording, so it has none.
+internal func statusCardPairedJournalAddress(pairedAddresses: [String], isPairedHome: Bool) -> String? {
+    isPairedHome ? nil : pairedAddresses.first
+}
+
+internal func journalHost(_ serverURL: String?, pairedJournalAddress: String? = nil) -> String {
+    if let pairedJournalAddress, !pairedJournalAddress.isEmpty {
+        return pairedJournalAddress
+    }
     guard let serverURL, !serverURL.isEmpty else {
         return "your journal"
     }
@@ -60,8 +70,12 @@ internal func journalHost(_ serverURL: String?) -> String {
     return serverURL
 }
 
-internal func encryptionClause(_ serverURL: String?) -> String {
-    serverURL?.hasPrefix("https://") == true ? ", encrypted" : ""
+internal func encryptionClause(_ serverURL: String?, pairedJournalAddress: String? = nil) -> String {
+    // A paired journal is reached over pinned TLS, whatever its address says.
+    if let pairedJournalAddress, !pairedJournalAddress.isEmpty {
+        return ", encrypted"
+    }
+    return serverURL?.hasPrefix("https://") == true ? ", encrypted" : ""
 }
 
 internal func coarseRelativeTime(_ date: Date, now: Date) -> String {
@@ -84,9 +98,11 @@ internal func bundledStatusFooterText(permissionsGranted: Bool, microphoneCount:
     return "everything stays on this Mac · \(permissions) · \(microphones)"
 }
 
-internal func externalStatusFooterText(serverURL: String?, permissionsGranted: Bool) -> String {
+internal func externalStatusFooterText(serverURL: String?, pairedJournalAddress: String? = nil, permissionsGranted: Bool) -> String {
     let permissions = permissionsGranted ? "permissions granted" : "permissions need attention"
-    return "solstone is on · your journal lives on \(journalHost(serverURL))\(encryptionClause(serverURL)) · \(permissions)"
+    let host = journalHost(serverURL, pairedJournalAddress: pairedJournalAddress)
+    let encryption = encryptionClause(serverURL, pairedJournalAddress: pairedJournalAddress)
+    return "solstone is on · your journal lives on \(host)\(encryption) · \(permissions)"
 }
 
 extension StatusHealthSummary {
@@ -98,6 +114,7 @@ extension StatusHealthSummary {
         pendingCount: Int,
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
         serverURL: String?,
+        pairedJournalAddress: String? = nil,
         now: Date,
         selectedSources: CaptureSources = .all,
         permittedSources: CaptureSources = .all,
@@ -158,6 +175,7 @@ extension StatusHealthSummary {
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
             serverURL: serverURL,
+            pairedJournalAddress: pairedJournalAddress,
             now: now,
             lastHealthReason: lastHealthReason
         )
@@ -180,10 +198,11 @@ extension StatusHealthSummary {
         pendingCount: Int,
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
         serverURL: String?,
+        pairedJournalAddress: String?,
         now: Date,
         lastHealthReason: ObserverHealthFailureReason? = nil
     ) -> StatusHealthSummary {
-        let host = journalHost(serverURL)
+        let host = journalHost(serverURL, pairedJournalAddress: pairedJournalAddress)
         let isBundled = serviceMode == .bundled
 
         if isBundled {

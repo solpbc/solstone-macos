@@ -45,6 +45,8 @@ final class PairingCoordinator {
     typealias ClearLastSuccessfulJournalContact = @MainActor @Sendable () -> Void
 
     private(set) var state: PairingFlowState = .idle
+    /// The one address a failed ceremony dialed, when the link named exactly one.
+    private(set) var failedAddress: String?
 
     @ObservationIgnored
     private let pair: PairOperation
@@ -105,6 +107,7 @@ final class PairingCoordinator {
 
     func submitPairingLink(_ rawLink: String) async {
         pendingSwitchPairing = nil
+        failedAddress = nil
 
         let pairURL: PairURL
         do {
@@ -178,7 +181,9 @@ final class PairingCoordinator {
                     publicFields: ["errorType": String(describing: type(of: error))]
                 )
             )
-            state = .failed(Self.failure(for: error))
+            let failure = Self.failure(for: error)
+            failedAddress = failure == .homeUnreachable ? Self.singleCandidateAddress(pairURL) : nil
+            state = .failed(failure)
             return
         }
 
@@ -312,6 +317,13 @@ final class PairingCoordinator {
         }
     }
 
+    static func singleCandidateAddress(_ pairURL: PairURL) -> String? {
+        let addresses = JournalAddressText.distinct(pairURL.candidates.map {
+            JournalAddressText.format(host: $0.address, port: Int($0.port))
+        })
+        return addresses.count == 1 ? addresses[0] : nil
+    }
+
     static func invalidLinkReason(_ error: PairURLError) -> String {
         switch error {
         case .wrongScheme(nil):
@@ -352,10 +364,17 @@ final class PairingCoordinator {
 
 extension PairingFailure {
     var message: String {
+        message(address: nil)
+    }
+
+    func message(address: String?) -> String {
         switch self {
         case .staleLink:
             return "this pairing window closed or expired. get a fresh link from your journal's network app and try again."
         case .homeUnreachable:
+            if let address {
+                return "couldn't reach your journal at \(address). make sure it's running, then try again."
+            }
             return "couldn't reach your journal. make sure it's running, then try again."
         case .relayUnauthorized:
             return "your journal didn't accept this pairing link. get a fresh link from its network app and try again."

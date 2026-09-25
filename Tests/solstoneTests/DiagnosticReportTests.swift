@@ -25,7 +25,10 @@ struct DiagnosticReportTests {
             ))
         ))
 
-        #expect(report.rows.map(\.id) == DiagnosticReportRowID.allCases)
+        // With no pairing, the journal address rows have nothing to say and stay out.
+        #expect(report.rows.map(\.id) == DiagnosticReportRowID.allCases.filter {
+            ![.journalAddresses, .relay, .addressesTried, .connectedThrough].contains($0)
+        })
         #expect(report.text == """
         app version: 1.2.3
         screen recording: granted

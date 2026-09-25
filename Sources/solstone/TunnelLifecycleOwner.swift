@@ -126,6 +126,11 @@ final class TunnelLifecycleOwner {
     private(set) var isPairedHome = false
     private(set) var relayAccessStatus: PairingRelayAccessStatus = .noPairing
     private(set) var liveRelayEligible: Bool = true
+    /// The journal addresses dialed in the current connection cycle, distinct
+    /// and in dial order. A `.connecting` plan is not a dial, and the relay is
+    /// never listed.
+    private(set) var triedAddresses: [String] = []
+    private(set) var connectedThrough: JournalConnectedThrough?
     private(set) var pendingDurableClear: (pairingGen: UInt64, accessGen: UInt64)?
     private(set) var transportAttemptID: UInt64 = 0
     private(set) var transportIncarnation: UInt64 = 0
@@ -152,6 +157,27 @@ final class TunnelLifecycleOwner {
             instanceID: pairing.instanceID,
             fingerprint: pairing.fingerprint
         )
+    }
+
+    /// The stored pairing's journal addresses, in the order it holds them.
+    var pairedAddresses: [String] {
+        guard case .loaded(let pairing) = cachedPairingOutcome else {
+            return []
+        }
+        return JournalAddressText.distinct(pairing.localEndpoints.map(JournalAddressText.format))
+    }
+
+    /// The relay's host when a connection attempt would actually dial it.
+    var dialableRelayHost: String? {
+        guard case .loaded(let pairing) = cachedPairingOutcome else {
+            return nil
+        }
+        for candidate in usableCandidates(for: pairing) {
+            if case .relay(let endpoint, _, _) = candidate {
+                return JournalAddressText.relayHost(endpoint)
+            }
+        }
+        return nil
     }
 
     var sameMachineStoredPairingState: SameMachineStoredPairingState {
@@ -379,6 +405,8 @@ final class TunnelLifecycleOwner {
     func reevaluatePairing() async {
         transportAttemptID &+= 1
         journalVersion.clear()
+        triedAddresses = []
+        connectedThrough = nil
         invalidatePairingCache()
         liveRelayEligible = true
         pendingDurableClear = nil
@@ -459,6 +487,9 @@ final class TunnelLifecycleOwner {
     }
 
     private func handleStateTransition(old: TunnelLifecycleState, new: TunnelLifecycleState) {
+        if case .connected = new {} else {
+            connectedThrough = nil
+        }
         updateConnectionVerdict()
         if case .connected(let port, _) = new {
             journalVersion.adoptConnectedPort(port)
@@ -891,6 +922,17 @@ final class TunnelLifecycleOwner {
             guard let self, self.running, !Task.isCancelled, self.transportAttemptID == attemptID, !self.isIntentionallyRetiring else { return }
             await self.handleUnexpectedAttemptStreamCompletion(forIncarnation: nil, forAttempt: attemptID)
         }
+        // Until install nothing else reads this candidate's dial progress, and a
+        // journal that can't be reached is never installed.
+        let dialObservation = Task { @MainActor [weak self] in
+            for await tunnelState in candidate.stateUpdates {
+                guard let self, self.running, !Task.isCancelled, self.transportAttemptID == attemptID else {
+                    return
+                }
+                self.noteDialProgress(tunnelState)
+            }
+        }
+        defer { dialObservation.cancel() }
         var loopbackAttempt = 0
         while operationIsCurrent(pairing: pGen, access: aGen, attempt: attemptID), !rejectedAttemptIDs.contains(attemptID) {
             do {
@@ -1129,6 +1171,9 @@ final class TunnelLifecycleOwner {
         if case .error = state {
             return
         }
+        if credentialStore.currentGenerations().pairingGeneration == pairingRevision {
+            noteDialProgress(tunnelState)
+        }
 
         switch tunnelState {
         case .disconnected:
@@ -1150,6 +1195,7 @@ final class TunnelLifecycleOwner {
                     return false
                 }()
                 state = .connected(localPort: port, via: Self.route(for: via))
+                connectedThrough = JournalConnectedThrough(via)
                 if !wasConnected {
                     probeWatchdog.noteConnectionEstablished()
                     startProbe()
@@ -1178,6 +1224,28 @@ final class TunnelLifecycleOwner {
                 health = .unknown
             }
         }
+    }
+
+    /// `.tlsHandshaking` is forwarded at each candidate's dial start, so it is
+    /// the record of what was dialed; a `.connecting` plan only opens a cycle.
+    private func noteDialProgress(_ tunnelState: TunnelState) {
+        switch tunnelState {
+        case .connecting, .connected:
+            setTriedAddresses([])
+        case .tlsHandshaking(.lanDirect(let host, let port)):
+            let address = JournalAddressText.format(host: host, port: port)
+            if !triedAddresses.contains(address) {
+                setTriedAddresses(triedAddresses + [address])
+            }
+        case .disconnected, .tlsHandshaking(.relay), .awaitingBroker, .failed:
+            break
+        }
+    }
+
+    private func setTriedAddresses(_ addresses: [String]) {
+        guard addresses != triedAddresses else { return }
+        triedAddresses = addresses
+        updateConnectionVerdict()
     }
 
     private func handleConnectionMode(_ mode: ConnectionMode?) {
@@ -1674,7 +1742,8 @@ final class TunnelLifecycleOwner {
             supervisorAttemptState: supervisorAttemptState,
             isProxyStarting: isProxyStarting,
             establishedLoopbackPort: establishedLoopbackPort,
-            hasTransport: transport != nil
+            hasTransport: transport != nil,
+            triedAddresses: triedAddresses
         )
     }
 
@@ -1686,7 +1755,8 @@ final class TunnelLifecycleOwner {
         supervisorAttemptState: TunnelSupervisorAttemptState,
         isProxyStarting: Bool,
         establishedLoopbackPort: Int?,
-        hasTransport: Bool
+        hasTransport: Bool,
+        triedAddresses: [String] = []
     ) -> JournalConnectionVerdict {
         // Layer (a): Live Installed Route
         if case .connected(let localPort, _) = state,
@@ -1770,7 +1840,7 @@ final class TunnelLifecycleOwner {
         return JournalConnectionVerdict(
             severity: .attention,
             message: "can't reach your journal right now",
-            caption: nil,
+            caption: UICopy.journalTriedAddresses(triedAddresses),
             axToken: PairingConnectionAXState.unreachable.axToken,
             failureCause: .unreachable(nil)
         )

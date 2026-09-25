@@ -44,6 +44,18 @@ func isSameMacJournalDoor(
         || BundledJournalEndpoint.isBundledServiceURL(serverURL)
 }
 
+/// The journal line of the agent instructions: the paired address first, the
+/// legacy server URL otherwise.
+func agentInstructionsJournalValue(pairedAddresses: [String], serverURL: String?) -> String {
+    if let first = pairedAddresses.first {
+        return first
+    }
+    if let serverURL, !serverURL.isEmpty {
+        return serverURL
+    }
+    return "not configured"
+}
+
 func journalLocationLabel(isSameMacJournalDoor: Bool) -> String {
     isSameMacJournalDoor
         ? UICopy.JOURNAL_MODE_THIS_MAC_LABEL
@@ -1153,6 +1165,8 @@ struct SettingsView: View {
                     Text(journalLocationLabel)
                 }
 
+                journalAddressRows
+
                 if pairingMismatch {
                     pairingMismatchPane
                 } else {
@@ -1233,6 +1247,31 @@ struct SettingsView: View {
 
         externalJournalSyncSection
         externalJournalStorageSection
+    }
+
+    @ViewBuilder
+    private var journalAddressRows: some View {
+        let owner = appState.tunnelLifecycleOwner
+        let addresses = owner.pairedAddresses
+        if !addresses.isEmpty {
+            LabeledContent(UICopy.JOURNAL_ADDRESSES_LABEL) {
+                Text(addresses.joined(separator: "\n"))
+                    .multilineTextAlignment(.trailing)
+                    .textSelection(.enabled)
+            }
+        }
+        if owner.cachedPairingIdentity != nil {
+            LabeledContent(UICopy.JOURNAL_RELAY_LABEL) {
+                Text(journalRelayValue(dialableRelayHost: owner.dialableRelayHost))
+                    .textSelection(.enabled)
+            }
+        }
+        if let connectedThrough = owner.connectedThrough {
+            LabeledContent(UICopy.JOURNAL_CONNECTED_THROUGH_LABEL) {
+                Text(connectedThrough.text)
+                    .textSelection(.enabled)
+            }
+        }
     }
 
     @ViewBuilder
@@ -1900,7 +1939,7 @@ struct SettingsView: View {
         switch appState.pairingCoordinator.state {
         case .failed(let failure):
             VStack(alignment: .leading, spacing: 8) {
-                Text(failure.message)
+                Text(failure.message(address: appState.pairingCoordinator.failedAddress))
                     .font(.caption)
                     .foregroundStyle(.red)
                 Button("retry") {
@@ -2666,6 +2705,10 @@ struct SettingsView: View {
             pendingCount: appState.uploadCoordinator.pendingCount,
             lastDeliveryOutcome: appState.uploadCoordinator.lastJournalDeliveryOutcome,
             serverURL: appState.config.serverURL,
+            pairedJournalAddress: statusCardPairedJournalAddress(
+                pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses,
+                isPairedHome: appState.tunnelLifecycleOwner.isPairedHome
+            ),
             now: Date(),
             selectedSources: appState.config.selectedSources,
             permittedSources: appState.capture.permittedSources,
@@ -3109,7 +3152,7 @@ struct SettingsView: View {
         installed at: \(Bundle.main.bundlePath)
         files: ~/Library/Application Support/Solstone/captures/
         logs: /usr/bin/log show --predicate '\(SolstoneLogSubsystem.persistedHelpPredicate)' --last 1h
-        journal: \(appState.config.serverURL ?? "not configured")
+        journal: \(agentInstructionsJournalValue(pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses, serverURL: appState.config.serverURL))
 
         if intake isn't running, check settings → permissions.
         if it's not syncing, check settings → journal.
@@ -3317,7 +3360,14 @@ struct SettingsView: View {
                 ingestReason: appState.uploadCoordinator.lastErrorReason,
                 ingestRoute: appState.uploadCoordinator.lastRequestedIngestPath,
                 now: Date(),
-                activeSources: appState.captureManager.activeSources
+                activeSources: appState.captureManager.activeSources,
+                connection: DiagnosticConnectionInput(
+                    isPaired: appState.tunnelLifecycleOwner.cachedPairingIdentity != nil,
+                    pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses,
+                    dialableRelayHost: appState.tunnelLifecycleOwner.dialableRelayHost,
+                    triedAddresses: appState.tunnelLifecycleOwner.triedAddresses,
+                    connectedThrough: appState.tunnelLifecycleOwner.connectedThrough
+                )
             ))
             diagnosticsLoading = false
         }
@@ -3557,6 +3607,14 @@ struct SettingsView: View {
             return AXID.Settings.Help.diagnosticsJournalLinkRow
         case .recentStateCodes:
             return AXID.Settings.Help.diagnosticsRecentStateCodesRow
+        case .journalAddresses:
+            return AXID.Settings.Help.diagnosticsJournalAddressesRow
+        case .relay:
+            return AXID.Settings.Help.diagnosticsRelayRow
+        case .addressesTried:
+            return AXID.Settings.Help.diagnosticsAddressesTriedRow
+        case .connectedThrough:
+            return AXID.Settings.Help.diagnosticsConnectedThroughRow
         }
     }
 

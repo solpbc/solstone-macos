@@ -14,6 +14,10 @@ internal enum DiagnosticReportRowID: CaseIterable, Hashable, Sendable {
     case ingestReason
     case ingestRoute
     case journalLink
+    case journalAddresses
+    case relay
+    case addressesTried
+    case connectedThrough
     case recentStateCodes
 }
 
@@ -56,6 +60,25 @@ internal struct DiagnosticReportInput: Equatable, Sendable {
     let ingestRoute: String?
     let now: Date
     var activeSources: CaptureSources? = nil
+    var connection: DiagnosticConnectionInput = .unpaired
+}
+
+/// What the app holds and has done to reach the journal. Addresses, the relay's
+/// host and the winning route only: never an instance ID, a token or a key.
+internal struct DiagnosticConnectionInput: Equatable, Sendable {
+    let isPaired: Bool
+    let pairedAddresses: [String]
+    let dialableRelayHost: String?
+    let triedAddresses: [String]
+    let connectedThrough: JournalConnectedThrough?
+
+    static let unpaired = DiagnosticConnectionInput(
+        isPaired: false,
+        pairedAddresses: [],
+        dialableRelayHost: nil,
+        triedAddresses: [],
+        connectedThrough: nil
+    )
 }
 
 internal enum DiagnosticCopyFeedback: Equatable, Sendable {
@@ -82,7 +105,37 @@ internal enum DiagnosticCopyFeedback: Equatable, Sendable {
 }
 
 internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> DiagnosticReport {
-    DiagnosticReport(rows: [
+    let connection = input.connection
+    var connectionRows: [DiagnosticReportRow] = []
+    if connection.isPaired, !connection.pairedAddresses.isEmpty {
+        connectionRows.append(DiagnosticReportRow(
+            id: .journalAddresses,
+            label: UICopy.JOURNAL_ADDRESSES_LABEL,
+            value: connection.pairedAddresses.joined(separator: "\n")
+        ))
+    }
+    if connection.isPaired {
+        connectionRows.append(DiagnosticReportRow(
+            id: .relay,
+            label: UICopy.JOURNAL_RELAY_LABEL,
+            value: journalRelayValue(dialableRelayHost: connection.dialableRelayHost)
+        ))
+    }
+    if connection.connectedThrough == nil, !connection.triedAddresses.isEmpty {
+        connectionRows.append(DiagnosticReportRow(
+            id: .addressesTried,
+            label: UICopy.JOURNAL_ADDRESSES_TRIED_LABEL,
+            value: connection.triedAddresses.joined(separator: "\n")
+        ))
+    }
+    if let connectedThrough = connection.connectedThrough {
+        connectionRows.append(DiagnosticReportRow(
+            id: .connectedThrough,
+            label: UICopy.JOURNAL_CONNECTED_THROUGH_LABEL,
+            value: connectedThrough.text
+        ))
+    }
+    return DiagnosticReport(rows: [
         DiagnosticReportRow(
             id: .appVersion,
             label: UICopy.SETTINGS_DIAGNOSTICS_APP_VERSION,
@@ -133,7 +186,8 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
             id: .journalLink,
             label: UICopy.SETTINGS_DIAGNOSTICS_JOURNAL_LINK,
             value: diagnosticJournalLinkValue(input.evidence)
-        ),
+        )
+    ] + connectionRows + [
         DiagnosticReportRow(
             id: .recentStateCodes,
             label: UICopy.SETTINGS_DIAGNOSTICS_RECENT_STATE_CODES,
