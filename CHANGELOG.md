@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.17] - 2026-09-26
+
+### Fixed
+- reaching your journal at a public address now works when your mac is on a network that only uses IPv6. before, the solstone app couldn't reach your journal there.
+
 ## [2.0.16] - 2026-09-25
 
 ### Added
