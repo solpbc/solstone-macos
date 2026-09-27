@@ -219,8 +219,6 @@
       "settings.status.observing.nextSegment.state",
       "settings.status.observing.state",
       "settings.status.setup.app.version.state",
-      "settings.status.setup.commandLineTools.action",
-      "settings.status.setup.commandLineTools.state",
       "settings.status.setup.journalApp.action",
       "settings.status.setup.journalApp.state",
       "settings.status.setup.journalLink.action",
@@ -416,10 +414,6 @@
     },
     "settings.status.setup.app.version.state" : {
       "kind" : "freeform"
-    },
-    "settings.status.setup.commandLineTools.state" : {
-      "kind" : "enum",
-      "vocabulary" : "SetupCheckRowAXState"
     },
     "settings.status.setup.journalApp.state" : {
       "kind" : "enum",

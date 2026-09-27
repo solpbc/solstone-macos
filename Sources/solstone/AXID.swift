@@ -176,8 +176,6 @@ enum AXID {
             static let setupJournalAppAction = "settings.status.setup.journalApp.action"
             static let setupJournalLinkState = "settings.status.setup.journalLink.state"
             static let setupJournalLinkAction = "settings.status.setup.journalLink.action"
-            static let setupCommandLineToolsState = "settings.status.setup.commandLineTools.state"
-            static let setupCommandLineToolsAction = "settings.status.setup.commandLineTools.action"
             static let setupScreenRecordingState = "settings.status.setup.screenRecording.state"
             static let setupScreenRecordingAction = "settings.status.setup.screenRecording.action"
             static let setupMicrophoneState = "settings.status.setup.microphone.state"

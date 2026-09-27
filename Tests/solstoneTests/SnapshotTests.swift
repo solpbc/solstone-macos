@@ -789,9 +789,7 @@ struct SnapshotTests {
                 initialStorageUsedMB: 42,
                 initialSetupProbeSnapshot: setupProbeSnapshot(
                     solAppPlacement: .ready,
-                    journalAppInstalled: .ready,
-                    solstoneWrapperExecutable: .ready,
-                    journalWrapperExecutable: .ready
+                    journalAppInstalled: .ready
                 )
             ),
             size: settingsSize,
@@ -814,8 +812,6 @@ struct SnapshotTests {
                 initialSetupProbeSnapshot: setupProbeSnapshot(
                     solAppPlacement: .needsAttention,
                     journalAppInstalled: .needsAttention,
-                    solstoneWrapperExecutable: .needsAttention,
-                    journalWrapperExecutable: .needsAttention,
                     hasPromptedScreenRecording: true,
                     screenDiagnostic: ScreenRecordingPermissionDiagnostic(
                         preflightSucceeded: false,
@@ -847,8 +843,6 @@ struct SnapshotTests {
                 initialSetupProbeSnapshot: setupProbeSnapshot(
                     solAppPlacement: .ready,
                     journalAppInstalled: .unavailable,
-                    solstoneWrapperExecutable: .ready,
-                    journalWrapperExecutable: .ready,
                     screenDiagnostic: ScreenRecordingPermissionDiagnostic(
                         preflightSucceeded: true,
                         sckFailedAfterPositivePreflight: true
@@ -1018,16 +1012,12 @@ struct SnapshotTests {
     private func setupProbeSnapshot(
         solAppPlacement: SetupProbeOutcome = .ready,
         journalAppInstalled: SetupProbeOutcome = .ready,
-        solstoneWrapperExecutable: SetupProbeOutcome = .ready,
-        journalWrapperExecutable: SetupProbeOutcome = .ready,
         hasPromptedScreenRecording: Bool = false,
         screenDiagnostic: ScreenRecordingPermissionDiagnostic? = nil
     ) -> SetupProbeSnapshot {
         SetupProbeSnapshot(
             solAppPlacement: solAppPlacement,
             journalAppInstalled: journalAppInstalled,
-            solstoneWrapperExecutable: solstoneWrapperExecutable,
-            journalWrapperExecutable: journalWrapperExecutable,
             hasPromptedScreenRecording: hasPromptedScreenRecording,
             screenDiagnostic: screenDiagnostic
         )

@@ -9,13 +9,6 @@ import UpdateKit
 
 @Suite("SettingsView")
 struct SettingsViewTests {
-    @Test func commandLineToolsProbeUsesCurrentCommandNames() throws {
-        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
-        #expect(wireUpContains(source, "wrapperExecutableOutcome(named: \"solstone\")"))
-        #expect(wireUpContains(source, "wrapperExecutableOutcome(named: \"journal\")"))
-        #expect(!wireUpContains(source, "wrapperExecutableOutcome(named: \"sol\")"))
-    }
-
     @Test func configuredJournalPanelWiresAffordancesFromRemedy() throws {
         let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
         #expect(wireUpContains(source, "journalPanelAffordances(for:"))

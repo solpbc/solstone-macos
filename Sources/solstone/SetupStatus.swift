@@ -129,7 +129,6 @@ internal enum SetupCheckRowID: CaseIterable, Hashable, Sendable {
     case solApp
     case journalApp
     case journalLink
-    case commandLineTools
     case screenRecording
     case microphone
     case lastDelivery
@@ -195,8 +194,6 @@ internal struct SetupSnapshotInput: Equatable, Sendable {
     let solAppPlacement: SetupProbeOutcome
     let journalAppInstalled: SetupProbeOutcome
     let serviceIsDone: Bool
-    let solstoneWrapperExecutable: SetupProbeOutcome
-    let journalWrapperExecutable: SetupProbeOutcome
     let screenRecording: PermissionOutcome
     let microphone: PermissionOutcome
     let lastDeliveryOutcome: LastJournalDeliveryOutcome
@@ -208,16 +205,12 @@ internal struct SetupSnapshotInput: Equatable, Sendable {
 internal struct SetupProbeSnapshot: Equatable, Sendable {
     var solAppPlacement: SetupProbeOutcome
     var journalAppInstalled: SetupProbeOutcome
-    var solstoneWrapperExecutable: SetupProbeOutcome
-    var journalWrapperExecutable: SetupProbeOutcome
     var hasPromptedScreenRecording: Bool
     var screenDiagnostic: ScreenRecordingPermissionDiagnostic?
 
     static let checking = SetupProbeSnapshot(
         solAppPlacement: .checking,
         journalAppInstalled: .checking,
-        solstoneWrapperExecutable: .checking,
-        journalWrapperExecutable: .checking,
         hasPromptedScreenRecording: false,
         screenDiagnostic: nil
     )
@@ -259,10 +252,6 @@ internal func buildSetupSnapshot(_ input: SetupSnapshotInput) -> SetupSnapshotPr
             action: .openJournalSettings,
             actionLabel: UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION,
             notRequiredText: localArtifactsRequired ? nil : UICopy.SETTINGS_SETUP_SHARED_NOT_REQUIRED
-        ),
-        commandLineToolsRow(
-            solstoneWrapperExecutable: input.solstoneWrapperExecutable,
-            journalWrapperExecutable: input.journalWrapperExecutable
         ),
         permissionRow(
             id: .screenRecording,
@@ -371,38 +360,6 @@ private func probeRow(
         action: state == .needsAttention ? action : nil,
         actionLabel: state == .needsAttention ? actionLabel : nil,
         votes: votes
-    )
-}
-
-private func commandLineToolsRow(
-    solstoneWrapperExecutable: SetupProbeOutcome,
-    journalWrapperExecutable: SetupProbeOutcome
-) -> SetupCheckRow {
-    let state: SetupCheckRowAXState
-    let value: String
-    if solstoneWrapperExecutable == .unavailable || journalWrapperExecutable == .unavailable {
-        state = .unavailable
-        value = UICopy.SETTINGS_SETUP_SHARED_COULD_NOT_CHECK
-    } else if solstoneWrapperExecutable == .checking || journalWrapperExecutable == .checking {
-        state = .checking
-        value = UICopy.SETTINGS_SETUP_SHARED_CHECKING
-    } else if solstoneWrapperExecutable == .needsAttention || journalWrapperExecutable == .needsAttention {
-        state = .notRequired
-        value = UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_NOT_INSTALLED
-    } else {
-        state = .ready
-        value = UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_READY
-    }
-
-    return SetupCheckRow(
-        id: .commandLineTools,
-        label: UICopy.SETTINGS_SETUP_COMMAND_LINE_TOOLS_LABEL,
-        value: value,
-        state: state,
-        systemImage: setupSystemImage(for: state),
-        action: nil,
-        actionLabel: nil,
-        votes: false
     )
 }
 

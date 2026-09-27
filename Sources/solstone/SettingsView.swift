@@ -220,7 +220,6 @@ struct SettingsView: View {
     ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>
     private let markFetch: @MainActor @Sendable (String) async -> JournalMark?
     private let runningJournalController: any RunningJournalController
-    private let setupFileManager: FileManager
     private let diagnosticClipboardWrite: @MainActor (String) -> Bool
     private let diagnosticAnnouncement: @MainActor (String) -> Void
     private let openURL: @MainActor (URL) -> Bool
@@ -260,7 +259,6 @@ struct SettingsView: View {
             await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL)
         },
         runningJournalController: any RunningJournalController = LiveRunningJournalController(),
-        setupFileManager: FileManager = .default,
         initialSetupProbeSnapshot: SetupProbeSnapshot = .checking,
         initialDiagnosticsExpanded: Bool = false,
         initialDiagnosticReport: DiagnosticReport? = nil,
@@ -294,7 +292,6 @@ struct SettingsView: View {
         self.sameMachinePairStart = sameMachinePairStart
         self.markFetch = markFetch
         self.runningJournalController = runningJournalController
-        self.setupFileManager = setupFileManager
         self.diagnosticClipboardWrite = diagnosticClipboardWrite
         self.diagnosticAnnouncement = diagnosticAnnouncement
         self.openURL = openURL
@@ -955,8 +952,6 @@ struct SettingsView: View {
             setupProbeSnapshot = SetupProbeSnapshot(
                 solAppPlacement: solAppPlacementOutcome(),
                 journalAppInstalled: runningJournalController.installedURL() == nil ? .needsAttention : .ready,
-                solstoneWrapperExecutable: wrapperExecutableOutcome(named: "solstone"),
-                journalWrapperExecutable: wrapperExecutableOutcome(named: "journal"),
                 hasPromptedScreenRecording: permissionChecker.hasPromptedScreenRecording,
                 screenDiagnostic: screenDiagnostic
             )
@@ -970,13 +965,6 @@ struct SettingsView: View {
         case .repair:
             return .needsAttention
         }
-    }
-
-    private func wrapperExecutableOutcome(named name: String) -> SetupProbeOutcome {
-        let wrapperURL = setupFileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".local/bin", isDirectory: true)
-            .appendingPathComponent(name)
-        return setupFileManager.isExecutableFile(atPath: wrapperURL.path) ? .ready : .needsAttention
     }
 
     // MARK: - Observer Tab
@@ -2680,8 +2668,6 @@ struct SettingsView: View {
             solAppPlacement: setupProbeSnapshot.solAppPlacement,
             journalAppInstalled: setupProbeSnapshot.journalAppInstalled,
             serviceIsDone: appState.serviceIsDone,
-            solstoneWrapperExecutable: setupProbeSnapshot.solstoneWrapperExecutable,
-            journalWrapperExecutable: setupProbeSnapshot.journalWrapperExecutable,
             screenRecording: screenOutcome,
             microphone: microphoneOutcome,
             lastDeliveryOutcome: primaryLastDeliveryOutcome,
@@ -2855,8 +2841,6 @@ struct SettingsView: View {
             return AXID.Settings.Status.setupJournalAppState
         case .journalLink:
             return AXID.Settings.Status.setupJournalLinkState
-        case .commandLineTools:
-            return AXID.Settings.Status.setupCommandLineToolsState
         case .screenRecording:
             return AXID.Settings.Status.setupScreenRecordingState
         case .microphone:
@@ -2874,8 +2858,6 @@ struct SettingsView: View {
             return AXID.Settings.Status.setupJournalAppAction
         case .journalLink:
             return AXID.Settings.Status.setupJournalLinkAction
-        case .commandLineTools:
-            return AXID.Settings.Status.setupCommandLineToolsAction
         case .screenRecording:
             return AXID.Settings.Status.setupScreenRecordingAction
         case .microphone:
