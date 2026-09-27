@@ -63,7 +63,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 - **AudioDeviceMonitor.swift** - Monitors audio device additions/removals
 - **VideoWriter** - H.264 hardware encoding to .mp4
 - **SingleTrackAudioWriter** - Single-source M4A recording with timing metadata
-- **AudioRemixer** - Combines individual M4A files into multi-track output with silence detection
+- **AudioRemixer** - Combines individual M4A files into multi-track output, dropping tracks with no speech
 - **SystemAudioStreamOutput** - SCStreamOutput routing system audio to SingleTrackAudioWriter
 - **ExternalMicCapture** - AVAudioEngine capture for all microphones
 - **MicrophoneMonitor** - CoreAudio device enumeration
@@ -77,7 +77,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 - **Dynamic Mic Join/Leave**: Mics can connect/disconnect mid-segment without rotation
 - **Audio Remix on Segment End**: Individual M4A files combined into single multi-track output
 - **Timing Offset Tracking**: Each source tracks start/end time for proper remix alignment
-- **Silent Track Detection**: RMS-based silence detection during remix, silent tracks skipped
+- **Speech Detection on Remix**: `SystemAudioAnalyzer` runs Apple's SoundAnalysis classifier (`SNClassifySoundRequest`) on each track. Tracks with no detected speech are skipped, and music-only stretches of system audio are silenced. If analysis fails, the track is kept
 - **Window Exclusion**: Filters out password managers and private browser windows
 
 ## File Paths
@@ -94,7 +94,7 @@ Server Key: UserDefaults
 - Segment rotation triggers on display changes and sleep/wake events (NOT mic changes)
 - Audio sources write to individual M4A files during segment, remixed at end
 - Interleaved track reading during remix ensures AVAssetWriter receives data from all tracks together
-- Silent mic tracks automatically detected via RMS analysis and skipped during remix
+- Tracks with no detected speech are skipped during remix (SoundAnalysis classifier, not an RMS level). `SingleTrackAudioWriter` uses an RMS threshold only to batch silent buffers while writing
 
 ## Logging
 
