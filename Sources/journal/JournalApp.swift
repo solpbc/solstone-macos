@@ -183,7 +183,6 @@ final class JournalAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@main
 struct JournalApp: App {
     @NSApplicationDelegateAdaptor(JournalAppDelegate.self) private var appDelegate
     @State private var model: JournalAppModel
