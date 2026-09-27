@@ -91,7 +91,7 @@ struct JournalSnapshotTests {
 
     /// The sun arc in both appearances at the spec's five check times (Denver 2026-09-23:
     /// 13:00, 19:41 = dusk + 15, 22:00, 01:00 true dark, 05:30 before dawn), for review next to
-    /// `cmo/brand/sbis/patterns/sun-arc/appearances/board.html`. Each frame is rendered in the
+    /// the sun-arc appearances board. Each frame is rendered in the
     /// window appearance the owner's system would give it (`NSAppearance` on the host, no
     /// SwiftUI override), bare and under the two surfaces the window shows.
     @Test func sunArcAppearanceMatrix() async throws {

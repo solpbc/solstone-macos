@@ -6,11 +6,11 @@ import Foundation
 
 /// The sun, all day — time-of-day background pattern.
 ///
-/// Ported from `cmo/brand/sbis/patterns/sun-arc/{index.md,sunarc.js}` in the extro repo
+/// Ported from the sun-arc reference implementation (`sunarc.js` plus its index)
 /// (founder lock 2026-09-19, amended 2026-09-23: the day in both appearances). Vendor the
 /// reference math (`SUNARC.both()`); do not re-derive it from the token constants alone.
 /// Section numbers below (§3, §4, §4a, §6, §7, §8a) refer to that spec; constant names follow
-/// `vpx/design-system/tokens.md` § the sun, all day.
+/// the sun-arc token section «the sun, all day».
 public enum SunArc {
     public static let phi: Double = 1.618_033_988_7
     public static let bow: Double = 0.079_19               // sagitta ÷ chord, §3
@@ -229,7 +229,7 @@ public struct SunArcTime: Sendable, Equatable {
         // same extended axis dusk is already on, so day progress keeps moving forward through
         // midnight instead of resetting to "before dawn".
         //
-        // The mirror (canon extro 5ed645e420): a sunrise before 00:30 puts dawn before midnight,
+        // The mirror rule: a sunrise before 00:30 puts dawn before midnight,
         // so a late-evening `m` at or past the wrapped-forward dawn is already tomorrow's dawn —
         // read it one day back, on the axis dawn is on.
         let m2: Double
@@ -386,7 +386,7 @@ public struct SunArcTwilight: Sendable, Equatable {
         // requires a non-zero length, so neither division below can be by zero.
         //
         // `m` is `time.axisMinutes`, the day's own extended axis: on a day whose sunset falls
-        // after local midnight, 00:00 up to dusk is still the day (canon since extro e56d376260).
+        // after local midnight, 00:00 up to dusk is still the day (the day-axis rule).
         let span = wrap(dawn - dusk), ms = wrap(m - dusk)
         let mid = span / 2, half = trueDarkHalf(span: span, trueDarkMinutes: trueDarkMinutes)
         let dS = mid - half, dE = mid + half
