@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- the "automatic updates" checkboxes and the "how often" menu in "updates" now show your change as soon as you make it. before, the boxes kept showing the old setting even though your change was saved, and each further click changed the setting again. if you clicked either box, check how each one is set now.
+
 ## [2.0.17] - 2026-09-26
 
 ### Fixed

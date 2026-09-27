@@ -85,10 +85,18 @@ public final class UpdateController {
     internal var checkForUpdatesInterceptor: (() -> Void)?
     #endif
 
+    // The updater settings read through to Sparkle, which Observation cannot see,
+    // so each one registers its own access and mutation. Without that, a write
+    // persists but the settings controls keep drawing the old value.
     public var automaticChecksEnabled: Bool {
-        get { updater?.automaticallyChecksForUpdates ?? true }
+        get {
+            access(keyPath: \.automaticChecksEnabled)
+            return updater?.automaticallyChecksForUpdates ?? true
+        }
         set {
-            updater?.automaticallyChecksForUpdates = newValue
+            withMutation(keyPath: \.automaticChecksEnabled) {
+                updater?.automaticallyChecksForUpdates = newValue
+            }
         }
     }
 
@@ -107,16 +115,26 @@ public final class UpdateController {
     }
 
     public var updateCheckInterval: TimeInterval {
-        get { updater?.updateCheckInterval ?? 86_400 }
+        get {
+            access(keyPath: \.updateCheckInterval)
+            return updater?.updateCheckInterval ?? 86_400
+        }
         set {
-            updater?.updateCheckInterval = newValue
+            withMutation(keyPath: \.updateCheckInterval) {
+                updater?.updateCheckInterval = newValue
+            }
         }
     }
 
     public var automaticDownloadsEnabled: Bool {
-        get { updater?.automaticallyDownloadsUpdates ?? false }
+        get {
+            access(keyPath: \.automaticDownloadsEnabled)
+            return updater?.automaticallyDownloadsUpdates ?? false
+        }
         set {
-            updater?.automaticallyDownloadsUpdates = newValue
+            withMutation(keyPath: \.automaticDownloadsEnabled) {
+                updater?.automaticallyDownloadsUpdates = newValue
+            }
         }
     }
 

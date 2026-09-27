@@ -1,4 +1,6 @@
 import Foundation
+import Observation
+import os
 import Sparkle
 import Testing
 @testable import UpdateKit
@@ -175,6 +177,44 @@ struct UpdateControllerTests {
         #expect(controller.automaticChecksEnabled)
         #expect(controller.updateCheckInterval == 604_800)
         #expect(!controller.automaticDownloadsEnabled)
+    }
+
+    @Test func updaterSettingsWritesNotifyObservers() {
+        clearDefaults()
+        defer { clearDefaults() }
+        let spy = SpyUpdater()
+
+        let controller = UpdateController(
+            feedURL: validFeedURL,
+            publicKey: validPublicKey,
+            log: updateKitTestLog,
+            errorDomain: updateKitTestErrorDomain,
+            defaults: isolatedDefaults.defaults
+        ) { _, _ in
+            spy
+        }
+
+        #expect(writeNotifiesObserver(
+            reading: { _ = controller.automaticChecksEnabled },
+            writing: { controller.automaticChecksEnabled = false }
+        ))
+        #expect(writeNotifiesObserver(
+            reading: { _ = controller.updateCheckInterval },
+            writing: { controller.updateCheckInterval = 604_800 }
+        ))
+        #expect(writeNotifiesObserver(
+            reading: { _ = controller.automaticDownloadsEnabled },
+            writing: { controller.automaticDownloadsEnabled = true }
+        ))
+    }
+
+    private func writeNotifiesObserver(reading read: () -> Void, writing write: () -> Void) -> Bool {
+        let notified = OSAllocatedUnfairLock(initialState: false)
+        withObservationTracking(read) {
+            notified.withLock { $0 = true }
+        }
+        write()
+        return notified.withLock { $0 }
     }
 
     @Test func updaterSettingsNilUpdaterReadsSparkleDefaultsAndIgnoresWrites() {
