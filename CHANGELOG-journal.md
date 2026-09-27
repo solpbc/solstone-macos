@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- the journal menu now has "open admin terminal". it opens a Terminal window in your own shell. in zsh (the mac default), bash or fish, `journal` and `solstone` there run this app's own copies. nothing is installed, and your shell files stay as they were.
+
 ### Fixed
 - running the journal app's own program from a terminal with a command, such as `journal --version`, now runs that command and returns. before, it opened the app instead and the terminal never got an answer.
 - the "automatic updates" checkboxes and the "how often" menu in "updates" now show your change as soon as you make it. before, the boxes kept showing the old setting even though your change was saved, and each further click changed the setting again. if you clicked either box, check how each one is set now.

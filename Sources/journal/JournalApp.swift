@@ -203,6 +203,13 @@ struct JournalApp: App {
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
+        .commands {
+            CommandGroup(after: .appSettings) {
+                Button(JournalAdminTerminal.menuItemTitle) {
+                    JournalAdminTerminal.openFromMenu()
+                }
+            }
+        }
     }
 }
 
