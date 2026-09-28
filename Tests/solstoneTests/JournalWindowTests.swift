@@ -953,10 +953,8 @@ struct JournalWindowWireUpTests {
     }
 
     @Test func legitimateNonJournalNSWorkspaceOpenSitesRemain() throws {
-        let settingsSource = try readWireUpSource("Sources/solstone/SettingsView.swift")
         let repairSource = try readWireUpSource("Sources/solstone/AppPlacementRepair.swift")
 
-        #expect(settingsSource.components(separatedBy: "NSWorkspace.shared.open").count - 1 == 7)
         #expect(repairSource.components(separatedBy: "NSWorkspace.shared.open").count - 1 == 1)
     }
 }

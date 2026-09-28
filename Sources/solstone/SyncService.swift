@@ -1139,12 +1139,12 @@ public actor SyncService {
             .appendingPathComponent("preserved-segments", isDirectory: true)
     }
 
-    /// Move a confirmed segment folder, whole, to `preserved-segments/{day}/{segment}` (or
+    /// Move a confirmed segment folder, whole, to `preserved-segments/{day folder}/{segment}` (or
     /// `{segment}.{n}` when that name is taken). An existing folder is never replaced. False leaves the
     /// segment where it is, so a later pass tries again and nothing is removed unpreserved.
-    private func preserveSegmentDirectory(_ segmentURL: URL, day: String, segment: String) -> Bool {
+    private func preserveSegmentDirectory(_ segmentURL: URL, segment: String) -> Bool {
         let dayURL = Self.preservedSegmentsDirectory(for: storageManager)
-            .appendingPathComponent(day, isDirectory: true)
+            .appendingPathComponent(segmentURL.deletingLastPathComponent().lastPathComponent, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dayURL, withIntermediateDirectories: true)
         } catch {
@@ -1286,7 +1286,7 @@ public actor SyncService {
             self.segmentBounds.removeValue(forKey: address)
 
             if preserveSyncedSegments {
-                return preserveSegmentDirectory(segmentURL, day: day, segment: segment) ? .finished : .failed
+                return preserveSegmentDirectory(segmentURL, segment: segment) ? .finished : .failed
             }
 
             for url in nonAckConfirmedURLs {
@@ -1374,7 +1374,7 @@ public actor SyncService {
             self.segmentBounds.removeValue(forKey: address)
 
             if preserveSyncedSegments {
-                return preserveSegmentDirectory(segmentURL, day: day, segment: segment) ? .finished : .failed
+                return preserveSegmentDirectory(segmentURL, segment: segment) ? .finished : .failed
             }
 
             for url in nonAckConfirmedURLs {
@@ -1466,7 +1466,7 @@ public actor SyncService {
             self.segmentBounds.removeValue(forKey: address)
 
             if preserveSyncedSegments {
-                return preserveSegmentDirectory(segmentURL, day: day, segment: segment) ? .finished : .failed
+                return preserveSegmentDirectory(segmentURL, segment: segment) ? .finished : .failed
             }
 
             // Every confirmed file goes before any rename, so a failed removal leaves the folder under
