@@ -23,6 +23,7 @@ public enum SettingsReloadSemantics {
         "syncPaused": .live,
         "debugSegments": .live,
         "debugKeepRejectedAudio": .live,
+        "preserveSyncedSegments": .live,
         "observerName": .live,
         "loginItemEnabled": .live,
         "isScreenCaptureEnabled": .live,

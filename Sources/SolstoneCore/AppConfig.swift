@@ -57,7 +57,7 @@ public struct AppConfig: Sendable {
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
         "excludePrivateBrowsing", "serverURL", "serverKey",
         "syncPaused", "debugSegments",
-        "debugKeepRejectedAudio", "microphoneGain", "silenceMusic",
+        "debugKeepRejectedAudio", "preserveSyncedSegments", "microphoneGain", "silenceMusic",
         "serviceMode", "journalPath",
         "observerName"
     ]
@@ -74,6 +74,7 @@ public struct AppConfig: Sendable {
         static let debugSegments = "debugSegments"
         static let serverKey = "serverKey"
         static let debugKeepRejectedAudio = "debugKeepRejectedAudio"
+        static let preserveSyncedSegments = "preserveSyncedSegments"
         static let microphoneGain = "microphoneGain"
         static let silenceMusic = "silenceMusic"
         static let serviceMode = "serviceMode"
@@ -135,6 +136,9 @@ public struct AppConfig: Sendable {
     /// When true, move rejected audio tracks to rejected/ folder instead of deleting
     public var debugKeepRejectedAudio: Bool
 
+    /// When true, a segment the journal confirmed is moved to the preserved-segments folder instead of being removed
+    public var preserveSyncedSegments: Bool
+
     /// Microphone gain multiplier (1.0 to 8.0). Default: 2.0
     public var microphoneGain: Float
 
@@ -169,6 +173,7 @@ public struct AppConfig: Sendable {
         syncPaused: Bool = false,
         debugSegments: Bool = false,
         debugKeepRejectedAudio: Bool = false,
+        preserveSyncedSegments: Bool = false,
         microphoneGain: Float = 2.0,
         silenceMusic: Bool = true,
         serviceMode: ServiceMode? = nil,
@@ -186,6 +191,7 @@ public struct AppConfig: Sendable {
         self.syncPaused = syncPaused
         self.debugSegments = debugSegments
         self.debugKeepRejectedAudio = debugKeepRejectedAudio
+        self.preserveSyncedSegments = preserveSyncedSegments
         self.microphoneGain = microphoneGain
         self.silenceMusic = silenceMusic
         self.serviceMode = serviceMode
@@ -232,6 +238,7 @@ public struct AppConfig: Sendable {
             syncPaused: defaults.bool(forKey: Keys.syncPaused),
             debugSegments: defaults.bool(forKey: Keys.debugSegments),
             debugKeepRejectedAudio: defaults.bool(forKey: Keys.debugKeepRejectedAudio),
+            preserveSyncedSegments: defaults.bool(forKey: Keys.preserveSyncedSegments),
             microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float ?? 2.0,
             silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true,
             serviceMode: serviceMode,
@@ -315,6 +322,7 @@ public struct AppConfig: Sendable {
         defaults.set(syncPaused, forKey: Keys.syncPaused)
         defaults.set(debugSegments, forKey: Keys.debugSegments)
         defaults.set(debugKeepRejectedAudio, forKey: Keys.debugKeepRejectedAudio)
+        defaults.set(preserveSyncedSegments, forKey: Keys.preserveSyncedSegments)
         defaults.set(microphoneGain, forKey: Keys.microphoneGain)
         defaults.set(silenceMusic, forKey: Keys.silenceMusic)
     }

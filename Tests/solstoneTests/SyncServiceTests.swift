@@ -128,6 +128,81 @@ struct SyncServiceTests {
         #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("keeper.bin").path))
     }
 
+    @Test func preserveMovesConfirmedSegmentBesideCapturesInsteadOfRemoving() async throws {
+        store.reset()
+        let parent = try makeTempDirectory("sync-preserve-moves")
+        let root = parent.appendingPathComponent("captures", isDirectory: true)
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24690") })
+        await configurePreserving(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        let day = seg.url.deletingLastPathComponent().lastPathComponent
+        let preserved = parent.appendingPathComponent("preserved-segments/\(day)/120000_300", isDirectory: true)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(FileManager.default.fileExists(atPath: preserved.appendingPathComponent(filename).path))
+        #expect(FileManager.default.fileExists(atPath: preserved.appendingPathComponent("120000_300_ingest_ack.json").path))
+    }
+
+    @Test func preserveMovesSegmentRemovedOutcomeAndNumbersRepeatedNames() async throws {
+        store.reset()
+        let parent = try makeTempDirectory("sync-preserve-seg-removed")
+        let root = parent.appendingPathComponent("captures", isDirectory: true)
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let day = seg.url.deletingLastPathComponent().lastPathComponent
+        let taken = parent.appendingPathComponent("preserved-segments/\(day)/120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: taken, withIntermediateDirectories: true)
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 500, body: "{\"status\":\"failed\",\"error\":\"Ingest request failed\",\"reason_code\":\"segment_removed\"}")
+
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24691") })
+        await configurePreserving(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        let second = parent.appendingPathComponent("preserved-segments/\(day)/120000_300.2", isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: second.appendingPathComponent("120000_300_audio.m4a").path))
+    }
+
+    @Test func preserveMoveFailureLeavesSegmentInPlaceAndRemovesNothing() async throws {
+        store.reset()
+        let parent = try makeTempDirectory("sync-preserve-move-fails")
+        let root = parent.appendingPathComponent("captures", isDirectory: true)
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 500, body: "{\"status\":\"failed\",\"error\":\"Ingest request failed\",\"reason_code\":\"segment_removed\"}")
+
+        let progress = ProgressCollector()
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24692") },
+            renameItem: { _, _ in throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO)) }
+        )
+        await configurePreserving(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent("120000_300_audio.m4a").path))
+    }
+
     @Test func localFinishDeletesSettledRemnantWithoutTunnelCall() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-local-finish-remnant")
@@ -4111,6 +4186,15 @@ struct SyncServiceTests {
             pairingIdentity: pairingA,
             journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA),
             syncPaused: false
+        )
+    }
+
+    private func configurePreserving(_ service: SyncService) async {
+        await service.configure(
+            pairingIdentity: pairingA,
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA),
+            syncPaused: false,
+            preserveSyncedSegments: true
         )
     }
 

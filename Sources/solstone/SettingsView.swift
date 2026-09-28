@@ -316,6 +316,17 @@ struct SettingsView: View {
         self._pairingMismatch = State(initialValue: initialPairingMismatch)
     }
 
+    private var preserveSyncedSegmentsBinding: Binding<Bool> {
+        Binding(
+            get: { appState.config.preserveSyncedSegments },
+            set: { newValue in
+                var config = appState.config
+                config.preserveSyncedSegments = newValue
+                appState.updateConfig(config)
+            }
+        )
+    }
+
     var body: some View {
         NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: $selectedTab) {
@@ -1604,6 +1615,26 @@ struct SettingsView: View {
                      .accessibilityIdentifier(AXID.Settings.Observer.cacheFolderOpen)
                  }
                  .padding(.vertical, 4)
+
+                 Toggle("keep synced segments for debugging", isOn: preserveSyncedSegmentsBinding)
+                     .accessibilityIdentifier(AXID.Settings.Observer.preserveSyncedSegments)
+                     .padding(.vertical, 4)
+
+                 Text("when on, segments your journal has confirmed are moved to a separate folder on this Mac instead of being removed. they build up until you delete them yourself.")
+                     .font(.caption)
+                     .foregroundStyle(.secondary)
+
+                 if appState.config.preserveSyncedSegments {
+                     LabeledContent("preserved segments") {
+                         Button("open in Finder") {
+                             let folder = SyncService.preservedSegmentsDirectory(for: appState.storageManager)
+                             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                             NSWorkspace.shared.open(folder)
+                         }
+                         .accessibilityIdentifier(AXID.Settings.Observer.preservedFolderOpen)
+                     }
+                     .padding(.vertical, 4)
+                 }
             }
         }
     }

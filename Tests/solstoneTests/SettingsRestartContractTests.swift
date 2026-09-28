@@ -28,6 +28,7 @@ struct SettingsRestartContractTests {
             "syncPaused",
             "debugSegments",
             "debugKeepRejectedAudio",
+            "preserveSyncedSegments",
             "loginItemEnabled",
             "observerName",
         ]

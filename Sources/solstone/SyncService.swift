@@ -99,6 +99,7 @@ public actor SyncService {
 
     private var journalContext: JournalUploadContext?
     private var syncPaused: Bool = false
+    private var preserveSyncedSegments: Bool = false
 
     // MARK: - Actor Memory (keyed by context)
 
@@ -190,7 +191,8 @@ public actor SyncService {
     func configure(
         pairingIdentity: TunnelPairingIdentity?,
         journalFingerprint: JournalConnectionFingerprint?,
-        syncPaused: Bool
+        syncPaused: Bool,
+        preserveSyncedSegments: Bool = false
     ) {
         let newContext = JournalUploadContext(
             pairing: pairingIdentity,
@@ -202,6 +204,7 @@ public actor SyncService {
         }
         self.journalContext = newContext
         self.syncPaused = syncPaused
+        self.preserveSyncedSegments = preserveSyncedSegments
     }
 
     /// Check if sync has a coherent journal upload context
@@ -1128,6 +1131,42 @@ public actor SyncService {
         return true
     }
 
+    /// The folder confirmed segments move to when the owner keeps them for debugging. It sits beside the
+    /// captures folder, never inside it, so discovery never walks it and the owner can delete it whole.
+    static func preservedSegmentsDirectory(for storageManager: StorageManager) -> URL {
+        storageManager.baseDirectory
+            .deletingLastPathComponent()
+            .appendingPathComponent("preserved-segments", isDirectory: true)
+    }
+
+    /// Move a confirmed segment folder, whole, to `preserved-segments/{day}/{segment}` (or
+    /// `{segment}.{n}` when that name is taken). An existing folder is never replaced. False leaves the
+    /// segment where it is, so a later pass tries again and nothing is removed unpreserved.
+    private func preserveSegmentDirectory(_ segmentURL: URL, day: String, segment: String) -> Bool {
+        let dayURL = Self.preservedSegmentsDirectory(for: storageManager)
+            .appendingPathComponent(day, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: dayURL, withIntermediateDirectories: true)
+        } catch {
+            Logger.upload.error("Failed to create preserved folder for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        var destination = dayURL.appendingPathComponent(segment, isDirectory: true)
+        var suffix = 1
+        var info = stat()
+        while lstat(destination.path, &info) == 0 {
+            suffix += 1
+            destination = dayURL.appendingPathComponent("\(segment).\(suffix)", isDirectory: true)
+        }
+        do {
+            try renameItem(segmentURL, destination)
+        } catch {
+            Logger.upload.error("Failed to preserve segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        return true
+    }
+
     private func removeConfirmedSegment(
         segmentURL: URL,
         day: String,
@@ -1246,6 +1285,10 @@ public actor SyncService {
             guard !syncPaused, journalContext == context else { return .stopped }
             self.segmentBounds.removeValue(forKey: address)
 
+            if preserveSyncedSegments {
+                return preserveSegmentDirectory(segmentURL, day: day, segment: segment) ? .finished : .failed
+            }
+
             for url in nonAckConfirmedURLs {
                 await beforeRemovalStep()
                 guard !syncPaused, journalContext == context else { return .stopped }
@@ -1329,6 +1372,10 @@ public actor SyncService {
             await beforeRemovalStep()
             guard !syncPaused, journalContext == context else { return .stopped }
             self.segmentBounds.removeValue(forKey: address)
+
+            if preserveSyncedSegments {
+                return preserveSegmentDirectory(segmentURL, day: day, segment: segment) ? .finished : .failed
+            }
 
             for url in nonAckConfirmedURLs {
                 await beforeRemovalStep()
@@ -1417,6 +1464,10 @@ public actor SyncService {
             await beforeRemovalStep()
             guard !syncPaused, journalContext == context else { return .stopped }
             self.segmentBounds.removeValue(forKey: address)
+
+            if preserveSyncedSegments {
+                return preserveSegmentDirectory(segmentURL, day: day, segment: segment) ? .finished : .failed
+            }
 
             // Every confirmed file goes before any rename, so a failed removal leaves the folder under
             // its own name for a later pass instead of stranding confirmed media in a quarantine folder.

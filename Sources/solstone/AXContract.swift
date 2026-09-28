@@ -53,6 +53,8 @@ enum AXContract {
         AXID.Settings.Observer.notificationDeniedState,
         AXID.Settings.Observer.storageUsedState,
         AXID.Settings.Observer.cacheFolderOpen,
+        AXID.Settings.Observer.preserveSyncedSegments,
+        AXID.Settings.Observer.preservedFolderOpen,
         AXID.Settings.Service.prereqPermissions,
         AXID.Settings.Service.journalNameState,
         AXID.Settings.Service.journalMarkState,

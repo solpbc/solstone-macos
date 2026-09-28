@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- settings has a "keep synced segments for debugging" box. when it is on, segments your journal has confirmed are moved to a separate folder on this mac instead of being removed. they build up until you delete them yourself.
+
 ## [2.0.18] - 2026-09-28
 
 ### Changed

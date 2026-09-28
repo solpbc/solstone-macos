@@ -178,7 +178,8 @@ public final class UploadCoordinator {
             await syncService.configure(
                 pairingIdentity: pairedIngestIdentity,
                 journalFingerprint: initialFingerprint,
-                syncPaused: config.syncPaused
+                syncPaused: config.syncPaused,
+            preserveSyncedSegments: config.preserveSyncedSegments
             )
         }
 
@@ -238,7 +239,8 @@ public final class UploadCoordinator {
             await syncService.configure(
                 pairingIdentity: pairedIngestIdentity,
                 journalFingerprint: fingerprint,
-                syncPaused: newConfig.syncPaused
+                syncPaused: newConfig.syncPaused,
+                preserveSyncedSegments: newConfig.preserveSyncedSegments
             )
 
             // If sync was re-enabled, trigger a sync
@@ -264,7 +266,8 @@ public final class UploadCoordinator {
             await syncService.configure(
                 pairingIdentity: identity,
                 journalFingerprint: fingerprint,
-                syncPaused: config.syncPaused
+                syncPaused: config.syncPaused,
+            preserveSyncedSegments: config.preserveSyncedSegments
             )
         }
     }
@@ -357,7 +360,8 @@ public final class UploadCoordinator {
         await syncService.configure(
             pairingIdentity: pairedIngestIdentity,
             journalFingerprint: journalIdentityProvider().fingerprint,
-            syncPaused: config.syncPaused
+            syncPaused: config.syncPaused,
+            preserveSyncedSegments: config.preserveSyncedSegments
         )
         return try await syncService.runLiveProbe(segmentURL: segmentURL, day: day, segment: segment)
     }

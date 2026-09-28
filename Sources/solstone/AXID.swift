@@ -71,6 +71,8 @@ enum AXID {
             static let notificationDeniedState = "settings.observer.notifications.denied.state"
             static let storageUsedState = "settings.observer.storage.used.state"
             static let cacheFolderOpen = "settings.observer.storage.cacheFolder.open"
+            static let preserveSyncedSegments = "settings.observer.storage.preserveSynced"
+            static let preservedFolderOpen = "settings.observer.storage.preservedFolder.open"
         }
 
         enum Service {
