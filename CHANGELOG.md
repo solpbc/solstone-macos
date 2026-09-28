@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.18] - 2026-09-28
+
 ### Changed
 - "check my setup" no longer shows a "command line tools" row. for the command line, open the journal app and choose "open admin terminal" from its journal menu.
 
