@@ -1616,11 +1616,11 @@ struct SettingsView: View {
                  }
                  .padding(.vertical, 4)
 
-                 Toggle("keep synced segments for debugging", isOn: preserveSyncedSegmentsBinding)
+                 Toggle("keep confirmed segments for debugging", isOn: preserveSyncedSegmentsBinding)
                      .accessibilityIdentifier(AXID.Settings.Observer.preserveSyncedSegments)
                      .padding(.vertical, 4)
 
-                 Text("when on, segments your journal has confirmed are moved to a separate folder on this Mac instead of being removed. they build up until you delete them yourself.")
+                 Text("when on, segments your journal has confirmed are moved to a separate folder on this mac instead of being removed. they build up until you delete them yourself.")
                      .font(.caption)
                      .foregroundStyle(.secondary)
 
