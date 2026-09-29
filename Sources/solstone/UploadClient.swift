@@ -315,7 +315,7 @@ public struct UploadClient: Sendable {
                 continuation.resume(returning: (data, response, error))
             }
             let leasedSession = URLSession(
-                configuration: Self.defaultSessionConfiguration(),
+                configuration: session.configuration,
                 delegate: delegate,
                 delegateQueue: OperationQueue()
             )
@@ -413,7 +413,9 @@ private final class BrowserLeaseUploadDelegate: NSObject, URLSessionDataDelegate
     private let lease: BrowserUploadLease
     private let completion: @Sendable (Data, URLResponse?, Error?) -> Void
     private let lock = NSLock()
+    private static let maximumResponseBytes = 1024 * 1024
     private var responseData = Data()
+    private var responseTooLarge = false
     private var response: URLResponse?
     private var session: URLSession?
     private var completed = false
@@ -428,6 +430,14 @@ private final class BrowserLeaseUploadDelegate: NSObject, URLSessionDataDelegate
         lock.withLock { self.session = session }
     }
 
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        // Browser custody is authorized for one captured paired route only.
+        completionHandler(nil)
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
         guard lease.isValid() else {
             completionHandler(nil)
@@ -437,24 +447,39 @@ private final class BrowserLeaseUploadDelegate: NSObject, URLSessionDataDelegate
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        lock.withLock { responseData.append(data) }
+        let accepted = lock.withLock {
+            guard !responseTooLarge, data.count <= Self.maximumResponseBytes - responseData.count else {
+                responseTooLarge = true
+                responseData.removeAll(keepingCapacity: false)
+                return false
+            }
+            responseData.append(data)
+            return true
+        }
+        if !accepted { dataTask.cancel() }
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
-        lock.withLock { self.response = response }
-        completionHandler(.allow)
+        let accepted = lock.withLock {
+            self.response = response
+            if response.expectedContentLength > Int64(Self.maximumResponseBytes) {
+                responseTooLarge = true
+            }
+            return !responseTooLarge
+        }
+        completionHandler(accepted ? .allow : .cancel)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        let result = lock.withLock { () -> (Data, URLResponse?, URLSession?)? in
+        let result = lock.withLock { () -> (Data, URLResponse?, URLSession?, Error?)? in
             guard !completed else { return nil }
             completed = true
-            let result = (responseData, response, self.session)
+            let result = (responseData, response, self.session, responseTooLarge ? UploadError.invalidResponse : error)
             self.session = nil
             return result
         }
         guard let result else { return }
-        completion(result.0, result.1, error)
+        completion(result.0, result.1, result.3)
         result.2?.finishTasksAndInvalidate()
     }
 }

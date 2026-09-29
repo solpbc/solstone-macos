@@ -5,20 +5,55 @@
 
 import Foundation
 
+struct BrowserIntakeRouteCapability: Sendable {
+    let id = UUID()
+    let serverURL: String
+    let identityDigest: String
+    let pairingGeneration: UInt64
+    let transportIncarnation: UInt64
+    let credentialIsCurrent: @Sendable () -> Bool
+
+    func namesSameConnection(as other: Self) -> Bool {
+        BrowserOpaqueString.equals(serverURL, other.serverURL)
+            && BrowserOpaqueString.equals(identityDigest, other.identityDigest)
+            && pairingGeneration == other.pairingGeneration
+            && transportIncarnation == other.transportIncarnation
+    }
+}
+
 final class BrowserIntakeRouteState: @unchecked Sendable {
     private let lock = NSLock()
-    private var route: String?
+    private var route: BrowserIntakeRouteCapability?
+    private var onChange: (@Sendable () -> Void)?
 
-    func update(_ route: String?) -> Bool {
-        lock.withLock {
-            guard !BrowserOpaqueString.equals(self.route, route) else { return false }
-            self.route = route
-            return true
-        }
+    func setOnChange(_ action: @escaping @Sendable () -> Void) {
+        lock.withLock { onChange = action }
     }
 
-    func matches(_ route: String) -> Bool {
-        lock.withLock { BrowserOpaqueString.equals(self.route, route) }
+    @discardableResult
+    func update(_ route: BrowserIntakeRouteCapability?) -> Bool {
+        let result = lock.withLock { () -> (Bool, (@Sendable () -> Void)?) in
+            if let current = self.route, let route, current.namesSameConnection(as: route) { return (false, nil) }
+            if self.route == nil && route == nil { return (false, nil) }
+            self.route = route
+            return (true, onChange)
+        }
+        // Invalidate transport tasks outside the route lock. A reader already
+        // sees the revoked capability even before cancellation is delivered.
+        result.1?()
+        return result.0
+    }
+
+    func snapshot(for permit: BrowserUploadPermit) -> BrowserIntakeRouteCapability? {
+        guard let captured = lock.withLock({ route }),
+              BrowserOpaqueString.equals(captured.identityDigest, permit.identityToken),
+              matches(captured) else { return nil }
+        return captured
+    }
+
+    func matches(_ captured: BrowserIntakeRouteCapability) -> Bool {
+        guard lock.withLock({ route?.id == captured.id }), captured.credentialIsCurrent() else { return false }
+        return lock.withLock { route?.id == captured.id }
     }
 }
 

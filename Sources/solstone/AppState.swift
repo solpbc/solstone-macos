@@ -1314,19 +1314,7 @@ public final class AppState {
         previousTunnelLifecycleState = newState
         journalHomeBaseChangeToken += 1
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        let ingestRoute = Self.ingestBaseURL(
-            lifecycleState: newState,
-            localPort: tunnelLifecycleOwner.localPort,
-            pairingIdentity: tunnelLifecycleOwner.cachedPairingIdentity
-        )
-        let route: String?
-        if case .url(let value) = ingestRoute { route = value } else { route = nil }
-        if browserIntakeRouteState?.update(route) == true {
-            browserUploadGate?.invalidateCurrentLease()
-            browserUploadGate?.resumeReaders()
-        }
-#endif
+
         guard isConnected(newState), !isConnected(previousState) else { return }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         if let owner = browserIntakeOwner {
@@ -1585,29 +1573,7 @@ public final class AppState {
         self.browserUploadGate = gate
         self.browserUploadPlanner = planner
 
-        // Install pairing hooks
-        credentialStore.beforeIdentityMutation = { [weak owner] newToken in
-            guard let owner else { return }
-            try owner.credentialWillChange(identityToken: newToken)
-        }
-
-        credentialStore.afterIdentityMutation = { [weak owner] token in
-            guard let owner else { return }
-            do {
-                try owner.credentialDidChange(identityToken: token)
-            } catch {
-                Logger.storage.error("Browser intake epoch publication failed")
-            }
-        }
-
-        credentialStore.afterCredentialLoad = { [weak owner] token in
-            guard let owner else { return }
-            do {
-                try owner.credentialReloaded(identityToken: token)
-            } catch {
-                Logger.storage.error("Browser intake credential reload rejected: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        owner.bindCredentials(credentialStore)
 
         self.pauseManager.onPauseIntake = { [weak authority, weak store] in
             authority?.setPaused(true)
@@ -1643,13 +1609,7 @@ public final class AppState {
         let spoolRoot = appSupport.appendingPathComponent("Solstone/browser-intake")
         let bridge = AppStateBridgeTarget()
         bridge.state = self
-        let routeState = BrowserIntakeRouteState()
-        let initialRoute = Self.ingestBaseURL(
-            lifecycleState: tunnelLifecycleOwner.state,
-            localPort: tunnelLifecycleOwner.localPort,
-            pairingIdentity: tunnelLifecycleOwner.cachedPairingIdentity
-        )
-        if case .url(let url) = initialRoute { _ = routeState.update(url) }
+        let routeState = tunnelLifecycleOwner.browserIntakeRouteState
         let pairing: StoredPairing?
         do {
             pairing = try credentialStore.currentPairing() ?? credentialStore.load()
@@ -1657,9 +1617,7 @@ public final class AppState {
             pairing = nil
             Logger.storage.error("Browser intake credential load failed: \(error.localizedDescription, privacy: .public)")
         }
-        let token = pairing.map {
-            [$0.instanceID, $0.clientCertPEM, $0.clientKeyPEM, $0.caChainPEM, String($0.pairedAt.timeIntervalSince1970)].joined(separator: "\u{0}")
-        }
+        let token = pairing.map { PairingCredentialStore.identityToken(for: $0) }
         let owner: BrowserIntakeOwner
         do {
             owner = try BrowserIntakeOwner.start(

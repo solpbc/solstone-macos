@@ -5,6 +5,7 @@
 
 import CryptoKit
 import Foundation
+import JournalRuntimeTestSupport
 import SolstoneCore
 import Testing
 @testable import solstone
@@ -788,7 +789,9 @@ struct BrowserIntakeAdmissionTests {
 
         let gate = BrowserUploadGate(store: store)
         let routeState = BrowserIntakeRouteState()
-        _ = routeState.update("http://127.0.0.1")
+        _ = routeState.update(BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1",
+            identityDigest: try #require(store.getActiveIdentityToken()), pairingGeneration: 1,
+            transportIncarnation: 1, credentialIsCurrent: { true }))
         let transport = ScriptedBrowserTransport()
         transport.uploadFailure = UploadError.serverError(IngestServerError(statusCode: 409, reasonCode: "segment_removed", bodyStatus: nil))
         let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, routeState: routeState)
@@ -1100,6 +1103,55 @@ struct BrowserIntakeAdmissionTests {
     }
 
     @Test(arguments: [false, true])
+    func browserURLSessionUsesCapturedLeaseAndInjectedTransport(oversizedResponse: Bool) async throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let spool = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        _ = try spool.publishEpoch(identityToken: "session-pairing", nowMs: 1700000000000)
+        let gate = BrowserUploadGate(store: spool)
+        let permit = try #require(gate.currentPermit())
+        let routes = BrowserIntakeRouteState()
+        let route = BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1:49323",
+            identityDigest: permit.identityToken, pairingGeneration: 1, transportIncarnation: 1,
+            credentialIsCurrent: { true })
+        routes.update(route)
+        let candidateLease = gate.makeLease(permit: permit, periodId: "session-period",
+            routeCheck: { routes.matches(route) })
+        let lease = try #require(candidateLease)
+        let file = tempRoot.appendingPathComponent("browser_pages.jsonl")
+        try Data("synthetic-browser-session-marker\n".utf8).write(to: file)
+        let prepared = try IngestV3UploadRequestBuilder.build(baseURL: route.serverURL,
+            day: "20260929", segment: "120000_1", selectedFiles: [file], meta: nil,
+            source: "browser", boundary: "session-boundary",
+            bodyURL: tempRoot.appendingPathComponent("multipart.body"))
+        let effects = ObserverURLProtocolStore()
+        effects.enqueue(statusCode: 503, body: oversizedResponse ? String(repeating: "x", count: 1024 * 1024 + 1) : "{}")
+        let config = observerURLProtocolConfiguration(store: effects)
+        config.timeoutIntervalForRequest = 2
+        config.timeoutIntervalForResource = 3
+        let client = UploadClient(sessionConfiguration: config)
+        let result = await client.uploadStaged(prepared: prepared, lease: lease)
+        if oversizedResponse {
+            guard case .failure(let error) = result else {
+                Issue.record("Oversized response must not acknowledge custody")
+                return
+            }
+            #expect(error as? UploadError == .invalidResponse)
+        }
+        #expect(effects.snapshotRequests().count == 1)
+        let body = try #require(effects.snapshotRequestBodyData().first ?? nil)
+        #expect(String(decoding: body, as: UTF8.self).contains("synthetic-browser-session-marker"))
+        // A connection replacement at the same URL must not reuse this lease.
+        routes.update(nil)
+        routes.update(BrowserIntakeRouteCapability(serverURL: route.serverURL,
+            identityDigest: permit.identityToken, pairingGeneration: 1, transportIncarnation: 2,
+            credentialIsCurrent: { true }))
+        _ = await client.uploadStaged(prepared: prepared, lease: lease)
+        #expect(effects.snapshotRequests().count == 1)
+    }
+
+    @Test(arguments: [false, true])
     func finalizedCorruptionCannotReachTransport(restart: Bool) async throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
@@ -1126,7 +1178,9 @@ struct BrowserIntakeAdmissionTests {
         }
         let transport = ScriptedBrowserTransport()
         let route = BrowserIntakeRouteState()
-        _ = route.update("http://127.0.0.1")
+        _ = route.update(BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1",
+            identityDigest: try #require(store.getActiveIdentityToken()), pairingGeneration: 1,
+            transportIncarnation: 1, credentialIsCurrent: { true }))
         let planner = BrowserUploadPlanner(store: candidate, gate: BrowserUploadGate(store: candidate), client: transport, routeState: route)
         await planner.planAndUpload()
         #expect(transport.prepareCount == 0)
@@ -1161,7 +1215,9 @@ struct BrowserIntakeAdmissionTests {
 
         let transport = ScriptedBrowserTransport()
         let routeState = BrowserIntakeRouteState()
-        _ = routeState.update("http://127.0.0.1")
+        _ = routeState.update(BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1",
+            identityDigest: try #require(store.getActiveIdentityToken()), pairingGeneration: 1,
+            transportIncarnation: 1, credentialIsCurrent: { true }))
         let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, serverURLProvider: { "http://127.0.0.1" }, routeState: routeState)
         // Reconciliation reads the day listing only after a validated upload
         // binding exists. Retire during that read, before any cleanup can occur.
@@ -1183,6 +1239,9 @@ struct BrowserIntakeAdmissionTests {
         transport.onDayRead = nil
         transport.succeed = true
         let fresh = try authority.publishEpoch(identityToken: "token-fresh")
+        routeState.update(BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1",
+            identityDigest: BrowserIntakeStore.identityDigest(of: "token-fresh"), pairingGeneration: 2,
+            transportIncarnation: 2, credentialIsCurrent: { true }))
         let freshSnap: [String: Any] = [
             "type": "batch", "destination_generation": fresh, "inst": "inst-1",
             "batch_id": "34343434343434343434343434343434",

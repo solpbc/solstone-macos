@@ -11,6 +11,46 @@ import Testing
 @Suite("TunnelLifecycleOwner", .serialized)
 @MainActor
 struct TunnelLifecycleOwnerTests {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    @Test func browserRouteUsesInstalledPairingAndRevokesReusedPort() async throws {
+        let original = pairing(instanceID: "browser-original")
+        let storage = PairingStore(pairing: original)
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34567, via: .relay))
+        let owner = makeOwner(store: storage, factory: FakeTransportFactory([transport]))
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 34567, via: .relay) }
+        let digest = BrowserIntakeStore.identityDigest(of: PairingCredentialStore.identityToken(for: original))
+        let permit = BrowserUploadPermit(generation: "test-epoch", identityToken: digest)
+        let routes = owner.browserIntakeRouteState
+        let first = try #require(routes.snapshot(for: permit))
+        #expect(first.serverURL == "http://127.0.0.1:34567")
+        #expect(first.transportIncarnation == owner.transportIncarnation)
+
+        let revisions = owner.credentialStore.currentGenerations()
+        _ = try owner.credentialStore.updateRelayAccess(expectedPairingGen: revisions.pairingGeneration,
+            expectedAccessGen: revisions.accessMutationGeneration, relayOrigin: "https://relay.example",
+            deviceToken: "refreshed-token", expiresAtString: nil)
+        #expect(routes.matches(first))
+
+        transport.emit(.disconnected)
+        try await waitUntil { owner.state == .disconnected }
+        #expect(!routes.matches(first))
+        #expect(routes.snapshot(for: permit) == nil)
+        transport.emit(.connected(via: URL(string: "ws://relay.example")!.relayConnectedVia))
+        try await waitUntil { owner.state == .connected(localPort: 34567, via: .relay) }
+        let reconnected = try #require(routes.snapshot(for: permit))
+        #expect(reconnected.id != first.id)
+        #expect(!routes.matches(first))
+
+        // Re-pair with identical identity bytes: the still-live old transport
+        // must not acquire the new credential generation or authorize its data.
+        try owner.credentialStore.save(original)
+        #expect(!routes.matches(reconnected))
+        #expect(routes.snapshot(for: permit) == nil)
+        await owner.stop()
+    }
+#endif
+
     @Test func nilAndNoUsableCandidatesStayDormant() async throws {
         let scenarios: [PairingStore] = [
             PairingStore(pairing: nil),

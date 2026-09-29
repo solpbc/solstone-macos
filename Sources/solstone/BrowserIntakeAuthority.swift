@@ -126,7 +126,9 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         guard !store.storeIsFailed() else { return }
         switch mode {
         case .replace:
-            try retireIfTokenChanged(newToken: token)
+            // Even re-pairing to the same journal starts a new authority epoch.
+            // The replacement token is published only after credential save.
+            try retireIfTokenChanged(newToken: nil)
         case .reload:
             guard let token else { return }
             let digest = BrowserIntakeStore.identityDigest(of: token)

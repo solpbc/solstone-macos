@@ -214,6 +214,13 @@ public actor BrowserIntakeOwner {
             clock: clock,
             routeState: routeState
         )
+        routeState.setOnChange { [weak gate, weak owner, weak routeState] in
+            guard let gate else { return }
+            gate.invalidateCurrentLease()
+            gate.resumeReaders()
+            guard let permit = gate.currentPermit(), routeState?.snapshot(for: permit) != nil else { return }
+            Task { await owner?.scheduleDelivery() }
+        }
         do {
             try authority.reconcileIdentity(credentialSnapshot.identityToken, mode: .reload)
         } catch {
@@ -271,14 +278,26 @@ public actor BrowserIntakeOwner {
         stopController.setDeliveryTask(task)
     }
 
-    public func updateRoute(_ route: ResolvedHomeBase) {
-        let value: String?
-        if case .url(let url) = route { value = url } else { value = nil }
-        if routeState.update(value) {
-            gate.invalidateCurrentLease()
-            gate.resumeReaders()
-        }
-        if value != nil { scheduleDelivery() }
+    nonisolated func bindCredentials(_ credentialStore: PairingCredentialStore) {
+        credentialStore.installBrowserHooks(beforeMutation: { [weak self] newToken in
+            guard let self else { return }
+            try self.credentialWillChange(identityToken: newToken)
+        }, afterMutation: { [weak self] token in
+            guard let self else { return }
+            do {
+                try self.credentialDidChange(identityToken: token)
+            } catch {
+                Logger.storage.error("Browser intake epoch publication failed")
+            }
+        }, afterLoad: { [weak self] token in
+            guard let self else { return }
+            do {
+                try self.credentialReloaded(identityToken: token)
+            } catch {
+                Logger.storage.error("Browser intake credential reload rejected: \(error.localizedDescription, privacy: .public)")
+            }
+        })
+
     }
 
     public nonisolated func credentialWillChange(identityToken: String?) throws {

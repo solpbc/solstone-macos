@@ -91,9 +91,9 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
 
     public func planAndUpload() async {
         guard !Task.isCancelled, await !syncPausedProvider() else { return }
-        guard let serverURL = await serverURLProvider(), let permit = gate.currentPermit() else { return }
-        store.setDeliveryFailure(nil)
-
+        guard let serverURL = await serverURLProvider(), let permit = gate.currentPermit(),
+              let route = routeState.snapshot(for: permit),
+              BrowserOpaqueString.equals(route.serverURL, serverURL) else { return }
         for period in store.getAllFinalizedPeriods() where BrowserOpaqueString.equals(period.generation, permit.generation) {
             guard !Task.isCancelled, await !syncPausedProvider() else { continue }
             guard let day = period.requestedDay, !day.isEmpty,
@@ -101,7 +101,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                 failStorage(period: period, error: BrowserIntakeStoreError.localIO)
                 continue
             }
-            guard let lease = gate.makeLease(permit: permit, periodId: period.periodId, routeCheck: { [routeState] in routeState.matches(serverURL) }),
+            guard let lease = gate.makeLease(permit: permit, periodId: period.periodId, routeCheck: { [routeState] in routeState.matches(route) }),
                   BrowserOpaqueString.equals(lease.periodId, period.periodId), lease.isValid() else { return }
             await deliver(period: period, lease: lease, serverURL: serverURL, day: day, segment: segment)
             if !lease.isValid() { return }
@@ -138,6 +138,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                 }
                 let listing = try await client.getSegmentsDay(serverURL: serverURL, day: day, source: "browser")
                 guard lease.isValid() else { return }
+                store.setDeliveryFailure(nil)
                 if listingMatches(listing, period: period, binding: binding),
                    store.getPeriod(periodId: period.periodId)?.ackDurable == true {
                     try store.releaseProven(periodId: period.periodId, binding: binding, nowMs: nowMs())
@@ -245,6 +246,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                     status: response.status
                 )
                 try store.publishDeliveryAck(ack)
+                store.setDeliveryFailure(nil)
             case .failure(let error):
                 if case .segmentScoped(.segmentRemoved) = classifyUpload(error), lease.isValid(),
                    let part = prepared.stagedParts.first {

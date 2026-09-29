@@ -134,6 +134,27 @@ final class TunnelLifecycleOwner {
     private(set) var pendingDurableClear: (pairingGen: UInt64, accessGen: UInt64)?
     private(set) var transportAttemptID: UInt64 = 0
     private(set) var transportIncarnation: UInt64 = 0
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    nonisolated let browserIntakeRouteState = BrowserIntakeRouteState()
+    private var browserInstalledIdentity: (digest: String, generation: UInt64)?
+
+    private func publishBrowserRoute(for state: TunnelLifecycleState) {
+        guard case .connected(let port, _) = state, establishedLoopbackPort == port,
+              transport != nil, let identity = browserInstalledIdentity else {
+            browserIntakeRouteState.update(nil)
+            return
+        }
+        let credentials = credentialStore
+        browserIntakeRouteState.update(BrowserIntakeRouteCapability(
+            serverURL: "http://127.0.0.1:\(port)",
+            identityDigest: identity.digest,
+            pairingGeneration: identity.generation,
+            transportIncarnation: transportIncarnation,
+            credentialIsCurrent: { credentials.matchesBrowserPairing(generation: identity.generation, identityDigest: identity.digest) }
+        ))
+    }
+#endif
+
 
     private var isIntentionallyRetiring = false
     private var rejectedAttemptIDs: Set<UInt64> = []
@@ -487,6 +508,9 @@ final class TunnelLifecycleOwner {
     }
 
     private func handleStateTransition(old: TunnelLifecycleState, new: TunnelLifecycleState) {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        publishBrowserRoute(for: new)
+#endif
         if case .connected = new {} else {
             connectedThrough = nil
         }
@@ -721,12 +745,14 @@ final class TunnelLifecycleOwner {
             return
         }
         candidateAttemptObservation.cancel()
-        install(candidate, connection: connection, attemptID: attempt, burstID: burstID)
+        install(candidate, connection: connection, pairing: pairing, pairingGeneration: pGen, attemptID: attempt, burstID: burstID)
     }
 
     private func install(
         _ candidate: any TunnelTransporting,
         connection: TunnelTransportConnection,
+        pairing: StoredPairing,
+        pairingGeneration: UInt64,
         attemptID: UInt64? = nil,
         burstID: UInt64? = nil,
         initialHealth: TunnelHealth = .healthy
@@ -739,6 +765,10 @@ final class TunnelLifecycleOwner {
             }
         }
         let oldTransport = transport
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIntakeRouteState.update(nil)
+        browserInstalledIdentity = (BrowserIntakeStore.identityDigest(of: PairingCredentialStore.identityToken(for: pairing)), pairingGeneration)
+#endif
         transportIncarnation &+= 1
         transport = candidate
         establishedLoopbackPort = connection.localPort
@@ -958,7 +988,7 @@ final class TunnelLifecycleOwner {
                     await candidate.disconnect()
                     return .cancelled
                 }
-                install(candidate, connection: connection, attemptID: attemptID, initialHealth: .unknown)
+                install(candidate, connection: connection, pairing: pairing, pairingGeneration: pGen, attemptID: attemptID, initialHealth: .unknown)
                 return .connected
             } catch {
                 inFlightConnectTask = nil
@@ -1675,6 +1705,10 @@ final class TunnelLifecycleOwner {
     }
 
     private func disconnectCurrentTransport(deadline: ContinuousClock.Instant? = nil) async {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIntakeRouteState.update(nil)
+        browserInstalledIdentity = nil
+#endif
         isIntentionallyRetiring = true
         defer { isIntentionallyRetiring = false }
         journalVersion.disconnected()
