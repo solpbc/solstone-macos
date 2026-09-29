@@ -470,6 +470,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         let sql = """
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = FULL;
+        PRAGMA fullfsync = ON;
 
         CREATE TABLE IF NOT EXISTS epoch (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -538,6 +539,11 @@ private static func fullSync(_ handle: FileHandle) throws {
         );
         """
         try execute(sql)
+        let fullSyncEnabled = try query("PRAGMA fullfsync") { stmt in
+            guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+            return sqlite3_column_int(stmt, 0) == 1
+        }
+        guard fullSyncEnabled else { throw BrowserIntakeStoreError.localIO }
         try ensureColumn("periods", name: "finalize_timezone", definition: "TEXT")
         try ensureColumn("periods", name: "finalize_reason", definition: "TEXT")
         try ensureColumn("periods", name: "delivery_binding", definition: "TEXT")
@@ -604,6 +610,14 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
 
         try recoverPeriodFiles()
+        do {
+            try reclaimAbandonedStaging()
+            try reclaimEmptyUnreferencedPeriodDirectories()
+        } catch {
+            // Keep custody inspectable when unexpected contents or failed
+            // cleanup prevent safely recovering the delivery reserve.
+            isStoreFailed = true
+        }
 
         if let gen = activeGeneration {
             currentOpenPeriodId = try query("SELECT period_id FROM periods WHERE generation = ? AND state = 'open' ORDER BY created_at_ms DESC LIMIT 1") { stmt in
@@ -618,6 +632,61 @@ private static func fullSync(_ handle: FileHandle) throws {
         // A readable database with damaged custody must still project the held
         // data and local failure. Mutations and delivery remain fail-closed.
         recalculateCounters()
+    }
+
+    private func reclaimAbandonedStaging() throws {
+        let stagingRoot = stagingRootURL()
+        try Self.assertNoSymlinkAncestors(stagingRoot)
+        let directories = try FileManager.default.contentsOfDirectory(at: stagingRoot, includingPropertiesForKeys: nil)
+        for directory in directories {
+            let name = directory.lastPathComponent
+            guard name.hasPrefix("browser-upload-"), UUID(uuidString: String(name.dropFirst("browser-upload-".count))) != nil else {
+                throw BrowserIntakeStoreError.localIO
+            }
+            try Self.assertNoSymlinkAncestors(directory)
+            var info = stat()
+            guard lstat(directory.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else {
+                throw BrowserIntakeStoreError.localIO
+            }
+            // Only a reproducible multipart copy belongs here. Never traverse
+            // or remove unknown entries or links during recovery.
+            let children = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            for child in children {
+                guard child.lastPathComponent == "multipart.body" else { throw BrowserIntakeStoreError.localIO }
+                try Self.assertNoSymlinkAncestors(child)
+                try Self.assertRegularFile(child)
+            }
+            for child in children { try FileManager.default.removeItem(at: child) }
+            try FileManager.default.removeItem(at: directory)
+        }
+        if !directories.isEmpty { try fsyncParentChecked(of: stagingRoot.appendingPathComponent("reclaimed")) }
+    }
+
+    private func reclaimEmptyUnreferencedPeriodDirectories() throws {
+        let periodsRoot = rootURL.appendingPathComponent("periods", isDirectory: true)
+        let directories = try FileManager.default.contentsOfDirectory(at: periodsRoot, includingPropertiesForKeys: nil)
+        let referencedIDs = try query("SELECT period_id FROM periods") { stmt in
+            var ids = Set<String>()
+            while true {
+                let rc = try stepChecked(stmt)
+                if rc == SQLITE_DONE { return ids }
+                guard rc == SQLITE_ROW, let id = Self.readText(stmt, 0) else { throw BrowserIntakeStoreError.localIO }
+                ids.insert(id)
+            }
+        }
+        var changed = false
+        for directory in directories {
+            let id = directory.lastPathComponent
+            guard UUID(uuidString: id) != nil else { continue }
+            guard !referencedIDs.contains(id) else { continue }
+            try Self.assertNoSymlinkAncestors(directory)
+            guard try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).isEmpty else {
+                throw BrowserIntakeStoreError.localIO
+            }
+            try FileManager.default.removeItem(at: directory)
+            changed = true
+        }
+        if changed { try fsyncParentChecked(of: periodsRoot.appendingPathComponent("reclaimed")) }
     }
 
     private func recoverPeriodFiles() throws {
@@ -1309,12 +1378,15 @@ private static func fullSync(_ handle: FileHandle) throws {
 
     private func productionFootprintBytesLocked(additionalPayloadBytes: Int = 0, additionalDedupBytes: Int = 0) throws -> Int {
         let payload = Self.saturatingAdd(heldPayloadBytes, max(0, additionalPayloadBytes))
-        let deliveryReserve = payload
-        var total = Self.saturatingAdd(payload, deliveryReserve)
+        // One sequential multipart upload consumes the already reserved copy;
+        // it must not charge that same copy a second time and block draining.
+        let deliveryReserve = payload > 0 ? Self.saturatingAdd(payload, 64 * 1024) : 0
+        let staging = try stagingFootprintBytes()
+        var total = Self.saturatingAdd(payload, max(deliveryReserve, staging))
         total = Self.saturatingAdd(total, max(0, additionalDedupBytes))
         total = Self.saturatingAdd(total, try sqliteFootprintBytes())
         total = Self.saturatingAdd(total, try acknowledgementFootprintBytes())
-        return Self.saturatingAdd(total, try stagingFootprintBytes())
+        return total
     }
 
     private static func saturatingAdd(_ lhs: Int, _ rhs: Int) -> Int {
@@ -1938,19 +2010,28 @@ private static func fullSync(_ handle: FileHandle) throws {
         guard floor >= projection.policy.acceptedRetentionMs else { return }
         let cutoff = floor - projection.policy.acceptedRetentionMs
         do {
-            var stmt: OpaquePointer?
-            try prepareChecked("SELECT period_id FROM periods WHERE state = 'delivered' AND cleanup_durable = 1 AND delivered_at_ms IS NOT NULL AND delivered_at_ms <= ? AND EXISTS (SELECT 1 FROM receipts r WHERE r.period_id = periods.period_id AND r.result = 'accepted') AND NOT EXISTS (SELECT 1 FROM epoch e WHERE e.destination_generation = periods.generation AND e.status = 'active')", &stmt)
-            try bindInt64Checked(stmt, 1, Int64(cutoff))
-            var expiredPeriods: [String] = []
-            while true {
-                let rc = try stepChecked(stmt)
-                if rc == SQLITE_DONE { break }
-                guard rc == SQLITE_ROW, let id = Self.readText(stmt, 0) else { throw BrowserIntakeStoreError.localIO }
-                expiredPeriods.append(id)
+            let expiredPeriods = try query("""
+                SELECT period_id FROM periods
+                WHERE (state IN ('delivered', 'removed') AND cleanup_durable = 1
+                       AND delivered_at_ms IS NOT NULL AND delivered_at_ms < ?)
+                   OR (state = 'retired' AND committed_length = 0 AND created_at_ms < ?
+                       AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.period_id = periods.period_id))
+                """) { stmt in
+                try bindInt64Checked(stmt, 1, Int64(cutoff))
+                try bindInt64Checked(stmt, 2, Int64(cutoff))
+                var ids: [String] = []
+                while true {
+                    let rc = try stepChecked(stmt)
+                    if rc == SQLITE_DONE { return ids }
+                    guard rc == SQLITE_ROW, let id = Self.readText(stmt, 0) else { throw BrowserIntakeStoreError.localIO }
+                    ids.append(id)
+                }
             }
-            sqlite3_finalize(stmt)
 
             for id in expiredPeriods {
+                let payloadURL = periodFileURL(for: id)
+                try Self.assertNoSymlinkAncestors(payloadURL)
+                guard !FileManager.default.fileExists(atPath: payloadURL.path) else { throw BrowserIntakeStoreError.localIO }
                 let ackURL = BrowserIngestAckStore.ackURL(
                     periodDirectory: periodFileURL(for: id).deletingLastPathComponent()
                 )
@@ -1959,7 +2040,12 @@ private static func fullSync(_ handle: FileHandle) throws {
                     try Self.assertRegularFile(ackURL)
                     try FileManager.default.removeItem(at: ackURL)
                 }
-                try fsyncParentChecked(of: ackURL)
+                let directory = payloadURL.deletingLastPathComponent()
+                if FileManager.default.fileExists(atPath: directory.path) {
+                    try fsyncParentChecked(of: ackURL)
+                } else {
+                    try fsyncParentChecked(of: directory)
+                }
             }
 
             try execute("BEGIN IMMEDIATE;")
@@ -1967,11 +2053,21 @@ private static func fullSync(_ handle: FileHandle) throws {
                 let escaped = id.replacingOccurrences(of: "'", with: "''")
                 try execute("DELETE FROM period_contexts WHERE period_id = '\(escaped)';")
                 try execute("DELETE FROM receipts WHERE period_id = '\(escaped)' AND result = 'accepted';")
-                try execute("DELETE FROM periods WHERE period_id = '\(escaped)' AND state = 'delivered' AND cleanup_durable = 1;")
+                try execute("DELETE FROM periods WHERE period_id = '\(escaped)' AND (state IN ('delivered', 'removed') OR (state = 'retired' AND committed_length = 0));")
             }
             try execute("DELETE FROM receipts WHERE result = 'rejected' AND reason = 'expired_unaccepted' AND accepted_at_ms IS NOT NULL AND accepted_at_ms <= \(cutoff);")
             try execute("DELETE FROM batch_seen WHERE queued_at_ms <= \(cutoff) AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.generation = batch_seen.generation AND r.inst = batch_seen.inst AND r.batch_id = batch_seen.batch_id);")
+            // Keep the most recent identity as a reload fence even if all its
+            // old periods have gone; retire older unreferenced history only.
+            try execute("""
+                DELETE FROM epoch WHERE status != 'active' AND retired_at_ms < \(cutoff)
+                AND id != (SELECT MAX(id) FROM epoch)
+                AND NOT EXISTS (SELECT 1 FROM periods p WHERE p.generation = epoch.destination_generation)
+                AND NOT EXISTS (SELECT 1 FROM receipts r WHERE r.generation = epoch.destination_generation)
+                AND NOT EXISTS (SELECT 1 FROM batch_seen b WHERE b.generation = epoch.destination_generation);
+                """)
             try execute("COMMIT;")
+            try reclaimEmptyUnreferencedPeriodDirectories()
             recalculateCounters()
         } catch {
             try? execute("ROLLBACK;")

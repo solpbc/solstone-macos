@@ -1614,9 +1614,10 @@ struct BrowserSpoolLifecycleTests {
         fixture.owner.stop()
     }
 
-    @Test func deliveredRetentionKeepsDuplicateThroughHorizonAndReclaimsHistoryAfterward() async throws {
+    @Test(arguments: [false, true])
+    func deliveredRetentionKeepsDuplicateThroughHorizonAndReclaimsHistoryAfterward(removed: Bool) async throws {
         let transport = LifecycleTransport()
-        transport.setOutcomeSuccess(true)
+        if removed { transport.setOutcomeSegmentRemoved() } else { transport.setOutcomeSuccess(true) }
         let fixture = try fixture(transport: transport)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         fixture.pause.set(true)
@@ -1632,12 +1633,14 @@ struct BrowserSpoolLifecycleTests {
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await transport.waitForAttempts(1))
-        let storedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: deliveredPeriodId)
-        let binding = try #require(storedBinding)
-        transport.setDayListing(matchingListing(binding))
-        await fixture.updateRoute(.held)
-        await fixture.updateRoute(.url("http://127.0.0.1:49321"))
-        #expect(await waitForPeriodState(fixture, periodId: deliveredPeriodId, state: "delivered"))
+        if !removed {
+            let storedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: deliveredPeriodId)
+            let binding = try #require(storedBinding)
+            transport.setDayListing(matchingListing(binding))
+            await fixture.updateRoute(.held)
+            await fixture.updateRoute(.url("http://127.0.0.1:49321"))
+        }
+        #expect(await waitForPeriodState(fixture, periodId: deliveredPeriodId, state: removed ? "removed" : "delivered"))
         let deliveredAt = try #require(fixture.owner.store.getPeriod(periodId: deliveredPeriodId)?.deliveredAtMs)
         #expect(try reply(await fixture.owner.accept(bytes: firstBytes, direction: "extension_to_host"))["result"] as? String == "duplicate")
 
@@ -1674,16 +1677,16 @@ struct BrowserSpoolLifecycleTests {
         }
         #expect(try reply(await fixture.owner.accept(bytes: firstBytes, direction: "extension_to_host"))["result"] as? String == "duplicate")
 
-        try fixture.owner.credentialWillChange(identityToken: "new-lifecycle-pairing")
-        try fixture.owner.credentialDidChange(identityToken: "new-lifecycle-pairing")
         let sleepCount = fixture.clock.sleepCount()
         fixture.clock.advance(seconds: 301)
         #expect(await fixture.clock.waitForSleepCount(sleepCount + 1))
         #expect(fixture.owner.store.getPeriod(periodId: deliveredPeriodId) == nil)
+        #expect(!FileManager.default.fileExists(atPath: fixture.owner.store.periodFileURL(for: deliveredPeriodId).deletingLastPathComponent().path))
         #expect(fixture.owner.store.getPeriod(periodId: heldPeriodId)?.state == "finalized")
         #expect(FileManager.default.fileExists(atPath: heldPayload.path))
 
         let newGeneration = try #require(fixture.owner.store.getActiveGeneration())
+        #expect(newGeneration == generation)
         let expiredReplay = try reply(await fixture.owner.accept(
             bytes: batch(newGeneration, id: "39393939393939393939393939393939", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"

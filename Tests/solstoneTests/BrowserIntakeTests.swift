@@ -413,9 +413,10 @@ struct BrowserIntakeAdmissionTests {
             url == stagingFile ? injectedStageSize.value : actual
         }
         try store.registerStagingDirectory(stagingDirectory, reservedBytes: 0)
-        injectedStageSize.value = gap - (exactPayload * 2)
+        let deliveryReserve = try Data(contentsOf: store.periodFileURL(for: anchorPid)).count + 64 * 1024
+        injectedStageSize.value = gap + deliveryReserve - exactPayload
         #expect(store.isQuotaFull(additionalBytes: exactPayload, additionalDedupBytes: 0) == false)
-        injectedStageSize.value = gap - (exactPayload * 2) + 1
+        injectedStageSize.value += 1
         #expect(store.isQuotaFull(additionalBytes: exactPayload, additionalDedupBytes: 0) == true)
 
         let anchorFile = store.periodFileURL(for: anchorPid)
@@ -1100,6 +1101,83 @@ struct BrowserIntakeAdmissionTests {
         let prettyText = try String(contentsOf: store.periodFileURL(for: try #require(prettyReply["period_id"] as? String)), encoding: .utf8)
         let lines = prettyText.split(separator: "\n", omittingEmptySubsequences: true)
         #expect(lines.contains { $0.contains("\"ts\":1000.0") && $0.contains("pretty") && !$0.contains("\n") })
+    }
+
+    @Test(arguments: [false, true])
+    func emptyPeriodHistoryReclaimsAfterRetention(directoryMissing: Bool) throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let nowMs: UInt64 = 1700000000000
+        _ = try store.publishEpoch(identityToken: "empty-pairing", nowMs: nowMs)
+        let old = try #require(store.getOpenPeriodId())
+        let directory = store.periodFileURL(for: old).deletingLastPathComponent()
+        try store.finalizePeriod(periodId: old, reason: "idle", civilDate: Date(timeIntervalSince1970: Double(nowMs) / 1000), timeZone: TimeZone(secondsFromGMT: 0)!)
+        let current = try #require(store.getOpenPeriodId())
+        if directoryMissing { try FileManager.default.removeItem(at: directory) }
+        store.garbageCollectExpiredTombstones(nowMs: nowMs + projection.policy.acceptedRetentionMs + 1)
+        #expect(store.getPeriod(periodId: old) == nil)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        #expect(store.getPeriod(periodId: current)?.state == "open")
+        #expect(!store.storeIsFailed())
+        let reopened = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        #expect(!reopened.storeIsFailed())
+        #expect(reopened.getActiveGeneration() == store.getActiveGeneration())
+    }
+
+    @Test(arguments: [false, true])
+    func stagingRecoveryPreservesUnexpectedContents(link: Bool) throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let staging = store.stagingRootURL().appendingPathComponent("browser-upload-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        let unrelated = tempRoot.appendingPathComponent("unrelated-marker")
+        let marker = Data("must-remain".utf8)
+        try marker.write(to: unrelated)
+        let child = staging.appendingPathComponent(link ? "multipart.body" : "unknown-file")
+        if link {
+            try FileManager.default.createSymbolicLink(at: child, withDestinationURL: unrelated)
+        } else {
+            try marker.write(to: child)
+        }
+        let reopened = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        #expect(reopened.storeIsFailed())
+        #expect(try Data(contentsOf: unrelated) == marker)
+        #expect(try Data(contentsOf: child) == marker)
+    }
+
+    @Test func stagingConsumesReservedSpaceAndRecoveryReclaimsOnlyItsCopy() throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let now = Date(timeIntervalSince1970: 1700000000)
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { now })
+        let generation = try authority.publishEpoch(identityToken: "staging-pairing")
+        let bytes = Data("""
+        {"type":"batch","destination_generation":"\(generation)","inst":"staging-inst","batch_id":"97979797979797979797979797979797","queued_at_ms":1700000000000,"records":[{"t":"segment_start","ts":1700000000000,"ctx":"ctx","blocks":[{"id":"b","text":"retained-original"}]}]}
+        """.utf8)
+        let accepted = try authority.accept(bytes: bytes, direction: "extension_to_host")
+        let periodID = try #require(accepted["period_id"] as? String)
+        try store.finalizePeriod(periodId: periodID, reason: "seal", civilDate: now, timeZone: TimeZone(secondsFromGMT: 0)!)
+        let source = store.periodFileURL(for: periodID)
+        let original = try Data(contentsOf: source)
+        let before = store.projectedSpoolBytes()
+        let staging = store.stagingRootURL().appendingPathComponent("browser-upload-\(UUID().uuidString)")
+        try store.registerStagingDirectory(staging, reservedBytes: original.count + 64 * 1024)
+        #expect(store.projectedSpoolBytes() == before)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        try Data("abandoned-copy".utf8).write(to: staging.appendingPathComponent("multipart.body"))
+        // Recreate after abandoned staging, without claiming process/power-loss coverage.
+        let reopened = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        #expect(!FileManager.default.fileExists(atPath: staging.path))
+        #expect(try Data(contentsOf: source) == original)
+        #expect(reopened.getPeriod(periodId: periodID)?.state == "finalized")
+        #expect(try reopened.lookupReceipt(generation: generation, inst: "staging-inst", batchId: "97979797979797979797979797979797")?.result == "accepted")
+        #expect(!reopened.storeIsFailed())
     }
 
     @Test(arguments: [false, true])
