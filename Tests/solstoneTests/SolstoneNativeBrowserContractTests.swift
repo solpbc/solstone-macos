@@ -319,6 +319,56 @@ struct SolstoneNativeBrowserContractTests {
         }
     }
 
+    @Test func productionDecoderRejectsPresentInvalidControlFields() throws {
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let cases: [(String, String?)] = [
+            (#"{"type":"state","capture":"permitted","delivery":"idle","freshness_ms":15000,"destination_generation":"g","period_id":"p"}"#, nil),
+            (#"{"type":"state","capture":"permitted","delivery":"idle","freshness_ms":15000,"destination_generation":"g","period_id":"p","failure":null}"#, "invalid_enum"),
+            (#"{"type":"unsupported","protocol":2,"behind":"app","version":3}"#, "missing_field"),
+            (#"{"type":"unsupported","protocol":2,"behind":"app","version":null}"#, "missing_field"),
+            (#"{"type":"unsupported","protocol":2,"behind":"app","version":""}"#, nil),
+            (#"{"type":"unsupported","protocol":2,"behind":"app","version":""# + String(repeating: "x", count: 65) + #""}"#, "missing_field"),
+            (#"{"type":"unsupported","protocol":2,"behind":"app","version":""# + String(repeating: "x", count: 64) + #""}"#, nil)
+        ]
+        for (json, expectedCode) in cases {
+            let result = BrowserPayloadDecoder.decode(bytes: Data(json.utf8), direction: "host_to_extension", projection: projection)
+            if let expectedCode {
+                guard case .refuse(let refusal) = result else {
+                    Issue.record("Expected control refusal for \(json)")
+                    continue
+                }
+                #expect(refusal.code == expectedCode)
+            } else if case .accept = result {
+            } else {
+                Issue.record("Valid control refused: \(json)")
+            }
+        }
+    }
+
+    @Test func productionDecoderPreservesAdditiveDeltaAndLastRootRecords() throws {
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let prefix = #"{"type":"batch","destination_generation":"g","inst":"i","batch_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","queued_at_ms":100,"records":"#
+        let snapshot = #"[{"t":"segment_start","ts":100.0,"ctx":"c","blocks":[]}]"#
+        let delta = #"[{"t":"delta","ts":100,"ctx":"c","op":"add","block":{"id":"b","text":"x"},"n":"extra"}]"#
+        var cases = [prefix + delta + "}"]
+        for previous in ["null", "true", "{}", "1", #""previous""#] {
+            cases.append("{\"records\":" + previous + "," + (prefix + snapshot + "}").dropFirst())
+        }
+        for json in cases {
+            let result = BrowserPayloadDecoder.decode(bytes: Data(json.utf8), direction: "extension_to_host", projection: projection)
+            guard case .accept(.batch(let batch)) = result else {
+                Issue.record("Valid additive/last-root-records batch refused: \(json)")
+                continue
+            }
+            #expect(batch.records.count == 1)
+            let raw = String(decoding: batch.records[0].rawSlice, as: UTF8.self)
+            #expect(raw.contains("extra") || raw.contains("100.0"))
+        }
+        let invalidSnapshot = prefix + snapshot.replacingOccurrences(of: "\"blocks\":[]", with: "\"blocks\":[],\"n\":\"extra\"") + "}"
+        if case .refuse = BrowserPayloadDecoder.decode(bytes: Data(invalidSnapshot.utf8), direction: "extension_to_host", projection: projection) {
+        } else { Issue.record("Snapshot n must remain bounded") }
+    }
+
     private func buildRecipe(id: String, projection: BrowserContractProjection) -> Data {
         let extMax = projection.caps.extensionToHost
         let controlMax = projection.caps.control

@@ -286,8 +286,14 @@ public enum BrowserPayloadDecoder {
                 guard peek() == UInt8(ascii: ":") else { return nil }
                 index += 1
                 if key == "records" {
-                    guard let elements = compactArrayElements() else { return nil }
-                    slices = elements
+                    skipWhitespace()
+                    if peek() == UInt8(ascii: "[") {
+                        guard let elements = compactArrayElements() else { return nil }
+                        slices = elements
+                    } else {
+                        guard compactValue() != nil else { return nil }
+                        slices = nil
+                    }
                 } else {
                     guard compactValue() != nil else { return nil }
                 }
@@ -793,7 +799,7 @@ public enum BrowserPayloadDecoder {
             }
         }
 
-        if let failureVal = root["failure"], !(failureVal is NSNull) {
+        if let failureVal = root["failure"] {
             guard let f = failureVal as? String else {
                 return .refuse(BrowserRefusal(code: "invalid_enum"))
             }
@@ -969,6 +975,11 @@ public enum BrowserPayloadDecoder {
         if !["app", "extension"].contains(behind) {
             return .refuse(BrowserRefusal(code: "invalid_enum"))
         }
+        if let version = root["version"] {
+            guard let value = version as? String, scalarCount(value) <= projection.stringBounds.version else {
+                return .refuse(BrowserRefusal(code: "missing_field"))
+            }
+        }
         return .accept(.unsupported(BrowserDecodedUnsupported(protocolVersion: protoNum.intValue, behind: behind)))
     }
 
@@ -1090,7 +1101,7 @@ public enum BrowserPayloadDecoder {
                 }
             }
 
-            if let nValue = rec["n"] {
+            if isSnapshot, let nValue = rec["n"] {
                 guard isNonNegativeInteger(nValue, max: UInt64(projection.stringBounds.blocksMax)) else {
                     return .refuse(BrowserRefusal(code: "bad_number", field: "n", row: row))
                 }
