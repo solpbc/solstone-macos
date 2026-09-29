@@ -12,6 +12,11 @@ public protocol BrowserIntakeClock: MonotonicClock {
     func wallNow() -> Date
     func timeZone() -> TimeZone
     func sleepUntil(_ date: Date) async throws
+    func ageStamp() -> BrowserAgeStamp?
+}
+
+public extension BrowserIntakeClock {
+    func ageStamp() -> BrowserAgeStamp? { BrowserAgeStamp.current() }
 }
 
 public struct SystemBrowserIntakeClock: BrowserIntakeClock {
@@ -185,7 +190,7 @@ public actor BrowserIntakeOwner {
         ioInjector: BrowserIntakeIOInjector = BrowserIntakeIOInjector(),
         routeState: BrowserIntakeRouteState = BrowserIntakeRouteState()
     ) throws -> BrowserIntakeOwner {
-        let store = try BrowserIntakeStore(rootURL: spoolRoot, projection: projection, ioInjector: ioInjector)
+        let store = try BrowserIntakeStore(rootURL: spoolRoot, projection: projection, ioInjector: ioInjector, ageClock: { clock.ageStamp() })
         let authority = BrowserIntakeAuthority(
             store: store,
             projection: projection,

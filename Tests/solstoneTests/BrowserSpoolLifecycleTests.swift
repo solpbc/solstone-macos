@@ -7,6 +7,7 @@ import AppKit
 import Foundation
 import SolstoneCore
 import SPLTunnel
+import SQLite3
 import Testing
 @testable import solstone
 
@@ -19,6 +20,7 @@ private final class LifecycleClock: BrowserIntakeClock, @unchecked Sendable {
     private let lock = NSLock()
     private var date: Date
     private var elapsed: Duration = .zero
+    private var bootID = "fixture-boot"
     private var zone: TimeZone
     private var sleepRegistrationCount = 0
     private var sleepers: [UUID: (Date, CheckedContinuation<Void, Error>)] = [:]
@@ -32,6 +34,13 @@ private final class LifecycleClock: BrowserIntakeClock, @unchecked Sendable {
     func wallNow() -> Date { lock.withLock { date } }
     func timeZone() -> TimeZone { lock.withLock { zone } }
     func now() -> Duration { lock.withLock { elapsed } }
+    func ageStamp() -> BrowserAgeStamp? {
+        lock.withLock {
+            let parts = elapsed.components
+            return BrowserAgeStamp(bootID: bootID, elapsedMs: UInt64(max(0, parts.seconds * 1000 + parts.attoseconds / 1_000_000_000_000_000)))
+        }
+    }
+    func reboot() { lock.withLock { bootID = "fixture-next-boot"; elapsed = .zero } }
     func sleep(for duration: Duration) async { await Task.yield() }
 
     func sleepUntil(_ target: Date) async throws {
@@ -813,9 +822,8 @@ struct BrowserSpoolLifecycleTests {
             direction: "extension_to_host"
         ))
         let periodId = try #require(accepted["period_id"] as? String)
-        let begins = Counter()
         fixture.injector.setFailure { point in
-            if point == .begin && begins.increment() == 2 { throw LifecycleInjectedFailure.injected }
+            if point == .finalizePublication { throw LifecycleInjectedFailure.injected }
         }
         fixture.clock.advance(seconds: 301)
         let deadline = ContinuousClock.now + .seconds(3)
@@ -1388,6 +1396,110 @@ struct BrowserSpoolLifecycleTests {
         fixture.owner.stop()
     }
 
+    @Test func damagedRetryAgeFailsClosed() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        await fixture.owner.start()
+        defer { fixture.owner.stop() }
+        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        try fixture.owner.store.recordBatchSeen(generation: generation, inst: "fixture", batchId: "fixture", queuedAtMs: 1, initialAgeMs: 0)
+        var database: OpaquePointer?
+        #expect(sqlite3_open(fixture.root.appendingPathComponent("intake.sqlite").path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        #expect(sqlite3_exec(database, "UPDATE batch_seen SET first_seen_ms = -1", nil, nil, nil) == SQLITE_OK)
+        #expect(throws: BrowserIntakeStoreError.localIO) {
+            try fixture.owner.store.getBatchAge(generation: generation, inst: "fixture", batchId: "fixture")
+        }
+        #expect(fixture.owner.store.storeIsFailed())
+    }
+
+    @Test func wallClockBeforeEpochKeepsEstablishedFloor() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        await fixture.owner.start()
+        defer { fixture.owner.stop() }
+        let floor = fixture.owner.store.getFloorMs()
+        fixture.clock.setWallDate(Date(timeIntervalSince1970: -1))
+        _ = fixture.owner.authority.status()
+        #expect(fixture.owner.store.getFloorMs() >= floor)
+        #expect(!fixture.owner.store.storeIsFailed())
+        #expect(BrowserAgeStamp.wallMilliseconds(Date(timeIntervalSince1970: .infinity)) == UInt64(Int64.max))
+    }
+
+    @Test(arguments: [false, true])
+    func recreatedStoreChargesDowntimeAndRejectsUnknownBoot(reboot: Bool) async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.pause.set(true)
+        await fixture.owner.start()
+        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let acceptedBytes = batch(generation, id: "aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae", queuedAtMs: 1_700_000_100_000)
+        let accepted = try reply(await fixture.owner.accept(bytes: acceptedBytes, direction: "extension_to_host"))
+        let period = try #require(accepted["period_id"] as? String)
+        let payload = fixture.owner.store.periodFileURL(for: period)
+        let original = try Data(contentsOf: payload)
+        let queued = UInt64(fixture.clock.wallNow().timeIntervalSince1970 * 1000) - 9 * 60 * 1000
+        let delta = Data("""
+        {"type":"batch","destination_generation":"\(generation)","inst":"instance-one","batch_id":"afafafafafafafafafafafafafafafaf","queued_at_ms":\(queued),"records":[{"t":"delta","ts":\(queued),"ctx":"unseen","op":"add","block":{"id":"b","text":"delta"}}]}
+        """.utf8)
+        #expect(try reply(await fixture.owner.accept(bytes: delta, direction: "extension_to_host"))["reason"] as? String == "snapshot_required")
+        fixture.clock.advance(seconds: 30)
+        #expect(try reply(await fixture.owner.accept(bytes: delta, direction: "extension_to_host"))["reason"] as? String == "snapshot_required")
+        fixture.owner.stop()
+        fixture.clock.advance(seconds: reboot ? 1 : 40)
+        fixture.clock.setWallDate(Date(timeIntervalSince1970: 1_600_000_000))
+        if reboot { fixture.clock.reboot() }
+        let store = try BrowserIntakeStore(rootURL: fixture.root, projection: fixture.projection,
+            ioInjector: BrowserIntakeIOInjector(), ageClock: { fixture.clock.ageStamp() })
+        let authority = BrowserIntakeAuthority(store: store, projection: fixture.projection,
+            monotonicClock: fixture.clock, wallClock: { fixture.clock.wallNow() }, timeZone: fixture.clock.timeZone())
+        try authority.reconcileIdentity("lifecycle-pairing", mode: .reload)
+        #expect(try authority.accept(bytes: delta, direction: "extension_to_host")["reason"] as? String == "expired_unaccepted")
+        #expect(try authority.accept(bytes: acceptedBytes, direction: "extension_to_host")["result"] as? String == "duplicate")
+        #expect(try Data(contentsOf: payload) == original)
+        #expect(!store.storeIsFailed())
+    }
+
+    @Test func retryAgeSurvivesAuthorityRecreationAndRollback() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        await fixture.owner.start()
+        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let queued = UInt64(fixture.clock.wallNow().timeIntervalSince1970 * 1000) - 9 * 60 * 1000
+        let delta = Data("""
+        {"type":"batch","destination_generation":"\(generation)","inst":"instance-one","batch_id":"acacacacacacacacacacacacacacacac","queued_at_ms":\(queued),"records":[{"t":"delta","ts":\(queued),"ctx":"missing-context","op":"add","block":{"id":"b","text":"delta"}}]}
+        """.utf8)
+        #expect(try reply(await fixture.owner.accept(bytes: delta, direction: "extension_to_host"))["reason"] as? String == "snapshot_required")
+        fixture.clock.advance(seconds: 30)
+        #expect(try reply(await fixture.owner.accept(bytes: delta, direction: "extension_to_host"))["reason"] as? String == "snapshot_required")
+        fixture.clock.setWallDate(Date(timeIntervalSince1970: 1_600_000_000))
+        let authority = BrowserIntakeAuthority(store: fixture.owner.store, projection: fixture.projection,
+            monotonicClock: fixture.clock, wallClock: { fixture.clock.wallNow() }, timeZone: fixture.clock.timeZone())
+        // The remaining thirty seconds must not reset on the new authority.
+        _ = try authority.accept(bytes: delta, direction: "extension_to_host")
+        fixture.clock.advance(seconds: 40)
+        #expect(try authority.accept(bytes: delta, direction: "extension_to_host")["reason"] as? String == "expired_unaccepted")
+        fixture.owner.stop()
+    }
+
+    @Test func quietCustodyCrossesWeekDuringClockRollback() async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.pause.set(true)
+        await fixture.owner.start()
+        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let accepted = try reply(await fixture.owner.accept(bytes: batch(generation,
+            id: "adadadadadadadadadadadadadadadad", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
+        let id = try #require(accepted["period_id"] as? String)
+        fixture.clock.setWallDate(Date(timeIntervalSince1970: 1_600_000_000))
+        fixture.clock.advance(seconds: 7 * 24 * 60 * 60 + 1)
+        let state = try decodedState(fixture.owner.authority.status(), projection: fixture.projection)
+        #expect(state.custodyStale)
+        #expect(state.capture == "permitted")
+        #expect(FileManager.default.fileExists(atPath: fixture.owner.store.periodFileURL(for: id).path))
+        fixture.owner.stop()
+    }
+
     @Test func initialAgeAndMonotonicRetryAgeSurviveWallRollback() async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -1548,6 +1660,12 @@ struct BrowserSpoolLifecycleTests {
         let rolledBack = try decodedState(fixture.owner.authority.status(), projection: fixture.projection)
         #expect(rolledBack.custodyStale)
         #expect(FileManager.default.fileExists(atPath: firstPayload.path))
+        #expect(FileManager.default.fileExists(atPath: secondPayload.path))
+        let persistedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: firstPeriodId)
+        let binding = try #require(persistedBinding)
+        try fixture.owner.store.releaseProven(periodId: firstPeriodId, binding: binding, nowMs: fixture.owner.store.getFloorMs())
+        let youngerOnly = try decodedState(fixture.owner.authority.status(), projection: fixture.projection)
+        #expect(!youngerOnly.custodyStale)
         #expect(FileManager.default.fileExists(atPath: secondPayload.path))
         fixture.owner.stop()
     }

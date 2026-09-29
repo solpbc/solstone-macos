@@ -47,6 +47,7 @@ enum BrowserIntakeIOPoint: Sendable, Equatable {
     case commit
     case size
     case proof
+    case finalizePublication
 }
 
 final class BrowserIntakeIOInjector: @unchecked Sendable {
@@ -117,6 +118,8 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     private let projection: BrowserContractProjection
     let ioInjector: BrowserIntakeIOInjector
     private var db: OpaquePointer?
+    private let ageClock: @Sendable () -> BrowserAgeStamp?
+    private var ageCheckpoint: BrowserAgeStamp?
 
     public var crashPoint: BrowserIntakeCrashPoint = .none
     private var deliveryFailure: String?
@@ -278,10 +281,12 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         try self.init(rootURL: rootURL, projection: projection, ioInjector: BrowserIntakeIOInjector())
     }
 
-    init(rootURL: URL, projection: BrowserContractProjection, ioInjector: BrowserIntakeIOInjector) throws {
+    init(rootURL: URL, projection: BrowserContractProjection, ioInjector: BrowserIntakeIOInjector,
+         ageClock: @escaping @Sendable () -> BrowserAgeStamp? = BrowserAgeStamp.current) throws {
         self.rootURL = rootURL
         self.projection = projection
         self.ioInjector = ioInjector
+        self.ageClock = ageClock
         var stage = "root-check"
         do {
             try Self.assertNoSymlinkAncestors(rootURL)
@@ -533,6 +538,13 @@ private static func fullSync(_ handle: FileHandle) throws {
             PRIMARY KEY (generation, inst, batch_id)
         );
 
+        CREATE TABLE IF NOT EXISTS age_clock (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            boot_id TEXT NOT NULL,
+            elapsed_ms INTEGER NOT NULL,
+            floor_ms INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS spool_state (
             key TEXT PRIMARY KEY,
             int_value INTEGER NOT NULL
@@ -553,6 +565,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         try ensureColumn("batch_seen", name: "initial_age_ms", definition: "INTEGER NOT NULL DEFAULT 0")
         try ensureColumn("batch_seen", name: "elapsed_highwater_ms", definition: "INTEGER NOT NULL DEFAULT 0")
         try ensureColumn("batch_seen", name: "age_established", definition: "INTEGER NOT NULL DEFAULT 0")
+        try ensureColumn("batch_seen", name: "first_seen_ms", definition: "INTEGER")
     }
 
     private func ensureColumn(_ table: String, name: String, definition: String) throws {
@@ -589,6 +602,15 @@ private static func fullSync(_ handle: FileHandle) throws {
     }
 
     private func recoverAndLoadState() throws {
+        storedFloorMs = try optionalStateValue("floor_ms") ?? 0
+        try query("SELECT boot_id, elapsed_ms, floor_ms FROM age_clock WHERE id = 1") { stmt in
+            let rc = try stepChecked(stmt)
+            if rc == SQLITE_DONE { return }
+            guard rc == SQLITE_ROW, let bootID = Self.readText(stmt, 0),
+                  sqlite3_column_int64(stmt, 1) >= 0, sqlite3_column_int64(stmt, 2) >= 0 else { throw BrowserIntakeStoreError.localIO }
+            ageCheckpoint = BrowserAgeStamp(bootID: bootID, elapsedMs: UInt64(sqlite3_column_int64(stmt, 1)))
+            storedFloorMs = max(storedFloorMs, UInt64(sqlite3_column_int64(stmt, 2)))
+        }
         let active = try query("SELECT destination_generation, identity_token FROM epoch WHERE status = 'active' ORDER BY id DESC LIMIT 1") { stmt -> (String, String)? in
             let rc = try stepChecked(stmt)
             if rc == SQLITE_DONE { return nil }
@@ -870,7 +892,7 @@ private static func fullSync(_ handle: FileHandle) throws {
                 return sqlite3_column_type(stmt, 0) == SQLITE_NULL ? 0 : UInt64(sqlite3_column_int64(stmt, 0))
             }
 
-            storedFloorMs = try optionalStateValue("floor_ms") ?? storedFloorMs
+            storedFloorMs = max(storedFloorMs, try optionalStateValue("floor_ms") ?? 0)
             staleAnchorMs = try optionalStateValue("stale_anchor_ms") ?? 0
             staleElapsedHighWaterMs = try optionalStateValue("stale_elapsed_ms") ?? 0
         } catch {
@@ -953,16 +975,41 @@ private static func fullSync(_ handle: FileHandle) throws {
     }
 
     private func updateFloorMsLocked(wallNowMs: UInt64) throws -> UInt64 {
-        let target = max(storedFloorMs, wallNowMs)
-        if target > storedFloorMs {
-            do {
-                try execute("INSERT OR REPLACE INTO spool_state (key, int_value) VALUES ('floor_ms', \(target));")
-            } catch {
-                isStoreFailed = true
-                throw error
-            }
-            storedFloorMs = target
+        guard let stamp = ageClock(), stamp.elapsedMs <= UInt64(Int64.max), !stamp.bootID.isEmpty else {
+            isStoreFailed = true
+            throw BrowserIntakeStoreError.localIO
         }
+        if let previous = ageCheckpoint, BrowserOpaqueString.equals(previous.bootID, stamp.bootID), stamp.elapsedMs < previous.elapsedMs {
+            isStoreFailed = true
+            throw BrowserIntakeStoreError.localIO
+        }
+        let sameBoot = ageCheckpoint.map { BrowserOpaqueString.equals($0.bootID, stamp.bootID) && stamp.elapsedMs >= $0.elapsedMs } ?? false
+        let elapsed = sameBoot ? stamp.elapsedMs - ageCheckpoint!.elapsedMs : (ageCheckpoint == nil ? 0 : stamp.elapsedMs)
+        let (advanced, overflow) = storedFloorMs.addingReportingOverflow(elapsed)
+        let target = max(wallNowMs, overflow ? UInt64(Int64.max) : min(advanced, UInt64(Int64.max)))
+        guard target <= UInt64(Int64.max) else { throw BrowserIntakeStoreError.localIO }
+        if target == storedFloorMs, sameBoot, ageCheckpoint?.elapsedMs == stamp.elapsedMs { return storedFloorMs }
+        do {
+            try execute("BEGIN IMMEDIATE;")
+            // A changed/missing boot coordinate cannot establish a recovered
+            // unaccepted batch's remaining time. Earned receipts are unaffected.
+            if !sameBoot && storedFloorMs > 0 {
+                try execute("UPDATE batch_seen SET age_established = 0;")
+            }
+            try query("INSERT OR REPLACE INTO age_clock (id, boot_id, elapsed_ms, floor_ms) VALUES (1, ?, ?, ?)") { stmt in
+                try bindTextChecked(stmt, 1, stamp.bootID)
+                try bindInt64Checked(stmt, 2, Int64(stamp.elapsedMs))
+                try bindInt64Checked(stmt, 3, Int64(target))
+                guard try stepChecked(stmt) == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
+            }
+            try execute("COMMIT;")
+        } catch {
+            try? execute("ROLLBACK;")
+            isStoreFailed = true
+            throw error
+        }
+        ageCheckpoint = stamp
+        storedFloorMs = target
         observedFloorMs = max(observedFloorMs, storedFloorMs)
         return storedFloorMs
     }
@@ -978,13 +1025,13 @@ private static func fullSync(_ handle: FileHandle) throws {
         lock.lock()
         defer { lock.unlock() }
 
-        if nowMs > storedFloorMs {
-            do { _ = try updateFloorMsLocked(wallNowMs: nowMs) }
-            catch { isStoreFailed = true }
-        }
+        do { _ = try updateFloorMsLocked(wallNowMs: nowMs) }
+        catch { isStoreFailed = true }
         let freshness = projection.policy.freshnessMaxMs
 
-        let isStale = earliestHeldMs > 0 && staleElapsedHighWaterMs >= projection.policy.spoolAgeMs
+        let heldAge = storedFloorMs >= earliestHeldMs ? storedFloorMs - earliestHeldMs : 0
+        let savedAge = staleAnchorMs == earliestHeldMs ? staleElapsedHighWaterMs : 0
+        let isStale = earliestHeldMs > 0 && max(heldAge, savedAge) >= projection.policy.spoolAgeMs
 
         let isFull = (try? isQuotaFullLocked()) ?? true
 
@@ -1225,12 +1272,13 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
 
         var stmt: OpaquePointer?
-        try prepareChecked("INSERT OR IGNORE INTO batch_seen (generation, inst, batch_id, queued_at_ms, initial_age_ms, elapsed_highwater_ms, age_established) VALUES (?, ?, ?, ?, ?, 0, 1)", &stmt)
+        try prepareChecked("INSERT OR IGNORE INTO batch_seen (generation, inst, batch_id, queued_at_ms, initial_age_ms, elapsed_highwater_ms, age_established, first_seen_ms) VALUES (?, ?, ?, ?, ?, 0, 1, ?)", &stmt)
         try bindTextChecked(stmt, 1, generation)
         try bindTextChecked(stmt, 2, inst)
         try bindTextChecked(stmt, 3, batchId)
         try bindInt64Checked(stmt, 4, Int64(queuedAtMs))
         try bindInt64Checked(stmt, 5, Int64(initialAgeMs))
+        try bindInt64Checked(stmt, 6, Int64(storedFloorMs))
         let rc = try stepChecked(stmt)
         sqlite3_finalize(stmt)
         guard rc == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
@@ -1246,18 +1294,23 @@ private static func fullSync(_ handle: FileHandle) throws {
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
 
-        try prepareChecked("SELECT initial_age_ms, elapsed_highwater_ms, age_established FROM batch_seen WHERE generation = ? AND inst = ? AND batch_id = ?", &stmt)
+        try prepareChecked("SELECT initial_age_ms, elapsed_highwater_ms, age_established, first_seen_ms FROM batch_seen WHERE generation = ? AND inst = ? AND batch_id = ?", &stmt)
         try bindTextChecked(stmt, 1, generation)
         try bindTextChecked(stmt, 2, inst)
         try bindTextChecked(stmt, 3, batchId)
         let rc = try stepChecked(stmt)
         if rc == SQLITE_DONE { return nil }
         guard rc == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
-        return (
-            UInt64(sqlite3_column_int64(stmt, 0)),
-            UInt64(sqlite3_column_int64(stmt, 1)),
-            sqlite3_column_int(stmt, 2) != 0
-        )
+        let initial = sqlite3_column_int64(stmt, 0)
+        let savedElapsed = sqlite3_column_int64(stmt, 1)
+        let firstSeen = sqlite3_column_int64(stmt, 3)
+        guard initial >= 0, savedElapsed >= 0, firstSeen >= 0 else {
+            isStoreFailed = true
+            throw BrowserIntakeStoreError.localIO
+        }
+        let elapsed = storedFloorMs >= UInt64(firstSeen) ? storedFloorMs - UInt64(firstSeen) : 0
+        return (UInt64(initial), max(UInt64(savedElapsed), elapsed),
+                sqlite3_column_int(stmt, 2) != 0 && sqlite3_column_type(stmt, 3) != SQLITE_NULL)
     }
 
     func updateBatchAgeHighWater(generation: String, inst: String, batchId: String, elapsedMs: UInt64) throws {
@@ -1277,10 +1330,9 @@ private static func fullSync(_ handle: FileHandle) throws {
         lock.lock()
         defer { lock.unlock() }
         if let anchorMs {
-            let candidate = max(staleElapsedHighWaterMs, elapsedMs)
+            let candidate = staleAnchorMs == anchorMs ? max(staleElapsedHighWaterMs, elapsedMs) : elapsedMs
             if staleAnchorMs != anchorMs {
-                try execute("INSERT OR REPLACE INTO spool_state (key, int_value) VALUES ('stale_anchor_ms', \(anchorMs));")
-                try execute("INSERT OR REPLACE INTO spool_state (key, int_value) VALUES ('stale_elapsed_ms', \(candidate));")
+                try execute("INSERT OR REPLACE INTO spool_state (key, int_value) VALUES ('stale_anchor_ms', \(anchorMs)), ('stale_elapsed_ms', \(candidate));")
                 staleAnchorMs = anchorMs
                 staleElapsedHighWaterMs = candidate
             } else if candidate > staleElapsedHighWaterMs {
@@ -1819,6 +1871,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
 
         fileRecoveryRequired = true
+        try ioInjector.check(.finalizePublication)
         try execute("BEGIN IMMEDIATE;")
         var publicationTransactionBegan = true
         do {

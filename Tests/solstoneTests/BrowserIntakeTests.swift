@@ -1070,7 +1070,7 @@ struct BrowserIntakeAdmissionTests {
         #expect(expired["reason"] as? String == "expired_unaccepted")
 
         let decoy = """
-        {"extra":{"records":[{"unvalidated":true}]},"type":"batch","destination_generation":"\(gen)","inst":"inst-1","batch_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","queued_at_ms":1700000000000,"records":[{"t":"segment_start","ts":1000.0,"ctx":"ctx-real","blocks":[{"id":"b","text":"real-record"}]}]}
+        {"extra":{"records":[{"unvalidated":true}]},"type":"batch","destination_generation":"\(gen)","inst":"inst-1","batch_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","queued_at_ms":\(store.getFloorMs()),"records":[{"t":"segment_start","ts":1000.0,"ctx":"ctx-real","blocks":[{"id":"b","text":"real-record"}]}]}
         """
         let decoyReply = try authority.accept(bytes: Data(decoy.utf8), direction: "extension_to_host")
         #expect(decoyReply["result"] as? String == "accepted")
@@ -1085,7 +1085,7 @@ struct BrowserIntakeAdmissionTests {
           "destination_generation": "\(gen)",
           "inst": "inst-1",
           "batch_id": "ffffffffffffffffffffffffffffffff",
-          "queued_at_ms": 1700000000000,
+          "queued_at_ms": \(store.getFloorMs()),
           "records": [
             {
               "t": "segment_start",

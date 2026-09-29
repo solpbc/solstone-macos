@@ -25,12 +25,8 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     private var staleAnchorMs: UInt64 = 0
     private var staleMonotonicAnchor: Duration = .zero
     private var staleElapsedBaseMs: UInt64 = 0
-    private struct SeenKey: Hashable {
-        let generation: Data
-        let inst: Data
-        let batchId: Data
-    }
-    private var firstSight: [SeenKey: Duration] = [:]
+    private let floorAnchorMs: UInt64
+    private let floorMonotonicAnchor: Duration
     public var isPaused: Bool {
         lock.withLock { _isPaused }
     }
@@ -48,16 +44,18 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         self.wallClock = wallClock
         self.timeZone = timeZone
         self.lastRotationDate = wallClock()
+        self.floorAnchorMs = max(store.getFloorMs(), BrowserAgeStamp.wallMilliseconds(wallClock()))
+        self.floorMonotonicAnchor = monotonicClock.now()
         let staleState = store.stalenessState()
         self.staleAnchorMs = staleState.anchorMs
         self.staleElapsedBaseMs = staleState.elapsedHighWaterMs
         self.staleMonotonicAnchor = monotonicClock.now()
         let initialHeldAnchor = store.getEarliestHeldMs()
         if initialHeldAnchor > 0 {
-            let wallNowMs = max(UInt64(wallClock().timeIntervalSince1970 * 1000.0), store.getFloorMs())
+            let wallNowMs = max(BrowserAgeStamp.wallMilliseconds(wallClock()), store.getFloorMs())
             let wallElapsed = wallNowMs > initialHeldAnchor ? wallNowMs - initialHeldAnchor : 0
             self.staleAnchorMs = initialHeldAnchor
-            self.staleElapsedBaseMs = max(staleState.elapsedHighWaterMs, wallElapsed)
+            self.staleElapsedBaseMs = max(staleState.anchorMs == initialHeldAnchor ? staleState.elapsedHighWaterMs : 0, wallElapsed)
         }
         if let created = store.openPeriodCreatedAtMs() {
             self.lastRotationDate = Date(timeIntervalSince1970: Double(created) / 1000.0)
@@ -110,13 +108,13 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
 
     public func publishEpoch(identityToken: String) throws -> String {
         let now = wallClock()
-        let nowMs = UInt64(now.timeIntervalSince1970 * 1000.0)
+        let nowMs = BrowserAgeStamp.wallMilliseconds(now)
         return try store.publishEpoch(identityToken: identityToken, nowMs: nowMs)
     }
 
     public func retireIfTokenChanged(newToken: String?) throws {
         let now = wallClock()
-        let nowMs = UInt64(now.timeIntervalSince1970 * 1000.0)
+        let nowMs = BrowserAgeStamp.wallMilliseconds(now)
         try store.retireIfTokenChanged(newToken: newToken, nowMs: nowMs)
     }
 
@@ -142,10 +140,21 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         }
     }
 
+    private func advanceFloor(wallNowMs: UInt64) throws -> UInt64 {
+        let elapsed = durationMs(monotonicClock.now() - floorMonotonicAnchor)
+        let (advanced, overflow) = floorAnchorMs.addingReportingOverflow(elapsed)
+        let candidate = overflow ? UInt64(Int64.max) : min(advanced, UInt64(Int64.max))
+        return try store.updateFloorMs(wallNowMs: max(wallNowMs, candidate))
+    }
+
     public func status() -> [String: Any] {
+        lock.lock()
+        defer { lock.unlock() }
         let now = wallClock()
-        let nowMs = UInt64(now.timeIntervalSince1970 * 1000.0)
-        let floorMs = max(nowMs, store.getFloorMs())
+        let nowMs = BrowserAgeStamp.wallMilliseconds(now)
+        let floorMs: UInt64
+        do { floorMs = try advanceFloor(wallNowMs: nowMs) }
+        catch { store.failClosed(); floorMs = store.getFloorMs() }
         let monoNow = monotonicClock.now()
         let heldAnchor = store.getEarliestHeldMs()
         do {
@@ -158,7 +167,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 if staleAnchorMs != heldAnchor {
                     let stored = store.stalenessState()
                     let wallElapsed = floorMs > heldAnchor ? floorMs - heldAnchor : 0
-                    staleElapsedBaseMs = max(stored.elapsedHighWaterMs, wallElapsed)
+                    staleElapsedBaseMs = max(stored.anchorMs == heldAnchor ? stored.elapsedHighWaterMs : 0, wallElapsed)
                     staleAnchorMs = heldAnchor
                     staleMonotonicAnchor = monoNow
                 }
@@ -169,7 +178,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             store.failClosed()
             Logger.storage.error("Browser intake stale-age persistence failed: \(error.localizedDescription, privacy: .public)")
         }
-        if lock.withLock({ admissionClosed }) {
+        if admissionClosed {
             let held = store.currentStatus(nowMs: nowMs, monotonicFreshnessMs: projection.policy.freshnessMaxMs)
             var result: [String: Any] = [
                 "type": "state",
@@ -189,8 +198,10 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     public func poll(now: Date) {
         lock.lock()
         defer { lock.unlock() }
+        let nowMs = BrowserAgeStamp.wallMilliseconds(now)
+        do { _ = try advanceFloor(wallNowMs: nowMs) }
+        catch { store.failClosed(); return }
         rotateIfBoundary(now: now)
-        let nowMs = UInt64(now.timeIntervalSince1970 * 1000.0)
         store.garbageCollectExpiredTombstones(nowMs: nowMs)
     }
 
@@ -242,7 +253,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
 
     public func accept(bytes: Data, direction: String) throws -> [String: Any] {
         let now = wallClock()
-        let nowMs = UInt64(now.timeIntervalSince1970 * 1000.0)
+        let nowMs = BrowserAgeStamp.wallMilliseconds(now)
         let decodeResult = BrowserPayloadDecoder.decode(bytes: bytes, direction: direction, projection: projection)
 
         switch decodeResult {
@@ -329,7 +340,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
 
         let floorMs: UInt64
         do {
-            floorMs = try store.updateFloorMs(wallNowMs: nowMs)
+            floorMs = try advanceFloor(wallNowMs: nowMs)
         } catch {
             return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
@@ -338,7 +349,6 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             return try rejected(batch: batch, reason: "age_policy", receiptClass: "retryable")
         }
 
-        let seenKey = SeenKey(generation: Data(batch.destinationGeneration.utf8), inst: Data(batch.inst.utf8), batchId: Data(batch.batchId.utf8))
         var seenAge: (initialAgeMs: UInt64, elapsedHighWaterMs: UInt64, established: Bool)?
         do {
             seenAge = try store.getBatchAge(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId)
@@ -351,7 +361,6 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                     queuedAtMs: batch.queuedAtMs,
                     initialAgeMs: initialAge
                 )
-                firstSight[seenKey] = monotonicClock.now()
                 seenAge = (initialAgeMs: initialAge, elapsedHighWaterMs: 0, established: true)
             }
         } catch {
@@ -376,16 +385,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             }
             return try rejected(batch: batch, reason: "expired_unaccepted", receiptClass: "permanent")
         }
-        if firstSight[seenKey] == nil {
-            firstSight[seenKey] = monotonicClock.now()
-        }
-        let elapsedSinceSight: UInt64
-        if let seenAt = firstSight[seenKey] {
-            elapsedSinceSight = durationMs(monotonicClock.now() - seenAt)
-        } else {
-            elapsedSinceSight = 0
-        }
-        let elapsedHighWater = max(seenAge.elapsedHighWaterMs, elapsedSinceSight)
+        let elapsedHighWater = seenAge.elapsedHighWaterMs
         do {
             try store.updateBatchAgeHighWater(
                 generation: batch.destinationGeneration,
