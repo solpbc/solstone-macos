@@ -117,6 +117,16 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     private let rootURL: URL
     private let projection: BrowserContractProjection
     let ioInjector: BrowserIntakeIOInjector
+    private let metadataPageLimit: Int
+    private let metadataPageBytes = 4096
+    // Reserve 256 KiB for each active period's finalization, bounded binding,
+    // receipt and terminal updates, plus 512 KiB for clocks/fences and cleanup.
+    // An empty replacement counts as a prospective active period.
+    private let drainPagesPerActivePeriod = 64
+    private let fixedDrainPages = 128
+    #if DEBUG
+    private var automaticFullRollbackCount = 0
+    #endif
     private var db: OpaquePointer?
     private let ageClock: @Sendable () -> BrowserAgeStamp?
     private var ageCheckpoint: BrowserAgeStamp?
@@ -224,7 +234,9 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         stagingDirectories.append(url)
         stagingReservations[url] = max(0, reservedBytes)
         do {
-            if try isQuotaFullLocked() {
+            // Delivery consumes its already-reserved copy and drain metadata.
+            // Admission headroom may be exhausted without blocking that work.
+            if try productionFootprintBytesLocked() > projection.policy.spoolBytes {
                 stagingDirectories.removeAll { $0 == url }
                 stagingReservations.removeValue(forKey: url)
                 throw BrowserIntakeStoreError.resourceExhausted
@@ -286,11 +298,14 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     }
 
     init(rootURL: URL, projection: BrowserContractProjection, ioInjector: BrowserIntakeIOInjector,
-         ageClock: @escaping @Sendable () -> BrowserAgeStamp? = BrowserAgeStamp.current) throws {
+         ageClock: @escaping @Sendable () -> BrowserAgeStamp? = BrowserAgeStamp.current,
+         metadataPageLimit: Int = 4096) throws {
         self.rootURL = rootURL
         self.projection = projection
         self.ioInjector = ioInjector
         self.ageClock = ageClock
+        guard metadataPageLimit >= 256, metadataPageLimit <= 4096 else { throw BrowserIntakeStoreError.localIO }
+        self.metadataPageLimit = metadataPageLimit
         var stage = "root-check"
         do {
             try Self.assertNoSymlinkAncestors(rootURL)
@@ -315,6 +330,49 @@ public final class BrowserIntakeStore: @unchecked Sendable {
             let dbURL = rootURL.appendingPathComponent("intake.sqlite")
             stage = "database"
             try validateDatabasePaths()
+            let allowedRootNames: Set<String> = ["periods", "staging", "intake.sqlite", "intake.sqlite-wal", "intake.sqlite-shm", "intake.sqlite-journal"]
+            guard try FileManager.default.contentsOfDirectory(atPath: rootURL.path).allSatisfy(allowedRootNames.contains) else {
+                throw BrowserIntakeStoreError.localIO
+            }
+            for directory in try FileManager.default.contentsOfDirectory(at: periodsDir, includingPropertiesForKeys: nil) {
+                guard UUID(uuidString: directory.lastPathComponent) != nil else { throw BrowserIntakeStoreError.localIO }
+                try Self.assertNoSymlinkAncestors(directory)
+                for child in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+                    let name = child.lastPathComponent
+                    let temporaryAck = name.hasPrefix(".browser_ingest_ack.json.") && name.hasSuffix(".tmp")
+                        && UUID(uuidString: String(name.dropFirst(".browser_ingest_ack.json.".count).dropLast(4))) != nil
+                    guard name == "browser_pages.jsonl" || name == "browser_ingest_ack.json" || temporaryAck else {
+                        throw BrowserIntakeStoreError.localIO
+                    }
+                    try Self.assertRegularFile(child)
+                }
+            }
+            if let databaseBytes = try Self.fileByteCount(dbURL), databaseBytes > metadataPageLimit * metadataPageBytes {
+                throw BrowserIntakeStoreError.resourceExhausted
+            }
+            // Bound an old WAL before opening can checkpoint it. Every possible
+            // committed page number must fit the new DB cap; repeated frames
+            // may be large, but are refused rather than erased to make room.
+            let walURL = rootURL.appendingPathComponent("intake.sqlite-wal")
+            if let walBytes = try Self.fileByteCount(walURL), walBytes > 0 {
+                guard walBytes <= metadataReservationBytes else { throw BrowserIntakeStoreError.resourceExhausted }
+                let wal = try Data(contentsOf: walURL)
+                func word(_ offset: Int) -> UInt32 {
+                    wal[offset..<(offset + 4)].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+                }
+                guard wal.count >= 32, [UInt32(0x377f0682), UInt32(0x377f0683)].contains(word(0)),
+                      word(8) == UInt32(metadataPageBytes), (wal.count - 32) % (metadataPageBytes + 24) == 0 else {
+                    throw BrowserIntakeStoreError.localIO
+                }
+                for offset in stride(from: 32, to: wal.count, by: metadataPageBytes + 24) {
+                    guard word(offset) > 0, word(offset) <= UInt32(metadataPageLimit),
+                          word(offset + 4) <= UInt32(metadataPageLimit) else { throw BrowserIntakeStoreError.resourceExhausted }
+                }
+            }
+            // Opening an old WAL can recover/checkpoint it. Reserve that work
+            // before SQLite can write, preserving an oversized store as-is.
+            guard Self.saturatingAdd(try directoryFootprintBytes(rootURL), metadataReservationBytes)
+                    <= projection.policy.spoolBytes else { throw BrowserIntakeStoreError.resourceExhausted }
             if FileManager.default.fileExists(atPath: dbURL.path) {
                 try Self.assertRegularFile(dbURL)
             }
@@ -329,6 +387,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
             stage = "recovery"
             try recoverAndLoadState()
         } catch {
+            if let db { sqlite3_close_v2(db); self.db = nil }
             Logger.storage.error("Browser spool initialization failed at \(stage, privacy: .public): \(error.localizedDescription, privacy: .public)")
             throw error
         }
@@ -414,8 +473,13 @@ public final class BrowserIntakeStore: @unchecked Sendable {
             try ioInjector.check(.step)
         }
         var err: UnsafeMutablePointer<CChar>?
-        if sqlite3_exec(db, sql, nil, nil, &err) != SQLITE_OK {
+        let rc = sqlite3_exec(db, sql, nil, nil, &err)
+        if rc != SQLITE_OK {
             sqlite3_free(err)
+            if rc & 0xff == SQLITE_FULL {
+                noteFullRollbackLocked()
+                throw BrowserIntakeStoreError.resourceExhausted
+            }
             throw BrowserIntakeStoreError.localIO
         }
     }
@@ -458,11 +522,87 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     private func stepChecked(_ stmt: OpaquePointer?) throws -> Int32 {
         try validateDatabasePaths()
         try ioInjector.check(.step)
-        return sqlite3_step(stmt)
+        let rc = sqlite3_step(stmt)
+        if rc & 0xff == SQLITE_FULL {
+            noteFullRollbackLocked()
+            throw BrowserIntakeStoreError.resourceExhausted
+        }
+        return rc
+    }
+
+    private func noteFullRollbackLocked() {
+        #if DEBUG
+        if sqlite3_get_autocommit(db) != 0 { automaticFullRollbackCount += 1 }
+        #endif
+    }
+
+    #if DEBUG
+    func setSQLitePageLimitForValidation(_ pages: Int) throws {
+        try lock.withLock {
+            guard pages > 0, pages <= metadataPageLimit,
+                  try integerPragmaLocked("max_page_count = \(pages)") == pages else { throw BrowserIntakeStoreError.localIO }
+        }
+    }
+
+    func sqlitePagesForValidation() throws -> (allocated: Int, free: Int, fullRollbacks: Int) {
+        try lock.withLock {
+            (try integerPragmaLocked("page_count"), try integerPragmaLocked("freelist_count"), automaticFullRollbackCount)
+        }
+    }
+    #endif
+
+    private func rollbackIfActiveLocked() throws {
+        // FULL can already have rolled back the transaction.
+        if sqlite3_get_autocommit(db) == 0 { try execute("ROLLBACK;") }
+    }
+
+    private func integerPragmaLocked(_ name: String) throws -> Int {
+        try query("PRAGMA \(name)") { stmt in
+            guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+            return Int(sqlite3_column_int64(stmt, 0))
+        }
+    }
+
+    // Reserve the entire hard DB bound, its rollback journal and conservative
+    // journal framing, rather than charge lexical row sizes as physical growth.
+    private var metadataReservationBytes: Int { metadataPageLimit * metadataPageBytes * 3 + 64 * 1024 }
+
+    private func metadataAdmissionFitsLocked(additionalBytes: Int = 0) throws -> Bool {
+        let allocated = try integerPragmaLocked("page_count")
+        let free = try integerPragmaLocked("freelist_count")
+        let periods = try query("SELECT COUNT(*), MAX(CASE WHEN state = 'open' THEN 1 ELSE 0 END) FROM periods WHERE state IN ('open', 'finalizing', 'finalized')") { stmt in
+            guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+            return (count: Int(sqlite3_column_int64(stmt, 0)), hasOpen: sqlite3_column_int(stmt, 1) == 1)
+        }
+        let prospectivePages = Self.saturatingAdd(max(0, additionalBytes), metadataPageBytes - 1) / metadataPageBytes
+        let reserve = fixedDrainPages + (periods.count + (periods.hasOpen ? 0 : 1)) * drainPagesPerActivePeriod
+        return allocated - free + reserve + prospectivePages + 4 <= metadataPageLimit
+    }
+
+    private func requireMetadataHeadroomLocked() throws {
+        guard try metadataAdmissionFitsLocked() else { throw BrowserIntakeStoreError.resourceExhausted }
+    }
+
+    private func admissionMetadataTransactionLocked<T>(_ operation: () throws -> T) throws -> T {
+        try requireMetadataHeadroomLocked()
+        try execute("BEGIN IMMEDIATE;")
+        do {
+            let result = try operation()
+            try requireMetadataHeadroomLocked()
+            guard try productionFootprintBytesLocked() <= projection.policy.spoolBytes else {
+                throw BrowserIntakeStoreError.resourceExhausted
+            }
+            try execute("COMMIT;")
+            return result
+        } catch {
+            do { try rollbackIfActiveLocked() }
+            catch { isStoreFailed = true }
+            throw error
+        }
     }
 
     private func validateDatabasePaths() throws {
-        for name in ["intake.sqlite", "intake.sqlite-wal", "intake.sqlite-shm"] {
+        for name in ["intake.sqlite", "intake.sqlite-wal", "intake.sqlite-shm", "intake.sqlite-journal"] {
             let url = rootURL.appendingPathComponent(name)
             try Self.assertNoSymlinkAncestors(url)
             if FileManager.default.fileExists(atPath: url.path) {
@@ -477,9 +617,11 @@ private static func fullSync(_ handle: FileHandle) throws {
 
     private func initSchema() throws {
         let sql = """
-        PRAGMA journal_mode = WAL;
+        PRAGMA journal_mode = DELETE;
         PRAGMA synchronous = FULL;
         PRAGMA fullfsync = ON;
+        PRAGMA cache_spill = OFF;
+        PRAGMA temp_store = MEMORY;
 
         CREATE TABLE IF NOT EXISTS epoch (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -555,6 +697,15 @@ private static func fullSync(_ handle: FileHandle) throws {
         );
         """
         try execute(sql)
+        let pageSize = try integerPragmaLocked("page_size")
+        let limit = try integerPragmaLocked("max_page_count = \(metadataPageLimit)")
+        let deleteJournal = try query("PRAGMA journal_mode") { stmt in
+            guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+            return Self.readText(stmt, 0) == "delete"
+        }
+        guard pageSize == metadataPageBytes, limit == metadataPageLimit, deleteJournal,
+              try integerPragmaLocked("cache_spill") == 0,
+              try integerPragmaLocked("temp_store") == 2 else { throw BrowserIntakeStoreError.localIO }
         let fullSyncEnabled = try query("PRAGMA fullfsync") { stmt in
             guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
             return sqlite3_column_int(stmt, 0) == 1
@@ -703,7 +854,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         var changed = false
         for directory in directories {
             let id = directory.lastPathComponent
-            guard UUID(uuidString: id) != nil else { continue }
+            guard UUID(uuidString: id) != nil else { throw BrowserIntakeStoreError.localIO }
             guard !referencedIDs.contains(id) else { continue }
             try Self.assertNoSymlinkAncestors(directory)
             guard try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).isEmpty else {
@@ -979,7 +1130,8 @@ private static func fullSync(_ handle: FileHandle) throws {
     }
 
     private func updateFloorMsLocked(wallNowMs: UInt64) throws -> UInt64 {
-        guard let stamp = ageClock(), stamp.elapsedMs <= UInt64(Int64.max), !stamp.bootID.isEmpty else {
+        guard let stamp = ageClock(), stamp.elapsedMs <= UInt64(Int64.max),
+              !stamp.bootID.isEmpty, stamp.bootID.utf8.count <= 128 else {
             isStoreFailed = true
             throw BrowserIntakeStoreError.localIO
         }
@@ -1054,7 +1206,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
 
         let held = heldPayloadBytes > 0
-        let custody: [String: Bool] = ["full": held && isFull, "stale": held && isStale]
+        let custody: [String: Bool] = ["full": isFull, "stale": held && isStale]
         let heldDelivery = held ? "kept_locally" : "unknown"
 
         guard let identity = activeIdentityToken, !identity.isEmpty else {
@@ -1126,18 +1278,20 @@ private static func fullSync(_ handle: FileHandle) throws {
         if let currentGen = activeGeneration, BrowserOpaqueString.equals(activeIdentityToken, digest) {
             guard !deliveryStopped else { throw BrowserIntakeStoreError.staleGeneration }
             let durableNowMs = try updateFloorMsLocked(wallNowMs: max(storedFloorMs, nowMs))
-            _ = try ensureOpenPeriodLocked(nowMs: durableNowMs)
+            do { _ = try ensureOpenPeriodLocked(nowMs: durableNowMs) }
+            catch BrowserIntakeStoreError.resourceExhausted { }
             deliveryProofsOpen = true
             return currentGen
         }
 
         let durableNowMs = try updateFloorMsLocked(wallNowMs: max(storedFloorMs, nowMs))
+        guard try !isQuotaFullLocked(additionalDedupBytes: 1) else { throw BrowserIntakeStoreError.resourceExhausted }
         let newGen = UUID().uuidString
         let newPeriodId = UUID().uuidString
 
-        try createEmptyPeriodFileLocked(newPeriodId)
         var transactionBegan = false
         do {
+            try createEmptyPeriodFileLocked(newPeriodId)
             try execute("BEGIN IMMEDIATE;")
             transactionBegan = true
             try execute("UPDATE epoch SET status = 'retired', retired_at_ms = \(durableNowMs) WHERE status = 'active';")
@@ -1153,11 +1307,15 @@ private static func fullSync(_ handle: FileHandle) throws {
                 try bindInt64Checked(stmt, 3, Int64(durableNowMs))
                 guard try stepChecked(stmt) == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
             }
+            try requireMetadataHeadroomLocked()
+            guard try productionFootprintBytesLocked() <= projection.policy.spoolBytes else {
+                throw BrowserIntakeStoreError.resourceExhausted
+            }
             try execute("COMMIT;")
             transactionBegan = false
         } catch {
             if transactionBegan {
-                do { try execute("ROLLBACK;") }
+                do { try rollbackIfActiveLocked() }
                 catch { isStoreFailed = true }
             }
             let fileURL = periodFileURL(for: newPeriodId)
@@ -1167,6 +1325,15 @@ private static func fullSync(_ handle: FileHandle) throws {
                     try ioInjector.check(.write)
                     try FileManager.default.removeItem(at: fileURL)
                     try fsyncParentChecked(of: fileURL)
+                }
+                let directory = fileURL.deletingLastPathComponent()
+                if FileManager.default.fileExists(atPath: directory.path) {
+                    try Self.assertNoSymlinkAncestors(directory)
+                    guard try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty else {
+                        throw BrowserIntakeStoreError.localIO
+                    }
+                    try FileManager.default.removeItem(at: directory)
+                    try fsyncParentChecked(of: directory)
                 }
             } catch {
                 isStoreFailed = true
@@ -1275,18 +1442,19 @@ private static func fullSync(_ handle: FileHandle) throws {
             throw BrowserIntakeStoreError.resourceExhausted
         }
 
-        var stmt: OpaquePointer?
-        try prepareChecked("INSERT OR IGNORE INTO batch_seen (generation, inst, batch_id, queued_at_ms, initial_age_ms, elapsed_highwater_ms, age_established, first_seen_ms) VALUES (?, ?, ?, ?, ?, 0, 1, ?)", &stmt)
-        try bindTextChecked(stmt, 1, generation)
-        try bindTextChecked(stmt, 2, inst)
-        try bindTextChecked(stmt, 3, batchId)
-        try bindInt64Checked(stmt, 4, Int64(queuedAtMs))
-        try bindInt64Checked(stmt, 5, Int64(initialAgeMs))
-        try bindInt64Checked(stmt, 6, Int64(storedFloorMs))
-        let rc = try stepChecked(stmt)
-        sqlite3_finalize(stmt)
-        guard rc == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
-        if sqlite3_changes(db) == 1 {
+        let inserted = try admissionMetadataTransactionLocked {
+            try query("INSERT OR IGNORE INTO batch_seen (generation, inst, batch_id, queued_at_ms, initial_age_ms, elapsed_highwater_ms, age_established, first_seen_ms) VALUES (?, ?, ?, ?, ?, 0, 1, ?)") { stmt in
+                try bindTextChecked(stmt, 1, generation)
+                try bindTextChecked(stmt, 2, inst)
+                try bindTextChecked(stmt, 3, batchId)
+                try bindInt64Checked(stmt, 4, Int64(queuedAtMs))
+                try bindInt64Checked(stmt, 5, Int64(initialAgeMs))
+                try bindInt64Checked(stmt, 6, Int64(storedFloorMs))
+                guard try stepChecked(stmt) == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
+                return sqlite3_changes(db) == 1
+            }
+        }
+        if inserted {
             heldDedupBytes += rowBytes
         }
     }
@@ -1366,7 +1534,7 @@ private static func fullSync(_ handle: FileHandle) throws {
     private func sqliteFootprintBytes() throws -> Int {
         var total = 0
         var sawDatabase = false
-        for name in ["intake.sqlite", "intake.sqlite-wal", "intake.sqlite-shm"] {
+        for name in ["intake.sqlite", "intake.sqlite-wal", "intake.sqlite-shm", "intake.sqlite-journal"] {
             let url = rootURL.appendingPathComponent(name)
             try ioInjector.check(.size)
             if let bytes = ioInjector.size(for: url, actual: try Self.fileByteCount(url)) {
@@ -1388,7 +1556,7 @@ private static func fullSync(_ handle: FileHandle) throws {
             var info = stat()
             guard lstat(url.path, &info) == 0 else { throw BrowserIntakeStoreError.localIO }
             let kind = info.st_mode & S_IFMT
-            guard kind != S_IFLNK else { throw BrowserIntakeStoreError.localIO }
+            guard kind == S_IFREG || kind == S_IFDIR else { throw BrowserIntakeStoreError.localIO }
             if kind == S_IFREG {
                 try ioInjector.check(.size)
                 total += ioInjector.size(for: url, actual: Int(info.st_size)) ?? 0
@@ -1425,9 +1593,13 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
         directories.append(contentsOf: children)
         var total = 0
-        for directory in Set(directories).union(stagingReservations.keys) {
+        let uniqueDirectories = Set((directories + Array(stagingReservations.keys)).map {
+            URL(fileURLWithPath: $0.path, isDirectory: true)
+        })
+        for directory in uniqueDirectories {
             let actual = try directoryFootprintBytes(directory)
-            total = Self.saturatingAdd(total, max(stagingReservations[directory] ?? 0, actual))
+            let reserved = stagingReservations.filter { $0.key.path == directory.path }.values.max() ?? 0
+            total = Self.saturatingAdd(total, max(reserved, actual))
         }
         return total
     }
@@ -1439,9 +1611,16 @@ private static func fullSync(_ handle: FileHandle) throws {
         let deliveryReserve = payload > 0 ? Self.saturatingAdd(payload, 64 * 1024) : 0
         let staging = try stagingFootprintBytes()
         var total = Self.saturatingAdd(payload, max(deliveryReserve, staging))
-        total = Self.saturatingAdd(total, max(0, additionalDedupBytes))
-        total = Self.saturatingAdd(total, try sqliteFootprintBytes())
-        total = Self.saturatingAdd(total, try acknowledgementFootprintBytes())
+        total = Self.saturatingAdd(total, max(metadataReservationBytes, try sqliteFootprintBytes()))
+        let periods = try query("SELECT COUNT(*) FROM periods") { stmt in
+            guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+            return Int(sqlite3_column_int64(stmt, 0))
+        }
+        // Account for small payload/directory overhead and both the previous
+        // receipt and its bounded temporary replacement for every period.
+        total = Self.saturatingAdd(total, periods * 8 * 1024)
+        total = Self.saturatingAdd(total, max(periods * BrowserIngestAckStore.maximumBytes * 2,
+                                            try acknowledgementFootprintBytes()))
         return total
     }
 
@@ -1457,6 +1636,7 @@ private static func fullSync(_ handle: FileHandle) throws {
     }
 
     private func isQuotaFullLocked(additionalBytes: Int = 0, additionalDedupBytes: Int = 0) throws -> Bool {
+        if try !metadataAdmissionFitsLocked(additionalBytes: max(1, additionalDedupBytes)) { return true }
         let payload = additionalBytes == 0 && additionalDedupBytes == 0 ? 1 : additionalBytes
         let projected = try productionFootprintBytesLocked(additionalPayloadBytes: payload, additionalDedupBytes: additionalDedupBytes)
         return projected > projection.policy.spoolBytes
@@ -1491,7 +1671,8 @@ private static func fullSync(_ handle: FileHandle) throws {
         if try isQuotaFullLocked(additionalBytes: 0, additionalDedupBytes: rowBytes) {
             throw BrowserIntakeStoreError.resourceExhausted
         }
-        let inserted = try query("INSERT OR IGNORE INTO receipts (generation, inst, batch_id, result, reason, class, queued_at_ms, accepted_at_ms, size_bytes) VALUES (?, ?, ?, 'rejected', ?, ?, ?, ?, 0)") { stmt in
+        let inserted = try admissionMetadataTransactionLocked {
+          try query("INSERT OR IGNORE INTO receipts (generation, inst, batch_id, result, reason, class, queued_at_ms, accepted_at_ms, size_bytes) VALUES (?, ?, ?, 'rejected', ?, ?, ?, ?, 0)") { stmt in
             try bindTextChecked(stmt, 1, generation)
             try bindTextChecked(stmt, 2, inst)
             try bindTextChecked(stmt, 3, batchId)
@@ -1501,6 +1682,7 @@ private static func fullSync(_ handle: FileHandle) throws {
             try bindInt64Checked(stmt, 7, Int64(durableNowMs))
             guard try stepChecked(stmt) == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
             return sqlite3_changes(db) == 1
+          }
         }
         if inserted {
             heldDedupBytes += rowBytes
@@ -1517,14 +1699,17 @@ private static func fullSync(_ handle: FileHandle) throws {
     private func ensureOpenPeriodLocked(nowMs: UInt64) throws -> String {
         if let pid = currentOpenPeriodId { return pid }
         guard let gen = activeGeneration else { throw BrowserIntakeStoreError.staleGeneration }
+        guard try !isQuotaFullLocked(additionalDedupBytes: 1) else { throw BrowserIntakeStoreError.resourceExhausted }
         let pid = UUID().uuidString
-        try createEmptyPeriodFileLocked(pid)
-        try query("INSERT INTO periods (period_id, generation, state, committed_length, created_at_ms) VALUES (?, ?, 'open', 0, ?)") { stmt in
+        try admissionMetadataTransactionLocked {
+          try query("INSERT INTO periods (period_id, generation, state, committed_length, created_at_ms) VALUES (?, ?, 'open', 0, ?)") { stmt in
             try bindTextChecked(stmt, 1, pid)
             try bindTextChecked(stmt, 2, gen)
             try bindInt64Checked(stmt, 3, Int64(nowMs))
             guard try stepChecked(stmt) == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
+          }
         }
+        try createEmptyPeriodFileLocked(pid)
         currentOpenPeriodId = pid
         return pid
     }
@@ -1585,7 +1770,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         if committed + byteCount > projection.policy.file && committed > 0 {
             try finalizePeriodInternal(periodId: pid, reason: "size_pressure", civilDate: civilDate, timeZone: timeZone)
         }
-        guard let selected = currentOpenPeriodId else { throw BrowserIntakeStoreError.localIO }
+        guard let selected = currentOpenPeriodId else { throw BrowserIntakeStoreError.resourceExhausted }
         let selectedCommitted = try checkedPeriodFileSize(selected)
         if selectedCommitted + byteCount > projection.policy.file {
             throw BrowserIntakeStoreError.resourceExhausted
@@ -1723,11 +1908,12 @@ private static func fullSync(_ handle: FileHandle) throws {
             guard updateRC == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
             guard sqlite3_changes(db) == 1 else { throw BrowserIntakeStoreError.localIO }
 
+            try requireMetadataHeadroomLocked()
             try execute("COMMIT;")
         } catch {
             if transactionBegan {
                 do {
-                    try execute("ROLLBACK;")
+                    try rollbackIfActiveLocked()
                 } catch {
                     isStoreFailed = true
                     fileRecoveryRequired = true
@@ -1794,7 +1980,8 @@ private static func fullSync(_ handle: FileHandle) throws {
             if currentOpenPeriodId == periodId {
                 currentOpenPeriodId = nil
                 if openReplacement, activeGeneration != nil {
-                    _ = try ensureOpenPeriodLocked(nowMs: storedFloorMs)
+                    do { _ = try ensureOpenPeriodLocked(nowMs: storedFloorMs) }
+                    catch BrowserIntakeStoreError.resourceExhausted { }
                 }
             }
             return
@@ -1804,11 +1991,15 @@ private static func fullSync(_ handle: FileHandle) throws {
             throw BrowserIntakeStoreError.localIO
         }
         let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
         dayFormatter.dateFormat = "yyyy-MM-dd"
         dayFormatter.timeZone = timeZone
         let dayStr = dayFormatter.string(from: civilDate)
 
         let timeFormatter = DateFormatter()
+        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        timeFormatter.calendar = Calendar(identifier: .gregorian)
         timeFormatter.dateFormat = "HHmmss"
         timeFormatter.timeZone = timeZone
         let timePrefix = timeFormatter.string(from: civilDate)
@@ -1903,6 +2094,8 @@ private static func fullSync(_ handle: FileHandle) throws {
             if openReplacement, activeGeneration != nil {
                 do {
                     _ = try ensureOpenPeriodLocked(nowMs: durableNowMs)
+                } catch BrowserIntakeStoreError.resourceExhausted {
+                    // Finalized custody remains deliverable at admission pressure.
                 } catch {
                     isStoreFailed = true
                     throw error
@@ -1925,7 +2118,7 @@ private static func fullSync(_ handle: FileHandle) throws {
               BrowserOpaqueString.equals(period.requestedDay, ack.requestedDay),
               BrowserOpaqueString.equals(period.requestedSegment, ack.requestedSegment),
               BrowserOpaqueString.equals(period.fileSha256, ack.sha256),
-              period.committedLength == Int(ack.size),
+              Int(exactly: ack.size) == period.committedLength,
               ack.source == "browser",
               BrowserOpaqueString.equals(ack.filename, "browser_pages.jsonl"),
               ack.metadata == nil else {
@@ -1934,6 +2127,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let encoded = try encoder.encode(ack)
+        guard encoded.count <= BrowserIngestAckStore.maximumBytes else { throw BrowserIntakeStoreError.localIO }
         let binding = String(decoding: encoded, as: UTF8.self)
         if let existing = period.deliveryBinding, Data(existing.utf8) != Data(binding.utf8) {
             throw BrowserIntakeStoreError.localIO
@@ -2013,7 +2207,7 @@ private static func fullSync(_ handle: FileHandle) throws {
               BrowserOpaqueString.equals(period.requestedDay, binding.requestedDay),
               BrowserOpaqueString.equals(period.requestedSegment, binding.requestedSegment),
               BrowserOpaqueString.equals(period.fileSha256, binding.sha256),
-              period.committedLength == Int(binding.size),
+              Int(exactly: binding.size) == period.committedLength,
               binding.source == "browser",
               BrowserOpaqueString.equals(binding.periodId, periodId),
               BrowserOpaqueString.equals(binding.filename, "browser_pages.jsonl"),

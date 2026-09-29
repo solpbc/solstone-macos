@@ -58,6 +58,7 @@ enum BrowserIngestAckError: Error {
 }
 
 enum BrowserIngestAckStore {
+    static let maximumBytes = 4096
     static func ackURL(periodDirectory: URL) -> URL {
         periodDirectory.appendingPathComponent("browser_ingest_ack.json")
     }
@@ -66,7 +67,8 @@ enum BrowserIngestAckStore {
         try assertNoSymlinkAncestors(fileURL)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         var info = stat()
-        guard lstat(fileURL.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else {
+        guard lstat(fileURL.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+              info.st_size <= maximumBytes else {
             throw BrowserIntakeStoreError.localIO
         }
         try ioInjector?.check(.read)
@@ -82,6 +84,7 @@ enum BrowserIngestAckStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(ack)
+        guard data.count <= maximumBytes else { throw BrowserIntakeStoreError.localIO }
 
         let directory = fileURL.deletingLastPathComponent()
         let stagingURL = directory.appendingPathComponent(".\(fileURL.lastPathComponent).\(UUID().uuidString).tmp")

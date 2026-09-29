@@ -1514,6 +1514,7 @@ struct BrowserSpoolLifecycleTests {
         defer { fixture.owner.stop() }
         let generation = try #require(fixture.owner.store.getActiveGeneration())
         try fixture.owner.store.recordBatchSeen(generation: generation, inst: "fixture", batchId: "fixture", queuedAtMs: 1, initialAgeMs: 0)
+        await fixture.owner.stopAndDrain()
         var database: OpaquePointer?
         #expect(sqlite3_open(fixture.root.appendingPathComponent("intake.sqlite").path, &database) == SQLITE_OK)
         defer { sqlite3_close(database) }
