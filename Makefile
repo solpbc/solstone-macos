@@ -1,4 +1,4 @@
-.PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
+.PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc release-browser-preview run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal assemble-journal-app journal-app-unsigned bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
         supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime journal-native-fetch-accepted journal-native-runtime-accepted brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
@@ -152,6 +152,9 @@ debug-universal:
 release-universal-adhoc:
 	swift build -c release --arch arm64 --arch x86_64 --product solstone
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
+
+release-browser-preview:
+	swift build -c release --product solstone -Xswiftc -DSOLSTONE_BROWSER_INTAKE_PREVIEW
 
 release-universal-journal:
 	swift build -c release $(JOURNAL_RELEASE_APPLE_ARCH_FLAGS) --product journal

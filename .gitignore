@@ -58,6 +58,8 @@ scratch/
 vendor/*
 !vendor/.gitkeep
 !vendor/*.sha256
+!vendor/contracts/
+!vendor/crates/
 
 # AppIcon.iconset is an intermediate artifact built by `make icons`
 # in a temp dir. The shipping artifact is AppIcon.icns. Use

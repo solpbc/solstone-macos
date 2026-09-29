@@ -92,7 +92,8 @@ let package = Package(
                 .copy("Resources")
             ],
             swiftSettings: [
-                .swiftLanguageMode(.v6)
+                .swiftLanguageMode(.v6),
+                .define("SOLSTONE_BROWSER_INTAKE_PREVIEW", .when(configuration: .debug))
             ],
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),
@@ -100,7 +101,8 @@ let package = Package(
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("ServiceManagement"),
-                .linkedFramework("SoundAnalysis")
+                .linkedFramework("SoundAnalysis"),
+                .linkedLibrary("sqlite3")
             ]
         ),
         .executableTarget(
@@ -218,7 +220,8 @@ let package = Package(
                 .copy("Fixtures")
             ],
             swiftSettings: [
-                .swiftLanguageMode(.v6)
+                .swiftLanguageMode(.v6),
+                .define("SOLSTONE_BROWSER_INTAKE_PREVIEW", .when(configuration: .debug))
             ]
         ),
         .testTarget(

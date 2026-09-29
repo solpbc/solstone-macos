@@ -1,0 +1,9 @@
+{
+  "name": "app.solstone.browser",
+  "description": "Solstone browser host",
+  "path": "__PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://eibbeeoifjoabddfmgeggnageolkcnim/"
+  ]
+}

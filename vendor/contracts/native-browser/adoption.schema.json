@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "solstone-native-browser:adoption",
+  "title": "Solstone Native Browser Adoption Pin",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bundle_path",
+    "source_revision",
+    "bundle_version",
+    "wire_protocol",
+    "manifest_sha256",
+    "journal_schema_id",
+    "journal_schema_sha256",
+    "journal_schema_revision"
+  ],
+  "properties": {
+    "bundle_path": {
+      "const": "contracts/native-browser"
+    },
+    "source_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bundle_version": {
+      "const": "1.1.0"
+    },
+    "wire_protocol": {
+      "const": 1
+    },
+    "manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "journal_schema_id": {
+      "const": "solstone-journal-format:browser-jsonl"
+    },
+    "journal_schema_sha256": {
+      "const": "c14e66318587b8fa451ef1363e113885bdd80a41ce680b0c62fcc9033460a2e1"
+    },
+    "journal_schema_revision": {
+      "const": "3b99f1af61d4e82c5c9c3748d90c1242c28c1e5b"
+    }
+  }
+}

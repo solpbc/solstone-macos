@@ -25,6 +25,10 @@ public final class PairingCredentialStore: @unchecked Sendable {
     private var storedAccessGeneration: UInt64 = 1
     private var cachedPairing: StoredPairing?
     private var lastIdentityToken: String?
+    #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    /// Hook invoked before identity mutation. Must not call back into this store (NSLock is not reentrant).
+    public var beforeIdentityMutation: (@Sendable (String?) throws -> Void)?
+    #endif
 
     public init(store: any PairingStoring) {
         self.store = store
@@ -63,27 +67,59 @@ public final class PairingCredentialStore: @unchecked Sendable {
     }
 
     public func save(_ pairing: StoredPairing, expectedGeneration: UInt64? = nil) throws {
+        let token = deriveIdentityToken(for: pairing)
         lock.lock()
-        defer { lock.unlock() }
         if let expectedGeneration, expectedGeneration != storedPairingGeneration {
+            lock.unlock()
             throw PairingCredentialStoreError.staleGeneration
         }
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let hook = beforeIdentityMutation
+        if let hook {
+            lock.unlock()
+            try hook(token)
+            lock.lock()
+            if let expectedGeneration, expectedGeneration != storedPairingGeneration {
+                lock.unlock()
+                throw PairingCredentialStoreError.staleGeneration
+            }
+        }
+        #endif
+        defer { lock.unlock() }
         try store.save(pairing)
         cachedPairing = pairing
-        lastIdentityToken = deriveIdentityToken(for: pairing)
+        lastIdentityToken = token
         storedPairingGeneration &+= 1
         storedAccessGeneration &+= 1
     }
 
     public func delete(expectedGeneration: UInt64? = nil, expectedAccessGeneration: UInt64? = nil) throws {
         lock.lock()
-        defer { lock.unlock() }
         if let expectedGeneration, expectedGeneration != storedPairingGeneration {
+            lock.unlock()
             throw PairingCredentialStoreError.staleGeneration
         }
         if let expectedAccessGeneration, expectedAccessGeneration != storedAccessGeneration {
+            lock.unlock()
             throw PairingCredentialStoreError.staleGeneration
         }
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let hook = beforeIdentityMutation
+        if let hook {
+            lock.unlock()
+            try hook(nil)
+            lock.lock()
+            if let expectedGeneration, expectedGeneration != storedPairingGeneration {
+                lock.unlock()
+                throw PairingCredentialStoreError.staleGeneration
+            }
+            if let expectedAccessGeneration, expectedAccessGeneration != storedAccessGeneration {
+                lock.unlock()
+                throw PairingCredentialStoreError.staleGeneration
+            }
+        }
+        #endif
+        defer { lock.unlock() }
         try store.delete()
         cachedPairing = nil
         lastIdentityToken = nil
@@ -164,11 +200,20 @@ public final class PairingCredentialStore: @unchecked Sendable {
         return (pairing: updated, newAccessGen: storedAccessGeneration)
     }
 
-    public func noteExternalPairingChange(_ pairing: StoredPairing?) {
+    public func noteExternalPairingChange(_ pairing: StoredPairing?) throws {
+        let token = pairing.map { self.deriveIdentityToken(for: $0) }
         lock.lock()
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let hook = beforeIdentityMutation
+        if let hook {
+            lock.unlock()
+            try hook(token)
+            lock.lock()
+        }
+        #endif
         defer { lock.unlock() }
         cachedPairing = pairing
-        lastIdentityToken = pairing.map { self.deriveIdentityToken(for: $0) }
+        lastIdentityToken = token
         storedPairingGeneration &+= 1
         storedAccessGeneration &+= 1
     }
