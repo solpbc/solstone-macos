@@ -1022,6 +1022,7 @@ struct BrowserSpoolLifecycleTests {
         stopped.injector.setFailure { point in
             guard point == .proof, stopProofCalls.increment() == 1 else { return }
             stoppedOwner.stop()
+            try stoppedOwner.credentialReloaded(identityToken: "lifecycle-pairing")
         }
         stopped.pause.set(false)
         await stopped.owner.updateRoute(.held)

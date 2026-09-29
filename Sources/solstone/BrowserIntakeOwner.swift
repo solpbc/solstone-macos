@@ -121,7 +121,7 @@ private final class BrowserIntakeStopController: @unchecked Sendable {
 
         authority.closeAdmission()
         gate.invalidateCurrentLease()
-        store.closeDeliveryProofs()
+        store.stopDeliveryProofs()
         deliveryTask?.cancel()
         boundaryTask?.cancel()
         for (center, token) in tokens { center.removeObserver(token) }
@@ -289,6 +289,7 @@ public actor BrowserIntakeOwner {
     }
 
     public nonisolated func credentialDidChange(identityToken: String?) throws {
+        guard !stopController.isStopped() else { return }
         guard let identityToken else { return }
         do {
             _ = try authority.publishEpoch(identityToken: identityToken)
@@ -303,6 +304,7 @@ public actor BrowserIntakeOwner {
     }
 
     public nonisolated func credentialReloaded(identityToken: String?) throws {
+        guard !stopController.isStopped() else { return }
         authority.closeAdmission()
         gate.invalidateCurrentLease()
         store.closeDeliveryProofs()

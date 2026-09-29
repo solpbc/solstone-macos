@@ -130,6 +130,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     private var activeIdentityToken: String?
     private var currentOpenPeriodId: String?
     private var deliveryProofsOpen = true
+    private var deliveryStopped = false
 
     private var storedFloorMs: UInt64 = 0
     private var observedFloorMs: UInt64 = 0
@@ -180,8 +181,17 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         lock.withLock { deliveryProofsOpen = false }
     }
 
+    func stopDeliveryProofs() {
+        lock.withLock {
+            deliveryStopped = true
+            deliveryProofsOpen = false
+        }
+    }
+
     func reopenDeliveryProofs() {
-        lock.withLock { deliveryProofsOpen = true }
+        lock.withLock {
+            if !deliveryStopped { deliveryProofsOpen = true }
+        }
     }
 
     private func requireCurrentDeliveryLocked(periodGeneration: String) throws {
@@ -946,7 +956,7 @@ private static func fullSync(_ handle: FileHandle) throws {
 
         let digest = Self.identityDigest(of: identityToken)
         if let currentGen = activeGeneration, BrowserOpaqueString.equals(activeIdentityToken, digest) {
-            deliveryProofsOpen = true
+            if !deliveryStopped { deliveryProofsOpen = true }
             return currentGen
         }
 
@@ -996,7 +1006,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         self.activeGeneration = newGen
         self.activeIdentityToken = digest
         self.currentOpenPeriodId = newPeriodId
-        deliveryProofsOpen = true
+        if !deliveryStopped { deliveryProofsOpen = true }
         return newGen
     }
 
