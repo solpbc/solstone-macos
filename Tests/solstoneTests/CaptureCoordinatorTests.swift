@@ -264,6 +264,36 @@ struct CaptureCoordinatorTests {
         #expect(resumeCallbackCount == 0)
     }
 
+    @Test func preservingPausePolicyKeepsTheTimedDeadline() async throws {
+        let pauseManager = PauseManager()
+        pauseManager.pause(for: .minutes(15))
+        let deadline = pauseManager.pauseState.expirationDate
+        let (coordinator, root) = try makeCoordinator(
+            pauseManager: pauseManager,
+            startOperation: { _, _, _ in .committed }
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        var resumeIntake = 0
+        pauseManager.onResumeIntake = { resumeIntake += 1 }
+        coordinator.handleCaptureStateChange(.paused(reasons: [.user]))
+        let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111116.incomplete", isDirectory: true))
+        coordinator.captureManager.seedRecordingForTesting(currentSegment: segment)
+        _ = await coordinator.captureManager.enqueueTransition(.pause(reason: .user, stopAudio: true))
+
+        let outcome = await coordinator.stopRecording(reason: .user, preservingPausePolicy: true)
+        guard case .committed = outcome else {
+            Issue.record("expected preserved stop to commit")
+            return
+        }
+        await coordinator.startRecording(preservingPausePolicy: true)
+        pauseManager.reapply()
+
+        #expect(pauseManager.pauseState.isPaused)
+        #expect(pauseManager.pauseState.expirationDate == deadline)
+        #expect(!pauseManager.pauseState.isIndefinite)
+        #expect(resumeIntake == 0)
+    }
+
     @Test func toggleRecordingWhileUserPausedResumesWithoutStarting() async throws {
         let pauseManager = PauseManager()
         pauseManager.pause(for: .indefinite)

@@ -51,6 +51,7 @@ final class AppQuitCoordinator {
     struct Dependencies {
         let setCommitted: @MainActor (Bool) -> Void
         let writeMarker: @MainActor (ExitReason) -> Bool
+        let closeBrowserHost: @MainActor (ExitReason, Int) -> Void
         let invalidateMarker: @MainActor () -> Void
         let prepareForQuit: @MainActor () async -> Void
         let prepareForUpdate: @MainActor () async -> Void
@@ -62,6 +63,7 @@ final class AppQuitCoordinator {
             writeMarker: @escaping @MainActor (ExitReason) -> Bool = {
                 ExpectedExitMarker.markExpectedExit(reason: $0.markerString)
             },
+            closeBrowserHost: @escaping @MainActor (ExitReason, Int) -> Void = { _, _ in },
             invalidateMarker: @escaping @MainActor () -> Void = {
                 ExpectedExitMarker.invalidate()
             },
@@ -72,6 +74,7 @@ final class AppQuitCoordinator {
         ) {
             self.setCommitted = setCommitted
             self.writeMarker = writeMarker
+            self.closeBrowserHost = closeBrowserHost
             self.invalidateMarker = invalidateMarker
             self.prepareForQuit = prepareForQuit
             self.prepareForUpdate = prepareForUpdate
@@ -88,7 +91,7 @@ final class AppQuitCoordinator {
 
     private var stateMachine = AppQuitStateMachine()
     private var preparationTask: Task<Void, Never>?
-    private var preparationGeneration = 0
+    internal private(set) var preparationGeneration = 0
     private var committedIntent: ExitIntent?
     private var finalActionPerformed = false
     private var externalReplies: [@MainActor (Bool) -> Void] = []
@@ -177,6 +180,7 @@ final class AppQuitCoordinator {
             // Intent is committed before cleanup can suspend or crash. A death
             // during cleanup must not turn an accepted quit into a relaunch.
             writeExpectedExitMarker(reason: intent.reason)
+            dependencies.closeBrowserHost(intent.reason, generation)
             let task = Task { @MainActor [weak self] in
                 guard let self else { return }
                 await self.performPreparation(generation: generation)

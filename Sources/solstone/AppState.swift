@@ -10,6 +10,7 @@ import os
 import JournalMarkKit
 import SolstoneCore
 import SPLTunnel
+import UpdateKit
 
 /// Thread-safe holder for a debug setting value
 /// Allows Sendable closures to read the current value
@@ -64,10 +65,13 @@ public final class AppState {
     internal let credentialStore: PairingCredentialStore?
     #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     @ObservationIgnored private var browserIntakeOwner: BrowserIntakeOwner?
+    @ObservationIgnored private var browserHostListener: BrowserHostListener?
+    @ObservationIgnored private var browserIntakeStartupScheduled = false
     @ObservationIgnored private var browserIntakeCredentialStore: PairingCredentialStore?
     @ObservationIgnored private var browserIntakeRouteState: BrowserIntakeRouteState?
     public private(set) var browserIntakeStore: BrowserIntakeStore?
     public private(set) var browserIntakeAuthority: BrowserIntakeAuthority?
+    public let browserHostSnapshot = BrowserHostSnapshot()
     public private(set) var browserUploadGate: BrowserUploadGate?
     public private(set) var browserUploadPlanner: BrowserUploadPlanner?
     #endif
@@ -283,6 +287,11 @@ public final class AppState {
                 writeMarker: { reason in
                     ExpectedExitMarker.markExpectedExit(reason: reason.markerString)
                 },
+                closeBrowserHost: { [weak self] reason, generation in
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+                    self?.browserHostListener?.commitClose(reason: reason, generation: generation)
+#endif
+                },
                 invalidateMarker: {
                     ExpectedExitMarker.invalidate()
                 },
@@ -318,15 +327,26 @@ public final class AppState {
 
     internal func performQuitPreparation() async {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let generation = appQuitCoordinator.preparationGeneration
+        await browserHostListener?.finishCommittedClose(generation: generation)
+        guard appQuitCoordinator.preparationGeneration == generation else { return }
         browserIntakeOwner?.stop()
 #endif
         await stopRecording(reason: .quit)
         await drainRemixQueueForTermination()
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        guard appQuitCoordinator.preparationGeneration == generation else { return }
+        await browserHostListener?.finalizeCommittedClose(generation: generation)
+#endif
     }
 
     internal func performUpdatePreparation() async {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let generation = appQuitCoordinator.preparationGeneration
+        await browserHostListener?.finishCommittedClose(generation: generation)
+        guard appQuitCoordinator.preparationGeneration == generation else { return }
         await browserIntakeOwner?.stopAndDrain()
+        guard appQuitCoordinator.preparationGeneration == generation else { return }
 #endif
         await stopRecording(reason: .update)
         await drainRemixQueueForTermination()
@@ -451,6 +471,9 @@ public final class AppState {
     /// Update and save configuration
     public func updateConfig(_ newConfig: AppConfig) {
         let oldConfig = config
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let browserIntakeChanged = oldConfig.isBrowserIntakeEnabled != newConfig.isBrowserIntakeEnabled
+#endif
         config = newConfig
         uploadCoordinator.updateConfig(newConfig)
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
@@ -481,12 +504,40 @@ public final class AppState {
         do {
             try configSaver(newConfig)
         } catch {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            if browserIntakeChanged {
+                config.isBrowserIntakeEnabled = oldConfig.isBrowserIntakeEnabled
+                if let owner = browserIntakeOwner {
+                    Task {
+                        await owner.setIntakeEnabled(oldConfig.isBrowserIntakeEnabled)
+                        await browserHostListener?.refreshSnapshot()
+                    }
+                }
+            }
+#endif
             Logger.general.error("Failed to save config: \(error.localizedDescription, privacy: .public)")
             errorMessage = UICopy.ERROR_SAVE_CONFIG
+            return
         }
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        if browserIntakeChanged, let owner = browserIntakeOwner {
+            Task {
+                await owner.setIntakeEnabled(newConfig.isBrowserIntakeEnabled)
+                await browserHostListener?.refreshSnapshot()
+            }
+        }
+#endif
     }
 
     @ObservationIgnored internal var configSaver: (AppConfig) throws -> Void = { try $0.save() }
+
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    public func setBrowserIntakeEnabled(_ enabled: Bool) {
+        var newConfig = config
+        newConfig.isBrowserIntakeEnabled = enabled
+        updateConfig(newConfig)
+    }
+#endif
 
     internal func currentJournalIdentity() -> JournalIdentityRead {
         let pairing: TunnelPairingIdentity?
@@ -1341,12 +1392,12 @@ public final class AppState {
         return false
     }
 
-    public func startRecording(reason: StartReason = .user) async {
-        await capture.startRecording(reason: reason)
+    public func startRecording(reason: StartReason = .user, preservingPausePolicy: Bool = false) async {
+        await capture.startRecording(reason: reason, preservingPausePolicy: preservingPausePolicy)
     }
 
-    public func stopRecording(reason: StopReason = .user) async {
-        await capture.stopRecording(reason: reason)
+    public func stopRecording(reason: StopReason = .user, preservingPausePolicy: Bool = false) async {
+        await capture.stopRecording(reason: reason, preservingPausePolicy: preservingPausePolicy)
     }
 
     public func toggleRecording() async {
@@ -1363,7 +1414,8 @@ public final class AppState {
             capture.clearExplicitStop()
         }
 
-        guard isRecording || isPaused else {
+        let wasPaused = pauseManager.isPaused
+        guard isRecording || wasPaused else {
             // Not running. Start now if a source is already usable; if the owner turned one on
             // but macOS hasn't granted it yet, the latch is clear above, so the permission poll
             // picks it up the moment the grant lands.
@@ -1376,14 +1428,13 @@ public final class AppState {
         let desired = availableSelectedSources
         guard desired != captureManager.activeSources else { return }
 
-        let wasPaused = isPaused
-        await stopRecording(reason: .user)
+        await stopRecording(reason: .user, preservingPausePolicy: wasPaused)
 
         guard !desired.isEmpty else { return }
 
-        await startRecording(reason: .user)
+        await startRecording(reason: .user, preservingPausePolicy: wasPaused)
         if wasPaused {
-            pauseManager.pause(for: .indefinite)
+            pauseManager.reapply()
         }
     }
 
@@ -1517,13 +1568,19 @@ public final class AppState {
     private func handleExternalDefaultsChange() {
         let fresh = AppConfig.load()
 
-        // Only react to journal connection changes — ignore unrelated defaults
-        guard fresh.serverURL != config.serverURL ||
-              fresh.serverKey != config.serverKey ||
-              fresh.observerName != config.observerName ||
-              fresh.serviceMode != config.serviceMode ||
-              fresh.journalPath != config.journalPath ||
-              fresh.syncPaused != config.syncPaused else {
+        // Only react to journal connection or browser-intake changes.
+        let journalConnectionChanged = fresh.serverURL != config.serverURL ||
+            fresh.serverKey != config.serverKey ||
+            fresh.observerName != config.observerName ||
+            fresh.serviceMode != config.serviceMode ||
+            fresh.journalPath != config.journalPath ||
+            fresh.syncPaused != config.syncPaused
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let browserIntakeChanged = fresh.isBrowserIntakeEnabled != config.isBrowserIntakeEnabled
+#else
+        let browserIntakeChanged = false
+#endif
+        guard journalConnectionChanged || browserIntakeChanged else {
             return
         }
 
@@ -1537,7 +1594,7 @@ public final class AppState {
         }
         updateConfig(fresh)
 
-        if isPairedIngestReady {
+        if journalConnectionChanged, isPairedIngestReady {
             Task.detached { [uploadCoordinator] in
                 await uploadCoordinator?.syncOnStartup()
             }
@@ -1577,10 +1634,14 @@ public final class AppState {
 
         owner.bindCredentials(credentialStore)
         authority.setPaused(pauseManager.isPaused)
+        Task { await owner.setIntakeEnabled(config.isBrowserIntakeEnabled) }
 
-        self.pauseManager.onPauseIntake = { [weak authority, weak store] in
+        self.pauseManager.onPauseIntake = { [weak self, weak authority, weak store] in
             authority?.setPaused(true)
             store?.setPaused(true)
+            if let listener = self?.browserHostListener {
+                Task { await listener.refreshSnapshot() }
+            }
         }
         self.pauseManager.onResumeIntake = { [weak self, weak authority, weak store] in
             authority?.setPaused(false)
@@ -1588,56 +1649,98 @@ public final class AppState {
             if let owner = self?.browserIntakeOwner {
                 Task { await owner.scheduleDelivery() }
             }
+            if let listener = self?.browserHostListener {
+                Task { await listener.refreshSnapshot() }
+            }
         }
     }
 
-    public func startBrowserIntake() {
-        guard browserIntakeStore == nil else { return }
-        guard let credentialStore else { return }
-        guard let vendorURL = BrowserContractProjection.vendorRootURL(bundleURL: Bundle.main.bundleURL) else {
-            Logger.storage.error("Browser intake left off: contract projection unavailable")
-            return
-        }
-        let projection: BrowserContractProjection
-        do {
-            projection = try BrowserContractProjection(rootURL: vendorURL)
-        } catch {
-            Logger.storage.error("Browser intake left off: contract projection failed")
-            return
-        }
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            Logger.storage.error("Browser intake left off: spool unavailable")
-            return
-        }
-        let spoolRoot = appSupport.appendingPathComponent("Solstone/browser-intake")
+    public func startBrowserIntake(updateController: UpdateController? = nil) {
+        guard !browserIntakeStartupScheduled, browserIntakeStore == nil,
+              let credentialStore, !isTerminating else { return }
+        browserIntakeStartupScheduled = true
+        let bundleURL = Bundle.main.bundleURL
         let bridge = AppStateBridgeTarget()
         bridge.state = self
         let routeState = tunnelLifecycleOwner.browserIntakeRouteState
-        let pairing: StoredPairing?
-        do {
-            pairing = try credentialStore.currentPairing() ?? credentialStore.load()
-        } catch {
-            pairing = nil
-            Logger.storage.error("Browser intake credential load failed: \(error.localizedDescription, privacy: .public)")
+        let routeResolver = Self.makeIngestBaseURLResolver(target: bridge)
+        let generation = appQuitCoordinator.preparationGeneration
+        let updateGate = BrowserHostUpdateGate {
+            updateController?.checkForUpdates()
         }
-        let token = pairing.map { PairingCredentialStore.identityToken(for: $0) }
-        let owner: BrowserIntakeOwner
-        do {
-            owner = try BrowserIntakeOwner.start(
-                spoolRoot: spoolRoot,
-                projection: projection,
-                credentialSnapshot: BrowserCredentialSnapshot(identityToken: token),
-                routeResolver: Self.makeIngestBaseURLResolver(target: bridge),
-                syncPaused: { [bridge] in await MainActor.run { bridge.state?.config.syncPaused ?? false } },
-                routeState: routeState
+        let snapshot = browserHostSnapshot
+        let state = self
+        Task.detached(priority: .utility) { [weak state, credentialStore, bridge] in
+            guard let vendorURL = BrowserContractProjection.vendorRootURL(bundleURL: bundleURL),
+                  let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+                Logger.storage.error("Browser intake left off: contract or spool path unavailable")
+                return
+            }
+            let projection: BrowserContractProjection
+            do {
+                projection = try BrowserContractProjection(rootURL: vendorURL)
+            } catch {
+                Logger.storage.error("Browser intake left off: contract projection failed")
+                return
+            }
+            let pairing: StoredPairing?
+            do {
+                pairing = try credentialStore.currentPairing() ?? credentialStore.load()
+            } catch {
+                pairing = nil
+                Logger.storage.error("Browser intake credential load failed")
+            }
+            let owner: BrowserIntakeOwner
+            do {
+                owner = try BrowserIntakeOwner.start(
+                    spoolRoot: appSupport.appendingPathComponent("Solstone/browser-intake"),
+                    projection: projection,
+                    credentialSnapshot: BrowserCredentialSnapshot(identityToken: pairing.map { PairingCredentialStore.identityToken(for: $0) }),
+                    routeResolver: routeResolver,
+                    syncPaused: { [bridge] in await MainActor.run { bridge.state?.config.syncPaused ?? false } },
+                    routeState: routeState
+                )
+            } catch {
+                Logger.storage.error("Browser intake left off: spool unavailable")
+                return
+            }
+
+            guard let state, await MainActor.run(body: { !state.isTerminating && state.appQuitCoordinator.preparationGeneration == generation }) else {
+                await owner.stopAndDrain()
+                return
+            }
+            await MainActor.run {
+                state.browserIntakeRouteState = routeState
+                state.configureBrowserIntake(owner: owner, credentialStore: credentialStore)
+            }
+            let currentEnabled = await MainActor.run { state.config.isBrowserIntakeEnabled }
+            await owner.setIntakeEnabled(currentEnabled)
+            await owner.start()
+
+            let helperURL = bundleURL.appendingPathComponent("Contents/MacOS/solstone-browser-host")
+            let registration = BrowserHostRegistration(contractRoot: projection.rootURL, helperURL: helperURL)
+            let registrationReport = registration.repair(mode: .production)
+            let listener = BrowserHostListener(
+                limits: BrowserHostLimits(projection: projection),
+                snapshot: snapshot,
+                updateGate: updateGate
             )
-        } catch {
-            Logger.storage.error("Browser intake left off: spool unavailable: \(error.localizedDescription, privacy: .public)")
-            return
+            await MainActor.run {
+                guard !state.isTerminating, state.appQuitCoordinator.preparationGeneration == generation else { return }
+                state.browserHostListener = listener
+            }
+            guard await MainActor.run(body: { !state.isTerminating && state.appQuitCoordinator.preparationGeneration == generation }) else {
+                await owner.stopAndDrain()
+                return
+            }
+            await listener.start(
+                rootURL: appSupport.appendingPathComponent("Solstone/browser-intake"),
+                owner: owner,
+                projection: projection,
+                registration: registrationReport,
+                generation: generation
+            )
         }
-        browserIntakeRouteState = routeState
-        configureBrowserIntake(owner: owner, credentialStore: credentialStore)
-        Task { await owner.start() }
     }
 
     public func stopBrowserIntake() {
@@ -1655,6 +1758,7 @@ public final class AppState {
                 credentialSnapshot: BrowserCredentialSnapshot(identityToken: pairing.map { PairingCredentialStore.identityToken(for: $0) }),
                 paused: pauseManager.isPaused
             )
+            await browserHostListener?.resumeAfterFailedUpdaterInstall(generation: appQuitCoordinator.preparationGeneration)
         } catch {
             Logger.storage.error("Browser intake update recovery failed: \(error.localizedDescription, privacy: .public)")
         }

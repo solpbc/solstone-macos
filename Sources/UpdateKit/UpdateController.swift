@@ -289,7 +289,7 @@ public final class UpdateController {
         }
     }
 
-    func checkForUpdates() {
+    public func checkForUpdates() {
         guard canCheckForUpdates else {
             log.warning("checkForUpdates() ignored because Sparkle config gate failed")
             return

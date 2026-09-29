@@ -200,7 +200,7 @@ public final class CaptureCoordinator {
         }
     }
 
-    public func startRecording(reason: StartReason = .user) async {
+    public func startRecording(reason: StartReason = .user, preservingPausePolicy: Bool = false) async {
         guard !isTerminating() else {
             Logger.general.info("startRecording() ignored because app is terminating")
             return
@@ -241,7 +241,7 @@ public final class CaptureCoordinator {
             if captureManager.activeSources.contains(.screen) {
                 publishScreenRecordingPermission(.granted)
             }
-            if wasUserPaused {
+            if wasUserPaused, !preservingPausePolicy {
                 pauseManager.clearPolicyStateSilently()
             }
         case .threw(let failure):
@@ -276,7 +276,7 @@ public final class CaptureCoordinator {
     }
 
     @discardableResult
-    public func stopRecording(reason: StopReason = .user) async -> TransitionOutcome {
+    public func stopRecording(reason: StopReason = .user, preservingPausePolicy: Bool = false) async -> TransitionOutcome {
         if reason == .user {
             isExplicitlyStopped = true
         } else if reason == .userStopped {
@@ -284,7 +284,7 @@ public final class CaptureCoordinator {
         }
         let wasUserPaused = isUserPaused
         let outcome = await captureManager.enqueueTransition(.stop(reason: reason))
-        if wasUserPaused, case .committed = outcome {
+        if wasUserPaused, !preservingPausePolicy, case .committed = outcome {
             pauseManager.clearPolicyStateSilently()
         }
         return outcome

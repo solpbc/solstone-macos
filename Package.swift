@@ -119,6 +119,15 @@ let package = Package(
             ]
         ),
         .executableTarget(
+            name: "solstone-browser-host",
+            path: "Sources/solstone-browser-host",
+            exclude: ["entitlements.plist"],
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+                .define("SOLSTONE_BROWSER_INTAKE_PREVIEW", .when(configuration: .debug))
+            ]
+        ),
+        .executableTarget(
             name: "journal",
             dependencies: [
                 .target(name: "SolstoneCore"),

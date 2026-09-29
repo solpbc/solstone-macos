@@ -53,7 +53,7 @@ public struct AppConfig: Sendable {
     // MARK: - UserDefaults Keys
 
     public static let knownKeys: [String] = [
-        "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled",
+        "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled", "isBrowserIntakeEnabled",
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
         "excludePrivateBrowsing", "serverURL", "serverKey",
         "syncPaused", "debugSegments",
@@ -65,6 +65,7 @@ public struct AppConfig: Sendable {
     private enum Keys {
         static let isScreenCaptureEnabled = "isScreenCaptureEnabled"
         static let isMicrophoneCaptureEnabled = "isMicrophoneCaptureEnabled"
+        static let isBrowserIntakeEnabled = "isBrowserIntakeEnabled"
         static let microphonePriority = "microphonePriority"
         static let excludedApps = "excludedApps"
         static let excludedTitlePatterns = "excludedTitlePatterns"
@@ -92,6 +93,9 @@ public struct AppConfig: Sendable {
 
     /// When true, microphone capture is enabled by the owner
     public var isMicrophoneCaptureEnabled: Bool
+
+    /// When true, browser-host intake is enabled for the owner.
+    public var isBrowserIntakeEnabled: Bool
 
     /// Returns the active capture sources selected by the owner
     public var selectedSources: CaptureSources {
@@ -164,6 +168,7 @@ public struct AppConfig: Sendable {
     public init(
         isScreenCaptureEnabled: Bool = true,
         isMicrophoneCaptureEnabled: Bool = true,
+        isBrowserIntakeEnabled: Bool = true,
         microphonePriority: [MicrophoneEntry] = [],
         excludedApps: [AppEntry] = [],
         excludedTitlePatterns: [String] = [],
@@ -182,6 +187,7 @@ public struct AppConfig: Sendable {
     ) {
         self.isScreenCaptureEnabled = isScreenCaptureEnabled
         self.isMicrophoneCaptureEnabled = isMicrophoneCaptureEnabled
+        self.isBrowserIntakeEnabled = isBrowserIntakeEnabled
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
         self.excludedTitlePatterns = excludedTitlePatterns
@@ -229,6 +235,7 @@ public struct AppConfig: Sendable {
         let config = AppConfig(
             isScreenCaptureEnabled: defaults.object(forKey: Keys.isScreenCaptureEnabled) as? Bool ?? true,
             isMicrophoneCaptureEnabled: defaults.object(forKey: Keys.isMicrophoneCaptureEnabled) as? Bool ?? true,
+            isBrowserIntakeEnabled: defaults.object(forKey: Keys.isBrowserIntakeEnabled) as? Bool ?? true,
             microphonePriority: microphonePriority,
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
@@ -291,6 +298,7 @@ public struct AppConfig: Sendable {
 
         defaults.set(isScreenCaptureEnabled, forKey: Keys.isScreenCaptureEnabled)
         defaults.set(isMicrophoneCaptureEnabled, forKey: Keys.isMicrophoneCaptureEnabled)
+        defaults.set(isBrowserIntakeEnabled, forKey: Keys.isBrowserIntakeEnabled)
 
         // Save complex types as JSON data
         if let data = try? JSONEncoder().encode(microphonePriority) {

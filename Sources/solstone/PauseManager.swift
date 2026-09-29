@@ -119,6 +119,17 @@ public final class PauseManager {
         }
     }
 
+    /// Reapplies pause effects without changing the existing deadline or timer.
+    public func reapply() {
+        guard pauseState.isPaused else { return }
+        onPauseIntake?()
+        if let onPause {
+            Task { @MainActor in
+                await onPause()
+            }
+        }
+    }
+
     public func clearPolicyStateSilently() {
         pauseTimer?.invalidate()
         pauseTimer = nil

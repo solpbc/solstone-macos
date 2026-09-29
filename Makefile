@@ -153,12 +153,25 @@ release-universal-adhoc:
 	swift build -c release --arch arm64 --arch x86_64 --product solstone
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
 
+BROWSER_PREVIEW_APP := .build/browser-preview/Solstone.app
+BROWSER_HOST_CODESIGN_IDENTIFIER := app.solstone.observer.browser-host
+BROWSER_HOST_ENTITLEMENTS := Sources/solstone-browser-host/entitlements.plist
+BROWSER_HOST_CODESIGN_OPTIONS := --options runtime
+
+# The caller signs the nested helper with the identifier, entitlements, and
+# hardened-runtime options above before signing the outer preview app.
 release-browser-preview:
 	swift build -c release --product solstone -Xswiftc -DSOLSTONE_BROWSER_INTAKE_PREVIEW
+	swift build -c release --arch arm64 --arch x86_64 --product solstone-browser-host -Xswiftc -DSOLSTONE_BROWSER_INTAKE_PREVIEW
 	rm -rf .build/browser-preview
-	mkdir -p .build/browser-preview/Contents/Resources/vendor/contracts/native-browser .build/browser-preview/Contents/Resources/vendor/crates/native-browser-frame/src
-	cp vendor/contracts/native-browser/authority.json vendor/contracts/native-browser/envelope.schema.json vendor/contracts/native-browser/browser.schema.json vendor/contracts/native-browser/manifest.json .build/browser-preview/Contents/Resources/vendor/contracts/native-browser/
-	cp vendor/crates/native-browser-frame/src/constants.rs .build/browser-preview/Contents/Resources/vendor/crates/native-browser-frame/src/
+	mkdir -p $(BROWSER_PREVIEW_APP)/Contents/MacOS $(BROWSER_PREVIEW_APP)/Contents/Resources/vendor/contracts/native-browser $(BROWSER_PREVIEW_APP)/Contents/Resources/vendor/crates/native-browser-frame/src
+	cp .build/apple/Products/Release/solstone $(BROWSER_PREVIEW_APP)/Contents/MacOS/solstone
+	cp .build/apple/Products/Release/solstone-browser-host $(BROWSER_PREVIEW_APP)/Contents/MacOS/solstone-browser-host
+	cp Sources/solstone/Info.plist $(BROWSER_PREVIEW_APP)/Contents/Info.plist
+	cp -R .build/apple/Products/Release/solstone_solstone.bundle $(BROWSER_PREVIEW_APP)/Contents/Resources/
+	cp vendor/contracts/native-browser/authority.json vendor/contracts/native-browser/envelope.schema.json vendor/contracts/native-browser/browser.schema.json vendor/contracts/native-browser/manifest.json $(BROWSER_PREVIEW_APP)/Contents/Resources/vendor/contracts/native-browser/
+	cp vendor/crates/native-browser-frame/src/constants.rs $(BROWSER_PREVIEW_APP)/Contents/Resources/vendor/crates/native-browser-frame/src/
+	cp -R vendor/contracts/native-browser/registration $(BROWSER_PREVIEW_APP)/Contents/Resources/vendor/contracts/native-browser/
 
 release-universal-journal:
 	swift build -c release $(JOURNAL_RELEASE_APPLE_ARCH_FLAGS) --product journal

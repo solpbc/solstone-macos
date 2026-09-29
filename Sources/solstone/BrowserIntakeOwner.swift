@@ -166,6 +166,8 @@ public actor BrowserIntakeOwner {
     private var started = false
     private var deliveryRunning = false
     private var deliveryPending = false
+    private var intakeEnabled = true
+    private var statusChangeHandler: (@Sendable () async -> Void)?
 
     private init(
         store: BrowserIntakeStore,
@@ -254,17 +256,35 @@ public actor BrowserIntakeOwner {
         scheduleDelivery()
     }
 
+    private var admissionOpen: @Sendable () -> Bool = { true }
+
+    public func setAdmissionOpen(_ predicate: @escaping @Sendable () -> Bool) {
+        admissionOpen = predicate
+    }
+
     public func accept(bytes: Data, direction: String) -> BrowserIntakeAcceptResult {
+        guard admissionOpen() else { return .refusal(BrowserIntakeLocalRefusal(code: "shutdown")) }
         guard started, !stopController.isStopped() else { return .refusal(BrowserIntakeLocalRefusal(code: "intake_off")) }
         do {
-            let reply = try authority.accept(bytes: bytes, direction: direction)
+            let reply: [String: Any]
+            if !intakeEnabled, direction == "extension_to_host" {
+                switch BrowserPayloadDecoder.decode(bytes: bytes, direction: direction, projection: authority.projection) {
+                case .accept(.batch):
+                    return .refusal(BrowserIntakeLocalRefusal(code: "intake_off"))
+                case .accept, .unsupported, .refuse:
+                    reply = try authority.accept(bytes: bytes, direction: direction)
+                }
+            } else {
+                reply = try authority.accept(bytes: bytes, direction: direction)
+            }
             if reply["type"] as? String == "refused" {
                 return .refusal(BrowserIntakeLocalRefusal(
                     code: reply["code"] as? String ?? "malformed",
                     field: reply["field"] as? String
                 ))
             }
-            let message = try BrowserPayloadDecoder.validatedHostMessage(reply, projection: authority.projection)
+            let projected = projectIntakePreference(in: reply)
+            let message = try BrowserPayloadDecoder.validatedHostMessage(projected, projection: authority.projection)
             scheduleDelivery()
             return .message(BrowserPayloadDecoder.encodeHostToExtension(message))
         } catch let refusal as BrowserIntakeLocalRefusal {
@@ -274,6 +294,39 @@ public actor BrowserIntakeOwner {
             Logger.storage.error("Browser intake accept failed: \(error.localizedDescription, privacy: .public)")
             return .refusal(BrowserIntakeLocalRefusal(code: "local_io"))
         }
+    }
+
+    public func setIntakeEnabled(_ enabled: Bool) {
+        intakeEnabled = enabled
+    }
+
+    public func isIntakeEnabled() -> Bool {
+        intakeEnabled
+    }
+
+    public func setStatusChangeHandler(_ handler: (@Sendable () async -> Void)?) {
+        statusChangeHandler = handler
+    }
+
+    public func projectedStatus() -> [String: Any] {
+        projectIntakePreference(in: authority.status())
+    }
+
+    public func currentFacts() -> BrowserHostOwnerFacts {
+        BrowserHostOwnerFacts(status: projectedStatus(), intakeEnabled: intakeEnabled)
+    }
+
+    static func projectingIntake(_ enabled: Bool, status: [String: Any]) -> [String: Any] {
+        guard !enabled,
+              let capture = status["capture"] as? String,
+              capture == "permitted" || capture == "paused" else { return status }
+        var projected = status
+        projected["capture"] = "intake_off"
+        return projected
+    }
+
+    private func projectIntakePreference(in status: [String: Any]) -> [String: Any] {
+        Self.projectingIntake(intakeEnabled, status: status)
     }
 
     public func scheduleDelivery() {
@@ -388,10 +441,16 @@ public actor BrowserIntakeOwner {
 
         deliveryRunning = false
         stopController.clearDeliveryTask(epoch: runEpoch)
+        notifyStatusChanged()
         if deliveryPending && !stopController.isStopped() {
             deliveryPending = false
             scheduleDelivery()
         }
+    }
+
+    private func notifyStatusChanged() {
+        guard let handler = statusChangeHandler else { return }
+        Task { await handler() }
     }
 
     private func observeLifecycle(workspaceCenter: NotificationCenter) {

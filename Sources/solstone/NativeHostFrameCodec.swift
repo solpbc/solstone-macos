@@ -1,0 +1,1 @@
+../solstone-browser-host/NativeHostFrameCodec.swift
