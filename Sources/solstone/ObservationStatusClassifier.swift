@@ -16,7 +16,9 @@ internal func classifyObservationRowState(
     uploadStatus: UploadCoordinator.Status,
     hasJournalOnRecord: Bool = true,
     journalConnectionAXToken: String? = nil,
-    journalFailureCause: JournalConnectionFailureCause? = nil
+    journalFailureCause: JournalConnectionFailureCause? = nil,
+    browserIntakePermitted: Bool = false,
+    browserIntakePaused: Bool = false
 ) -> MenubarStatusRowState {
     if permissionsNeedAttention {
         return .permissions
@@ -31,6 +33,8 @@ internal func classifyObservationRowState(
         return .journalMigrationNeeded
     }
     if !isRecording && !isPaused {
+        if browserIntakePaused { return .paused }
+        if browserIntakePermitted { return .observing }
         return .stopped
     }
     if isPaused {
@@ -242,7 +246,9 @@ extension AppState {
             hasJournalOnRecord: tunnelLifecycleOwner.pairingIdentityRead != .absent
                 || config.isUploadConfigured,
             journalConnectionAXToken: verdict.axToken,
-            journalFailureCause: verdict.failureCause
+            journalFailureCause: verdict.failureCause,
+            browserIntakePermitted: browserRowPermitted,
+            browserIntakePaused: browserRowPaused
         )
     }
 

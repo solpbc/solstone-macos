@@ -587,6 +587,15 @@ public actor BrowserHostListener {
         catch { return .refused }
     }
 
+    public var holdsEndpointFence: Bool { fence != nil }
+
+    public func noteRegistration(_ report: BrowserHostRegistrationReport) async {
+        registration = Dictionary(uniqueKeysWithValues: report.outcomes.map { brand, outcome in
+            (brand, BrowserHostRegistrationSummary(state: outcome.state, reasonCode: outcome.reasonCode))
+        })
+        await publishCurrentStatus()
+    }
+
     public func refreshSnapshot() async {
         await publishCurrentStatus()
     }

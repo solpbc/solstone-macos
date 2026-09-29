@@ -26,6 +26,12 @@ struct MenuContent: View {
         if appState.isRecording || appState.isPaused, !appState.captureManager.activeSources.isEmpty {
             Text(UICopy.sourceNames(appState.captureManager.activeSources))
         }
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        Button("browsers") {
+            openSettings(tab: "sources")
+        }
+        .accessibilityIdentifier(AXID.Menubar.browsers)
+#endif
         Divider()
 
         Section {
@@ -168,9 +174,21 @@ struct MenuContent: View {
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
         case .observing:
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            if !appState.isRecording {
+                Text("on")
+                    .accessibilityValue(rowState.axToken)
+                    .accessibilityIdentifier(AXID.Menubar.statusRowState)
+            } else {
+                Text(UICopy.MENUBAR_OBSERVING_CONNECTED)
+                    .accessibilityValue(rowState.axToken)
+                    .accessibilityIdentifier(AXID.Menubar.statusRowState)
+            }
+#else
             Text(UICopy.MENUBAR_OBSERVING_CONNECTED)
                 .accessibilityValue(rowState.axToken)
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
+#endif
         }
     }
 
@@ -185,11 +203,31 @@ struct MenuContent: View {
     // MARK: - Pause Controls
 
     private var hasPauseControl: Bool {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        menuPauseControls(
+            mediaRecording: appState.isRecording,
+            mediaPaused: appState.isPaused,
+            mediaUserPaused: appState.capture.isUserPaused,
+            pauseManagerPaused: appState.pauseManager.isPaused,
+            browserCapturePermitted: appState.browserRowPermitted
+        ).pause
+#else
         appState.isRecording && !appState.isPaused
+#endif
     }
 
     private var hasResumeControl: Bool {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        menuPauseControls(
+            mediaRecording: appState.isRecording,
+            mediaPaused: appState.isPaused,
+            mediaUserPaused: appState.capture.isUserPaused,
+            pauseManagerPaused: appState.pauseManager.isPaused,
+            browserCapturePermitted: appState.browserRowPermitted || appState.browserRowPaused
+        ).resume
+#else
         appState.capture.isUserPaused
+#endif
     }
 
     var hasPauseResumeControl: Bool {

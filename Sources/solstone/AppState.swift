@@ -72,6 +72,27 @@ public final class AppState {
     public private(set) var browserIntakeStore: BrowserIntakeStore?
     public private(set) var browserIntakeAuthority: BrowserIntakeAuthority?
     public let browserHostSnapshot = BrowserHostSnapshot()
+    var browserRepair = BrowserRepairController()
+    var browserStoreCatalog = BrowserStoreCatalog.preview
+    var browserStoreOpener: @MainActor (URL, BrowserBrand) -> Bool = { url, brand in
+        let bundleID: String
+        switch brand {
+        case .chrome: bundleID = "com.google.Chrome"
+        case .edge: bundleID = "com.microsoft.edgemac"
+        case .firefox: bundleID = "org.mozilla.firefox"
+        }
+        if let application = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            NSWorkspace.shared.open(
+                [url],
+                withApplicationAt: application,
+                configuration: NSWorkspace.OpenConfiguration(),
+                completionHandler: nil
+            )
+            return true
+        }
+        return NSWorkspace.shared.open(url)
+    }
+    var browserStoreLaunch: [BrowserBrand: BrowserStoreLaunch] = [:]
     public private(set) var browserUploadGate: BrowserUploadGate?
     public private(set) var browserUploadPlanner: BrowserUploadPlanner?
     #endif
@@ -537,7 +558,66 @@ public final class AppState {
         newConfig.isBrowserIntakeEnabled = enabled
         updateConfig(newConfig)
     }
+
+    func beginBrowserRepair() {
+        guard let token = browserRepair.click() else { return }
+        let listener = browserHostListener
+        Task {
+            let holdsFence = await listener?.holdsEndpointFence ?? false
+            var endpoint: BrowserHostEndpointDisposition?
+            let root = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Solstone/browser-intake", isDirectory: true)
+            if holdsFence {
+                endpoint = nil
+            } else if let listener {
+                endpoint = await listener.repairStaleEndpoint(rootURL: root)
+            } else {
+                endpoint = (try? BrowserHostEndpointFence(rootURL: root).repairStaleEndpoint()) ?? .refused
+            }
+            let bundleURL = Bundle.main.bundleURL
+            let report: BrowserHostRegistrationReport
+            if let contractRoot = BrowserContractProjection.vendorRootURL(bundleURL: bundleURL) {
+                report = BrowserHostRegistration(
+                    contractRoot: contractRoot,
+                    helperURL: bundleURL.appendingPathComponent("Contents/MacOS/solstone-browser-host")
+                ).repair()
+            } else {
+                report = BrowserHostRegistrationReport(outcomes: [:], changedAny: false)
+            }
+            await listener?.noteRegistration(report)
+            browserRepair.complete(
+                token: token,
+                report: report,
+                listenerHoldsFence: holdsFence,
+                endpoint: endpoint
+            )
+        }
+    }
+
+    func openBrowserStore(_ brand: BrowserBrand) {
+        guard let url = browserStoreCatalog.url(for: brand) else {
+            browserStoreLaunch[brand] = .disabled
+            return
+        }
+        browserStoreLaunch[brand] = browserStoreOpener(url, brand) ? .opened : .failed
+    }
 #endif
+
+    var browserRowPermitted: Bool {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserCapturePermitsPause(browserHostSnapshot.value, now: Date()) && !pauseManager.isPaused
+#else
+        false
+#endif
+    }
+
+    var browserRowPaused: Bool {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        pauseManager.isPaused && config.isBrowserIntakeEnabled && !isRecording
+#else
+        false
+#endif
+    }
 
     internal func currentJournalIdentity() -> JournalIdentityRead {
         let pairing: TunnelPairingIdentity?

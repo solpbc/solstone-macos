@@ -729,12 +729,49 @@ struct SettingsView: View {
                     ))
                     .accessibilityIdentifier(AXID.Settings.Sources.screenCaptureEnabled)
 
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+                    Toggle(isOn: Binding(
+                        get: { appState.config.isBrowserIntakeEnabled },
+                        set: { enabled in
+                            if sourcesToggleRestartsMedia(.browserPages(enabled)) {
+                                setCaptureSource(.microphone, enabled: enabled)
+                            }
+                            appState.setBrowserIntakeEnabled(enabled)
+                        }
+                    )) {
+                        Text(BrowserOwnerCopy.intakeToggleLabel ?? "browser pages")
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Sources.browserIntakeEnabled)
+
+                    if browserSetupGroupIsVisible(
+                        screenGranted: appState.screenRecordingGranted,
+                        microphoneGranted: appState.microphoneGranted
+                    ) {
+                        browserSourcesGroup
+                    }
+#endif
+
                     Divider()
 
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+                    Text(sourcesFooter(media: appState.captureSourcesStatusText, lead: sourcesLead))
+                        .accessibilityIdentifier(AXID.Settings.Sources.sourceStatus)
+#else
                     Text(appState.captureSourcesStatusText)
                         .accessibilityIdentifier(AXID.Settings.Sources.sourceStatus)
+#endif
                     if appState.config.selectedSources.isEmpty {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+                        if sourcesLead == .draining {
+                            if let reason = BrowserOwnerCopy.drainingReason {
+                                Text(reason).foregroundStyle(.secondary)
+                            }
+                        } else if !appState.config.isBrowserIntakeEnabled {
+                            Text(UICopy.SOURCES_NONE_REASON).foregroundStyle(.secondary)
+                        }
+#else
                         Text(UICopy.SOURCES_NONE_REASON).foregroundStyle(.secondary)
+#endif
                     } else if appState.availableSelectedSources.isEmpty {
                         Text(UICopy.SOURCES_GRANT_OR_CHANGE).foregroundStyle(.secondary)
                         navRow(UICopy.SETTINGS_NEXT_GRANT_PERMISSIONS) {
@@ -756,6 +793,72 @@ struct SettingsView: View {
             }
         }
     }
+
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    private var sourcesLead: BrowserOwnerStatusLead {
+        browserOwnerStatusLead(
+            mediaSourcesEmpty: appState.config.selectedSources.isEmpty,
+            mediaRecording: appState.isRecording,
+            mediaPaused: appState.isPaused,
+            snapshot: appState.browserHostSnapshot.value,
+            now: Date()
+        )
+    }
+
+    private var browserSourcesGroup: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("browsers")
+                .accessibilityIdentifier(AXID.Settings.Sources.browsersGroup)
+            ForEach(browserBrandRows(appState.browserHostSnapshot.value, now: Date()), id: \.brand) { row in
+                Text(row.brand.rawValue)
+                    .accessibilityIdentifier(browserBrandAXID(row.brand))
+                    .accessibilityValue("\(row.registration.rawValue) \(row.connectedCount)")
+            }
+            Button("repair") { appState.beginBrowserRepair() }
+                .disabled(appState.browserRepair.inFlight)
+                .accessibilityIdentifier(AXID.Settings.Sources.browserRepair)
+                .accessibilityValue(browserRepairValue)
+            ForEach(BrowserBrand.allCases, id: \.self) { brand in
+                Button(BrowserOwnerCopy.storeActionLabel ?? brand.rawValue) {
+                    appState.openBrowserStore(brand)
+                }
+                .disabled(appState.browserStoreCatalog.url(for: brand) == nil)
+                .accessibilityIdentifier(browserStoreAXID(brand))
+                .accessibilityValue(browserStoreValue(brand))
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var browserRepairValue: String {
+        if appState.browserRepair.inFlight { return "in_flight" }
+        return appState.browserRepair.repaired ? "repaired" : "idle"
+    }
+
+    private func browserStoreValue(_ brand: BrowserBrand) -> String {
+        switch appState.browserStoreLaunch[brand] ?? .disabled {
+        case .disabled: return "disabled"
+        case .opened: return "opened"
+        case .failed: return "failed"
+        }
+    }
+
+    private func browserBrandAXID(_ brand: BrowserBrand) -> String {
+        switch brand {
+        case .chrome: return AXID.Settings.Sources.browserChrome
+        case .edge: return AXID.Settings.Sources.browserEdge
+        case .firefox: return AXID.Settings.Sources.browserFirefox
+        }
+    }
+
+    private func browserStoreAXID(_ brand: BrowserBrand) -> String {
+        switch brand {
+        case .chrome: return AXID.Settings.Sources.browserStoreChrome
+        case .edge: return AXID.Settings.Sources.browserStoreEdge
+        case .firefox: return AXID.Settings.Sources.browserStoreFirefox
+        }
+    }
+#endif
 
     // MARK: - Permissions Tab
 
@@ -2670,7 +2773,11 @@ struct SettingsView: View {
     }
 
     private var statusFooterText: String {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        sourcesFooter(media: appState.captureSourcesStatusText, lead: sourcesLead)
+#else
         appState.captureSourcesStatusText
+#endif
     }
 
     private var setupTopology: SetupTopology {
@@ -2714,6 +2821,31 @@ struct SettingsView: View {
 
     private var statusHealthSummary: StatusHealthSummary {
         let setupPresentation = setupSnapshotPresentation
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        return StatusHealthSummary.makeIncludingBrowser(
+            serviceMode: appState.config.serviceMode,
+            isRecording: appState.isRecording,
+            isPaused: appState.isPaused,
+            uploadStatus: appState.uploadCoordinator.status,
+            pendingCount: appState.uploadCoordinator.pendingCount,
+            lastDeliveryOutcome: statusPrimaryDelivery(
+                media: appState.uploadCoordinator.lastJournalDeliveryOutcome,
+                browserDelivery: appState.browserHostSnapshot.value.delivery
+            ),
+            serverURL: appState.config.serverURL,
+            pairedJournalAddress: statusCardPairedJournalAddress(
+                pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses,
+                isPairedHome: appState.tunnelLifecycleOwner.isPairedHome
+            ),
+            now: Date(),
+            selectedSources: appState.config.selectedSources,
+            permittedSources: appState.capture.permittedSources,
+            errorMessage: appState.errorMessage,
+            setupVerdict: setupPresentation.verdict,
+            lastHealthReason: appState.uploadCoordinator.lastHealthReason,
+            snapshot: appState.browserHostSnapshot.value
+        )
+#else
         return StatusHealthSummary.make(
             serviceMode: appState.config.serviceMode,
             isRecording: appState.isRecording,
@@ -2733,6 +2865,7 @@ struct SettingsView: View {
             setupVerdict: setupPresentation.verdict,
             lastHealthReason: appState.uploadCoordinator.lastHealthReason
         )
+#endif
     }
 
     @ViewBuilder
@@ -3211,6 +3344,14 @@ struct SettingsView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityIdentifier(entry.accessibilityIdentifier)
                     }
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+                    if let footnote = BrowserOwnerCopy.helpLegendFootnote {
+                        Text(footnote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier(AXID.Settings.Help.browserFootnote)
+                    }
+#endif
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
@@ -3246,6 +3387,17 @@ struct SettingsView: View {
                                     .accessibilityIdentifier(diagnosticRowAXID(row.id))
                                     .accessibilityValue(row.value)
                                 }
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+                                ForEach(browserOwnerDiagnosticLines(appState.browserHostSnapshot.value, now: Date()), id: \.key) { line in
+                                    LabeledContent(line.key) {
+                                        Text(line.value)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .textSelection(.enabled)
+                                    }
+                                    .accessibilityIdentifier(AXID.Settings.Sources.browsersGroup)
+                                    .accessibilityValue(line.value)
+                                }
+#endif
                             }
                             .accessibilityElement(children: .contain)
                             .accessibilityIdentifier(AXID.Settings.Help.diagnosticsPreview)

@@ -24,6 +24,7 @@ enum AXID {
         static let settingsButton = "menubar.navigation.settings"
         static let aboutButton = "menubar.navigation.about"
         static let quitButton = "menubar.app.quit"
+        static let browsers = "menubar.navigation.browsers"
     }
 
     enum Journal {
@@ -52,6 +53,15 @@ enum AXID {
             static let sourceStatus = "settings.sources.status"
             static let screenCaptureEnabled = "settings.sources.screenCapture.enabled"
             static let microphoneCaptureEnabled = "settings.sources.microphoneCapture.enabled"
+            static let browserIntakeEnabled = "settings.sources.browserIntake.enabled"
+            static let browsersGroup = "settings.sources.browsers.group"
+            static let browserChrome = "settings.sources.browsers.chrome"
+            static let browserEdge = "settings.sources.browsers.edge"
+            static let browserFirefox = "settings.sources.browsers.firefox"
+            static let browserRepair = "settings.sources.browsers.repair"
+            static let browserStoreChrome = "settings.sources.browsers.store.chrome"
+            static let browserStoreEdge = "settings.sources.browsers.store.edge"
+            static let browserStoreFirefox = "settings.sources.browsers.store.firefox"
         }
 
         enum Permissions {
@@ -202,6 +212,7 @@ enum AXID {
         }
 
         enum Help {
+            static let browserFootnote = "settings.help.browserFootnote"
             static let agentInstructions = "settings.help.agentInstructions"
             static let copyAgentInstructions = "settings.help.agentInstructions.copy"
             static let diagnosticsDisclosure = "settings.help.diagnostics.disclosure"
