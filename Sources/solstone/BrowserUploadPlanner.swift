@@ -126,19 +126,14 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                 binding = legacyAck
             }
         } catch {
+            if logStaleProof(error, periodId: period.periodId) { return }
             failStorage(period: period, error: error)
             return
         }
         if let binding {
             do {
                 if !period.ackDurable || !(store.getPeriod(periodId: period.periodId)?.ackDurable ?? false) {
-                    if !FileManager.default.fileExists(atPath: ackURL.path) {
-                        try BrowserIngestAckStore.write(binding, to: ackURL, ioInjector: store.ioInjector)
-                    } else {
-                        try BrowserIngestAckStore.syncParent(of: ackURL, ioInjector: store.ioInjector)
-                    }
-                    guard lease.isValid() else { return }
-                    try store.markAckDurable(periodId: period.periodId)
+                    try store.publishDeliveryAck(binding)
                 }
                 let listing = try await client.getSegmentsDay(serverURL: serverURL, day: day, source: "browser")
                 guard lease.isValid() else { return }
@@ -147,6 +142,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                     try store.releaseProven(periodId: period.periodId, binding: binding, nowMs: nowMs())
                 }
             } catch {
+                if logStaleProof(error, periodId: period.periodId) { return }
                 Logger.upload.error("Browser delivery reconciliation failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 store.setDeliveryFailure("relay_unavailable")
             }
@@ -240,11 +236,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                     canonicalKey: response.storedSegmentKey,
                     status: response.status
                 )
-                try store.persistDeliveryBinding(ack)
-                guard lease.isValid() else { return }
-                try BrowserIngestAckStore.write(ack, to: ackURL, ioInjector: store.ioInjector)
-                guard lease.isValid() else { return }
-                try store.markAckDurable(periodId: period.periodId)
+                try store.publishDeliveryAck(ack)
             case .failure(let error):
                 if case .segmentScoped(.segmentRemoved) = classifyUpload(error), lease.isValid(),
                    let part = prepared.stagedParts.first {
@@ -261,7 +253,6 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                         canonicalKey: period.canonicalKey ?? segment,
                         status: .duplicate
                     )
-                    try store.persistDeliveryBinding(proof)
                     guard lease.isValid() else { return }
                     try store.removeProvenSegment(periodId: period.periodId, binding: proof, nowMs: nowMs())
                     return
@@ -271,6 +262,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                 store.setDeliveryFailure(failureCode(for: failure))
             }
         } catch {
+            if logStaleProof(error, periodId: period.periodId) { return }
             Logger.upload.error("Browser upload preparation failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
             store.setDeliveryFailure(error as? BrowserIntakeStoreError == .resourceExhausted ? "resource_exhausted" : "local_io")
         }
@@ -308,6 +300,12 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
         case .segmentScoped(.segmentRemoved):
             return "journal_rejected"
         }
+    }
+
+    private func logStaleProof(_ error: Error, periodId: String) -> Bool {
+        guard (error as? BrowserIntakeStoreError) == .staleGeneration else { return false }
+        Logger.upload.warning("Browser proof publication skipped for stale period \(periodId, privacy: .public)")
+        return true
     }
 
     private func failStorage(period: BrowserStoredPeriod, error: Error) {

@@ -121,6 +121,7 @@ private final class BrowserIntakeStopController: @unchecked Sendable {
 
         authority.closeAdmission()
         gate.invalidateCurrentLease()
+        store.closeDeliveryProofs()
         deliveryTask?.cancel()
         boundaryTask?.cancel()
         for (center, token) in tokens { center.removeObserver(token) }
@@ -283,6 +284,7 @@ public actor BrowserIntakeOwner {
     public nonisolated func credentialWillChange(identityToken: String?) throws {
         authority.closeAdmission()
         gate.invalidateCurrentLease()
+        store.closeDeliveryProofs()
         try authority.reconcileIdentity(identityToken, mode: .replace)
     }
 
@@ -303,6 +305,7 @@ public actor BrowserIntakeOwner {
     public nonisolated func credentialReloaded(identityToken: String?) throws {
         authority.closeAdmission()
         gate.invalidateCurrentLease()
+        store.closeDeliveryProofs()
         try authority.reconcileIdentity(identityToken, mode: .reload)
         if authority.isAdmissionOpen() { gate.resumeReaders() }
     }

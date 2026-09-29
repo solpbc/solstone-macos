@@ -905,8 +905,18 @@ struct BrowserSpoolLifecycleTests {
         #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
 
         let syncCalls = Counter()
+        let parentSyncFailures = Counter()
+        let proofCalls = Counter()
+        let injector = fixture.injector
         fixture.injector.setFailure { point in
-            if point == .sync && syncCalls.increment() == 3 { throw LifecycleInjectedFailure.injected }
+            guard point == .proof, proofCalls.increment() == 1 else { return }
+            injector.setFailure { point in
+                guard point == .sync else { return }
+                if syncCalls.increment() == 2 {
+                    parentSyncFailures.increment()
+                    throw LifecycleInjectedFailure.injected
+                }
+            }
         }
         fixture.pause.set(false)
         await fixture.owner.updateRoute(.held)
@@ -920,6 +930,8 @@ struct BrowserSpoolLifecycleTests {
         }
         #expect(FileManager.default.fileExists(atPath: ackURL.path))
         #expect(fixture.owner.store.getPeriod(periodId: periodId)?.ackDurable == false)
+        #expect(proofCalls.current == 1)
+        #expect(parentSyncFailures.current == 1)
         #expect(FileManager.default.fileExists(atPath: fileURL.path))
         let storedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: periodId)
         let binding = try #require(storedBinding)
@@ -933,6 +945,105 @@ struct BrowserSpoolLifecycleTests {
         #expect(transport.attempts == 1)
         #expect(FileManager.default.fileExists(atPath: fileURL.path) == false)
         fixture.owner.stop()
+    }
+
+    @Test func proofFenceRejectsAckAfterCredentialReplacementAndStop() async throws {
+        let replacementTransport = LifecycleTransport()
+        replacementTransport.setOutcomeSuccess(true)
+        let replacement = try fixture(transport: replacementTransport)
+        defer { try? FileManager.default.removeItem(at: replacement.root) }
+        replacement.pause.set(true)
+        await replacement.owner.start()
+        await replacement.clock.waitUntilSleeping()
+        let oldGeneration = try #require(replacement.owner.store.getActiveGeneration())
+        let accepted = try reply(await replacement.owner.accept(
+            bytes: batch(oldGeneration, id: "45454545454545454545454545454545", queuedAtMs: 1_700_000_100_000),
+            direction: "extension_to_host"
+        ))
+        let periodId = try #require(accepted["period_id"] as? String)
+        let payload = replacement.owner.store.periodFileURL(for: periodId)
+        replacement.clock.advance(seconds: 301)
+        #expect(await waitForPeriodState(replacement, periodId: periodId, state: "finalized"))
+
+        let replacementProofCalls = Counter()
+        let replacementInjector = replacement.injector
+        let replacementOwner = replacement.owner
+        replacement.injector.setFailure { point in
+            guard point == .proof, replacementProofCalls.increment() == 1 else { return }
+            try replacementOwner.credentialWillChange(identityToken: "replacement-pairing")
+            try replacementOwner.credentialDidChange(identityToken: "replacement-pairing")
+        }
+        replacement.pause.set(false)
+        await replacement.owner.updateRoute(.held)
+        await replacement.owner.updateRoute(.url("http://127.0.0.1:49321"))
+        #expect(await replacementTransport.waitForAttempts(1))
+
+        let ackURL = BrowserIngestAckStore.ackURL(periodDirectory: payload.deletingLastPathComponent())
+        let replacementDeadline = ContinuousClock.now + .seconds(2)
+        while replacementProofCalls.current == 0 && ContinuousClock.now < replacementDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(replacementProofCalls.current == 1)
+        #expect(replacement.owner.store.getActiveGeneration() != oldGeneration)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: payload.path))
+        #expect(replacement.owner.store.storeIsFailed() == false)
+
+        replacementInjector.setFailure(nil)
+        await replacement.owner.updateRoute(.held)
+        await replacement.owner.updateRoute(.url("http://127.0.0.1:49321"))
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(replacementTransport.attempts == 1)
+        #expect(replacementTransport.hashes.count == 1)
+        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: payload.path))
+        replacement.owner.stop()
+
+        let stopTransport = LifecycleTransport()
+        stopTransport.setOutcomeSuccess(true)
+        let stopped = try fixture(transport: stopTransport)
+        defer { try? FileManager.default.removeItem(at: stopped.root) }
+        stopped.pause.set(true)
+        await stopped.owner.start()
+        await stopped.clock.waitUntilSleeping()
+        let generation = try #require(stopped.owner.store.getActiveGeneration())
+        let stoppedAccepted = try reply(await stopped.owner.accept(
+            bytes: batch(generation, id: "46464646464646464646464646464646", queuedAtMs: 1_700_000_100_000),
+            direction: "extension_to_host"
+        ))
+        let stoppedPeriodId = try #require(stoppedAccepted["period_id"] as? String)
+        let stoppedPayload = stopped.owner.store.periodFileURL(for: stoppedPeriodId)
+        stopped.clock.advance(seconds: 301)
+        #expect(await waitForPeriodState(stopped, periodId: stoppedPeriodId, state: "finalized"))
+
+        let stopProofCalls = Counter()
+        let stopInjector = stopped.injector
+        let stoppedOwner = stopped.owner
+        stopped.injector.setFailure { point in
+            guard point == .proof, stopProofCalls.increment() == 1 else { return }
+            stoppedOwner.stop()
+        }
+        stopped.pause.set(false)
+        await stopped.owner.updateRoute(.held)
+        await stopped.owner.updateRoute(.url("http://127.0.0.1:49321"))
+        #expect(await stopTransport.waitForAttempts(1))
+
+        let stoppedAckURL = BrowserIngestAckStore.ackURL(periodDirectory: stoppedPayload.deletingLastPathComponent())
+        let stopDeadline = ContinuousClock.now + .seconds(2)
+        while stopProofCalls.current == 0 && ContinuousClock.now < stopDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(stopProofCalls.current == 1)
+        #expect(FileManager.default.fileExists(atPath: stoppedAckURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: stoppedPayload.path))
+        #expect(stopped.owner.store.storeIsFailed() == false)
+
+        stopInjector.setFailure(nil)
+        await stopped.owner.scheduleDelivery()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(stopTransport.attempts == 1)
+        #expect(FileManager.default.fileExists(atPath: stoppedAckURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: stoppedPayload.path))
     }
 
     @Test func segmentRemovedProofCleansOnlyItsPeriodAndRecoveryFinishesUnlink() async throws {

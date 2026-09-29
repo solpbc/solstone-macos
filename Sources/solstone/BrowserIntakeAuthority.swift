@@ -135,6 +135,8 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             }
             if store.getActiveGeneration() == nil {
                 _ = try publishEpoch(identityToken: token)
+            } else {
+                store.reopenDeliveryProofs()
             }
             reopenAdmission()
         }

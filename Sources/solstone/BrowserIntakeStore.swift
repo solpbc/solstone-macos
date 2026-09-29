@@ -46,6 +46,7 @@ enum BrowserIntakeIOPoint: Sendable, Equatable {
     case sync
     case commit
     case size
+    case proof
 }
 
 final class BrowserIntakeIOInjector: @unchecked Sendable {
@@ -128,6 +129,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     private var activeGeneration: String?
     private var activeIdentityToken: String?
     private var currentOpenPeriodId: String?
+    private var deliveryProofsOpen = true
 
     private var storedFloorMs: UInt64 = 0
     private var observedFloorMs: UInt64 = 0
@@ -172,6 +174,22 @@ public final class BrowserIntakeStore: @unchecked Sendable {
 
     public func storeIsFailed() -> Bool {
         lock.withLock { isStoreFailed }
+    }
+
+    func closeDeliveryProofs() {
+        lock.withLock { deliveryProofsOpen = false }
+    }
+
+    func reopenDeliveryProofs() {
+        lock.withLock { deliveryProofsOpen = true }
+    }
+
+    private func requireCurrentDeliveryLocked(periodGeneration: String) throws {
+        guard deliveryProofsOpen,
+              let activeGeneration,
+              BrowserOpaqueString.equals(activeGeneration, periodGeneration) else {
+            throw BrowserIntakeStoreError.staleGeneration
+        }
     }
 
     func registerStagingDirectory(_ url: URL, reservedBytes: Int) throws {
@@ -928,6 +946,7 @@ private static func fullSync(_ handle: FileHandle) throws {
 
         let digest = Self.identityDigest(of: identityToken)
         if let currentGen = activeGeneration, BrowserOpaqueString.equals(activeIdentityToken, digest) {
+            deliveryProofsOpen = true
             return currentGen
         }
 
@@ -977,6 +996,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         self.activeGeneration = newGen
         self.activeIdentityToken = digest
         self.currentOpenPeriodId = newPeriodId
+        deliveryProofsOpen = true
         return newGen
     }
 
@@ -1704,6 +1724,11 @@ private static func fullSync(_ handle: FileHandle) throws {
     func persistDeliveryBinding(_ ack: BrowserIngestAck) throws {
         lock.lock()
         defer { lock.unlock() }
+        try persistDeliveryBindingLocked(ack)
+    }
+
+    private func persistDeliveryBindingLocked(_ ack: BrowserIngestAck) throws {
+        try requireCurrentDeliveryLocked(periodGeneration: ack.generation)
         guard let period = getPeriodLocked(periodId: ack.periodId),
               BrowserOpaqueString.equals(period.generation, ack.generation),
               period.state == "finalized",
@@ -1723,12 +1748,27 @@ private static func fullSync(_ handle: FileHandle) throws {
         if let existing = period.deliveryBinding, Data(existing.utf8) != Data(binding.utf8) {
             throw BrowserIntakeStoreError.localIO
         }
+        guard period.deliveryBinding == nil else { return }
         try query("UPDATE periods SET delivery_binding = ?, canonical_key = ?, ack_durable = 0 WHERE period_id = ? AND state = 'finalized'") { stmt in
             try bindTextChecked(stmt, 1, binding)
             if let key = ack.canonicalKey { try bindTextChecked(stmt, 2, key) } else { try bindNullChecked(stmt, 2) }
             try bindTextChecked(stmt, 3, ack.periodId)
             guard try stepChecked(stmt) == SQLITE_DONE, sqlite3_changes(db) == 1 else { throw BrowserIntakeStoreError.localIO }
         }
+    }
+
+    func publishDeliveryAck(_ ack: BrowserIngestAck) throws {
+        try ioInjector.check(.proof)
+        lock.lock()
+        defer { lock.unlock() }
+
+        try persistDeliveryBindingLocked(ack)
+        try requireCurrentDeliveryLocked(periodGeneration: ack.generation)
+        let periodURL = periodFileURL(for: ack.periodId)
+        let ackURL = BrowserIngestAckStore.ackURL(periodDirectory: periodURL.deletingLastPathComponent())
+        try BrowserIngestAckStore.write(ack, to: ackURL, ioInjector: ioInjector)
+        try requireCurrentDeliveryLocked(periodGeneration: ack.generation)
+        try markAckDurableLocked(periodId: ack.periodId, periodGeneration: ack.generation)
     }
 
     func storedDeliveryBinding(periodId: String) throws -> BrowserIngestAck? {
@@ -1742,6 +1782,13 @@ private static func fullSync(_ handle: FileHandle) throws {
     func markAckDurable(periodId: String) throws {
         lock.lock()
         defer { lock.unlock() }
+        guard let period = getPeriodLocked(periodId: periodId) else { throw BrowserIntakeStoreError.staleGeneration }
+        try requireCurrentDeliveryLocked(periodGeneration: period.generation)
+        try markAckDurableLocked(periodId: periodId, periodGeneration: period.generation)
+    }
+
+    private func markAckDurableLocked(periodId: String, periodGeneration: String) throws {
+        try requireCurrentDeliveryLocked(periodGeneration: periodGeneration)
         try query("UPDATE periods SET ack_durable = 1 WHERE period_id = ? AND delivery_binding IS NOT NULL AND state = 'finalized'") { stmt in
             try bindTextChecked(stmt, 1, periodId)
             guard try stepChecked(stmt) == SQLITE_DONE, sqlite3_changes(db) == 1 else { throw BrowserIntakeStoreError.localIO }
@@ -1749,19 +1796,26 @@ private static func fullSync(_ handle: FileHandle) throws {
     }
 
     func releaseProven(periodId: String, binding: BrowserIngestAck, nowMs: UInt64) throws {
-        try terminalAndUnlink(periodId: periodId, binding: binding, state: "delivered", nowMs: nowMs, requireAck: true)
+        try ioInjector.check(.proof)
+        lock.lock()
+        defer { lock.unlock() }
+        try terminalAndUnlinkLocked(periodId: periodId, binding: binding, state: "delivered", nowMs: nowMs, requireAck: true)
     }
 
     func removeProvenSegment(periodId: String, binding: BrowserIngestAck, nowMs: UInt64) throws {
-        try terminalAndUnlink(periodId: periodId, binding: binding, state: "removed", nowMs: nowMs, requireAck: false)
+        try ioInjector.check(.proof)
+        lock.lock()
+        defer { lock.unlock() }
+        if getPeriodLocked(periodId: periodId)?.state != "removed" {
+            try persistDeliveryBindingLocked(binding)
+        }
+        try terminalAndUnlinkLocked(periodId: periodId, binding: binding, state: "removed", nowMs: nowMs, requireAck: false)
     }
 
-    private func terminalAndUnlink(periodId: String, binding: BrowserIngestAck, state: String, nowMs: UInt64, requireAck: Bool) throws {
+    private func terminalAndUnlinkLocked(periodId: String, binding: BrowserIngestAck, state: String, nowMs: UInt64, requireAck: Bool) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let expectedBinding = String(decoding: try encoder.encode(binding), as: UTF8.self)
-        lock.lock()
-        defer { lock.unlock() }
         guard let period = getPeriodLocked(periodId: periodId),
               period.deliveryBinding != nil,
               period.deliveryBinding.map({ Data($0.utf8) == Data(expectedBinding.utf8) }) == true,
@@ -1778,6 +1832,8 @@ private static func fullSync(_ handle: FileHandle) throws {
             throw BrowserIntakeStoreError.staleGeneration
         }
         if period.state != state {
+            guard period.state == "finalized" else { throw BrowserIntakeStoreError.staleGeneration }
+            try requireCurrentDeliveryLocked(periodGeneration: period.generation)
             try query("UPDATE periods SET state = ?, canonical_key = ?, delivered_at_ms = ?, cleanup_durable = 0 WHERE period_id = ? AND state IN ('finalized', 'delivered', 'removed')") { stmt in
                 try bindTextChecked(stmt, 1, state)
                 if let key = binding.canonicalKey { try bindTextChecked(stmt, 2, key) } else { try bindNullChecked(stmt, 2) }
