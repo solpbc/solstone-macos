@@ -57,6 +57,8 @@ public final class PauseManager {
     public private(set) var pauseState = PauseState()
     public var onPause: (() async -> Void)?
     public var onResume: (() async -> Void)?
+    public var onPauseIntake: (() -> Void)?
+    public var onResumeIntake: (() -> Void)?
 
     /// Convenience property for checking pause status
     public var isPaused: Bool { pauseState.isPaused }
@@ -91,6 +93,8 @@ public final class PauseManager {
         scheduleTimer(expiration: expirationDate)
         updateUIRefreshTimer()
 
+        onPauseIntake?()
+
         if let onPause {
             Task { @MainActor in
                 await onPause()
@@ -105,6 +109,8 @@ public final class PauseManager {
         pauseState = PauseState()
 
         updateUIRefreshTimer()
+
+        onResumeIntake?()
 
         if let onResume {
             Task { @MainActor in

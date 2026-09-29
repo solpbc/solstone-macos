@@ -14,6 +14,17 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     private var wallClock: @Sendable () -> Date
     private var timeZone: TimeZone
     private var lastRotationDate: Date
+    private var _isPaused: Bool = false
+    private var admissionClosed = false
+    private struct SeenKey: Hashable {
+        let generation: String
+        let inst: String
+        let batchId: String
+    }
+    private var firstSight: [SeenKey: Duration] = [:]
+    public var isPaused: Bool {
+        lock.withLock { _isPaused }
+    }
 
     public init(
         store: BrowserIntakeStore,
@@ -28,6 +39,30 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         self.wallClock = wallClock
         self.timeZone = timeZone
         self.lastRotationDate = wallClock()
+        if let created = store.openPeriodCreatedAtMs() {
+            self.lastRotationDate = Date(timeIntervalSince1970: Double(created) / 1000.0)
+        }
+        let now = self.wallClock()
+        rotateIfBoundary(now: now)
+    }
+
+    public func closeAdmission() {
+        lock.lock()
+        admissionClosed = true
+        lock.unlock()
+    }
+
+    public func reopenAdmission() {
+        lock.lock()
+        admissionClosed = false
+        lock.unlock()
+    }
+
+    public func setPaused(_ paused: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        self._isPaused = paused
+        store.setPaused(paused)
     }
 
     public func setWallClock(_ clock: @escaping @Sendable () -> Date) {
@@ -36,18 +71,13 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         self.wallClock = clock
     }
 
-    public func setTimeZone(_ tz: TimeZone) {
+    public func setTimeZone(_ tz: TimeZone) throws {
         lock.lock()
         defer { lock.unlock() }
         if tz != self.timeZone {
             let now = wallClock()
-            if let pid = store.getOpenPeriodId() {
-                let fileURL = store.periodFileURL(for: pid)
-                let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
-                let size = (attrs?[.size] as? NSNumber)?.intValue ?? 0
-                if size > 0 {
-                    try? store.finalizePeriod(periodId: pid, reason: "timezone_change", civilDate: now, timeZone: self.timeZone)
-                }
+            if let pid = store.getOpenPeriodId(), try store.periodFileByteCount(periodId: pid) > 0 {
+                try store.finalizePeriod(periodId: pid, reason: "timezone_change", civilDate: now, timeZone: self.timeZone)
             }
             self.timeZone = tz
             self.lastRotationDate = now
@@ -69,62 +99,69 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     public func status() -> [String: Any] {
         let now = wallClock()
         let nowMs = UInt64(now.timeIntervalSince1970 * 1000.0)
-        let elapsed = monotonicClock.now()
-        let freshnessMs = UInt64(Double(elapsed.components.seconds) * 1000.0 + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000.0)
-        return store.currentStatus(nowMs: nowMs, monotonicFreshnessMs: freshnessMs)
+        return store.currentStatus(nowMs: nowMs, monotonicFreshnessMs: projection.policy.freshnessMaxMs)
     }
 
     public func poll(now: Date) {
         lock.lock()
         defer { lock.unlock() }
-
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-
-        let lastMinute = calendar.component(.minute, from: lastRotationDate)
-        let currentMinute = calendar.component(.minute, from: now)
-        let lastDay = calendar.component(.day, from: lastRotationDate)
-        let currentDay = calendar.component(.day, from: now)
-
-        let crossedBoundary = (currentMinute / 5 != lastMinute / 5) || (currentDay != lastDay)
-
-        if crossedBoundary {
-            if let pid = store.getOpenPeriodId() {
-                try? store.finalizePeriod(periodId: pid, reason: "clock_boundary", civilDate: now, timeZone: timeZone)
-            }
-            lastRotationDate = now
-        }
-
+        rotateIfBoundary(now: now)
         let nowMs = UInt64(now.timeIntervalSince1970 * 1000.0)
         store.garbageCollectExpiredTombstones(nowMs: nowMs)
+    }
+
+    private func boundaryKey(_ date: Date) -> (Int, Int, Int, Int) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let hour = calendar.component(.hour, from: date)
+        let minute = calendar.component(.minute, from: date)
+        return (
+            calendar.component(.year, from: date),
+            calendar.component(.month, from: date),
+            calendar.component(.day, from: date),
+            (hour * 60 + minute) / 5
+        )
+    }
+
+    private func rotateIfBoundary(now: Date) {
+        let previous = boundaryKey(lastRotationDate)
+        let current = boundaryKey(now)
+        guard previous != current else { return }
+        if let pid = store.getOpenPeriodId() {
+            do {
+                try store.finalizePeriod(periodId: pid, reason: "clock_boundary", civilDate: now, timeZone: timeZone)
+                lastRotationDate = now
+            } catch {
+                return
+            }
+        } else {
+            lastRotationDate = now
+        }
+    }
+
+    private func durationMs(_ duration: Duration) -> UInt64 {
+        let parts = duration.components
+        if parts.seconds < 0 { return 0 }
+        return UInt64(parts.seconds) * 1000 + UInt64(parts.attoseconds / 1_000_000_000_000_000)
+    }
+
+    private func refusalReply(_ refusal: BrowserRefusal) -> [String: Any] {
+        [
+            "type": "refused",
+            "code": refusal.code,
+            "reason": refusal.receiptReason,
+            "class": refusal.receiptClass
+        ]
     }
 
     public func accept(bytes: Data, direction: String) throws -> [String: Any] {
         let now = wallClock()
         let nowMs = UInt64(now.timeIntervalSince1970 * 1000.0)
-
-        // 1. Decode
         let decodeResult = BrowserPayloadDecoder.decode(bytes: bytes, direction: direction, projection: projection)
 
         switch decodeResult {
         case .refuse(let refusal):
-            var gen = ""
-            var inst = ""
-            var batchId = ""
-            if let obj = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] {
-                gen = obj["destination_generation"] as? String ?? ""
-                inst = obj["inst"] as? String ?? ""
-                batchId = obj["batch_id"] as? String ?? ""
-            }
-            return try BrowserPayloadDecoder.buildReply(
-                destinationGeneration: gen,
-                inst: inst,
-                batchId: batchId,
-                result: "rejected",
-                reason: refusal.receiptReason,
-                receiptClass: refusal.receiptClass,
-                projection: projection
-            )
+            return refusalReply(refusal)
 
         case .unsupported(let proto, let behind):
             return [
@@ -141,7 +178,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                     "type": "hello_ack",
                     "capture": stat["capture"] ?? "permitted",
                     "delivery": stat["delivery"] ?? "idle",
-                    "freshness_ms": stat["freshness_ms"] ?? 0,
+                    "freshness_ms": stat["freshness_ms"] ?? projection.policy.freshnessMaxMs,
                     "destination_generation": stat["destination_generation"] ?? NSNull(),
                     "period_id": stat["period_id"] ?? NSNull(),
                     "custody": stat["custody"] ?? ["full": false, "stale": false]
@@ -150,16 +187,37 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 return reply
 
             case .state, .boundary, .accepted, .bye, .unsupported:
-                return ["type": "accepted", "result": "accepted", "destination_generation": "", "inst": "", "batch_id": "", "period_id": ""]
+                return refusalReply(BrowserRefusal(code: "bad_direction"))
 
             case .batch(let batch):
+                lock.lock()
+                defer { lock.unlock() }
                 return try processBatch(batch: batch, nowMs: nowMs, civilDate: now)
             }
         }
     }
 
+    private func rejected(
+        batch: BrowserDecodedBatch,
+        reason: String,
+        receiptClass: String
+    ) throws -> [String: Any] {
+        try BrowserPayloadDecoder.buildReply(
+            destinationGeneration: batch.destinationGeneration,
+            inst: batch.inst,
+            batchId: batch.batchId,
+            result: "rejected",
+            reason: reason,
+            receiptClass: receiptClass,
+            projection: projection
+        )
+    }
+
     private func processBatch(batch: BrowserDecodedBatch, nowMs: UInt64, civilDate: Date) throws -> [String: Any] {
-        // 2. Lookup existing receipt
+        if _isPaused || admissionClosed || store.storeIsFailed() {
+            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
+        }
+
         if let stored = store.lookupReceipt(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId) {
             if stored.result == "accepted" || stored.result == "duplicate" {
                 return try BrowserPayloadDecoder.buildReply(
@@ -170,133 +228,113 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                     periodId: stored.periodId ?? "",
                     projection: projection
                 )
-            } else {
-                return try BrowserPayloadDecoder.buildReply(
-                    destinationGeneration: batch.destinationGeneration,
-                    inst: batch.inst,
-                    batchId: batch.batchId,
-                    result: "rejected",
-                    reason: stored.reason,
-                    receiptClass: stored.receiptClass,
-                    projection: projection
-                )
             }
-        }
-
-        // 3. Generation check
-        guard batch.destinationGeneration.count <= projection.stringBounds.generation else {
-            return try BrowserPayloadDecoder.buildReply(
-                destinationGeneration: batch.destinationGeneration,
-                inst: batch.inst,
-                batchId: batch.batchId,
-                result: "rejected",
-                reason: "stale_generation",
-                receiptClass: "permanent",
-                projection: projection
-            )
+            return try rejected(batch: batch, reason: stored.reason ?? "malformed", receiptClass: stored.receiptClass ?? "permanent")
         }
 
         guard let activeGen = store.getActiveGeneration(), activeGen == batch.destinationGeneration else {
-            return try BrowserPayloadDecoder.buildReply(
-                destinationGeneration: batch.destinationGeneration,
-                inst: batch.inst,
-                batchId: batch.batchId,
-                result: "rejected",
-                reason: "stale_generation",
-                receiptClass: "permanent",
-                projection: projection
-            )
+            return try rejected(batch: batch, reason: "stale_generation", receiptClass: "permanent")
         }
 
-        // 4. Age policy
-        let floorMs = store.updateFloorMs(wallNowMs: nowMs)
-        let firstSeen = store.getFirstSeenQueuedAt(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId)
-        if firstSeen == nil {
-            store.recordBatchSeen(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId, queuedAtMs: batch.queuedAtMs)
+        let floorMs: UInt64
+        do {
+            floorMs = try store.updateFloorMs(wallNowMs: nowMs)
+        } catch {
+            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
-        let effectiveQueued = min(firstSeen ?? batch.queuedAtMs, batch.queuedAtMs)
+
+        let seenKey = SeenKey(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId)
+        let storedQueued = store.getFirstSeenQueuedAt(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId)
+        let effectiveQueued = min(storedQueued ?? batch.queuedAtMs, batch.queuedAtMs)
 
         if effectiveQueued > floorMs && (effectiveQueued - floorMs) > projection.policy.futureSkewMs {
-            return try BrowserPayloadDecoder.buildReply(
-                destinationGeneration: batch.destinationGeneration,
-                inst: batch.inst,
-                batchId: batch.batchId,
-                result: "rejected",
-                reason: "age_policy",
-                receiptClass: "retryable",
-                projection: projection
-            )
+            return try rejected(batch: batch, reason: "age_policy", receiptClass: "retryable")
         }
 
-        if floorMs >= effectiveQueued && (floorMs - effectiveQueued) >= projection.policy.outboxAgeMs {
-            try? store.commitTombstone(
-                generation: batch.destinationGeneration,
-                inst: batch.inst,
-                batchId: batch.batchId,
-                reason: "expired_unaccepted",
-                receiptClass: "permanent",
-                queuedAtMs: effectiveQueued
-            )
-            return try BrowserPayloadDecoder.buildReply(
-                destinationGeneration: batch.destinationGeneration,
-                inst: batch.inst,
-                batchId: batch.batchId,
-                result: "rejected",
-                reason: "expired_unaccepted",
-                receiptClass: "permanent",
-                projection: projection
-            )
+        let elapsedMs: UInt64
+        if let seenAt = firstSight[seenKey] {
+            elapsedMs = durationMs(monotonicClock.now() - seenAt)
+        } else {
+            elapsedMs = 0
         }
-
-        // 5. Snapshot / context check
-        let firstRec = batch.records[0]
-        if firstRec.t == "delta" {
-            guard let openPid = store.getOpenPeriodId(),
-                  store.isContextInitialized(periodId: openPid, inst: batch.inst, ctx: firstRec.ctx) else {
-                return try BrowserPayloadDecoder.buildReply(
-                    destinationGeneration: batch.destinationGeneration,
+        let wallExpired = floorMs >= effectiveQueued && (floorMs - effectiveQueued) >= projection.policy.outboxAgeMs
+        let monoExpired = elapsedMs >= projection.policy.outboxAgeMs && storedQueued != nil
+        if wallExpired || monoExpired {
+            do {
+                try store.commitTombstone(
+                    generation: batch.destinationGeneration,
                     inst: batch.inst,
                     batchId: batch.batchId,
-                    result: "rejected",
-                    reason: "snapshot_required",
-                    receiptClass: "retryable",
-                    projection: projection
+                    reason: "expired_unaccepted",
+                    receiptClass: "permanent",
+                    queuedAtMs: effectiveQueued
                 )
+            } catch {
+                return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
+            }
+            return try rejected(batch: batch, reason: "expired_unaccepted", receiptClass: "permanent")
+        }
+
+        var batchBytes = 0
+        for record in batch.records { batchBytes += record.rawSlice.count + 1 }
+        let selectedPeriod: String
+        do {
+            selectedPeriod = try store.selectPeriodForBatch(
+                byteCount: batchBytes,
+                civilDate: civilDate,
+                timeZone: timeZone,
+                nowMs: nowMs
+            )
+        } catch let error as BrowserIntakeStoreError {
+            switch error {
+            case .resourceExhausted:
+                return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
+            case .staleGeneration:
+                return try rejected(batch: batch, reason: "stale_generation", receiptClass: "permanent")
+            case .duplicateAccepted, .localIO:
+                return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
+            }
+        } catch {
+            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
+        }
+
+        if storedQueued == nil {
+            do {
+                try store.recordBatchSeen(
+                    generation: batch.destinationGeneration,
+                    inst: batch.inst,
+                    batchId: batch.batchId,
+                    queuedAtMs: batch.queuedAtMs
+                )
+                if firstSight[seenKey] == nil {
+                    firstSight[seenKey] = monotonicClock.now()
+                }
+            } catch {
+                return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
             }
         }
 
-        // 6. Quota check
-        var batchBytes = 0
-        for r in batch.records { batchBytes += r.rawSlice.count + 1 }
-        let batchDedupBytes = BrowserIntakeStore.receiptDedupBytes(
-            generation: batch.destinationGeneration,
-            inst: batch.inst,
-            batchId: batch.batchId,
-            periodId: store.getOpenPeriodId(),
-            reason: nil,
-            receiptClass: nil
-        )
-
-        if store.isQuotaFull(additionalBytes: batchBytes, additionalDedupBytes: batchDedupBytes) {
-            return try BrowserPayloadDecoder.buildReply(
-                destinationGeneration: batch.destinationGeneration,
-                inst: batch.inst,
-                batchId: batch.batchId,
-                result: "rejected",
-                reason: "resource_exhausted",
-                receiptClass: "retryable",
-                projection: projection
-            )
+        let firstRec = batch.records[0]
+        if firstRec.t == "delta" && !store.isContextInitialized(periodId: selectedPeriod, inst: batch.inst, ctx: firstRec.ctx) {
+            return try rejected(batch: batch, reason: "snapshot_required", receiptClass: "retryable")
         }
 
-        // 7. Commit
-        do {
-            let pid = try store.commitBatch(
-                batch: batch,
-                nowMs: nowMs,
-                civilDate: civilDate,
-                timeZone: timeZone
+        if store.isQuotaFull(
+            additionalBytes: batchBytes,
+            additionalDedupBytes: BrowserIntakeStore.receiptDedupBytes(
+                generation: batch.destinationGeneration,
+                inst: batch.inst,
+                batchId: batch.batchId,
+                periodId: selectedPeriod,
+                reason: nil,
+                receiptClass: nil
             )
+        ) {
+            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
+        }
+
+        do {
+            let pid = try store.commitBatch(batch: batch, nowMs: nowMs, civilDate: civilDate, timeZone: timeZone)
             return try BrowserPayloadDecoder.buildReply(
                 destinationGeneration: batch.destinationGeneration,
                 inst: batch.inst,
@@ -305,16 +343,23 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 periodId: pid,
                 projection: projection
             )
+        } catch let error as BrowserIntakeStoreError {
+            if case .duplicateAccepted(let periodId) = error {
+                return try BrowserPayloadDecoder.buildReply(
+                    destinationGeneration: batch.destinationGeneration,
+                    inst: batch.inst,
+                    batchId: batch.batchId,
+                    result: "duplicate",
+                    periodId: periodId,
+                    projection: projection
+                )
+            }
+            if case .staleGeneration = error {
+                return try rejected(batch: batch, reason: "stale_generation", receiptClass: "permanent")
+            }
+            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         } catch {
-            return try BrowserPayloadDecoder.buildReply(
-                destinationGeneration: batch.destinationGeneration,
-                inst: batch.inst,
-                batchId: batch.batchId,
-                result: "rejected",
-                reason: "resource_exhausted",
-                receiptClass: "retryable",
-                projection: projection
-            )
+            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
     }
 }

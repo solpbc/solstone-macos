@@ -61,6 +61,13 @@ public final class AppState {
     public let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
     internal let tunnelLifecycleOwner: TunnelLifecycleOwner
     internal let pairingCoordinator: PairingCoordinator
+    internal let credentialStore: PairingCredentialStore?
+    #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    public private(set) var browserIntakeStore: BrowserIntakeStore?
+    public private(set) var browserIntakeAuthority: BrowserIntakeAuthority?
+    public private(set) var browserUploadGate: BrowserUploadGate?
+    public private(set) var browserUploadPlanner: BrowserUploadPlanner?
+    #endif
     private let homeBaseURLResolver: HomeBaseURLResolver
     private let ingestBaseURLResolver: HomeBaseURLResolver
     private let sameMachinePairStart: @MainActor @Sendable (
@@ -838,6 +845,7 @@ public final class AppState {
             }
         )
         self.tunnelLifecycleOwner = tunnelLifecycleOwner
+        self.credentialStore = splCredentialStore
         self.pairingCoordinator = PairingCoordinator(
             clientInfo: splClientInfo,
             credentialStore: splCredentialStore,
@@ -1213,6 +1221,7 @@ public final class AppState {
         }
         let tunnelLifecycleOwner = TunnelLifecycleOwner.dormantForSnapshot(loadPairing: tunnelPairingLoad)
         self.tunnelLifecycleOwner = tunnelLifecycleOwner
+        self.credentialStore = nil
         self.pairingCoordinator = PairingCoordinator(
             pair: pairingOperation,
             loadPairing: pairingLoad ?? { nil },
@@ -1526,5 +1535,113 @@ public final class AppState {
         }
         dockMode = DockMode(rawValue: rawValue) ?? .auto
     }
+
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    public func configureBrowserIntake(
+        store: BrowserIntakeStore,
+        authority: BrowserIntakeAuthority,
+        gate: BrowserUploadGate,
+        planner: BrowserUploadPlanner,
+        credentialStore: PairingCredentialStore
+    ) {
+        self.browserIntakeStore = store
+        self.browserIntakeAuthority = authority
+        self.browserUploadGate = gate
+        self.browserUploadPlanner = planner
+
+        // Install pairing hooks
+        credentialStore.beforeIdentityMutation = { [weak authority, weak gate] newToken in
+            guard let authority, let gate else { return }
+            authority.closeAdmission()
+            gate.cancelInFlightAndWait()
+            try authority.retireIfTokenChanged(newToken: newToken)
+        }
+
+        credentialStore.afterIdentityMutation = { [weak authority, weak gate] token in
+            guard let authority, let token else { return }
+            do {
+                _ = try authority.publishEpoch(identityToken: token)
+                authority.reopenAdmission()
+                gate?.resumeReaders()
+            } catch {
+                Logger.storage.error("Browser intake epoch publication failed")
+            }
+        }
+
+        self.pauseManager.onPauseIntake = { [weak authority, weak store] in
+            authority?.setPaused(true)
+            store?.setPaused(true)
+        }
+        self.pauseManager.onResumeIntake = { [weak authority, weak store] in
+            authority?.setPaused(false)
+            store?.setPaused(false)
+        }
+    }
+
+    public func startBrowserIntake() {
+        guard browserIntakeStore == nil else { return }
+        guard let credentialStore else { return }
+        let possibleVendorURLs = [
+            Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/vendor"),
+            Bundle.main.bundleURL.appendingPathComponent("vendor"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("vendor"),
+            URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("vendor")
+        ]
+        guard let vendorURL = possibleVendorURLs.first(where: { FileManager.default.fileExists(atPath: $0.appendingPathComponent("contracts/native-browser/manifest.json").path) }) else {
+            Logger.storage.error("Browser intake left off: contract projection unavailable")
+            return
+        }
+        let projection: BrowserContractProjection
+        do {
+            projection = try BrowserContractProjection(rootURL: vendorURL)
+        } catch {
+            Logger.storage.error("Browser intake left off: contract projection failed")
+            return
+        }
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            Logger.storage.error("Browser intake left off: spool unavailable")
+            return
+        }
+        let spoolRoot = appSupport.appendingPathComponent("Solstone/browser-intake")
+        let store: BrowserIntakeStore
+        do {
+            store = try BrowserIntakeStore(rootURL: spoolRoot, projection: projection)
+        } catch {
+            Logger.storage.error("Browser intake left off: spool unavailable")
+            return
+        }
+        let authority = BrowserIntakeAuthority(store: store, projection: projection)
+        let gate = BrowserUploadGate(store: store)
+        let bridge = AppStateBridgeTarget()
+        bridge.state = self
+        let planner = BrowserUploadPlanner(
+            store: store,
+            gate: gate,
+            client: UploadClient(),
+            serverURLProvider: { [bridge] in
+                await MainActor.run { bridge.state?.config.serverURL }
+            },
+            syncPausedProvider: { [bridge] in
+                await MainActor.run { bridge.state?.config.syncPaused ?? false }
+            }
+        )
+        configureBrowserIntake(
+            store: store,
+            authority: authority,
+            gate: gate,
+            planner: planner,
+            credentialStore: credentialStore
+        )
+        if let pairing = try? credentialStore.currentPairing() ?? credentialStore.load() {
+            let token = [pairing.instanceID, pairing.clientCertPEM, pairing.clientKeyPEM, pairing.caChainPEM, String(pairing.pairedAt.timeIntervalSince1970)].joined(separator: "\u{0}")
+            do {
+                _ = try authority.publishEpoch(identityToken: token)
+            } catch {
+                Logger.storage.error("Browser intake left off: epoch publication failed")
+                authority.closeAdmission()
+            }
+        }
+    }
+#endif
 
 }

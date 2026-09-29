@@ -24,6 +24,37 @@ struct IngestV3UploadRequestBuilder {
         let segment: String
         let files: [SubmittedFile]
         let meta: [String: IngestJSONValue]?
+        let source: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case day, segment, files, meta, source
+        }
+
+        init(day: String, segment: String, files: [SubmittedFile], meta: [String: IngestJSONValue]?, source: String? = nil) {
+            self.day = day
+            self.segment = segment
+            self.files = files
+            self.meta = meta
+            self.source = source
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(day, forKey: .day)
+            try container.encode(segment, forKey: .segment)
+            try container.encode(files, forKey: .files)
+            try container.encode(meta, forKey: .meta)
+            try container.encodeIfPresent(source, forKey: .source)
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            day = try container.decode(String.self, forKey: .day)
+            segment = try container.decode(String.self, forKey: .segment)
+            files = try container.decode([SubmittedFile].self, forKey: .files)
+            meta = try container.decodeIfPresent([String: IngestJSONValue].self, forKey: .meta)
+            source = try container.decodeIfPresent(String.self, forKey: .source)
+        }
     }
 
     static func build(
@@ -32,6 +63,7 @@ struct IngestV3UploadRequestBuilder {
         segment: String,
         selectedFiles: [URL],
         meta: [String: IngestJSONValue]?,
+        source: String? = nil,
         boundary: String,
         bodyURL: URL
     ) throws -> PreparedIngestV3Upload {
@@ -45,7 +77,8 @@ struct IngestV3UploadRequestBuilder {
             day: day,
             segment: segment,
             files: selectedFiles.map { SubmittedFile(submitted: $0.lastPathComponent) },
-            meta: meta
+            meta: meta,
+            source: source
         )
         let envelopeData = try JSONEncoder().encode(envelope)
         guard let envelopeString = String(data: envelopeData, encoding: .utf8) else {
@@ -81,7 +114,14 @@ struct IngestV3UploadRequestBuilder {
         try bodyHandle.writeMultipartField(boundary: boundary, name: "envelope", value: envelopeString)
         for fileURL in selectedFiles {
             let filename = fileURL.lastPathComponent
-            let mimeType = fileURL.pathExtension == "mp4" ? "video/mp4" : "audio/mp4"
+            let mimeType: String
+            if source == "browser" && filename == "browser_pages.jsonl" {
+                mimeType = "application/jsonl"
+            } else if fileURL.pathExtension == "mp4" {
+                mimeType = "video/mp4"
+            } else {
+                mimeType = "audio/mp4"
+            }
             try bodyHandle.writeMultipartFileHeader(
                 boundary: boundary,
                 name: "files",

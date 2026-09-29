@@ -154,10 +154,10 @@ public struct UploadClient: Sendable {
 
     // MARK: - Protocol v3 reads
 
-    func getSegmentsDay(serverURL: String, day: String) async throws -> IngestProtocolV3.SegmentsDay {
+    func getSegmentsDay(serverURL: String, day: String, source: String? = nil) async throws -> IngestProtocolV3.SegmentsDay {
         try await get(
             serverURL: serverURL,
-            path: IngestProtocolV3.segmentsDayPath(day),
+            path: IngestProtocolV3.segmentsDayPath(day, source: source),
             as: IngestProtocolV3.SegmentsDay.self
         )
     }
@@ -233,6 +233,7 @@ public struct UploadClient: Sendable {
         segment: String,
         mediaFiles: [URL],
         metadata: [String: IngestJSONValue]?,
+        source: String? = nil,
         boundary: String = UUID().uuidString,
         bodyURL: URL
     ) throws -> PreparedIngestV3Upload {
@@ -245,6 +246,7 @@ public struct UploadClient: Sendable {
             segment: segment,
             selectedFiles: mediaFiles,
             meta: metadata,
+            source: source,
             boundary: boundary,
             bodyURL: bodyURL
         )

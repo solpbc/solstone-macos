@@ -174,6 +174,126 @@ struct SolstoneNativeBrowserContractTests {
             #expect(recipeBytes.count == expectedLen, "Recipe \(id) length mismatch")
             let actualSHA = SHA256.hash(data: recipeBytes).map { String(format: "%02x", $0) }.joined()
             #expect(actualSHA == expectedSHA, "Recipe \(id) SHA-256 mismatch")
+
+            let decoded = BrowserPayloadDecoder.decode(
+                bytes: recipeBytes,
+                direction: "extension_to_host",
+                projection: projection
+            )
+            switch id {
+            case "extension_to_host_batch_oversize", "control_payload_oversize":
+                if case .refuse(let refusal) = decoded {
+                    #expect(refusal.code == "oversize")
+                } else {
+                    #expect(Bool(false), "Recipe \(id) should refuse oversize")
+                }
+            case "batch_delta_oversize_3001":
+                if case .refuse(let refusal) = decoded {
+                    #expect(refusal.code == "too_many_deltas")
+                } else {
+                    #expect(Bool(false), "Recipe \(id) should refuse too_many_deltas")
+                }
+            default:
+                if case .accept = decoded {
+                } else {
+                    #expect(Bool(false), "Recipe \(id) should decode")
+                }
+            }
+        }
+    }
+
+    @Test func productionDecoderMatchesFrozenContract() throws {
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+
+        func decode(_ json: String, direction: String = "extension_to_host") -> BrowserDecodeResult {
+            BrowserPayloadDecoder.decode(bytes: Data(json.utf8), direction: direction, projection: projection)
+        }
+
+        if case .refuse(let refusal) = decode(#"{"type":"hello","protocol":9007199254740992,"version":"1","brand":"chrome","inst":"i"}"#) {
+            #expect(refusal.code == "bad_number")
+        } else {
+            #expect(Bool(false), "unsafe protocol integer should be refused")
+        }
+        if case .accept(.hello) = decode(#"{"type":"hello","protocol":1.0,"version":"1","brand":"chrome","inst":"i"}"#) {
+        } else {
+            #expect(Bool(false), "1.0 is an integral protocol")
+        }
+        if case .unsupported = decode(#"{"type":"hello","protocol":1e3,"version":"1","brand":"chrome","inst":"i"}"#) {
+        } else {
+            #expect(Bool(false), "1e3 is an integral unsupported protocol")
+        }
+        if case .refuse(let refusal) = decode(#"{"type":"hello","protocol":2.5,"version":"1","brand":"chrome","inst":"i"}"#) {
+            #expect(refusal.code == "bad_number")
+        } else {
+            #expect(Bool(false), "2.5 is not an integer")
+        }
+
+        let literal = #"{"type":"batch","destination_generation":"g","inst":"i","batch_id":"0123456789abcdef0123456789abcdef","queued_at_ms":0,"records":[{"t":"segment_start","ts":0,"ctx":"c","title":"\\uD800","blocks":[{"id":"b","text":"x"}]}]}"#
+        if case .accept = decode(literal) {
+        } else {
+            #expect(Bool(false), "escaped backslash before uD800 is literal text")
+        }
+        let lone = #"{"type":"batch","destination_generation":"g","inst":"i","batch_id":"0123456789abcdef0123456789abcdef","queued_at_ms":0,"records":[{"t":"segment_start","ts":0,"ctx":"c","title":"\uD800","blocks":[{"id":"b","text":"x"}]}]}"#
+        if case .refuse(let refusal) = decode(lone) {
+            #expect(refusal.code == "lone_surrogate")
+        } else {
+            #expect(Bool(false), "lone surrogate escape should be refused")
+        }
+
+        let longInst = String(repeating: "e\u{0301}", count: 129)
+        let longHello = try JSONSerialization.data(withJSONObject: [
+            "type": "hello", "protocol": 1, "version": "1", "brand": "chrome", "inst": longInst
+        ])
+        if case .refuse = BrowserPayloadDecoder.decode(bytes: longHello, direction: "extension_to_host", projection: projection) {
+        } else {
+            #expect(Bool(false), "unicode scalar length should bound inst")
+        }
+
+        let missingText = #"{"type":"batch","destination_generation":"g","inst":"i","batch_id":"0123456789abcdef0123456789abcdef","queued_at_ms":0,"records":[{"t":"segment_start","ts":0,"ctx":"c","blocks":[{"id":"b"}]}]}"#
+        if case .refuse(let refusal) = decode(missingText) {
+            #expect(refusal.field == "text")
+        } else {
+            #expect(Bool(false), "block text is required")
+        }
+        let negativeDepth = #"{"type":"batch","destination_generation":"g","inst":"i","batch_id":"0123456789abcdef0123456789abcdef","queued_at_ms":0,"records":[{"t":"delta","ts":0,"ctx":"c","op":"add","block":{"id":"b","text":"x","depth":-1}}]}"#
+        if case .refuse(let refusal) = decode(negativeDepth) {
+            #expect(refusal.field == "depth")
+        } else {
+            #expect(Bool(false), "negative depth should be refused")
+        }
+
+        let failedState = #"{"type":"state","capture":"permitted","delivery":"failed","freshness_ms":1000,"destination_generation":"g","period_id":"p"}"#
+        if case .refuse(let refusal) = decode(failedState, direction: "host_to_extension") {
+            #expect(refusal.field == "failure")
+        } else {
+            #expect(Bool(false), "failed delivery requires failure")
+        }
+        let failedWithCause = #"{"type":"state","capture":"permitted","delivery":"failed","failure":"journal_rejected","freshness_ms":1000,"destination_generation":"g","period_id":"p"}"#
+        if case .accept = decode(failedWithCause, direction: "host_to_extension") {
+        } else {
+            #expect(Bool(false), "failed delivery with failure should decode")
+        }
+
+        let decoy = #"{"extra":{"records":[{"unvalidated":true}]},"type":"batch","destination_generation":"g","inst":"i","batch_id":"0123456789abcdef0123456789abcdef","queued_at_ms":0,"records":[{"t":"segment_start","ts":1000.0,"ctx":"c","blocks":[{"id":"b","text":"real"}]}]}"#
+        if case .accept(.batch(let batch)) = decode(decoy) {
+            let slice = String(decoding: batch.records[0].rawSlice, as: UTF8.self)
+            #expect(slice.contains("\"ts\":1000.0"))
+            #expect(slice.contains("real"))
+            #expect(!slice.contains("unvalidated"))
+        } else {
+            #expect(Bool(false), "root records should be the persisted slice")
+        }
+
+        func nestedJSON(depth: Int) -> String {
+            String(repeating: "{\"a\":", count: depth) + "1" + String(repeating: "}", count: depth)
+        }
+        if case .refuse(let shallow) = decode(nestedJSON(depth: 127)) {
+            #expect(shallow.code != "bad_json")
+        }
+        if case .refuse(let deep) = decode(nestedJSON(depth: 128)) {
+            #expect(deep.code == "bad_json")
+        } else {
+            #expect(Bool(false), "depth 128 should be bad_json")
         }
     }
 

@@ -69,6 +69,12 @@ public actor SyncService {
         let fingerprint: String
         let day: String
         let segment: String
+        var source: String = ""
+    }
+
+    private struct DayReadAddress: Hashable, Sendable {
+        let day: String
+        var source: String = ""
     }
 
     private enum SegmentBoundKind: Sendable, Equatable {
@@ -417,7 +423,7 @@ public actor SyncService {
 
         // Pass-local day reads cache: never store a listing on the actor.
         // A prior pass's response is not custody after the journal may have changed.
-        var passDayReads: [String: Result<IngestProtocolV3.SegmentsDay, DayReadClass>] = [:]
+        var passDayReads: [DayReadAddress: Result<IngestProtocolV3.SegmentsDay, DayReadClass>] = [:]
 
         // Device-quiet window active: skip upload walk, probe today only
         if let quietUntil = self.deviceQuietUntil, currentTime < quietUntil {
@@ -625,7 +631,7 @@ public actor SyncService {
         }
 
         // Idle probe: if no POST was made and today was not read and discovery succeeded
-        if !didPOST && passDayReads[today] == nil && snapshot.failure == nil {
+        if !didPOST && passDayReads[DayReadAddress(day: today, source: "")] == nil && snapshot.failure == nil {
             let probeResult = await self.readDayCached(day: today, serverURL: serverURL, client: client, cache: &passDayReads)
             switch probeResult {
             case .success:
@@ -1599,22 +1605,24 @@ public actor SyncService {
 
     private func readDayCached(
         day: String,
+        source: String = "",
         serverURL: String,
         client: UploadClient,
-        cache: inout [String: Result<IngestProtocolV3.SegmentsDay, DayReadClass>]
+        cache: inout [DayReadAddress: Result<IngestProtocolV3.SegmentsDay, DayReadClass>]
     ) async -> Result<IngestProtocolV3.SegmentsDay, DayReadClass> {
-        if let cached = cache[day] {
+        let key = DayReadAddress(day: day, source: source)
+        if let cached = cache[key] {
             return cached
         }
         do {
-            let segments = try await client.getSegmentsDay(serverURL: serverURL, day: day)
+            let segments = try await client.getSegmentsDay(serverURL: serverURL, day: day, source: source.isEmpty ? nil : source)
             let res = Result<IngestProtocolV3.SegmentsDay, DayReadClass>.success(segments)
-            cache[day] = res
+            cache[key] = res
             return res
         } catch {
             let classification = classifyDayRead(error, day: day)
             let res = Result<IngestProtocolV3.SegmentsDay, DayReadClass>.failure(classification)
-            cache[day] = res
+            cache[key] = res
             return res
         }
     }

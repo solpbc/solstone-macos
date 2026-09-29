@@ -62,6 +62,9 @@ internal enum SolstoneStartupComposition {
             if automaticObservationPipelineEnabled {
                 appState.capture.activate()
             }
+            #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            appState.startBrowserIntake()
+            #endif
             let updateController = makeUpdateController(appState)
             registerUpdateAnnouncement(updateController)
             return makeStartup(appState, updateController)

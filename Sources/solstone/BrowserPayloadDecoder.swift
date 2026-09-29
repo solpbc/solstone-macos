@@ -156,33 +156,37 @@ public enum BrowserPayloadDecoder {
         return val
     }
 
+    /// Scan JSON source for a lone `\u` surrogate. A preceding escaped backslash
+    /// (`\\uD800`) is literal text and is not a surrogate escape.
     private static func hasLoneSurrogateEscape(_ text: String) -> Bool {
         let utf8 = Array(text.utf8)
         var i = 0
         let n = utf8.count
         while i < n {
-            if utf8[i] == UInt8(ascii: "\\") && i + 1 < n && utf8[i + 1] == UInt8(ascii: "u") {
-                if i + 5 >= n {
-                    return true
-                }
-                guard let hexVal = parseHex4(utf8, from: i + 2) else {
-                    return true
-                }
-                if (0xD800...0xDBFF).contains(hexVal) {
-                    if i + 11 < n && utf8[i + 6] == UInt8(ascii: "\\") && utf8[i + 7] == UInt8(ascii: "u") {
-                        if let lowVal = parseHex4(utf8, from: i + 8), (0xDC00...0xDFFF).contains(lowVal) {
-                            i += 12
-                            continue
-                        }
-                    }
-                    return true
-                } else if (0xDC00...0xDFFF).contains(hexVal) {
-                    return true
-                }
-                i += 6
-            } else {
+            if utf8[i] != UInt8(ascii: "\\") {
                 i += 1
+                continue
             }
+            if i + 1 >= n { return true }
+            let next = utf8[i + 1]
+            if next != UInt8(ascii: "u") {
+                i += 2
+                continue
+            }
+            if i + 5 >= n { return true }
+            guard let hexVal = parseHex4(utf8, from: i + 2) else { return true }
+            if (0xD800...0xDBFF).contains(hexVal) {
+                if i + 11 < n && utf8[i + 6] == UInt8(ascii: "\\") && utf8[i + 7] == UInt8(ascii: "u") {
+                    if let lowVal = parseHex4(utf8, from: i + 8), (0xDC00...0xDFFF).contains(lowVal) {
+                        i += 12
+                        continue
+                    }
+                }
+                return true
+            } else if (0xDC00...0xDFFF).contains(hexVal) {
+                return true
+            }
+            i += 6
         }
         return false
     }
@@ -236,50 +240,237 @@ public enum BrowserPayloadDecoder {
         return false
     }
 
-    private static func extractRecordSlices(from rawText: String) -> [Data]? {
-        guard let recordsRange = rawText.range(of: "\"records\"") else { return nil }
-        let restOfText = rawText[recordsRange.upperBound...]
-        guard let openBracketIdx = restOfText.firstIndex(of: "[") else { return nil }
+    /// One walk of the root object. Record slices come from the root `records`
+    /// array (last duplicate key wins, matching JSON object semantics), with
+    /// insignificant whitespace removed and string/number lexemes preserved.
+    private static func rootRecordSlices(in bytes: Data) -> [Data]? {
+        var lexer = JSONLexer(bytes: [UInt8](bytes))
+        return lexer.rootRecordSlices()
+    }
 
-        var slices: [Data] = []
-        var idx = rawText.index(after: openBracketIdx)
-        let endIdx = rawText.endIndex
+    private struct JSONLexer {
+        let bytes: [UInt8]
+        var index: Int = 0
 
-        var inString = false
-        var escaped = false
-        var depth = 0
-        var recordStartIdx: String.Index? = nil
-
-        while idx < endIdx {
-            let ch = rawText[idx]
-            if inString {
-                if escaped {
-                    escaped = false
-                } else if ch == "\\" {
-                    escaped = true
-                } else if ch == "\"" {
-                    inString = false
-                }
-            } else if ch == "\"" {
-                inString = true
-            } else if ch == "{" {
-                if depth == 0 {
-                    recordStartIdx = idx
-                }
-                depth += 1
-            } else if ch == "}" {
-                depth -= 1
-                if depth == 0, let start = recordStartIdx {
-                    let recString = String(rawText[start...idx])
-                    slices.append(Data(recString.utf8))
-                    recordStartIdx = nil
-                }
-            } else if ch == "]" && depth == 0 {
-                break
+        mutating func rootRecordSlices() -> [Data]? {
+            skipWhitespace()
+            guard peek() == UInt8(ascii: "{") else { return nil }
+            index += 1
+            skipWhitespace()
+            var slices: [Data]?
+            if peek() == UInt8(ascii: "}") {
+                return nil
             }
-            idx = rawText.index(after: idx)
+            while index < bytes.count {
+                guard let keyRaw = rawString() else { return nil }
+                guard let key = jsonStringValue(keyRaw) else { return nil }
+                skipWhitespace()
+                guard peek() == UInt8(ascii: ":") else { return nil }
+                index += 1
+                if key == "records" {
+                    guard let elements = compactArrayElements() else { return nil }
+                    slices = elements
+                } else {
+                    guard compactValue() != nil else { return nil }
+                }
+                skipWhitespace()
+                if peek() == UInt8(ascii: ",") {
+                    index += 1
+                    skipWhitespace()
+                    continue
+                }
+                if peek() == UInt8(ascii: "}") {
+                    index += 1
+                    return slices
+                }
+                return nil
+            }
+            return nil
         }
-        return slices
+
+        private mutating func compactArrayElements() -> [Data]? {
+            skipWhitespace()
+            guard peek() == UInt8(ascii: "[") else { return nil }
+            index += 1
+            skipWhitespace()
+            var elements: [Data] = []
+            if peek() == UInt8(ascii: "]") {
+                index += 1
+                return elements
+            }
+            while index < bytes.count {
+                guard let value = compactValue() else { return nil }
+                elements.append(Data(value))
+                skipWhitespace()
+                if peek() == UInt8(ascii: ",") {
+                    index += 1
+                    skipWhitespace()
+                    continue
+                }
+                if peek() == UInt8(ascii: "]") {
+                    index += 1
+                    return elements
+                }
+                return nil
+            }
+            return nil
+        }
+
+        private mutating func compactValue() -> [UInt8]? {
+            skipWhitespace()
+            guard let byte = peek() else { return nil }
+            switch byte {
+            case UInt8(ascii: "{"):
+                return compactObject()
+            case UInt8(ascii: "["):
+                return compactArray()
+            case UInt8(ascii: "\""):
+                return rawString()
+            case UInt8(ascii: "t"):
+                return rawLiteral("true")
+            case UInt8(ascii: "f"):
+                return rawLiteral("false")
+            case UInt8(ascii: "n"):
+                return rawLiteral("null")
+            case UInt8(ascii: "-"), UInt8(ascii: "0")...UInt8(ascii: "9"):
+                return rawNumber()
+            default:
+                return nil
+            }
+        }
+
+        private mutating func compactObject() -> [UInt8]? {
+            guard peek() == UInt8(ascii: "{") else { return nil }
+            index += 1
+            var out: [UInt8] = [UInt8(ascii: "{")]
+            skipWhitespace()
+            if peek() == UInt8(ascii: "}") {
+                index += 1
+                out.append(UInt8(ascii: "}"))
+                return out
+            }
+            var first = true
+            while index < bytes.count {
+                if !first { out.append(UInt8(ascii: ",")) }
+                first = false
+                guard let key = rawString() else { return nil }
+                out.append(contentsOf: key)
+                skipWhitespace()
+                guard peek() == UInt8(ascii: ":") else { return nil }
+                index += 1
+                out.append(UInt8(ascii: ":"))
+                guard let value = compactValue() else { return nil }
+                out.append(contentsOf: value)
+                skipWhitespace()
+                if peek() == UInt8(ascii: ",") {
+                    index += 1
+                    skipWhitespace()
+                    continue
+                }
+                if peek() == UInt8(ascii: "}") {
+                    index += 1
+                    out.append(UInt8(ascii: "}"))
+                    return out
+                }
+                return nil
+            }
+            return nil
+        }
+
+        private mutating func compactArray() -> [UInt8]? {
+            guard peek() == UInt8(ascii: "[") else { return nil }
+            index += 1
+            var out: [UInt8] = [UInt8(ascii: "[")]
+            skipWhitespace()
+            if peek() == UInt8(ascii: "]") {
+                index += 1
+                out.append(UInt8(ascii: "]"))
+                return out
+            }
+            var first = true
+            while index < bytes.count {
+                if !first { out.append(UInt8(ascii: ",")) }
+                first = false
+                guard let value = compactValue() else { return nil }
+                out.append(contentsOf: value)
+                skipWhitespace()
+                if peek() == UInt8(ascii: ",") {
+                    index += 1
+                    skipWhitespace()
+                    continue
+                }
+                if peek() == UInt8(ascii: "]") {
+                    index += 1
+                    out.append(UInt8(ascii: "]"))
+                    return out
+                }
+                return nil
+            }
+            return nil
+        }
+
+        private mutating func rawString() -> [UInt8]? {
+            guard peek() == UInt8(ascii: "\"") else { return nil }
+            let start = index
+            index += 1
+            while index < bytes.count {
+                let byte = bytes[index]
+                if byte == UInt8(ascii: "\\") {
+                    index += 2
+                    if index > bytes.count { return nil }
+                } else if byte == UInt8(ascii: "\"") {
+                    index += 1
+                    return Array(bytes[start..<index])
+                } else {
+                    index += 1
+                }
+            }
+            return nil
+        }
+
+        private mutating func rawLiteral(_ literal: String) -> [UInt8]? {
+            let raw = Array(literal.utf8)
+            guard index + raw.count <= bytes.count else { return nil }
+            guard Array(bytes[index..<(index + raw.count)]) == raw else { return nil }
+            index += raw.count
+            return raw
+        }
+
+        private mutating func rawNumber() -> [UInt8]? {
+            let start = index
+            if peek() == UInt8(ascii: "-") { index += 1 }
+            let numberStart = index
+            while index < bytes.count {
+                let byte = bytes[index]
+                let isDigit = byte >= UInt8(ascii: "0") && byte <= UInt8(ascii: "9")
+                if isDigit || byte == UInt8(ascii: ".") || byte == UInt8(ascii: "e") || byte == UInt8(ascii: "E") || byte == UInt8(ascii: "+") || byte == UInt8(ascii: "-") {
+                    index += 1
+                } else {
+                    break
+                }
+            }
+            if index == numberStart { return nil }
+            return Array(bytes[start..<index])
+        }
+
+        private mutating func skipWhitespace() {
+            while index < bytes.count {
+                let byte = bytes[index]
+                if byte == 0x20 || byte == 0x09 || byte == 0x0A || byte == 0x0D {
+                    index += 1
+                } else {
+                    break
+                }
+            }
+        }
+
+        private func peek() -> UInt8? {
+            index < bytes.count ? bytes[index] : nil
+        }
+
+        private func jsonStringValue(_ raw: [UInt8]) -> String? {
+            (try? JSONSerialization.jsonObject(with: Data(raw), options: [.fragmentsAllowed])) as? String
+        }
     }
 
     public static func decode(
@@ -364,7 +555,7 @@ public enum BrowserPayloadDecoder {
         case "hello":
             return decodeHello(root: root, projection: projection)
         case "batch":
-            return decodeBatch(root: root, rawBytes: bytes, rawText: text, projection: projection)
+            return decodeBatch(root: root, rawBytes: bytes, projection: projection)
         case "state", "hello_ack":
             return decodeState(root: root, type: type, projection: projection)
         case "boundary":
@@ -385,13 +576,38 @@ public enum BrowserPayloadDecoder {
         return CFGetTypeID(num) == CFBooleanGetTypeID()
     }
 
+    private static let maxSafeInteger: Double = 9007199254740991
+
+    private static func scalarCount(_ string: String) -> Int {
+        string.unicodeScalars.count
+    }
+
+    /// Integral JSON numbers, including `1.0` and `1e3`. Values above the
+    /// IEEE safe-integer maximum are refused even when they parse as integers.
     private static func isNonNegativeInteger(_ val: Any?, max: UInt64? = nil) -> Bool {
         guard let num = val as? NSNumber else { return false }
         if CFGetTypeID(num) == CFBooleanGetTypeID() { return false }
-        let d = num.doubleValue
-        if d < 0 || d != floor(d) || d.isInfinite { return false }
-        if let max = max, d > Double(max) { return false }
+        let value = num.doubleValue
+        if !value.isFinite || value < 0 || value != value.rounded(.towardZero) { return false }
+        if value > maxSafeInteger { return false }
+        if let max, value > Double(max) { return false }
         return true
+    }
+
+    private static func optionalRecordString(
+        _ record: [String: Any],
+        key: String,
+        max: Int,
+        row: Int
+    ) -> BrowserDecodeResult? {
+        guard let value = record[key] else { return nil }
+        guard let string = value as? String else {
+            return .refuse(BrowserRefusal(code: "bad_record", field: key, row: row))
+        }
+        if scalarCount(string) > max {
+            return .refuse(BrowserRefusal(code: "bad_record", field: key, cause: "too_long", row: row))
+        }
+        return nil
     }
 
     private static func decodeHello(root: [String: Any], projection: BrowserContractProjection) -> BrowserDecodeResult {
@@ -413,7 +629,7 @@ public enum BrowserPayloadDecoder {
         if !["chrome", "edge", "firefox"].contains(brand) {
             return .refuse(BrowserRefusal(code: "invalid_enum"))
         }
-        if version.count > projection.stringBounds.version || inst.isEmpty || inst.count > projection.stringBounds.instStringMax {
+        if scalarCount(version) > projection.stringBounds.version || inst.isEmpty || scalarCount(inst) > projection.stringBounds.instStringMax {
             return .refuse(BrowserRefusal(code: "missing_field"))
         }
 
@@ -452,6 +668,15 @@ public enum BrowserPayloadDecoder {
         let validDeliveries = ["unknown", "kept_locally", "delivered", "idle", "failed"]
         if !validDeliveries.contains(delivery) {
             return .refuse(BrowserRefusal(code: "invalid_enum"))
+        }
+
+        if delivery == "failed" {
+            guard let failure = root["failure"] as? String, !failure.isEmpty else {
+                return .refuse(BrowserRefusal(code: "missing_field", field: "failure"))
+            }
+            if scalarCount(failure) > projection.stringBounds.failureCode {
+                return .refuse(BrowserRefusal(code: "invalid_enum", field: "failure"))
+            }
         }
 
         if let failureVal = root["failure"], !(failureVal is NSNull) {
@@ -516,6 +741,17 @@ public enum BrowserPayloadDecoder {
         }
 
         let failureCode = (root["failure"] as? String)
+        if let version = root["version"] {
+            guard let versionString = version as? String, scalarCount(versionString) <= projection.stringBounds.version else {
+                return .refuse(BrowserRefusal(code: "missing_field", field: "version"))
+            }
+        }
+        if let generation = genStr, generation.isEmpty || scalarCount(generation) > projection.stringBounds.generation {
+            return .refuse(BrowserRefusal(code: "bad_state_ids"))
+        }
+        if let period = periodStr, period.isEmpty || scalarCount(period) > projection.stringBounds.periodId {
+            return .refuse(BrowserRefusal(code: "bad_state_ids"))
+        }
         let version = root["version"] as? String
 
         return .accept(.state(BrowserDecodedState(
@@ -537,8 +773,8 @@ public enum BrowserPayloadDecoder {
               let period = root["period_id"] as? String else {
             return .refuse(BrowserRefusal(code: "missing_field"))
         }
-        if gen.isEmpty || gen.count > projection.stringBounds.generation ||
-           period.isEmpty || period.count > projection.stringBounds.periodId {
+        if gen.isEmpty || scalarCount(gen) > projection.stringBounds.generation ||
+           period.isEmpty || scalarCount(period) > projection.stringBounds.periodId {
             return .refuse(BrowserRefusal(code: "missing_field"))
         }
         return .accept(.boundary(BrowserDecodedBoundary(destinationGeneration: gen, periodId: period)))
@@ -556,6 +792,11 @@ public enum BrowserPayloadDecoder {
             return .refuse(BrowserRefusal(code: "invalid_receipt"))
         }
 
+        if gen.isEmpty || scalarCount(gen) > projection.stringBounds.generation ||
+            inst.isEmpty || scalarCount(inst) > projection.stringBounds.instStringMax {
+            return .refuse(BrowserRefusal(code: "invalid_receipt"))
+        }
+
         if batchId.count != projection.caps.batchIdHex ||
            batchId.range(of: "^[0-9a-f]{32}$", options: .regularExpression) == nil {
             return .refuse(BrowserRefusal(code: "invalid_receipt"))
@@ -566,7 +807,11 @@ public enum BrowserPayloadDecoder {
         let receiptClass = root["class"] as? String
 
         if result == "accepted" || result == "duplicate" {
-            guard let period = periodId, !period.isEmpty, reason == nil, receiptClass == nil else {
+            guard let period = periodId,
+                  !period.isEmpty,
+                  scalarCount(period) <= projection.stringBounds.periodId,
+                  reason == nil,
+                  receiptClass == nil else {
                 return .refuse(BrowserRefusal(code: "invalid_receipt"))
             }
             return .accept(.accepted(BrowserDecodedAccepted(
@@ -622,7 +867,6 @@ public enum BrowserPayloadDecoder {
     private static func decodeBatch(
         root: [String: Any],
         rawBytes: Data,
-        rawText: String,
         projection: BrowserContractProjection
     ) -> BrowserDecodeResult {
         guard let gen = root["destination_generation"] as? String,
@@ -632,7 +876,12 @@ public enum BrowserPayloadDecoder {
             return .refuse(BrowserRefusal(code: "missing_field"))
         }
 
-        if batchId.count != projection.caps.batchIdHex ||
+        if gen.isEmpty || scalarCount(gen) > projection.stringBounds.generation ||
+            inst.isEmpty || scalarCount(inst) > projection.stringBounds.instStringMax {
+            return .refuse(BrowserRefusal(code: "missing_field"))
+        }
+
+        if scalarCount(batchId) != projection.caps.batchIdHex ||
            batchId.range(of: "^[0-9a-f]{32}$", options: .regularExpression) == nil {
             return .refuse(BrowserRefusal(code: "bad_batch_id"))
         }
@@ -642,8 +891,14 @@ public enum BrowserPayloadDecoder {
         }
         let queuedAtMs = (queuedAtRaw as! NSNumber).uint64Value
 
-        guard let recordsArray = root["records"] as? [[String: Any]] else {
+        guard let recordsValue = root["records"] as? [Any] else {
             return .refuse(BrowserRefusal(code: "missing_field"))
+        }
+        guard let recordSlices = rootRecordSlices(in: rawBytes), recordSlices.count == recordsValue.count else {
+            return .refuse(BrowserRefusal(code: "bad_json"))
+        }
+        guard let recordsArray = recordsValue as? [[String: Any]] else {
+            return .refuse(BrowserRefusal(code: "bad_record"))
         }
 
         if recordsArray.isEmpty {
@@ -662,8 +917,8 @@ public enum BrowserPayloadDecoder {
             return .refuse(BrowserRefusal(code: "bad_record"))
         }
 
-        guard let firstCtx = firstRec["ctx"] as? String, !firstCtx.isEmpty else {
-            let cause = firstRec.keys.contains("ctx") ? "empty" : "missing"
+        guard let firstCtx = firstRec["ctx"] as? String, !firstCtx.isEmpty, scalarCount(firstCtx) <= projection.stringBounds.ctxStringMax else {
+            let cause = firstRec["ctx"] == nil ? "missing" : (scalarCount(firstRec["ctx"] as? String ?? "") > projection.stringBounds.ctxStringMax ? "too_long" : "empty")
             return .refuse(BrowserRefusal(code: "bad_record", field: "ctx", cause: cause, row: 0))
         }
 
@@ -678,21 +933,48 @@ public enum BrowserPayloadDecoder {
                 return .refuse(BrowserRefusal(code: "bad_record", row: row))
             }
 
-            guard let recCtx = rec["ctx"] as? String, !recCtx.isEmpty else {
-                let cause = rec.keys.contains("ctx") ? "empty" : "missing"
+            guard let recCtx = rec["ctx"] as? String, !recCtx.isEmpty, scalarCount(recCtx) <= projection.stringBounds.ctxStringMax else {
+                let cause = rec["ctx"] == nil ? "missing" : "too_long"
                 return .refuse(BrowserRefusal(code: "bad_record", field: "ctx", cause: cause, row: row))
             }
             if recCtx != firstCtx {
                 return .refuse(BrowserRefusal(code: "mixed_context"))
             }
 
-            if let recInst = rec["inst"] as? String, recInst != inst {
-                return .refuse(BrowserRefusal(code: "bad_record", field: "inst", cause: "mismatch", row: row))
+            if let recInst = rec["inst"] {
+                guard let instString = recInst as? String, instString == inst, scalarCount(instString) <= projection.stringBounds.instStringMax else {
+                    return .refuse(BrowserRefusal(code: "bad_record", field: "inst", cause: "mismatch", row: row))
+                }
             }
 
-            if let snapReason = rec["snapshot_reason"] as? String {
-                if snapReason != "delivery_recovery" {
+            if let snapReason = rec["snapshot_reason"] {
+                guard let reason = snapReason as? String, reason == "delivery_recovery" else {
                     return .refuse(BrowserRefusal(code: "invalid_enum"))
+                }
+            }
+
+            for key in ["title", "url", "site", "adapter"] {
+                let max: Int
+                switch key {
+                case "title": max = projection.stringBounds.titleStringMax
+                case "url": max = projection.stringBounds.urlStringMax
+                case "site": max = projection.stringBounds.siteStringMax
+                default: max = projection.stringBounds.adapterStringMax
+                }
+                if let refusal = optionalRecordString(rec, key: key, max: max, row: row) {
+                    return refusal
+                }
+            }
+
+            if let rel = rec["rel"] {
+                guard let number = rel as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite else {
+                    return .refuse(BrowserRefusal(code: "bad_number", row: row))
+                }
+            }
+
+            if let nValue = rec["n"] {
+                guard isNonNegativeInteger(nValue, max: UInt64(projection.stringBounds.blocksMax)) else {
+                    return .refuse(BrowserRefusal(code: "bad_number", field: "n", row: row))
                 }
             }
 
@@ -712,12 +994,8 @@ public enum BrowserPayloadDecoder {
                     return .refuse(BrowserRefusal(code: "bad_record", row: row))
                 }
                 for block in blocks {
-                    guard let bid = block["id"] as? String, !bid.isEmpty else {
-                        let cause = block.keys.contains("id") ? "empty" : "missing"
-                        return .refuse(BrowserRefusal(code: "bad_record", field: "id", cause: cause, row: row))
-                    }
-                    if bid.count > projection.stringBounds.idStringMax {
-                        return .refuse(BrowserRefusal(code: "bad_record", field: "id", cause: "too_long", row: row))
+                    if let refusal = validateTextBlock(block, requireText: true, projection: projection, row: row) {
+                        return refusal
                     }
                 }
             } else {
@@ -727,26 +1005,14 @@ public enum BrowserPayloadDecoder {
                 guard let block = rec["block"] as? [String: Any] else {
                     return .refuse(BrowserRefusal(code: "bad_record", row: row))
                 }
-                guard let bid = block["id"] as? String, !bid.isEmpty else {
-                    let cause = block.keys.contains("id") ? "empty" : "missing"
-                    return .refuse(BrowserRefusal(code: "bad_record", field: "id", cause: cause, row: row))
+                if let refusal = validateTextBlock(block, requireText: op != "remove", projection: projection, row: row) {
+                    return refusal
                 }
-                if bid.count > projection.stringBounds.idStringMax {
-                    return .refuse(BrowserRefusal(code: "bad_record", field: "id", cause: "too_long", row: row))
-                }
-                blockIdVal = bid
-            }
-
-            let rawSlices = extractRecordSlices(from: rawText)
-            let recBytes: Data
-            if let slices = rawSlices, row < slices.count {
-                recBytes = slices[row]
-            } else {
-                recBytes = encodeRecordBytes(rec, projection: projection)
+                blockIdVal = block["id"] as? String
             }
 
             decodedRecords.append(BrowserDecodedBatchRecord(
-                rawSlice: recBytes,
+                rawSlice: recordSlices[row],
                 t: recT,
                 ts: tsVal,
                 ctx: recCtx,
@@ -764,6 +1030,60 @@ public enum BrowserPayloadDecoder {
             queuedAtMs: queuedAtMs,
             records: decodedRecords
         )))
+    }
+
+    private static func validateTextBlock(
+        _ block: [String: Any],
+        requireText: Bool,
+        projection: BrowserContractProjection,
+        row: Int
+    ) -> BrowserDecodeResult? {
+        if let idValue = block["id"] {
+            guard let id = idValue as? String, !id.isEmpty else {
+                return .refuse(BrowserRefusal(code: "bad_record", field: "id", cause: "empty", row: row))
+            }
+            if scalarCount(id) > projection.stringBounds.idStringMax {
+                return .refuse(BrowserRefusal(code: "bad_record", field: "id", cause: "too_long", row: row))
+            }
+        } else {
+            return .refuse(BrowserRefusal(code: "bad_record", field: "id", cause: "missing", row: row))
+        }
+
+        if requireText || block["text"] != nil {
+            guard let text = block["text"] as? String else {
+                let cause = block.keys.contains("text") ? "invalid" : "missing"
+                return .refuse(BrowserRefusal(code: "bad_record", field: "text", cause: cause, row: row))
+            }
+            if scalarCount(text) > projection.stringBounds.textMax {
+                return .refuse(BrowserRefusal(code: "bad_record", field: "text", cause: "too_long", row: row))
+            }
+        }
+
+        if let typeValue = block["type"] {
+            guard let type = typeValue as? String, scalarCount(type) <= projection.stringBounds.typeStringMax else {
+                return .refuse(BrowserRefusal(code: "bad_record", field: "type", row: row))
+            }
+        }
+        if let depth = block["depth"] {
+            guard isNonNegativeInteger(depth, max: UInt64(projection.stringBounds.blockDepthMax)) else {
+                return .refuse(BrowserRefusal(code: "bad_record", field: "depth", row: row))
+            }
+        }
+        if let attrs = block["attrs"] {
+            guard let dict = attrs as? [String: Any] else {
+                return .refuse(BrowserRefusal(code: "bad_record", field: "attrs", row: row))
+            }
+            if let refusal = optionalRecordString(dict, key: "label", max: projection.stringBounds.labelStringMax, row: row) {
+                return refusal
+            }
+            if let refusal = optionalRecordString(dict, key: "level", max: projection.stringBounds.levelStringMax, row: row) {
+                return refusal
+            }
+            if let refusal = optionalRecordString(dict, key: "linkHost", max: projection.stringBounds.linkHostStringMax, row: row) {
+                return refusal
+            }
+        }
+        return nil
     }
 
     public static func encodeRecordBytes(_ rec: [String: Any], projection: BrowserContractProjection) -> Data {

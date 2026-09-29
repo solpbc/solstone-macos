@@ -5,6 +5,7 @@
 
 import CryptoKit
 import Foundation
+import SolstoneCore
 import Testing
 @testable import solstone
 
@@ -33,6 +34,29 @@ private final class BrowserTestClock: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         _date = _date.addingTimeInterval(seconds)
+    }
+}
+
+private final class ManualMonotonicClock: MonotonicClock, @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Duration
+
+    init(_ current: Duration = .zero) {
+        self.current = current
+    }
+
+    func now() -> Duration {
+        lock.lock()
+        defer { lock.unlock() }
+        return current
+    }
+
+    func sleep(for duration: Duration) async {}
+
+    func advance(milliseconds: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        current += .milliseconds(milliseconds)
     }
 }
 
@@ -142,70 +166,86 @@ struct BrowserIntakeAdmissionTests {
         )
 
         let gen = try authority.publishEpoch(identityToken: "test-token-1")
+        let pad = String(repeating: "p", count: 26 * 1024 * 1024)
 
-        // Batch 1: 26 MB snapshot payload (<= 33554432 extensionToHost cap)
-        let pad26MB = String(repeating: "1", count: 26 * 1024 * 1024)
         let batch1: [String: Any] = [
             "type": "batch",
             "destination_generation": gen,
             "inst": "inst-1",
             "batch_id": "11111111111111111111111111111111",
             "queued_at_ms": 1700000000000 as UInt64,
-            "records": [
-                [
-                    "t": "segment_start",
-                    "ts": 1700000000000 as UInt64,
-                    "ctx": "ctx-1",
-                    "blocks": [["id": "b1", "text": pad26MB]]
-                ]
-            ]
+            "records": [[
+                "t": "segment_start",
+                "ts": 1700000000000 as UInt64,
+                "ctx": "ctx-1",
+                "blocks": [["id": "b1", "text": "snapshot"]],
+                "pad": pad
+            ]]
         ]
         let reply1 = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: batch1), direction: "extension_to_host")
         #expect(reply1["result"] as? String == "accepted")
-        let pid1 = reply1["period_id"] as! String
+        let pid1 = try #require(reply1["period_id"] as? String)
+        let file1Before = try Data(contentsOf: store.periodFileURL(for: pid1))
 
-        // Batch 2: 26 MB delta batch with marker "batch2_marker". Total (26 + 26 = 52 MB) > 50331648
-        let pad26MB_2 = String(repeating: "2", count: 26 * 1024 * 1024)
+        let deltaId = "22222222222222222222222222222222"
         let batch2: [String: Any] = [
             "type": "batch",
             "destination_generation": gen,
             "inst": "inst-1",
-            "batch_id": "22222222222222222222222222222222",
+            "batch_id": deltaId,
             "queued_at_ms": 1700000001000 as UInt64,
-            "records": [
-                [
-                    "t": "delta",
-                    "ts": 1700000001000 as UInt64,
-                    "ctx": "ctx-1",
-                    "op": "add",
-                    "block": ["id": "batch2_marker", "text": pad26MB_2]
-                ]
-            ]
+            "records": [[
+                "t": "delta",
+                "ts": 1700000001000 as UInt64,
+                "ctx": "ctx-1",
+                "op": "add",
+                "block": ["id": "batch2_marker", "text": "short"],
+                "pad": pad
+            ]]
         ]
         let reply2 = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: batch2), direction: "extension_to_host")
-        #expect(reply2["result"] as? String == "accepted")
-        let pid2 = reply2["period_id"] as! String
+        #expect(reply2["result"] as? String == "rejected")
+        #expect(reply2["reason"] as? String == "snapshot_required")
+        #expect(reply2["class"] as? String == "retryable")
+        #expect(store.lookupReceipt(generation: gen, inst: "inst-1", batchId: deltaId) == nil)
+        #expect(store.getPeriod(periodId: pid1)?.state == "finalized")
+        let file1After = try Data(contentsOf: store.periodFileURL(for: pid1))
+        #expect(file1After == file1Before)
+        #expect(!String(decoding: file1After, as: UTF8.self).contains("batch2_marker"))
 
-        #expect(pid1 != pid2)
+        let openAfterRotation = try #require(store.getOpenPeriodId())
+        #expect(openAfterRotation != pid1)
+        let rotatedURL = store.periodFileURL(for: openAfterRotation)
+        let rotatedBytes = (try? Data(contentsOf: rotatedURL)) ?? Data()
+        #expect(!String(decoding: rotatedBytes, as: UTF8.self).contains("batch2_marker"))
 
-        // Verify period 1 file does NOT contain batch2_marker
-        let file1URL = store.periodFileURL(for: pid1)
-        let file1Data = try Data(contentsOf: file1URL)
-        let file1String = String(data: file1Data, encoding: .utf8) ?? ""
-        #expect(!file1String.contains("batch2_marker"))
+        let substituted: [String: Any] = [
+            "type": "batch",
+            "destination_generation": gen,
+            "inst": "inst-1",
+            "batch_id": deltaId,
+            "queued_at_ms": 1700000001000 as UInt64,
+            "records": [[
+                "t": "segment_start",
+                "ts": 1700000001000 as UInt64,
+                "ctx": "ctx-1",
+                "blocks": [["id": "b2", "text": "substituted-snapshot"]],
+                "snapshot_reason": "delivery_recovery"
+            ]]
+        ]
+        let substitutedBytes = try JSONSerialization.data(withJSONObject: substituted)
+        let reply3 = try authority.accept(bytes: substitutedBytes, direction: "extension_to_host")
+        #expect(reply3["result"] as? String == "accepted")
+        let pid2 = try #require(reply3["period_id"] as? String)
+        #expect(pid2 == openAfterRotation)
+        let file2 = try String(contentsOf: store.periodFileURL(for: pid2), encoding: .utf8)
+        #expect(file2.contains("substituted-snapshot"))
+        #expect(!file2.contains("batch2_marker"))
 
-        // Verify period 2 file contains entire record line with batch2_marker
-        let file2URL = store.periodFileURL(for: pid2)
-        let file2Data = try Data(contentsOf: file2URL)
-        let file2String = String(data: file2Data, encoding: .utf8) ?? ""
-        #expect(file2String.contains("batch2_marker"))
-
-        // Verify no extra empty open periods exist (only pid2 is open)
+        let replay = try authority.accept(bytes: substitutedBytes, direction: "extension_to_host")
+        #expect(replay["result"] as? String == "duplicate")
+        #expect(replay["period_id"] as? String == pid2)
         #expect(store.getOpenPeriodId() == pid2)
-        let storedP1 = store.getPeriod(periodId: pid1)
-        #expect(storedP1?.state == "finalized")
-        let storedP2 = store.getPeriod(periodId: pid2)
-        #expect(storedP2?.state == "open")
     }
 
     @Test func test3_afterFinalizeSyncRecoveryAndReopenAndFailCommit() throws {
@@ -346,116 +386,82 @@ struct BrowserIntakeAdmissionTests {
         // Rotate anchor period so it can be isolated
         try store.finalizePeriod(periodId: anchorPid, reason: "anchor_seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
 
-        // 3. Fill with large filler records to approach spoolBytes (536870912)
-        // Delivery reserve doubles payload: 2 * payload + dedup + sqliteSize ~ 536870912 -> ~256 MB payload fills it
-        var fillerPids: [String] = []
-        var fillerIndex = 2
-        while true {
-            // Check remaining space before admitting another ~25 MB batch
-            let nextBatchPayloadBytes = 25 * 1024 * 1024
-            let nextDedup = 128
-            if store.projectedSpoolBytes(additionalPayloadBytes: nextBatchPayloadBytes, additionalDedupBytes: nextDedup) > projection.policy.spoolBytes {
-                break
-            }
-            let pad25M = String(repeating: "f", count: nextBatchPayloadBytes - 500)
-            let bId = String(format: "%032d", fillerIndex)
-            let bPayload: [String: Any] = [
-                "type": "batch",
-                "destination_generation": gen,
-                "inst": "inst-1",
-                "batch_id": bId,
-                "queued_at_ms": 1700000000000 as UInt64,
-                "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-filler-\(fillerIndex)", "blocks": [["id": "bf", "text": pad25M]]]]
-            ]
-            let rep = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: bPayload), direction: "extension_to_host")
-            #expect(rep["result"] as? String == "accepted")
-            let fPid = rep["period_id"] as! String
-            if !fillerPids.contains(fPid) { fillerPids.append(fPid) }
-            try store.finalizePeriod(periodId: fPid, reason: "filler_seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
-            fillerIndex += 1
-        }
+        let before = store.projectedSpoolBytes()
+        let extra = 1000
+        #expect(store.projectedSpoolBytes(additionalPayloadBytes: extra) - before == extra * 2)
 
-        // Fill remaining space until store.isQuotaFull() is true
-        while !store.isQuotaFull() {
-            _ = store.updateFloorMs(wallNowMs: 1700000000000)
-            let curProj = store.projectedSpoolBytes(additionalPayloadBytes: 0, additionalDedupBytes: 0)
-            let fitBatchId = String(format: "e%031x", fillerIndex)
-            let fitDedup = BrowserIntakeStore.receiptDedupBytes(generation: gen, inst: "inst-1", batchId: fitBatchId, periodId: store.getOpenPeriodId(), reason: nil, receiptClass: nil)
-            let fitSeenDedup = BrowserIntakeStore.batchSeenDedupBytes(generation: gen, inst: "inst-1", batchId: fitBatchId)
-            let headroom = projection.policy.spoolBytes - curProj - fitDedup - fitSeenDedup
-            let newRecBytes = max(1, headroom / 2)
+        let gap = projection.policy.spoolBytes - before
+        let exactPayload = 32
+        store.setHeldStagingBytes(gap - (exactPayload * 2))
+        #expect(store.isQuotaFull(additionalBytes: exactPayload, additionalDedupBytes: 0) == false)
+        store.setHeldStagingBytes(gap - (exactPayload * 2) + 1)
+        #expect(store.isQuotaFull(additionalBytes: exactPayload, additionalDedupBytes: 0) == true)
+        store.setHeldStagingBytes(0)
 
-            let basePrefix = "{\"t\":\"segment_start\",\"ts\":1700000000000,\"ctx\":\"ctx-fit-\(fillerIndex)\",\"blocks\":[{\"id\":\"be\",\"text\":\""
-            let baseSuffix = "\"}]}"
-            let padLen = max(0, newRecBytes - basePrefix.utf8.count - baseSuffix.utf8.count - 1)
-            let pad = String(repeating: "z", count: padLen)
-            let recJson = basePrefix + pad + baseSuffix
-            let batchJson = "{\"type\":\"batch\",\"destination_generation\":\"\(gen)\",\"inst\":\"inst-1\",\"batch_id\":\"\(fitBatchId)\",\"queued_at_ms\":1700000000000,\"records\":[\(recJson)]}"
-            let rep = try authority.accept(bytes: Data(batchJson.utf8), direction: "extension_to_host")
-            #expect(rep["result"] as? String == "accepted")
-            let pId = rep["period_id"] as! String
-            if !fillerPids.contains(pId) { fillerPids.append(pId) }
-            try store.finalizePeriod(periodId: pId, reason: "fit_seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
-            fillerIndex += 1
-        }
+        let anchorFile = store.periodFileURL(for: anchorPid)
+        store.setHeldStagingBytes(projection.policy.spoolBytes)
         #expect(store.isQuotaFull())
 
-        // One extra byte returns resource_exhausted
-        let openPidBeforeOver = store.getOpenPeriodId()!
-        let openFileBeforeOver = store.periodFileURL(for: openPidBeforeOver)
-        let lenBeforeOver = (try? Data(contentsOf: openFileBeforeOver).count) ?? 0
-
+        let openBeforeOver = try #require(store.getOpenPeriodId())
+        let openFile = store.periodFileURL(for: openBeforeOver)
+        let lenBeforeOver = (try? Data(contentsOf: openFile).count) ?? 0
         let overPayload: [String: Any] = [
             "type": "batch",
             "destination_generation": gen,
             "inst": "inst-1",
             "batch_id": "77777777777777777777777777777777",
             "queued_at_ms": 1700000000000 as UInt64,
-            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-over", "blocks": [["id": "bo", "text": "extra byte over cap"]]]]
+            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-over", "blocks": [["id": "bo", "text": "extra"]]]]
         ]
         let repOver = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: overPayload), direction: "extension_to_host")
         #expect(repOver["result"] as? String == "rejected")
         #expect(repOver["reason"] as? String == "resource_exhausted")
         #expect(repOver["class"] as? String == "retryable")
-        let lenAfterOver = (try? Data(contentsOf: openFileBeforeOver).count) ?? 0
-        #expect(lenAfterOver == lenBeforeOver)
+        #expect(((try? Data(contentsOf: openFile).count) ?? 0) == lenBeforeOver)
         #expect(store.lookupReceipt(generation: gen, inst: "inst-1", batchId: "77777777777777777777777777777777") == nil)
 
-        // Replay of an accepted id is duplicate while full
         let repReplay = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: anchorBatch), direction: "extension_to_host")
         #expect(repReplay["result"] as? String == "duplicate")
         #expect(repReplay["period_id"] as? String == anchorPid)
 
-        // Advance spoolAgeMs (7 days = 604,800 s): custody.full, custody.stale, and delivery == failed (seam) true together
+        store.setHeldStagingBytes(0)
+        #expect(store.isQuotaFull() == false)
         clock.advance(by: 604801)
+        let staleOnly = authority.status()
+        let staleCustody = staleOnly["custody"] as? [String: Bool]
+        #expect(staleCustody?["stale"] == true)
+        #expect(staleCustody?["full"] == false)
+        #expect(staleOnly["capture"] as? String == "permitted")
+        #expect(staleOnly["delivery"] as? String == "kept_locally")
+
+        clock.advance(by: -100000)
+        let afterRollback = authority.status()
+        let rollbackCustody = afterRollback["custody"] as? [String: Bool]
+        #expect(rollbackCustody?["stale"] == true)
+        #expect(afterRollback["delivery"] as? String == "kept_locally")
+
         store.simulatedDeliveryFailure = "journal_rejected"
-        let statFullStaleFail = authority.status()
-        let cFSF = statFullStaleFail["custody"] as? [String: Bool]
-        #expect(cFSF?["full"] == true)
-        #expect(cFSF?["stale"] == true)
-        #expect(statFullStaleFail["delivery"] as? String == "failed")
-        #expect(statFullStaleFail["failure"] as? String == "journal_rejected")
-
-        // Clear only the seam -> full and stale stay
+        let failed = authority.status()
+        #expect(failed["delivery"] as? String == "failed")
+        #expect(failed["failure"] as? String == "journal_rejected")
+        store.setHeldStagingBytes(projection.policy.spoolBytes)
+        let combined = authority.status()
+        let combinedCustody = combined["custody"] as? [String: Bool]
+        #expect(combined["capture"] as? String == "intake_off")
+        #expect(combined["delivery"] as? String == "failed")
+        #expect(combined["failure"] as? String == "journal_rejected")
+        #expect(combinedCustody?["full"] == true)
+        #expect(combinedCustody?["stale"] == true)
         store.simulatedDeliveryFailure = nil
-        let statFS = authority.status()
-        let cFS = statFS["custody"] as? [String: Bool]
-        #expect(cFS?["full"] == true)
-        #expect(cFS?["stale"] == true)
-        #expect(statFS["delivery"] as? String == "kept_locally")
+        store.setHeldStagingBytes(0)
 
-        // Release the filler periods and assert explicitly if that clears full
-        for fPid in fillerPids {
-            store.releaseProven(periodId: fPid)
-        }
-        let statAfterFillerRelease = authority.status()
-        let cAFR = statAfterFillerRelease["custody"] as? [String: Bool]
-        #expect(cAFR?["full"] == false)
-        #expect(cAFR?["stale"] == true) // Anchor is still held and old, so stale stays
-        #expect(statAfterFillerRelease["capture"] as? String == "permitted")
+        store.releaseProven(periodId: anchorPid)
+        #expect(!FileManager.default.fileExists(atPath: anchorFile.path))
+        #expect(store.getPeriod(periodId: anchorPid)?.state == "delivered")
 
-        // New snapshot accepts
-        let youngNowMs = UInt64(clock.now.timeIntervalSince1970 * 1000.0)
+        // Wall time is still behind the durable floor. A batch timestamped at
+        // that rolled-back instant is older than the outbox window.
+        let youngNowMs = store.getFloorMs()
         let youngSnap: [String: Any] = [
             "type": "batch",
             "destination_generation": gen,
@@ -466,80 +472,14 @@ struct BrowserIntakeAdmissionTests {
         ]
         let youngRep = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: youngSnap), direction: "extension_to_host")
         #expect(youngRep["result"] as? String == "accepted")
-        let youngPid = youngRep["period_id"] as! String
-        try store.finalizePeriod(periodId: youngPid, reason: "young_seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
+        try store.finalizePeriod(periodId: try #require(youngRep["period_id"] as? String), reason: "young_seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
 
-        // Release only the anchor: stale clears
-        store.releaseProven(periodId: anchorPid)
-        let statAfterAnchorRelease = authority.status()
-        let cAAR = statAfterAnchorRelease["custody"] as? [String: Bool]
-        #expect(cAAR?["stale"] == false)
-        #expect(cAAR?["full"] == false)
-
-        // Refill with young bytes to the cap
-        var youngFillerPids: [String] = []
-        var youngFillerIndex = 1
-        while true {
-            let nextBatchPayloadBytes = 25 * 1024 * 1024
-            let nextDedup = 128
-            if store.projectedSpoolBytes(additionalPayloadBytes: nextBatchPayloadBytes, additionalDedupBytes: nextDedup) > projection.policy.spoolBytes {
-                break
-            }
-            let pad25M = String(repeating: "y", count: nextBatchPayloadBytes - 500)
-            let bId = String(format: "a%031x", youngFillerIndex)
-            let bPayload: [String: Any] = [
-                "type": "batch",
-                "destination_generation": gen,
-                "inst": "inst-1",
-                "batch_id": bId,
-                "queued_at_ms": youngNowMs,
-                "records": [["t": "segment_start", "ts": youngNowMs, "ctx": "ctx-yfill-\(youngFillerIndex)", "blocks": [["id": "byf", "text": pad25M]]]]
-            ]
-            let rep = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: bPayload), direction: "extension_to_host")
-            #expect(rep["result"] as? String == "accepted")
-            let yfPid = rep["period_id"] as! String
-            if !youngFillerPids.contains(yfPid) { youngFillerPids.append(yfPid) }
-            try store.finalizePeriod(periodId: yfPid, reason: "yfiller_seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
-            youngFillerIndex += 1
-        }
-
-        while !store.isQuotaFull() {
-            _ = store.updateFloorMs(wallNowMs: youngNowMs)
-            let curProj = store.projectedSpoolBytes(additionalPayloadBytes: 0, additionalDedupBytes: 0)
-            let yFitBatchId = String(format: "b%031x", youngFillerIndex)
-            let yFitDedup = BrowserIntakeStore.receiptDedupBytes(generation: gen, inst: "inst-1", batchId: yFitBatchId, periodId: store.getOpenPeriodId(), reason: nil, receiptClass: nil)
-            let yFitSeenDedup = BrowserIntakeStore.batchSeenDedupBytes(generation: gen, inst: "inst-1", batchId: yFitBatchId)
-            let headroom = projection.policy.spoolBytes - curProj - yFitDedup - yFitSeenDedup
-            let newRecBytes = max(1, headroom / 2)
-
-            let basePrefix = "{\"t\":\"segment_start\",\"ts\":\(youngNowMs),\"ctx\":\"ctx-yfit-\(youngFillerIndex)\",\"blocks\":[{\"id\":\"bye\",\"text\":\""
-            let baseSuffix = "\"}]}"
-            let padLen = max(0, newRecBytes - basePrefix.utf8.count - baseSuffix.utf8.count - 1)
-            let pad = String(repeating: "w", count: padLen)
-            let recJson = basePrefix + pad + baseSuffix
-            let batchJson = "{\"type\":\"batch\",\"destination_generation\":\"\(gen)\",\"inst\":\"inst-1\",\"batch_id\":\"\(yFitBatchId)\",\"queued_at_ms\":\(youngNowMs),\"records\":[\(recJson)]}"
-            let rep = try authority.accept(bytes: Data(batchJson.utf8), direction: "extension_to_host")
-            #expect(rep["result"] as? String == "accepted")
-            let pId = rep["period_id"] as! String
-            if !youngFillerPids.contains(pId) { youngFillerPids.append(pId) }
-            try store.finalizePeriod(periodId: pId, reason: "yfit_seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
-            youngFillerIndex += 1
-        }
-        #expect(store.isQuotaFull())
-
-        let statAfterYoungFull = authority.status()
-        let cAYF = statAfterYoungFull["custody"] as? [String: Bool]
-        #expect(cAYF?["stale"] == false)
-        #expect(cAYF?["full"] == true)
-
-        // Reopen store: floor_ms and earliest_held_ms are unchanged
         let floorBeforeReopen = store.getFloorMs()
         let earliestBeforeReopen = store.getEarliestHeldMs()
         let storeReopened = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         #expect(storeReopened.getFloorMs() == floorBeforeReopen)
         #expect(storeReopened.getEarliestHeldMs() == earliestBeforeReopen)
 
-        // GC tombstone, roll injected clock backwards, submit same queued_at_ms again -> expired_unaccepted
         let oldTombstoneBatchId = "11110000111100001111000011110000"
         let oldQueuedAt: UInt64 = 1690000000000
         let oldBatch: [String: Any] = [
@@ -559,17 +499,17 @@ struct BrowserIntakeAdmissionTests {
         let repOld1 = try authorityReopened.accept(bytes: try JSONSerialization.data(withJSONObject: oldBatch), direction: "extension_to_host")
         #expect(repOld1["result"] as? String == "rejected")
         #expect(repOld1["reason"] as? String == "expired_unaccepted")
-
-        // Poll immediately after insert leaves the tombstone
         authorityReopened.poll(now: clock.now)
         #expect(storeReopened.lookupReceipt(generation: gen, inst: "inst-1", batchId: oldTombstoneBatchId) != nil)
-
-        // Advance 2000s (> 1200000ms acceptedRetentionMs) and poll -> deletes tombstone
-        clock.advance(by: 2000)
+        // The durable floor is still ahead of the rolled-back wall clock.
+        // Retention is measured from accepted_at_ms against that floor.
+        let retentionTarget = storeReopened.getFloorMs() + projection.policy.acceptedRetentionMs + 1000
+        let wallMs = UInt64(clock.now.timeIntervalSince1970 * 1000.0)
+        if retentionTarget > wallMs {
+            clock.advance(by: TimeInterval(retentionTarget - wallMs) / 1000.0)
+        }
         authorityReopened.poll(now: clock.now)
         #expect(storeReopened.lookupReceipt(generation: gen, inst: "inst-1", batchId: oldTombstoneBatchId) == nil)
-
-        // Roll injected clock backwards and submit again -> still expired_unaccepted (because floor_ms never rolls back)
         clock.advance(by: -100000)
         let repOld2 = try authorityReopened.accept(bytes: try JSONSerialization.data(withJSONObject: oldBatch), direction: "extension_to_host")
         #expect(repOld2["result"] as? String == "rejected")
@@ -589,7 +529,6 @@ struct BrowserIntakeAdmissionTests {
             let store1 = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
             let authority1 = BrowserIntakeAuthority(store: store1, projection: projection, wallClock: { clock.now })
             gen = try authority1.publishEpoch(identityToken: "token-1")
-
             let snap: [String: Any] = [
                 "type": "batch",
                 "destination_generation": gen,
@@ -600,45 +539,41 @@ struct BrowserIntakeAdmissionTests {
             ]
             let reply = try authority1.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
             #expect(reply["result"] as? String == "accepted")
-            pid1 = reply["period_id"] as! String
+            pid1 = try #require(reply["period_id"] as? String)
         }
 
-        // Reopen and call publishEpoch with the same token: generation id is unchanged
         let store2 = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let authority2 = BrowserIntakeAuthority(store: store2, projection: projection, wallClock: { clock.now })
         let sameGen = try authority2.publishEpoch(identityToken: "token-1")
         #expect(sameGen == gen)
-
-        // retireIfTokenChanged with that same token is a no-op
         try authority2.retireIfTokenChanged(newToken: "token-1")
         #expect(store2.getActiveGeneration() == gen)
 
-        // Call with a different token without calling publishEpoch: status is unavailable
         try authority2.retireIfTokenChanged(newToken: "token-2")
         let statDiff = authority2.status()
         #expect(statDiff["capture"] as? String == "unavailable")
         #expect(statDiff["destination_generation"] is NSNull)
         #expect(statDiff["period_id"] is NSNull)
+        #expect(statDiff["delivery"] as? String == "kept_locally")
 
-        // retireIfTokenChanged(nil) -> capture not_paired, old file still on disk
         let openFileURL = store2.periodFileURL(for: pid1)
         #expect(FileManager.default.fileExists(atPath: openFileURL.path))
-
         try authority2.retireIfTokenChanged(newToken: nil)
-
         let statNil = authority2.status()
         #expect(statNil["capture"] as? String == "not_paired")
         #expect(statNil["destination_generation"] is NSNull)
         #expect(statNil["period_id"] is NSNull)
         #expect(FileManager.default.fileExists(atPath: openFileURL.path))
 
-        // Reopen after retire(nil): retired epoch with no publishEpoch stays closed
         let store3 = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let authority3 = BrowserIntakeAuthority(store: store3, projection: projection, wallClock: { clock.now })
         #expect(store3.getActiveGeneration() == nil)
-        #expect(store3.getOpenPeriodId() == nil)
+        let reopened = authority3.status()
+        #expect(reopened["capture"] as? String == "unavailable")
+        #expect(reopened["delivery"] as? String == "kept_locally")
+        #expect(reopened["destination_generation"] is NSNull)
+        #expect(reopened["period_id"] is NSNull)
 
-        // Batch to old generation is rejected with stale_generation
         let staleBatch: [String: Any] = [
             "type": "batch",
             "destination_generation": gen,
@@ -655,35 +590,605 @@ struct BrowserIntakeAdmissionTests {
     @Test func test6_malformedAndOversizeAdmission() throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { Date(timeIntervalSince1970: 1700000000) })
+        _ = try authority.publishEpoch(identityToken: "token-1")
+        let openFileURL = store.periodFileURL(for: try #require(store.getOpenPeriodId()))
+        let lenBefore = (try? Data(contentsOf: openFileURL).count) ?? 0
+
+        let reply1 = try authority.accept(bytes: Data("{invalid json".utf8), direction: "extension_to_host")
+        #expect(reply1["type"] as? String == "refused")
+        #expect(reply1["code"] as? String == "bad_json")
+        #expect(reply1["result"] == nil)
+        #expect(reply1["destination_generation"] == nil)
+        #expect(reply1["inst"] == nil)
+        #expect(reply1["batch_id"] == nil)
+        #expect(((try? Data(contentsOf: openFileURL).count) ?? 0) == lenBefore)
+
+        let oversizeData = Data(String(repeating: "o", count: projection.caps.extensionToHost + 10).utf8)
+        let reply2 = try authority.accept(bytes: oversizeData, direction: "extension_to_host")
+        #expect(reply2["type"] as? String == "refused")
+        #expect(reply2["code"] as? String == "oversize")
+        #expect(reply2["result"] == nil)
+        #expect(reply2["batch_id"] == nil)
+        #expect(((try? Data(contentsOf: openFileURL).count) ?? 0) == lenBefore)
+    }
+
+    @Test func test1_generationRaceZeroBytesAndFileRetained() throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
+        let authority = BrowserIntakeAuthority(
+            store: store,
+            projection: projection,
+            wallClock: { clock.now },
+            timeZone: TimeZone(identifier: "UTC")!
+        )
+        let gate = BrowserUploadGate(store: store)
+        let gen1 = try authority.publishEpoch(identityToken: "token-1")
+
+        // Accept a batch
+        let snap: [String: Any] = [
+            "type": "batch",
+            "destination_generation": gen1,
+            "inst": "inst-1",
+            "batch_id": "11111111111111111111111111111111",
+            "queued_at_ms": 1700000000000 as UInt64,
+            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b1", "text": "race test payload"]]]]
+        ]
+        let reply = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
+        let pid1 = reply["period_id"] as! String
+
+        // Finalize period 1
+        try store.finalizePeriod(periodId: pid1, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
+
+        // Acquire current permit under gen1
+        let permit = try #require(gate.currentPermit())
+        #expect(gate.isPermitActive(permit))
+
+        let p1FileURL = store.periodFileURL(for: pid1)
+        let originalBytes = try Data(contentsOf: p1FileURL)
+        #expect(!originalBytes.isEmpty)
+
+        // Race: pairing replaced / retired via retireIfTokenChanged
+        gate.cancelInFlightAndWait()
+        try authority.retireIfTokenChanged(newToken: "token-2")
+
+        #expect(!gate.isPermitActive(permit))
+
+        // Attempt reading body through gate returns empty Data (zero bytes)
+        let readData = gate.readBodyData(fileURL: p1FileURL, permit: permit)
+        #expect(readData.isEmpty)
+
+        // File remains on disk untouched
+        let remainingBytes = try Data(contentsOf: p1FileURL)
+        #expect(remainingBytes == originalBytes)
+
+        // Status is unavailable
+        let stat = authority.status()
+        #expect(stat["capture"] as? String == "unavailable")
+    }
+
+    @Test func test2_sourceAwareMultipartAndDayReadAndSegmentRemoved() async throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        // 1. Multipart MIME builder
+        let audioFile = tempRoot.appendingPathComponent("120000_300_audio.m4a")
+        let videoFile = tempRoot.appendingPathComponent("120000_300_screen.mp4")
+        let notesFile = tempRoot.appendingPathComponent("notes.jsonl")
+        let browserFile = tempRoot.appendingPathComponent("browser_pages.jsonl")
+        try Data("audio-data".utf8).write(to: audioFile)
+        try Data("video-data".utf8).write(to: videoFile)
+        try Data("notes-data".utf8).write(to: notesFile)
+        try Data("browser-data".utf8).write(to: browserFile)
+
+        let mediaBodyURL = tempRoot.appendingPathComponent("media_body.tmp")
+        _ = try IngestV3UploadRequestBuilder.build(
+            baseURL: "http://journal.example",
+            day: "20260703",
+            segment: "120000_300",
+            selectedFiles: [videoFile, audioFile, notesFile],
+            meta: nil,
+            source: nil,
+            boundary: "media-boundary-123",
+            bodyURL: mediaBodyURL
+        )
+        let mediaBody = try String(contentsOf: mediaBodyURL, encoding: .utf8)
+        #expect(mediaBody.contains("Content-Type: video/mp4"))
+        #expect(mediaBody.contains("Content-Type: audio/mp4"))
+        #expect(!mediaBody.contains("application/jsonl"))
+        #expect(!mediaBody.contains("\"source\""))
+
+        let browserBodyURL = tempRoot.appendingPathComponent("browser_body.tmp")
+        _ = try IngestV3UploadRequestBuilder.build(
+            baseURL: "http://journal.example",
+            day: "20260703",
+            segment: "120000_300",
+            selectedFiles: [browserFile],
+            meta: nil,
+            source: "browser",
+            boundary: "browser-boundary-123",
+            bodyURL: browserBodyURL
+        )
+        let browserBody = try String(contentsOf: browserBodyURL, encoding: .utf8)
+        #expect(browserBody.contains("Content-Type: application/jsonl"))
+        #expect(browserBody.contains("\"source\":\"browser\""))
+
+        // 2. Day query path
+        #expect(IngestProtocolV3.segmentsDayPath("20260703") == "/app/devices/ingest/segments/20260703")
+        #expect(IngestProtocolV3.segmentsDayPath("20260703", source: nil) == "/app/devices/ingest/segments/20260703")
+        #expect(IngestProtocolV3.segmentsDayPath("20260703", source: "") == "/app/devices/ingest/segments/20260703")
+        #expect(IngestProtocolV3.segmentsDayPath("20260703", source: "browser") == "/app/devices/ingest/segments/20260703?source=browser")
+
+        // 3. Segment removed handling
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
+        let authority = BrowserIntakeAuthority(
+            store: store,
+            projection: projection,
+            wallClock: { clock.now },
+            timeZone: TimeZone(identifier: "UTC")!
+        )
+        let gen = try authority.publishEpoch(identityToken: "tok")
+        let snap: [String: Any] = [
+            "type": "batch",
+            "destination_generation": gen,
+            "inst": "inst-1",
+            "batch_id": "22222222222222222222222222222222",
+            "queued_at_ms": 1700000000000 as UInt64,
+            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b1", "text": "to be removed"]]]]
+        ]
+        let rep = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
+        let pid = try #require(rep["period_id"] as? String)
+        try store.finalizePeriod(periodId: pid, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
+
+        let pFileURL = store.periodFileURL(for: pid)
+        #expect(FileManager.default.fileExists(atPath: pFileURL.path))
+
+        let gate = BrowserUploadGate(store: store)
+        let planner = BrowserUploadPlanner(store: store, gate: gate, client: UploadClient())
+
+        // Mismatched generation -> ignored
+        planner.handleSegmentRemoved(generation: "wrong-gen", source: "browser", periodId: pid)
+        #expect(store.getPeriod(periodId: pid)?.state == "finalized")
+        #expect(FileManager.default.fileExists(atPath: pFileURL.path))
+
+        // Mismatched source -> ignored
+        planner.handleSegmentRemoved(generation: gen, source: "media", periodId: pid)
+        #expect(store.getPeriod(periodId: pid)?.state == "finalized")
+        #expect(FileManager.default.fileExists(atPath: pFileURL.path))
+
+        // Matching generation + browser source -> removed
+        planner.handleSegmentRemoved(generation: gen, source: "browser", periodId: pid)
+        #expect(store.getPeriod(periodId: pid)?.state == "removed")
+        #expect(!FileManager.default.fileExists(atPath: pFileURL.path))
+    }
+
+    @Test func test3_collisionAndLostResponseProof() throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
 
         let projection = try BrowserContractProjection(rootURL: vendorURL)
         let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
-        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now })
-        _ = try authority.publishEpoch(identityToken: "token-1")
+        let authority = BrowserIntakeAuthority(
+            store: store,
+            projection: projection,
+            wallClock: { clock.now },
+            timeZone: TimeZone(identifier: "UTC")!
+        )
 
-        let openPid = store.getOpenPeriodId()!
-        let openFileURL = store.periodFileURL(for: openPid)
-        let lenBefore = (try? Data(contentsOf: openFileURL).count) ?? 0
+        let gen = try authority.publishEpoch(identityToken: "tok-3")
 
-        // 1. Malformed JSON
-        let badJsonData = Data("{invalid json".utf8)
-        let reply1 = try authority.accept(bytes: badJsonData, direction: "extension_to_host")
-        #expect(reply1["result"] as? String == "rejected")
-        #expect(reply1["reason"] as? String == "malformed")
-        #expect(reply1["class"] as? String == "permanent")
-        let lenAfterBadJson = (try? Data(contentsOf: openFileURL).count) ?? 0
-        #expect(lenAfterBadJson == lenBefore)
+        // Create and finalize period 1
+        let snap1: [String: Any] = [
+            "type": "batch",
+            "destination_generation": gen,
+            "inst": "inst-1",
+            "batch_id": "33333333333333333333333333333333",
+            "queued_at_ms": 1700000000000 as UInt64,
+            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b1", "text": "collision test"]]]]
+        ]
+        let rep1 = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap1), direction: "extension_to_host")
+        let pid1 = rep1["period_id"] as! String
+        try store.finalizePeriod(periodId: pid1, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
 
-        // 2. Oversize batch (> 33,554,432 bytes)
-        let oversizePad = String(repeating: "o", count: projection.caps.extensionToHost + 10)
-        let oversizeData = Data(oversizePad.utf8)
-        let reply2 = try authority.accept(bytes: oversizeData, direction: "extension_to_host")
-        #expect(reply2["result"] as? String == "rejected")
-        #expect(reply2["reason"] as? String == "oversize")
-        #expect(reply2["class"] as? String == "permanent")
-        let lenAfterOversize = (try? Data(contentsOf: openFileURL).count) ?? 0
-        #expect(lenAfterOversize == lenBefore)
+        let p1FileURL = store.periodFileURL(for: pid1)
+        let p1Data = try Data(contentsOf: p1FileURL)
+        let p1Sha256 = SHA256.hash(data: p1Data).map { String(format: "%02x", $0) }.joined()
+
+        // 1. Collision response handling
+        let collisionAck = BrowserIngestAck(
+            generation: gen,
+            source: "browser",
+            periodId: pid1,
+            filename: "browser_pages.jsonl",
+            sha256: p1Sha256,
+            size: UInt64(p1Data.count),
+            metadata: nil,
+            requestedDay: "20260703",
+            requestedSegment: "120000_300",
+            canonicalKey: "120001_300",
+            status: .collision
+        )
+        let ackURL1 = BrowserIngestAckStore.ackURL(periodDirectory: p1FileURL.deletingLastPathComponent())
+        try BrowserIngestAckStore.write(collisionAck, to: ackURL1)
+        store.recordDelivered(periodId: pid1, canonicalKey: "120001_300")
+
+        let storedAck1 = try #require(BrowserIngestAckStore.read(from: ackURL1))
+        #expect(storedAck1.status == .collision)
+        #expect(storedAck1.canonicalKey == "120001_300")
+        #expect(store.getPeriod(periodId: pid1)?.canonicalKey == "120001_300")
+
+        // 2. Lost response recovery: custody .present releases period bytes
+        #expect(FileManager.default.fileExists(atPath: p1FileURL.path))
+        store.releaseProven(periodId: pid1)
+        #expect(!FileManager.default.fileExists(atPath: p1FileURL.path))
+        #expect(store.getPeriod(periodId: pid1)?.state == "delivered")
+    }
+
+    @Test @MainActor func test4_lifecyclePauseResumeAndStartupComposition() throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
+        let authority = BrowserIntakeAuthority(
+            store: store,
+            projection: projection,
+            wallClock: { clock.now },
+            timeZone: TimeZone(identifier: "UTC")!
+        )
+        let pauseManager = PauseManager()
+        pauseManager.onPauseIntake = { [weak authority, weak store] in
+            authority?.setPaused(true)
+            store?.setPaused(true)
+        }
+        pauseManager.onResumeIntake = { [weak authority, weak store] in
+            authority?.setPaused(false)
+            store?.setPaused(false)
+        }
+
+        let gen = try authority.publishEpoch(identityToken: "tok-4")
+        #expect(authority.status()["capture"] as? String == "permitted")
+
+        // 1. Pause intake
+        pauseManager.pause(for: .seconds(300))
+        #expect(authority.isPaused)
+        #expect(store.isPaused)
+        #expect(authority.status()["capture"] as? String == "paused")
+
+        // Batches rejected while paused
+        let snap: [String: Any] = [
+            "type": "batch",
+            "destination_generation": gen,
+            "inst": "inst-1",
+            "batch_id": "44444444444444444444444444444444",
+            "queued_at_ms": 1700000000000 as UInt64,
+            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b1", "text": "paused test"]]]]
+        ]
+        let repPaused = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
+        #expect(repPaused["result"] as? String == "rejected")
+        #expect(repPaused["reason"] as? String == "resource_exhausted")
+        #expect(repPaused["class"] as? String == "retryable")
+
+        // 2. Resume intake
+        pauseManager.resume()
+        #expect(!authority.isPaused)
+        #expect(!store.isPaused)
+        #expect(authority.status()["capture"] as? String == "permitted")
+
+        // Batches accepted when resumed
+        let repResumed = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
+        #expect(repResumed["result"] as? String == "accepted")
+    }
+
+    @Test func test7_nulIdentifiersAndDigestRestart() throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let authority = BrowserIntakeAuthority(
+            store: store,
+            projection: projection,
+            wallClock: { Date(timeIntervalSince1970: 1700000000) },
+            timeZone: TimeZone(identifier: "UTC")!
+        )
+        let token = "instance-A\u{0}private-key"
+        let gen = try authority.publishEpoch(identityToken: token)
+        let instA = "i\u{0}a"
+        let instB = "i\u{0}b"
+        let ctxA = "c\u{0}a"
+        let ctxB = "c\u{0}b"
+        func batch(inst: String, ctx: String, id: String, snapshot: Bool) -> Data {
+            let record: [String: Any] = snapshot
+                ? ["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": ctx, "blocks": [["id": "b", "text": "t"]]]
+                : ["t": "delta", "ts": 1700000000000 as UInt64, "ctx": ctx, "op": "add", "block": ["id": "b", "text": "t"]]
+            let object: [String: Any] = [
+                "type": "batch",
+                "destination_generation": gen,
+                "inst": inst,
+                "batch_id": id,
+                "queued_at_ms": 1700000000000 as UInt64,
+                "records": [record]
+            ]
+            return try! JSONSerialization.data(withJSONObject: object)
+        }
+        let first = try authority.accept(bytes: batch(inst: instA, ctx: ctxA, id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", snapshot: true), direction: "extension_to_host")
+        let second = try authority.accept(bytes: batch(inst: instB, ctx: ctxA, id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", snapshot: true), direction: "extension_to_host")
+        #expect(first["result"] as? String == "accepted")
+        #expect(second["result"] as? String == "accepted")
+        let borrowed = try authority.accept(bytes: batch(inst: instB, ctx: ctxB, id: "cccccccccccccccccccccccccccccccc", snapshot: false), direction: "extension_to_host")
+        #expect(borrowed["reason"] as? String == "snapshot_required")
+        #expect(store.lookupReceipt(generation: gen, inst: instA, batchId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == nil)
+
+        let reopened = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let again = BrowserIntakeAuthority(store: reopened, projection: projection, wallClock: { Date(timeIntervalSince1970: 1700000000) })
+        #expect(try again.publishEpoch(identityToken: token) == gen)
+        try again.retireIfTokenChanged(newToken: "instance-A\u{0}other-key")
+        #expect(reopened.getActiveGeneration() == nil)
+    }
+
+    @Test func test8_fileSyncContinuationRefinalizeAndMissingPayload() throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now }, timeZone: TimeZone(identifier: "UTC")!)
+        let gen = try authority.publishEpoch(identityToken: "token-1")
+        func payload(_ id: String, _ marker: String) -> Data {
+            let object: [String: Any] = [
+                "type": "batch", "destination_generation": gen, "inst": "inst-1", "batch_id": id,
+                "queued_at_ms": 1700000000000 as UInt64,
+                "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-\(marker)", "blocks": [["id": "b", "text": marker]]]]
+            ]
+            return try! JSONSerialization.data(withJSONObject: object)
+        }
+        store.crashPoint = .afterFileSync
+        let rejected = try authority.accept(bytes: payload("11111111111111111111111111111111", "REJECTED_SUFFIX"), direction: "extension_to_host")
+        #expect(rejected["reason"] as? String == "resource_exhausted")
+        #expect(store.lookupReceipt(generation: gen, inst: "inst-1", batchId: "11111111111111111111111111111111") == nil)
+        let openId = try #require(store.getOpenPeriodId())
+        let openURL = store.periodFileURL(for: openId)
+        #expect(String(decoding: try Data(contentsOf: openURL), as: UTF8.self).contains("REJECTED_SUFFIX"))
+
+        store.crashPoint = .none
+        let accepted = try authority.accept(bytes: payload("22222222222222222222222222222222", "ACCEPTED_BODY"), direction: "extension_to_host")
+        #expect(accepted["result"] as? String == "accepted")
+        let kept = String(decoding: try Data(contentsOf: openURL), as: UTF8.self)
+        #expect(kept.contains("ACCEPTED_BODY"))
+        #expect(!kept.contains("REJECTED_SUFFIX"))
+
+        try store.finalizePeriod(periodId: openId, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
+        let sealed = store.getPeriod(periodId: openId)
+        try store.finalizePeriod(periodId: openId, reason: "again", civilDate: clock.now.addingTimeInterval(10), timeZone: TimeZone(identifier: "UTC")!)
+        let resealed = store.getPeriod(periodId: openId)
+        #expect(resealed?.requestedSegment == sealed?.requestedSegment)
+        #expect(resealed?.requestedDay == sealed?.requestedDay)
+        #expect(resealed?.finalizedAtMs == sealed?.finalizedAtMs)
+
+        try FileManager.default.removeItem(at: openURL)
+        let recovered = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        #expect(recovered.storeIsFailed())
+        let failed = BrowserIntakeAuthority(store: recovered, projection: projection, wallClock: { clock.now })
+        let stat = failed.status()
+        #expect(stat["capture"] as? String == "unavailable")
+        #expect(stat["delivery"] as? String == "failed")
+        #expect(stat["failure"] as? String == "local_io")
+        let replay = try failed.accept(bytes: payload("22222222222222222222222222222222", "ACCEPTED_BODY"), direction: "extension_to_host")
+        #expect(replay["result"] as? String == "rejected")
+        #expect(replay["reason"] as? String == "resource_exhausted")
+    }
+
+    @Test func test9_monotonicExpiryWallRollbackAndRootRecords() throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
+        let mono = ManualMonotonicClock()
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let authority = BrowserIntakeAuthority(
+            store: store,
+            projection: projection,
+            monotonicClock: mono,
+            wallClock: { clock.now },
+            timeZone: TimeZone(identifier: "UTC")!
+        )
+        let gen = try authority.publishEpoch(identityToken: "token-1")
+        let delta: [String: Any] = [
+            "type": "batch", "destination_generation": gen, "inst": "inst-1",
+            "batch_id": "dddddddddddddddddddddddddddddddd",
+            "queued_at_ms": 1700000000000 as UInt64,
+            "records": [["t": "delta", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "op": "add", "block": ["id": "b", "text": "t"]]]
+        ]
+        let deltaBytes = try JSONSerialization.data(withJSONObject: delta)
+        let first = try authority.accept(bytes: deltaBytes, direction: "extension_to_host")
+        #expect(first["reason"] as? String == "snapshot_required")
+        mono.advance(milliseconds: Int(projection.policy.outboxAgeMs))
+        let expired = try authority.accept(bytes: deltaBytes, direction: "extension_to_host")
+        #expect(expired["reason"] as? String == "expired_unaccepted")
+
+        let decoy = """
+        {"extra":{"records":[{"unvalidated":true}]},"type":"batch","destination_generation":"\(gen)","inst":"inst-1","batch_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","queued_at_ms":1700000000000,"records":[{"t":"segment_start","ts":1000.0,"ctx":"ctx-real","blocks":[{"id":"b","text":"real-record"}]}]}
+        """
+        let decoyReply = try authority.accept(bytes: Data(decoy.utf8), direction: "extension_to_host")
+        #expect(decoyReply["result"] as? String == "accepted")
+        let decoyFile = try String(contentsOf: store.periodFileURL(for: try #require(decoyReply["period_id"] as? String)), encoding: .utf8)
+        #expect(decoyFile.contains("\"ts\":1000.0"))
+        #expect(decoyFile.contains("real-record"))
+        #expect(!decoyFile.contains("unvalidated"))
+
+        let pretty = """
+        {
+          "type": "batch",
+          "destination_generation": "\(gen)",
+          "inst": "inst-1",
+          "batch_id": "ffffffffffffffffffffffffffffffff",
+          "queued_at_ms": 1700000000000,
+          "records": [
+            {
+              "t": "segment_start",
+              "ts": 1000.0,
+              "ctx": "ctx-pretty",
+              "blocks": [{"id": "b", "text": "pretty"}]
+            }
+          ]
+        }
+        """
+        let prettyReply = try authority.accept(bytes: Data(pretty.utf8), direction: "extension_to_host")
+        #expect(prettyReply["result"] as? String == "accepted")
+        let prettyText = try String(contentsOf: store.periodFileURL(for: try #require(prettyReply["period_id"] as? String)), encoding: .utf8)
+        let lines = prettyText.split(separator: "\n", omittingEmptySubsequences: true)
+        #expect(lines.contains { $0.contains("\"ts\":1000.0") && $0.contains("pretty") && !$0.contains("\n") })
+    }
+
+    @Test func test10_plannerRaceProofAndSegmentKey() async throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now }, timeZone: TimeZone(identifier: "UTC")!)
+        let gate = BrowserUploadGate(store: store)
+        let gen = try authority.publishEpoch(identityToken: "token-1")
+        let snap: [String: Any] = [
+            "type": "batch", "destination_generation": gen, "inst": "inst-1",
+            "batch_id": "12121212121212121212121212121212",
+            "queued_at_ms": 1700000000000 as UInt64,
+            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b", "text": "planner"]]]]
+        ]
+        let reply = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
+        let pid = try #require(reply["period_id"] as? String)
+        try store.finalizePeriod(periodId: pid, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
+        let period = try #require(store.getPeriod(periodId: pid))
+        let segment = try #require(period.requestedSegment)
+        let day = try #require(period.requestedDay)
+        let fileURL = store.periodFileURL(for: pid)
+        let original = try Data(contentsOf: fileURL)
+
+        let transport = ScriptedBrowserTransport()
+        transport.onDayRead = {
+            try? authority.retireIfTokenChanged(newToken: "token-2")
+        }
+        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, serverURLProvider: { "http://127.0.0.1" })
+        await planner.planAndUpload()
+        #expect(transport.prepareCount == 0)
+        #expect(try Data(contentsOf: fileURL) == original)
+        #expect(authority.status()["capture"] as? String == "unavailable")
+
+        _ = try authority.publishEpoch(identityToken: "token-2")
+        gate.resumeReaders()
+        authority.reopenAdmission()
+        transport.onDayRead = nil
+        transport.succeed = true
+        let fresh = try authority.publishEpoch(identityToken: "token-fresh")
+        let freshSnap: [String: Any] = [
+            "type": "batch", "destination_generation": fresh, "inst": "inst-1",
+            "batch_id": "34343434343434343434343434343434",
+            "queued_at_ms": UInt64(clock.now.timeIntervalSince1970 * 1000),
+            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-2", "blocks": [["id": "b", "text": "fresh"]]]]
+        ]
+        let freshReply = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: freshSnap), direction: "extension_to_host")
+        let freshPid = try #require(freshReply["period_id"] as? String)
+        try store.finalizePeriod(periodId: freshPid, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
+        let freshPeriod = try #require(store.getPeriod(periodId: freshPid))
+        await planner.planAndUpload()
+        #expect(store.getPeriod(periodId: freshPid)?.state == "finalized")
+        #expect(store.getPeriod(periodId: freshPid)?.canonicalKey == "120001_1")
+        #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: freshPid).path))
+        let ack = try #require(BrowserIngestAckStore.read(from: BrowserIngestAckStore.ackURL(periodDirectory: store.periodFileURL(for: freshPid).deletingLastPathComponent())))
+        transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
+            IngestProtocolV3.SegmentsItem(
+                key: "other-key",
+                files: [IngestProtocolV3.ReadFile(name: "browser_pages.jsonl", size: ack.size, sha256: ack.sha256, status: .present)],
+                originalKey: freshPeriod.requestedSegment
+            )
+        ])
+        await planner.planAndUpload()
+        #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: freshPid).path))
+        transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
+            IngestProtocolV3.SegmentsItem(
+                key: try #require(freshPeriod.requestedSegment),
+                files: [IngestProtocolV3.ReadFile(name: "browser_pages.jsonl", size: ack.size, sha256: ack.sha256, status: .processed)]
+            )
+        ])
+        await planner.planAndUpload()
+        #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: freshPid).path))
+        transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
+            IngestProtocolV3.SegmentsItem(
+                key: try #require(freshPeriod.requestedSegment),
+                files: [IngestProtocolV3.ReadFile(name: "browser_pages.jsonl", size: ack.size, sha256: ack.sha256, status: .present)]
+            )
+        ])
+        await planner.planAndUpload()
+        #expect(!FileManager.default.fileExists(atPath: store.periodFileURL(for: freshPid).path))
+        #expect(store.getPeriod(periodId: freshPid)?.state == "delivered")
+        _ = (segment, day)
+    }
+}
+
+private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked Sendable {
+    var dayListing = IngestProtocolV3.SegmentsDay(total: 0, items: [])
+    var onDayRead: (@Sendable () -> Void)?
+    var prepareCount = 0
+    var succeed = false
+    private let lock = NSLock()
+
+    func getSegmentsDay(serverURL: String, day: String, source: String?) async throws -> IngestProtocolV3.SegmentsDay {
+        onDayRead?()
+        return dayListing
+    }
+
+    func prepareUpload(
+        serverURL: String,
+        day: String,
+        segment: String,
+        mediaFiles: [URL],
+        metadata: [String: IngestJSONValue]?,
+        source: String?,
+        boundary: String,
+        bodyURL: URL
+    ) throws -> PreparedIngestV3Upload {
+        lock.lock()
+        prepareCount += 1
+        lock.unlock()
+        return try IngestV3UploadRequestBuilder.build(
+            baseURL: serverURL,
+            day: day,
+            segment: segment,
+            selectedFiles: mediaFiles,
+            meta: metadata,
+            source: source,
+            boundary: boundary,
+            bodyURL: bodyURL
+        )
+    }
+
+    func uploadStaged(prepared: PreparedIngestV3Upload) async -> UploadResult {
+        guard succeed, let part = prepared.stagedParts.first else {
+            return .failure(UploadError.invalidRequest)
+        }
+        let response = IngestProtocolV3.UploadResponse(
+            status: .collision,
+            storedSegmentKey: "120001_1",
+            segmentOriginal: prepared.submittedSegment,
+            fileDescriptors: [IngestProtocolV3.UploadFileDescriptor(
+                submitted: part.submitted,
+                written: part.submitted,
+                size: part.size,
+                sha256: part.sha256,
+                disposition: .written
+            )],
+            meta: prepared.metadata ?? [:]
+        )
+        return .success(UploadSuccessInfo(response: response))
     }
 }
 

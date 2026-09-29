@@ -50,8 +50,13 @@ public enum IngestProtocolV3 {
 
     static let uploadPath = "/app/devices/ingest"
 
-    static func segmentsDayPath(_ day: String) -> String {
-        "\(uploadPath)/segments/\(day)"
+    static func segmentsDayPath(_ day: String, source: String? = nil) -> String {
+        let basePath = "\(uploadPath)/segments/\(day)"
+        guard let source, !source.isEmpty else {
+            return basePath
+        }
+        let escapedSource = source.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? source
+        return "\(basePath)?source=\(escapedSource)"
     }
 
     enum Custody: Sendable, Equatable {
