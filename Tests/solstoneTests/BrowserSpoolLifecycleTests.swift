@@ -100,6 +100,9 @@ private final class LifecycleTransport: BrowserUploadTransport, @unchecked Senda
     private var maxConcurrentUploads = 0
     private var countedBytes = 0
     private var recordedSources: [String?] = []
+    private var recordedServers: [String] = []
+    var servers: [String] { lock.withLock { recordedServers } }
+    var completedAttempts: Int { lock.withLock { attemptCount - activeUploads } }
     private var stagedHashes: [String] = []
     private var dayListing = IngestProtocolV3.SegmentsDay(total: 0, items: [])
     private var storedSegmentKey: String?
@@ -160,7 +163,7 @@ private final class LifecycleTransport: BrowserUploadTransport, @unchecked Senda
         bodyURL: URL,
         ioInjector: BrowserIntakeIOInjector
     ) throws -> PreparedIngestV3Upload {
-        lock.withLock { recordedSources.append(source) }
+        lock.withLock { recordedSources.append(source); recordedServers.append(serverURL) }
         return try IngestV3UploadRequestBuilder.build(
             baseURL: serverURL,
             day: day,
@@ -737,11 +740,14 @@ struct BrowserSpoolLifecycleTests {
         }
     }
 
-    @Test func emptyBoundaryRetiresCleanlyAcrossRestart() async throws {
+    @Test func callerIdleRestartMustAnswerValidHello() async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         #expect(await fixture.clock.waitForSleepCount(1))
+        let hello = Data(#"{"type":"hello","protocol":1,"version":"1.0.0","brand":"chrome","inst":"desktop_inst_1"}"#.utf8)
+        let initialHello = try reply(await fixture.owner.accept(bytes: hello, direction: "extension_to_host"))
+        #expect(initialHello["type"] as? String == "hello_ack")
         let emptyPeriod = try #require(fixture.owner.store.getOpenPeriodId())
         let emptyFile = fixture.owner.store.periodFileURL(for: emptyPeriod)
         #expect(try Data(contentsOf: emptyFile).isEmpty)
@@ -768,6 +774,17 @@ struct BrowserSpoolLifecycleTests {
         #expect(restarted.store.getAllFinalizedPeriods().allSatisfy {
             FileManager.default.fileExists(atPath: restarted.store.periodFileURL(for: $0.periodId).path)
         })
+        let result = await restarted.accept(bytes: hello, direction: "extension_to_host")
+        var returnedHello = false
+        switch result {
+        case .message(let bytes):
+            let object = try JSONSerialization.jsonObject(with: bytes) as? [String: Any]
+            returnedHello = object?["type"] as? String == "hello_ack"
+            print("CALLER_IDLE_PROBE hello=message validHello=\(returnedHello)")
+        case .refusal(let refusal):
+            print("CALLER_IDLE_PROBE hello=refusal code=\(refusal.code)")
+        }
+        #expect(returnedHello)
         restarted.stop()
     }
 
@@ -1145,6 +1162,57 @@ struct BrowserSpoolLifecycleTests {
         recovered.stop()
     }
 
+    // Caller-only synthetic regression. No socket, owner service, or real credentials.
+    @Test(arguments: ["lifecycle-pairing", "foreign-pairing"])
+    func callerRecoveredCustodyMustMatchLoadedPairing(token: String) async throws {
+        let fixture = try fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        await fixture.owner.start()
+        let oldGeneration = try #require(fixture.owner.store.getActiveGeneration())
+        let accepted = try reply(await fixture.owner.accept(
+            bytes: batch(oldGeneration, id: "fafafafafafafafafafafafafafafafa", queuedAtMs: 1_700_000_100_000),
+            direction: "extension_to_host"
+        ))
+        let periodId = try #require(accepted["period_id"] as? String)
+        fixture.owner.stop()
+        #expect(fixture.owner.store.getPeriod(periodId: periodId)?.state == "finalized")
+        let destination = "http://127.0.0.1:49322"
+        let route = BrowserIntakeRouteState()
+        _ = route.update(destination)
+        let transport = LifecycleTransport()
+        let replacement = try BrowserIntakeOwner.start(
+            spoolRoot: fixture.root,
+            projection: fixture.projection,
+            credentialSnapshot: BrowserCredentialSnapshot(identityToken: token),
+            clock: fixture.clock,
+            transport: transport,
+            routeResolver: HomeBaseURLResolver { .url(destination) },
+            ioInjector: fixture.injector,
+            routeState: route
+        )
+        defer { replacement.stop() }
+        let admissionBeforeStart = replacement.authority.isAdmissionOpen()
+        await replacement.start()
+        let deadline = ContinuousClock.now + .seconds(3)
+        while transport.completedAttempts == 0 && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let attempts = transport.attempts
+        let bytes = transport.bytesSent
+        let servers = transport.servers
+        print("CALLER_STARTUP_PROBE token=\(token) admission=\(admissionBeforeStart) attempts=\(attempts) bodyBytesRead=\(bytes) servers=\(servers)")
+        if token == "lifecycle-pairing" {
+            #expect(attempts > 0)
+            #expect(bytes > 0)
+            #expect(servers == [destination])
+        } else {
+            #expect(admissionBeforeStart == false)
+            #expect(attempts == 0)
+            #expect(bytes == 0)
+            #expect(servers.isEmpty)
+        }
+    }
+
     @Test func reloadMismatchKeepsCustodyAndClosesAdmission() async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -1175,7 +1243,7 @@ struct BrowserSpoolLifecycleTests {
         #expect(state["destination_generation"] is NSNull)
     }
 
-    @Test func injectedFootprintRejectsBeforePayloadWrite() async throws {
+    @Test func callerQuotaRefusalMustNotPoisonDelivery() async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
@@ -1204,6 +1272,14 @@ struct BrowserSpoolLifecycleTests {
         ))
         #expect(duplicate["result"] as? String == "duplicate")
         #expect(try Data(contentsOf: fileURL) == before)
+        let failedUnderPressure = fixture.owner.store.storeIsFailed()
+        fixture.injector.setSizeOverride(nil)
+        let failedAfterPressure = fixture.owner.store.storeIsFailed()
+        let permitAfterPressure = fixture.owner.gate.currentPermit() != nil
+        print("CALLER_QUOTA_PROBE failedUnderPressure=\(failedUnderPressure) failedAfterPressure=\(failedAfterPressure) permitAfterPressure=\(permitAfterPressure)")
+        #expect(failedUnderPressure == false)
+        #expect(failedAfterPressure == false)
+        #expect(permitAfterPressure)
         fixture.owner.stop()
     }
 
@@ -1339,11 +1415,18 @@ struct BrowserSpoolLifecycleTests {
             direction: "extension_to_host"
         )
         fixture.injector.setFailure(nil)
-        guard case .refusal(let refusal) = failed else {
-            Issue.record("failed store read did not fail closed")
-            return
+        // A read failure during this request is a local refusal. If an owner
+        // status read detects it first, the identified batch gets a retryable
+        // rejection instead. Neither path may earn an accepted receipt.
+        switch failed {
+        case .refusal(let refusal):
+            #expect(refusal.code == "local_io")
+        case .message:
+            let rejection = try reply(failed)
+            #expect(rejection["result"] as? String == "rejected")
+            #expect(rejection["reason"] as? String == "resource_exhausted")
+            #expect(rejection["class"] as? String == "retryable")
         }
-        #expect(refusal.code == "local_io")
         let state = try decodedState(fixture.owner.authority.status(), projection: fixture.projection)
         #expect(state.capture == "unavailable")
         #expect(state.destinationGeneration == nil)

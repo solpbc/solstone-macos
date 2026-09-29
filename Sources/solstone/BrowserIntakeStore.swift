@@ -129,7 +129,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     private var activeGeneration: String?
     private var activeIdentityToken: String?
     private var currentOpenPeriodId: String?
-    private var deliveryProofsOpen = true
+    private var deliveryProofsOpen = false
     private var deliveryStopped = false
 
     private var storedFloorMs: UInt64 = 0
@@ -177,6 +177,14 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         lock.withLock { isStoreFailed }
     }
 
+    func currentDeliveryPermit() -> BrowserUploadPermit? {
+        lock.withLock {
+            guard deliveryProofsOpen, !deliveryStopped, !isStoreFailed,
+                  let activeGeneration, let activeIdentityToken else { return nil }
+            return BrowserUploadPermit(generation: activeGeneration, identityToken: activeIdentityToken)
+        }
+    }
+
     func closeDeliveryProofs() {
         lock.withLock { deliveryProofsOpen = false }
     }
@@ -195,7 +203,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     }
 
     private func requireCurrentDeliveryLocked(periodGeneration: String) throws {
-        guard deliveryProofsOpen,
+        guard deliveryProofsOpen, !deliveryStopped, !isStoreFailed,
               let activeGeneration,
               BrowserOpaqueString.equals(activeGeneration, periodGeneration) else {
             throw BrowserIntakeStoreError.staleGeneration
@@ -607,13 +615,14 @@ private static func fullSync(_ handle: FileHandle) throws {
             }
         }
 
+        // A readable database with damaged custody must still project the held
+        // data and local failure. Mutations and delivery remain fail-closed.
         recalculateCounters()
-        if isStoreFailed { throw BrowserIntakeStoreError.localIO }
     }
 
     private func recoverPeriodFiles() throws {
         var stmt: OpaquePointer?
-        try prepareChecked("SELECT period_id, committed_length, state, requested_day, requested_segment FROM periods WHERE state IN ('open', 'finalized', 'finalizing')", &stmt)
+        try prepareChecked("SELECT period_id, committed_length, state, requested_day, requested_segment, file_sha256 FROM periods WHERE state IN ('open', 'finalized', 'finalizing')", &stmt)
         defer { sqlite3_finalize(stmt) }
         var finalizing: [(String, Int, String, String)] = []
         while true {
@@ -658,8 +667,15 @@ private static func fullSync(_ handle: FileHandle) throws {
                 isStoreFailed = true
                 continue
             }
-            if state == "finalized" && bytes != committed {
-                isStoreFailed = true
+            if state == "finalized" {
+                do {
+                    guard bytes == committed, let expectedHash = Self.readText(stmt, 5) else {
+                        throw BrowserIntakeStoreError.localIO
+                    }
+                    try validatePayloadLocked(fileURL, length: committed, sha256: expectedHash)
+                } catch {
+                    isStoreFailed = true
+                }
                 continue
             }
             if (state == "open" || state == "finalizing") && bytes > committed {
@@ -821,6 +837,36 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
     }
 
+    private func validatePayloadLocked(_ url: URL, length: Int, sha256: String) throws {
+        guard length > 0, length <= projection.policy.file else { throw BrowserIntakeStoreError.localIO }
+        try Self.assertNoSymlinkAncestors(url)
+        try Self.assertRegularFile(url)
+        try ioInjector.check(.size)
+        guard try Self.fileByteCount(url) == length else { throw BrowserIntakeStoreError.localIO }
+        try ioInjector.check(.read)
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: length + 1) ?? Data()
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard data.count == length, BrowserOpaqueString.equals(digest, sha256) else {
+            throw BrowserIntakeStoreError.localIO
+        }
+    }
+
+    func validateFinalizedPayload(_ period: BrowserStoredPeriod) throws {
+        try lock.withLock {
+            do {
+                guard !isStoreFailed, period.state == "finalized", let digest = period.fileSha256 else {
+                    throw BrowserIntakeStoreError.localIO
+                }
+                try validatePayloadLocked(periodFileURL(for: period.periodId), length: period.committedLength, sha256: digest)
+            } catch {
+                isStoreFailed = true
+                throw error
+            }
+        }
+    }
+
     public func periodFileByteCount(periodId: String) throws -> Int {
         let url = periodFileURL(for: periodId)
         try Self.assertNoSymlinkAncestors(url)
@@ -953,10 +999,15 @@ private static func fullSync(_ handle: FileHandle) throws {
     public func publishEpoch(identityToken: String, nowMs: UInt64) throws -> String {
         lock.lock()
         defer { lock.unlock() }
+        guard !isStoreFailed else { throw BrowserIntakeStoreError.localIO }
+        guard !deliveryStopped else { throw BrowserIntakeStoreError.staleGeneration }
 
         let digest = Self.identityDigest(of: identityToken)
         if let currentGen = activeGeneration, BrowserOpaqueString.equals(activeIdentityToken, digest) {
-            if !deliveryStopped { deliveryProofsOpen = true }
+            guard !deliveryStopped else { throw BrowserIntakeStoreError.staleGeneration }
+            let durableNowMs = try updateFloorMsLocked(wallNowMs: max(storedFloorMs, nowMs))
+            _ = try ensureOpenPeriodLocked(nowMs: durableNowMs)
+            deliveryProofsOpen = true
             return currentGen
         }
 

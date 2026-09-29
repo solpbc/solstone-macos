@@ -69,22 +69,21 @@ public final class BrowserUploadGate: @unchecked Sendable {
 
     public func currentPermit() -> BrowserUploadPermit? {
         lock.withLock {
-            guard !isCancelled,
-                  !store.storeIsFailed(),
-                  let generation = store.getActiveGeneration(),
-                  let token = store.getActiveIdentityToken() else {
-                return nil
-            }
-            return BrowserUploadPermit(generation: generation, identityToken: token)
+            guard !isCancelled else { return nil }
+            return store.currentDeliveryPermit()
         }
+    }
+
+    private func permitMatchesStore(_ permit: BrowserUploadPermit) -> Bool {
+        guard let current = store.currentDeliveryPermit() else { return false }
+        return BrowserOpaqueString.equals(current.generation, permit.generation)
+            && BrowserOpaqueString.equals(current.identityToken, permit.identityToken)
     }
 
     public func makeLease(permit: BrowserUploadPermit, periodId: String, routeCheck: @escaping @Sendable () -> Bool = { true }) -> BrowserUploadLease? {
         lock.withLock {
             guard !isCancelled,
-                  !store.storeIsFailed(),
-                  store.getActiveGeneration().map({ BrowserOpaqueString.equals($0, permit.generation) }) == true,
-                  store.getActiveIdentityToken().map({ BrowserOpaqueString.equals($0, permit.identityToken) }) == true else {
+                  permitMatchesStore(permit) else {
                 return nil
             }
             let id = UUID()
@@ -96,13 +95,13 @@ public final class BrowserUploadGate: @unchecked Sendable {
 
     public func isPermitActive(_ permit: BrowserUploadPermit) -> Bool {
         lock.withLock {
-            !isCancelled && !store.storeIsFailed() && store.getActiveGeneration().map({ BrowserOpaqueString.equals($0, permit.generation) }) == true && store.getActiveIdentityToken().map({ BrowserOpaqueString.equals($0, permit.identityToken) }) == true
+            !isCancelled && permitMatchesStore(permit)
         }
     }
 
     fileprivate func isLeaseActive(id: UUID, permit: BrowserUploadPermit) -> Bool {
         lock.withLock {
-            !isCancelled && !store.storeIsFailed() && activeLeaseID == id && store.getActiveGeneration().map({ BrowserOpaqueString.equals($0, permit.generation) }) == true && store.getActiveIdentityToken().map({ BrowserOpaqueString.equals($0, permit.identityToken) }) == true
+            !isCancelled && activeLeaseID == id && permitMatchesStore(permit)
         }
     }
 

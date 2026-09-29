@@ -282,6 +282,7 @@ public actor BrowserIntakeOwner {
     }
 
     public nonisolated func credentialWillChange(identityToken: String?) throws {
+        guard !stopController.isStopped() else { return }
         authority.closeAdmission()
         gate.invalidateCurrentLease()
         store.closeDeliveryProofs()

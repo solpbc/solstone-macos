@@ -122,6 +122,8 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
 
     public func reconcileIdentity(_ token: String?, mode: BrowserIdentityChangeMode) throws {
         closeAdmission()
+        store.closeDeliveryProofs()
+        guard !store.storeIsFailed() else { return }
         switch mode {
         case .replace:
             try retireIfTokenChanged(newToken: token)
@@ -133,11 +135,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             } else if store.hasPersistedIdentityHistory() {
                 return
             }
-            if store.getActiveGeneration() == nil {
-                _ = try publishEpoch(identityToken: token)
-            } else {
-                store.reopenDeliveryProofs()
-            }
+            _ = try publishEpoch(identityToken: token)
             reopenAdmission()
         }
     }
@@ -300,6 +298,11 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     }
 
     private func processBatch(batch: BrowserDecodedBatch, nowMs: UInt64, civilDate: Date) throws -> [String: Any] {
+        // A receipt from damaged custody cannot promise that the bytes remain
+        // kept. Closed admission alone still permits healthy duplicate answers.
+        if store.storeIsFailed() {
+            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
+        }
         if let stored = try store.lookupReceipt(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId) {
             if stored.result == "accepted" || stored.result == "duplicate" {
                 return try BrowserPayloadDecoder.buildReply(
@@ -350,7 +353,9 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 seenAge = (initialAgeMs: initialAge, elapsedHighWaterMs: 0, established: true)
             }
         } catch {
-            store.failClosed()
+            if error as? BrowserIntakeStoreError != .resourceExhausted {
+                store.failClosed()
+            }
             return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
         guard let seenAge else { throw BrowserIntakeStoreError.localIO }

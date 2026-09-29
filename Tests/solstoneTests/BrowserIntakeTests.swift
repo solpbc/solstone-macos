@@ -79,7 +79,7 @@ struct BrowserIntakeAdmissionTests {
     }
 
     private func createTempRoot() throws -> URL {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("solstone-intake-test-\(UUID().uuidString)")
+        let tempDir = URL(fileURLWithPath: "/private/var/tmp", isDirectory: true).appendingPathComponent("solstone-intake-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         return tempDir
     }
@@ -462,6 +462,11 @@ struct BrowserIntakeAdmissionTests {
 
         let failed = authority.status()
         #expect(failed["delivery"] as? String == "kept_locally")
+        // releaseStagingDirectory removed the earlier file. Recreate an actual
+        // measured staging file before injecting simultaneous full/stale custody.
+        try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+        try Data().write(to: stagingFile)
+        try store.registerStagingDirectory(stagingDirectory, reservedBytes: 0)
         injectedStageSize.value = projection.policy.spoolBytes
         let combined = authority.status()
         let combinedCustody = combined["custody"] as? [String: Bool]
@@ -989,19 +994,26 @@ struct BrowserIntakeAdmissionTests {
             ]
             return try! JSONSerialization.data(withJSONObject: object)
         }
+        let anchor = try authority.accept(bytes: payload("00000000000000000000000000000000", "ACKNOWLEDGED_PREFIX"), direction: "extension_to_host")
+        #expect(anchor["result"] as? String == "accepted")
         store.crashPoint = .afterFileSync
         let rejected = try authority.accept(bytes: payload("11111111111111111111111111111111", "REJECTED_SUFFIX"), direction: "extension_to_host")
         #expect(rejected["reason"] as? String == "resource_exhausted")
         #expect(try store.lookupReceipt(generation: gen, inst: "inst-1", batchId: "11111111111111111111111111111111") == nil)
         let openId = try #require(store.getOpenPeriodId())
         let openURL = store.periodFileURL(for: openId)
-        #expect(String(decoding: try Data(contentsOf: openURL), as: UTF8.self).contains("REJECTED_SUFFIX"))
+        let recoveredPrefix = String(decoding: try Data(contentsOf: openURL), as: UTF8.self)
+        #expect(recoveredPrefix.contains("ACKNOWLEDGED_PREFIX"))
+        // The simulated crash leaves a suffix on disk. The next mutation must
+        // recover the committed prefix before it can accept or finalize again.
+        #expect(recoveredPrefix.contains("REJECTED_SUFFIX"))
 
         store.crashPoint = .none
         let accepted = try authority.accept(bytes: payload("22222222222222222222222222222222", "ACCEPTED_BODY"), direction: "extension_to_host")
         #expect(accepted["result"] as? String == "accepted")
         let kept = String(decoding: try Data(contentsOf: openURL), as: UTF8.self)
         #expect(kept.contains("ACCEPTED_BODY"))
+        #expect(kept.contains("ACKNOWLEDGED_PREFIX"))
         #expect(!kept.contains("REJECTED_SUFFIX"))
 
         try store.finalizePeriod(periodId: openId, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
@@ -1087,6 +1099,42 @@ struct BrowserIntakeAdmissionTests {
         #expect(lines.contains { $0.contains("\"ts\":1000.0") && $0.contains("pretty") && !$0.contains("\n") })
     }
 
+    @Test(arguments: [false, true])
+    func finalizedCorruptionCannotReachTransport(restart: Bool) async throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let now = Date(timeIntervalSince1970: 1700000000)
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { now })
+        let gen = try authority.publishEpoch(identityToken: "token-1")
+        let bytes = Data("""
+        {"type":"batch","destination_generation":"\(gen)","inst":"inst-1","batch_id":"98989898989898989898989898989898","queued_at_ms":1700000000000,"records":[{"t":"segment_start","ts":1700000000000,"ctx":"ctx-1","blocks":[{"id":"b","text":"before"}]}]}
+        """.utf8)
+        let accepted = try authority.accept(bytes: bytes, direction: "extension_to_host")
+        let pid = try #require(accepted["period_id"] as? String)
+        try store.finalizePeriod(periodId: pid, reason: "seal", civilDate: now, timeZone: TimeZone(secondsFromGMT: 0)!)
+        let url = store.periodFileURL(for: pid)
+        let original = try String(contentsOf: url, encoding: .utf8)
+        let damaged = original.replacingOccurrences(of: "before", with: "after!")
+        #expect(damaged != original)
+        #expect(damaged.utf8.count == original.utf8.count)
+        try Data(damaged.utf8).write(to: url)
+        let candidate = restart ? try BrowserIntakeStore(rootURL: tempRoot, projection: projection) : store
+        if !candidate.storeIsFailed() {
+            _ = try candidate.publishEpoch(identityToken: "token-1", nowMs: 1700000000000)
+        }
+        let transport = ScriptedBrowserTransport()
+        let route = BrowserIntakeRouteState()
+        _ = route.update("http://127.0.0.1")
+        let planner = BrowserUploadPlanner(store: candidate, gate: BrowserUploadGate(store: candidate), client: transport, routeState: route)
+        await planner.planAndUpload()
+        #expect(transport.prepareCount == 0)
+        #expect(candidate.storeIsFailed())
+        #expect(candidate.getPeriod(periodId: pid)?.state == "finalized")
+        #expect(try String(contentsOf: url, encoding: .utf8) == damaged)
+    }
+
     @Test func test10_plannerRaceProofAndSegmentKey() async throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
@@ -1112,14 +1160,20 @@ struct BrowserIntakeAdmissionTests {
         let original = try Data(contentsOf: fileURL)
 
         let transport = ScriptedBrowserTransport()
-        transport.onDayRead = {
-            try? authority.retireIfTokenChanged(newToken: "token-2")
-        }
         let routeState = BrowserIntakeRouteState()
         _ = routeState.update("http://127.0.0.1")
         let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, serverURLProvider: { "http://127.0.0.1" }, routeState: routeState)
+        // Reconciliation reads the day listing only after a validated upload
+        // binding exists. Retire during that read, before any cleanup can occur.
+        transport.succeed = true
         await planner.planAndUpload()
-        #expect(transport.prepareCount == 0)
+        #expect(transport.prepareCount == 1)
+        #expect(try store.storedDeliveryBinding(periodId: pid) != nil)
+        transport.onDayRead = {
+            try? authority.retireIfTokenChanged(newToken: "token-2")
+        }
+        await planner.planAndUpload()
+        #expect(transport.prepareCount == 1)
         #expect(try Data(contentsOf: fileURL) == original)
         #expect(authority.status()["capture"] as? String == "unavailable")
 
@@ -1161,10 +1215,12 @@ struct BrowserIntakeAdmissionTests {
         ])
         await planner.planAndUpload()
         #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: freshPid).path))
+        // Only the returned canonical collision key can prove delivery.
         transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
             IngestProtocolV3.SegmentsItem(
-                key: try #require(freshPeriod.requestedSegment),
-                files: [IngestProtocolV3.ReadFile(name: "browser_pages.jsonl", size: ack.size, sha256: ack.sha256, status: .present)]
+                key: try #require(ack.canonicalKey),
+                files: [IngestProtocolV3.ReadFile(name: "browser_pages.jsonl", size: ack.size, sha256: ack.sha256, status: .present)],
+                originalKey: freshPeriod.requestedSegment
             )
         ])
         await planner.planAndUpload()

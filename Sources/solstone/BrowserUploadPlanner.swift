@@ -120,6 +120,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
 
         var binding: BrowserIngestAck?
         do {
+            try store.validateFinalizedPayload(period)
             binding = try store.storedDeliveryBinding(periodId: period.periodId)
             if binding == nil, let legacyAck = try BrowserIngestAckStore.read(from: ackURL, ioInjector: store.ioInjector) {
                 try store.persistDeliveryBinding(legacyAck)
@@ -207,6 +208,13 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                 bodyURL: multipartURL,
                 ioInjector: store.ioInjector
             )
+            guard let stagedPart = prepared.stagedParts.first,
+                  prepared.stagedParts.count == 1,
+                  stagedPart.size == UInt64(period.committedLength),
+                  BrowserOpaqueString.equals(stagedPart.sha256, period.fileSha256) else {
+                failStorage(period: period, error: BrowserIntakeStoreError.localIO)
+                return
+            }
             guard lease.isValid() else { return }
             let result = await client.uploadStaged(prepared: prepared, lease: lease)
             guard lease.isValid() else { return }
