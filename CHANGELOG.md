@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.19] - 2026-09-29
+
 ### Added
 - the solstone app on your mac now has a setting, "keep confirmed segments for debugging". when it is on, segments your journal has confirmed are moved to a separate folder on this mac instead of being removed, and they build up until you delete them yourself.
 
