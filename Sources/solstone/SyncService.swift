@@ -736,7 +736,8 @@ public actor SyncService {
         metadataState: SegmentMetadataState,
         context: JournalUploadContext
     ) -> Bool {
-        guard metadataState != .unreadable else {
+        let effectiveMetadataState = Self.applyingCaptureTimeZone(segmentURL: segmentURL, sidecar: metadataState)
+        guard effectiveMetadataState != .unreadable else {
             return false
         }
         let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
@@ -750,7 +751,7 @@ public actor SyncService {
         }
 
         let expectedMeta: [String: IngestJSONValue]
-        if case .present(let m) = metadataState {
+        if case .present(let m) = effectiveMetadataState {
             expectedMeta = m
         } else {
             expectedMeta = [:]
@@ -783,7 +784,8 @@ public actor SyncService {
         metadataState: SegmentMetadataState,
         context: JournalUploadContext
     ) async -> UploadRetryOutcome {
-        guard metadataState != .unreadable else {
+        let effectiveMetadataState = Self.applyingCaptureTimeZone(segmentURL: segmentURL, sidecar: metadataState)
+        guard effectiveMetadataState != .unreadable else {
             return .segmentScoped(
                 .deterministic(status: 400, reasonCode: "unreadable_metadata"),
                 UploadError.invalidResponse
@@ -791,7 +793,7 @@ public actor SyncService {
         }
 
         let meta: [String: IngestJSONValue]? = {
-            switch metadataState {
+            switch effectiveMetadataState {
             case .present(let m): return m
             case .missing: return nil
             case .unreadable: return nil
@@ -1091,6 +1093,64 @@ public actor SyncService {
         }
     }
 
+    // This OS's known list spells that zone Asia/Calcutta, but Foundation still resolves Asia/Kolkata.
+    // Etc/ and SystemV/ stay omitted because they are fixed-offset names.
+    private static func shouldSendCaptureTimeZoneIdentifier(_ identifier: String) -> Bool {
+        if TimeZone.knownTimeZoneIdentifiers.contains(identifier) {
+            return true
+        }
+        return identifier.contains("/")
+            && !identifier.hasPrefix("Etc/")
+            && !identifier.hasPrefix("SystemV/")
+            && !identifier.contains(where: \.isWhitespace)
+            && TimeZone(identifier: identifier)?.identifier == identifier
+    }
+
+    static func applyingCaptureTimeZone(
+        segmentURL: URL,
+        sidecar: SegmentMetadataState
+    ) -> SegmentMetadataState {
+        guard sidecar != .unreadable else {
+            return .unreadable
+        }
+
+        let zoneURL = segmentURL.appendingPathComponent(StorageManager.captureZoneFileName)
+        guard FileManager.default.fileExists(atPath: zoneURL.path) else {
+            return sidecar
+        }
+
+        guard let data = try? Data(contentsOf: zoneURL),
+              let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []),
+              let dict = jsonObject as? [String: Any],
+              let offsetNum = dict["utc_offset_seconds"] as? NSNumber,
+              !CFNumberIsFloatType(offsetNum as CFNumber),
+              let tz = dict["tz"] as? String else {
+            Logger.upload.warning("Failed to decode capture_zone.json or invalid field types at \(zoneURL.lastPathComponent, privacy: .public)")
+            return sidecar
+        }
+
+        let offset = offsetNum.intValue
+
+        var meta: [String: IngestJSONValue]
+        switch sidecar {
+        case .present(let existing):
+            meta = existing
+        case .missing:
+            meta = [:]
+        case .unreadable:
+            return .unreadable
+        }
+
+        meta["utc_offset_seconds"] = .integer(offset)
+        if shouldSendCaptureTimeZoneIdentifier(tz) {
+            meta["tz"] = .string(tz)
+        } else {
+            meta.removeValue(forKey: "tz")
+        }
+
+        return .present(meta)
+    }
+
     // MARK: - Confirmed Segment Removal
 
     private enum ConfirmedSegmentRemovalMode: Sendable {
@@ -1277,6 +1337,7 @@ public actor SyncService {
                 }
                 if IngestAcknowledgment.isUploadMediaName(name, segment: segment) ||
                    name == "\(segment)_meta.json" ||
+                   name == StorageManager.captureZoneFileName ||
                    safeUnreadableAudioNames.contains(name) ||
                    name == ".DS_Store" ||
                    Self.isStagingAckTmp(name: name, segment: segment) ||
@@ -1365,6 +1426,7 @@ public actor SyncService {
                     continue
                 }
                 if name == "\(segment)_meta.json" ||
+                   name == StorageManager.captureZoneFileName ||
                    safeUnreadableAudioNames.contains(name) ||
                    name == ".DS_Store" ||
                    Self.isStagingAckTmp(name: name, segment: segment) ||
@@ -1457,6 +1519,7 @@ public actor SyncService {
                 } else if IngestAcknowledgment.isUploadMediaName(name, segment: segment) {
                     uploadMediaURLs.append(entry)
                 } else if name == "\(segment)_meta.json" ||
+                            name == StorageManager.captureZoneFileName ||
                             name == ".DS_Store" ||
                             safeUnreadableAudioNames.contains(name) ||
                             Self.isStagingAckTmp(name: name, segment: segment) ||
