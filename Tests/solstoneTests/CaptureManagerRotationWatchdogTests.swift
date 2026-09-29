@@ -368,14 +368,17 @@ struct CaptureManagerRotationWatchdogTests {
         let finalizer = FakeFinalizer()
         let factoryCalls = LockedCounter()
         let firstNow = fixedDate(second: 7)
+        let now = LockedValue<Date>()
+        now.set(firstNow)
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
             segmentFactory: { outputDirectory, _, _, _, _ in
                 factoryCalls.increment()
+                now.set(firstNow.addingTimeInterval(Double(factoryCalls.count)))
                 return FakeCaptureSegment(outputDirectory: outputDirectory)
             },
             finalizer: finalizer,
-            now: { firstNow },
+            now: { now.current ?? firstNow },
             allowsEmptyDisplayConfigurationForTesting: true
         )
         manager.seedRecordingForTesting(currentSegment: current)

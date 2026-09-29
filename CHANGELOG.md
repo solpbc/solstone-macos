@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- changing your language or calendar settings no longer puts moments under the wrong date.
+- an unfinished moment is kept if a new one would use the same folder.
+
 ## [2.0.19] - 2026-09-29
 
 ### Added

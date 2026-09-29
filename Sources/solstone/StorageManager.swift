@@ -22,9 +22,15 @@ public final class StorageManager: Sendable {
         return appSupport.appendingPathComponent("Solstone/captures", isDirectory: true)
     }
 
+    static func configureSegmentFormatter(_ formatter: DateFormatter) {
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+    }
+
     /// Date formatter for directory names (YYYY-MM-DD)
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
+        configureSegmentFormatter(formatter)
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
@@ -32,6 +38,7 @@ public final class StorageManager: Sendable {
     /// Time formatter for segment directories (HHMMSS)
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
+        configureSegmentFormatter(formatter)
         formatter.dateFormat = "HHmmss"
         return formatter
     }()
@@ -115,7 +122,8 @@ public final class StorageManager: Sendable {
         // Create segment directory: HHMMSS.incomplete (duration added on completion)
         let segmentDir = dateDir.appendingPathComponent("\(timeString).incomplete", isDirectory: true)
 
-        try FileManager.default.createDirectory(at: segmentDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dateDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: segmentDir, withIntermediateDirectories: false)
 
         if let zoneRecord {
             do {
