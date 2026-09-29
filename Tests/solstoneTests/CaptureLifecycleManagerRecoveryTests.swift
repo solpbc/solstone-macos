@@ -964,7 +964,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         isScreenLocked: @escaping @MainActor () -> Bool = { false },
         unlockResumeDelay: @escaping @MainActor @Sendable () async throws -> Void = {},
         transitionTimeoutSeconds: TimeInterval = 30,
-        workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
+        workspaceCenter: NotificationCenter = NotificationCenter()
     ) -> CaptureLifecycleManager {
         let manager = CaptureLifecycleManager(
             recoveryScheduler: { delay, fire in
@@ -973,6 +973,7 @@ struct CaptureLifecycleManagerRecoveryTests {
             isScreenLocked: isScreenLocked,
             unlockResumeDelay: unlockResumeDelay,
             transitionTimeoutSeconds: transitionTimeoutSeconds,
+            preResumeSettle: {},
             workspaceCenter: workspaceCenter
         )
         manager.configure(delegate: delegate)
@@ -1312,4 +1313,3 @@ private final class GatedUnlockResumeDelay {
         }
     }
 }
-

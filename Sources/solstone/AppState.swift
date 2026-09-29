@@ -64,6 +64,7 @@ public final class AppState {
     internal let credentialStore: PairingCredentialStore?
     #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     @ObservationIgnored private var browserIntakeOwner: BrowserIntakeOwner?
+    @ObservationIgnored private var browserIntakeCredentialStore: PairingCredentialStore?
     @ObservationIgnored private var browserIntakeRouteState: BrowserIntakeRouteState?
     public private(set) var browserIntakeStore: BrowserIntakeStore?
     public private(set) var browserIntakeAuthority: BrowserIntakeAuthority?
@@ -325,7 +326,7 @@ public final class AppState {
 
     internal func performUpdatePreparation() async {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        browserIntakeOwner?.stop()
+        await browserIntakeOwner?.stopAndDrain()
 #endif
         await stopRecording(reason: .update)
         await drainRemixQueueForTermination()
@@ -453,6 +454,11 @@ public final class AppState {
         config = newConfig
         uploadCoordinator.updateConfig(newConfig)
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        if oldConfig.syncPaused && !newConfig.syncPaused, let owner = browserIntakeOwner {
+            Task { await owner.scheduleDelivery() }
+        }
+#endif
         debugAudioHolder.value = newConfig.debugKeepRejectedAudio
         silenceMusicHolder.value = newConfig.silenceMusic
 
@@ -473,12 +479,14 @@ public final class AppState {
         }
 
         do {
-            try newConfig.save()
+            try configSaver(newConfig)
         } catch {
             Logger.general.error("Failed to save config: \(error.localizedDescription, privacy: .public)")
             errorMessage = UICopy.ERROR_SAVE_CONFIG
         }
     }
+
+    @ObservationIgnored internal var configSaver: (AppConfig) throws -> Void = { try $0.save() }
 
     internal func currentJournalIdentity() -> JournalIdentityRead {
         let pairing: TunnelPairingIdentity?
@@ -1508,7 +1516,6 @@ public final class AppState {
     /// Guards against feedback loops: updateConfig() -> save() -> notification -> load() -> same values -> return.
     private func handleExternalDefaultsChange() {
         let fresh = AppConfig.load()
-        let syncWasPaused = config.syncPaused
 
         // Only react to journal connection changes — ignore unrelated defaults
         guard fresh.serverURL != config.serverURL ||
@@ -1529,12 +1536,6 @@ public final class AppState {
             clearLastSuccessfulJournalContact()
         }
         updateConfig(fresh)
-
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        if syncWasPaused && !fresh.syncPaused, let owner = browserIntakeOwner {
-            Task { await owner.scheduleDelivery() }
-        }
-#endif
 
         if isPairedIngestReady {
             Task.detached { [uploadCoordinator] in
@@ -1568,12 +1569,14 @@ public final class AppState {
         let gate = owner.gate
         let planner = owner.planner
         self.browserIntakeOwner = owner
+        self.browserIntakeCredentialStore = credentialStore
         self.browserIntakeStore = store
         self.browserIntakeAuthority = authority
         self.browserUploadGate = gate
         self.browserUploadPlanner = planner
 
         owner.bindCredentials(credentialStore)
+        authority.setPaused(pauseManager.isPaused)
 
         self.pauseManager.onPauseIntake = { [weak authority, weak store] in
             authority?.setPaused(true)
@@ -1641,5 +1644,21 @@ public final class AppState {
         browserIntakeOwner?.stop()
     }
 #endif
+
+    internal func recoverAfterFailedUpdaterInstall() async {
+        appQuitCoordinator.resetAfterFailedUpdaterInstall()
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        guard let owner = browserIntakeOwner, let credentials = browserIntakeCredentialStore else { return }
+        do {
+            let pairing = try credentials.load()
+            await owner.resumeAfterFailedUpdate(
+                credentialSnapshot: BrowserCredentialSnapshot(identityToken: pairing.map { PairingCredentialStore.identityToken(for: $0) }),
+                paused: pauseManager.isPaused
+            )
+        } catch {
+            Logger.storage.error("Browser intake update recovery failed: \(error.localizedDescription, privacy: .public)")
+        }
+#endif
+    }
 
 }

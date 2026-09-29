@@ -22,6 +22,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     private var lastRotationDate: Date
     private var _isPaused: Bool = false
     private var admissionClosed = false
+    private var stopped = false
     private var staleAnchorMs: UInt64 = 0
     private var staleMonotonicAnchor: Duration = .zero
     private var staleElapsedBaseMs: UInt64 = 0
@@ -72,8 +73,12 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
 
     public func reopenAdmission() {
         lock.lock()
-        admissionClosed = false
+        if !stopped { admissionClosed = false }
         lock.unlock()
+    }
+
+    func resumeAfterDrain() {
+        lock.withLock { stopped = false }
     }
 
     public func isAdmissionOpen() -> Bool {
@@ -107,15 +112,29 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     }
 
     public func publishEpoch(identityToken: String) throws -> String {
+        lock.lock()
+        defer { lock.unlock() }
         let now = wallClock()
         let nowMs = BrowserAgeStamp.wallMilliseconds(now)
         return try store.publishEpoch(identityToken: identityToken, nowMs: nowMs)
     }
 
     public func retireIfTokenChanged(newToken: String?) throws {
+        lock.lock()
+        defer { lock.unlock() }
         let now = wallClock()
         let nowMs = BrowserAgeStamp.wallMilliseconds(now)
-        try store.retireIfTokenChanged(newToken: newToken, nowMs: nowMs)
+        try store.retireIfTokenChanged(newToken: newToken, nowMs: nowMs, timeZone: timeZone)
+    }
+
+    public func stopAndFinalize() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        admissionClosed = true
+        stopped = true
+        if let periodId = store.getOpenPeriodId() {
+            try store.finalizePeriod(periodId: periodId, reason: "owner_stop", civilDate: wallClock(), timeZone: timeZone, openReplacement: false)
+        }
     }
 
     public func reconcileIdentity(_ token: String?, mode: BrowserIdentityChangeMode) throws {
@@ -252,8 +271,6 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     }
 
     public func accept(bytes: Data, direction: String) throws -> [String: Any] {
-        let now = wallClock()
-        let nowMs = BrowserAgeStamp.wallMilliseconds(now)
         let decodeResult = BrowserPayloadDecoder.decode(bytes: bytes, direction: direction, projection: projection)
 
         switch decodeResult {
@@ -289,6 +306,8 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             case .batch(let batch):
                 lock.lock()
                 defer { lock.unlock() }
+                let now = wallClock()
+                let nowMs = BrowserAgeStamp.wallMilliseconds(now)
                 return try processBatch(batch: batch, nowMs: nowMs, civilDate: now)
             }
         }

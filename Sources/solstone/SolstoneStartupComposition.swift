@@ -35,7 +35,7 @@ internal enum SolstoneStartupComposition {
                     await appState.appQuitCoordinator.prepareForUpdaterInstall()
                 },
                 installFailureRecovery: { @MainActor in
-                    appState.appQuitCoordinator.resetAfterFailedUpdaterInstall()
+                    await appState.recoverAfterFailedUpdaterInstall()
                 },
                 terminationBegan: { @MainActor in
                     appState.appKitTerminationBegan

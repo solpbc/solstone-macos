@@ -48,6 +48,7 @@ private final class LifecycleClock: BrowserIntakeClock, @unchecked Sendable {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let (immediate, ready) = lock.withLock { () -> (Bool, [CheckedContinuation<Void, Never>]) in
+                    if Task.isCancelled { return (true, []) }
                     if target <= date { return (true, []) }
                     sleepers[id] = (target, continuation)
                     sleepRegistrationCount += 1
@@ -377,6 +378,15 @@ struct BrowserSpoolLifecycleTests {
         return fixture.owner.store.getPeriod(periodId: periodId)?.state == state
     }
 
+    private func waitForDurableAck(_ fixture: LifecycleFixture, periodId: String) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while ContinuousClock.now < deadline {
+            if fixture.owner.store.getPeriod(periodId: periodId)?.ackDurable == true { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return fixture.owner.store.getPeriod(periodId: periodId)?.ackDurable == true
+    }
+
     private func matchingListing(_ binding: BrowserIngestAck, key: String? = nil) -> IngestProtocolV3.SegmentsDay {
         let file = IngestProtocolV3.ReadFile(
             name: binding.filename,
@@ -399,6 +409,15 @@ struct BrowserSpoolLifecycleTests {
             throw LifecycleInjectedFailure.injected
         }
         return state
+    }
+
+    private func waitForDeliveryState(_ fixture: LifecycleFixture, state: String) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while ContinuousClock.now < deadline {
+            if fixture.owner.authority.status()["delivery"] as? String == state { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return fixture.owner.authority.status()["delivery"] as? String == state
     }
 
     private func verifyFailedSecondBatch(_ point: BrowserIntakeIOPoint, index: Int) async throws {
@@ -726,6 +745,93 @@ struct BrowserSpoolLifecycleTests {
         #expect(FileManager.default.fileExists(atPath: payload.path))
     }
 
+    @Test @MainActor func failedUpdateDrainsLateReaderBeforeResumingTheSameOwner() async throws {
+        let paired = pairing(instanceID: "browser-update-test")
+        let credentials = PairingCredentialStore(store: PairingStore(pairing: paired))
+        _ = try credentials.load()
+        let transport = LifecycleTransport()
+        transport.setOutcomeSuccess(true)
+        transport.suspendAfterFirstChunk()
+        let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired), transport: transport)
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+        let state = AppState.forSnapshot()
+        state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
+        await fixture.owner.start()
+        await fixture.clock.waitUntilSleeping()
+        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let accepted = try reply(await fixture.owner.accept(bytes: batch(generation,
+            id: "41414141414141414141414141414141", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
+        let periodId = try #require(accepted["period_id"] as? String)
+        fixture.clock.advance(seconds: 301)
+        #expect(await transport.waitUntilSuspended())
+        fixture.owner.stop()
+        let stoppedBytes = transport.bytesSent
+        let resumedZone = TimeZone(secondsFromGMT: -6 * 3600)!
+        fixture.clock.setTimeZone(resumedZone)
+        let recovery = Task { await state.recoverAfterFailedUpdaterInstall() }
+        await Task.yield()
+        #expect(!fixture.owner.authority.isAdmissionOpen())
+        #expect(fixture.owner.store.getPeriod(periodId: periodId)?.state == "finalized")
+        transport.resumeStream()
+        await recovery.value
+        #expect(state.browserIntakeStore === fixture.owner.store)
+        #expect(fixture.owner.store.getActiveGeneration() == generation)
+        #expect(fixture.owner.authority.isAdmissionOpen())
+        #expect(await waitForDurableAck(fixture, periodId: periodId))
+        #expect(transport.maxConcurrent == 1)
+        #expect(transport.bytesSent > stoppedBytes)
+        let next = try reply(await fixture.owner.accept(bytes: batch(generation,
+            id: "44444444444444444444444444444444", queuedAtMs: 1_700_000_401_000), direction: "extension_to_host"))
+        let nextPeriod = try #require(next["period_id"] as? String)
+        fixture.owner.stop()
+        #expect(fixture.owner.store.getPeriod(periodId: nextPeriod)?.finalizeTimeZone == resumedZone.identifier)
+    }
+
+    @Test @MainActor func settingsSyncResumeDeliversHeldBrowserDataWithoutANewBatch() async throws {
+        let state = AppState.forSnapshot(config: AppConfig(syncPaused: true))
+        state.configSaver = { _ in }
+        let paired = pairing(instanceID: "browser-settings-test")
+        let credentials = PairingCredentialStore(store: PairingStore(pairing: paired))
+        _ = try credentials.load()
+        let transport = LifecycleTransport()
+        transport.setOutcomeSuccess(true)
+        let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired), transport: transport,
+            syncPaused: { await MainActor.run { state.config.syncPaused } })
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+        state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
+        await fixture.owner.start()
+        await fixture.clock.waitUntilSleeping()
+        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let accepted = try reply(await fixture.owner.accept(bytes: batch(generation,
+            id: "42424242424242424242424242424242", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
+        let periodId = try #require(accepted["period_id"] as? String)
+        fixture.clock.advance(seconds: 301)
+        #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
+        #expect(transport.attempts == 0)
+        var config = state.config
+        config.syncPaused = false
+        state.updateConfig(config)
+        #expect(await waitForDurableAck(fixture, periodId: periodId))
+        #expect(transport.attempts == 1)
+    }
+
+    @Test func stopUsesTrackedZoneEvenBeforeItsNotificationArrives() async throws {
+        let fixture = try fixture(date: Date(timeIntervalSince1970: 1_700_006_500))
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        await fixture.owner.start()
+        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let accepted = try reply(await fixture.owner.accept(bytes: batch(generation,
+            id: "43434343434343434343434343434343", queuedAtMs: 1_700_006_500_000), direction: "extension_to_host"))
+        let periodId = try #require(accepted["period_id"] as? String)
+        fixture.clock.setTimeZone(TimeZone(secondsFromGMT: -12 * 3600)!)
+        fixture.clock.setWallDate(Date(timeIntervalSince1970: -1))
+        fixture.owner.stop()
+        let period = try #require(fixture.owner.store.getPeriod(periodId: periodId))
+        #expect(period.state == "finalized")
+        #expect(period.finalizeTimeZone == "GMT")
+        #expect(period.requestedDay == "1969-12-31")
+    }
+
     @Test func failedCommittedLengthReadNeverTruncatesToZero() async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -811,7 +917,7 @@ struct BrowserSpoolLifecycleTests {
         restarted.stop()
     }
 
-    @Test func finalizingIntentRecoversWithItsStoredCivilContext() async throws {
+    @Test(arguments: [false, true]) func finalizingIntentRecoversWithItsStoredCivilContext(afterSync: Bool) async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
@@ -822,8 +928,12 @@ struct BrowserSpoolLifecycleTests {
             direction: "extension_to_host"
         ))
         let periodId = try #require(accepted["period_id"] as? String)
-        fixture.injector.setFailure { point in
-            if point == .finalizePublication { throw LifecycleInjectedFailure.injected }
+        if afterSync {
+            fixture.owner.store.crashPoint = .afterFinalizeSync
+        } else {
+            fixture.injector.setFailure { point in
+                if point == .finalizePublication { throw LifecycleInjectedFailure.injected }
+            }
         }
         fixture.clock.advance(seconds: 301)
         let deadline = ContinuousClock.now + .seconds(3)
@@ -837,6 +947,7 @@ struct BrowserSpoolLifecycleTests {
         let storedZone = try #require(intent.finalizeTimeZone)
         #expect(storedZone == "GMT")
         fixture.owner.stop()
+        fixture.owner.store.crashPoint = .none
         fixture.injector.setFailure(nil)
         fixture.clock.setTimeZone(TimeZone(secondsFromGMT: -7 * 60 * 60)!)
         fixture.clock.setWallDate(fixture.clock.wallNow().addingTimeInterval(86_400))
@@ -1706,7 +1817,7 @@ struct BrowserSpoolLifecycleTests {
     @Test func retryableTransportFailureGetsOneOwnerScheduledRetry() async throws {
         let transport = LifecycleTransport()
         let fixture = try fixture(transport: transport)
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
         let generation = try #require(fixture.owner.store.getActiveGeneration())
@@ -1718,6 +1829,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.clock.advance(seconds: 301)
         #expect(await transport.waitForAttempts(1))
         #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
+        #expect(await waitForDeliveryState(fixture, state: "failed"))
         let failed = try decodedState(fixture.owner.authority.status(), projection: fixture.projection)
         #expect(failed.delivery == "failed")
         #expect(failed.failure != nil)

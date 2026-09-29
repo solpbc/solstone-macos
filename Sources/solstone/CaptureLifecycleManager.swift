@@ -86,6 +86,7 @@ final class CaptureLifecycleManager {
             try await Task.sleep(nanoseconds: 500_000_000)
         },
         transitionTimeoutSeconds: TimeInterval = 30,
+        preResumeSettle: (@MainActor () async -> Void)? = nil,
         workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
     ) {
         self.recoveryScheduler = recoveryScheduler
@@ -94,7 +95,7 @@ final class CaptureLifecycleManager {
         self.executor = CaptureExecutor(
             isScreenLocked: isScreenLocked,
             unlockResumeDelay: unlockResumeDelay,
-            preResumeSettle: {
+            preResumeSettle: preResumeSettle ?? {
                 await CaptureLifecycleManager.waitForAudioDevices(timeout: 5.0)
             },
             transitionTimeoutSeconds: transitionTimeoutSeconds

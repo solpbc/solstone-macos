@@ -128,11 +128,15 @@ PRIOR_DEFAULT="$(python3 scripts/keychain_search_list.py current-default)"
 python3 scripts/keychain_search_list.py prepend "$TEST_KC"
 security default-keychain -d user -s "$TEST_KC"
 
+CI_SWIFT_ARGUMENTS=("$@")
+
 run_tests() {
   echo "==> brand asset freshness"
   ./scripts/check-brand-assets-fresh.sh 2>&1
   echo "==> swift test"
-  swift test 2>&1
+  # Suite-level parallelism overloads short deterministic fixture deadlines.
+  # Individual concurrency/race tests still drive their own competing tasks.
+  swift test --no-parallel "${CI_SWIFT_ARGUMENTS[@]}" 2>&1
   echo "==> python unittest"
   python3 -m unittest discover scripts/tests 2>&1
 }

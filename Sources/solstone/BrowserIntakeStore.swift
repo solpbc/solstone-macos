@@ -199,6 +199,10 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         }
     }
 
+    func resumeDeliveryAfterDrain() {
+        lock.withLock { deliveryStopped = false }
+    }
+
     func reopenDeliveryProofs() {
         lock.withLock {
             if !deliveryStopped { deliveryProofsOpen = true }
@@ -1177,7 +1181,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         return newGen
     }
 
-    public func retireIfTokenChanged(newToken: String?, nowMs: UInt64) throws {
+    public func retireIfTokenChanged(newToken: String?, nowMs: UInt64, timeZone: TimeZone = .current) throws {
         lock.lock()
         defer { lock.unlock() }
 
@@ -1196,7 +1200,7 @@ private static func fullSync(_ handle: FileHandle) throws {
                 periodId: openPid,
                 reason: "identity_retirement",
                 civilDate: Date(timeIntervalSince1970: Double(durableNowMs) / 1000.0),
-                timeZone: TimeZone.current,
+                timeZone: timeZone,
                 openReplacement: false
             )
         }
@@ -1799,20 +1803,6 @@ private static func fullSync(_ handle: FileHandle) throws {
         guard let fileBytes = try Self.fileByteCount(fileURL), fileBytes >= committedLength else {
             throw BrowserIntakeStoreError.localIO
         }
-        let fh = try FileHandle(forWritingTo: fileURL)
-        if fileBytes > committedLength {
-            try ioInjector.check(.write)
-            try fh.truncate(atOffset: UInt64(committedLength))
-        }
-        try ioInjector.check(.sync)
-        try Self.fullSync(fh)
-        try fh.close()
-        try fsyncParentChecked(of: fileURL)
-
-        if crashPoint == .afterFinalizeSync {
-            throw BrowserIntakeStoreError.localIO
-        }
-
         let dayFormatter = DateFormatter()
         dayFormatter.dateFormat = "yyyy-MM-dd"
         dayFormatter.timeZone = timeZone
@@ -1833,7 +1823,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         guard fileData.count == committedLength else { throw BrowserIntakeStoreError.localIO }
         let sha256Hex = SHA256.hash(data: fileData).map { String(format: "%02x", $0) }.joined()
 
-        let nowMs = UInt64(civilDate.timeIntervalSince1970 * 1000.0)
+        let nowMs = BrowserAgeStamp.wallMilliseconds(civilDate)
         let durableNowMs = try updateFloorMsLocked(wallNowMs: max(storedFloorMs, nowMs))
 
         let (createdAtMs, state) = try query("SELECT created_at_ms, state FROM periods WHERE period_id = ?") { stmt in
@@ -1871,6 +1861,20 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
 
         fileRecoveryRequired = true
+        // Commit the civil identity before changing the file. Recovery must
+        // retain this destination even if the clock or time zone changes.
+        let fh = try FileHandle(forWritingTo: fileURL)
+        defer { try? fh.close() }
+        if fileBytes > committedLength {
+            try ioInjector.check(.write)
+            try fh.truncate(atOffset: UInt64(committedLength))
+        }
+        try ioInjector.check(.sync)
+        try Self.fullSync(fh)
+        try fsyncParentChecked(of: fileURL)
+        if crashPoint == .afterFinalizeSync {
+            throw BrowserIntakeStoreError.localIO
+        }
         try ioInjector.check(.finalizePublication)
         try execute("BEGIN IMMEDIATE;")
         var publicationTransactionBegan = true

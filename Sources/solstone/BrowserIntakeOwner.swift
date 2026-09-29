@@ -55,18 +55,16 @@ private final class BrowserIntakeStopController: @unchecked Sendable {
     private let store: BrowserIntakeStore
     private let authority: BrowserIntakeAuthority
     private let gate: BrowserUploadGate
-    private let clock: any BrowserIntakeClock
     private var stopped = false
     private var epoch: UInt64 = 0
     private var deliveryTask: Task<Void, Never>?
     private var boundaryTask: Task<Void, Never>?
     private var observerTokens: [(NotificationCenter, NSObjectProtocol)] = []
 
-    init(store: BrowserIntakeStore, authority: BrowserIntakeAuthority, gate: BrowserUploadGate, clock: any BrowserIntakeClock) {
+    init(store: BrowserIntakeStore, authority: BrowserIntakeAuthority, gate: BrowserUploadGate) {
         self.store = store
         self.authority = authority
         self.gate = gate
-        self.clock = clock
     }
 
     func isStopped() -> Bool { lock.withLock { stopped } }
@@ -116,8 +114,6 @@ private final class BrowserIntakeStopController: @unchecked Sendable {
             stopped = true
             epoch &+= 1
             defer {
-                deliveryTask = nil
-                boundaryTask = nil
                 observerTokens.removeAll()
             }
             return (deliveryTask, boundaryTask, observerTokens)
@@ -131,18 +127,28 @@ private final class BrowserIntakeStopController: @unchecked Sendable {
         boundaryTask?.cancel()
         for (center, token) in tokens { center.removeObserver(token) }
 
-        guard let periodId = store.getOpenPeriodId() else { return }
         do {
-            try store.finalizePeriod(
-                periodId: periodId,
-                reason: "owner_stop",
-                civilDate: clock.wallNow(),
-                timeZone: clock.timeZone(),
-                openReplacement: false
-            )
+            try authority.stopAndFinalize()
         } catch {
             store.setStoreFailed(true)
             Logger.storage.error("Browser intake stop finalization failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    func drain() async {
+        let tasks = lock.withLock { (deliveryTask, boundaryTask) }
+        await tasks.0?.value
+        await tasks.1?.value
+    }
+
+    func resumeAfterDrain() -> Bool {
+        lock.withLock {
+            guard stopped else { return false }
+            deliveryTask = nil
+            boundaryTask = nil
+            epoch &+= 1
+            stopped = false
+            return true
         }
     }
 }
@@ -176,7 +182,7 @@ public actor BrowserIntakeOwner {
         self.clock = clock
         self.routeState = routeState
         self.timeZone = clock.timeZone()
-        self.stopController = BrowserIntakeStopController(store: store, authority: authority, gate: gate, clock: clock)
+        self.stopController = BrowserIntakeStopController(store: store, authority: authority, gate: gate)
     }
 
     static func start(
@@ -208,7 +214,7 @@ public actor BrowserIntakeOwner {
                 return url
             },
             syncPausedProvider: syncPaused,
-            nowMs: { UInt64(clock.wallNow().timeIntervalSince1970 * 1000) },
+            nowMs: { BrowserAgeStamp.wallMilliseconds(clock.wallNow()) },
             routeState: routeState
         )
         let owner = BrowserIntakeOwner(
@@ -237,8 +243,10 @@ public actor BrowserIntakeOwner {
 
     public func start() async {
         guard !started, !stopController.isStopped() else { return }
+        let runEpoch = stopController.currentEpoch()
         started = true
         let workspaceCenter = await MainActor.run { NSWorkspace.shared.notificationCenter }
+        guard stopController.isActive(epoch: runEpoch) else { return }
         observeLifecycle(workspaceCenter: workspaceCenter)
         guard !stopController.isStopped() else { return }
         authority.poll(now: clock.wallNow())
@@ -339,6 +347,36 @@ public actor BrowserIntakeOwner {
 
     public nonisolated func stop() { stopController.stop() }
 
+    public func stopAndDrain() async {
+        stop()
+        await stopController.drain()
+    }
+
+    public func resumeAfterFailedUpdate(credentialSnapshot: BrowserCredentialSnapshot, paused: Bool) async {
+        guard stopController.isStopped() else { return }
+        await stopController.drain()
+        guard stopController.isStopped(), !store.storeIsFailed() else { return }
+        store.resumeDeliveryAfterDrain()
+        authority.resumeAfterDrain()
+        do {
+            let currentZone = clock.timeZone()
+            try authority.setTimeZone(currentZone)
+            timeZone = currentZone
+            try authority.reconcileIdentity(credentialSnapshot.identityToken, mode: .reload)
+            authority.setPaused(paused)
+            guard stopController.resumeAfterDrain() else { return }
+            deliveryRunning = false
+            deliveryPending = false
+            started = false
+            gate.resumeReaders()
+            await start()
+        } catch {
+            store.stopDeliveryProofs()
+            authority.closeAdmission()
+            Logger.storage.error("Browser intake update recovery failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     private func runDelivery(epoch runEpoch: UInt64) async {
         var passes = 0
         repeat {
@@ -375,6 +413,7 @@ public actor BrowserIntakeOwner {
     }
 
     private func systemTimeZoneChanged() {
+        guard !stopController.isStopped() else { return }
         let newZone = clock.timeZone()
         guard newZone != timeZone else { return }
         do {
@@ -389,6 +428,7 @@ public actor BrowserIntakeOwner {
     }
 
     private func startBoundaryWaiter() {
+        let runEpoch = stopController.currentEpoch()
         let task = Task { [weak self, clock] in
             while !Task.isCancelled {
                 guard let self else { return }
@@ -400,7 +440,7 @@ public actor BrowserIntakeOwner {
                     if Task.isCancelled { return }
                 }
                 guard !Task.isCancelled else { return }
-                await self.boundaryDidPass()
+                await self.boundaryDidPass(epoch: runEpoch)
             }
         }
         stopController.setBoundaryTask(task)
@@ -416,8 +456,8 @@ public actor BrowserIntakeOwner {
         return next
     }
 
-    private func boundaryDidPass() {
-        guard started, !stopController.isStopped() else { return }
+    private func boundaryDidPass(epoch: UInt64) {
+        guard started, stopController.isActive(epoch: epoch) else { return }
         authority.poll(now: clock.wallNow())
         scheduleDelivery()
     }
