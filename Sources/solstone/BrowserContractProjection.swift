@@ -74,6 +74,21 @@ public final class BrowserContractProjection: Sendable {
     public let browserSchemaData: Data
     public let manifestJsonData: Data
 
+    public static func vendorRootURL(bundleURL: URL) -> URL? {
+        let root = bundleURL.appendingPathComponent("Contents/Resources/vendor", isDirectory: true)
+        let relativePaths = [
+            "contracts/native-browser/authority.json",
+            "crates/native-browser-frame/src/constants.rs",
+            "contracts/native-browser/envelope.schema.json",
+            "contracts/native-browser/browser.schema.json",
+            "contracts/native-browser/manifest.json"
+        ]
+        guard relativePaths.allSatisfy({ FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }) else {
+            return nil
+        }
+        return root
+    }
+
     public init(rootURL: URL) throws {
         self.rootURL = rootURL
 

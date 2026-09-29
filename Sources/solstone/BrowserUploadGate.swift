@@ -5,6 +5,23 @@
 
 import Foundation
 
+final class BrowserIntakeRouteState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var route: String?
+
+    func update(_ route: String?) -> Bool {
+        lock.withLock {
+            guard !BrowserOpaqueString.equals(self.route, route) else { return false }
+            self.route = route
+            return true
+        }
+    }
+
+    func matches(_ route: String) -> Bool {
+        lock.withLock { BrowserOpaqueString.equals(self.route, route) }
+    }
+}
+
 public struct BrowserUploadPermit: Sendable, Equatable {
     public let generation: String
     public let identityToken: String
@@ -15,86 +32,105 @@ public struct BrowserUploadPermit: Sendable, Equatable {
     }
 }
 
+public final class BrowserUploadLease: @unchecked Sendable {
+    private weak var gate: BrowserUploadGate?
+    private let routeCheck: @Sendable () -> Bool
+    fileprivate let id: UUID
+    fileprivate let permit: BrowserUploadPermit
+    let periodId: String
+
+    fileprivate init(gate: BrowserUploadGate, id: UUID, permit: BrowserUploadPermit, periodId: String, routeCheck: @escaping @Sendable () -> Bool) {
+        self.gate = gate
+        self.id = id
+        self.permit = permit
+        self.periodId = periodId
+        self.routeCheck = routeCheck
+    }
+
+    public func isValid() -> Bool {
+        (gate?.isLeaseActive(id: id, permit: permit) ?? false) && routeCheck()
+    }
+
+    public func onInvalidate(_ cancel: @escaping @Sendable () -> Void) {
+        gate?.setCancellationHandler(cancel, for: id)
+    }
+}
+
 public final class BrowserUploadGate: @unchecked Sendable {
-    private let condition = NSCondition()
+    private let lock = NSLock()
     private let store: BrowserIntakeStore
-    private var activeReadersCount: Int = 0
-    private var isCancelled: Bool = false
+    private var isCancelled = false
+    private var activeLeaseID: UUID?
+    private var cancellationHandler: (@Sendable () -> Void)?
 
     public init(store: BrowserIntakeStore) {
         self.store = store
     }
 
     public func currentPermit() -> BrowserUploadPermit? {
-        condition.lock()
-        defer { condition.unlock() }
-        guard !isCancelled else { return nil }
-        guard let generation = store.getActiveGeneration(),
-              let token = store.getActiveIdentityToken() else {
-            return nil
+        lock.withLock {
+            guard !isCancelled,
+                  !store.storeIsFailed(),
+                  let generation = store.getActiveGeneration(),
+                  let token = store.getActiveIdentityToken() else {
+                return nil
+            }
+            return BrowserUploadPermit(generation: generation, identityToken: token)
         }
-        return BrowserUploadPermit(generation: generation, identityToken: token)
+    }
+
+    public func makeLease(permit: BrowserUploadPermit, periodId: String, routeCheck: @escaping @Sendable () -> Bool = { true }) -> BrowserUploadLease? {
+        lock.withLock {
+            guard !isCancelled,
+                  !store.storeIsFailed(),
+                  store.getActiveGeneration().map({ BrowserOpaqueString.equals($0, permit.generation) }) == true,
+                  store.getActiveIdentityToken().map({ BrowserOpaqueString.equals($0, permit.identityToken) }) == true else {
+                return nil
+            }
+            let id = UUID()
+            activeLeaseID = id
+            cancellationHandler = nil
+            return BrowserUploadLease(gate: self, id: id, permit: permit, periodId: periodId, routeCheck: routeCheck)
+        }
     }
 
     public func isPermitActive(_ permit: BrowserUploadPermit) -> Bool {
-        condition.lock()
-        defer { condition.unlock() }
-        guard !isCancelled else { return false }
-        guard let currentGeneration = store.getActiveGeneration(),
-              let currentToken = store.getActiveIdentityToken() else {
+        lock.withLock {
+            !isCancelled && !store.storeIsFailed() && store.getActiveGeneration().map({ BrowserOpaqueString.equals($0, permit.generation) }) == true && store.getActiveIdentityToken().map({ BrowserOpaqueString.equals($0, permit.identityToken) }) == true
+        }
+    }
+
+    fileprivate func isLeaseActive(id: UUID, permit: BrowserUploadPermit) -> Bool {
+        lock.withLock {
+            !isCancelled && !store.storeIsFailed() && activeLeaseID == id && store.getActiveGeneration().map({ BrowserOpaqueString.equals($0, permit.generation) }) == true && store.getActiveIdentityToken().map({ BrowserOpaqueString.equals($0, permit.identityToken) }) == true
+        }
+    }
+
+    fileprivate func setCancellationHandler(_ handler: @escaping @Sendable () -> Void, for id: UUID) {
+        let shouldCancel = lock.withLock { () -> Bool in
+            guard !isCancelled, activeLeaseID == id else { return true }
+            cancellationHandler = handler
             return false
         }
-        return currentGeneration == permit.generation && currentToken == permit.identityToken
+        if shouldCancel { handler() }
     }
 
-    public func enterBodyRead(permit: BrowserUploadPermit) -> Bool {
-        condition.lock()
-        defer { condition.unlock() }
-        if isCancelled { return false }
-        guard let currentGeneration = store.getActiveGeneration(),
-              let currentToken = store.getActiveIdentityToken(),
-              currentGeneration == permit.generation,
-              currentToken == permit.identityToken else {
-            return false
+    public func invalidateCurrentLease() {
+        let cancel = lock.withLock { () -> (@Sendable () -> Void)? in
+            isCancelled = true
+            activeLeaseID = nil
+            defer { cancellationHandler = nil }
+            return cancellationHandler
         }
-        activeReadersCount += 1
-        return true
-    }
-
-    public func leaveBodyRead() {
-        condition.lock()
-        activeReadersCount -= 1
-        if activeReadersCount == 0 {
-            condition.broadcast()
-        }
-        condition.unlock()
-    }
-
-    /// Blocks until in-flight body reads finish. New reads stay closed until
-    /// `resumeReaders()` after the replacement epoch is durable.
-    public func cancelInFlightAndWait() {
-        condition.lock()
-        isCancelled = true
-        while activeReadersCount > 0 {
-            condition.wait()
-        }
-        condition.unlock()
+        cancel?()
     }
 
     public func resumeReaders() {
-        condition.lock()
-        isCancelled = false
-        condition.unlock()
+        lock.withLock { isCancelled = false }
     }
 
     public func readBodyData(fileURL: URL, permit: BrowserUploadPermit) -> Data {
-        guard enterBodyRead(permit: permit) else {
-            return Data()
-        }
-        defer { leaveBodyRead() }
-        guard isPermitActive(permit) else {
-            return Data()
-        }
+        guard isPermitActive(permit) else { return Data() }
         return (try? Data(contentsOf: fileURL)) ?? Data()
     }
 }

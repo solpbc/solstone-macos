@@ -30,6 +30,7 @@ public final class PairingCredentialStore: @unchecked Sendable {
     public var beforeIdentityMutation: (@Sendable (String?) throws -> Void)?
     /// Hook invoked after identity mutation succeeds, with the lock released.
     public var afterIdentityMutation: (@Sendable (String?) -> Void)?
+    public var afterCredentialLoad: (@Sendable (String?) -> Void)?
     #endif
 
     public init(store: any PairingStoring) {
@@ -53,8 +54,19 @@ public final class PairingCredentialStore: @unchecked Sendable {
 
     public func load() throws -> StoredPairing? {
         lock.lock()
-        defer { lock.unlock() }
-        let loaded = try store.load()
+        let loaded: StoredPairing?
+        do {
+            loaded = try store.load()
+        } catch {
+            #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            let hook = afterCredentialLoad
+            lock.unlock()
+            hook?(nil)
+            #else
+            lock.unlock()
+            #endif
+            throw error
+        }
         let previous = cachedPairing
         cachedPairing = loaded
         let identity = loaded.map { self.deriveIdentityToken(for: $0) }
@@ -65,6 +77,13 @@ public final class PairingCredentialStore: @unchecked Sendable {
         } else if loaded != previous {
             storedAccessGeneration &+= 1
         }
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let hook = afterCredentialLoad
+        lock.unlock()
+        hook?(identity)
+        #else
+        lock.unlock()
+        #endif
         return loaded
     }
 

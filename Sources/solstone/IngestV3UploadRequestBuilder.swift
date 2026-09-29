@@ -12,6 +12,13 @@ struct PreparedIngestV3Upload: Sendable {
     let metadata: [String: IngestJSONValue]?
 }
 
+struct IngestV3UploadIOHooks {
+    let beforeRead: () throws -> Void
+    let beforeWrite: () throws -> Void
+    let beforeSync: () throws -> Void
+    let sync: (FileHandle) throws -> Void
+}
+
 /// Builds the v3 multipart request independently from HTTP. The caller owns the
 /// returned body file and removes it after URLSession finishes reading it.
 struct IngestV3UploadRequestBuilder {
@@ -65,7 +72,8 @@ struct IngestV3UploadRequestBuilder {
         meta: [String: IngestJSONValue]?,
         source: String? = nil,
         boundary: String,
-        bodyURL: URL
+        bodyURL: URL,
+        ioHooks: IngestV3UploadIOHooks? = nil
     ) throws -> PreparedIngestV3Upload {
         guard !selectedFiles.isEmpty else { throw UploadError.noFiles }
         guard selectedFiles.count <= IngestProtocolV3.maxFiles else { throw UploadError.invalidRequest }
@@ -105,13 +113,14 @@ struct IngestV3UploadRequestBuilder {
         }
 
         let fileManager = FileManager.default
-        fileManager.createFile(atPath: bodyURL.path, contents: nil)
+        try ioHooks?.beforeWrite()
+        guard fileManager.createFile(atPath: bodyURL.path, contents: nil) else { throw UploadError.invalidRequest }
         let bodyHandle = try FileHandle(forWritingTo: bodyURL)
         defer { try? bodyHandle.close() }
 
         var stagedParts: [IngestAcknowledgedFileProof] = []
 
-        try bodyHandle.writeMultipartField(boundary: boundary, name: "envelope", value: envelopeString)
+        try bodyHandle.writeMultipartField(boundary: boundary, name: "envelope", value: envelopeString, beforeWrite: ioHooks?.beforeWrite)
         for fileURL in selectedFiles {
             let filename = fileURL.lastPathComponent
             let mimeType: String
@@ -126,7 +135,8 @@ struct IngestV3UploadRequestBuilder {
                 boundary: boundary,
                 name: "files",
                 filename: filename,
-                mimeType: mimeType
+                mimeType: mimeType,
+                beforeWrite: ioHooks?.beforeWrite
             )
 
             var hasher = SHA256()
@@ -135,10 +145,12 @@ struct IngestV3UploadRequestBuilder {
             defer { try? sourceHandle.close() }
             let sourceVersion = IngestLocalFileVersion.read(fileDescriptor: sourceHandle.fileDescriptor)
             while true {
+                try ioHooks?.beforeRead()
                 let chunk = sourceHandle.readData(ofLength: 1_024 * 1_024)
                 if chunk.isEmpty { break }
                 hasher.update(data: chunk)
                 partSize += UInt64(chunk.count)
+                try ioHooks?.beforeWrite()
                 try bodyHandle.write(contentsOf: chunk)
             }
             let digest = hasher.finalize()
@@ -150,10 +162,14 @@ struct IngestV3UploadRequestBuilder {
                 submitted: filename, sha256: hex, size: partSize,
                 localVersion: unchangedSource ? sourceVersion : nil
             ))
+            try ioHooks?.beforeWrite()
             try bodyHandle.write(contentsOf: Data("\r\n".utf8))
         }
+        try ioHooks?.beforeWrite()
         try bodyHandle.write(contentsOf: Data("--\(boundary)--\r\n".utf8))
-        try bodyHandle.synchronize()
+        try ioHooks?.beforeSync()
+        if let ioHooks { try ioHooks.sync(bodyHandle) }
+        else { try bodyHandle.synchronize() }
         guard let bodySize = try? bodyURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
               bodySize <= IngestProtocolV3.maxConnectionBodyBytes else {
             throw UploadError.invalidRequest
@@ -173,8 +189,9 @@ struct IngestV3UploadRequestBuilder {
 }
 
 private extension FileHandle {
-    func writeMultipartField(boundary: String, name: String, value: String) throws {
+    func writeMultipartField(boundary: String, name: String, value: String, beforeWrite: (() throws -> Void)?) throws {
         let header = "--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n"
+        try beforeWrite?()
         try write(contentsOf: Data(header.utf8))
     }
 
@@ -182,9 +199,11 @@ private extension FileHandle {
         boundary: String,
         name: String,
         filename: String,
-        mimeType: String
+        mimeType: String,
+        beforeWrite: (() throws -> Void)?
     ) throws {
         let header = "--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"; filename=\"\(filename)\"\r\nContent-Type: \(mimeType)\r\n\r\n"
+        try beforeWrite?()
         try write(contentsOf: Data(header.utf8))
     }
 }

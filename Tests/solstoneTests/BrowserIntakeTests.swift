@@ -37,6 +37,16 @@ private final class BrowserTestClock: @unchecked Sendable {
     }
 }
 
+private final class BrowserTestInjectedSize: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue = 0
+
+    var value: Int {
+        get { lock.withLock { storedValue } }
+        set { lock.withLock { storedValue = max(0, newValue) } }
+    }
+}
+
 private final class ManualMonotonicClock: MonotonicClock, @unchecked Sendable {
     private let lock = NSLock()
     private var current: Duration
@@ -106,7 +116,7 @@ struct BrowserIntakeAdmissionTests {
         #expect(reply1["class"] as? String == "retryable")
 
         // Assert snapshot_required leaves no receipt row and does not change open file length
-        #expect(store.lookupReceipt(generation: gen, inst: "inst-A", batchId: sharedBatchId) == nil)
+        #expect(try store.lookupReceipt(generation: gen, inst: "inst-A", batchId: sharedBatchId) == nil)
         let fileLenAfterRefusal = (try? Data(contentsOf: openFileURL).count) ?? 0
         #expect(fileLenAfterRefusal == fileLenBefore)
 
@@ -207,7 +217,7 @@ struct BrowserIntakeAdmissionTests {
         #expect(reply2["result"] as? String == "rejected")
         #expect(reply2["reason"] as? String == "snapshot_required")
         #expect(reply2["class"] as? String == "retryable")
-        #expect(store.lookupReceipt(generation: gen, inst: "inst-1", batchId: deltaId) == nil)
+        #expect(try store.lookupReceipt(generation: gen, inst: "inst-1", batchId: deltaId) == nil)
         #expect(store.getPeriod(periodId: pid1)?.state == "finalized")
         let file1After = try Data(contentsOf: store.periodFileURL(for: pid1))
         #expect(file1After == file1Before)
@@ -340,7 +350,7 @@ struct BrowserIntakeAdmissionTests {
         let replyFail = try authority3.accept(bytes: try JSONSerialization.data(withJSONObject: deltaFail), direction: "extension_to_host")
         #expect(replyFail["result"] as? String == "rejected")
         #expect(replyFail["reason"] as? String == "resource_exhausted")
-        #expect(store3.lookupReceipt(generation: gen, inst: "inst-1", batchId: "55555555555555555555555555555555") == nil)
+        #expect(try store3.lookupReceipt(generation: gen, inst: "inst-1", batchId: "55555555555555555555555555555555") == nil)
         let p2LenAfter = try Data(contentsOf: p2URL).count
         #expect(p2LenAfter == p2LenBefore)
     }
@@ -352,7 +362,8 @@ struct BrowserIntakeAdmissionTests {
         let projection = try BrowserContractProjection(rootURL: vendorURL)
         #expect(projection.policy.spoolBytes == 536870912)
 
-        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let ioInjector = BrowserIntakeIOInjector()
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection, ioInjector: ioInjector)
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
         let authority = BrowserIntakeAuthority(
             store: store,
@@ -392,14 +403,22 @@ struct BrowserIntakeAdmissionTests {
 
         let gap = projection.policy.spoolBytes - before
         let exactPayload = 32
-        store.setHeldStagingBytes(gap - (exactPayload * 2))
+        let stagingDirectory = store.stagingRootURL().appendingPathComponent("footprint-staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+        let stagingFile = stagingDirectory.appendingPathComponent("multipart.body")
+        try Data().write(to: stagingFile)
+        let injectedStageSize = BrowserTestInjectedSize()
+        ioInjector.setSizeOverride { url, actual in
+            url == stagingFile ? injectedStageSize.value : actual
+        }
+        try store.registerStagingDirectory(stagingDirectory, reservedBytes: 0)
+        injectedStageSize.value = gap - (exactPayload * 2)
         #expect(store.isQuotaFull(additionalBytes: exactPayload, additionalDedupBytes: 0) == false)
-        store.setHeldStagingBytes(gap - (exactPayload * 2) + 1)
+        injectedStageSize.value = gap - (exactPayload * 2) + 1
         #expect(store.isQuotaFull(additionalBytes: exactPayload, additionalDedupBytes: 0) == true)
-        store.setHeldStagingBytes(0)
 
         let anchorFile = store.periodFileURL(for: anchorPid)
-        store.setHeldStagingBytes(projection.policy.spoolBytes)
+        injectedStageSize.value = projection.policy.spoolBytes
         #expect(store.isQuotaFull())
 
         let openBeforeOver = try #require(store.getOpenPeriodId())
@@ -418,13 +437,14 @@ struct BrowserIntakeAdmissionTests {
         #expect(repOver["reason"] as? String == "resource_exhausted")
         #expect(repOver["class"] as? String == "retryable")
         #expect(((try? Data(contentsOf: openFile).count) ?? 0) == lenBeforeOver)
-        #expect(store.lookupReceipt(generation: gen, inst: "inst-1", batchId: "77777777777777777777777777777777") == nil)
+        #expect(try store.lookupReceipt(generation: gen, inst: "inst-1", batchId: "77777777777777777777777777777777") == nil)
 
         let repReplay = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: anchorBatch), direction: "extension_to_host")
         #expect(repReplay["result"] as? String == "duplicate")
         #expect(repReplay["period_id"] as? String == anchorPid)
 
-        store.setHeldStagingBytes(0)
+        injectedStageSize.value = 0
+        try store.releaseStagingDirectory(stagingDirectory)
         #expect(store.isQuotaFull() == false)
         clock.advance(by: 604801)
         let staleOnly = authority.status()
@@ -440,22 +460,30 @@ struct BrowserIntakeAdmissionTests {
         #expect(rollbackCustody?["stale"] == true)
         #expect(afterRollback["delivery"] as? String == "kept_locally")
 
-        store.simulatedDeliveryFailure = "journal_rejected"
         let failed = authority.status()
-        #expect(failed["delivery"] as? String == "failed")
-        #expect(failed["failure"] as? String == "journal_rejected")
-        store.setHeldStagingBytes(projection.policy.spoolBytes)
+        #expect(failed["delivery"] as? String == "kept_locally")
+        injectedStageSize.value = projection.policy.spoolBytes
         let combined = authority.status()
         let combinedCustody = combined["custody"] as? [String: Bool]
         #expect(combined["capture"] as? String == "intake_off")
-        #expect(combined["delivery"] as? String == "failed")
-        #expect(combined["failure"] as? String == "journal_rejected")
+        #expect(combined["delivery"] as? String == "kept_locally")
         #expect(combinedCustody?["full"] == true)
         #expect(combinedCustody?["stale"] == true)
-        store.simulatedDeliveryFailure = nil
-        store.setHeldStagingBytes(0)
+        injectedStageSize.value = 0
+        try store.releaseStagingDirectory(stagingDirectory)
 
-        store.releaseProven(periodId: anchorPid)
+        let anchorPeriod = try #require(store.getPeriod(periodId: anchorPid))
+        let anchorProof = BrowserIngestAck(
+            generation: gen, periodId: anchorPid, sha256: anchorPeriod.fileSha256 ?? "",
+            size: UInt64(anchorPeriod.committedLength), metadata: nil,
+            requestedDay: anchorPeriod.requestedDay ?? "", requestedSegment: anchorPeriod.requestedSegment ?? "",
+            canonicalKey: anchorPeriod.requestedSegment, status: .collision
+        )
+        try store.persistDeliveryBinding(anchorProof)
+        let anchorAck = BrowserIngestAckStore.ackURL(periodDirectory: anchorFile.deletingLastPathComponent())
+        try BrowserIngestAckStore.write(anchorProof, to: anchorAck)
+        try store.markAckDurable(periodId: anchorPid)
+        try store.releaseProven(periodId: anchorPid, binding: anchorProof, nowMs: 1700000000000)
         #expect(!FileManager.default.fileExists(atPath: anchorFile.path))
         #expect(store.getPeriod(periodId: anchorPid)?.state == "delivered")
 
@@ -500,7 +528,7 @@ struct BrowserIntakeAdmissionTests {
         #expect(repOld1["result"] as? String == "rejected")
         #expect(repOld1["reason"] as? String == "expired_unaccepted")
         authorityReopened.poll(now: clock.now)
-        #expect(storeReopened.lookupReceipt(generation: gen, inst: "inst-1", batchId: oldTombstoneBatchId) != nil)
+        #expect(try storeReopened.lookupReceipt(generation: gen, inst: "inst-1", batchId: oldTombstoneBatchId) != nil)
         // The durable floor is still ahead of the rolled-back wall clock.
         // Retention is measured from accepted_at_ms against that floor.
         let retentionTarget = storeReopened.getFloorMs() + projection.policy.acceptedRetentionMs + 1000
@@ -509,7 +537,7 @@ struct BrowserIntakeAdmissionTests {
             clock.advance(by: TimeInterval(retentionTarget - wallMs) / 1000.0)
         }
         authorityReopened.poll(now: clock.now)
-        #expect(storeReopened.lookupReceipt(generation: gen, inst: "inst-1", batchId: oldTombstoneBatchId) == nil)
+        #expect(try storeReopened.lookupReceipt(generation: gen, inst: "inst-1", batchId: oldTombstoneBatchId) == nil)
         clock.advance(by: -100000)
         let repOld2 = try authorityReopened.accept(bytes: try JSONSerialization.data(withJSONObject: oldBatch), direction: "extension_to_host")
         #expect(repOld2["result"] as? String == "rejected")
@@ -587,32 +615,35 @@ struct BrowserIntakeAdmissionTests {
         #expect(replyStale["reason"] as? String == "stale_generation")
     }
 
-    @Test func test6_malformedAndOversizeAdmission() throws {
+    @Test func test6_malformedAndOversizeAdmission() async throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let projection = try BrowserContractProjection(rootURL: vendorURL)
-        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
-        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { Date(timeIntervalSince1970: 1700000000) })
-        _ = try authority.publishEpoch(identityToken: "token-1")
+        let owner = try BrowserIntakeOwner.start(
+            spoolRoot: tempRoot,
+            projection: projection,
+            credentialSnapshot: BrowserCredentialSnapshot(identityToken: "token-1"),
+            routeResolver: HomeBaseURLResolver { .held }
+        )
+        await owner.start()
+        let store = owner.store
         let openFileURL = store.periodFileURL(for: try #require(store.getOpenPeriodId()))
         let lenBefore = (try? Data(contentsOf: openFileURL).count) ?? 0
 
-        let reply1 = try authority.accept(bytes: Data("{invalid json".utf8), direction: "extension_to_host")
-        #expect(reply1["type"] as? String == "refused")
-        #expect(reply1["code"] as? String == "bad_json")
-        #expect(reply1["result"] == nil)
-        #expect(reply1["destination_generation"] == nil)
-        #expect(reply1["inst"] == nil)
-        #expect(reply1["batch_id"] == nil)
+        let reply1 = await owner.accept(bytes: Data("{invalid json".utf8), direction: "extension_to_host")
+        guard case .refusal(let localRefusal1) = reply1 else { Issue.record("malformed input was not a local refusal"); return }
+        #expect(localRefusal1.code == "bad_json")
+        #expect(throws: BrowserIntakeLocalRefusal.self) {
+            try BrowserPayloadDecoder.validatedHostMessage(["type": "refused", "code": localRefusal1.code], projection: projection)
+        }
         #expect(((try? Data(contentsOf: openFileURL).count) ?? 0) == lenBefore)
 
         let oversizeData = Data(String(repeating: "o", count: projection.caps.extensionToHost + 10).utf8)
-        let reply2 = try authority.accept(bytes: oversizeData, direction: "extension_to_host")
-        #expect(reply2["type"] as? String == "refused")
-        #expect(reply2["code"] as? String == "oversize")
-        #expect(reply2["result"] == nil)
-        #expect(reply2["batch_id"] == nil)
+        let reply2 = await owner.accept(bytes: oversizeData, direction: "extension_to_host")
+        guard case .refusal(let localRefusal2) = reply2 else { Issue.record("oversize input was not a local refusal"); return }
+        #expect(localRefusal2.code == "oversize")
         #expect(((try? Data(contentsOf: openFileURL).count) ?? 0) == lenBefore)
+        owner.stop()
     }
 
     @Test func test1_generationRaceZeroBytesAndFileRetained() throws {
@@ -654,7 +685,7 @@ struct BrowserIntakeAdmissionTests {
         #expect(!originalBytes.isEmpty)
 
         // Race: pairing replaced / retired via retireIfTokenChanged
-        gate.cancelInFlightAndWait()
+        gate.invalidateCurrentLease()
         try authority.retireIfTokenChanged(newToken: "token-2")
 
         #expect(!gate.isPermitActive(permit))
@@ -751,20 +782,26 @@ struct BrowserIntakeAdmissionTests {
         #expect(FileManager.default.fileExists(atPath: pFileURL.path))
 
         let gate = BrowserUploadGate(store: store)
-        let planner = BrowserUploadPlanner(store: store, gate: gate, client: UploadClient())
+        let routeState = BrowserIntakeRouteState()
+        _ = routeState.update("http://127.0.0.1")
+        let transport = ScriptedBrowserTransport()
+        transport.uploadFailure = UploadError.serverError(IngestServerError(statusCode: 409, reasonCode: "segment_removed", bodyStatus: nil))
+        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, routeState: routeState)
 
-        // Mismatched generation -> ignored
-        planner.handleSegmentRemoved(generation: "wrong-gen", source: "browser", periodId: pid)
+        let stored = try #require(store.getPeriod(periodId: pid))
+        let wrongBinding = BrowserIngestAck(
+            generation: "wrong-gen", periodId: pid, filename: "browser_pages.jsonl",
+            sha256: stored.fileSha256 ?? "", size: UInt64(stored.committedLength), metadata: nil,
+            requestedDay: stored.requestedDay ?? "", requestedSegment: stored.requestedSegment ?? "",
+            canonicalKey: nil, status: .duplicate
+        )
+        #expect(throws: BrowserIntakeStoreError.self) {
+            try store.persistDeliveryBinding(wrongBinding)
+        }
         #expect(store.getPeriod(periodId: pid)?.state == "finalized")
         #expect(FileManager.default.fileExists(atPath: pFileURL.path))
 
-        // Mismatched source -> ignored
-        planner.handleSegmentRemoved(generation: gen, source: "media", periodId: pid)
-        #expect(store.getPeriod(periodId: pid)?.state == "finalized")
-        #expect(FileManager.default.fileExists(atPath: pFileURL.path))
-
-        // Matching generation + browser source -> removed
-        planner.handleSegmentRemoved(generation: gen, source: "browser", periodId: pid)
+        await planner.planAndUpload()
         #expect(store.getPeriod(periodId: pid)?.state == "removed")
         #expect(!FileManager.default.fileExists(atPath: pFileURL.path))
     }
@@ -801,6 +838,7 @@ struct BrowserIntakeAdmissionTests {
         let p1FileURL = store.periodFileURL(for: pid1)
         let p1Data = try Data(contentsOf: p1FileURL)
         let p1Sha256 = SHA256.hash(data: p1Data).map { String(format: "%02x", $0) }.joined()
+        let period1 = try #require(store.getPeriod(periodId: pid1))
 
         // 1. Collision response handling
         let collisionAck = BrowserIngestAck(
@@ -811,23 +849,24 @@ struct BrowserIntakeAdmissionTests {
             sha256: p1Sha256,
             size: UInt64(p1Data.count),
             metadata: nil,
-            requestedDay: "20260703",
-            requestedSegment: "120000_300",
+            requestedDay: try #require(period1.requestedDay),
+            requestedSegment: try #require(period1.requestedSegment),
             canonicalKey: "120001_300",
             status: .collision
         )
         let ackURL1 = BrowserIngestAckStore.ackURL(periodDirectory: p1FileURL.deletingLastPathComponent())
+        try store.persistDeliveryBinding(collisionAck)
         try BrowserIngestAckStore.write(collisionAck, to: ackURL1)
-        store.recordDelivered(periodId: pid1, canonicalKey: "120001_300")
+        try store.markAckDurable(periodId: pid1)
 
-        let storedAck1 = try #require(BrowserIngestAckStore.read(from: ackURL1))
+        let storedAck1 = try #require(try BrowserIngestAckStore.read(from: ackURL1))
         #expect(storedAck1.status == .collision)
         #expect(storedAck1.canonicalKey == "120001_300")
         #expect(store.getPeriod(periodId: pid1)?.canonicalKey == "120001_300")
 
         // 2. Lost response recovery: custody .present releases period bytes
         #expect(FileManager.default.fileExists(atPath: p1FileURL.path))
-        store.releaseProven(periodId: pid1)
+        try store.releaseProven(periodId: pid1, binding: collisionAck, nowMs: 1700000000000)
         #expect(!FileManager.default.fileExists(atPath: p1FileURL.path))
         #expect(store.getPeriod(periodId: pid1)?.state == "delivered")
     }
@@ -864,7 +903,7 @@ struct BrowserIntakeAdmissionTests {
         #expect(store.isPaused)
         #expect(authority.status()["capture"] as? String == "paused")
 
-        // Batches rejected while paused
+        // A batch already created by the extension can still be admitted while capture is paused.
         let snap: [String: Any] = [
             "type": "batch",
             "destination_generation": gen,
@@ -874,9 +913,8 @@ struct BrowserIntakeAdmissionTests {
             "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b1", "text": "paused test"]]]]
         ]
         let repPaused = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
-        #expect(repPaused["result"] as? String == "rejected")
-        #expect(repPaused["reason"] as? String == "resource_exhausted")
-        #expect(repPaused["class"] as? String == "retryable")
+        #expect(repPaused["result"] as? String == "accepted")
+        #expect(authority.status()["capture"] as? String == "paused")
 
         // 2. Resume intake
         pauseManager.resume()
@@ -884,9 +922,9 @@ struct BrowserIntakeAdmissionTests {
         #expect(!store.isPaused)
         #expect(authority.status()["capture"] as? String == "permitted")
 
-        // Batches accepted when resumed
+        // A retry after resume is an idempotent duplicate.
         let repResumed = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
-        #expect(repResumed["result"] as? String == "accepted")
+        #expect(repResumed["result"] as? String == "duplicate")
     }
 
     @Test func test7_nulIdentifiersAndDigestRestart() throws {
@@ -926,7 +964,7 @@ struct BrowserIntakeAdmissionTests {
         #expect(second["result"] as? String == "accepted")
         let borrowed = try authority.accept(bytes: batch(inst: instB, ctx: ctxB, id: "cccccccccccccccccccccccccccccccc", snapshot: false), direction: "extension_to_host")
         #expect(borrowed["reason"] as? String == "snapshot_required")
-        #expect(store.lookupReceipt(generation: gen, inst: instA, batchId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == nil)
+        #expect(try store.lookupReceipt(generation: gen, inst: instA, batchId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == nil)
 
         let reopened = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let again = BrowserIntakeAuthority(store: reopened, projection: projection, wallClock: { Date(timeIntervalSince1970: 1700000000) })
@@ -954,7 +992,7 @@ struct BrowserIntakeAdmissionTests {
         store.crashPoint = .afterFileSync
         let rejected = try authority.accept(bytes: payload("11111111111111111111111111111111", "REJECTED_SUFFIX"), direction: "extension_to_host")
         #expect(rejected["reason"] as? String == "resource_exhausted")
-        #expect(store.lookupReceipt(generation: gen, inst: "inst-1", batchId: "11111111111111111111111111111111") == nil)
+        #expect(try store.lookupReceipt(generation: gen, inst: "inst-1", batchId: "11111111111111111111111111111111") == nil)
         let openId = try #require(store.getOpenPeriodId())
         let openURL = store.periodFileURL(for: openId)
         #expect(String(decoding: try Data(contentsOf: openURL), as: UTF8.self).contains("REJECTED_SUFFIX"))
@@ -1077,7 +1115,9 @@ struct BrowserIntakeAdmissionTests {
         transport.onDayRead = {
             try? authority.retireIfTokenChanged(newToken: "token-2")
         }
-        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, serverURLProvider: { "http://127.0.0.1" })
+        let routeState = BrowserIntakeRouteState()
+        _ = routeState.update("http://127.0.0.1")
+        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, serverURLProvider: { "http://127.0.0.1" }, routeState: routeState)
         await planner.planAndUpload()
         #expect(transport.prepareCount == 0)
         #expect(try Data(contentsOf: fileURL) == original)
@@ -1103,7 +1143,7 @@ struct BrowserIntakeAdmissionTests {
         #expect(store.getPeriod(periodId: freshPid)?.state == "finalized")
         #expect(store.getPeriod(periodId: freshPid)?.canonicalKey == "120001_1")
         #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: freshPid).path))
-        let ack = try #require(BrowserIngestAckStore.read(from: BrowserIngestAckStore.ackURL(periodDirectory: store.periodFileURL(for: freshPid).deletingLastPathComponent())))
+        let ack = try #require(try BrowserIngestAckStore.read(from: BrowserIngestAckStore.ackURL(periodDirectory: store.periodFileURL(for: freshPid).deletingLastPathComponent())))
         transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
             IngestProtocolV3.SegmentsItem(
                 key: "other-key",
@@ -1139,6 +1179,8 @@ private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked
     var onDayRead: (@Sendable () -> Void)?
     var prepareCount = 0
     var succeed = false
+    var uploadFailure: Error?
+    private(set) var uploadedByteCount = 0
     private let lock = NSLock()
 
     func getSegmentsDay(serverURL: String, day: String, source: String?) async throws -> IngestProtocolV3.SegmentsDay {
@@ -1154,7 +1196,8 @@ private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked
         metadata: [String: IngestJSONValue]?,
         source: String?,
         boundary: String,
-        bodyURL: URL
+        bodyURL: URL,
+        ioInjector: BrowserIntakeIOInjector
     ) throws -> PreparedIngestV3Upload {
         lock.lock()
         prepareCount += 1
@@ -1167,13 +1210,24 @@ private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked
             meta: metadata,
             source: source,
             boundary: boundary,
-            bodyURL: bodyURL
+            bodyURL: bodyURL,
+            ioHooks: .browser(using: ioInjector)
         )
     }
 
-    func uploadStaged(prepared: PreparedIngestV3Upload) async -> UploadResult {
+    func uploadStaged(prepared: PreparedIngestV3Upload, lease: BrowserUploadLease) async -> UploadResult {
+        guard lease.isValid(), let handle = try? FileHandle(forReadingFrom: prepared.bodyURL) else {
+            return .failure(URLError(.cancelled))
+        }
+        defer { try? handle.close() }
+        while true {
+            guard lease.isValid() else { return .failure(URLError(.cancelled)) }
+            let chunk = handle.readData(ofLength: 4096)
+            if chunk.isEmpty { break }
+            lock.withLock { uploadedByteCount += chunk.count }
+        }
         guard succeed, let part = prepared.stagedParts.first else {
-            return .failure(UploadError.invalidRequest)
+            return .failure(uploadFailure ?? UploadError.invalidRequest)
         }
         let response = IngestProtocolV3.UploadResponse(
             status: .collision,
@@ -1190,6 +1244,7 @@ private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked
         )
         return .success(UploadSuccessInfo(response: response))
     }
+
 }
 
 #endif

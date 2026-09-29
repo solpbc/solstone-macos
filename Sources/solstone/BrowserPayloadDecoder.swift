@@ -57,6 +57,20 @@ public struct BrowserRefusal: Sendable, Equatable {
     }
 }
 
+public struct BrowserIntakeLocalRefusal: Error, Sendable, Equatable {
+    public let code: String
+    public let field: String?
+
+    public init(code: String, field: String? = nil) {
+        self.code = code
+        self.field = field
+    }
+}
+
+public struct BrowserHostToExtensionMessage: Sendable, Equatable {
+    fileprivate let bytes: Data
+}
+
 public struct BrowserDecodedBatchRecord: Sendable, Equatable {
     public let rawSlice: Data
     public let t: String
@@ -137,6 +151,10 @@ public enum BrowserDecodeResult: Sendable, Equatable {
 }
 
 public enum BrowserPayloadDecoder {
+    private static func exactUTF8(_ lhs: String, _ rhs: String) -> Bool {
+        Data(lhs.utf8) == Data(rhs.utf8)
+    }
+
     private static func parseHex4(_ bytes: [UInt8], from start: Int) -> UInt16? {
         var val: UInt16 = 0
         for offset in 0..<4 {
@@ -284,6 +302,108 @@ public enum BrowserPayloadDecoder {
                     return slices
                 }
                 return nil
+            }
+            return nil
+        }
+
+        mutating func rootObjectLastWins() -> [String: Any]? {
+            skipWhitespace()
+            guard peek() == UInt8(ascii: "{") else { return nil }
+            index += 1
+            skipWhitespace()
+            var object: [String: Any] = [:]
+            if peek() == UInt8(ascii: "}") {
+                index += 1
+                skipWhitespace()
+                return index == bytes.count ? object : nil
+            }
+            while index < bytes.count {
+                guard let rawKey = rawString(), let key = jsonStringValue(rawKey) else { return nil }
+                skipWhitespace()
+                guard peek() == UInt8(ascii: ":") else { return nil }
+                index += 1
+                guard let value = jsonValue() else { return nil }
+                object[key] = value
+                skipWhitespace()
+                if peek() == UInt8(ascii: ",") {
+                    index += 1
+                    skipWhitespace()
+                    continue
+                }
+                guard peek() == UInt8(ascii: "}") else { return nil }
+                index += 1
+                skipWhitespace()
+                return index == bytes.count ? object : nil
+            }
+            return nil
+        }
+
+        private mutating func jsonValue() -> Any? {
+            skipWhitespace()
+            switch peek() {
+            case UInt8(ascii: "{"):
+                return jsonObject()
+            case UInt8(ascii: "["):
+                return jsonArray()
+            case UInt8(ascii: "\""):
+                guard let raw = rawString() else { return nil }
+                return jsonStringValue(raw)
+            default:
+                guard let raw = compactValue() else { return nil }
+                return try? JSONSerialization.jsonObject(with: Data(raw), options: [.fragmentsAllowed])
+            }
+        }
+
+        private mutating func jsonObject() -> [String: Any]? {
+            guard peek() == UInt8(ascii: "{") else { return nil }
+            index += 1
+            skipWhitespace()
+            var object: [String: Any] = [:]
+            if peek() == UInt8(ascii: "}") {
+                index += 1
+                return object
+            }
+            while index < bytes.count {
+                guard let rawKey = rawString(), let key = jsonStringValue(rawKey) else { return nil }
+                skipWhitespace()
+                guard peek() == UInt8(ascii: ":") else { return nil }
+                index += 1
+                guard let value = jsonValue() else { return nil }
+                object[key] = value
+                skipWhitespace()
+                if peek() == UInt8(ascii: ",") {
+                    index += 1
+                    skipWhitespace()
+                    continue
+                }
+                guard peek() == UInt8(ascii: "}") else { return nil }
+                index += 1
+                return object
+            }
+            return nil
+        }
+
+        private mutating func jsonArray() -> [Any]? {
+            guard peek() == UInt8(ascii: "[") else { return nil }
+            index += 1
+            skipWhitespace()
+            var values: [Any] = []
+            if peek() == UInt8(ascii: "]") {
+                index += 1
+                return values
+            }
+            while index < bytes.count {
+                guard let value = jsonValue() else { return nil }
+                values.append(value)
+                skipWhitespace()
+                if peek() == UInt8(ascii: ",") {
+                    index += 1
+                    skipWhitespace()
+                    continue
+                }
+                guard peek() == UInt8(ascii: "]") else { return nil }
+                index += 1
+                return values
             }
             return nil
         }
@@ -503,14 +623,8 @@ public enum BrowserPayloadDecoder {
             return .refuse(BrowserRefusal(code: "bad_json"))
         }
 
-        let jsonObject: Any
-        do {
-            jsonObject = try JSONSerialization.jsonObject(with: bytes, options: [])
-        } catch {
-            return .refuse(BrowserRefusal(code: "bad_json"))
-        }
-
-        guard let root = jsonObject as? [String: Any] else {
+        var rootLexer = JSONLexer(bytes: [UInt8](bytes))
+        guard let root = rootLexer.rootObjectLastWins() else {
             return .refuse(BrowserRefusal(code: "bad_json"))
         }
 
@@ -704,10 +818,10 @@ public enum BrowserPayloadDecoder {
         let hasGen = genStr != nil && !genStr!.isEmpty
         let hasPeriod = periodStr != nil && !periodStr!.isEmpty
 
-        if let g = genVal, !(g is NSNull), !(g is String) {
+        if let genVal, !(genVal is NSNull), !(genVal is String) {
             return .refuse(BrowserRefusal(code: "bad_state_ids"))
         }
-        if let p = periodVal, !(p is NSNull), !(p is String) {
+        if let periodVal, !(periodVal is NSNull), !(periodVal is String) {
             return .refuse(BrowserRefusal(code: "bad_state_ids"))
         }
 
@@ -802,16 +916,19 @@ public enum BrowserPayloadDecoder {
             return .refuse(BrowserRefusal(code: "invalid_receipt"))
         }
 
-        let periodId = root["period_id"] as? String
-        let reason = root["reason"] as? String
-        let receiptClass = root["class"] as? String
+        let periodPresent = root.keys.contains("period_id")
+        let reasonPresent = root.keys.contains("reason")
+        let classPresent = root.keys.contains("class")
+        let periodId: String? = periodPresent ? root["period_id"] as? String : nil
+        let reason: String? = reasonPresent ? root["reason"] as? String : nil
+        let receiptClass: String? = classPresent ? root["class"] as? String : nil
 
         if result == "accepted" || result == "duplicate" {
-            guard let period = periodId,
+            guard periodPresent, let period = periodId,
                   !period.isEmpty,
                   scalarCount(period) <= projection.stringBounds.periodId,
-                  reason == nil,
-                  receiptClass == nil else {
+                  !reasonPresent,
+                  !classPresent else {
                 return .refuse(BrowserRefusal(code: "invalid_receipt"))
             }
             return .accept(.accepted(BrowserDecodedAccepted(
@@ -824,7 +941,8 @@ public enum BrowserPayloadDecoder {
                 receiptClass: nil
             )))
         } else {
-            guard let r = reason, let c = receiptClass, periodId == nil else {
+            guard !periodPresent, reasonPresent, classPresent,
+                  let r = reason, let c = receiptClass else {
                 return .refuse(BrowserRefusal(code: "invalid_receipt"))
             }
             guard let validReasons = projection.receiptClasses[c], validReasons.contains(r) else {
@@ -937,12 +1055,12 @@ public enum BrowserPayloadDecoder {
                 let cause = rec["ctx"] == nil ? "missing" : "too_long"
                 return .refuse(BrowserRefusal(code: "bad_record", field: "ctx", cause: cause, row: row))
             }
-            if recCtx != firstCtx {
+            if !exactUTF8(recCtx, firstCtx) {
                 return .refuse(BrowserRefusal(code: "mixed_context"))
             }
 
             if let recInst = rec["inst"] {
-                guard let instString = recInst as? String, instString == inst, scalarCount(instString) <= projection.stringBounds.instStringMax else {
+                guard let instString = recInst as? String, exactUTF8(instString, inst), scalarCount(instString) <= projection.stringBounds.instStringMax else {
                     return .refuse(BrowserRefusal(code: "bad_record", field: "inst", cause: "mismatch", row: row))
                 }
             }
@@ -1088,6 +1206,50 @@ public enum BrowserPayloadDecoder {
 
     public static func encodeRecordBytes(_ rec: [String: Any], projection: BrowserContractProjection) -> Data {
         return canonicalEncode(rec, projection: projection)
+    }
+
+    public static func validatedHostMessage(
+        _ object: [String: Any],
+        projection: BrowserContractProjection
+    ) throws -> BrowserHostToExtensionMessage {
+        if let type = object["type"] as? String, type == "hello_ack" || type == "state" {
+            guard let capture = object["capture"] as? String,
+                  object.keys.contains("destination_generation"),
+                  object.keys.contains("period_id") else {
+                throw BrowserIntakeLocalRefusal(code: "bad_state_ids")
+            }
+            let generation = object["destination_generation"]!
+            let period = object["period_id"]!
+            switch capture {
+            case "unavailable", "not_paired":
+                guard generation is NSNull, period is NSNull else {
+                    throw BrowserIntakeLocalRefusal(code: "bad_state_ids")
+                }
+            case "permitted":
+                guard generation is String, period is String else {
+                    throw BrowserIntakeLocalRefusal(code: "bad_state_ids")
+                }
+            case "paused", "intake_off":
+                guard generation is String, period is NSNull || period is String else {
+                    throw BrowserIntakeLocalRefusal(code: "bad_state_ids")
+                }
+            default:
+                throw BrowserIntakeLocalRefusal(code: "bad_state_ids")
+            }
+        }
+        let bytes = canonicalEncode(object, projection: projection)
+        switch decode(bytes: bytes, direction: "host_to_extension", projection: projection) {
+        case .accept:
+            return BrowserHostToExtensionMessage(bytes: bytes)
+        case .refuse(let refusal):
+            throw BrowserIntakeLocalRefusal(code: refusal.code, field: refusal.field)
+        case .unsupported:
+            throw BrowserIntakeLocalRefusal(code: "bad_type")
+        }
+    }
+
+    public static func encodeHostToExtension(_ message: BrowserHostToExtensionMessage) -> Data {
+        message.bytes
     }
 
     public static func canonicalEncode(_ val: Any, projection: BrowserContractProjection) -> Data {

@@ -198,6 +198,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         if let state = AppState.shared {
             state.audioDeviceMonitor.stopListening()
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            state.stopBrowserIntake()
+#endif
             state.isTerminating = true
             state.appKitTerminationBegan = true
             state.stopTunnelLifecycleOwner()

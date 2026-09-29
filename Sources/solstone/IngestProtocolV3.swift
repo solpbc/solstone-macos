@@ -50,6 +50,10 @@ public enum IngestProtocolV3 {
 
     static let uploadPath = "/app/devices/ingest"
 
+    static func exactString(_ lhs: String, _ rhs: String) -> Bool {
+        Data(lhs.utf8) == Data(rhs.utf8)
+    }
+
     static func segmentsDayPath(_ day: String, source: String? = nil) -> String {
         let basePath = "\(uploadPath)/segments/\(day)"
         guard let source, !source.isEmpty else {
@@ -107,9 +111,9 @@ public enum IngestProtocolV3 {
             guard protocolVersion == 3, total >= 0, total == items.count else {
                 throw UploadError.invalidResponse
             }
-            var canonicalKeys: Set<String> = []
+            var canonicalKeys: Set<Data> = []
             for item in items {
-                guard !item.key.isEmpty, canonicalKeys.insert(item.key).inserted else {
+                guard !item.key.isEmpty, canonicalKeys.insert(Data(item.key.utf8)).inserted else {
                     throw UploadError.invalidResponse
                 }
             }
@@ -117,7 +121,7 @@ public enum IngestProtocolV3 {
             var allKeys = canonicalKeys
             for item in items {
                 if let originalKey = item.originalKey,
-                   (originalKey.isEmpty || !allKeys.insert(originalKey).inserted) {
+                   (originalKey.isEmpty || !allKeys.insert(Data(originalKey.utf8)).inserted) {
                     throw UploadError.invalidResponse
                 }
             }
@@ -290,30 +294,30 @@ public enum IngestProtocolV3 {
         ) -> Bool {
             guard IngestProtocolV3.isSafePathComponent(storedSegmentKey),
                   IngestProtocolV3.isSafePathComponent(submittedSegment),
-                  Set(stagedFiles.map(\.submitted)).count == stagedFiles.count else { return false }
-            if status == .ok && storedSegmentKey != submittedSegment { return false }
+                  Set(stagedFiles.map { Data($0.submitted.utf8) }).count == stagedFiles.count else { return false }
+            if status == .ok && !IngestProtocolV3.exactString(storedSegmentKey, submittedSegment) { return false }
             if status == .collision {
-                guard segmentOriginal == submittedSegment else { return false }
+                guard segmentOriginal.map({ IngestProtocolV3.exactString($0, submittedSegment) }) == true else { return false }
             }
             guard !fileDescriptors.isEmpty, fileDescriptors.count == stagedFiles.count else {
                 return false
             }
 
-            var descriptorBySubmitted: [String: UploadFileDescriptor] = [:]
+            var descriptorBySubmitted: [Data: UploadFileDescriptor] = [:]
             for descriptor in fileDescriptors {
                 guard IngestProtocolV3.isSafePathComponent(descriptor.submitted),
                       IngestProtocolV3.isSafePathComponent(descriptor.written),
-                      descriptorBySubmitted[descriptor.submitted] == nil else {
+                      descriptorBySubmitted[Data(descriptor.submitted.utf8)] == nil else {
                     return false
                 }
-                descriptorBySubmitted[descriptor.submitted] = descriptor
+                descriptorBySubmitted[Data(descriptor.submitted.utf8)] = descriptor
             }
 
             for staged in stagedFiles {
-                guard let descriptor = descriptorBySubmitted[staged.submitted] else {
+                guard let descriptor = descriptorBySubmitted[Data(staged.submitted.utf8)] else {
                     return false
                 }
-                guard descriptor.sha256 == staged.sha256,
+                guard IngestProtocolV3.exactString(descriptor.sha256, staged.sha256),
                       descriptor.size == staged.size else {
                     return false
                 }
@@ -332,19 +336,19 @@ public enum IngestProtocolV3 {
     }
 
     static func isSafePathComponent(_ value: String) -> Bool {
-        !value.isEmpty && value != "." && value != ".."
+        !value.isEmpty && !exactString(value, ".") && !exactString(value, "..")
             && !value.contains("/")
             && value.utf8.allSatisfy { $0 >= 32 && $0 != 127 }
-            && (value as NSString).lastPathComponent == value
+            && exactString((value as NSString).lastPathComponent, value)
     }
 
     private static func validateFiles(_ files: [ReadFile]) throws {
-        var names: Set<String> = []
+        var names: Set<Data> = []
         for file in files {
             guard !file.name.isEmpty,
                   !file.effectiveName.isEmpty,
                   !file.sha256.isEmpty,
-                  names.insert(file.effectiveName).inserted else {
+                  names.insert(Data(file.effectiveName.utf8)).inserted else {
                 throw UploadError.invalidResponse
             }
         }

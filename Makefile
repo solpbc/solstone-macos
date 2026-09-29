@@ -155,6 +155,10 @@ release-universal-adhoc:
 
 release-browser-preview:
 	swift build -c release --product solstone -Xswiftc -DSOLSTONE_BROWSER_INTAKE_PREVIEW
+	rm -rf .build/browser-preview
+	mkdir -p .build/browser-preview/Contents/Resources/vendor/contracts/native-browser .build/browser-preview/Contents/Resources/vendor/crates/native-browser-frame/src
+	cp vendor/contracts/native-browser/authority.json vendor/contracts/native-browser/envelope.schema.json vendor/contracts/native-browser/browser.schema.json vendor/contracts/native-browser/manifest.json .build/browser-preview/Contents/Resources/vendor/contracts/native-browser/
+	cp vendor/crates/native-browser-frame/src/constants.rs .build/browser-preview/Contents/Resources/vendor/crates/native-browser-frame/src/
 
 release-universal-journal:
 	swift build -c release $(JOURNAL_RELEASE_APPLE_ARCH_FLAGS) --product journal

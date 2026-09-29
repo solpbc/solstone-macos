@@ -5,6 +5,12 @@
 
 import Foundation
 import SolstoneCore
+import os
+
+public enum BrowserIdentityChangeMode: Sendable {
+    case replace
+    case reload
+}
 
 public final class BrowserIntakeAuthority: @unchecked Sendable {
     private let lock = NSLock()
@@ -16,10 +22,13 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     private var lastRotationDate: Date
     private var _isPaused: Bool = false
     private var admissionClosed = false
+    private var staleAnchorMs: UInt64 = 0
+    private var staleMonotonicAnchor: Duration = .zero
+    private var staleElapsedBaseMs: UInt64 = 0
     private struct SeenKey: Hashable {
-        let generation: String
-        let inst: String
-        let batchId: String
+        let generation: Data
+        let inst: Data
+        let batchId: Data
     }
     private var firstSight: [SeenKey: Duration] = [:]
     public var isPaused: Bool {
@@ -39,6 +48,17 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         self.wallClock = wallClock
         self.timeZone = timeZone
         self.lastRotationDate = wallClock()
+        let staleState = store.stalenessState()
+        self.staleAnchorMs = staleState.anchorMs
+        self.staleElapsedBaseMs = staleState.elapsedHighWaterMs
+        self.staleMonotonicAnchor = monotonicClock.now()
+        let initialHeldAnchor = store.getEarliestHeldMs()
+        if initialHeldAnchor > 0 {
+            let wallNowMs = max(UInt64(wallClock().timeIntervalSince1970 * 1000.0), store.getFloorMs())
+            let wallElapsed = wallNowMs > initialHeldAnchor ? wallNowMs - initialHeldAnchor : 0
+            self.staleAnchorMs = initialHeldAnchor
+            self.staleElapsedBaseMs = max(staleState.elapsedHighWaterMs, wallElapsed)
+        }
         if let created = store.openPeriodCreatedAtMs() {
             self.lastRotationDate = Date(timeIntervalSince1970: Double(created) / 1000.0)
         }
@@ -56,6 +76,10 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         lock.lock()
         admissionClosed = false
         lock.unlock()
+    }
+
+    public func isAdmissionOpen() -> Bool {
+        lock.withLock { !admissionClosed && !store.storeIsFailed() }
     }
 
     public func setPaused(_ paused: Bool) {
@@ -96,9 +120,67 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         try store.retireIfTokenChanged(newToken: newToken, nowMs: nowMs)
     }
 
+    public func reconcileIdentity(_ token: String?, mode: BrowserIdentityChangeMode) throws {
+        closeAdmission()
+        switch mode {
+        case .replace:
+            try retireIfTokenChanged(newToken: token)
+        case .reload:
+            guard let token else { return }
+            let digest = BrowserIntakeStore.identityDigest(of: token)
+            if let stored = store.getActiveIdentityToken() {
+                guard BrowserOpaqueString.equals(stored, digest) else { return }
+            } else if store.hasPersistedIdentityHistory() {
+                return
+            }
+            if store.getActiveGeneration() == nil {
+                _ = try publishEpoch(identityToken: token)
+            }
+            reopenAdmission()
+        }
+    }
+
     public func status() -> [String: Any] {
         let now = wallClock()
         let nowMs = UInt64(now.timeIntervalSince1970 * 1000.0)
+        let floorMs = max(nowMs, store.getFloorMs())
+        let monoNow = monotonicClock.now()
+        let heldAnchor = store.getEarliestHeldMs()
+        do {
+            if heldAnchor == 0 {
+                _ = try store.updateStaleness(anchorMs: nil, elapsedMs: 0)
+                staleAnchorMs = 0
+                staleElapsedBaseMs = 0
+                staleMonotonicAnchor = monoNow
+            } else {
+                if staleAnchorMs != heldAnchor {
+                    let stored = store.stalenessState()
+                    let wallElapsed = floorMs > heldAnchor ? floorMs - heldAnchor : 0
+                    staleElapsedBaseMs = max(stored.elapsedHighWaterMs, wallElapsed)
+                    staleAnchorMs = heldAnchor
+                    staleMonotonicAnchor = monoNow
+                }
+                let elapsed = durationMs(monoNow - staleMonotonicAnchor)
+                _ = try store.updateStaleness(anchorMs: heldAnchor, elapsedMs: staleElapsedBaseMs + elapsed)
+            }
+        } catch {
+            store.failClosed()
+            Logger.storage.error("Browser intake stale-age persistence failed: \(error.localizedDescription, privacy: .public)")
+        }
+        if lock.withLock({ admissionClosed }) {
+            let held = store.currentStatus(nowMs: nowMs, monotonicFreshnessMs: projection.policy.freshnessMaxMs)
+            var result: [String: Any] = [
+                "type": "state",
+                "capture": "unavailable",
+                "delivery": held["delivery"] ?? "unknown",
+                "freshness_ms": held["freshness_ms"] ?? projection.policy.freshnessMaxMs,
+                "destination_generation": NSNull(),
+                "period_id": NSNull(),
+                "custody": held["custody"] ?? ["full": false, "stale": false]
+            ]
+            if let failure = held["failure"] as? String { result["failure"] = failure }
+            return result
+        }
         return store.currentStatus(nowMs: nowMs, monotonicFreshnessMs: projection.policy.freshnessMaxMs)
     }
 
@@ -132,6 +214,8 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 try store.finalizePeriod(periodId: pid, reason: "clock_boundary", civilDate: now, timeZone: timeZone)
                 lastRotationDate = now
             } catch {
+                store.setStoreFailed(true)
+                Logger.storage.error("Browser intake boundary finalization failed")
                 return
             }
         } else {
@@ -214,11 +298,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     }
 
     private func processBatch(batch: BrowserDecodedBatch, nowMs: UInt64, civilDate: Date) throws -> [String: Any] {
-        if _isPaused || admissionClosed || store.storeIsFailed() {
-            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
-        }
-
-        if let stored = store.lookupReceipt(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId) {
+        if let stored = try store.lookupReceipt(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId) {
             if stored.result == "accepted" || stored.result == "duplicate" {
                 return try BrowserPayloadDecoder.buildReply(
                     destinationGeneration: batch.destinationGeneration,
@@ -232,8 +312,12 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             return try rejected(batch: batch, reason: stored.reason ?? "malformed", receiptClass: stored.receiptClass ?? "permanent")
         }
 
-        guard let activeGen = store.getActiveGeneration(), activeGen == batch.destinationGeneration else {
+        guard let activeGen = store.getActiveGeneration(), BrowserOpaqueString.equals(activeGen, batch.destinationGeneration) else {
             return try rejected(batch: batch, reason: "stale_generation", receiptClass: "permanent")
+        }
+
+        if admissionClosed || store.storeIsFailed() {
+            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
 
         let floorMs: UInt64
@@ -243,23 +327,32 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
 
-        let seenKey = SeenKey(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId)
-        let storedQueued = store.getFirstSeenQueuedAt(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId)
-        let effectiveQueued = min(storedQueued ?? batch.queuedAtMs, batch.queuedAtMs)
-
-        if effectiveQueued > floorMs && (effectiveQueued - floorMs) > projection.policy.futureSkewMs {
+        if batch.queuedAtMs > floorMs && (batch.queuedAtMs - floorMs) > projection.policy.futureSkewMs {
             return try rejected(batch: batch, reason: "age_policy", receiptClass: "retryable")
         }
 
-        let elapsedMs: UInt64
-        if let seenAt = firstSight[seenKey] {
-            elapsedMs = durationMs(monotonicClock.now() - seenAt)
-        } else {
-            elapsedMs = 0
+        let seenKey = SeenKey(generation: Data(batch.destinationGeneration.utf8), inst: Data(batch.inst.utf8), batchId: Data(batch.batchId.utf8))
+        var seenAge: (initialAgeMs: UInt64, elapsedHighWaterMs: UInt64, established: Bool)?
+        do {
+            seenAge = try store.getBatchAge(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId)
+            if seenAge == nil {
+                let initialAge = floorMs > batch.queuedAtMs ? floorMs - batch.queuedAtMs : 0
+                try store.recordBatchSeen(
+                    generation: batch.destinationGeneration,
+                    inst: batch.inst,
+                    batchId: batch.batchId,
+                    queuedAtMs: batch.queuedAtMs,
+                    initialAgeMs: initialAge
+                )
+                firstSight[seenKey] = monotonicClock.now()
+                seenAge = (initialAgeMs: initialAge, elapsedHighWaterMs: 0, established: true)
+            }
+        } catch {
+            store.failClosed()
+            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
-        let wallExpired = floorMs >= effectiveQueued && (floorMs - effectiveQueued) >= projection.policy.outboxAgeMs
-        let monoExpired = elapsedMs >= projection.policy.outboxAgeMs && storedQueued != nil
-        if wallExpired || monoExpired {
+        guard let seenAge else { throw BrowserIntakeStoreError.localIO }
+        if !seenAge.established {
             do {
                 try store.commitTombstone(
                     generation: batch.destinationGeneration,
@@ -267,7 +360,44 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                     batchId: batch.batchId,
                     reason: "expired_unaccepted",
                     receiptClass: "permanent",
-                    queuedAtMs: effectiveQueued
+                    queuedAtMs: batch.queuedAtMs
+                )
+            } catch {
+                return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
+            }
+            return try rejected(batch: batch, reason: "expired_unaccepted", receiptClass: "permanent")
+        }
+        if firstSight[seenKey] == nil {
+            firstSight[seenKey] = monotonicClock.now()
+        }
+        let elapsedSinceSight: UInt64
+        if let seenAt = firstSight[seenKey] {
+            elapsedSinceSight = durationMs(monotonicClock.now() - seenAt)
+        } else {
+            elapsedSinceSight = 0
+        }
+        let elapsedHighWater = max(seenAge.elapsedHighWaterMs, elapsedSinceSight)
+        do {
+            try store.updateBatchAgeHighWater(
+                generation: batch.destinationGeneration,
+                inst: batch.inst,
+                batchId: batch.batchId,
+                elapsedMs: elapsedHighWater
+            )
+        } catch {
+            store.failClosed()
+            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
+        }
+        let totalAge = seenAge.initialAgeMs + elapsedHighWater
+        if totalAge >= projection.policy.outboxAgeMs {
+            do {
+                try store.commitTombstone(
+                    generation: batch.destinationGeneration,
+                    inst: batch.inst,
+                    batchId: batch.batchId,
+                    reason: "expired_unaccepted",
+                    receiptClass: "permanent",
+                    queuedAtMs: batch.queuedAtMs
                 )
             } catch {
                 return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
@@ -298,25 +428,12 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
 
-        if storedQueued == nil {
-            do {
-                try store.recordBatchSeen(
-                    generation: batch.destinationGeneration,
-                    inst: batch.inst,
-                    batchId: batch.batchId,
-                    queuedAtMs: batch.queuedAtMs
-                )
-                if firstSight[seenKey] == nil {
-                    firstSight[seenKey] = monotonicClock.now()
-                }
-            } catch {
-                return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
-            }
-        }
-
         let firstRec = batch.records[0]
-        if firstRec.t == "delta" && !store.isContextInitialized(periodId: selectedPeriod, inst: batch.inst, ctx: firstRec.ctx) {
-            return try rejected(batch: batch, reason: "snapshot_required", receiptClass: "retryable")
+        if firstRec.t == "delta" {
+            let initialized = try store.isContextInitialized(periodId: selectedPeriod, inst: batch.inst, ctx: firstRec.ctx)
+            if !initialized {
+                return try rejected(batch: batch, reason: "snapshot_required", receiptClass: "retryable")
+            }
         }
 
         if store.isQuotaFull(

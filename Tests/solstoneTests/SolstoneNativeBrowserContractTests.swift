@@ -94,6 +94,28 @@ struct SolstoneNativeBrowserContractTests {
         #expect(projection.receiptClasses["permanent"]?.sorted() == ["expired_unaccepted", "malformed", "oversize", "stale_generation", "unaccepted_lost"].sorted())
     }
 
+    @Test func previewResourceLookupUsesBundleResources() throws {
+        let root = URL(fileURLWithPath: "/private/var/tmp", isDirectory: true)
+            .appendingPathComponent("browser-resource-lookup-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vendor = root.appendingPathComponent("Contents/Resources/vendor", isDirectory: true)
+        let paths = [
+            "contracts/native-browser/authority.json",
+            "crates/native-browser-frame/src/constants.rs",
+            "contracts/native-browser/envelope.schema.json",
+            "contracts/native-browser/browser.schema.json",
+            "contracts/native-browser/manifest.json"
+        ]
+        for path in paths {
+            let file = vendor.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: file)
+        }
+        #expect(BrowserContractProjection.vendorRootURL(bundleURL: root) == vendor)
+        try FileManager.default.removeItem(at: vendor.appendingPathComponent("contracts/native-browser/manifest.json"))
+        #expect(BrowserContractProjection.vendorRootURL(bundleURL: root) == nil)
+    }
+
     @Test func corpusVectorsValidation() throws {
         let projection = try BrowserContractProjection(rootURL: vendorURL)
         let corpusURL = vendorURL.appendingPathComponent("contracts/native-browser/corpus.json")
