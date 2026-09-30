@@ -198,11 +198,13 @@ struct MenuContent: View {
                     case .hold(let reason):
                         return reason == "unaccepted_lost" ? UICopy.SOURCES_BROWSER_LOST_AND_HELD : UICopy.SOURCES_BROWSER_HELD
                     case .notPaired:
-                        return UICopy.SOURCES_BROWSER_REGISTRATION_BROKEN
+                        return UICopy.SOURCES_BROWSER_CANNOT_START
                     case .intakeOff:
                         return UICopy.SOURCES_BROWSER_INTAKE_OFF
                     case .unavailable:
                         return UICopy.SOURCES_BROWSER_CANNOT_START
+                    case .unknown:
+                        return UICopy.SOURCES_BROWSER_UNKNOWN
                     case .shutdown, .sessionClosed:
                         return UICopy.SOURCES_BROWSER_INTAKE_OFF
                     case .mediaUnchanged:
@@ -242,7 +244,7 @@ struct MenuContent: View {
             mediaPaused: appState.isPaused,
             mediaUserPaused: appState.capture.isUserPaused,
             pauseManagerPaused: appState.pauseManager.isPaused,
-            browserCapturePermitted: appState.browserRowPermitted
+            browserCapturePermitted: appState.browserPauseEnabled
         ).pause
 #else
         appState.isRecording && !appState.isPaused
@@ -256,7 +258,7 @@ struct MenuContent: View {
             mediaPaused: appState.isPaused,
             mediaUserPaused: appState.capture.isUserPaused,
             pauseManagerPaused: appState.pauseManager.isPaused,
-            browserCapturePermitted: appState.browserRowPermitted || appState.browserRowPaused
+            browserCapturePermitted: appState.browserPauseEnabled
         ).resume
 #else
         appState.capture.isUserPaused

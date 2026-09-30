@@ -159,13 +159,28 @@ struct OwnerSurfaceStatusTests {
         #expect(lostVerdict.fullSecondary)
 
         var legacy = BrowserHostSnapshotValue(capture: "permitted", delivery: "idle", failureCode: "queue_full", listener: .available)
-        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: legacy, now: now) == .custodyFull)
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: legacy, now: now) == .hold("queue_full"))
         legacy.custodyPresent = true
         legacy.custodyFull = false
-        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: legacy, now: now) == .waiting)
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: legacy, now: now) == .hold("queue_full"))
 
         let exhausted = BrowserHostSnapshotValue(capture: "permitted", delivery: "failed", failureCode: "resource_exhausted", listener: .available)
-        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: exhausted, now: now) == .custodyFull)
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: exhausted, now: now) == .hold("resource_exhausted"))
+
+        let exhaustedVerdict = browserOwnerVerdict(mediaSourcesEmpty: true, mediaRecording: false,
+            mediaPaused: false, snapshot: exhausted, now: now)
+        #expect(!exhaustedVerdict.fullSecondary)
+        var independentCustody = exhausted
+        independentCustody.custodyPresent = true
+        independentCustody.custodyFull = true
+        independentCustody.custodyStale = true
+        independentCustody.failureCode = "local_io"
+        let independentVerdict = browserOwnerVerdict(mediaSourcesEmpty: true, mediaRecording: false,
+            mediaPaused: false, snapshot: independentCustody, now: now)
+        #expect(independentVerdict.lead == .hold("local_io"))
+        #expect(independentVerdict.fullSecondary)
+        #expect(independentVerdict.stale)
+        #expect(independentVerdict.showsDeliveryLine)
 
         let activeProfile = BrowserHostProfile(lastSeen: now, handshake: .compatible, byeReason: nil, leaseExpiry: now.addingTimeInterval(30))
         let stale = BrowserHostSnapshotValue(

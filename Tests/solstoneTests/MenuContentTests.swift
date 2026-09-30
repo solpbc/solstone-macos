@@ -19,35 +19,60 @@ struct MenuContentTests {
             defaults: isolatedDefaults.defaults
         )
 
-        let observing = AppState.forSnapshot()
+        let observing = AppState.forSnapshot(config: AppConfig(isBrowserIntakeEnabled: false))
         observing.isRecording = true
         #expect(MenuContent(appState: observing, updateController: updateController).hasPauseResumeControl)
 
-        let paused = AppState.forSnapshot()
+        let paused = AppState.forSnapshot(config: AppConfig(isBrowserIntakeEnabled: false))
         paused.capture.handleCaptureStateChange(.paused(reasons: [.user]))
         #expect(MenuContent(appState: paused, updateController: updateController).hasPauseResumeControl)
 
-        let environmentPaused = AppState.forSnapshot()
+        let environmentPaused = AppState.forSnapshot(config: AppConfig(isBrowserIntakeEnabled: false))
         environmentPaused.capture.handleCaptureStateChange(.paused(reasons: [.lock]))
         #expect(!MenuContent(appState: environmentPaused, updateController: updateController).hasPauseResumeControl)
 
-        let starting = AppState.forSnapshot()
+        let starting = AppState.forSnapshot(config: AppConfig(isBrowserIntakeEnabled: false))
         #expect(!MenuContent(appState: starting, updateController: updateController).hasPauseResumeControl)
 
-        let error = AppState.forSnapshot()
+        let error = AppState.forSnapshot(config: AppConfig(isBrowserIntakeEnabled: false))
         error.errorMessage = "offline"
         #expect(!MenuContent(appState: error, updateController: updateController).hasPauseResumeControl)
 
-        let permissionsNeeded = AppState.forSnapshot()
+        let permissionsNeeded = AppState.forSnapshot(config: AppConfig(isBrowserIntakeEnabled: false))
         permissionsNeeded.initialPermissionCheckComplete = true
         permissionsNeeded.capture.publishScreenRecordingPermission(.notGranted)
         permissionsNeeded.microphoneAuthorizationCause = .denied
         #expect(!MenuContent(appState: permissionsNeeded, updateController: updateController).hasPauseResumeControl)
 
-        let wedge = AppState.forSnapshot()
+        let wedge = AppState.forSnapshot(config: AppConfig(isBrowserIntakeEnabled: false))
         wedge.initialPermissionCheckComplete = true
         #expect(!MenuContent(appState: wedge, updateController: updateController).hasPauseResumeControl)
     }
+
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    @Test @MainActor func browserOnlyPauseRemainsAvailableWithoutClaimingUnknownIntakeReady() {
+        let config = AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false,
+                               isBrowserIntakeEnabled: true)
+        let state = AppState.forSnapshot(config: config)
+        let updateController = UpdateController(log: Logger.setup,
+            errorDomain: "app.solstone.observer.updates", defaults: isolatedDefaults.defaults)
+        #expect(!state.isRecording)
+        #expect(state.browserPauseEnabled)
+        #expect(!state.browserRowPermitted)
+        #expect(MenuContent(appState: state, updateController: updateController).hasPauseResumeControl)
+        state.pauseManager.pause(for: .indefinite)
+        #expect(state.browserRowPaused)
+        #expect(MenuContent(appState: state, updateController: updateController).hasPauseResumeControl)
+        state.pauseManager.resume()
+        state.browserHostSnapshot.publish(BrowserHostSnapshotValue(capture: "unknown", listener: .available))
+        #expect(!state.browserRowPermitted)
+        #expect(state.browserPauseEnabled)
+        state.browserHostSnapshot.publish(BrowserHostSnapshotValue(capture: "permitted", listener: .available))
+        #expect(state.browserRowPermitted)
+        state.browserHostSnapshot.publish(BrowserHostSnapshotValue(capture: "permitted", listener: .unavailable))
+        #expect(!state.browserRowPermitted)
+    }
+#endif
 
     @Test func menubarStatusRowIconMappingIsExhaustive() {
         let cases: [(MenubarStatusRowState, String)] = [

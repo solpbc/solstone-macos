@@ -810,6 +810,8 @@ struct SettingsView: View {
     private var browserSourcesGroup: some View {
         let snapshot = appState.browserHostSnapshot.value
         let rows = browserBrandRows(snapshot, now: Date())
+        let verdict = browserOwnerVerdict(mediaSourcesEmpty: appState.config.selectedSources.isEmpty,
+            mediaRecording: appState.isRecording, mediaPaused: appState.isPaused, snapshot: snapshot, now: Date())
         let hasAnyHistory = rows.contains { $0.lastSeen != nil }
         let hasAnyStore = BrowserBrand.allCases.contains { appState.browserStoreCatalog.url(for: $0) != nil }
 
@@ -839,7 +841,11 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityIdentifier(browserBrandAXID(row.brand))
-                .accessibilityValue(row.registration.axToken)
+                .accessibilityValue(row.state.axToken)
+
+                if row.connectedCount > 0 && (row.needsAppUpdate || row.needsExtensionUpdate) {
+                    Text(UICopy.SOURCES_BROWSER_CONNECTED_NOW).foregroundStyle(.secondary)
+                }
             }
 
             HStack(spacing: 8) {
@@ -854,7 +860,7 @@ struct SettingsView: View {
                     Text(UICopy.SOURCES_BROWSER_REPAIRED)
                         .foregroundStyle(.secondary)
                 } else if let failure = appState.browserRepair.lastFailureReason {
-                    Text(UICopy.sourcesBrowserRepairFailed(reason: failure))
+                    Text(UICopy.sourcesBrowserRepairFailed(reason: UICopy.browserSetupReason(failure)))
                         .foregroundStyle(.red)
                 }
             }
@@ -880,23 +886,27 @@ struct SettingsView: View {
             Text(UICopy.SOURCES_BROWSER_FOOTNOTE)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if rows.contains(where: { $0.needsAppUpdate }) { Text(UICopy.SOURCES_BROWSER_NEWER_EXTENSION) }
+            if verdict.fullSecondary { Text(UICopy.SOURCES_BROWSER_FULL) }
+            if verdict.stale { Text(UICopy.SOURCES_BROWSER_STALE) }
+            if verdict.showsDeliveryLine { Text(UICopy.SOURCES_BROWSER_DELIVERY_FAILED) }
+            if snapshot.registration.values.contains(where: { $0.state == .refused }) {
+                Text(UICopy.SOURCES_BROWSER_REGISTRATION_BROKEN)
+            }
         }
         .accessibilityElement(children: .contain)
     }
 
     private func browserRowStatusText(_ row: BrowserBrandRow) -> String {
+        if row.needsAppUpdate { return UICopy.SOURCES_BROWSER_NEEDS_APP_UPDATE }
+        if row.needsExtensionUpdate { return UICopy.SOURCES_BROWSER_NEEDS_EXT_UPDATE }
         if row.connectedCount > 0 {
             return UICopy.SOURCES_BROWSER_CONNECTED_NOW
         }
         if let bucket = row.lastSeen {
             return UICopy.sourcesBrowserLastSeen(formatRelativeBucket(bucket))
         }
-        switch row.registration {
-        case .refused:
-            return UICopy.SOURCES_BROWSER_NEEDS_APP_UPDATE
-        default:
-            return UICopy.SOURCES_BROWSER_NEEDS_EXT_UPDATE
-        }
+        return UICopy.SOURCES_BROWSERS_NO_HISTORY
     }
 
     private var browserRepairValue: BrowserRepairAXState {
@@ -3644,34 +3654,11 @@ struct SettingsView: View {
     }
 
     private func copyDiagnostics(_ report: DiagnosticReport) {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        let baseRows = report.rows.filter { $0.id != .browserPages && $0.id != .browsersSeen && $0.id != .browserSetup }
-        let browserRows = buildBrowserDiagnosticRows(
-            snapshot: appState.browserHostSnapshot.value,
-            repair: appState.browserRepair,
-            now: Date()
-        )
-        let text = (baseRows.map { row in
-            let continuationPrefix = String(repeating: " ", count: row.label.count + 2)
-            let value = row.value.replacingOccurrences(of: "\n", with: "\n\(continuationPrefix)")
-            return "\(row.label): \(value)"
-        } + browserRows.map { row in
-            let continuationPrefix = String(repeating: " ", count: row.label.count + 2)
-            let value = row.machineValue.replacingOccurrences(of: "\n", with: "\n\(continuationPrefix)")
-            return "\(row.label): \(value)"
-        }).joined(separator: "\n")
-        diagnosticCopyFeedback = performDiagnosticCopy(
-            text: text,
-            write: diagnosticClipboardWrite,
-            announce: diagnosticAnnouncement
-        )
-#else
         diagnosticCopyFeedback = performDiagnosticCopy(
             report,
             write: diagnosticClipboardWrite,
             announce: diagnosticAnnouncement
         )
-#endif
     }
 
     private var logExportFailureReasonValue: String {

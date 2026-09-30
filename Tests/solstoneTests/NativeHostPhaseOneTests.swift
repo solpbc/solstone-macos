@@ -328,8 +328,10 @@ struct NativeHostRegistrationTests {
 struct NativeHostLifecycleTests {
     @Test func staleGenerationCannotCloseReplacementAdmission() {
         let gate = BrowserHostAdmissionGate()
+        #expect(gate.prepare(generation: 4))
         gate.install(listenerFD: -1, generation: 4)
         #expect(gate.isOpen(generation: 4))
+        #expect(gate.prepare(generation: 5))
         gate.install(listenerFD: -1, generation: 5)
         #expect(!gate.commitClose(reason: .ordinaryQuit, generation: 4))
         #expect(!gate.commitClose(reason: .ordinaryQuit, generation: 5))
@@ -362,6 +364,7 @@ struct NativeHostLifecycleTests {
 
     @Test func quitCommitRejectsANewHello() {
         let gate = BrowserHostAdmissionGate()
+        #expect(gate.prepare(generation: 1))
         gate.install(listenerFD: -1, generation: 1)
         #expect(gate.isOpen())
         #expect(!gate.commitClose(reason: .ordinaryQuit, generation: 1))
@@ -493,7 +496,10 @@ struct NativeHostSpoolCompositionTests {
         #expect(duplicate["result"] as? String == "duplicate")
         let periodID = try #require(accepted["period_id"] as? String)
 
-        _ = try await owner.authority.accept(bytes: Data("{}".utf8), direction: "extension_to_host")
+        let liveDelta = nativeHostBatch(generation: generation, id: "55555555555555555555555555555555", queuedAtMs: queuedAt + 1, record: "delta")
+        #expect(try nativeHostAccepted(await owner.accept(bytes: liveDelta, direction: "extension_to_host"))["result"] as? String == "accepted")
+        clock.advance(seconds: 300)
+        owner.authority.poll(now: clock.wallNow())
         let delta = nativeHostBatch(generation: generation, id: "22222222222222222222222222222222", queuedAtMs: queuedAt + 1, record: "delta")
         let deltaResult = try nativeHostAccepted(try await owner.accept(bytes: delta, direction: "extension_to_host"))
         #expect(deltaResult["reason"] as? String == "snapshot_required")
@@ -502,10 +508,12 @@ struct NativeHostSpoolCompositionTests {
 
         injector.setFailure { point in if point == .commit { throw NativeHostTestError.unexpected } }
         let failed = await owner.accept(bytes: nativeHostBatch(generation: generation, id: "44444444444444444444444444444444", queuedAtMs: queuedAt + 3, record: "snapshot"), direction: "extension_to_host")
-        guard case .refusal = failed else { Issue.record("failed commit emitted an accepted response"); return }
+        let failedReply = try nativeHostAccepted(failed)
+        #expect(failedReply["result"] as? String == "rejected")
+        #expect(failedReply["reason"] as? String == "resource_exhausted")
         injector.setFailure(nil)
 
-        owner.stop()
+        await owner.stopAndDrain()
         let restarted = try makeOwner()
         await restarted.start()
         let duplicateAfterRestart = try nativeHostAccepted(try await restarted.accept(bytes: snapshotBatch, direction: "extension_to_host"))
@@ -741,8 +749,8 @@ private final class NativeHostCompositionClock: BrowserIntakeClock, @unchecked S
     func advance(seconds: TimeInterval) { lock.withLock { date = date.addingTimeInterval(seconds) } }
     func timeZone() -> TimeZone { zone }
     func now() -> Duration { .zero }
-    func sleep(for duration: Duration) async {}
-    func sleepUntil(_ date: Date) async throws {}
+    func sleep(for duration: Duration) async { try? await Task.sleep(for: duration) }
+    func sleepUntil(_ date: Date) async throws { try await Task.sleep(for: .seconds(3_600)) }
     func ageStamp() -> BrowserAgeStamp? { BrowserAgeStamp.current() }
 }
 
@@ -777,9 +785,9 @@ private func nativeHostDecodedState(_ result: BrowserIntakeAcceptResult, project
 private func nativeHostBatch(generation: String, id: String, queuedAtMs: UInt64, inst: String = "composition-instance", record: String) -> Data {
     let recordObject: String
     if record == "snapshot" {
-        recordObject = "\"t\":\"snapshot\",\"ts\":\(queuedAtMs),\"ctx\":\"composition-context\",\"inst\":\"\(inst)\",\"blocks\":[{\"id\":\"block\",\"text\":\"synthetic page\"}]"
+        recordObject = "\"t\":\"segment_start\",\"ts\":\(queuedAtMs),\"ctx\":\"composition-context\",\"inst\":\"\(inst)\",\"blocks\":[{\"id\":\"block\",\"text\":\"synthetic page\"}]"
     } else {
-        recordObject = "\"t\":\"delta\",\"ts\":\(queuedAtMs),\"ctx\":\"missing-context\",\"inst\":\"\(inst)\",\"op\":\"add\",\"block\":{\"id\":\"block\",\"text\":\"synthetic delta\"}"
+        recordObject = "\"t\":\"delta\",\"ts\":\(queuedAtMs),\"ctx\":\"composition-context\",\"inst\":\"\(inst)\",\"op\":\"add\",\"block\":{\"id\":\"block\",\"text\":\"synthetic delta\"}"
     }
     return Data("{\"type\":\"batch\",\"destination_generation\":\"\(generation)\",\"inst\":\"\(inst)\",\"batch_id\":\"\(id)\",\"queued_at_ms\":\(queuedAtMs),\"records\":[{\(recordObject)}]}".utf8)
 }
@@ -788,6 +796,89 @@ private func nativeHostAccepted(_ result: BrowserIntakeAcceptResult) throws -> [
     guard case .message(let bytes) = result,
           let object = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { throw NativeHostTestError.unexpected }
     return object
+}
+
+@Suite("BrowserHostInputRepresentation")
+struct BrowserHostInputRepresentationTests {
+    @Test func dataSliceKeepsOffsetAndStrictUTF8Semantics() throws {
+        let projection = try nativeHostProjection()
+        let hello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.1.0\",\"brand\":\"chrome\",\"inst\":\"slice-instance\"}".utf8)
+        var prefixed = Data([0, 0, 0, 0]); prefixed.append(hello)
+        let slice = prefixed[4...]
+        #expect(slice.startIndex == 4)
+        #expect(BrowserPayloadDecoder.decode(bytes: slice, direction: "extension_to_host", projection: projection)
+                == BrowserPayloadDecoder.decode(bytes: hello, direction: "extension_to_host", projection: projection))
+        for bytes: [UInt8] in [[0xC0, 0x80], [0xED, 0xA0, 0x80], [0xF4, 0x90, 0x80, 0x80], [0xE2, 0x82]] {
+            #expect(!NativeHostUTF8.isValid(Data(bytes)))
+        }
+        #expect(NativeHostUTF8.isValid(Data("text 👋".utf8)))
+    }
+
+    @Test func everyContractDeltaFitsTheRecordRangeCollector() throws {
+        let projection = try nativeHostProjection()
+        let record = "{\"t\":\"delta\",\"ts\":1,\"ctx\":\"c\",\"inst\":\"i\",\"op\":\"add\",\"block\":{\"id\":\"b\",\"text\":\"synthetic\"}}"
+        let records = Array(repeating: record, count: projection.caps.deltaRecords).joined(separator: ",")
+        let body = Data("{\"type\":\"batch\",\"destination_generation\":\"g\",\"inst\":\"i\",\"batch_id\":\"ffffffffffffffffffffffffffffffff\",\"queued_at_ms\":1,\"records\":[\(records)]}".utf8)
+        guard case .accept(.batch(let batch)) = BrowserPayloadDecoder.decode(bytes: body, direction: "extension_to_host", projection: projection) else {
+            Issue.record("canonical maximum-record batch was refused"); return
+        }
+        #expect(batch.records.count == projection.caps.deltaRecords)
+        #expect(batch.records.allSatisfy { !$0.rawSlice.isEmpty })
+    }
+
+    @Test func denseInputRefusesBeforeContainerReservation() throws {
+        let projection = try nativeHostProjection()
+        var body = Data("{\"type\":\"batch\",\"records\":[".utf8)
+        for _ in 0..<600_000 { body.append(contentsOf: [48, 44]) }
+        body.append(contentsOf: [48, 93, 125])
+        var reserved = false
+        let result = BrowserPayloadDecoder.decode(bytes: body, direction: "extension_to_host", projection: projection,
+            reserveWorkingMemory: { _ in reserved = true; return true })
+        #expect(result == .refuse(BrowserRefusal(code: "resource_exhausted")))
+        #expect(!reserved)
+    }
+
+    @Test func oversizedControlUsesFinalEscapedRootTypeBeforeTreeReservation() throws {
+        let projection = try nativeHostProjection()
+        let prefix = "{\"type\":\"batch\",\"\\u0074ype\":\"hello\",\"padding\":\""
+        var body = Data(prefix.utf8)
+        body.append(Data(repeating: 120, count: projection.caps.control))
+        body.append(Data("\"}".utf8))
+        var reserved = false
+        let result = BrowserPayloadDecoder.decode(bytes: body, direction: "extension_to_host", projection: projection,
+            reserveWorkingMemory: { _ in reserved = true; return true })
+        #expect(result == .refuse(BrowserRefusal(code: "oversize")))
+        #expect(!reserved)
+    }
+
+    @Test func maximumDepthControlStillRefusesBeforeMaterialization() throws {
+        let projection = try nativeHostProjection()
+        let depth = projection.caps.jsonMaxDepth - 1
+        let nested = String(repeating: "[", count: depth) + "0" + String(repeating: "]", count: depth)
+        let body = Data(("{\"type\":\"hello\",\"ignored\":" + nested + ",\"padding\":\"" +
+            String(repeating: "x", count: projection.caps.control) + "\"}").utf8)
+        var reserved = false
+        #expect(BrowserPayloadDecoder.decode(bytes: body, direction: "extension_to_host", projection: projection,
+            reserveWorkingMemory: { _ in reserved = true; return true }) == .refuse(BrowserRefusal(code: "oversize")))
+        #expect(!reserved)
+    }
+
+    @Test func nearFrameCeilingFitsChargedInputAndDenialIsFailClosed() throws {
+        let projection = try nativeHostProjection()
+        var body = Data("{\"type\":\"batch\",\"destination_generation\":\"g\",\"inst\":\"i\",\"batch_id\":\"ffffffffffffffffffffffffffffffff\",\"queued_at_ms\":1,\"records\":[{\"t\":\"segment_start\",\"ts\":1,\"ctx\":\"c\",\"blocks\":[{\"id\":\"b\",\"text\":\"synthetic page\"}],\"padding\":\"".utf8)
+        let suffix = Data("\"}]}".utf8)
+        body.append(Data(repeating: 120, count: projection.caps.extensionToHost - body.count - suffix.count - 1))
+        body.append(suffix)
+        var working = 0
+        let decoded = BrowserPayloadDecoder.decode(bytes: body, direction: "extension_to_host", projection: projection,
+            reserveWorkingMemory: { amount in working = amount; return true })
+        guard case .accept(.batch(let batch)) = decoded else { Issue.record("near-ceiling valid batch refused"); return }
+        #expect(batch.records.count == 1)
+        #expect(working >= body.count * 2)
+        #expect(working + body.count <= 128 * 1024 * 1024)
+        #expect(BrowserPayloadDecoder.decode(bytes: body, direction: "extension_to_host", projection: projection,
+            reserveWorkingMemory: { _ in false }) == .refuse(BrowserRefusal(code: "resource_exhausted")))
+    }
 }
 
 #endif

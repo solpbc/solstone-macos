@@ -11,6 +11,7 @@ public actor BrowserHostUpdateGate {
     private let clock: @Sendable () -> Date
     private let checkForUpdates: @MainActor @Sendable () -> Void
     public private(set) var lastRequestedAt: Date?
+    private var requestRevision = 0
 
     public init(
         clock: @escaping @Sendable () -> Date = Date.init,
@@ -21,14 +22,23 @@ public actor BrowserHostUpdateGate {
     }
 
     @discardableResult
-    public func requestForAppBehindHello() async -> Bool {
+    public func requestForAppBehindHello(isCurrent: @escaping @Sendable () -> Bool = { true }) async -> Bool {
+        guard isCurrent() else { return false }
         let now = clock()
         if let lastRequestedAt, now.timeIntervalSince(lastRequestedAt) < Self.interval {
             return false
         }
+        let previous = lastRequestedAt
+        requestRevision &+= 1
+        let revision = requestRevision
         lastRequestedAt = now
-        await checkForUpdates()
-        return true
+        let invoked = await MainActor.run {
+            guard isCurrent() else { return false }
+            checkForUpdates()
+            return true
+        }
+        if !invoked, requestRevision == revision { lastRequestedAt = previous }
+        return invoked
     }
 }
 

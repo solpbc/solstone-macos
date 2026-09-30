@@ -28,7 +28,7 @@ public enum JournalIconWordLayout {
     static let referenceSide: CGFloat = 100
     static let startingFontSize: CGFloat = 12
     static let maximumWordWidth: CGFloat = 76
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
     static var forceFontUnavailableForTesting = false
 #endif
 
@@ -37,7 +37,7 @@ public enum JournalIconWordLayout {
         tileSide: CGFloat
     ) -> JournalIconWordLayoutResult? {
         guard tileSide > 0, !inputs.isEmpty else { return nil }
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
         guard !forceFontUnavailableForTesting else { return nil }
 #endif
         JournalMarkFont.register()

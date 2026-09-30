@@ -322,9 +322,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         return outputDirectory.appendingPathComponent(filename)
     }
 
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
     /// Test-only: inject a pre-built source writer + device metadata directly into
-    /// segment state, bypassing addMicrophone's hardware capture. Not in release builds.
+    /// segment state, bypassing addMicrophone's hardware capture. Excluded from shipping builds.
     internal func _addSourceWriterForTesting(_ writer: SingleTrackAudioWriter, device: AudioInputDevice) {
         lock.lock()
         sourceWriters[device.uid] = SourceWriter(writer: writer)

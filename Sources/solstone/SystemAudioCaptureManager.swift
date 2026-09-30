@@ -26,7 +26,7 @@ public final class SystemAudioCaptureManager {
     private var streamGeneration: Int = 0
     private let verbose: Bool
     private let streamFactory: CaptureStreamFactory
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
     internal private(set) var _restartDecisionTraceForTesting: [String] = []
     internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
     internal var _stopParkHookForTesting: (@MainActor () async -> Void)?
@@ -139,12 +139,12 @@ public final class SystemAudioCaptureManager {
 
         Logger.audio.info("[SystemAudio] Stopping persistent SCStream...")
 
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
         let stopParkHook = _stopParkHookForTesting
 #endif
         do {
             try await withTimeout(seconds: 5) {
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
                 if let hook = stopParkHook {
                     await hook()
                     try Task.checkCancellation()
@@ -377,7 +377,7 @@ public final class SystemAudioCaptureManager {
     }
 
     private func restartBackoff() async throws {
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
         if let hook = _restartParkHookForTesting {
             await hook()
             return
@@ -387,18 +387,18 @@ public final class SystemAudioCaptureManager {
     }
 
     private func appendRestartSuppressedTraceForTesting() {
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
         _restartDecisionTraceForTesting.append("restart suppressed - stream generation changed")
 #endif
     }
 
     private func appendRestartProceedTraceForTesting() {
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
         _restartDecisionTraceForTesting.append("restart proceeding")
 #endif
     }
 
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
     internal func _restartStreamForTesting() async {
         await restartStream()
     }

@@ -42,12 +42,13 @@ enum BrowserHostCommand {
         let fence = BrowserHostEndpointFence(rootURL: root)
         let report: BrowserHostRegistrationReport
         let endpoint: BrowserHostEndpointDisposition
+        var repairRefused = false
         switch command {
         case .check(let mode):
             endpoint = fence.inspectEndpoint()
             report = registration.check(mode: mode)
         case .repair(let mode):
-            _ = (try? fence.repairStaleEndpoint()) ?? .refused
+            repairRefused = ((try? fence.repairStaleEndpoint()) ?? .refused) == .refused
             _ = registration.repair(mode: mode)
             report = registration.check(mode: mode)
             endpoint = fence.inspectEndpoint()
@@ -77,7 +78,7 @@ enum BrowserHostCommand {
         }
         let registrationReady = report.outcomes.values.allSatisfy { $0.state == .ready }
         let endpointReady = endpoint == .absent || endpoint == .live || endpoint == .removed
-        return registrationReady && endpointReady ? 0 : 1
+        return registrationReady && endpointReady && !repairRefused ? 0 : 1
     }
 
     private static func helperURL(for command: Command, bundleURL: URL) -> URL {

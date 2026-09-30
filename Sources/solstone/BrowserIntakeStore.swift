@@ -124,7 +124,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     // An empty replacement counts as a prospective active period.
     private let drainPagesPerActivePeriod = 64
     private let fixedDrainPages = 128
-    #if DEBUG
+    #if DEBUG || SOLSTONE_TEST_SUPPORT
     private var automaticFullRollbackCount = 0
     #endif
     private var db: OpaquePointer?
@@ -531,12 +531,12 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     }
 
     private func noteFullRollbackLocked() {
-        #if DEBUG
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
         if sqlite3_get_autocommit(db) != 0 { automaticFullRollbackCount += 1 }
         #endif
     }
 
-    #if DEBUG
+    #if DEBUG || SOLSTONE_TEST_SUPPORT
     func setSQLitePageLimitForValidation(_ pages: Int) throws {
         try lock.withLock {
             guard pages > 0, pages <= metadataPageLimit,

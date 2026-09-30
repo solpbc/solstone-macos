@@ -793,6 +793,15 @@ func axIntegerString(_ value: Int) -> String {
 }
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+public enum BrowserProfileAXState: String, CaseIterable, Sendable {
+    case connected
+    case lastSeen = "last_seen"
+    case needsAppUpdate = "needs_app_update"
+    case needsExtensionUpdate = "needs_extension_update"
+    case none
+    public var axToken: String { rawValue }
+}
+
 extension BrowserHostRegistrationState {
     public static let axTokens = [
         "ready",

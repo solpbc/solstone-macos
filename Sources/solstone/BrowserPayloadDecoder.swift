@@ -155,10 +155,10 @@ public enum BrowserPayloadDecoder {
         Data(lhs.utf8) == Data(rhs.utf8)
     }
 
-    private static func parseHex4(_ bytes: [UInt8], from start: Int) -> UInt16? {
+    private static func parseHex4(_ bytes: Data, from start: Int) -> UInt16? {
         var val: UInt16 = 0
         for offset in 0..<4 {
-            let b = bytes[start + offset]
+            let b = bytes[bytes.startIndex + start + offset]
             let digit: UInt16
             if b >= UInt8(ascii: "0") && b <= UInt8(ascii: "9") {
                 digit = UInt16(b - UInt8(ascii: "0"))
@@ -176,17 +176,16 @@ public enum BrowserPayloadDecoder {
 
     /// Scan JSON source for a lone `\u` surrogate. A preceding escaped backslash
     /// (`\\uD800`) is literal text and is not a surrogate escape.
-    private static func hasLoneSurrogateEscape(_ text: String) -> Bool {
-        let utf8 = Array(text.utf8)
+    private static func hasLoneSurrogateEscape(_ utf8: Data) -> Bool {
         var i = 0
         let n = utf8.count
         while i < n {
-            if utf8[i] != UInt8(ascii: "\\") {
+            if utf8[utf8.startIndex + i] != UInt8(ascii: "\\") {
                 i += 1
                 continue
             }
             if i + 1 >= n { return true }
-            let next = utf8[i + 1]
+            let next = utf8[utf8.startIndex + i + 1]
             if next != UInt8(ascii: "u") {
                 i += 2
                 continue
@@ -194,7 +193,7 @@ public enum BrowserPayloadDecoder {
             if i + 5 >= n { return true }
             guard let hexVal = parseHex4(utf8, from: i + 2) else { return true }
             if (0xD800...0xDBFF).contains(hexVal) {
-                if i + 11 < n && utf8[i + 6] == UInt8(ascii: "\\") && utf8[i + 7] == UInt8(ascii: "u") {
+                if i + 11 < n && utf8[utf8.startIndex + i + 6] == UInt8(ascii: "\\") && utf8[utf8.startIndex + i + 7] == UInt8(ascii: "u") {
                     if let lowVal = parseHex4(utf8, from: i + 8), (0xDC00...0xDFFF).contains(lowVal) {
                         i += 12
                         continue
@@ -233,11 +232,12 @@ public enum BrowserPayloadDecoder {
         return false
     }
 
-    private static func exceedsJsonDepth(_ text: String, maxDepth: Int) -> Bool {
+    private static func exceedsJsonDepth(_ text: Data, maxDepth: Int) -> Bool {
         var depth = 0
         var inString = false
         var escaped = false
-        for ch in text {
+        for byte in text {
+            let ch = UnicodeScalar(byte)
             if inString {
                 if escaped {
                     escaped = false
@@ -261,55 +261,97 @@ public enum BrowserPayloadDecoder {
     /// One walk of the root object. Record slices come from the root `records`
     /// array (last duplicate key wins, matching JSON object semantics), with
     /// insignificant whitespace removed and string/number lexemes preserved.
-    private static func rootRecordSlices(in bytes: Data) -> [Data]? {
-        var lexer = JSONLexer(bytes: [UInt8](bytes))
-        return lexer.rootRecordSlices()
+    private static func rootRecordSlices(in bytes: Data, maximumRecords: Int) -> [Data]? {
+        var lexer = JSONLexer(bytes: bytes)
+        return lexer.rootRecordSlices(maximumRecords: maximumRecords)
     }
 
     private struct JSONLexer {
-        let bytes: [UInt8]
+        let bytes: Data
         var index: Int = 0
 
-        mutating func rootRecordSlices() -> [Data]? {
+        mutating func rootRecordSlices(maximumRecords: Int) -> [Data]? {
             skipWhitespace()
             guard peek() == UInt8(ascii: "{") else { return nil }
             index += 1
-            skipWhitespace()
-            var slices: [Data]?
-            if peek() == UInt8(ascii: "}") {
-                return nil
-            }
+            var ranges: [Range<Int>]?
             while index < bytes.count {
-                guard let keyRaw = rawString() else { return nil }
-                guard let key = jsonStringValue(keyRaw) else { return nil }
+                skipWhitespace()
+                guard let rawKey = rawString(), let key = jsonStringValue(rawKey) else { return nil }
                 skipWhitespace()
                 guard peek() == UInt8(ascii: ":") else { return nil }
                 index += 1
-                if key == "records" {
+                skipWhitespace()
+                if key == "records", peek() == UInt8(ascii: "[") {
+                    index += 1
+                    var next: [Range<Int>] = []
+                    var tooMany = false
                     skipWhitespace()
-                    if peek() == UInt8(ascii: "[") {
-                        guard let elements = compactArrayElements() else { return nil }
-                        slices = elements
-                    } else {
-                        guard compactValue() != nil else { return nil }
-                        slices = nil
+                    while peek() != UInt8(ascii: "]") {
+                        guard let range = skipRawValue() else { return nil }
+                        if next.count < maximumRecords { next.append(range) } else { tooMany = true }
+                        skipWhitespace()
+                        if peek() == UInt8(ascii: ",") { index += 1; skipWhitespace() }
+                        else if peek() != UInt8(ascii: "]") { return nil }
                     }
+                    index += 1
+                    ranges = tooMany ? nil : next
                 } else {
-                    guard compactValue() != nil else { return nil }
+                    guard skipRawValue() != nil else { return nil }
+                    if key == "records" { ranges = nil }
                 }
                 skipWhitespace()
-                if peek() == UInt8(ascii: ",") {
-                    index += 1
-                    skipWhitespace()
-                    continue
-                }
-                if peek() == UInt8(ascii: "}") {
-                    index += 1
-                    return slices
-                }
-                return nil
+                if peek() == UInt8(ascii: ",") { index += 1; continue }
+                guard peek() == UInt8(ascii: "}") else { return nil }
+                return ranges?.map { compactSlice($0) }
             }
             return nil
+        }
+
+        // Input was already parsed and validated. Traverse source ranges without
+        // recursive temporary buffers or materializing unrelated root values.
+        private mutating func skipRawValue() -> Range<Int>? {
+            skipWhitespace()
+            let start = index
+            var depth = 0
+            var quoted = false
+            var escaped = false
+            while index < bytes.count {
+                let byte = bytes[bytes.startIndex + index]
+                if quoted {
+                    if escaped { escaped = false }
+                    else if byte == 92 { escaped = true }
+                    else if byte == 34 { quoted = false }
+                } else {
+                    if byte == 34 { quoted = true }
+                    else if byte == 123 || byte == 91 { depth += 1 }
+                    else if byte == 125 || byte == 93 {
+                        if depth == 0 { break }
+                        depth -= 1
+                    } else if byte == 44 && depth == 0 { break }
+                }
+                index += 1
+            }
+            return index > start && !quoted && depth == 0 ? start..<index : nil
+        }
+
+        private func compactSlice(_ range: Range<Int>) -> Data {
+            var result = Data()
+            result.reserveCapacity(range.count)
+            var quoted = false
+            var escaped = false
+            for index in range {
+                let byte = bytes[bytes.startIndex + index]
+                if quoted {
+                    result.append(byte)
+                    if escaped { escaped = false }
+                    else if byte == 92 { escaped = true }
+                    else if byte == 34 { quoted = false }
+                } else if byte == 34 {
+                    quoted = true; result.append(byte)
+                } else if byte != 32 && byte != 9 && byte != 10 && byte != 13 { result.append(byte) }
+            }
+            return result
         }
 
         mutating func rootObjectLastWins() -> [String: Any]? {
@@ -356,7 +398,7 @@ public enum BrowserPayloadDecoder {
                 return jsonStringValue(raw)
             default:
                 guard let raw = compactValue() else { return nil }
-                return try? JSONSerialization.jsonObject(with: Data(raw), options: [.fragmentsAllowed])
+                return try? JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed])
             }
         }
 
@@ -414,139 +456,31 @@ public enum BrowserPayloadDecoder {
             return nil
         }
 
-        private mutating func compactArrayElements() -> [Data]? {
-            skipWhitespace()
-            guard peek() == UInt8(ascii: "[") else { return nil }
-            index += 1
-            skipWhitespace()
-            var elements: [Data] = []
-            if peek() == UInt8(ascii: "]") {
-                index += 1
-                return elements
-            }
-            while index < bytes.count {
-                guard let value = compactValue() else { return nil }
-                elements.append(Data(value))
-                skipWhitespace()
-                if peek() == UInt8(ascii: ",") {
-                    index += 1
-                    skipWhitespace()
-                    continue
-                }
-                if peek() == UInt8(ascii: "]") {
-                    index += 1
-                    return elements
-                }
-                return nil
-            }
-            return nil
-        }
-
-        private mutating func compactValue() -> [UInt8]? {
+        private mutating func compactValue() -> Data? {
             skipWhitespace()
             guard let byte = peek() else { return nil }
             switch byte {
-            case UInt8(ascii: "{"):
-                return compactObject()
-            case UInt8(ascii: "["):
-                return compactArray()
-            case UInt8(ascii: "\""):
-                return rawString()
-            case UInt8(ascii: "t"):
-                return rawLiteral("true")
-            case UInt8(ascii: "f"):
-                return rawLiteral("false")
-            case UInt8(ascii: "n"):
-                return rawLiteral("null")
-            case UInt8(ascii: "-"), UInt8(ascii: "0")...UInt8(ascii: "9"):
-                return rawNumber()
-            default:
-                return nil
+            case UInt8(ascii: "\""): return rawString()
+            case UInt8(ascii: "t"): return rawLiteral("true")
+            case UInt8(ascii: "f"): return rawLiteral("false")
+            case UInt8(ascii: "n"): return rawLiteral("null")
+            case UInt8(ascii: "-"), UInt8(ascii: "0")...UInt8(ascii: "9"): return rawNumber()
+            default: return nil
             }
         }
 
-        private mutating func compactObject() -> [UInt8]? {
-            guard peek() == UInt8(ascii: "{") else { return nil }
-            index += 1
-            var out: [UInt8] = [UInt8(ascii: "{")]
-            skipWhitespace()
-            if peek() == UInt8(ascii: "}") {
-                index += 1
-                out.append(UInt8(ascii: "}"))
-                return out
-            }
-            var first = true
-            while index < bytes.count {
-                if !first { out.append(UInt8(ascii: ",")) }
-                first = false
-                guard let key = rawString() else { return nil }
-                out.append(contentsOf: key)
-                skipWhitespace()
-                guard peek() == UInt8(ascii: ":") else { return nil }
-                index += 1
-                out.append(UInt8(ascii: ":"))
-                guard let value = compactValue() else { return nil }
-                out.append(contentsOf: value)
-                skipWhitespace()
-                if peek() == UInt8(ascii: ",") {
-                    index += 1
-                    skipWhitespace()
-                    continue
-                }
-                if peek() == UInt8(ascii: "}") {
-                    index += 1
-                    out.append(UInt8(ascii: "}"))
-                    return out
-                }
-                return nil
-            }
-            return nil
-        }
-
-        private mutating func compactArray() -> [UInt8]? {
-            guard peek() == UInt8(ascii: "[") else { return nil }
-            index += 1
-            var out: [UInt8] = [UInt8(ascii: "[")]
-            skipWhitespace()
-            if peek() == UInt8(ascii: "]") {
-                index += 1
-                out.append(UInt8(ascii: "]"))
-                return out
-            }
-            var first = true
-            while index < bytes.count {
-                if !first { out.append(UInt8(ascii: ",")) }
-                first = false
-                guard let value = compactValue() else { return nil }
-                out.append(contentsOf: value)
-                skipWhitespace()
-                if peek() == UInt8(ascii: ",") {
-                    index += 1
-                    skipWhitespace()
-                    continue
-                }
-                if peek() == UInt8(ascii: "]") {
-                    index += 1
-                    out.append(UInt8(ascii: "]"))
-                    return out
-                }
-                return nil
-            }
-            return nil
-        }
-
-        private mutating func rawString() -> [UInt8]? {
+        private mutating func rawString() -> Data? {
             guard peek() == UInt8(ascii: "\"") else { return nil }
             let start = index
             index += 1
             while index < bytes.count {
-                let byte = bytes[index]
+                let byte = bytes[bytes.startIndex + index]
                 if byte == UInt8(ascii: "\\") {
                     index += 2
                     if index > bytes.count { return nil }
                 } else if byte == UInt8(ascii: "\"") {
                     index += 1
-                    return Array(bytes[start..<index])
+                    return Data(bytes[(bytes.startIndex + start)..<(bytes.startIndex + index)])
                 } else {
                     index += 1
                 }
@@ -554,20 +488,20 @@ public enum BrowserPayloadDecoder {
             return nil
         }
 
-        private mutating func rawLiteral(_ literal: String) -> [UInt8]? {
-            let raw = Array(literal.utf8)
+        private mutating func rawLiteral(_ literal: String) -> Data? {
+            let raw = Data(literal.utf8)
             guard index + raw.count <= bytes.count else { return nil }
-            guard Array(bytes[index..<(index + raw.count)]) == raw else { return nil }
+            guard bytes[(bytes.startIndex + index)..<(bytes.startIndex + index + raw.count)] == raw else { return nil }
             index += raw.count
             return raw
         }
 
-        private mutating func rawNumber() -> [UInt8]? {
+        private mutating func rawNumber() -> Data? {
             let start = index
             if peek() == UInt8(ascii: "-") { index += 1 }
             let numberStart = index
             while index < bytes.count {
-                let byte = bytes[index]
+                let byte = bytes[bytes.startIndex + index]
                 let isDigit = byte >= UInt8(ascii: "0") && byte <= UInt8(ascii: "9")
                 if isDigit || byte == UInt8(ascii: ".") || byte == UInt8(ascii: "e") || byte == UInt8(ascii: "E") || byte == UInt8(ascii: "+") || byte == UInt8(ascii: "-") {
                     index += 1
@@ -576,12 +510,12 @@ public enum BrowserPayloadDecoder {
                 }
             }
             if index == numberStart { return nil }
-            return Array(bytes[start..<index])
+            return Data(bytes[(bytes.startIndex + start)..<(bytes.startIndex + index)])
         }
 
         private mutating func skipWhitespace() {
             while index < bytes.count {
-                let byte = bytes[index]
+                let byte = bytes[bytes.startIndex + index]
                 if byte == 0x20 || byte == 0x09 || byte == 0x0A || byte == 0x0D {
                     index += 1
                 } else {
@@ -591,15 +525,192 @@ public enum BrowserPayloadDecoder {
         }
 
         private func peek() -> UInt8? {
-            index < bytes.count ? bytes[index] : nil
+            index < bytes.count ? bytes[bytes.startIndex + index] : nil
         }
 
-        private func jsonStringValue(_ raw: [UInt8]) -> String? {
-            (try? JSONSerialization.jsonObject(with: Data(raw), options: [.fragmentsAllowed])) as? String
+        private func jsonStringValue(_ raw: Data) -> String? {
+            (try? JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed])) as? String
         }
     }
 
+    /// Syntax-only bounded scan used before generic container materialization.
+    /// Only the tiny final root type value is decoded; duplicate and escaped keys
+    /// retain the parser's last-key-wins semantics.
+    private struct ControlTypeScanner {
+        let bytes: Data
+        let maximumDepth: Int
+        var index = 0
+        var rootType: String?
+        private func byte(_ offset: Int) -> UInt8? {
+            offset < bytes.count ? bytes[bytes.startIndex + offset] : nil
+        }
+        private mutating func whitespace() {
+            while let b = byte(index), b == 32 || b == 9 || b == 10 || b == 13 { index += 1 }
+        }
+        mutating func scan() -> Bool {
+            whitespace()
+            guard byte(index) == 123, object(depth: 1, isRoot: true) else { return false }
+            whitespace()
+            return index == bytes.count
+        }
+        private mutating func value(depth: Int) -> Bool {
+            // The depth limit counts containers, not scalar leaves.
+            whitespace()
+            switch byte(index) {
+            case 123: return object(depth: depth, isRoot: false)
+            case 91: return array(depth: depth)
+            case 34: return string() != nil
+            case 116: return literal([116, 114, 117, 101])
+            case 102: return literal([102, 97, 108, 115, 101])
+            case 110: return literal([110, 117, 108, 108])
+            default: return number()
+            }
+        }
+        private mutating func object(depth: Int, isRoot: Bool) -> Bool {
+            guard depth <= maximumDepth, byte(index) == 123 else { return false }
+            index += 1; whitespace()
+            if byte(index) == 125 { index += 1; return true }
+            while index < bytes.count {
+                guard let keyRange = string() else { return false }
+                var isType = false
+                if isRoot, keyRange.count <= 64 {
+                    let raw = Data(bytes[(bytes.startIndex + keyRange.lowerBound)..<(bytes.startIndex + keyRange.upperBound)])
+                    isType = (try? JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed]) as? String) == "type"
+                }
+                whitespace()
+                guard byte(index) == 58 else { return false }
+                index += 1; whitespace()
+                let start = index
+                guard value(depth: depth + 1) else { return false }
+                if isType {
+                    rootType = nil
+                    if index - start <= 64, byte(start) == 34 {
+                        let raw = Data(bytes[(bytes.startIndex + start)..<(bytes.startIndex + index)])
+                        rootType = try? JSONSerialization.jsonObject(with: raw, options: [.fragmentsAllowed]) as? String
+                    }
+                }
+                whitespace()
+                if byte(index) == 125 { index += 1; return true }
+                guard byte(index) == 44 else { return false }
+                index += 1; whitespace()
+            }
+            return false
+        }
+        private mutating func array(depth: Int) -> Bool {
+            guard depth <= maximumDepth, byte(index) == 91 else { return false }
+            index += 1; whitespace()
+            if byte(index) == 93 { index += 1; return true }
+            while index < bytes.count {
+                guard value(depth: depth + 1) else { return false }
+                whitespace()
+                if byte(index) == 93 { index += 1; return true }
+                guard byte(index) == 44 else { return false }
+                index += 1; whitespace()
+            }
+            return false
+        }
+        private mutating func string() -> Range<Int>? {
+            guard byte(index) == 34 else { return nil }
+            let start = index; index += 1
+            while let b = byte(index) {
+                index += 1
+                if b == 34 { return start..<index }
+                if b < 32 { return nil }
+                if b == 92 {
+                    guard let escape = byte(index) else { return nil }
+                    index += 1
+                    if escape == 117 {
+                        for _ in 0..<4 {
+                            guard let h = byte(index), (48...57).contains(h) || (65...70).contains(h) || (97...102).contains(h) else { return nil }
+                            index += 1
+                        }
+                    } else if ![34, 92, 47, 98, 102, 110, 114, 116].contains(escape) { return nil }
+                }
+            }
+            return nil
+        }
+        private mutating func literal(_ expected: [UInt8]) -> Bool {
+            for b in expected { guard byte(index) == b else { return false }; index += 1 }
+            return true
+        }
+        private func digit(_ b: UInt8?) -> Bool { b.map { (48...57).contains($0) } ?? false }
+        private mutating func number() -> Bool {
+            if byte(index) == 45 { index += 1 }
+            if byte(index) == 48 { index += 1 }
+            else {
+                guard let b = byte(index), (49...57).contains(b) else { return false }
+                repeat { index += 1 } while digit(byte(index))
+            }
+            if byte(index) == 46 {
+                index += 1; guard digit(byte(index)) else { return false }
+                repeat { index += 1 } while digit(byte(index))
+            }
+            if byte(index) == 101 || byte(index) == 69 {
+                index += 1
+                if byte(index) == 43 || byte(index) == 45 { index += 1 }
+                guard digit(byte(index)) else { return false }
+                repeat { index += 1 } while digit(byte(index))
+            }
+            return true
+        }
+    }
+
+    /// Accounted input representations are bounded separately from process RSS.
+    /// Two body-sized working allowances cover materialized strings / scalar
+    /// scratch; after parsing they cover record slices plus the commit bundle.
+    /// Each lexical node and slot has a charge;
+    /// dense malformed input is refused before building Foundation containers.
     public static func decode(
+        bytes: Data, direction: String, projection: BrowserContractProjection,
+        reserveWorkingMemory: (Int) -> Bool = { _ in true }
+    ) -> BrowserDecodeResult {
+        let cap = direction == "host_to_extension" ? projection.caps.control : projection.caps.extensionToHost
+        guard bytes.count <= cap else { return .refuse(BrowserRefusal(code: "oversize")) }
+        guard direction == "extension_to_host" || direction == "host_to_extension" else {
+            return .refuse(BrowserRefusal(code: "bad_direction"))
+        }
+        guard NativeHostUTF8.isValid(bytes) else { return .refuse(BrowserRefusal(code: "bad_utf8")) }
+        var charged = bytes.count * 2
+        var quoted = false, escaped = false, literal = false
+        for byte in bytes {
+            if quoted {
+                if escaped { escaped = false }
+                else if byte == 92 { escaped = true }
+                else if byte == 34 { quoted = false }
+                continue
+            }
+            switch byte {
+            case 34: charged += 256; quoted = true; literal = false
+            case 123, 91: charged += 256; literal = false
+            case 44, 58: charged += 128; literal = false
+            case 125, 93, 32, 9, 10, 13: literal = false
+            default: if !literal { charged += 128; literal = true }
+            }
+            guard charged <= 128 * 1024 * 1024 - bytes.count else {
+                return .refuse(BrowserRefusal(code: "resource_exhausted"))
+            }
+        }
+        if bytes.count > projection.caps.control {
+            var scanner = ControlTypeScanner(bytes: bytes, maximumDepth: projection.caps.jsonMaxDepth)
+            if scanner.scan(), let type = scanner.rootType, type != "batch" {
+                return .refuse(BrowserRefusal(code: "oversize"))
+            }
+        }
+        guard reserveWorkingMemory(charged) else { return .refuse(BrowserRefusal(code: "resource_exhausted")) }
+        let metadata = decodeMetadata(bytes: bytes, direction: direction, projection: projection)
+        guard case .accept(.batch(let batch)) = metadata else { return metadata }
+        guard let slices = rootRecordSlices(in: bytes, maximumRecords: projection.caps.deltaRecords), slices.count == batch.records.count else {
+            return .refuse(BrowserRefusal(code: "bad_json"))
+        }
+        let records = zip(batch.records, slices).map { record, slice in
+            BrowserDecodedBatchRecord(rawSlice: slice, t: record.t, ts: record.ts, ctx: record.ctx,
+                inst: record.inst, op: record.op, blockId: record.blockId, snapshotReason: record.snapshotReason)
+        }
+        return .accept(.batch(BrowserDecodedBatch(destinationGeneration: batch.destinationGeneration,
+            inst: batch.inst, batchId: batch.batchId, queuedAtMs: batch.queuedAtMs, records: records)))
+    }
+
+    private static func decodeMetadata(
         bytes: Data,
         direction: String,
         projection: BrowserContractProjection
@@ -613,23 +724,23 @@ public enum BrowserPayloadDecoder {
             return .refuse(BrowserRefusal(code: "oversize"))
         }
 
-        guard let text = String(data: bytes, encoding: .utf8) else {
+        guard NativeHostUTF8.isValid(bytes) else {
             return .refuse(BrowserRefusal(code: "bad_utf8"))
         }
 
-        if bytes.isEmpty || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if bytes.isEmpty || bytes.allSatisfy({ $0 == 32 || $0 == 9 || $0 == 10 || $0 == 13 }) {
             return .refuse(BrowserRefusal(code: "empty_payload"))
         }
 
-        if hasLoneSurrogateEscape(text) {
+        if hasLoneSurrogateEscape(bytes) {
             return .refuse(BrowserRefusal(code: "lone_surrogate"))
         }
 
-        if exceedsJsonDepth(text, maxDepth: projection.caps.jsonMaxDepth) {
+        if exceedsJsonDepth(bytes, maxDepth: projection.caps.jsonMaxDepth) {
             return .refuse(BrowserRefusal(code: "bad_json"))
         }
 
-        var rootLexer = JSONLexer(bytes: [UInt8](bytes))
+        var rootLexer = JSONLexer(bytes: bytes)
         guard let root = rootLexer.rootObjectLastWins() else {
             return .refuse(BrowserRefusal(code: "bad_json"))
         }
@@ -1023,9 +1134,6 @@ public enum BrowserPayloadDecoder {
         guard let recordsValue = root["records"] as? [Any] else {
             return .refuse(BrowserRefusal(code: "missing_field"))
         }
-        guard let recordSlices = rootRecordSlices(in: rawBytes), recordSlices.count == recordsValue.count else {
-            return .refuse(BrowserRefusal(code: "bad_json"))
-        }
         guard let recordsArray = recordsValue as? [[String: Any]] else {
             return .refuse(BrowserRefusal(code: "bad_record"))
         }
@@ -1141,7 +1249,7 @@ public enum BrowserPayloadDecoder {
             }
 
             decodedRecords.append(BrowserDecodedBatchRecord(
-                rawSlice: recordSlices[row],
+                rawSlice: Data(),
                 t: recT,
                 ts: tsVal,
                 ctx: recCtx,

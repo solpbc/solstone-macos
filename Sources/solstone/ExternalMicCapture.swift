@@ -46,9 +46,9 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
     private var isRunning = false
     private var isRecovering = false  // Prevents recursive recovery attempts
-    #if DEBUG
+    #if DEBUG || SOLSTONE_TEST_SUPPORT
     /// Test-only: records teardown call order ("engine.stop", "removeTap").
-    /// Mutated only on writerQueue inside teardownEngine(). Not in release builds.
+    /// Mutated only on writerQueue inside teardownEngine(). Excluded from shipping builds.
     internal private(set) var _teardownTraceForTesting: [String] = []
     #endif
     private var receivedFirstBuffer = false
@@ -177,7 +177,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(writerQueue))
 
         engine.stop()
-        #if DEBUG
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
         _teardownTraceForTesting.append("engine.stop")
         #endif
 
@@ -188,7 +188,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         } catch {
             // Tap may already be gone, that's fine
         }
-        #if DEBUG
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
         _teardownTraceForTesting.append("removeTap")
         #endif
     }

@@ -29,7 +29,7 @@ public enum UICopy {
     public static let SOURCES_BROWSER_INTAKE_OFF = "browser pages are off. nothing new is taken in from your browsers."
     public static let SOURCES_BROWSER_DRAINING = "browser pages are off. nothing new is taken in from your browsers; turning them off doesn't hold back what's already kept on this mac."
     public static let SOURCES_BROWSER_NEWER_EXTENSION = "the solstone extension in a browser needs a newer solstone app. look under updates."
-    public static let SOURCES_BROWSER_FULL = "the room on this mac for what you share from your browsers is full. new browser pages are taken in again once there's room."
+    public static let SOURCES_BROWSER_FULL = "the room on this mac for what you share from your browsers is full."
     public static let SOURCES_BROWSER_STALE = "some browser pages have waited more than a week to go into your journal. they're still kept on this mac."
     public static let SOURCES_BROWSER_CANNOT_START = "browser pages can't start right now."
     public static let SOURCES_BROWSER_UNKNOWN = "browser status isn't known yet."
@@ -43,6 +43,17 @@ public enum UICopy {
     public static let SOURCES_BROWSER_REPAIR_ACTION = "repair"
     public static let SOURCES_BROWSER_REPAIRED = "repaired"
     public static func sourcesBrowserRepairFailed(reason: String) -> String { "couldn't repair: \(reason)" }
+    public static func browserSetupReason(_ code: String?) -> String {
+        switch code {
+        case "listener_down": return "the app isn't available"
+        case "endpoint_collision": return "the app's connection couldn't be checked"
+        case "helper_path_not_bundled", "unsafe_helper_path", "invalid_contract", "invalid_template":
+            return "the app's files couldn't be checked"
+        case "manifest_missing", "manifest_change_required", "unsafe_registration_directory", "unsafe_manifest", "manifest_verification_failed", "registration_io":
+            return "the browser setup couldn't be changed"
+        default: return "the setup couldn't be checked"
+        }
+    }
     public static let SOURCES_BROWSER_FOOTNOTE = "the solstone extension works in Chrome, Edge and Firefox. it doesn't run in private windows. that covers this extension only."
 
     // Menu row

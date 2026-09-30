@@ -262,10 +262,16 @@ test:
 	swift test
 
 ax-contract:
-	AX_CONTRACT_REGEN=1 swift test --filter AXContract
+	AX_CONTRACT_REGEN=1 ./scripts/run-ci.sh -c release -Xswiftc -DSOLSTONE_TEST_SUPPORT --filter AXContractTests.contractMatchesCommittedFileOrRegenerates
+	AX_CONTRACT_REGEN=1 ./scripts/run-ci.sh --filter AXContractTests.contractMatchesCommittedFileOrRegenerates
 
 ci:
 	@./scripts/run-ci.sh
+
+ci-release:
+	@./scripts/run-ci.sh -c release -Xswiftc -DSOLSTONE_TEST_SUPPORT
+
+.PHONY: ci-release
 
 # On-demand integration tier: the apps' real Journal-runtime code against a
 # native journal runtime, inside an isolated home. Opt-in only; `make ci`

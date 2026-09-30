@@ -291,7 +291,7 @@ enum AXContract {
     }
 
     static var vocabularies: [String: [String]] {
-        [
+        var result: [String: [String]] = [
             "AXPermissionState": AXPermissionState.allCases.map(\.axToken),
             "MenubarIconState": MenubarIconState.allCases.map(\.axToken),
             "MenubarIconOverlayState": MenubarIconOverlayState.allCases.map(\.axToken),
@@ -319,10 +319,17 @@ enum AXContract {
             "UpdateStatus": UpdateStatus.axTokens,
             "ExcludedAppPickerAvailability": ExcludedAppPickerAvailability.allCases.map(\.axToken)
         ]
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        result["BrowserProfileAXState"] = BrowserProfileAXState.allCases.map(\.axToken)
+        result["BrowserRepairAXState"] = BrowserRepairAXState.axTokens
+        result["BrowserStoreLaunchAXState"] = BrowserStoreLaunchAXState.axTokens
+        result["BrowserHostRegistrationState"] = BrowserHostRegistrationState.axTokens
+#endif
+        return result
     }
 
     static var states: [String: StateBinding] {
-        [
+        var result: [String: StateBinding] = [
             AXID.Menubar.statusIconState: .enum("MenubarIconState"),
             AXID.Menubar.statusIconOverlayState: .enum("MenubarIconOverlayState"),
             AXID.Menubar.statusRowState: .enum("MenubarStatusRowState"),
@@ -390,6 +397,16 @@ enum AXContract {
             UpdatesAXID.debugStatePicker: .freeform,
             AXID.About.versionState: .freeform
         ]
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        for id in [AXID.Settings.Sources.browserChrome, AXID.Settings.Sources.browserEdge, AXID.Settings.Sources.browserFirefox] {
+            result[id] = .enum("BrowserProfileAXState")
+        }
+        result[AXID.Settings.Sources.browserRepair] = .enum("BrowserRepairAXState")
+        for id in [AXID.Settings.Sources.browserStoreChrome, AXID.Settings.Sources.browserStoreEdge, AXID.Settings.Sources.browserStoreFirefox] {
+            result[id] = .enum("BrowserStoreLaunchAXState")
+        }
+#endif
+        return result
     }
 
     static var requiredStateKeys: Set<String> {
@@ -399,6 +416,14 @@ enum AXContract {
                 .map(stateKey(for:))
         )
         keys.insert(AXID.Settings.Help.logExportFailureReason)
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        keys.formUnion([
+            AXID.Settings.Sources.browserChrome, AXID.Settings.Sources.browserEdge,
+            AXID.Settings.Sources.browserFirefox, AXID.Settings.Sources.browserRepair,
+            AXID.Settings.Sources.browserStoreChrome, AXID.Settings.Sources.browserStoreEdge,
+            AXID.Settings.Sources.browserStoreFirefox
+        ])
+#endif
         return keys
     }
 

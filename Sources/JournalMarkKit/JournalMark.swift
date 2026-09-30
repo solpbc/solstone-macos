@@ -76,7 +76,7 @@ public nonisolated struct JournalMark: Codable, Equatable, Sendable {
     }
 }
 
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
 extension JournalMark {
     public static let uiTestSample = JournalMark(
         icon1: Icon(

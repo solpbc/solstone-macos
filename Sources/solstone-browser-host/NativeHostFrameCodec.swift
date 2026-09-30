@@ -80,6 +80,39 @@ public struct NativeHostFrame: Sendable, Equatable {
     public let isLargeAssembly: Bool
 }
 
+/// Strict UTF-8 validation without materializing a second body-sized string.
+public enum NativeHostUTF8 {
+    public static func isValid(_ data: Data) -> Bool {
+        data.withUnsafeBytes { raw in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            var i = 0
+            while i < bytes.count {
+                let first = bytes[i]
+                if first < 0x80 { i += 1; continue }
+                let remaining: Int
+                let lower: UInt8
+                let upper: UInt8
+                switch first {
+                case 0xC2...0xDF: remaining = 1; lower = 0x80; upper = 0xBF
+                case 0xE0: remaining = 2; lower = 0xA0; upper = 0xBF
+                case 0xE1...0xEC, 0xEE...0xEF: remaining = 2; lower = 0x80; upper = 0xBF
+                case 0xED: remaining = 2; lower = 0x80; upper = 0x9F
+                case 0xF0: remaining = 3; lower = 0x90; upper = 0xBF
+                case 0xF1...0xF3: remaining = 3; lower = 0x80; upper = 0xBF
+                case 0xF4: remaining = 3; lower = 0x80; upper = 0x8F
+                default: return false
+                }
+                guard i + remaining < bytes.count, bytes[i + 1] >= lower, bytes[i + 1] <= upper else { return false }
+                if remaining > 1 {
+                    for offset in 2...remaining where bytes[i + offset] < 0x80 || bytes[i + offset] > 0xBF { return false }
+                }
+                i += remaining + 1
+            }
+            return true
+        }
+    }
+}
+
 public enum NativeHostSocketPath {
     public static let sunPathBytes = 104
 
@@ -90,16 +123,19 @@ public enum NativeHostSocketPath {
 
 /// Incremental parser for native-messaging's four-byte little-endian length prefix.
 public struct NativeHostFrameDecoder: Sendable {
-    private let direction: NativeHostFrameDirection
+    private var direction: NativeHostFrameDirection
+    private let initialControl: Bool
+    private var completedFirstFrame = false
     private let limits: BrowserHostLimits
     private var prefix = Data()
     private var body = Data()
     private var expectedLength: Int?
     private var assemblyStartedAt: Date?
 
-    public init(direction: NativeHostFrameDirection, limits: BrowserHostLimits = .helperFallback) {
+    public init(direction: NativeHostFrameDirection, limits: BrowserHostLimits = .helperFallback, initialControl: Bool = false) {
         self.direction = direction
         self.limits = limits
+        self.initialControl = initialControl
     }
 
     public var retainedByteCount: Int { prefix.count + body.count }
@@ -109,12 +145,16 @@ public struct NativeHostFrameDecoder: Sendable {
         return expectedLength > limits.control
     }
 
-    public mutating func append(_ bytes: Data, now: Date = Date()) throws -> [Data] {
+    public mutating func checkDeadline(now: Date = Date(timeIntervalSince1970: ProcessInfo.processInfo.systemUptime)) throws {
         if let started = assemblyStartedAt,
            now.timeIntervalSince(started) * 1000 > Double(limits.partialFrameMs) {
             reset()
             throw NativeHostFrameError.timedOut
         }
+    }
+
+    public mutating func append(_ bytes: Data, now: Date = Date(timeIntervalSince1970: ProcessInfo.processInfo.systemUptime)) throws -> [Data] {
+        try checkDeadline(now: now)
 
         var output: [Data] = []
         var offset = 0
@@ -131,7 +171,8 @@ public struct NativeHostFrameDecoder: Sendable {
                     let b = raw.bindMemory(to: UInt8.self)
                     return UInt32(b[0]) | (UInt32(b[1]) << 8) | (UInt32(b[2]) << 16) | (UInt32(b[3]) << 24)
                 }
-                guard Int(declared) <= direction.maximum(using: limits) else {
+                let cap = initialControl && !completedFirstFrame ? limits.control : direction.maximum(using: limits)
+                guard Int(declared) <= cap else {
                     reset()
                     throw NativeHostFrameError.oversized
                 }
@@ -140,6 +181,7 @@ public struct NativeHostFrameDecoder: Sendable {
                 if assemblyStartedAt == nil { assemblyStartedAt = now }
                 if declared == 0 {
                     output.append(Data())
+                    completedFirstFrame = true
                     reset()
                 }
                 continue
@@ -150,11 +192,12 @@ public struct NativeHostFrameDecoder: Sendable {
             body.append(bytes.subdata(in: offset..<(offset + amount)))
             offset += amount
             if body.count == expectedLength {
-                guard String(data: body, encoding: .utf8) != nil else {
+                guard NativeHostUTF8.isValid(body) else {
                     reset()
                     throw NativeHostFrameError.invalidUTF8
                 }
                 output.append(body)
+                completedFirstFrame = true
                 reset()
             }
         }
@@ -180,6 +223,13 @@ public struct NativeHostFrameDecoder: Sendable {
 /// Blocking descriptor adapter used by the helper and the app listener. The first byte may
 /// wait indefinitely; once a prefix begins, the contract partial-frame deadline applies.
 public enum NativeHostFrameIO {
+    public static func makeNonblocking(_ descriptor: Int32) throws {
+        let flags = fcntl(descriptor, F_GETFL, 0)
+        guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+            throw POSIXError(.init(rawValue: errno) ?? .EIO)
+        }
+    }
+
     public static func readFrame(
         from descriptor: Int32,
         direction: NativeHostFrameDirection,
@@ -189,6 +239,7 @@ public enum NativeHostFrameIO {
         reserve: (_ byteCount: Int, _ large: Bool) -> Bool = { _, _ in true },
         release: (_ byteCount: Int, _ large: Bool) -> Void = { _, _ in }
     ) throws -> NativeHostFrame? {
+        try makeNonblocking(descriptor)
         var prefix = [UInt8](repeating: 0, count: 4)
         var prefixCount = 0
         var startedAt: UInt64?
@@ -271,7 +322,7 @@ public enum NativeHostFrameIO {
                 }
                 bodyCount += amount
             }
-            guard String(data: body, encoding: .utf8) != nil else { throw NativeHostFrameError.invalidUTF8 }
+            guard NativeHostUTF8.isValid(body) else { throw NativeHostFrameError.invalidUTF8 }
             return NativeHostFrame(body: body, reservedByteCount: length, isLargeAssembly: large)
         } catch {
             release(length, large)
@@ -302,6 +353,7 @@ public enum NativeHostFrameIO {
         timeoutMs: UInt64 = 30_000,
         shouldCancel: @Sendable () -> Bool = { false }
     ) throws {
+        try makeNonblocking(descriptor)
         let framed = try NativeHostFrameCodec.encode(body, direction: direction, limits: limits)
         let startedAt = DispatchTime.now().uptimeNanoseconds
         try framed.withUnsafeBytes { raw in
@@ -354,7 +406,7 @@ public enum NativeHostFrameCodec {
         guard body.count <= direction.maximum(using: limits), body.count <= Int(UInt32.max) else {
             throw NativeHostFrameError.oversized
         }
-        guard String(data: body, encoding: .utf8) != nil else { throw NativeHostFrameError.invalidUTF8 }
+        guard NativeHostUTF8.isValid(body) else { throw NativeHostFrameError.invalidUTF8 }
         let length = UInt32(body.count)
         var result = Data([
             UInt8(truncatingIfNeeded: length),

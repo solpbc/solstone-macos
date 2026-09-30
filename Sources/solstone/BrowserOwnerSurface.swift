@@ -29,6 +29,7 @@ public enum BrowserOwnerStatusLead: Equatable, Sendable {
     case custodyFull
     case hold(String)
     case sessionClosed
+    case unknown
 }
 
 public struct BrowserOwnerVerdict: Equatable, Sendable {
@@ -89,6 +90,14 @@ public struct BrowserRepairToken: Equatable, Sendable {
         self.lifecycleGeneration = lifecycleGeneration
         self.viewGeneration = viewGeneration
     }
+}
+
+final class BrowserRepairValidity: @unchecked Sendable {
+    private let lock = NSLock()
+    private var revision: UInt64 = 0
+    var value: UInt64 { lock.withLock { revision } }
+    func invalidate() { lock.withLock { revision &+= 1 } }
+    func matches(_ captured: UInt64) -> Bool { lock.withLock { revision == captured } }
 }
 
 public struct BrowserRepairController: Equatable, Sendable {
@@ -159,6 +168,16 @@ public struct BrowserBrandRow: Equatable, Sendable {
     public var connectedCount: Int
     public var lastSeen: BrowserRelativeTimeBucket?
     public var registration: BrowserHostRegistrationState
+    public var needsAppUpdate = false
+    public var needsExtensionUpdate = false
+
+    public var state: BrowserProfileAXState {
+        if needsAppUpdate { return .needsAppUpdate }
+        if needsExtensionUpdate { return .needsExtensionUpdate }
+        if connectedCount > 0 { return .connected }
+        if lastSeen != nil { return .lastSeen }
+        return .none
+    }
 
     public init(brand: BrowserBrand, connectedCount: Int, lastSeen: BrowserRelativeTimeBucket?, registration: BrowserHostRegistrationState) {
         self.brand = brand
@@ -207,12 +226,7 @@ public func browserPresentsLocalReceiptAsDelivered(_ delivery: String) -> Bool {
 }
 
 public func browserShowsDeliveryLine(_ delivery: String) -> Bool {
-    switch delivery {
-    case "delivered", "kept_locally", "idle":
-        return false
-    default:
-        return true
-    }
+    delivery == "failed"
 }
 
 public func statusPrimaryDelivery<Outcome: Equatable>(media: Outcome, browserDelivery: String) -> Outcome {
@@ -255,14 +269,14 @@ public func browserOwnerVerdict(
             lead: .draining,
             fullSecondary: snapshot.custodyPresent && snapshot.custodyFull,
             stale: snapshot.custodyStale,
-            showsDeliveryLine: false
+            showsDeliveryLine: browserShowsDeliveryLine(snapshot.delivery)
         )
     }
 
     let full = inferredFull(snapshot)
     let blockingHold = ownerHold(snapshot)
-    let fullPrimary = full && blockingHold == nil && (
-        snapshot.capture == "permitted" || snapshot.capture == "intake_off" || snapshot.failureCode == "queue_full"
+    let fullPrimary = snapshot.intakeEnabled && full && blockingHold == nil && (
+        snapshot.capture == "permitted" || snapshot.capture == "intake_off"
     )
     let fullSecondary = full && !fullPrimary
     let deliveryLine = browserShowsDeliveryLine(snapshot.delivery)
@@ -278,6 +292,9 @@ public func browserOwnerVerdict(
     case "unavailable":
         return BrowserOwnerVerdict(lead: .unavailable, fullSecondary: fullSecondary, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
     case "intake_off":
+        if !snapshot.intakeEnabled {
+            return BrowserOwnerVerdict(lead: .intakeOff, fullSecondary: full, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
+        }
         if let blockingHold {
             return BrowserOwnerVerdict(lead: .hold(blockingHold), fullSecondary: fullSecondary, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
         }
@@ -302,7 +319,8 @@ public func browserOwnerVerdict(
         }
         return BrowserOwnerVerdict(lead: .ready, fullSecondary: false, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
     default:
-        return BrowserOwnerVerdict(lead: .mediaUnchanged, fullSecondary: fullSecondary, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
+        return BrowserOwnerVerdict(lead: mediaSourcesEmpty && snapshot.intakeEnabled ? .unknown : .mediaUnchanged,
+                                  fullSecondary: fullSecondary, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
     }
 }
 
@@ -326,8 +344,12 @@ public func sourcesFooter(media: String, lead: BrowserOwnerStatusLead) -> String
     switch lead {
     case .draining:
         return UICopy.SOURCES_BROWSER_DRAINING
-    case .mediaUnchanged, .notPaired, .unavailable:
+    case .mediaUnchanged:
         return media
+    case .notPaired, .unavailable:
+        return UICopy.SOURCES_BROWSER_CANNOT_START
+    case .unknown:
+        return UICopy.SOURCES_BROWSER_UNKNOWN
     case .intakeOff:
         return UICopy.SOURCES_BROWSER_INTAKE_OFF
     case .paused:
@@ -350,12 +372,15 @@ public func browserBrandRows(_ snapshot: BrowserHostSnapshotValue, now: Date, ca
         let profiles = profiles(snapshot, brand)
         let authorizing = profiles.filter { sessionAuthorizes($0, now: now) }
         let last = profiles.compactMap(\.lastSeen).max()
-        return BrowserBrandRow(
+        var row = BrowserBrandRow(
             brand: brand,
             connectedCount: authorizing.count,
             lastSeen: last.map { browserRelativeTimeBucket(lastSeen: $0, now: now, calendar: calendar) },
             registration: snapshot.registration[brand]?.state ?? .unknown
         )
+        row.needsAppUpdate = profiles.contains { $0.handshake == .unsupportedApp }
+        row.needsExtensionUpdate = profiles.contains { $0.handshake == .unsupportedExtension }
+        return row
     }
 }
 
@@ -393,12 +418,12 @@ public func buildBrowserDiagnosticRows(
     } else if let hold = ownerHold(snapshot) {
         pagesHuman = "held"
         pagesMachine = hold
-    } else if snapshot.capture == "permitted" {
+    } else if browserIntakeIsReady(snapshot, now: now) {
         pagesHuman = "on"
         pagesMachine = "on"
     } else {
-        pagesHuman = "off"
-        pagesMachine = "off"
+        pagesHuman = "held"
+        pagesMachine = snapshot.listener != .available ? "listener_down" : "intake_unavailable"
     }
 
     let rows = browserBrandRows(snapshot, now: now, calendar: calendar)
@@ -412,19 +437,19 @@ public func buildBrowserDiagnosticRows(
         snapshot.registration[$0]?.state == .ready || snapshot.registration[$0]?.state == .changed
     }
     let setupValue: String
-    if repair.repaired {
-        let brandParts = BrowserBrand.allCases.map { "\($0.displayName): repaired at launch" }
-        setupValue = brandParts.joined(separator: ", ")
-    } else if allReady && snapshot.listener == .available {
+    if allReady && snapshot.listener == .available {
         let brandNames = BrowserBrand.allCases.map(\.displayName).joined(separator: ", ")
         setupValue = "\(brandNames) ready"
     } else {
         let brandParts = BrowserBrand.allCases.map { brand -> String in
             let reg = snapshot.registration[brand]
-            if reg?.state == .ready || reg?.state == .changed {
+            if snapshot.listener == .available, reg?.state == .changed {
+                return "\(brand.displayName): repaired at launch"
+            }
+            if snapshot.listener == .available, reg?.state == .ready {
                 return "\(brand.displayName): ready"
             }
-            let reason = reg?.reasonCode ?? "not_configured"
+            let reason = UICopy.browserSetupReason(snapshot.listener == .available ? reg?.reasonCode : "listener_down")
             return "\(brand.displayName): couldn't set up (\(reason))"
         }
         setupValue = brandParts.joined(separator: ", ")
@@ -489,6 +514,15 @@ public func browserCapturePermitsPause(_ snapshot: BrowserHostSnapshotValue, now
     return true
 }
 
+public func browserIntakeIsReady(_ snapshot: BrowserHostSnapshotValue, now: Date) -> Bool {
+    guard snapshot.intakeEnabled else { return false }
+    let verdict = browserOwnerVerdict(
+        mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false,
+        snapshot: snapshot, now: now
+    )
+    return verdict.lead == .ready || verdict.lead == .waiting
+}
+
 extension StatusHealthSummary {
     public static func makeIncludingBrowser(
         serviceMode: ServiceMode?,
@@ -531,7 +565,12 @@ extension StatusHealthSummary {
             snapshot: snapshot,
             now: now
         )
-        let deliverySubtitle: String? = verdict.showsDeliveryLine ? UICopy.SOURCES_BROWSER_DELIVERY_FAILED : nil
+        let details = [
+            verdict.fullSecondary ? UICopy.SOURCES_BROWSER_FULL : nil,
+            verdict.stale ? UICopy.SOURCES_BROWSER_STALE : nil,
+            verdict.showsDeliveryLine ? UICopy.SOURCES_BROWSER_DELIVERY_FAILED : nil
+        ].compactMap { $0 }
+        let deliverySubtitle = details.isEmpty ? nil : details.joined(separator: "\n")
         switch verdict.lead {
         case .draining:
             return StatusHealthSummary(
@@ -599,25 +638,31 @@ extension StatusHealthSummary {
                 subtitle: deliverySubtitle,
                 axValue: "browser_off"
             )
-        case .notPaired, .unavailable, .mediaUnchanged:
+        case .notPaired, .unavailable:
+            return StatusHealthSummary(severity: .attention, title: UICopy.SOURCES_BROWSER_CANNOT_START,
+                subtitle: deliverySubtitle, axValue: "browser_unavailable",
+                action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources"))
+        case .unknown:
+            return StatusHealthSummary(severity: .calm, title: UICopy.SOURCES_BROWSER_UNKNOWN,
+                subtitle: deliverySubtitle, axValue: "browser_unknown")
+        case .mediaUnchanged:
             return media
         }
     }
 }
 
 private func inferredFull(_ snapshot: BrowserHostSnapshotValue) -> Bool {
-    if snapshot.custodyPresent {
-        if snapshot.failureCode == "queue_full", !snapshot.custodyFull { return false }
-        if snapshot.failureCode == "resource_exhausted", !snapshot.custodyFull { return false }
-        return snapshot.custodyFull
-    }
-    return snapshot.failureCode == "queue_full" || snapshot.failureCode == "resource_exhausted"
+    snapshot.custodyPresent && snapshot.custodyFull
 }
 
 private func ownerHold(_ snapshot: BrowserHostSnapshotValue) -> String? {
     switch snapshot.failureCode {
-    case "unaccepted_lost", "relay_unavailable", "journal_rejected", "local_io", "age_policy":
+    case "unaccepted_lost", "local_io", "age_policy":
         return snapshot.failureCode
+    case "resource_exhausted", "queue_full":
+        return inferredFull(snapshot) ? nil : snapshot.failureCode
+    case "relay_unavailable", "journal_rejected":
+        return snapshot.capture == "intake_off" ? snapshot.failureCode : nil
     default:
         return nil
     }

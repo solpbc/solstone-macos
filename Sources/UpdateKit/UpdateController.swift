@@ -81,7 +81,7 @@ public final class UpdateController {
     private var pendingDownloadIntent = false
 
     internal var onExclusivityReevaluated: ((Bool) -> Void)?
-    #if DEBUG
+    #if DEBUG || SOLSTONE_TEST_SUPPORT
     internal var checkForUpdatesInterceptor: (() -> Void)?
     #endif
 
@@ -300,7 +300,7 @@ public final class UpdateController {
             return
         }
 
-        #if DEBUG
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
         if let checkForUpdatesInterceptor {
             checkForUpdatesInterceptor()
             beginUserInitiatedCheck(cancellation: {})
@@ -670,7 +670,7 @@ public final class UpdateController {
         }
     }
 
-    #if DEBUG
+    #if DEBUG || SOLSTONE_TEST_SUPPORT
     func applyDebugFixture(
         activity: UpdateActivity,
         availableUpdate: AvailableUpdate? = nil,

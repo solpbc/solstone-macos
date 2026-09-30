@@ -1,0 +1,793 @@
+{
+  "_generated" : "DO NOT EDIT. Generated from AXID.swift + AXToken.swift. Run `make ax-contract` to regenerate; `make ci` fails on drift.",
+  "grammar" : {
+    "identifier" : "^(about|journal|menubar|settings|updates)(\\.[a-z][a-zA-Z0-9-]*)+$",
+    "token" : "^[a-z][a-z_]*$"
+  },
+  "identifiers" : {
+    "parameterized" : [
+      {
+        "key" : "CoreAudio device UID",
+        "runtime" : true,
+        "template" : "settings.microphones.priority.device.{uid}"
+      },
+      {
+        "key" : "CoreAudio device UID",
+        "runtime" : true,
+        "template" : "settings.microphones.priority.remove.{uid}"
+      },
+      {
+        "key" : "CoreAudio device UID",
+        "runtime" : true,
+        "template" : "settings.microphones.priority.toggle.{uid}"
+      },
+      {
+        "key" : "AppEntry.name",
+        "runtime" : true,
+        "template" : "settings.privacy.excludedApps.app.{value}"
+      },
+      {
+        "key" : "AppEntry.name",
+        "runtime" : true,
+        "template" : "settings.privacy.excludedApps.remove.{value}"
+      },
+      {
+        "key" : "title pattern",
+        "runtime" : true,
+        "template" : "settings.privacy.titlePatterns.pattern.{value}"
+      },
+      {
+        "key" : "title pattern",
+        "runtime" : true,
+        "template" : "settings.privacy.titlePatterns.remove.{value}"
+      },
+      {
+        "expansions" : [
+          "permissions",
+          "sources",
+          "observer",
+          "service",
+          "microphones",
+          "privacy",
+          "status",
+          "updates",
+          "help"
+        ],
+        "key" : "SettingsView.Tab.rawValue",
+        "template" : "settings.sidebar.tab.{tab}"
+      },
+      {
+        "expansions" : [
+          "permissions",
+          "sources",
+          "observer",
+          "service",
+          "microphones",
+          "privacy",
+          "status",
+          "updates",
+          "help"
+        ],
+        "key" : "SettingsView.Tab.rawValue",
+        "template" : "settings.sidebar.tab.{tab}.state"
+      }
+    ],
+    "static" : [
+      "about.identity.logo",
+      "about.identity.title",
+      "about.identity.version.state",
+      "about.link.sourceCode",
+      "about.link.website",
+      "journal.browser.connectJournal",
+      "journal.browser.navigation.state",
+      "journal.browser.openSettings",
+      "journal.browser.retry",
+      "journal.browser.webView",
+      "menubar.app.quit",
+      "menubar.navigation.about",
+      "menubar.navigation.browsers",
+      "menubar.navigation.openJournal",
+      "menubar.navigation.settings",
+      "menubar.pause.fifteenMinutes",
+      "menubar.pause.indefinite",
+      "menubar.pause.menu",
+      "menubar.pause.oneHour",
+      "menubar.pause.resume",
+      "menubar.pause.thirtyMinutes",
+      "menubar.status.error",
+      "menubar.status.icon.overlay.state",
+      "menubar.status.icon.state",
+      "menubar.status.journal.state",
+      "menubar.status.journalMigrationNeeded",
+      "menubar.status.localOnly",
+      "menubar.status.offline",
+      "menubar.status.permissions",
+      "menubar.status.row.state",
+      "settings.help.agentInstructions",
+      "settings.help.agentInstructions.copy",
+      "settings.help.browserFootnote",
+      "settings.help.diagnostics.addressesTried.row",
+      "settings.help.diagnostics.appVersion.row",
+      "settings.help.diagnostics.browserPages.row",
+      "settings.help.diagnostics.browserSetup.row",
+      "settings.help.diagnostics.browsersSeen.row",
+      "settings.help.diagnostics.connectedThrough.row",
+      "settings.help.diagnostics.copy",
+      "settings.help.diagnostics.copyResult.state",
+      "settings.help.diagnostics.disclosure",
+      "settings.help.diagnostics.ingestReason.row",
+      "settings.help.diagnostics.ingestRoute.row",
+      "settings.help.diagnostics.journalAddresses.row",
+      "settings.help.diagnostics.journalLink.row",
+      "settings.help.diagnostics.lastDelivery.row",
+      "settings.help.diagnostics.lastDelivery.state",
+      "settings.help.diagnostics.lastDelivery.timestamp.state",
+      "settings.help.diagnostics.lastJournalConnection.row",
+      "settings.help.diagnostics.lastJournalConnection.state",
+      "settings.help.diagnostics.lastJournalConnection.timestamp.state",
+      "settings.help.diagnostics.microphone.row",
+      "settings.help.diagnostics.microphone.state",
+      "settings.help.diagnostics.preview",
+      "settings.help.diagnostics.recentStateCodes.row",
+      "settings.help.diagnostics.relay.row",
+      "settings.help.diagnostics.screenAndAudio.row",
+      "settings.help.diagnostics.screenAndAudio.state",
+      "settings.help.diagnostics.screenRecording.row",
+      "settings.help.diagnostics.screenRecording.state",
+      "settings.help.iconState.attention",
+      "settings.help.iconState.connecting",
+      "settings.help.iconState.error",
+      "settings.help.iconState.offline",
+      "settings.help.iconState.paused",
+      "settings.help.iconState.recording",
+      "settings.help.log.export",
+      "settings.help.log.export.failure-reason",
+      "settings.help.log.export.preview",
+      "settings.help.log.export.save",
+      "settings.help.log.export.state",
+      "settings.help.support.email",
+      "settings.help.support.site",
+      "settings.help.version.state",
+      "settings.microphones.audioProcessing.silenceMusic",
+      "settings.microphones.gain.picker",
+      "settings.microphones.gain.state",
+      "settings.microphones.priority.list",
+      "settings.observer.general.startAtLogin",
+      "settings.observer.notifications.denied.state",
+      "settings.observer.storage.cacheFolder.open",
+      "settings.observer.storage.preserveSynced",
+      "settings.observer.storage.preservedFolder.open",
+      "settings.observer.storage.used.state",
+      "settings.permissions.microphone.grantAccess",
+      "settings.permissions.microphone.state",
+      "settings.permissions.next.connectJournal",
+      "settings.permissions.screenRecording.enable",
+      "settings.permissions.screenRecording.resetHint",
+      "settings.permissions.screenRecording.restartNow",
+      "settings.permissions.screenRecording.restartPending.state",
+      "settings.permissions.screenRecording.state",
+      "settings.permissions.systemSettings.open",
+      "settings.privacy.excludedApps.add",
+      "settings.privacy.excludedApps.field",
+      "settings.privacy.excludedApps.list",
+      "settings.privacy.excludedApps.picker",
+      "settings.privacy.excludedApps.picker.state",
+      "settings.privacy.privateBrowsing.exclude",
+      "settings.privacy.titlePatterns.add",
+      "settings.privacy.titlePatterns.field",
+      "settings.privacy.titlePatterns.list",
+      "settings.service.external.address",
+      "settings.service.external.connect",
+      "settings.service.external.connectionTest.state",
+      "settings.service.external.key",
+      "settings.service.external.setupGuide",
+      "settings.service.external.testConnection",
+      "settings.service.external.viewStatus",
+      "settings.service.journal.connection.state",
+      "settings.service.journal.create.state",
+      "settings.service.journal.createThisMac",
+      "settings.service.journal.handoff.banner",
+      "settings.service.journal.handoff.start",
+      "settings.service.journal.handoff.state",
+      "settings.service.journal.mark.state",
+      "settings.service.journal.name.state",
+      "settings.service.journal.open",
+      "settings.service.journal.pairAnotherDevice",
+      "settings.service.journal.relink",
+      "settings.service.localJournal.confirm",
+      "settings.service.localJournal.discovery.path.state",
+      "settings.service.localJournal.discovery.state",
+      "settings.service.next.checkStatus",
+      "settings.service.pairing.connect",
+      "settings.service.pairing.disconnectCancel",
+      "settings.service.pairing.disconnectConfirm",
+      "settings.service.pairing.failure.state",
+      "settings.service.pairing.flow.state",
+      "settings.service.pairing.link",
+      "settings.service.pairing.markCancelPairing",
+      "settings.service.pairing.markConfirm",
+      "settings.service.pairing.markContinueAnyway",
+      "settings.service.pairing.markMismatch",
+      "settings.service.pairing.mismatchFreshLink",
+      "settings.service.pairing.mismatchSupport",
+      "settings.service.pairing.paidPlanLink",
+      "settings.service.pairing.retry",
+      "settings.service.pairing.switchCancel",
+      "settings.service.pairing.switchConfirm",
+      "settings.service.pairing.unpair",
+      "settings.service.prereq.permissions",
+      "settings.sources.browserIntake.enabled",
+      "settings.sources.browsers.chrome",
+      "settings.sources.browsers.edge",
+      "settings.sources.browsers.firefox",
+      "settings.sources.browsers.group",
+      "settings.sources.browsers.repair",
+      "settings.sources.browsers.store.chrome",
+      "settings.sources.browsers.store.edge",
+      "settings.sources.browsers.store.firefox",
+      "settings.sources.microphoneCapture.enabled",
+      "settings.sources.screenCapture.enabled",
+      "settings.sources.status",
+      "settings.status.debug.keepRejectedAudio",
+      "settings.status.debug.oneMinuteSegments",
+      "settings.status.health.summary.action",
+      "settings.status.health.summary.state",
+      "settings.status.observing.nextSegment.state",
+      "settings.status.observing.state",
+      "settings.status.setup.app.version.state",
+      "settings.status.setup.journalApp.action",
+      "settings.status.setup.journalApp.state",
+      "settings.status.setup.journalLink.action",
+      "settings.status.setup.journalLink.state",
+      "settings.status.setup.lastDelivery.state",
+      "settings.status.setup.lastDelivery.timestamp.state",
+      "settings.status.setup.manageJournal",
+      "settings.status.setup.microphone.action",
+      "settings.status.setup.microphone.state",
+      "settings.status.setup.screenRecording.action",
+      "settings.status.setup.screenRecording.state",
+      "settings.status.setup.solApp.action",
+      "settings.status.setup.solApp.state",
+      "settings.status.setup.verdict.state",
+      "settings.status.storage.settings",
+      "settings.status.tryAgain",
+      "settings.status.upload.checked.state",
+      "settings.status.upload.journal.state",
+      "settings.status.upload.lastDelivery.state",
+      "settings.status.upload.lastDelivery.timestamp.state",
+      "settings.status.upload.lastError.state",
+      "settings.status.upload.pauseSync",
+      "settings.status.upload.pending.state",
+      "settings.status.upload.resyncAll",
+      "settings.status.upload.state",
+      "settings.status.upload.total.state",
+      "updates.action.cancel",
+      "updates.action.check",
+      "updates.action.check.state",
+      "updates.action.checkAgain.state",
+      "updates.action.dismiss",
+      "updates.action.dismissStaged",
+      "updates.action.download",
+      "updates.action.download.state",
+      "updates.action.install",
+      "updates.action.retry",
+      "updates.action.retry.state",
+      "updates.debug.state",
+      "updates.deferredInstall.state",
+      "updates.downloadProgress.state",
+      "updates.extractProgress.state",
+      "updates.preferences.automaticChecks",
+      "updates.preferences.automaticDownloads",
+      "updates.preferences.frequency",
+      "updates.preferences.frequency.state",
+      "updates.releaseNotes.content",
+      "updates.releaseNotes.online",
+      "updates.status.notrunning",
+      "updates.status.notrunning.reason",
+      "updates.status.notrunning.retry",
+      "updates.status.state",
+      "updates.status.unavailable"
+    ]
+  },
+  "states" : {
+    "about.identity.version.state" : {
+      "kind" : "freeform"
+    },
+    "journal.browser.navigation.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalWindowAXState"
+    },
+    "menubar.status.icon.overlay.state" : {
+      "kind" : "enum",
+      "vocabulary" : "MenubarIconOverlayState"
+    },
+    "menubar.status.icon.state" : {
+      "kind" : "enum",
+      "vocabulary" : "MenubarIconState"
+    },
+    "menubar.status.journal.state" : {
+      "kind" : "enum",
+      "vocabulary" : "MenubarStatusRowState"
+    },
+    "menubar.status.row.state" : {
+      "kind" : "enum",
+      "vocabulary" : "MenubarStatusRowState"
+    },
+    "settings.help.diagnostics.copyResult.state" : {
+      "kind" : "enum",
+      "vocabulary" : "DiagnosticCopyAXState"
+    },
+    "settings.help.diagnostics.lastDelivery.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LastJournalDeliveryAXState"
+    },
+    "settings.help.diagnostics.lastDelivery.timestamp.state" : {
+      "kind" : "numeric"
+    },
+    "settings.help.diagnostics.lastJournalConnection.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LastJournalContactAXState"
+    },
+    "settings.help.diagnostics.lastJournalConnection.timestamp.state" : {
+      "kind" : "numeric"
+    },
+    "settings.help.diagnostics.microphone.state" : {
+      "kind" : "enum",
+      "vocabulary" : "AXPermissionState"
+    },
+    "settings.help.diagnostics.screenAndAudio.state" : {
+      "kind" : "enum",
+      "vocabulary" : "DiagnosticCaptureAXState"
+    },
+    "settings.help.diagnostics.screenRecording.state" : {
+      "kind" : "enum",
+      "vocabulary" : "AXPermissionState"
+    },
+    "settings.help.log.export.failure-reason" : {
+      "kind" : "freeform"
+    },
+    "settings.help.log.export.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LogExportAXState"
+    },
+    "settings.help.version.state" : {
+      "kind" : "freeform"
+    },
+    "settings.microphones.gain.state" : {
+      "kind" : "numeric"
+    },
+    "settings.observer.notifications.denied.state" : {
+      "kind" : "freeform"
+    },
+    "settings.observer.storage.used.state" : {
+      "kind" : "numeric"
+    },
+    "settings.permissions.microphone.state" : {
+      "kind" : "enum",
+      "vocabulary" : "AXPermissionState"
+    },
+    "settings.permissions.screenRecording.restartPending.state" : {
+      "kind" : "freeform"
+    },
+    "settings.permissions.screenRecording.state" : {
+      "kind" : "enum",
+      "vocabulary" : "AXPermissionState"
+    },
+    "settings.privacy.excludedApps.picker.state" : {
+      "kind" : "enum",
+      "vocabulary" : "ExcludedAppPickerAvailability"
+    },
+    "settings.service.external.connectionTest.state" : {
+      "kind" : "enum",
+      "vocabulary" : "ConnectionTestState"
+    },
+    "settings.service.journal.connection.state" : {
+      "kind" : "enum",
+      "vocabulary" : "PairingConnectionAXState"
+    },
+    "settings.service.journal.create.state" : {
+      "kind" : "enum",
+      "vocabulary" : "FreshJournalAXState"
+    },
+    "settings.service.journal.handoff.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalHandoffAXState"
+    },
+    "settings.service.journal.mark.state" : {
+      "kind" : "freeform"
+    },
+    "settings.service.journal.name.state" : {
+      "kind" : "freeform"
+    },
+    "settings.service.localJournal.discovery.path.state" : {
+      "kind" : "freeform"
+    },
+    "settings.service.localJournal.discovery.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LocalJournalDiscoveryAXState"
+    },
+    "settings.service.pairing.failure.state" : {
+      "kind" : "enum",
+      "vocabulary" : "PairingFailure"
+    },
+    "settings.service.pairing.flow.state" : {
+      "kind" : "enum",
+      "vocabulary" : "PairingFlowState"
+    },
+    "settings.sidebar.tab.{tab}.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SidebarBadgeState"
+    },
+    "settings.sources.browsers.chrome" : {
+      "kind" : "enum",
+      "vocabulary" : "BrowserProfileAXState"
+    },
+    "settings.sources.browsers.edge" : {
+      "kind" : "enum",
+      "vocabulary" : "BrowserProfileAXState"
+    },
+    "settings.sources.browsers.firefox" : {
+      "kind" : "enum",
+      "vocabulary" : "BrowserProfileAXState"
+    },
+    "settings.sources.browsers.repair" : {
+      "kind" : "enum",
+      "vocabulary" : "BrowserRepairAXState"
+    },
+    "settings.sources.browsers.store.chrome" : {
+      "kind" : "enum",
+      "vocabulary" : "BrowserStoreLaunchAXState"
+    },
+    "settings.sources.browsers.store.edge" : {
+      "kind" : "enum",
+      "vocabulary" : "BrowserStoreLaunchAXState"
+    },
+    "settings.sources.browsers.store.firefox" : {
+      "kind" : "enum",
+      "vocabulary" : "BrowserStoreLaunchAXState"
+    },
+    "settings.status.health.summary.state" : {
+      "kind" : "freeform"
+    },
+    "settings.status.observing.nextSegment.state" : {
+      "kind" : "numeric"
+    },
+    "settings.status.observing.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SettingsObservationAXState"
+    },
+    "settings.status.setup.app.version.state" : {
+      "kind" : "freeform"
+    },
+    "settings.status.setup.journalApp.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.journalLink.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.lastDelivery.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LastJournalDeliveryAXState"
+    },
+    "settings.status.setup.lastDelivery.timestamp.state" : {
+      "kind" : "numeric"
+    },
+    "settings.status.setup.microphone.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.screenRecording.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.solApp.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupCheckRowAXState"
+    },
+    "settings.status.setup.verdict.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupGroupVerdictAXState"
+    },
+    "settings.status.upload.checked.state" : {
+      "kind" : "numeric"
+    },
+    "settings.status.upload.journal.state" : {
+      "kind" : "freeform"
+    },
+    "settings.status.upload.lastDelivery.state" : {
+      "kind" : "enum",
+      "vocabulary" : "LastJournalDeliveryAXState"
+    },
+    "settings.status.upload.lastDelivery.timestamp.state" : {
+      "kind" : "numeric"
+    },
+    "settings.status.upload.lastError.state" : {
+      "kind" : "freeform"
+    },
+    "settings.status.upload.pending.state" : {
+      "kind" : "numeric"
+    },
+    "settings.status.upload.state" : {
+      "kind" : "enum",
+      "vocabulary" : "UploadCoordinator.Status"
+    },
+    "settings.status.upload.total.state" : {
+      "kind" : "numeric"
+    },
+    "updates.action.check.state" : {
+      "kind" : "freeform"
+    },
+    "updates.action.checkAgain.state" : {
+      "kind" : "freeform"
+    },
+    "updates.action.download.state" : {
+      "kind" : "freeform"
+    },
+    "updates.action.retry.state" : {
+      "kind" : "freeform"
+    },
+    "updates.debug.state" : {
+      "kind" : "freeform"
+    },
+    "updates.deferredInstall.state" : {
+      "kind" : "freeform"
+    },
+    "updates.downloadProgress.state" : {
+      "kind" : "numeric"
+    },
+    "updates.extractProgress.state" : {
+      "kind" : "numeric"
+    },
+    "updates.preferences.frequency.state" : {
+      "kind" : "enum",
+      "vocabulary" : "FrequencyOption"
+    },
+    "updates.status.state" : {
+      "kind" : "enum",
+      "vocabulary" : "UpdateStatus"
+    }
+  },
+  "surfaces" : [
+    "about",
+    "journal",
+    "menubar",
+    "settings",
+    "updates"
+  ],
+  "version" : 1,
+  "vocabularies" : {
+    "AXPermissionState" : [
+      "granted",
+      "denied",
+      "waiting",
+      "unavailable"
+    ],
+    "BrowserHostRegistrationState" : [
+      "ready",
+      "changed",
+      "refused",
+      "unknown"
+    ],
+    "BrowserProfileAXState" : [
+      "connected",
+      "last_seen",
+      "needs_app_update",
+      "needs_extension_update",
+      "none"
+    ],
+    "BrowserRepairAXState" : [
+      "idle",
+      "in_flight",
+      "repaired",
+      "failed"
+    ],
+    "BrowserStoreLaunchAXState" : [
+      "disabled",
+      "opened",
+      "failed"
+    ],
+    "ConnectionTestState" : [
+      "idle",
+      "testing",
+      "success",
+      "failure"
+    ],
+    "DiagnosticCaptureAXState" : [
+      "on",
+      "paused",
+      "off",
+      "error"
+    ],
+    "DiagnosticCopyAXState" : [
+      "idle",
+      "copied",
+      "failed"
+    ],
+    "ExcludedAppPickerAvailability" : [
+      "needs_screen_recording",
+      "nothing_available",
+      "ready"
+    ],
+    "FrequencyOption" : [
+      "day",
+      "week",
+      "month"
+    ],
+    "FreshJournalAXState" : [
+      "idle",
+      "acquiring",
+      "launching",
+      "waiting_for_journal",
+      "failed"
+    ],
+    "JournalHandoffAXState" : [
+      "idle",
+      "acquiring",
+      "checking_running_journal",
+      "writing_handoff",
+      "launching_journal",
+      "waiting_for_adoption",
+      "auth_gate",
+      "flipping_to_external",
+      "triggering_sync_drain",
+      "confirming_mark_best_effort",
+      "completed",
+      "failed",
+      "aborted"
+    ],
+    "JournalWindowAXState" : [
+      "held",
+      "loading",
+      "loaded",
+      "error",
+      "link_down"
+    ],
+    "LastJournalContactAXState" : [
+      "connected",
+      "no_connection_yet",
+      "not_linked",
+      "unavailable"
+    ],
+    "LastJournalDeliveryAXState" : [
+      "delivered",
+      "no_delivery_yet",
+      "not_linked",
+      "unavailable"
+    ],
+    "LocalJournalDiscoveryAXState" : [
+      "searching",
+      "found_running",
+      "found_on_disk",
+      "not_found"
+    ],
+    "LogExportAXState" : [
+      "idle",
+      "working",
+      "empty",
+      "ready",
+      "partial",
+      "failed",
+      "write_failed"
+    ],
+    "MenubarIconOverlayState" : [
+      "none",
+      "attention"
+    ],
+    "MenubarIconState" : [
+      "on",
+      "offline",
+      "paused",
+      "error",
+      "connecting",
+      "attention"
+    ],
+    "MenubarStatusRowState" : [
+      "off",
+      "permissions",
+      "error",
+      "starting",
+      "journal_migration_needed",
+      "connection_waiting",
+      "local_only",
+      "sync_paused",
+      "offline",
+      "paused",
+      "on"
+    ],
+    "PairingConnectionAXState" : [
+      "disconnected",
+      "connecting",
+      "connected",
+      "not_entitled",
+      "revoked",
+      "loopback_unavailable",
+      "keychain_unavailable",
+      "no_route",
+      "unreachable",
+      "mismatch",
+      "not_serving"
+    ],
+    "PairingFailure" : [
+      "stale_link",
+      "home_unreachable",
+      "relay_unauthorized",
+      "instance_mismatch",
+      "network",
+      "connection_dropped",
+      "invalid_link",
+      "local_setup"
+    ],
+    "PairingFlowState" : [
+      "idle",
+      "pairing",
+      "switch_confirm_pending",
+      "paired",
+      "already_connected",
+      "switched",
+      "save_failed",
+      "failed"
+    ],
+    "SettingsObservationAXState" : [
+      "off",
+      "on",
+      "connecting",
+      "paused",
+      "on_not_reaching",
+      "on_no_journal",
+      "attention",
+      "on_saved_locally",
+      "error"
+    ],
+    "SetupCheckRowAXState" : [
+      "ready",
+      "needs_attention",
+      "not_required",
+      "checking",
+      "unavailable"
+    ],
+    "SetupGroupVerdictAXState" : [
+      "ready",
+      "needs_attention",
+      "some_unavailable"
+    ],
+    "SidebarBadgeState" : [
+      "done",
+      "attention",
+      "none"
+    ],
+    "UpdateActivity" : [
+      "idle",
+      "checking",
+      "downloading",
+      "extracting",
+      "ready_to_install",
+      "installing"
+    ],
+    "UpdateStatus" : [
+      "idle",
+      "checking",
+      "downloading",
+      "extracting",
+      "ready_to_install",
+      "installing",
+      "downloading_background",
+      "deferred_install",
+      "update_available",
+      "up_to_date",
+      "error",
+      "staged_ready",
+      "not_running"
+    ],
+    "UploadCoordinator.Status" : [
+      "not_synced",
+      "syncing",
+      "synced",
+      "uploading",
+      "retrying",
+      "awaiting_tunnel",
+      "offline"
+    ]
+  }
+}

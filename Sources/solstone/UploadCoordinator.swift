@@ -351,7 +351,7 @@ public final class UploadCoordinator {
         }
     }
 
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
     func runLiveIngestProbe(segmentURL: URL, day: String, segment: String) async throws -> ServerFileInfo {
         guard let pairedIngestIdentity else {
             throw UploadError.invalidResponse

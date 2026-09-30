@@ -272,7 +272,11 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
 
     public func accept(bytes: Data, direction: String, admitNewBatches: Bool = true) throws -> [String: Any] {
         let decodeResult = BrowserPayloadDecoder.decode(bytes: bytes, direction: direction, projection: projection)
+        return try accept(decoded: decodeResult, admitNewBatches: admitNewBatches)
+    }
 
+    public func accept(decoded decodeResult: BrowserDecodeResult, admitNewBatches: Bool = true,
+                       sessionIsCurrent: @Sendable () -> Bool = { true }) throws -> [String: Any] {
         switch decodeResult {
         case .refuse(let refusal):
             return refusalReply(refusal)
@@ -306,6 +310,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             case .batch(let batch):
                 lock.lock()
                 defer { lock.unlock() }
+                guard sessionIsCurrent() else { return refusalReply(BrowserRefusal(code: "shutdown")) }
                 let now = wallClock()
                 let nowMs = BrowserAgeStamp.wallMilliseconds(now)
                 return try processBatch(batch: batch, nowMs: nowMs, civilDate: now, admitNewBatches: admitNewBatches)
@@ -349,15 +354,11 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             return try rejected(batch: batch, reason: stored.reason ?? "malformed", receiptClass: stored.receiptClass ?? "permanent")
         }
 
-        if !admitNewBatches {
-            return try rejected(batch: batch, reason: "intake_off", receiptClass: "retryable")
-        }
-
         guard let activeGen = store.getActiveGeneration(), BrowserOpaqueString.equals(activeGen, batch.destinationGeneration) else {
             return try rejected(batch: batch, reason: "stale_generation", receiptClass: "permanent")
         }
 
-        if admissionClosed || store.storeIsFailed() {
+        if !admitNewBatches || admissionClosed || store.storeIsFailed() {
             return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
 

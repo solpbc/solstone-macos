@@ -265,10 +265,15 @@ public actor BrowserIntakeOwner {
     }
 
     public func accept(bytes: Data, direction: String) -> BrowserIntakeAcceptResult {
+        accept(decoded: BrowserPayloadDecoder.decode(bytes: bytes, direction: direction, projection: authority.projection))
+    }
+
+    public func accept(decoded: BrowserDecodeResult, sessionIsCurrent: @Sendable () -> Bool = { true }) -> BrowserIntakeAcceptResult {
         guard admissionOpen() else { return .refusal(BrowserIntakeLocalRefusal(code: "shutdown")) }
+        guard sessionIsCurrent() else { return .refusal(BrowserIntakeLocalRefusal(code: "shutdown")) }
         guard started, !stopController.isStopped() else { return .refusal(BrowserIntakeLocalRefusal(code: "intake_off")) }
         do {
-            let reply = try authority.accept(bytes: bytes, direction: direction, admitNewBatches: intakeEnabled)
+            let reply = try authority.accept(decoded: decoded, admitNewBatches: intakeEnabled, sessionIsCurrent: sessionIsCurrent)
             if reply["type"] as? String == "refused" {
                 return .refusal(BrowserIntakeLocalRefusal(
                     code: reply["code"] as? String ?? "malformed",
@@ -311,6 +316,14 @@ public actor BrowserIntakeOwner {
             return nil
         }
         return BrowserPayloadDecoder.encodeHostToExtension(message)
+    }
+
+    public func currentHostProjection() -> (facts: BrowserHostOwnerFacts, state: Data?) {
+        let status = projectedStatus()
+        let facts = BrowserHostOwnerFacts(status: status, intakeEnabled: intakeEnabled)
+        let state = (try? BrowserPayloadDecoder.validatedHostMessage(status, projection: authority.projection))
+            .map { BrowserPayloadDecoder.encodeHostToExtension($0) }
+        return (facts, state)
     }
 
     public func currentFacts() -> BrowserHostOwnerFacts {

@@ -29,7 +29,7 @@ enum BrowserHostMain {
         let socketURL = NativeHostPaths.socketURL()
         let socketPath = socketURL.path
         guard NativeHostSocketPath.fits(socketPath) else { reject("socket_path_too_long") }
-        let connection = connect(path: socketPath)
+        let connection = NativeHostEndpoint.connect(path: socketPath)
         guard let descriptor = connection.descriptor else {
             if connection.error == ENOENT || connection.error == ECONNREFUSED {
                 writeUnavailableHelloAck()
@@ -38,28 +38,35 @@ enum BrowserHostMain {
         }
         defer { Darwin.close(descriptor) }
 
+        let stop = NativeHostStopFlag()
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+        source.setEventHandler { stop.stop() }
+        source.resume()
+        defer { source.cancel() }
+
         let context: [String: String] = [
             "type": "local_hello",
             "brand": identity.brandHint.rawValue,
             "mode": identity.mode.rawValue
         ]
         guard let contextBytes = try? JSONSerialization.data(withJSONObject: context, options: [.sortedKeys]),
-              (try? NativeHostFrameIO.writeFrame(contextBytes, to: descriptor, direction: .control)) != nil else {
+              (try? NativeHostFrameIO.writeFrame(contextBytes, to: descriptor, direction: .control,
+                                                timeoutMs: BrowserHostLimits.helperFallback.handshakeMs,
+                                                shouldCancel: { stop.value })) != nil else {
             return
         }
 
-        let stop = NativeHostStopFlag()
-        signal(SIGTERM, SIG_IGN)
-        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-        source.setEventHandler { stop.stop() }
-        source.resume()
         relay(stdin: STDIN_FILENO, socket: descriptor, stop: stop)
     }
 
     private static func relay(stdin: Int32, socket: Int32, stop: NativeHostStopFlag) {
         var reducer = NativeHostRelayReducer()
-        var stdinDecoder = NativeHostFrameDecoder(direction: .extensionToHost)
+        var stdinDecoder = NativeHostFrameDecoder(direction: .extensionToHost, initialControl: true)
         var stdinBuffer = [UInt8](repeating: 0, count: 65536)
+        guard (try? NativeHostFrameIO.makeNonblocking(stdin)) != nil else { return }
+        let handshakeStarted = DispatchTime.now().uptimeNanoseconds
+        var receivedFirstFrame = false
 
         while true {
             if stop.value {
@@ -80,6 +87,12 @@ enum BrowserHostMain {
                 _ = reducer.reduce(.appLoss)
                 return
             }
+            do { try stdinDecoder.checkDeadline() }
+            catch { return }
+            if !receivedFirstFrame,
+               (DispatchTime.now().uptimeNanoseconds &- handshakeStarted) / 1_000_000 >= BrowserHostLimits.helperFallback.handshakeMs {
+                return
+            }
             if ready == 0 { continue }
 
             // Drain host output first so shutdown and unsupported replies stay terminal
@@ -98,6 +111,7 @@ enum BrowserHostMain {
                         response.body,
                         to: STDOUT_FILENO,
                         direction: .hostToExtension,
+                        timeoutMs: BrowserHostLimits.helperFallback.handshakeMs,
                         shouldCancel: { stop.value }
                     )
                     if isBye(response.body) {
@@ -136,6 +150,7 @@ enum BrowserHostMain {
                     let chunk = Data(stdinBuffer[0..<amount])
                     let frames = try stdinDecoder.append(chunk)
                     for frameBody in frames {
+                        receivedFirstFrame = true
                         try NativeHostFrameIO.writeFrame(
                             frameBody,
                             to: socket,
@@ -161,93 +176,6 @@ enum BrowserHostMain {
         return object["type"] as? String
     }
 
-    private static func assertNoSymlinkAncestors(_ path: String) -> Bool {
-        var current = URL(fileURLWithPath: "/")
-        for component in path.split(separator: "/") {
-            current.appendPathComponent(String(component))
-            var info = stat()
-            if lstat(current.path, &info) == 0 {
-                guard (info.st_mode & S_IFMT) != S_IFLNK else { return false }
-            } else if errno != ENOENT {
-                return false
-            }
-        }
-        return true
-    }
-
-    private static func connect(path: String) -> (descriptor: Int32?, error: Int32) {
-        guard assertNoSymlinkAncestors(path) else { return (nil, EPERM) }
-        let euid = geteuid()
-        let dirPath = (path as NSString).deletingLastPathComponent
-        var dirStat = stat()
-        guard lstat(dirPath, &dirStat) == 0,
-              (dirStat.st_mode & S_IFMT) == S_IFDIR,
-              (dirStat.st_mode & 0o777) == 0o700,
-              dirStat.st_uid == euid else {
-            return (nil, errno != 0 ? errno : EPERM)
-        }
-
-        var socketStat = stat()
-        guard lstat(path, &socketStat) == 0,
-              (socketStat.st_mode & S_IFMT) == S_IFSOCK,
-              (socketStat.st_mode & 0o777) == 0o600,
-              socketStat.st_uid == euid else {
-            return (nil, errno != 0 ? errno : EPERM)
-        }
-
-        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard descriptor >= 0 else { return (nil, errno) }
-        var noSigPipe: Int32 = 1
-        _ = setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let bytes = Array(path.utf8)
-        let capacity = MemoryLayout.size(ofValue: address.sun_path)
-        withUnsafeMutablePointer(to: &address.sun_path) { pointer in
-            pointer.withMemoryRebound(to: CChar.self, capacity: capacity) { chars in
-                for (index, byte) in bytes.enumerated() { chars[index] = CChar(bitPattern: byte) }
-                chars[bytes.count] = 0
-            }
-        }
-        let length = socklen_t(MemoryLayout<sa_family_t>.size + bytes.count + 1)
-        let result = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(descriptor, $0, length) }
-        }
-        guard result == 0 else {
-            let error = errno
-            Darwin.close(descriptor)
-            return (nil, error)
-        }
-
-        // Post-connect security verification
-        var peerUID: uid_t = 0
-        var peerGID: gid_t = 0
-        guard getpeereid(descriptor, &peerUID, &peerGID) == 0, peerUID == euid else {
-            Darwin.close(descriptor)
-            return (nil, EPERM)
-        }
-
-        var postSocketStat = stat()
-        var postDirStat = stat()
-        guard lstat(path, &postSocketStat) == 0,
-              postSocketStat.st_dev == socketStat.st_dev,
-              postSocketStat.st_ino == socketStat.st_ino,
-              (postSocketStat.st_mode & S_IFMT) == S_IFSOCK,
-              (postSocketStat.st_mode & 0o777) == 0o600,
-              postSocketStat.st_uid == euid,
-              lstat(dirPath, &postDirStat) == 0,
-              postDirStat.st_dev == dirStat.st_dev,
-              postDirStat.st_ino == dirStat.st_ino,
-              (postDirStat.st_mode & S_IFMT) == S_IFDIR,
-              (postDirStat.st_mode & 0o777) == 0o700,
-              postDirStat.st_uid == euid else {
-            Darwin.close(descriptor)
-            return (nil, EPERM)
-        }
-
-        return (descriptor, 0)
-    }
-
 private final class NativeHostStopFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var stopped = false
@@ -267,4 +195,11 @@ private final class NativeHostStopFlag: @unchecked Sendable {
     }
 }
 
+#else
+import Darwin
+
+@main
+enum BrowserHostDisabled {
+    static func main() { exit(78) }
+}
 #endif

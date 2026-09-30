@@ -10,7 +10,11 @@ import Testing
 @Suite("AXContract", .serialized)
 @MainActor
 struct AXContractTests {
+    #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    private let contractPath = "ax-contract-browser-preview.json"
+    #else
     private let contractPath = "ax-contract.json"
+    #endif
     private let validFeedURL = "https://updates.solstone.app/solstone-macos/appcast.xml"
     private let validPublicKey = "11qYAYKxCrfVS/7TyWQHOg7hcvPa9jIlrwIaaPcHUho="
     private let isolatedDefaults = IsolatedUserDefaults()
@@ -27,12 +31,12 @@ struct AXContractTests {
         }
 
         guard let committed = try? String(contentsOfFile: contractPath, encoding: .utf8) else {
-            Issue.record("ax-contract.json is missing or unreadable; run `make ax-contract` and commit.")
+            Issue.record("\(contractPath) is missing or unreadable; run `make ax-contract` and commit.")
             return
         }
 
         if committed != generated {
-            Issue.record("ax-contract.json is stale vs the Swift SoT; run `make ax-contract` and commit.")
+            Issue.record("\(contractPath) is stale vs the Swift SoT; run `make ax-contract` and commit.")
         }
         #expect(committed == generated)
     }

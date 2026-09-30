@@ -30,6 +30,7 @@ internal struct DiagnosticReportRow: Equatable, Identifiable, Sendable {
     let id: DiagnosticReportRowID
     let label: String
     let value: String
+    var machineValue: String? = nil
 }
 
 internal struct DiagnosticReport: Equatable, Sendable {
@@ -45,7 +46,7 @@ internal struct DiagnosticReport: Equatable, Sendable {
     var text: String {
         rows.map { row in
             let continuationPrefix = String(repeating: " ", count: row.label.count + 2)
-            let value = row.value.replacingOccurrences(of: "\n", with: "\n\(continuationPrefix)")
+            let value = (row.machineValue ?? row.value).replacingOccurrences(of: "\n", with: "\n\(continuationPrefix)")
             return "\(row.label): \(value)"
         }.joined(separator: "\n")
     }
@@ -218,7 +219,8 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
             browserDiagnosticRows.append(DiagnosticReportRow(
                 id: rowID,
                 label: row.label,
-                value: row.humanValue
+                value: row.humanValue,
+                machineValue: row.machineValue
             ))
         }
     }

@@ -110,6 +110,38 @@ struct BrowserHostPureOutboundTests {
         await outbound.close()
     }
 
+    @Test func obsoletePublicationCannotConsumeBoundaryOrOverwriteNewState() async throws {
+        let sink = MemoryByteSink()
+        let outbound = BrowserHostOutbound(sink: sink)
+        func state(_ period: String, _ capture: String) -> Data {
+            Data("{\"type\":\"state\",\"destination_generation\":\"epoch\",\"period_id\":\"\(period)\",\"capture\":\"\(capture)\"}".utf8)
+        }
+        let boundary = Data("{\"type\":\"boundary\",\"destination_generation\":\"epoch\",\"period_id\":\"p2\"}".utf8)
+        #expect(await outbound.enqueuePublication(state: state("p1", "permitted"), boundary: nil,
+            periodID: "p1", destinationGeneration: "epoch", isCurrent: { true }))
+        await outbound.flush()
+        // The obsolete pass must leave this channel's accepted cursor at p1.
+        #expect(await !outbound.enqueuePublication(state: state("p2", "permitted"), boundary: boundary,
+            periodID: "p2", destinationGeneration: "epoch", isCurrent: { false }))
+        #expect(await outbound.enqueuePublication(state: state("p2", "paused"), boundary: boundary,
+            periodID: "p2", destinationGeneration: "epoch", isCurrent: { true }))
+        await outbound.flush()
+        // Repeating the latest pass must not create a second boundary.
+        #expect(await outbound.enqueuePublication(state: state("p2", "paused"), boundary: boundary,
+            periodID: "p2", destinationGeneration: "epoch", isCurrent: { true }))
+        #expect(await !outbound.enqueuePublication(state: state("p2", "permitted"), boundary: boundary,
+            periodID: "p2", destinationGeneration: "epoch", isCurrent: { false }))
+        await outbound.flush()
+        let messages = try sink.writtenData.map { try #require(JSONSerialization.jsonObject(with: $0) as? [String: String]) }
+        let boundaries = messages.filter { $0["type"] == "boundary" }
+        #expect(boundaries.count == 1)
+        #expect(boundaries.first?["period_id"] == "p2")
+        #expect(messages.last?["capture"] == "paused")
+        let index = try #require(messages.firstIndex { $0["type"] == "boundary" })
+        #expect(messages[index + 1]["period_id"] == "p2")
+        await outbound.close()
+    }
+
     @Test func outboundCloseReleasesUnwrittenReplyBudgets() async throws {
         let sink = MemoryByteSink()
         sink.setFailure(true)
@@ -122,7 +154,7 @@ struct BrowserHostPureOutboundTests {
         #expect(budgetReleased.value)
     }
 
-    @Test func coalescedStateAndRenewal() async throws {
+    @Test func coalescedStateMailbox() async throws {
         let sink = MemoryByteSink()
         let outbound = BrowserHostOutbound(sink: sink)
 
@@ -135,13 +167,8 @@ struct BrowserHostPureOutboundTests {
         let initialWritten = sink.writtenData
         #expect(initialWritten.contains(stateB))
 
-        // Simulate renewal sleeper firing and enqueueing renewed state via emitRenewalState
-        let renewedState = Data("state-renewed".utf8)
-        await BrowserHostListener.emitRenewalState(
-            isCompatible: true,
-            outbound: outbound,
-            state: renewedState
-        )
+        let renewedState = Data("state-updated".utf8)
+        await outbound.enqueueState(renewedState)
         try await Task.sleep(for: .milliseconds(50))
 
         let finalWritten = sink.writtenData
@@ -172,6 +199,7 @@ struct BrowserHostPureAdmissionGateTests {
         #expect(gate.committedClose(generation: 1)?.0 == .ordinaryQuit)
 
         // Reinstall at generation 2 ignores stale generation 1 close
+        #expect(gate.prepare(generation: 2))
         gate.install(listenerFD: -1, generation: 2)
         #expect(gate.isOpen(generation: 2))
         #expect(!gate.commitClose(reason: .ordinaryQuit, generation: 1))

@@ -768,7 +768,7 @@ public final class CaptureManager {
         currentSegment
     }
 
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
     internal var isSystemAudioRunningForTesting: Bool {
         systemAudioCaptureManager.isRunning
     }

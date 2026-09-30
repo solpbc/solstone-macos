@@ -72,7 +72,17 @@ public final class AppState {
     public private(set) var browserIntakeStore: BrowserIntakeStore?
     public private(set) var browserIntakeAuthority: BrowserIntakeAuthority?
     public let browserHostSnapshot = BrowserHostSnapshot()
-    var browserRepair = BrowserRepairController()
+    @ObservationIgnored private let browserRepairValidity = BrowserRepairValidity()
+    var browserRepair = BrowserRepairController() {
+        didSet {
+            if oldValue.attempt != browserRepair.attempt ||
+               oldValue.destinationGeneration != browserRepair.destinationGeneration ||
+               oldValue.lifecycleGeneration != browserRepair.lifecycleGeneration ||
+               oldValue.viewGeneration != browserRepair.viewGeneration {
+                browserRepairValidity.invalidate()
+            }
+        }
+    }
     var browserStoreCatalog = BrowserStoreCatalog.preview
     var browserStoreOpener: @MainActor (URL, BrowserBrand) -> Bool = { url, brand in
         let bundleID: String
@@ -201,7 +211,13 @@ public final class AppState {
     public internal(set) var dockMode: DockMode = .auto
     public internal(set) var currentPolicy: NSApplication.ActivationPolicy = .accessory
     public internal(set) var loginLaunchSuppressionExpires: Date = .distantPast
-    public internal(set) var isTerminating: Bool = false
+    public internal(set) var isTerminating: Bool = false {
+        didSet {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            if isTerminating != oldValue { browserRepairValidity.invalidate() }
+#endif
+        }
+    }
     public internal(set) var appKitTerminationBegan: Bool = false
     private var activationPolicyWorkItem: DispatchWorkItem?
     private var nextJournalOpenIntentID: UInt64 = 0
@@ -563,10 +579,17 @@ public final class AppState {
     func beginBrowserRepair() {
         guard let token = browserRepair.click() else { return }
         let listener = browserHostListener
+        let validity = browserRepairValidity
+        let revision = validity.value
+        let store = browserIntakeOwner?.store
+        let destination = store?.getActiveGeneration()
+        let isCurrent: @Sendable () -> Bool = {
+            validity.matches(revision) && store?.getActiveGeneration() == destination
+        }
         Task { @MainActor [weak self] in
             guard let self else { return }
             @MainActor func isStale() -> Bool {
-                if token.attempt != self.browserRepair.attempt ||
+                if !isCurrent() || token.attempt != self.browserRepair.attempt ||
                    token.destinationGeneration != self.browserRepair.destinationGeneration ||
                    token.lifecycleGeneration != self.browserRepair.lifecycleGeneration ||
                    token.viewGeneration != self.browserRepair.viewGeneration {
@@ -584,7 +607,7 @@ public final class AppState {
             if holdsFence {
                 endpoint = nil
             } else if let listener {
-                endpoint = await listener.repairStaleEndpoint(rootURL: root)
+                endpoint = await listener.repairStaleEndpoint(rootURL: root, isCurrent: isCurrent)
                 if isStale() { return }
             } else {
                 endpoint = (try? BrowserHostEndpointFence(rootURL: root).repairStaleEndpoint()) ?? .refused
@@ -617,7 +640,7 @@ public final class AppState {
             if isStale() { return }
 
             if !holdsFence, let listener, (endpoint == .absent || endpoint == .removed) {
-                await listener.startIfNeeded(rootURL: root)
+                await listener.startIfNeeded(rootURL: root, isCurrent: isCurrent)
                 if isStale() { return }
                 holdsFence = await listener.holdsEndpointFence
                 if isStale() { return }
@@ -625,7 +648,7 @@ public final class AppState {
 
             if isStale() { return }
 
-            await listener?.noteRegistration(prodReport)
+            await listener?.noteRegistration(prodReport, isCurrent: isCurrent)
             if isStale() { return }
 
             self.browserRepair.complete(
@@ -649,7 +672,15 @@ public final class AppState {
 
     var browserRowPermitted: Bool {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        browserCapturePermitsPause(browserHostSnapshot.value, now: Date()) && !pauseManager.isPaused
+        browserIntakeIsReady(browserHostSnapshot.value, now: Date()) && !pauseManager.isPaused
+#else
+        false
+#endif
+    }
+
+    var browserPauseEnabled: Bool {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        config.isBrowserIntakeEnabled && !browserHostSnapshot.value.shutdown && !browserHostSnapshot.value.quiescence
 #else
         false
 #endif
@@ -1880,15 +1911,20 @@ public final class AppState {
     internal func recoverAfterFailedUpdaterInstall() async {
         appQuitCoordinator.resetAfterFailedUpdaterInstall()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let recoveryGeneration = appQuitCoordinator.preparationGeneration
         browserRepair.lifecycleGeneration += 1
-        guard let owner = browserIntakeOwner, let credentials = browserIntakeCredentialStore else { return }
+        let revision = browserRepairValidity.value
+        let validity = browserRepairValidity
+        let current: @Sendable () -> Bool = { validity.matches(revision) }
+        guard !isTerminating, let owner = browserIntakeOwner, let credentials = browserIntakeCredentialStore else { return }
         do {
             let pairing = try credentials.load()
             await owner.resumeAfterFailedUpdate(
                 credentialSnapshot: BrowserCredentialSnapshot(identityToken: pairing.map { PairingCredentialStore.identityToken(for: $0) }),
                 paused: pauseManager.isPaused
             )
-            await browserHostListener?.resumeAfterFailedUpdaterInstall(generation: appQuitCoordinator.preparationGeneration)
+            guard !isTerminating, appQuitCoordinator.preparationGeneration == recoveryGeneration, current() else { return }
+            await browserHostListener?.resumeAfterFailedUpdaterInstall(generation: recoveryGeneration, isCurrent: current)
         } catch {
             Logger.storage.error("Browser intake update recovery failed: \(error.localizedDescription, privacy: .public)")
         }

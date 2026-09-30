@@ -1700,7 +1700,7 @@ struct BrowserMetadataCapacityTests {
         #expect(!reopened.storeIsFailed())
     }
 
-    #if DEBUG
+    #if DEBUG || SOLSTONE_TEST_SUPPORT
     @Test func actualSQLiteFullAutomaticallyRollsBackAdmissionAndKeepsStoreHealthy() throws {
         let url = try root()
         defer { try? FileManager.default.removeItem(at: url) }

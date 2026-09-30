@@ -1592,8 +1592,8 @@ public actor SyncService {
         }
     }
 
-#if DEBUG
-    /// Debug-only, explicit-fixture entry point.
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+    /// Explicit-fixture entry point for debug and validation builds.
     func runLiveProbe(segmentURL: URL, day: String, segment: String) async throws -> ServerFileInfo {
         guard let context = journalContext, !syncPaused else {
             throw UploadError.invalidResponse

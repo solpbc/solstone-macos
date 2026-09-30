@@ -68,7 +68,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private var firstBufferTime: CMTime?
     private var lastBufferTime: CMTime?
     private let lock = NSLock()
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
     internal private(set) var _appendAttemptCountForTesting: Int = 0
 #endif
 
@@ -198,7 +198,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         if input.isReadyForMoreMediaData {
             let adjustedTime = CMTimeSubtract(currentTime, firstTime)
             if let retimedBuffer = createRetimedSampleBuffer(sampleBuffer, newTime: adjustedTime) {
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
                 _appendAttemptCountForTesting += 1
 #endif
                 do {
@@ -470,10 +470,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         return (firstTime, lastTime, startTime, wasStarted)
     }
 
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
     /// Test-only: force the recorded last-buffer time so finish() computes an
     /// invalid endSession source time, reproducing the sleep/lock ObjC throw from
-    /// a writer that still reports .writing. Not compiled into release builds.
+    /// a writer that still reports .writing. Excluded from shipping builds.
     internal func _forceLastBufferTimeForTesting(_ time: CMTime) {
         lock.lock()
         lastBufferTime = time

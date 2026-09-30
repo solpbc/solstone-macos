@@ -34,7 +34,7 @@ public final class ScreenshotCapturer {
     private var healthCheckFrameCount = 0
     private var firstFrameLogged = false
     private var streamStartTime: Date?
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
     internal private(set) var _teardownTraceForTesting: [String] = []
     internal private(set) var _restartDecisionTraceForTesting: [String] = []
     internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
@@ -303,7 +303,7 @@ public final class ScreenshotCapturer {
     }
 
     private func teardownStream() async {
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
         _teardownTraceForTesting.append("stopCapture")
 #endif
         if let stream = stream {
@@ -318,7 +318,7 @@ public final class ScreenshotCapturer {
             }
         }
 
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
         _teardownTraceForTesting.append("dropOutput")
 #endif
         stream = nil
@@ -453,7 +453,7 @@ public final class ScreenshotCapturer {
     }
 
     private func restartBackoff() async throws {
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
         if let hook = _restartParkHookForTesting {
             await hook()
             return
@@ -463,18 +463,18 @@ public final class ScreenshotCapturer {
     }
 
     private func appendRestartSuppressedTraceForTesting() {
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
         _restartDecisionTraceForTesting.append("restart suppressed - stream generation changed")
 #endif
     }
 
     private func appendRestartProceedTraceForTesting() {
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
         _restartDecisionTraceForTesting.append("restart proceeding")
 #endif
     }
 
-#if DEBUG
+#if DEBUG || SOLSTONE_TEST_SUPPORT
     internal func _restartStreamForTesting() async {
         await restartStream()
     }
