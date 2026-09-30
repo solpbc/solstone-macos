@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - if a moment changes on its way into your journal, the changed files stay on this mac for another attempt.
+- after you change time zones, each new moment goes into your journal under the time zone your mac is set to when that moment starts. a moment already underway keeps the time zone it started in.
+- when the clocks go back an hour, moments from the repeated hour now reach your journal. before, some of them could stay on this mac.
 
 ## [2.0.20] - 2026-09-30
 
