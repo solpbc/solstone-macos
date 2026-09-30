@@ -25,7 +25,12 @@ enum BrowserHostCommand {
     }
 
     static func run(arguments: [String], output: (String) -> Void = { print($0) }) -> Int? {
-        guard let command = command(arguments: arguments) else { return nil }
+        guard let first = arguments.dropFirst().first else { return nil }
+        guard first == "browser-host-check" || first == "browser-host-repair" else { return nil }
+        guard let command = command(arguments: arguments) else {
+            output("malformed")
+            return 2
+        }
         let bundleURL = Bundle.main.bundleURL
         guard let contractRoot = BrowserContractProjection.vendorRootURL(bundleURL: bundleURL) else {
             output("unknown contract_unavailable")
@@ -33,21 +38,19 @@ enum BrowserHostCommand {
         }
         let helperURL = helperURL(for: command, bundleURL: bundleURL)
         let registration = BrowserHostRegistration(contractRoot: contractRoot, helperURL: helperURL)
-        let root = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Solstone/browser-intake", isDirectory: true)
+        let root = NativeHostPaths.hostDirectory()
         let fence = BrowserHostEndpointFence(rootURL: root)
         let report: BrowserHostRegistrationReport
         let endpoint: BrowserHostEndpointDisposition
-        let checkOnly: Bool
         switch command {
         case .check(let mode):
             endpoint = fence.inspectEndpoint()
             report = registration.check(mode: mode)
-            checkOnly = true
         case .repair(let mode):
-            endpoint = (try? fence.repairStaleEndpoint()) ?? .refused
-            report = registration.repair(mode: mode)
-            checkOnly = false
+            _ = (try? fence.repairStaleEndpoint()) ?? .refused
+            _ = registration.repair(mode: mode)
+            report = registration.check(mode: mode)
+            endpoint = fence.inspectEndpoint()
         }
         for brand in BrowserBrand.allCases {
             guard let result = report.outcomes[brand] else {
@@ -72,10 +75,8 @@ enum BrowserHostCommand {
         case .refused:
             output("endpoint_collision")
         }
-        let registrationReady = checkOnly
-            ? report.outcomes.values.allSatisfy { $0.state == .ready }
-            : report.isComplete
-        let endpointReady = endpoint == .absent || endpoint == .removed
+        let registrationReady = report.outcomes.values.allSatisfy { $0.state == .ready }
+        let endpointReady = endpoint == .absent || endpoint == .live || endpoint == .removed
         return registrationReady && endpointReady ? 0 : 1
     }
 

@@ -27,7 +27,11 @@ struct DiagnosticReportTests {
 
         // With no pairing, the journal address rows have nothing to say and stay out.
         #expect(report.rows.map(\.id) == DiagnosticReportRowID.allCases.filter {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            ![.journalAddresses, .relay, .addressesTried, .connectedThrough, .browserPages, .browsersSeen, .browserSetup].contains($0)
+#else
             ![.journalAddresses, .relay, .addressesTried, .connectedThrough].contains($0)
+#endif
         })
         #expect(report.text == """
         app version: 1.2.3

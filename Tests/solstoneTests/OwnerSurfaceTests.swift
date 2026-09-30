@@ -10,6 +10,8 @@ import Testing
 
 @Suite("OwnerSurfaceSources")
 struct OwnerSurfaceSourcesTests {
+    private let now = Date(timeIntervalSince1970: 1_700_000_000)
+
     @Test func browserToggleDoesNotRestartMedia() {
         #expect(sourcesToggleRestartsMedia(.microphone(false)))
         #expect(sourcesToggleRestartsMedia(.screen(true)))
@@ -56,6 +58,22 @@ struct OwnerSurfaceSourcesTests {
         #expect(!lockPaused.resume)
         #expect(!idle.pause)
         #expect(!idle.resume)
+    }
+
+    @Test func browserOnlyPauseEligibility() {
+        var snapshot = BrowserHostSnapshotValue(intakeEnabled: true)
+        #expect(browserCapturePermitsPause(snapshot, now: now))
+
+        snapshot.intakeEnabled = false
+        #expect(!browserCapturePermitsPause(snapshot, now: now))
+
+        snapshot.intakeEnabled = true
+        snapshot.shutdown = true
+        #expect(!browserCapturePermitsPause(snapshot, now: now))
+
+        snapshot.shutdown = false
+        snapshot.quiescence = true
+        #expect(!browserCapturePermitsPause(snapshot, now: now))
     }
 
     @Test func rowStaysLiveForPermittedBrowserIntake() {
@@ -130,25 +148,34 @@ struct OwnerSurfaceStatusTests {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
 
     @Test func ownerGatesOutrankCustodyAndLocalReceiptIsNotDelivered() {
-        let permitted = BrowserHostSnapshotValue(capture: "permitted", delivery: "kept_locally", custodyFull: true, custodyPresent: true)
+        let permitted = BrowserHostSnapshotValue(capture: "permitted", delivery: "kept_locally", custodyFull: true, custodyPresent: true, listener: .available)
         #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: permitted, now: now) == .custodyFull)
 
         var lost = permitted
         lost.failureCode = "unaccepted_lost"
+        lost.listener = .available
         let lostVerdict = browserOwnerVerdict(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: lost, now: now)
         #expect(lostVerdict.lead == .hold("unaccepted_lost"))
         #expect(lostVerdict.fullSecondary)
 
-        var legacy = BrowserHostSnapshotValue(capture: "permitted", delivery: "idle", failureCode: "queue_full")
+        var legacy = BrowserHostSnapshotValue(capture: "permitted", delivery: "idle", failureCode: "queue_full", listener: .available)
         #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: legacy, now: now) == .custodyFull)
         legacy.custodyPresent = true
         legacy.custodyFull = false
-        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: legacy, now: now) == .ready)
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: legacy, now: now) == .waiting)
 
-        let exhausted = BrowserHostSnapshotValue(capture: "permitted", delivery: "failed", failureCode: "resource_exhausted")
-        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: exhausted, now: now) == .hold("resource_exhausted"))
+        let exhausted = BrowserHostSnapshotValue(capture: "permitted", delivery: "failed", failureCode: "resource_exhausted", listener: .available)
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: exhausted, now: now) == .custodyFull)
 
-        let stale = BrowserHostSnapshotValue(capture: "permitted", delivery: "kept_locally", custodyStale: true, custodyPresent: true)
+        let activeProfile = BrowserHostProfile(lastSeen: now, handshake: .compatible, byeReason: nil, leaseExpiry: now.addingTimeInterval(30))
+        let stale = BrowserHostSnapshotValue(
+            capture: "permitted",
+            delivery: "kept_locally",
+            custodyStale: true,
+            custodyPresent: true,
+            profiles: BrowserHostProfileGroup(chrome: [activeProfile]),
+            listener: .available
+        )
         let staleVerdict = browserOwnerVerdict(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: stale, now: now)
         #expect(staleVerdict.lead == .ready)
         #expect(staleVerdict.stale)
@@ -156,9 +183,9 @@ struct OwnerSurfaceStatusTests {
         #expect(!browserPresentsLocalReceiptAsDelivered("kept_locally"))
         #expect(statusPrimaryDelivery(media: LastJournalDeliveryOutcome.noDeliveryYet, browserDelivery: "kept_locally") == .noDeliveryYet)
 
-        let paused = BrowserHostSnapshotValue(capture: "paused", custodyFull: true, custodyPresent: true)
+        let paused = BrowserHostSnapshotValue(capture: "paused", custodyFull: true, custodyPresent: true, listener: .available)
         #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: paused, now: now) == .paused)
-        let unpaired = BrowserHostSnapshotValue(capture: "not_paired", custodyFull: true, custodyPresent: true)
+        let unpaired = BrowserHostSnapshotValue(capture: "not_paired", custodyFull: true, custodyPresent: true, listener: .available)
         #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: unpaired, now: now) == .notPaired)
         var shutdown = BrowserHostSnapshotValue(capture: "permitted")
         shutdown.shutdown = true
@@ -167,17 +194,33 @@ struct OwnerSurfaceStatusTests {
 
     @Test func sessionLeaseDoesNotTreatAbsenceAsExpiry() {
         let open = BrowserHostSnapshotValue(capture: "permitted", delivery: "idle")
-        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: open, now: now) == .ready)
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: open, now: now) == .unavailable)
+
+        var openWithListener = open
+        openWithListener.listener = .available
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: openWithListener, now: now) == .waiting)
 
         let seen = now.addingTimeInterval(-10)
+        let valid = BrowserHostProfile(lastSeen: seen, handshake: .compatible, byeReason: nil, leaseExpiry: now.addingTimeInterval(30))
+        var connected = openWithListener
+        connected.profiles = BrowserHostProfileGroup(chrome: [valid])
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: connected, now: now) == .ready)
+
         let expired = BrowserHostProfile(lastSeen: seen, handshake: .compatible, byeReason: nil, leaseExpiry: seen)
-        var closed = open
+        var closed = openWithListener
         closed.profiles = BrowserHostProfileGroup(chrome: [expired])
-        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: closed, now: now) == .sessionClosed)
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: closed, now: now) == .waiting)
 
         let bye = BrowserHostProfile(lastSeen: seen, handshake: .compatible, byeReason: "shutdown", leaseExpiry: now.addingTimeInterval(30))
         closed.profiles = BrowserHostProfileGroup(firefox: [bye])
-        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: closed, now: now) == .sessionClosed)
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: closed, now: now) == .waiting)
+    }
+
+    @Test func localReceiptIsNotDelivered() {
+        #expect(!browserPresentsLocalReceiptAsDelivered("kept_locally"))
+        #expect(browserPresentsLocalReceiptAsDelivered("delivered"))
+        #expect(!browserPresentsLocalReceiptAsDelivered("idle"))
+        #expect(!browserPresentsLocalReceiptAsDelivered("failed"))
     }
 
     @Test func statusCardFooterAndSetupKeepMediaTruth() {
@@ -187,7 +230,13 @@ struct OwnerSurfaceStatusTests {
         #expect(drainingSummary.subtitle != UICopy.SOURCES_NONE_REASON)
         #expect(sourcesFooter(media: UICopy.SOURCES_NONE, lead: .draining) != UICopy.SOURCES_NONE_REASON)
 
-        let ready = BrowserHostSnapshotValue(capture: "permitted", delivery: "kept_locally")
+        let validProfile = BrowserHostProfile(lastSeen: now, handshake: .compatible, byeReason: nil, leaseExpiry: now.addingTimeInterval(30))
+        let ready = BrowserHostSnapshotValue(
+            capture: "permitted",
+            delivery: "kept_locally",
+            profiles: BrowserHostProfileGroup(chrome: [validProfile]),
+            listener: .available
+        )
         let readySummary = statusSummary(snapshot: ready, recording: false, sources: [])
         #expect(readySummary.axValue == "browser_ready")
         #expect(readySummary.title != UICopy.SOURCES_NONE)
@@ -209,7 +258,8 @@ struct OwnerSurfaceStatusTests {
         #expect(setup.rows.map(\.id).contains(.screenRecording))
         #expect(setup.rows.map(\.id).contains(.microphone))
         #expect(browserSetupGroupIsVisible(screenGranted: false, microphoneGranted: false))
-        #expect(sourcesFooter(media: UICopy.SOURCES_NONE, lead: .ready) == "on")
+        #expect(sourcesFooter(media: UICopy.SOURCES_NONE, lead: .ready) == UICopy.SOURCES_BROWSER_HEADLINE_READY)
+        #expect(sourcesFooter(media: UICopy.SOURCES_NONE, lead: .waiting) == UICopy.SOURCES_BROWSER_HEADLINE_WAITING)
     }
 
     private func statusSummary(
@@ -270,7 +320,7 @@ struct OwnerSurfaceRepairTests {
         controller.complete(token: token, report: registrationReport(state: .changed), listenerHoldsFence: false, endpoint: .live)
         #expect(!controller.repaired)
         let again = controller.click()!
-        controller.complete(token: again, report: registrationReport(state: .changed), listenerHoldsFence: false, endpoint: .removed)
+        controller.complete(token: again, report: registrationReport(state: .changed), listenerHoldsFence: true, endpoint: .removed)
         #expect(controller.repaired)
     }
 
@@ -306,14 +356,12 @@ struct OwnerSurfaceRepairTests {
             profiles: BrowserHostProfileGroup(chrome: [profile]),
             listener: .collision
         )
-        let lines = browserOwnerDiagnosticLines(snapshot, now: Date(timeIntervalSince1970: 1_700_000_000))
-        let text = lines.map { "\($0.key) \($0.value)" }.joined(separator: "\n")
+        let rows = buildBrowserDiagnosticRows(snapshot: snapshot, repair: BrowserRepairController(), now: Date(timeIntervalSince1970: 1_700_000_000))
+        let text = rows.map { "\($0.label) \($0.humanValue) \($0.machineValue)" }.joined(separator: "\n")
         #expect(!text.contains("http"))
         #expect(!text.contains("host.sock"))
         #expect(!text.contains("/"))
-        #expect(lines.contains { $0.key == "chrome" && $0.value.contains("unknown") })
-        #expect(lines.contains { $0.key == "listener" && $0.value == "collision" })
-        #expect(!lines.contains { $0.key == "delivery" })
+        #expect(rows.contains { $0.machineValue.contains("Chrome") })
         #expect(browserSetupGroupIsVisible(screenGranted: false, microphoneGranted: false))
     }
 

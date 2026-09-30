@@ -182,6 +182,13 @@ public struct BrowserHostRegistration: Sendable {
                     continue
                 }
                 try fileSystem.writeAtomically(bytes, to: destination)
+                guard let verifyInfo = fileSystem.info(destination),
+                      verifyInfo.kind == .regular,
+                      verifyInfo.uid == effectiveUID,
+                      (try? fileSystem.read(destination)) == bytes else {
+                    outcomes[brand] = outcome(brand, .refused, destination.path, "manifest_verification_failed")
+                    continue
+                }
                 changedAny = true
                 outcomes[brand] = outcome(brand, .changed, destination.path, nil)
             } catch {

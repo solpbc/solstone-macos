@@ -120,6 +120,8 @@ public struct BrowserHostOwnerFacts: Sendable {
     public var custodyFull: Bool
     public var custodyStale: Bool
     public var custodyPresent: Bool
+    public var destinationGeneration: String?
+    public var periodId: String?
 
     public init(status: [String: Any], intakeEnabled: Bool) {
         let custody = status["custody"] as? [String: Any]
@@ -130,6 +132,8 @@ public struct BrowserHostOwnerFacts: Sendable {
         custodyFull = custody?["full"] as? Bool ?? false
         custodyStale = custody?["stale"] as? Bool ?? false
         custodyPresent = custody != nil
+        destinationGeneration = status["destination_generation"] as? String
+        periodId = status["period_id"] as? String
     }
 }
 

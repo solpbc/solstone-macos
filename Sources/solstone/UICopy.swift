@@ -2,18 +2,78 @@ import SolstoneCore
 
 public enum UICopy {
     public static let SOURCES_TITLE = "sources"
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    public static let SOURCES_HELP = "what you turn on here goes into your journal. each one is on unless you turn it off."
+    public static let SOURCES_NONE = "every source is off"
+    public static let SOURCES_NONE_REASON = "nothing new is taken in until you turn one back on. turning sources off doesn't hold back what's already kept on this mac."
+    public static let SOURCES_BROWSER_PAGES = "browser pages"
+
+    // Group & store
+    public static let SOURCES_BROWSERS_GROUP_TITLE = "browsers"
+    public static let SOURCES_BROWSERS_NO_HISTORY = "no browser connected yet"
+    public static let SOURCES_BROWSERS_NO_STORE = "the solstone extension isn't in the browser stores yet."
+    public static let SOURCES_BROWSERS_STORES_CONFIGURED = "add the solstone extension to Chrome, Edge or Firefox on this mac, then choose which sites to share. what you share goes into your journal."
+    public static func sourcesBrowserAddAction(browser: String) -> String { "add to \(browser)" }
+    public static func sourcesBrowserLaunchFailure(browser: String) -> String { "couldn't open the store page in \(browser)." }
+
+    // Rows
+    public static func sourcesBrowserRowLabel(browser: String, profileCount: Int) -> String {
+        profileCount > 1 ? "\(browser) · \(profileCount) profiles" : browser
+    }
+    public static let SOURCES_BROWSER_CONNECTED_NOW = "connected now"
+    public static func sourcesBrowserLastSeen(_ relative: String) -> String { "last seen \(relative)" }
+    public static let SOURCES_BROWSER_NEEDS_EXT_UPDATE = "needs an extension update"
+    public static let SOURCES_BROWSER_NEEDS_APP_UPDATE = "needs a solstone app update"
+
+    // State lines
+    public static let SOURCES_BROWSER_INTAKE_OFF = "browser pages are off. nothing new is taken in from your browsers."
+    public static let SOURCES_BROWSER_DRAINING = "browser pages are off. nothing new is taken in from your browsers; turning them off doesn't hold back what's already kept on this mac."
+    public static let SOURCES_BROWSER_NEWER_EXTENSION = "the solstone extension in a browser needs a newer solstone app. look under updates."
+    public static let SOURCES_BROWSER_FULL = "the room on this mac for what you share from your browsers is full. new browser pages are taken in again once there's room."
+    public static let SOURCES_BROWSER_STALE = "some browser pages have waited more than a week to go into your journal. they're still kept on this mac."
+    public static let SOURCES_BROWSER_CANNOT_START = "browser pages can't start right now."
+    public static let SOURCES_BROWSER_UNKNOWN = "browser status isn't known yet."
+    public static let SOURCES_BROWSER_HELD = "new browser pages aren't being taken in right now."
+    public static let SOURCES_BROWSER_LOST_AND_HELD = "some browser pages couldn't be kept, so they won't go into your journal. new browser pages aren't being taken in right now."
+    public static let SOURCES_BROWSER_PAUSED = "paused with the rest of the solstone app. pausing doesn't hold back what's already taken in."
+    public static let SOURCES_BROWSER_DELIVERY_FAILED = "kept on this mac, not reaching your journal right now"
+    public static let SOURCES_BROWSER_REGISTRATION_BROKEN = "your browsers can't find the solstone app on this mac."
+
+    // Repair
+    public static let SOURCES_BROWSER_REPAIR_ACTION = "repair"
+    public static let SOURCES_BROWSER_REPAIRED = "repaired"
+    public static func sourcesBrowserRepairFailed(reason: String) -> String { "couldn't repair: \(reason)" }
+    public static let SOURCES_BROWSER_FOOTNOTE = "the solstone extension works in Chrome, Edge and Firefox. it doesn't run in private windows. that covers this extension only."
+
+    // Menu row
+    public static func menubarBrowsersLive(_ brands: String) -> String { "browsers · \(brands)" }
+    public static let MENUBAR_BROWSERS_NONE_CONNECTED = "browsers · none connected now"
+    public static let MENUBAR_BROWSERS_NONE_YET = "browsers · none yet"
+    public static let MENUBAR_BROWSERS_OFF = "browsers · off"
+    public static let MENUBAR_BROWSERS_PAUSED = "browsers · paused"
+
+    // Headlines
+    public static let SOURCES_BROWSER_HEADLINE_READY = "on · browser pages only"
+    public static let SOURCES_BROWSER_HEADLINE_WAITING = "on · waiting for a browser to connect"
+
+    // Legend footnote
+    public static let SETTINGS_HELP_BROWSER_FOOTNOTE = "the solstone extension shows the same marks in your browser's toolbar, for what you share from that browser."
+
+    // Diagnostics labels
+    public static let DIAGNOSTICS_BROWSER_PAGES_LABEL = "browser pages"
+    public static let DIAGNOSTICS_BROWSERS_SEEN_LABEL = "browsers seen"
+    public static let DIAGNOSTICS_BROWSER_SETUP_LABEL = "browser setup"
+#else
     public static let SOURCES_HELP = "what you turn on here goes into your journal. both are on unless you turn one off."
+    public static let SOURCES_NONE = "both sources are off"
+    public static let SOURCES_NONE_REASON = "nothing is going into your journal until you turn one back on."
+#endif
     public static let SOURCES_MICROPHONE = "microphone"
     public static let SOURCES_SCREEN = "screen and system audio"
     public static let SOURCES_OFF = "off"
     public static let SOURCES_STARTING = "starting…"
     public static let SOURCES_OPEN_ACTION = "open sources →"
     public static let PERMISSIONS_OPEN_ACTION = "open permissions →"
-
-    // Both switches off. The owner did that on purpose, so it is a calm state with a way back,
-    // never a fault — but it is also the one state where nothing reaches the journal at all.
-    public static let SOURCES_NONE = "both sources are off"
-    public static let SOURCES_NONE_REASON = "nothing is going into your journal until you turn one back on."
 
     // Selected, but macOS hasn't granted either one.
     public static let SOURCES_UNAVAILABLE = "the source you turned on didn't start"
@@ -80,7 +140,11 @@ public enum UICopy {
     public static let SETTINGS_ATTENTION_JOURNAL = "journal setup needed"
     public static let SETTINGS_ATTENTION_UPDATE_AVAILABLE = "update available"
     public static let SETTINGS_ATTENTION_UPDATE_CHECK_FAILED = "update check failed"
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    public static let MENUBAR_SOURCES_OFF_OPEN_SETTINGS = "every source is off · open sources →"
+#else
     public static let MENUBAR_SOURCES_OFF_OPEN_SETTINGS = "both sources are off · open sources →"
+#endif
     public static let MENUBAR_NO_SOURCE_OPEN_SETTINGS = "waiting on a permission · open permissions →"
     public static let MENUBAR_OBSERVING_CONNECTED = "on, connected"
     public static let MENUBAR_OBSERVATION_WEDGE_OPEN_SETTINGS = "needs attention · open settings →"

@@ -227,12 +227,12 @@ struct NativeHostSessionsTests {
             leaseExpiry: Date(timeIntervalSince1970: 15)
         )
         let chrome = UUID()
-        table.record(chrome, brand: .chrome, profile: connected)
-        table.record(UUID(), brand: .firefox, profile: connected)
-        table.disconnect(chrome)
+        table.record(sessionID: chrome, brand: .chrome, inst: "chrome-1", profile: connected)
+        table.record(sessionID: UUID(), brand: .firefox, inst: "firefox-1", profile: connected)
+        table.disconnect(sessionID: chrome)
         #expect(table.count(.chrome) == 0)
         #expect(table.count(.firefox) == 1)
-        table.record(UUID(), brand: .chrome, profile: connected)
+        table.record(sessionID: UUID(), brand: .chrome, inst: "chrome-2", profile: connected)
         #expect(table.count(.chrome) == 1)
         #expect(table.count(.edge) == 0)
     }
@@ -332,10 +332,11 @@ struct NativeHostLifecycleTests {
         #expect(gate.isOpen(generation: 4))
         gate.install(listenerFD: -1, generation: 5)
         #expect(!gate.commitClose(reason: .ordinaryQuit, generation: 4))
+        #expect(!gate.commitClose(reason: .ordinaryQuit, generation: 5))
         #expect(gate.isOpen(generation: 5))
-        #expect(gate.commitClose(reason: .updaterInstall, generation: 5))
+        #expect(gate.commitClose(reason: .updaterInstall, generation: 6))
         #expect(!gate.isOpen(generation: 5))
-        #expect(gate.committedClose(generation: 5)?.0 == .updaterInstall)
+        #expect(gate.committedClose(generation: 6)?.0 == .updaterInstall)
     }
 
     @Test func ownerStatusProjectionPreservesCustodyPresenceAndFailure() {
@@ -363,7 +364,9 @@ struct NativeHostLifecycleTests {
         let gate = BrowserHostAdmissionGate()
         gate.install(listenerFD: -1, generation: 1)
         #expect(gate.isOpen())
-        #expect(gate.commitClose(reason: .ordinaryQuit, generation: 1))
+        #expect(!gate.commitClose(reason: .ordinaryQuit, generation: 1))
+        #expect(gate.isOpen())
+        #expect(gate.commitClose(reason: .ordinaryQuit, generation: 2))
         #expect(!gate.isOpen())
     }
 
@@ -373,7 +376,9 @@ struct NativeHostLifecycleTests {
         #expect(life.admitsHello)
         #expect(life.listenerCount == 1)
         #expect(life.timerCount == 0)
-        let beganUpdate = life.beginClose(reason: .updaterInstall, generation: 3)
+        let rejectedUpdate = life.beginClose(reason: .updaterInstall, generation: 3)
+        #expect(!rejectedUpdate)
+        let beganUpdate = life.beginClose(reason: .updaterInstall, generation: 4)
         #expect(beganUpdate)
         #expect(life.quiescence)
         #expect(!life.admitsHello)
@@ -390,8 +395,8 @@ struct NativeHostLifecycleTests {
         #expect(life.listenerCount == 1)
         var quiet = BrowserHostLifecycle()
         quiet.install(generation: 8)
-        let beganQuiet = quiet.beginClose(reason: .updaterInstall, generation: 8)
-        let finishedQuiet = quiet.finishQuiescence(generation: 8)
+        let beganQuiet = quiet.beginClose(reason: .updaterInstall, generation: 9)
+        let finishedQuiet = quiet.finishQuiescence(generation: 9)
         #expect(beganQuiet)
         #expect(finishedQuiet)
         #expect(quiet.listenerCount == 0)
@@ -445,7 +450,7 @@ struct NativeHostLifecycleTests {
 struct NativeHostSpoolCompositionTests {
     @Test func acceptedReceiptsAndCustodySurviveOwnerRecreation() async throws {
         let projection = try nativeHostProjection()
-        let root = URL(fileURLWithPath: "/var/tmp", isDirectory: true)
+        let root = URL(fileURLWithPath: "/private/var/tmp", isDirectory: true)
             .appendingPathComponent("solstone-native-host-spool-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -502,6 +507,7 @@ struct NativeHostSpoolCompositionTests {
 
         owner.stop()
         let restarted = try makeOwner()
+        await restarted.start()
         let duplicateAfterRestart = try nativeHostAccepted(try await restarted.accept(bytes: snapshotBatch, direction: "extension_to_host"))
         #expect(duplicateAfterRestart["result"] as? String == "duplicate")
         #expect(duplicateAfterRestart["period_id"] as? String == periodID)
@@ -510,7 +516,7 @@ struct NativeHostSpoolCompositionTests {
 
     @Test func custodyDeliveryAndBothBrowsersShareOneOwner() async throws {
         let projection = try nativeHostProjection()
-        let root = URL(fileURLWithPath: "/var/tmp", isDirectory: true)
+        let root = URL(fileURLWithPath: "/private/var/tmp", isDirectory: true)
             .appendingPathComponent("solstone-native-host-spool-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -771,9 +777,9 @@ private func nativeHostDecodedState(_ result: BrowserIntakeAcceptResult, project
 private func nativeHostBatch(generation: String, id: String, queuedAtMs: UInt64, inst: String = "composition-instance", record: String) -> Data {
     let recordObject: String
     if record == "snapshot" {
-        recordObject = "\"t\":\"snapshot\",\"ts\":\(queuedAtMs),\"ctx\":\"composition-context\",\"inst\":\"composition-instance\",\"blocks\":[{\"id\":\"block\",\"text\":\"synthetic page\"}]"
+        recordObject = "\"t\":\"snapshot\",\"ts\":\(queuedAtMs),\"ctx\":\"composition-context\",\"inst\":\"\(inst)\",\"blocks\":[{\"id\":\"block\",\"text\":\"synthetic page\"}]"
     } else {
-        recordObject = "\"t\":\"delta\",\"ts\":\(queuedAtMs),\"ctx\":\"missing-context\",\"inst\":\"composition-instance\",\"op\":\"add\",\"block\":{\"id\":\"block\",\"text\":\"synthetic delta\"}"
+        recordObject = "\"t\":\"delta\",\"ts\":\(queuedAtMs),\"ctx\":\"missing-context\",\"inst\":\"\(inst)\",\"op\":\"add\",\"block\":{\"id\":\"block\",\"text\":\"synthetic delta\"}"
     }
     return Data("{\"type\":\"batch\",\"destination_generation\":\"\(generation)\",\"inst\":\"\(inst)\",\"batch_id\":\"\(id)\",\"queued_at_ms\":\(queuedAtMs),\"records\":[{\(recordObject)}]}".utf8)
 }

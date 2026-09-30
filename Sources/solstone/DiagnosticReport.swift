@@ -19,6 +19,11 @@ internal enum DiagnosticReportRowID: CaseIterable, Hashable, Sendable {
     case addressesTried
     case connectedThrough
     case recentStateCodes
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    case browserPages
+    case browsersSeen
+    case browserSetup
+#endif
 }
 
 internal struct DiagnosticReportRow: Equatable, Identifiable, Sendable {
@@ -61,6 +66,9 @@ internal struct DiagnosticReportInput: Equatable, Sendable {
     let now: Date
     var activeSources: CaptureSources? = nil
     var connection: DiagnosticConnectionInput = .unpaired
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    var browserRows: [BrowserDiagnosticRow]? = nil
+#endif
 }
 
 /// What the app holds and has done to reach the journal. Addresses, the relay's
@@ -135,7 +143,7 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
             value: connectedThrough.text
         ))
     }
-    return DiagnosticReport(rows: [
+    let baseRows = [
         DiagnosticReportRow(
             id: .appVersion,
             label: UICopy.SETTINGS_DIAGNOSTICS_APP_VERSION,
@@ -193,18 +201,45 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
             label: UICopy.SETTINGS_DIAGNOSTICS_RECENT_STATE_CODES,
             value: diagnosticEvidenceValue(input.evidence)
         )
-    ],
-    screenRecordingState: input.screenRecording.diagnosticAXState,
-    microphoneState: input.microphone.diagnosticAXState,
-    captureState: diagnosticCaptureAXState(
-        isRecording: input.isRecording,
-        isPaused: input.isPaused,
-        hasError: input.hasError
-    ),
-    lastDeliveryState: input.lastDelivery.diagnosticAXState,
-    lastDeliveryTimestamp: input.lastDelivery.deliveredAt,
-    lastJournalContactState: input.lastJournalContact.diagnosticAXState,
-    lastJournalContactTimestamp: input.lastJournalContact.connectedAt)
+    ]
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    var browserDiagnosticRows: [DiagnosticReportRow] = []
+    if let browserRows = input.browserRows {
+        for row in browserRows {
+            let rowID: DiagnosticReportRowID
+            switch row.label {
+            case UICopy.DIAGNOSTICS_BROWSER_PAGES_LABEL:
+                rowID = .browserPages
+            case UICopy.DIAGNOSTICS_BROWSERS_SEEN_LABEL:
+                rowID = .browsersSeen
+            default:
+                rowID = .browserSetup
+            }
+            browserDiagnosticRows.append(DiagnosticReportRow(
+                id: rowID,
+                label: row.label,
+                value: row.humanValue
+            ))
+        }
+    }
+    let allRows = baseRows + browserDiagnosticRows
+#else
+    let allRows = baseRows
+#endif
+    return DiagnosticReport(
+        rows: allRows,
+        screenRecordingState: input.screenRecording.diagnosticAXState,
+        microphoneState: input.microphone.diagnosticAXState,
+        captureState: diagnosticCaptureAXState(
+            isRecording: input.isRecording,
+            isPaused: input.isPaused,
+            hasError: input.hasError
+        ),
+        lastDeliveryState: input.lastDelivery.diagnosticAXState,
+        lastDeliveryTimestamp: input.lastDelivery.deliveredAt,
+        lastJournalContactState: input.lastJournalContact.diagnosticAXState,
+        lastJournalContactTimestamp: input.lastJournalContact.connectedAt
+    )
 }
 
 internal func performDiagnosticCopy(
@@ -212,7 +247,15 @@ internal func performDiagnosticCopy(
     write: (String) -> Bool,
     announce: (String) -> Void
 ) -> DiagnosticCopyFeedback {
-    guard write(report.text) else {
+    performDiagnosticCopy(text: report.text, write: write, announce: announce)
+}
+
+internal func performDiagnosticCopy(
+    text: String,
+    write: (String) -> Bool,
+    announce: (String) -> Void
+) -> DiagnosticCopyFeedback {
+    guard write(text) else {
         return .failed
     }
     announce(UICopy.SETTINGS_DIAGNOSTICS_COPY_ANNOUNCEMENT)

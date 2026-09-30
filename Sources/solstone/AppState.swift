@@ -310,6 +310,7 @@ public final class AppState {
                 },
                 closeBrowserHost: { [weak self] reason, generation in
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+                    self?.browserRepair.lifecycleGeneration += 1
                     self?.browserHostListener?.commitClose(reason: reason, generation: generation)
 #endif
                 },
@@ -562,32 +563,75 @@ public final class AppState {
     func beginBrowserRepair() {
         guard let token = browserRepair.click() else { return }
         let listener = browserHostListener
-        Task {
-            let holdsFence = await listener?.holdsEndpointFence ?? false
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            @MainActor func isStale() -> Bool {
+                if token.attempt != self.browserRepair.attempt ||
+                   token.destinationGeneration != self.browserRepair.destinationGeneration ||
+                   token.lifecycleGeneration != self.browserRepair.lifecycleGeneration ||
+                   token.viewGeneration != self.browserRepair.viewGeneration {
+                    self.browserRepair.inFlight = false
+                    return true
+                }
+                return false
+            }
+
+            var holdsFence = await listener?.holdsEndpointFence ?? false
+            if isStale() { return }
+
             var endpoint: BrowserHostEndpointDisposition?
-            let root = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support/Solstone/browser-intake", isDirectory: true)
+            let root = NativeHostPaths.hostDirectory()
             if holdsFence {
                 endpoint = nil
             } else if let listener {
                 endpoint = await listener.repairStaleEndpoint(rootURL: root)
+                if isStale() { return }
             } else {
                 endpoint = (try? BrowserHostEndpointFence(rootURL: root).repairStaleEndpoint()) ?? .refused
             }
+
+            if endpoint == .refused {
+                self.browserRepair.inFlight = false
+                self.browserRepair.lastFailureReason = "endpoint_collision"
+                Logger.general.error("Browser host endpoint repair refused")
+                return
+            }
+
             let bundleURL = Bundle.main.bundleURL
-            let report: BrowserHostRegistrationReport
+            let prodReport: BrowserHostRegistrationReport
+            let devReport: BrowserHostRegistrationReport
             if let contractRoot = BrowserContractProjection.vendorRootURL(bundleURL: bundleURL) {
-                report = BrowserHostRegistration(
+                let registration = BrowserHostRegistration(
                     contractRoot: contractRoot,
                     helperURL: bundleURL.appendingPathComponent("Contents/MacOS/solstone-browser-host")
-                ).repair()
+                )
+                _ = registration.repair(mode: .development)
+                _ = registration.repair(mode: .production)
+                prodReport = registration.check(mode: .production)
+                devReport = registration.check(mode: .development)
             } else {
-                report = BrowserHostRegistrationReport(outcomes: [:], changedAny: false)
+                prodReport = BrowserHostRegistrationReport(outcomes: [:], changedAny: false)
+                devReport = BrowserHostRegistrationReport(outcomes: [:], changedAny: false)
             }
-            await listener?.noteRegistration(report)
-            browserRepair.complete(
+
+            if isStale() { return }
+
+            if !holdsFence, let listener, (endpoint == .absent || endpoint == .removed) {
+                await listener.startIfNeeded(rootURL: root)
+                if isStale() { return }
+                holdsFence = await listener.holdsEndpointFence
+                if isStale() { return }
+            }
+
+            if isStale() { return }
+
+            await listener?.noteRegistration(prodReport)
+            if isStale() { return }
+
+            self.browserRepair.complete(
                 token: token,
-                report: report,
+                report: prodReport,
+                devReport: devReport,
                 listenerHoldsFence: holdsFence,
                 endpoint: endpoint
             )
@@ -647,6 +691,9 @@ public final class AppState {
     }
 
     internal func reevaluateTunnelPairing() async {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserRepair.destinationGeneration += 1
+#endif
         await tunnelLifecycleOwner.reevaluatePairing()
         uploadCoordinator.refreshLastJournalDelivery()
     }
@@ -1799,6 +1846,7 @@ public final class AppState {
 
             let helperURL = bundleURL.appendingPathComponent("Contents/MacOS/solstone-browser-host")
             let registration = BrowserHostRegistration(contractRoot: projection.rootURL, helperURL: helperURL)
+            _ = registration.repair(mode: .development)
             let registrationReport = registration.repair(mode: .production)
             let listener = BrowserHostListener(
                 limits: BrowserHostLimits(projection: projection),
@@ -1814,11 +1862,12 @@ public final class AppState {
                 return
             }
             await listener.start(
-                rootURL: appSupport.appendingPathComponent("Solstone/browser-intake"),
+                rootURL: NativeHostPaths.hostDirectory(),
                 owner: owner,
                 projection: projection,
                 registration: registrationReport,
-                generation: generation
+                generation: generation,
+                modes: [.production, .development]
             )
         }
     }
@@ -1831,6 +1880,7 @@ public final class AppState {
     internal func recoverAfterFailedUpdaterInstall() async {
         appQuitCoordinator.resetAfterFailedUpdaterInstall()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserRepair.lifecycleGeneration += 1
         guard let owner = browserIntakeOwner, let credentials = browserIntakeCredentialStore else { return }
         do {
             let pairing = try credentials.load()

@@ -27,7 +27,7 @@ struct MenuContent: View {
             Text(UICopy.sourceNames(appState.captureManager.activeSources))
         }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        Button("browsers") {
+        Button(menubarBrowserRowTitle(snapshot: appState.browserHostSnapshot.value, now: Date())) {
             openSettings(tab: "sources")
         }
         .accessibilityIdentifier(AXID.Menubar.browsers)
@@ -175,8 +175,41 @@ struct MenuContent: View {
 
         case .observing:
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-            if !appState.isRecording {
-                Text("on")
+            if !appState.isRecording && !appState.isPaused {
+                let verdict = browserOwnerVerdict(
+                    mediaSourcesEmpty: appState.config.selectedSources.isEmpty,
+                    mediaRecording: false,
+                    mediaPaused: false,
+                    snapshot: appState.browserHostSnapshot.value,
+                    now: Date()
+                )
+                let text: String = {
+                    switch verdict.lead {
+                    case .ready:
+                        return UICopy.SOURCES_BROWSER_HEADLINE_READY
+                    case .waiting:
+                        return UICopy.SOURCES_BROWSER_HEADLINE_WAITING
+                    case .draining:
+                        return UICopy.SOURCES_BROWSER_DRAINING
+                    case .paused:
+                        return UICopy.SOURCES_BROWSER_PAUSED
+                    case .custodyFull:
+                        return UICopy.SOURCES_BROWSER_FULL
+                    case .hold(let reason):
+                        return reason == "unaccepted_lost" ? UICopy.SOURCES_BROWSER_LOST_AND_HELD : UICopy.SOURCES_BROWSER_HELD
+                    case .notPaired:
+                        return UICopy.SOURCES_BROWSER_REGISTRATION_BROKEN
+                    case .intakeOff:
+                        return UICopy.SOURCES_BROWSER_INTAKE_OFF
+                    case .unavailable:
+                        return UICopy.SOURCES_BROWSER_CANNOT_START
+                    case .shutdown, .sessionClosed:
+                        return UICopy.SOURCES_BROWSER_INTAKE_OFF
+                    case .mediaUnchanged:
+                        return UICopy.MENUBAR_OBSERVING_CONNECTED
+                    }
+                }()
+                Text(text)
                     .accessibilityValue(rowState.axToken)
                     .accessibilityIdentifier(AXID.Menubar.statusRowState)
             } else {

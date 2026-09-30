@@ -270,7 +270,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         ]
     }
 
-    public func accept(bytes: Data, direction: String) throws -> [String: Any] {
+    public func accept(bytes: Data, direction: String, admitNewBatches: Bool = true) throws -> [String: Any] {
         let decodeResult = BrowserPayloadDecoder.decode(bytes: bytes, direction: direction, projection: projection)
 
         switch decodeResult {
@@ -308,7 +308,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 defer { lock.unlock() }
                 let now = wallClock()
                 let nowMs = BrowserAgeStamp.wallMilliseconds(now)
-                return try processBatch(batch: batch, nowMs: nowMs, civilDate: now)
+                return try processBatch(batch: batch, nowMs: nowMs, civilDate: now, admitNewBatches: admitNewBatches)
             }
         }
     }
@@ -329,7 +329,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         )
     }
 
-    private func processBatch(batch: BrowserDecodedBatch, nowMs: UInt64, civilDate: Date) throws -> [String: Any] {
+    private func processBatch(batch: BrowserDecodedBatch, nowMs: UInt64, civilDate: Date, admitNewBatches: Bool = true) throws -> [String: Any] {
         // A receipt from damaged custody cannot promise that the bytes remain
         // kept. Closed admission alone still permits healthy duplicate answers.
         if store.storeIsFailed() {
@@ -347,6 +347,10 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 )
             }
             return try rejected(batch: batch, reason: stored.reason ?? "malformed", receiptClass: stored.receiptClass ?? "permanent")
+        }
+
+        if !admitNewBatches {
+            return try rejected(batch: batch, reason: "intake_off", receiptClass: "retryable")
         }
 
         guard let activeGen = store.getActiveGeneration(), BrowserOpaqueString.equals(activeGen, batch.destinationGeneration) else {

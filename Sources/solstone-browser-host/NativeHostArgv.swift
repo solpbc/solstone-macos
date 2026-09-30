@@ -141,4 +141,23 @@ public struct NativeHostRelayReducer: Sendable {
     }
 }
 
+public enum NativeHostPaths {
+    public static let socketName = "host.sock"
+    public static let fenceName = "host.fence"
+
+    public static func hostDirectory(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        homeDirectory
+            .appendingPathComponent("Library/Application Support/Solstone/browser-host", isDirectory: true)
+    }
+
+    public static func socketURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        hostDirectory(homeDirectory: homeDirectory).appendingPathComponent(socketName)
+    }
+
+    public static func fenceURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        hostDirectory(homeDirectory: homeDirectory).appendingPathComponent(fenceName)
+    }
+}
+
 #endif
+

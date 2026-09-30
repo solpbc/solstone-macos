@@ -24,25 +24,28 @@ struct BrowserHostEndpointIdentity: Sendable, Equatable {
     enum Kind: Sendable, Equatable { case socket, other }
     let kind: Kind
     let uid: uid_t
+    let mode: mode_t
     let device: UInt64
     let inode: UInt64
 
     init(_ value: stat) {
         kind = (value.st_mode & S_IFMT) == S_IFSOCK ? .socket : .other
         uid = value.st_uid
+        mode = value.st_mode & 0o777
         device = UInt64(value.st_dev)
         inode = UInt64(value.st_ino)
     }
 
-    init(kind: Kind, uid: uid_t, device: UInt64, inode: UInt64) {
+    init(kind: Kind, uid: uid_t, mode: mode_t = 0o600, device: UInt64, inode: UInt64) {
         self.kind = kind
         self.uid = uid
+        self.mode = mode
         self.device = device
         self.inode = inode
     }
 }
 
-enum BrowserHostEndpointDisposition: String, Sendable, Equatable {
+public enum BrowserHostEndpointDisposition: String, Sendable, Equatable {
     case absent
     case removed
     case live
@@ -59,7 +62,8 @@ enum BrowserHostEndpointRepairPolicy {
     ) -> Bool {
         rootVerified && first.kind == .socket && rechecked.kind == .socket &&
             first.uid == effectiveUID && rechecked.uid == effectiveUID &&
-            first.device == rechecked.device && first.inode == rechecked.inode
+            first.device == rechecked.device && first.inode == rechecked.inode &&
+            first.mode == 0o600 && rechecked.mode == 0o600
     }
 
     static func mayCleanup(
@@ -70,6 +74,149 @@ enum BrowserHostEndpointRepairPolicy {
     ) -> Bool {
         rootVerified && current.kind == .socket && current.uid == effectiveUID &&
             created.device == current.device && created.inode == current.inode
+    }
+}
+
+public protocol BrowserHostByteSink: Sendable {
+    func write(_ data: Data) async throws
+}
+
+final class FDByteSink: BrowserHostByteSink, @unchecked Sendable {
+    private let fd: Int32
+    private let limits: BrowserHostLimits
+
+    init(fd: Int32, limits: BrowserHostLimits) {
+        self.fd = fd
+        self.limits = limits
+    }
+
+    func write(_ data: Data) async throws {
+        try NativeHostFrameIO.writeFrame(
+            data,
+            to: fd,
+            direction: .hostToExtension,
+            limits: limits,
+            timeoutMs: limits.handshakeMs,
+            shouldCancel: { Task.isCancelled }
+        )
+    }
+}
+
+public actor BrowserHostOutbound {
+    private let sink: any BrowserHostByteSink
+    private var pendingState: Data?
+    private var pendingBoundary: Data?
+    private var pendingReplies: [(Data, @Sendable () -> Void)] = []
+    private var pendingBye: Data?
+    private var isWriting = false
+    private var isClosed = false
+
+    public init(sink: any BrowserHostByteSink) {
+        self.sink = sink
+    }
+
+    public func enqueueState(_ data: Data) {
+        guard !isClosed, pendingBye == nil else { return }
+        pendingState = data
+        drainIfNeeded()
+    }
+
+    public func enqueueBoundary(_ data: Data) {
+        guard !isClosed, pendingBye == nil else { return }
+        pendingBoundary = data
+        drainIfNeeded()
+    }
+
+    public func enqueueReply(_ data: Data, budgetRelease: @escaping @Sendable () -> Void) {
+        guard !isClosed, pendingBye == nil else {
+            budgetRelease()
+            return
+        }
+        pendingReplies.append((data, budgetRelease))
+        drainIfNeeded()
+    }
+
+    public func enqueueBye(_ data: Data) {
+        guard !isClosed else { return }
+        pendingBye = data
+        drainIfNeeded()
+    }
+
+    public func close() {
+        guard !isClosed else { return }
+        isClosed = true
+        for (_, release) in pendingReplies {
+            release()
+        }
+        pendingReplies.removeAll()
+        pendingState = nil
+        pendingBoundary = nil
+        pendingBye = nil
+    }
+
+    private func drainIfNeeded() {
+        guard !isWriting, !isClosed else { return }
+        isWriting = true
+        Task { [weak self] in
+            await self?.runDrainLoop()
+        }
+    }
+
+    private func runDrainLoop() async {
+        while !isClosed {
+            let nextAction: OutboundAction? = nextItem()
+            guard let nextAction else { break }
+            do {
+                switch nextAction {
+                case .state(let data):
+                    try await sink.write(data)
+                case .boundary(let data):
+                    try await sink.write(data)
+                case .reply(let data, let release):
+                    defer { release() }
+                    try await sink.write(data)
+                case .bye(let data):
+                    try await sink.write(data)
+                    close()
+                    break
+                }
+            } catch {
+                if let bye = pendingBye {
+                    pendingBye = nil
+                    _ = try? await sink.write(bye)
+                }
+                close()
+                break
+            }
+        }
+        isWriting = false
+    }
+
+    private enum OutboundAction {
+        case state(Data)
+        case boundary(Data)
+        case reply(Data, @Sendable () -> Void)
+        case bye(Data)
+    }
+
+    private func nextItem() -> OutboundAction? {
+        if let bye = pendingBye {
+            pendingBye = nil
+            return .bye(bye)
+        }
+        if let state = pendingState {
+            pendingState = nil
+            return .state(state)
+        }
+        if let boundary = pendingBoundary {
+            pendingBoundary = nil
+            return .boundary(boundary)
+        }
+        if !pendingReplies.isEmpty {
+            let (reply, release) = pendingReplies.removeFirst()
+            return .reply(reply, release)
+        }
+        return nil
     }
 }
 
@@ -88,22 +235,68 @@ final class BrowserHostEndpointFence: @unchecked Sendable {
 
     func repairStaleEndpoint() throws -> BrowserHostEndpointDisposition {
         try verifyOrCreateRoot()
-        guard try acquireFence() else {
-            release()
-            return .live
+        let acquired = try acquireFence(create: false)
+        if !acquired {
+            if fenceFD < 0 {
+                if (try? endpointInfo()) != nil {
+                    return .refused
+                } else {
+                    guard rootStillVerified() else { return .refused }
+                    return .absent
+                }
+            } else {
+                release()
+                return .live
+            }
         }
         defer { release() }
         guard let first = try endpointInfo() else {
-            guard rootStillVerified(), try endpointInfo() == nil else { return .refused }
+            guard rootStillVerified(), (try? endpointInfo()) == nil else { return .refused }
             return .absent
         }
+
+        let path = rootURL.appendingPathComponent("host.sock").path
+        let probe = socket(AF_UNIX, SOCK_STREAM, 0)
+        if probe >= 0 {
+            let flags = fcntl(probe, F_GETFL, 0)
+            if flags >= 0 { _ = fcntl(probe, F_SETFL, flags | O_NONBLOCK) }
+            var address = sockaddr_un()
+            address.sun_family = sa_family_t(AF_UNIX)
+            let pathBytes = Array(path.utf8)
+            let capacity = MemoryLayout.size(ofValue: address.sun_path)
+            withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: capacity) { chars in
+                    for (index, byte) in pathBytes.enumerated() { chars[index] = CChar(bitPattern: byte) }
+                    chars[pathBytes.count] = 0
+                }
+            }
+            let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count + 1)
+            let connectResult = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(probe, $0, addressLength) }
+            }
+            let connectErrno = errno
+            Darwin.close(probe)
+            if connectResult == 0 || connectErrno == EINPROGRESS || connectErrno == EWOULDBLOCK || connectErrno == EALREADY {
+                return .live
+            }
+        }
+
+        var fenceBuffer = [CChar](repeating: 0, count: 64)
+        let bytesRead = pread(fenceFD, &fenceBuffer, 63, 0)
+        guard bytesRead > 0 else { return .refused }
+        fenceBuffer[bytesRead] = 0
+        let fenceContent = String(cString: fenceBuffer).trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedRecord = "\(first.device):\(first.inode)"
+        guard fenceContent == expectedRecord else { return .refused }
+
         guard let second = try endpointInfo(),
               BrowserHostEndpointRepairPolicy.mayRemove(
                 first: BrowserHostEndpointIdentity(first),
                 rechecked: BrowserHostEndpointIdentity(second),
                 rootVerified: rootStillVerified(),
                 effectiveUID: euid
-              ) else { return .refused }
+              ),
+              second.inode == first.inode, second.device == first.device else { return .refused }
         guard unlinkat(rootFD, "host.sock", 0) == 0 else { return .refused }
         return .removed
     }
@@ -121,33 +314,20 @@ final class BrowserHostEndpointFence: @unchecked Sendable {
         if fstatat(root, "host.sock", &socketInfo, AT_SYMLINK_NOFOLLOW) != 0 {
             return errno == ENOENT ? .absent : .refused
         }
-        let fence = openat(root, "host.fence", O_RDWR | O_NOFOLLOW)
-        guard fence >= 0 else { return .refused }
-        defer { Darwin.close(fence) }
-        if flock(fence, LOCK_EX | LOCK_NB) != 0 { return .live }
-        defer { _ = flock(fence, LOCK_UN) }
-        var rootCheck = stat()
-        var again = stat()
-        guard fstat(root, &rootCheck) == 0, (rootCheck.st_mode & S_IFMT) == S_IFDIR,
-              (rootCheck.st_mode & 0o777) == 0o700, rootCheck.st_uid == euid,
-              fstatat(root, "host.sock", &again, AT_SYMLINK_NOFOLLOW) == 0 else { return .refused }
-        guard BrowserHostEndpointRepairPolicy.mayRemove(
-            first: BrowserHostEndpointIdentity(socketInfo),
-            rechecked: BrowserHostEndpointIdentity(again),
-            rootVerified: true,
-            effectiveUID: euid
-        ) else { return .refused }
-        return .stale
+        guard (socketInfo.st_mode & S_IFMT) == S_IFSOCK, socketInfo.st_uid == euid,
+              (socketInfo.st_mode & 0o777) == 0o600 else { return .refused }
+        return .live
     }
 
     func bindListener() throws -> Int32 {
         try verifyOrCreateRoot()
-        guard try acquireFence() else {
+        guard try acquireFence(create: true) else {
             release()
             throw BrowserHostListenerError.endpointCollision
         }
         guard rootStillVerified() else { throw BrowserHostListenerError.unsafeEndpoint }
         guard try endpointInfo() == nil else { throw BrowserHostListenerError.endpointCollision }
+
         let path = rootURL.appendingPathComponent("host.sock").path
         guard NativeHostSocketPath.fits(path) else {
             throw BrowserHostListenerError.socketPathTooLong
@@ -176,16 +356,29 @@ final class BrowserHostEndpointFence: @unchecked Sendable {
             if errno == EADDRINUSE { throw BrowserHostListenerError.endpointCollision }
             throw BrowserHostListenerError.socketFailure
         }
-        guard fchmodat(rootFD, "host.sock", 0o600, 0) == 0,
+        var descStat = stat()
+        guard fstat(descriptor, &descStat) == 0,
+              fchmodat(rootFD, "host.sock", 0o600, 0) == 0,
               listen(descriptor, 16) == 0,
               let info = try? endpointInfo(), info.kind == S_IFSOCK, info.uid == euid,
-              (info.mode & 0o777) == 0o600 else {
+              (info.mode & 0o777) == 0o600,
+              descStat.st_dev == info.st_dev, descStat.st_ino == info.st_ino else {
             Darwin.close(descriptor)
-            _ = unlinkat(rootFD, "host.sock", 0)
+            if let current = try? endpointInfo(),
+               current.kind == S_IFSOCK, current.uid == euid,
+               descStat.st_dev == current.st_dev, descStat.st_ino == current.st_ino {
+                _ = unlinkat(rootFD, "host.sock", 0)
+            }
             throw BrowserHostListenerError.unsafeEndpoint
         }
         listenerFD = descriptor
         createdSocket = BrowserHostSocketIdentity(device: info.device, inode: info.inode)
+        let payload = "\(info.device):\(info.inode)\n"
+        _ = ftruncate(fenceFD, 0)
+        payload.utf8CString.withUnsafeBufferPointer { buffer in
+            guard let base = buffer.baseAddress else { return }
+            _ = pwrite(fenceFD, base, buffer.count - 1, 0)
+        }
         return descriptor
     }
 
@@ -235,22 +428,26 @@ final class BrowserHostEndpointFence: @unchecked Sendable {
               (rootStat.st_mode & S_IFMT) == S_IFDIR, rootStat.st_uid == euid else {
             throw BrowserHostListenerError.unsafeEndpoint
         }
-        guard chmod(rootURL.path, 0o700) == 0,
-              lstat(rootURL.path, &rootStat) == 0,
-              (rootStat.st_mode & 0o777) == 0o700,
-              rootStat.st_uid == euid else { throw BrowserHostListenerError.unsafeEndpoint }
         if rootFD < 0 {
             rootFD = open(rootURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
             guard rootFD >= 0 else { throw BrowserHostListenerError.unsafeEndpoint }
         }
+        guard fchmod(rootFD, 0o700) == 0,
+              fstat(rootFD, &rootStat) == 0,
+              (rootStat.st_mode & 0o777) == 0o700,
+              rootStat.st_uid == euid else { throw BrowserHostListenerError.unsafeEndpoint }
     }
 
     private var rootStat = stat()
 
-    private func acquireFence() throws -> Bool {
+    private func acquireFence(create: Bool) throws -> Bool {
         guard fenceFD < 0 else { return true }
-        fenceFD = openat(rootFD, "host.fence", O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
-        guard fenceFD >= 0 else { throw BrowserHostListenerError.unsafeEndpoint }
+        let flags = create ? (O_CREAT | O_RDWR | O_NOFOLLOW) : (O_RDWR | O_NOFOLLOW)
+        fenceFD = openat(rootFD, "host.fence", flags, 0o600)
+        guard fenceFD >= 0 else {
+            if !create && errno == ENOENT { return false }
+            throw BrowserHostListenerError.unsafeEndpoint
+        }
         var info = stat()
         guard fstat(fenceFD, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_uid == euid else {
             throw BrowserHostListenerError.unsafeEndpoint
@@ -269,8 +466,14 @@ final class BrowserHostEndpointFence: @unchecked Sendable {
 
     private func rootStillVerified() -> Bool {
         var info = stat()
-        return fstat(rootFD, &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR &&
-            (info.st_mode & 0o777) == 0o700 && info.st_uid == euid
+        guard fstat(rootFD, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR,
+              (info.st_mode & 0o777) == 0o700, info.st_uid == euid else { return false }
+        let freshFD = open(rootURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard freshFD >= 0 else { return false }
+        defer { Darwin.close(freshFD) }
+        var freshInfo = stat()
+        guard fstat(freshFD, &freshInfo) == 0 else { return false }
+        return freshInfo.st_dev == info.st_dev && freshInfo.st_ino == info.st_ino
     }
 }
 
@@ -299,13 +502,15 @@ final class BrowserHostAdmissionGate: @unchecked Sendable {
     }
 
     func isOpen(generation expected: Int? = nil) -> Bool {
-        lock.withLock { accepting && (expected == nil || generation == expected) }
+        lock.withLock {
+            accepting && (expected == nil || generation == expected!)
+        }
     }
 
     @discardableResult
     func commitClose(reason: ExitReason, generation: Int) -> Bool {
         let fd = lock.withLock { () -> Int32? in
-            guard self.generation == generation, accepting else { return nil }
+            guard generation == self.generation &+ 1, accepting else { return nil }
             closeRequest = (reason, generation)
             accepting = false
             let descriptor = listenerFD
@@ -319,7 +524,7 @@ final class BrowserHostAdmissionGate: @unchecked Sendable {
 
     func committedClose(generation: Int) -> (ExitReason, Int)? {
         lock.withLock {
-            guard closeRequest?.1 == generation else { return nil }
+            guard let closeRequest, closeRequest.1 == generation else { return nil }
             return closeRequest
         }
     }
@@ -400,14 +605,19 @@ final class BrowserHostSessionBudget: @unchecked Sendable {
     }
 }
 
-private struct BrowserHostConnectionContext: Sendable {
-    let brandHint: NativeHostBrandHint
-    let mode: NativeHostMode
+public struct BrowserHostConnectionContext: Sendable {
+    public let brandHint: NativeHostBrandHint
+    public let mode: NativeHostMode
 
-    static func decode(_ data: Data) -> BrowserHostConnectionContext? {
+    public init(brandHint: NativeHostBrandHint, mode: NativeHostMode) {
+        self.brandHint = brandHint
+        self.mode = mode
+    }
+
+    public static func decode(_ data: Data) -> BrowserHostConnectionContext? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: String],
               object["type"] == "local_hello",
-              let brandRaw = object["brand"] , let brand = NativeHostBrandHint(rawValue: brandRaw),
+              let brandRaw = object["brand"], let brand = NativeHostBrandHint(rawValue: brandRaw),
               let modeRaw = object["mode"], let mode = NativeHostMode(rawValue: modeRaw) else { return nil }
         return BrowserHostConnectionContext(brandHint: brand, mode: mode)
     }
@@ -434,7 +644,7 @@ struct BrowserHostLifecycle: Equatable, Sendable {
 
     @discardableResult
     mutating func beginClose(reason: ExitReason, generation: Int) -> Bool {
-        guard self.generation == generation else { return false }
+        guard generation == self.generation &+ 1, listenerCount > 0 else { return false }
         if shutdown, closingReason == reason { return false }
         shutdown = true
         accepting = false
@@ -450,7 +660,7 @@ struct BrowserHostLifecycle: Equatable, Sendable {
 
     @discardableResult
     mutating func finishQuiescence(generation: Int) -> Bool {
-        guard self.generation == generation, shutdown else { return false }
+        guard generation == self.generation &+ 1, shutdown else { return false }
         quiescence = false
         timerCount = 0
         listenerCount = 0
@@ -469,19 +679,69 @@ struct BrowserHostLifecycle: Equatable, Sendable {
     }
 }
 
-struct BrowserHostProfileTable: Sendable {
-    private(set) var entries: [UUID: (BrowserBrand, BrowserHostProfile)] = [:]
+struct BrowserProfileKey: Hashable, Sendable {
+    let brand: BrowserBrand
+    let inst: String
+}
 
-    mutating func record(_ id: UUID, brand: BrowserBrand, profile: BrowserHostProfile) {
-        entries[id] = (brand, profile)
+struct BrowserHostProfileTable: Sendable {
+    private(set) var entries: [BrowserProfileKey: BrowserHostProfile] = [:]
+    private var sessionKeys: [UUID: BrowserProfileKey] = [:]
+    private var sessionEpochs: [UUID: String] = [:]
+
+    mutating func record(sessionID: UUID, brand: BrowserBrand, inst: String, epoch: String? = nil, profile: BrowserHostProfile) {
+        let key = BrowserProfileKey(brand: brand, inst: inst)
+        sessionKeys[sessionID] = key
+        if let epoch {
+            sessionEpochs[sessionID] = epoch
+        }
+        entries[key] = profile
     }
 
-    mutating func disconnect(_ id: UUID) {
-        entries.removeValue(forKey: id)
+    func epoch(for sessionID: UUID) -> String? {
+        sessionEpochs[sessionID]
+    }
+
+    mutating func refreshLease(sessionID: UUID, expiry: Date) {
+        guard let key = sessionKeys[sessionID], var profile = entries[key] else { return }
+        profile = BrowserHostProfile(
+            lastSeen: profile.lastSeen,
+            handshake: profile.handshake,
+            byeReason: profile.byeReason,
+            leaseExpiry: expiry
+        )
+        entries[key] = profile
+    }
+
+    mutating func dropCompatible(sessionID: UUID) {
+        guard let key = sessionKeys[sessionID], let profile = entries[key] else { return }
+        entries[key] = BrowserHostProfile(
+            lastSeen: profile.lastSeen,
+            handshake: .unsupportedExtension,
+            byeReason: profile.byeReason,
+            leaseExpiry: profile.leaseExpiry
+        )
+    }
+
+    mutating func disconnect(sessionID: UUID) {
+        sessionEpochs.removeValue(forKey: sessionID)
+        if let key = sessionKeys.removeValue(forKey: sessionID) {
+            if !sessionKeys.values.contains(key) {
+                entries.removeValue(forKey: key)
+            }
+        }
+    }
+
+    func sessionID(for inst: String) -> UUID? {
+        sessionKeys.first(where: { $0.value.inst == inst })?.key
+    }
+
+    func sessionKey(for sessionID: UUID) -> BrowserProfileKey? {
+        sessionKeys[sessionID]
     }
 
     func count(_ brand: BrowserBrand) -> Int {
-        entries.values.filter { $0.0 == brand }.count
+        entries.keys.filter { $0.brand == brand }.count
     }
 }
 
@@ -500,12 +760,14 @@ public actor BrowserHostListener {
     private var rootURL: URL?
     private var listeningFD: Int32 = -1
     private var lifecycle = BrowserHostLifecycle()
-    private var acceptingMode: NativeHostMode = .production
+    private var acceptingModes: Set<NativeHostMode> = [.production]
     private var registration: [BrowserBrand: BrowserHostRegistrationSummary] = [:]
     private var profiles = BrowserHostProfileTable()
-    private var sessions: [UUID: Int32] = [:]
+    private var sessions: [UUID: (Int32, BrowserHostOutbound)] = [:]
     private var quiescenceTask: Task<Void, Never>?
     private var currentSnapshot = BrowserHostSnapshotValue()
+    private var lastEmittedPeriodID: String?
+    private var lastEmittedDestinationGeneration: String?
 
     public init(
         limits: BrowserHostLimits,
@@ -528,11 +790,29 @@ public actor BrowserHostListener {
         generation: Int,
         mode: NativeHostMode = .production
     ) async {
+        await start(
+            rootURL: rootURL,
+            owner: owner,
+            projection: projection,
+            registration: registration,
+            generation: generation,
+            modes: [mode]
+        )
+    }
+
+    public func start(
+        rootURL: URL,
+        owner: BrowserIntakeOwner,
+        projection: BrowserContractProjection,
+        registration: BrowserHostRegistrationReport,
+        generation: Int,
+        modes: Set<NativeHostMode>
+    ) async {
         guard listeningFD < 0 else { return }
         self.rootURL = rootURL
         self.owner = owner
         self.projection = projection
-        self.acceptingMode = mode
+        self.acceptingModes = modes
         if !registration.outcomes.isEmpty || self.registration.isEmpty {
             self.registration = Dictionary(uniqueKeysWithValues: registration.outcomes.map { key, value in
                 (key, BrowserHostRegistrationSummary(state: value.state, reasonCode: value.reasonCode))
@@ -626,8 +906,8 @@ public actor BrowserHostListener {
         case .updaterInstall: byeReason = "update"
         }
         let bye = Data("{\"type\":\"bye\",\"reason\":\"\(byeReason)\"}".utf8)
-        for descriptor in sessions.values {
-            try? NativeHostFrameIO.writeFrame(bye, to: descriptor, direction: .hostToExtension, limits: limits)
+        for (descriptor, outbound) in sessions.values {
+            await outbound.enqueueBye(bye)
             _ = Darwin.shutdown(descriptor, SHUT_RDWR)
         }
         if lifecycle.quiescence {
@@ -650,7 +930,7 @@ public actor BrowserHostListener {
         quiescenceTask = nil
         let previousGeneration = lifecycle.generation
         admissionGate.close()
-        cleanup(generation: previousGeneration)
+        cleanup(generation: previousGeneration &+ 1)
         lifecycle.prepareRecovery(generation: generation)
         guard let rootURL, let owner, let projection else { return }
         guard listeningFD < 0 else { return }
@@ -660,20 +940,61 @@ public actor BrowserHostListener {
             projection: projection,
             registration: BrowserHostRegistrationReport(outcomes: [:], changedAny: false),
             generation: generation,
-            mode: acceptingMode
+            modes: acceptingModes
         )
     }
 
     private func cleanup(generation: Int) {
-        guard lifecycle.generation == generation else { return }
+        guard generation == lifecycle.generation &+ 1 else { return }
         if listeningFD >= 0 {
             _ = Darwin.shutdown(listeningFD, SHUT_RDWR)
-            Darwin.close(listeningFD)
+            if fence == nil {
+                Darwin.close(listeningFD)
+            }
             listeningFD = -1
         }
         fence?.release()
         fence = nil
         admissionGate.close()
+    }
+
+    public func startIfNeeded(rootURL: URL) async {
+        guard listeningFD < 0, let owner, let projection else { return }
+        await start(
+            rootURL: rootURL,
+            owner: owner,
+            projection: projection,
+            registration: BrowserHostRegistrationReport(outcomes: [:], changedAny: false),
+            generation: lifecycle.generation,
+            modes: acceptingModes
+        )
+    }
+
+    func isCompatibleSession(sessionID: UUID, inst: String) async -> Bool {
+        guard admissionGate.isOpen() else { return false }
+        guard let key = profiles.sessionKey(for: sessionID), key.inst == inst else { return false }
+        guard let profile = profiles.entries[key] else { return false }
+        guard profile.handshake == .compatible, profile.byeReason == nil else { return false }
+        guard let leaseExpiry = profile.leaseExpiry, leaseExpiry > Date() else { return false }
+        guard let storedEpoch = profiles.epoch(for: sessionID) else { return false }
+        let currentDestGen = await owner?.currentFacts().destinationGeneration
+        guard let currentDestGen, storedEpoch == currentDestGen else { return false }
+        return true
+    }
+
+    func refreshLease(sessionID: UUID) {
+        let now = Date()
+        let expiry = now.addingTimeInterval(Double(projection?.policy.stateRenewalMs ?? 5_000) / 1000)
+        profiles.refreshLease(sessionID: sessionID, expiry: expiry)
+    }
+
+    public static func emitRenewalState(
+        isCompatible: Bool,
+        outbound: BrowserHostOutbound,
+        state: Data?
+    ) async {
+        guard isCompatible, let state else { return }
+        await outbound.enqueueState(state)
     }
 
     private func publishStatus(_ listenerState: BrowserHostListenerState) {
@@ -713,14 +1034,74 @@ public actor BrowserHostListener {
         )
         let value = currentSnapshot
         await MainActor.run { snapshot.publish(value) }
+
+        let currentPeriodID = facts.periodId
+        let currentDestGen = facts.destinationGeneration
+
+        guard let stateData = await formatState() else {
+            for (sessionID, _) in sessions {
+                profiles.dropCompatible(sessionID: sessionID)
+            }
+            return
+        }
+
+        for (sessionID, _) in sessions {
+            if let storedEpoch = profiles.epoch(for: sessionID) {
+                if currentDestGen == nil || storedEpoch != currentDestGen {
+                    profiles.dropCompatible(sessionID: sessionID)
+                }
+            } else {
+                profiles.dropCompatible(sessionID: sessionID)
+            }
+        }
+
+        let periodChanged = (lastEmittedPeriodID != nil && currentPeriodID != nil && currentPeriodID != lastEmittedPeriodID)
+        let sameEpoch = (lastEmittedDestinationGeneration != nil && currentDestGen != nil && currentDestGen == lastEmittedDestinationGeneration)
+
+        var boundaryData: Data?
+        var boundaryValidationFailed = false
+        if periodChanged && sameEpoch, let currentPeriodID, let currentDestGen, let projection {
+            let boundaryDict: [String: Any] = [
+                "type": "boundary",
+                "destination_generation": currentDestGen,
+                "period_id": currentPeriodID
+            ]
+            do {
+                let msg = try BrowserPayloadDecoder.validatedHostMessage(boundaryDict, projection: projection)
+                boundaryData = BrowserPayloadDecoder.encodeHostToExtension(msg)
+            } catch {
+                boundaryValidationFailed = true
+            }
+        }
+
+        for (sessionID, (_, outbound)) in sessions {
+            guard let key = profiles.sessionKey(for: sessionID) else { continue }
+            if boundaryValidationFailed {
+                profiles.dropCompatible(sessionID: sessionID)
+                continue
+            }
+            guard await isCompatibleSession(sessionID: sessionID, inst: key.inst) else { continue }
+            if let boundaryData {
+                await outbound.enqueueBoundary(boundaryData)
+            }
+            await outbound.enqueueState(stateData)
+        }
+
+        if let currentPeriodID { lastEmittedPeriodID = currentPeriodID }
+        if let currentDestGen { lastEmittedDestinationGeneration = currentDestGen }
+    }
+
+    public func formatState() async -> Data? {
+        guard let owner else { return nil }
+        return await owner.projectedStateData()
     }
 
     private func profileGroups() -> BrowserHostProfileGroup {
         var chrome: [BrowserHostProfile] = []
         var edge: [BrowserHostProfile] = []
         var firefox: [BrowserHostProfile] = []
-        for (brand, profile) in profiles.entries.values {
-            switch brand {
+        for (key, profile) in profiles.entries {
+            switch key.brand {
             case .chrome: chrome.append(profile)
             case .edge: edge.append(profile)
             case .firefox: firefox.append(profile)
@@ -729,9 +1110,9 @@ public actor BrowserHostListener {
         return BrowserHostProfileGroup(chrome: chrome, edge: edge, firefox: firefox)
     }
 
-    private func recordProfile(_ id: UUID, brand: BrowserBrand, handshake: BrowserHostHandshake, bye: String? = nil) {
+    func recordProfile(_ id: UUID, brand: BrowserBrand, inst: String, epoch: String? = nil, handshake: BrowserHostHandshake, bye: String? = nil) {
         let now = Date()
-        profiles.record(id, brand: brand, profile: BrowserHostProfile(
+        profiles.record(sessionID: id, brand: brand, inst: inst, epoch: epoch, profile: BrowserHostProfile(
             lastSeen: now,
             handshake: handshake,
             byeReason: bye,
@@ -739,19 +1120,87 @@ public actor BrowserHostListener {
         ))
     }
 
-    private func admit(_ descriptor: Int32, generation: Int) -> UUID? {
+    private func admit(_ descriptor: Int32, outbound: BrowserHostOutbound, generation: Int) -> UUID? {
         guard admissionGate.isOpen(generation: generation) else { return nil }
         let id = UUID()
         guard budget.open(id) else { return nil }
-        sessions[id] = descriptor
+        sessions[id] = (descriptor, outbound)
         return id
     }
 
     private func finishSession(_ id: UUID) async {
-        sessions.removeValue(forKey: id)
-        profiles.disconnect(id)
+        if let (_, outbound) = sessions.removeValue(forKey: id) {
+            await outbound.close()
+        }
+        profiles.disconnect(sessionID: id)
         budget.close(id)
         await publishCurrentStatus()
+    }
+
+    public enum BrowserHostFirstMessageDecision: Equatable, Sendable {
+        case compatible(brand: BrowserBrand, inst: String, hello: BrowserDecodedHello)
+        case unsupportedApp(brand: BrowserBrand, inst: String)
+        case unsupportedExtension(brand: BrowserBrand, inst: String)
+        case close
+    }
+
+    public static func decideFirstMessage(
+        body: Data,
+        context: BrowserHostConnectionContext,
+        acceptingModes: Set<NativeHostMode>,
+        isFresh: Bool,
+        projection: BrowserContractProjection,
+        updateGate: BrowserHostUpdateGate
+    ) async -> BrowserHostFirstMessageDecision {
+        guard isFresh else { return .close }
+        guard acceptingModes.contains(context.mode) else { return .close }
+        let decoded = BrowserPayloadDecoder.decode(bytes: body, direction: "extension_to_host", projection: projection)
+        switch decoded {
+        case .accept(.hello(let hello)):
+            guard let brand = BrowserBrand(rawValue: hello.brand),
+                  (context.brandHint == .firefox) == (brand == .firefox) else { return .close }
+            guard isAllowlisted(mode: context.mode, brand: brand, projection: projection) else { return .close }
+            return .compatible(brand: brand, inst: hello.inst, hello: hello)
+        case .unsupported(let proto, let behind):
+            guard let brand = brand(in: body),
+                  (context.brandHint == .firefox) == (brand == .firefox) else { return .close }
+            let allowlisted = isAllowlisted(mode: context.mode, brand: brand, projection: projection)
+            let inst = inst(in: body) ?? UUID().uuidString
+            let isAppBehind = behind == "app"
+            let obsolete = !isAppBehind
+            if BrowserHostUpdateEligibility.shouldRequest(
+                decoded: decoded,
+                firstMessage: true,
+                fresh: isFresh,
+                allowlisted: allowlisted,
+                modeMatches: acceptingModes.contains(context.mode),
+                obsolete: obsolete
+            ) {
+                _ = await updateGate.requestForAppBehindHello()
+                return .unsupportedApp(brand: brand, inst: inst)
+            } else {
+                return .unsupportedExtension(brand: brand, inst: inst)
+            }
+        case .accept, .refuse:
+            return .close
+        }
+    }
+
+    private static func isAllowlisted(mode: NativeHostMode, brand: BrowserBrand, projection: BrowserContractProjection) -> Bool {
+        switch mode {
+        case .production:
+            switch brand {
+            case .chrome: return !projection.prodHosts.chromeId.isEmpty
+            case .edge: return !projection.prodHosts.edgeId.isEmpty
+            case .firefox: return !projection.prodHosts.firefoxId.isEmpty
+            }
+        case .development:
+            switch brand {
+            case .chrome: return !projection.devHosts.chromeId.isEmpty
+            case .edge: return !projection.devHosts.edgeId.isEmpty
+            case .firefox: return !projection.devHosts.firefoxId.isEmpty
+            }
+        }
     }
 
     private static func acceptLoop(
@@ -778,8 +1227,12 @@ public actor BrowserHostListener {
             var peerUID: uid_t = 0
             var peerGID: gid_t = 0
             guard getpeereid(client, &peerUID, &peerGID) == 0, peerUID == geteuid(),
-                  gate.isOpen(generation: generation), let listener,
-                  let sessionID = await listener.admit(client, generation: generation) else {
+                  gate.isOpen(generation: generation), let listener else {
+                Darwin.close(client)
+                continue
+            }
+            let outbound = BrowserHostOutbound(sink: FDByteSink(fd: client, limits: limits))
+            guard let sessionID = await listener.admit(client, outbound: outbound, generation: generation) else {
                 Darwin.close(client)
                 continue
             }
@@ -788,7 +1241,7 @@ public actor BrowserHostListener {
                 await listener.finishSession(sessionID)
                 continue
             }
-            let mode = await listener.acceptingMode
+            let acceptingModes = await listener.acceptingModes
             Task.detached(priority: .userInitiated) {
                 defer {
                     Darwin.close(client)
@@ -797,7 +1250,8 @@ public actor BrowserHostListener {
                 await Self.serve(
                     descriptor: client,
                     sessionID: sessionID,
-                    mode: mode,
+                    outbound: outbound,
+                    acceptingModes: acceptingModes,
                     owner: owner,
                     projection: projection,
                     limits: limits,
@@ -815,7 +1269,8 @@ public actor BrowserHostListener {
     private static func serve(
         descriptor: Int32,
         sessionID: UUID,
-        mode: NativeHostMode,
+        outbound: BrowserHostOutbound,
+        acceptingModes: Set<NativeHostMode>,
         owner: BrowserIntakeOwner,
         projection: BrowserContractProjection,
         limits: BrowserHostLimits,
@@ -839,16 +1294,20 @@ public actor BrowserHostListener {
         guard let contextFrame else { return }
         let decodedContext = BrowserHostConnectionContext.decode(contextFrame.body)
         budget.releaseInput(contextFrame.reservedByteCount, large: contextFrame.isLargeAssembly)
-        guard let context = decodedContext, context.mode == mode,
+        guard let context = decodedContext, acceptingModes.contains(context.mode),
               gate.isOpen(generation: generation) else { return }
 
         var didHandleFirstMessage = false
+        var sessionInst: String?
+        var renewalTask: Task<Void, Never>?
+        defer { renewalTask?.cancel() }
+
         while gate.isOpen(generation: generation) {
             let frame: NativeHostFrame
             do {
                 guard let read = try NativeHostFrameIO.readFrame(
                     from: descriptor,
-                    direction: .extensionToHost,
+                    direction: didHandleFirstMessage ? .extensionToHost : .control,
                     limits: didHandleFirstMessage ? limits : Self.limits(
                         limits,
                         partialFrameMs: min(limits.partialFrameMs, remainingHandshakeMs(connectedAt: connectedAt, handshakeMs: limits.handshakeMs))
@@ -867,59 +1326,92 @@ public actor BrowserHostListener {
             let decoded = BrowserPayloadDecoder.decode(bytes: body, direction: "extension_to_host", projection: projection)
             if !didHandleFirstMessage {
                 let isFresh = remainingHandshakeMs(connectedAt: connectedAt, handshakeMs: projection.policy.handshakeMs) > 0
-                guard isFresh else { return }
-                switch decoded {
-                case .accept(.hello(let hello)):
-                    guard let brand = BrowserBrand(rawValue: hello.brand),
-                          (context.brandHint == .firefox) == (brand == .firefox) else { return }
-                    await listener.recordProfile(sessionID, brand: brand, handshake: .compatible)
-                case .unsupported:
-                    let brand = Self.brand(in: body, fallback: context.brandHint == .firefox ? .firefox : .chrome)
-                    if BrowserHostUpdateEligibility.shouldRequest(
-                        decoded: decoded,
-                        firstMessage: true,
-                        fresh: isFresh,
-                        allowlisted: true,
-                        modeMatches: context.mode == mode,
-                        obsolete: false
-                    ) {
-                        guard gate.isOpen(generation: generation) else { return }
-                        await updateGate.requestForAppBehindHello()
-                        await listener.recordProfile(sessionID, brand: brand, handshake: .unsupportedApp)
-                    } else {
-                        await listener.recordProfile(sessionID, brand: brand, handshake: .unsupportedExtension)
+                let decision = await Self.decideFirstMessage(
+                    body: body,
+                    context: context,
+                    acceptingModes: acceptingModes,
+                    isFresh: isFresh,
+                    projection: projection,
+                    updateGate: updateGate
+                )
+                switch decision {
+                case .compatible(let brand, let inst, _):
+                    sessionInst = inst
+                    let facts = await owner.currentFacts()
+                    let epoch = facts.destinationGeneration
+                    await listener.recordProfile(sessionID, brand: brand, inst: inst, epoch: epoch, handshake: .compatible)
+                    if let stateData = await listener.formatState() {
+                        await outbound.enqueueState(stateData)
                     }
-                case .accept, .refuse:
+                    let stateRenewalMs = UInt64(projection.policy.stateRenewalMs)
+                    let sleeper = await listener.sleeper
+                    renewalTask = Task { [weak listener, weak outbound] in
+                        while !Task.isCancelled {
+                            await sleeper(.milliseconds(Int64(stateRenewalMs)))
+                            guard !Task.isCancelled, let listener, let outbound else { break }
+                            let compatible = await listener.isCompatibleSession(sessionID: sessionID, inst: inst)
+                            guard compatible else { break }
+                            await listener.refreshLease(sessionID: sessionID)
+                            let renewedState = await listener.formatState()
+                            await Self.emitRenewalState(
+                                isCompatible: compatible,
+                                outbound: outbound,
+                                state: renewedState
+                            )
+                        }
+                    }
+                case .unsupportedApp(let brand, let inst):
+                    guard gate.isOpen(generation: generation) else { return }
+                    await listener.recordProfile(sessionID, brand: brand, inst: inst, handshake: .unsupportedApp)
+                case .unsupportedExtension(let brand, let inst):
+                    await listener.recordProfile(sessionID, brand: brand, inst: inst, handshake: .unsupportedExtension)
+                case .close:
                     return
                 }
                 didHandleFirstMessage = true
+            } else {
+                if case .accept(.batch(let batch)) = decoded {
+                    if let sessionInst, batch.inst != sessionInst {
+                        return
+                    }
+                }
             }
 
             guard budget.reserveReply(limits.hostToExtension, for: sessionID) else { return }
-            defer { budget.releaseReply(limits.hostToExtension, for: sessionID) }
-            guard gate.isOpen(generation: generation) else { return }
+            guard gate.isOpen(generation: generation) else {
+                budget.releaseReply(limits.hostToExtension, for: sessionID)
+                return
+            }
             let result = await owner.accept(bytes: body, direction: "extension_to_host")
-            guard gate.isOpen(generation: generation) else { return }
+            guard gate.isOpen(generation: generation) else {
+                budget.releaseReply(limits.hostToExtension, for: sessionID)
+                return
+            }
             switch result {
             case .message(let reply):
-                do {
-                    try NativeHostFrameIO.writeFrame(reply, to: descriptor, direction: .hostToExtension, limits: limits)
-                } catch {
-                    return
+                await outbound.enqueueReply(reply) { [budget] in
+                    budget.releaseReply(limits.hostToExtension, for: sessionID)
                 }
                 await listener.publishCurrentStatus()
                 if case .unsupported = decoded { return }
             case .refusal:
+                budget.releaseReply(limits.hostToExtension, for: sessionID)
                 return
             }
         }
     }
 
-    private static func brand(in body: Data, fallback: BrowserBrand) -> BrowserBrand {
+    private static func brand(in body: Data, fallback: BrowserBrand = .chrome) -> BrowserBrand? {
         guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
               let raw = object["brand"] as? String,
               let brand = BrowserBrand(rawValue: raw) else { return fallback }
         return brand
+    }
+
+    private static func inst(in body: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let inst = object["inst"] as? String else { return nil }
+        return inst
     }
 
     private static func remainingHandshakeMs(connectedAt: UInt64, handshakeMs: UInt64) -> UInt64 {

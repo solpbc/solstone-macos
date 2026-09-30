@@ -18,15 +18,18 @@ internal func classifyObservationRowState(
     journalConnectionAXToken: String? = nil,
     journalFailureCause: JournalConnectionFailureCause? = nil,
     browserIntakePermitted: Bool = false,
-    browserIntakePaused: Bool = false
+    browserIntakePaused: Bool = false,
+    browserOnlyIntake: Bool = false
 ) -> MenubarStatusRowState {
-    if permissionsNeedAttention {
+    let mediaActive = isRecording || isPaused
+    let suppressPermissionGate = browserOnlyIntake && browserIntakePermitted && !mediaActive
+    if permissionsNeedAttention && !suppressPermissionGate {
         return .permissions
     }
     if errorMessage != nil {
         return .error
     }
-    if !initialPermissionCheckComplete {
+    if !initialPermissionCheckComplete && !suppressPermissionGate {
         return .starting
     }
     if serviceMode == .bundled {
@@ -233,6 +236,11 @@ internal func observationRecoveryPresentation(
 extension AppState {
     internal var observationRowState: MenubarStatusRowState {
         let verdict = tunnelLifecycleOwner.connectionVerdict
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let browserOnly = config.selectedSources.isEmpty && config.isBrowserIntakeEnabled
+#else
+        let browserOnly = false
+#endif
         return classifyObservationRowState(
             permissionsNeedAttention: permissionsNeedAttention,
             errorMessage: errorMessage,
@@ -248,7 +256,8 @@ extension AppState {
             journalConnectionAXToken: verdict.axToken,
             journalFailureCause: verdict.failureCause,
             browserIntakePermitted: browserRowPermitted,
-            browserIntakePaused: browserRowPaused
+            browserIntakePaused: browserRowPaused,
+            browserOnlyIntake: browserOnly
         )
     }
 

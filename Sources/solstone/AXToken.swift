@@ -791,3 +791,53 @@ extension SettingsView.SidebarBadgeState {
 func axIntegerString(_ value: Int) -> String {
     String(value)
 }
+
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+extension BrowserHostRegistrationState {
+    public static let axTokens = [
+        "ready",
+        "changed",
+        "refused",
+        "unknown"
+    ]
+
+    public var axToken: String {
+        switch self {
+        case .ready: return "ready"
+        case .changed: return "changed"
+        case .refused: return "refused"
+        case .unknown: return "unknown"
+        }
+    }
+}
+
+public enum BrowserRepairAXState: String, CaseIterable, Sendable {
+    case idle
+    case inFlight = "in_flight"
+    case repaired
+    case failed
+
+    public static let axTokens = [
+        "idle",
+        "in_flight",
+        "repaired",
+        "failed"
+    ]
+
+    public var axToken: String { rawValue }
+}
+
+public enum BrowserStoreLaunchAXState: String, CaseIterable, Sendable {
+    case disabled
+    case opened
+    case failed
+
+    public static let axTokens = [
+        "disabled",
+        "opened",
+        "failed"
+    ]
+
+    public var axToken: String { rawValue }
+}
+#endif

@@ -185,6 +185,7 @@ public enum NativeHostFrameIO {
         direction: NativeHostFrameDirection,
         limits: BrowserHostLimits = .helperFallback,
         firstByteTimeoutMs: UInt64? = nil,
+        shouldCancel: @Sendable () -> Bool = { false },
         reserve: (_ byteCount: Int, _ large: Bool) -> Bool = { _, _ in true },
         release: (_ byteCount: Int, _ large: Bool) -> Void = { _, _ in }
     ) throws -> NativeHostFrame? {
@@ -193,22 +194,31 @@ public enum NativeHostFrameIO {
         var startedAt: UInt64?
         let firstByteWaitStartedAt = DispatchTime.now().uptimeNanoseconds
         while prefixCount < 4 {
+            if shouldCancel() { throw NativeHostFrameError.timedOut }
             var pollDescriptor = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
-            let timeout: Int32
+            let totalTimeout: Int32
             if let startedAt {
-                timeout = remainingMilliseconds(startedAt: startedAt, timeoutMs: limits.partialFrameMs)
-                if timeout == 0 { throw NativeHostFrameError.timedOut }
+                totalTimeout = remainingMilliseconds(startedAt: startedAt, timeoutMs: limits.partialFrameMs)
+                if totalTimeout == 0 { throw NativeHostFrameError.timedOut }
             } else if prefixCount == 0, let firstByteTimeoutMs {
-                timeout = remainingMilliseconds(startedAt: firstByteWaitStartedAt, timeoutMs: firstByteTimeoutMs)
-                if timeout == 0 { throw NativeHostFrameError.timedOut }
+                totalTimeout = remainingMilliseconds(startedAt: firstByteWaitStartedAt, timeoutMs: firstByteTimeoutMs)
+                if totalTimeout == 0 { throw NativeHostFrameError.timedOut }
             } else {
-                timeout = -1
+                totalTimeout = -1
             }
-            let pollResult = poll(&pollDescriptor, 1, timeout)
-            if pollResult == 0 { throw NativeHostFrameError.timedOut }
+            let sliceTimeout = totalTimeout >= 0 ? min(totalTimeout, 250) : 250
+            let pollResult = poll(&pollDescriptor, 1, sliceTimeout)
+            if shouldCancel() { throw NativeHostFrameError.timedOut }
             if pollResult < 0 {
                 if errno == EINTR { continue }
                 throw POSIXError(.init(rawValue: errno) ?? .EIO)
+            }
+            if pollResult == 0 {
+                if totalTimeout >= 0 {
+                    let recheck = letRefStarted(startedAt, firstByteWaitStartedAt, prefixCount, firstByteTimeoutMs, limits.partialFrameMs)
+                    if recheck == 0 { throw NativeHostFrameError.timedOut }
+                }
+                continue
             }
             let amount = prefix.withUnsafeMutableBytes { raw in
                 Darwin.read(descriptor, raw.baseAddress!.advanced(by: prefixCount), 4 - prefixCount)
@@ -233,15 +243,23 @@ public enum NativeHostFrameIO {
             var body = Data(count: length)
             var bodyCount = 0
             while bodyCount < length {
+                if shouldCancel() { throw NativeHostFrameError.timedOut }
                 guard let startedAt else { throw NativeHostFrameError.truncatedBody }
                 var pollDescriptor = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
                 let timeout = remainingMilliseconds(startedAt: startedAt, timeoutMs: limits.partialFrameMs)
                 if timeout == 0 { throw NativeHostFrameError.timedOut }
-                let pollResult = poll(&pollDescriptor, 1, timeout)
-                if pollResult == 0 { throw NativeHostFrameError.timedOut }
+                let sliceTimeout = min(timeout, 250)
+                let pollResult = poll(&pollDescriptor, 1, sliceTimeout)
+                if shouldCancel() { throw NativeHostFrameError.timedOut }
                 if pollResult < 0 {
                     if errno == EINTR { continue }
                     throw POSIXError(.init(rawValue: errno) ?? .EIO)
+                }
+                if pollResult == 0 {
+                    if remainingMilliseconds(startedAt: startedAt, timeoutMs: limits.partialFrameMs) == 0 {
+                        throw NativeHostFrameError.timedOut
+                    }
+                    continue
                 }
                 let amount = body.withUnsafeMutableBytes { raw in
                     Darwin.read(descriptor, raw.baseAddress!.advanced(by: bodyCount), length - bodyCount)
@@ -261,19 +279,54 @@ public enum NativeHostFrameIO {
         }
     }
 
+    private static func letRefStarted(
+        _ startedAt: UInt64?,
+        _ firstByteWaitStartedAt: UInt64,
+        _ prefixCount: Int,
+        _ firstByteTimeoutMs: UInt64?,
+        _ partialFrameMs: UInt64
+    ) -> Int32 {
+        if let startedAt {
+            return remainingMilliseconds(startedAt: startedAt, timeoutMs: partialFrameMs)
+        } else if prefixCount == 0, let firstByteTimeoutMs {
+            return remainingMilliseconds(startedAt: firstByteWaitStartedAt, timeoutMs: firstByteTimeoutMs)
+        }
+        return -1
+    }
+
     public static func writeFrame(
         _ body: Data,
         to descriptor: Int32,
         direction: NativeHostFrameDirection,
-        limits: BrowserHostLimits = .helperFallback
+        limits: BrowserHostLimits = .helperFallback,
+        timeoutMs: UInt64 = 30_000,
+        shouldCancel: @Sendable () -> Bool = { false }
     ) throws {
         let framed = try NativeHostFrameCodec.encode(body, direction: direction, limits: limits)
+        let startedAt = DispatchTime.now().uptimeNanoseconds
         try framed.withUnsafeBytes { raw in
             var written = 0
             while written < raw.count {
+                if shouldCancel() { throw NativeHostFrameError.timedOut }
+                let remaining = remainingMilliseconds(startedAt: startedAt, timeoutMs: timeoutMs)
+                if remaining == 0 { throw NativeHostFrameError.timedOut }
+                let sliceTimeout = min(remaining, 250)
+                var pollDescriptor = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+                let pollResult = poll(&pollDescriptor, 1, sliceTimeout)
+                if shouldCancel() { throw NativeHostFrameError.timedOut }
+                if pollResult < 0 {
+                    if errno == EINTR { continue }
+                    throw POSIXError(.init(rawValue: errno) ?? .EIO)
+                }
+                if pollResult == 0 {
+                    if remainingMilliseconds(startedAt: startedAt, timeoutMs: timeoutMs) == 0 {
+                        throw NativeHostFrameError.timedOut
+                    }
+                    continue
+                }
                 let amount = Darwin.write(descriptor, raw.baseAddress!.advanced(by: written), raw.count - written)
                 if amount < 0 {
-                    if errno == EINTR { continue }
+                    if errno == EINTR || errno == EAGAIN { continue }
                     throw POSIXError(.init(rawValue: errno) ?? .EIO)
                 }
                 guard amount > 0 else { throw POSIXError(.EIO) }
@@ -281,6 +334,7 @@ public enum NativeHostFrameIO {
             }
         }
     }
+
 
     private static func remainingMilliseconds(startedAt: UInt64, timeoutMs: UInt64) -> Int32 {
         let elapsed = DispatchTime.now().uptimeNanoseconds &- startedAt

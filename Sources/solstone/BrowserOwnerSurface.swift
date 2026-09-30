@@ -6,18 +6,21 @@
 import Foundation
 import SolstoneCore
 
-/// Section 5 owner sentences were not in this repo. Nil hides the line instead of inventing one.
-enum BrowserOwnerCopy {
-    static let intakeToggleLabel: String? = nil
-    static let helpLegendFootnote: String? = nil
-    static let drainingReason: String? = nil
-    static let storeActionLabel: String? = nil
+extension BrowserBrand {
+    public var displayName: String {
+        switch self {
+        case .chrome: return "Chrome"
+        case .edge: return "Edge"
+        case .firefox: return "Firefox"
+        }
+    }
 }
 
-enum BrowserOwnerStatusLead: Equatable {
+public enum BrowserOwnerStatusLead: Equatable, Sendable {
     case mediaUnchanged
     case draining
     case ready
+    case waiting
     case paused
     case intakeOff
     case notPaired
@@ -28,14 +31,21 @@ enum BrowserOwnerStatusLead: Equatable {
     case sessionClosed
 }
 
-struct BrowserOwnerVerdict: Equatable {
-    var lead: BrowserOwnerStatusLead
-    var fullSecondary: Bool
-    var stale: Bool
-    var showsDeliveryLine: Bool
+public struct BrowserOwnerVerdict: Equatable, Sendable {
+    public var lead: BrowserOwnerStatusLead
+    public var fullSecondary: Bool
+    public var stale: Bool
+    public var showsDeliveryLine: Bool
+
+    public init(lead: BrowserOwnerStatusLead, fullSecondary: Bool, stale: Bool, showsDeliveryLine: Bool) {
+        self.lead = lead
+        self.fullSecondary = fullSecondary
+        self.stale = stale
+        self.showsDeliveryLine = showsDeliveryLine
+    }
 }
 
-enum BrowserRelativeTimeBucket: Equatable {
+public enum BrowserRelativeTimeBucket: Equatable, Sendable {
     case justNow
     case minutes(Int)
     case hours(Int)
@@ -43,46 +53,61 @@ enum BrowserRelativeTimeBucket: Equatable {
     case date(Date)
 }
 
-enum SourcesToggle: Equatable {
+public enum SourcesToggle: Equatable, Sendable {
     case microphone(Bool)
     case screen(Bool)
     case browserPages(Bool)
 }
 
-enum BrowserStoreLaunch: Equatable {
+public enum BrowserStoreLaunch: Equatable, Sendable {
     case disabled
     case opened
     case failed
 }
 
-struct BrowserStoreCatalog: Equatable {
-    var urls: [BrowserBrand: URL]
+public struct BrowserStoreCatalog: Equatable, Sendable {
+    public var urls: [BrowserBrand: URL]
 
-    static let preview = BrowserStoreCatalog(urls: [:])
+    public static let preview = BrowserStoreCatalog(urls: [:])
 
-    func url(for brand: BrowserBrand) -> URL? { urls[brand] }
+    public init(urls: [BrowserBrand: URL] = [:]) {
+        self.urls = urls
+    }
+
+    public func url(for brand: BrowserBrand) -> URL? { urls[brand] }
 }
 
-struct BrowserRepairToken: Equatable {
-    var attempt: Int
-    var destinationGeneration: Int
-    var lifecycleGeneration: Int
-    var viewGeneration: Int
+public struct BrowserRepairToken: Equatable, Sendable {
+    public var attempt: Int
+    public var destinationGeneration: Int
+    public var lifecycleGeneration: Int
+    public var viewGeneration: Int
+
+    public init(attempt: Int, destinationGeneration: Int, lifecycleGeneration: Int, viewGeneration: Int) {
+        self.attempt = attempt
+        self.destinationGeneration = destinationGeneration
+        self.lifecycleGeneration = lifecycleGeneration
+        self.viewGeneration = viewGeneration
+    }
 }
 
-struct BrowserRepairController: Equatable {
-    var destinationGeneration = 0
-    var lifecycleGeneration = 0
-    var viewGeneration = 0
-    var inFlight = false
-    var attempt = 0
-    var results: [BrowserBrand: BrowserHostRegistrationSummary] = [:]
-    var repaired = false
+public struct BrowserRepairController: Equatable, Sendable {
+    public var destinationGeneration = 0
+    public var lifecycleGeneration = 0
+    public var viewGeneration = 0
+    public var inFlight = false
+    public var attempt = 0
+    public var results: [BrowserBrand: BrowserHostRegistrationSummary] = [:]
+    public var repaired = false
+    public var lastFailureReason: String?
 
-    mutating func click() -> BrowserRepairToken? {
+    public init() {}
+
+    public mutating func click() -> BrowserRepairToken? {
         guard !inFlight else { return nil }
         inFlight = true
         repaired = false
+        lastFailureReason = nil
         attempt += 1
         return BrowserRepairToken(
             attempt: attempt,
@@ -92,9 +117,10 @@ struct BrowserRepairController: Equatable {
         )
     }
 
-    mutating func complete(
+    public mutating func complete(
         token: BrowserRepairToken,
         report: BrowserHostRegistrationReport,
+        devReport: BrowserHostRegistrationReport? = nil,
         listenerHoldsFence: Bool,
         endpoint: BrowserHostEndpointDisposition?
     ) {
@@ -106,31 +132,62 @@ struct BrowserRepairController: Equatable {
         results = Dictionary(uniqueKeysWithValues: report.outcomes.map { brand, outcome in
             (brand, BrowserHostRegistrationSummary(state: outcome.state, reasonCode: outcome.reasonCode))
         })
-        let endpointOK = listenerHoldsFence || endpoint == .absent || endpoint == .removed
-        repaired = report.isComplete && endpointOK
+        let dev = devReport ?? report
+        let allVerified = BrowserBrand.allCases.allSatisfy { brand in
+            let prodState = report.outcomes[brand]?.state
+            let devState = dev.outcomes[brand]?.state
+            let prodOk = prodState == .ready || prodState == .changed
+            let devOk = devState == .ready || devState == .changed
+            return prodOk && devOk
+        }
+        repaired = report.isComplete && dev.isComplete && allVerified && listenerHoldsFence
+        if !repaired {
+            if let firstRefused = report.outcomes.values.first(where: { $0.state == .refused }) ?? dev.outcomes.values.first(where: { $0.state == .refused }),
+               let reason = firstRefused.reasonCode {
+                lastFailureReason = reason
+            } else if !listenerHoldsFence {
+                lastFailureReason = "listener_down"
+            } else {
+                lastFailureReason = "registration_incomplete"
+            }
+        }
     }
 }
 
-struct BrowserBrandRow: Equatable {
-    var brand: BrowserBrand
-    var connectedCount: Int
-    var lastSeen: BrowserRelativeTimeBucket?
-    var registration: BrowserHostRegistrationState
+public struct BrowserBrandRow: Equatable, Sendable {
+    public var brand: BrowserBrand
+    public var connectedCount: Int
+    public var lastSeen: BrowserRelativeTimeBucket?
+    public var registration: BrowserHostRegistrationState
+
+    public init(brand: BrowserBrand, connectedCount: Int, lastSeen: BrowserRelativeTimeBucket?, registration: BrowserHostRegistrationState) {
+        self.brand = brand
+        self.connectedCount = connectedCount
+        self.lastSeen = lastSeen
+        self.registration = registration
+    }
 }
 
-struct BrowserOwnerDiagnosticLine: Equatable {
-    var key: String
-    var value: String
+public struct BrowserDiagnosticRow: Equatable, Sendable {
+    public let label: String
+    public let humanValue: String
+    public let machineValue: String
+
+    public init(label: String, humanValue: String, machineValue: String) {
+        self.label = label
+        self.humanValue = humanValue
+        self.machineValue = machineValue
+    }
 }
 
-func sourcesToggleRestartsMedia(_ toggle: SourcesToggle) -> Bool {
+public func sourcesToggleRestartsMedia(_ toggle: SourcesToggle) -> Bool {
     switch toggle {
     case .microphone, .screen: return true
     case .browserPages: return false
     }
 }
 
-func menuPauseControls(
+public func menuPauseControls(
     mediaRecording: Bool,
     mediaPaused: Bool,
     mediaUserPaused: Bool,
@@ -145,11 +202,11 @@ func menuPauseControls(
     return (pause, resume)
 }
 
-func browserPresentsLocalReceiptAsDelivered(_ delivery: String) -> Bool {
+public func browserPresentsLocalReceiptAsDelivered(_ delivery: String) -> Bool {
     delivery == "delivered"
 }
 
-func browserShowsDeliveryLine(_ delivery: String) -> Bool {
+public func browserShowsDeliveryLine(_ delivery: String) -> Bool {
     switch delivery {
     case "delivered", "kept_locally", "idle":
         return false
@@ -158,17 +215,17 @@ func browserShowsDeliveryLine(_ delivery: String) -> Bool {
     }
 }
 
-func statusPrimaryDelivery<Outcome: Equatable>(media: Outcome, browserDelivery: String) -> Outcome {
+public func statusPrimaryDelivery<Outcome: Equatable>(media: Outcome, browserDelivery: String) -> Outcome {
     _ = browserDelivery
     return media
 }
 
-func browserSetupGroupIsVisible(screenGranted: Bool, microphoneGranted: Bool) -> Bool {
+public func browserSetupGroupIsVisible(screenGranted: Bool, microphoneGranted: Bool) -> Bool {
     _ = (screenGranted, microphoneGranted)
     return true
 }
 
-func browserRelativeTimeBucket(lastSeen: Date, now: Date, calendar: Calendar = .current) -> BrowserRelativeTimeBucket {
+public func browserRelativeTimeBucket(lastSeen: Date, now: Date, calendar: Calendar = .current) -> BrowserRelativeTimeBucket {
     let dayDelta = calendar.dateComponents(
         [.day],
         from: calendar.startOfDay(for: lastSeen),
@@ -185,7 +242,7 @@ func browserRelativeTimeBucket(lastSeen: Date, now: Date, calendar: Calendar = .
     return .date(calendar.startOfDay(for: lastSeen))
 }
 
-func browserOwnerVerdict(
+public func browserOwnerVerdict(
     mediaSourcesEmpty: Bool,
     mediaRecording: Bool,
     mediaPaused: Bool,
@@ -229,14 +286,19 @@ func browserOwnerVerdict(
         }
         return BrowserOwnerVerdict(lead: .intakeOff, fullSecondary: fullSecondary, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
     case "permitted":
+        if snapshot.listener != .available {
+            return BrowserOwnerVerdict(lead: .unavailable, fullSecondary: fullSecondary, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
+        }
         if let blockingHold {
             return BrowserOwnerVerdict(lead: .hold(blockingHold), fullSecondary: fullSecondary, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
         }
         if fullPrimary {
             return BrowserOwnerVerdict(lead: .custodyFull, fullSecondary: false, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
         }
-        if !sessionAuthorizes(snapshot, now: now) {
-            return BrowserOwnerVerdict(lead: .sessionClosed, fullSecondary: fullSecondary, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
+        let allProfiles = snapshot.profiles.chrome + snapshot.profiles.edge + snapshot.profiles.firefox
+        let liveProfiles = allProfiles.filter { sessionAuthorizes($0, now: now) }
+        if liveProfiles.isEmpty {
+            return BrowserOwnerVerdict(lead: .waiting, fullSecondary: fullSecondary, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
         }
         return BrowserOwnerVerdict(lead: .ready, fullSecondary: false, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
     default:
@@ -244,7 +306,7 @@ func browserOwnerVerdict(
     }
 }
 
-func browserOwnerStatusLead(
+public func browserOwnerStatusLead(
     mediaSourcesEmpty: Bool,
     mediaRecording: Bool,
     mediaPaused: Bool,
@@ -260,20 +322,30 @@ func browserOwnerStatusLead(
     ).lead
 }
 
-func sourcesFooter(media: String, lead: BrowserOwnerStatusLead) -> String {
+public func sourcesFooter(media: String, lead: BrowserOwnerStatusLead) -> String {
     switch lead {
-    case .draining, .mediaUnchanged, .intakeOff, .notPaired, .unavailable:
+    case .draining:
+        return UICopy.SOURCES_BROWSER_DRAINING
+    case .mediaUnchanged, .notPaired, .unavailable:
         return media
+    case .intakeOff:
+        return UICopy.SOURCES_BROWSER_INTAKE_OFF
     case .paused:
-        return "paused"
+        return UICopy.SOURCES_BROWSER_PAUSED
     case .shutdown, .sessionClosed:
-        return UICopy.SOURCES_OFF
-    case .ready, .custodyFull, .hold:
-        return "on"
+        return UICopy.SOURCES_BROWSER_INTAKE_OFF
+    case .ready:
+        return UICopy.SOURCES_BROWSER_HEADLINE_READY
+    case .waiting:
+        return UICopy.SOURCES_BROWSER_HEADLINE_WAITING
+    case .custodyFull:
+        return UICopy.SOURCES_BROWSER_FULL
+    case .hold(let reason):
+        return reason == "unaccepted_lost" ? UICopy.SOURCES_BROWSER_LOST_AND_HELD : UICopy.SOURCES_BROWSER_HELD
     }
 }
 
-func browserBrandRows(_ snapshot: BrowserHostSnapshotValue, now: Date, calendar: Calendar = .current) -> [BrowserBrandRow] {
+public func browserBrandRows(_ snapshot: BrowserHostSnapshotValue, now: Date, calendar: Calendar = .current) -> [BrowserBrandRow] {
     BrowserBrand.allCases.map { brand in
         let profiles = profiles(snapshot, brand)
         let authorizing = profiles.filter { sessionAuthorizes($0, now: now) }
@@ -287,24 +359,123 @@ func browserBrandRows(_ snapshot: BrowserHostSnapshotValue, now: Date, calendar:
     }
 }
 
-func browserOwnerDiagnosticLines(_ snapshot: BrowserHostSnapshotValue, now: Date, calendar: Calendar = .current) -> [BrowserOwnerDiagnosticLine] {
-    var lines = [
-        BrowserOwnerDiagnosticLine(key: "intake", value: snapshot.intakeEnabled ? "on" : "off"),
-        BrowserOwnerDiagnosticLine(key: "capture", value: snapshot.capture),
-        BrowserOwnerDiagnosticLine(key: "listener", value: listenerToken(snapshot.listener)),
-        BrowserOwnerDiagnosticLine(key: "custody_full", value: snapshot.custodyPresent ? (snapshot.custodyFull ? "full" : "not_full") : "unknown"),
-        BrowserOwnerDiagnosticLine(key: "custody_stale", value: snapshot.custodyPresent ? (snapshot.custodyStale ? "stale" : "not_stale") : "unknown"),
-    ]
-    if browserShowsDeliveryLine(snapshot.delivery) {
-        lines.append(BrowserOwnerDiagnosticLine(key: "delivery", value: snapshot.delivery == "unknown" ? "unknown" : snapshot.delivery))
+public func formatRelativeBucket(_ bucket: BrowserRelativeTimeBucket) -> String {
+    switch bucket {
+    case .justNow:
+        return "just now"
+    case .minutes(let m):
+        return "\(m) min ago"
+    case .hours(let h):
+        return h == 1 ? "1 hour ago" : "\(h) hours ago"
+    case .yesterday:
+        return "yesterday"
+    case .date(let d):
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: d)
     }
-    for row in browserBrandRows(snapshot, now: now, calendar: calendar) {
-        lines.append(BrowserOwnerDiagnosticLine(key: row.brand.rawValue, value: "\(row.registration.rawValue) \(row.connectedCount)"))
-    }
-    return lines
 }
 
-func performBrowserStoreOpen(
+public func buildBrowserDiagnosticRows(
+    snapshot: BrowserHostSnapshotValue,
+    repair: BrowserRepairController,
+    now: Date,
+    calendar: Calendar = .current
+) -> [BrowserDiagnosticRow] {
+    let pagesHuman: String
+    let pagesMachine: String
+    if !snapshot.intakeEnabled {
+        pagesHuman = "off"
+        pagesMachine = "off"
+    } else if snapshot.capture == "paused" {
+        pagesHuman = "paused"
+        pagesMachine = "paused"
+    } else if let hold = ownerHold(snapshot) {
+        pagesHuman = "held"
+        pagesMachine = hold
+    } else if snapshot.capture == "permitted" {
+        pagesHuman = "on"
+        pagesMachine = "on"
+    } else {
+        pagesHuman = "off"
+        pagesMachine = "off"
+    }
+
+    let rows = browserBrandRows(snapshot, now: now, calendar: calendar)
+    let seenParts = rows.compactMap { row -> String? in
+        guard let bucket = row.lastSeen else { return nil }
+        return "\(row.brand.displayName) (\(formatRelativeBucket(bucket)))"
+    }
+    let browsersSeen = seenParts.isEmpty ? "none yet" : seenParts.joined(separator: ", ")
+
+    let allReady = BrowserBrand.allCases.allSatisfy {
+        snapshot.registration[$0]?.state == .ready || snapshot.registration[$0]?.state == .changed
+    }
+    let setupValue: String
+    if repair.repaired {
+        let brandParts = BrowserBrand.allCases.map { "\($0.displayName): repaired at launch" }
+        setupValue = brandParts.joined(separator: ", ")
+    } else if allReady && snapshot.listener == .available {
+        let brandNames = BrowserBrand.allCases.map(\.displayName).joined(separator: ", ")
+        setupValue = "\(brandNames) ready"
+    } else {
+        let brandParts = BrowserBrand.allCases.map { brand -> String in
+            let reg = snapshot.registration[brand]
+            if reg?.state == .ready || reg?.state == .changed {
+                return "\(brand.displayName): ready"
+            }
+            let reason = reg?.reasonCode ?? "not_configured"
+            return "\(brand.displayName): couldn't set up (\(reason))"
+        }
+        setupValue = brandParts.joined(separator: ", ")
+    }
+
+    return [
+        BrowserDiagnosticRow(
+            label: UICopy.DIAGNOSTICS_BROWSER_PAGES_LABEL,
+            humanValue: pagesHuman,
+            machineValue: pagesMachine
+        ),
+        BrowserDiagnosticRow(
+            label: UICopy.DIAGNOSTICS_BROWSERS_SEEN_LABEL,
+            humanValue: browsersSeen,
+            machineValue: browsersSeen
+        ),
+        BrowserDiagnosticRow(
+            label: UICopy.DIAGNOSTICS_BROWSER_SETUP_LABEL,
+            humanValue: setupValue,
+            machineValue: setupValue
+        )
+    ]
+}
+
+public func menubarBrowserRowTitle(snapshot: BrowserHostSnapshotValue, now: Date) -> String {
+    guard snapshot.intakeEnabled else {
+        return UICopy.MENUBAR_BROWSERS_OFF
+    }
+    if snapshot.capture == "paused" {
+        return UICopy.MENUBAR_BROWSERS_PAUSED
+    }
+    let allProfiles = [
+        (BrowserBrand.chrome, snapshot.profiles.chrome),
+        (BrowserBrand.edge, snapshot.profiles.edge),
+        (BrowserBrand.firefox, snapshot.profiles.firefox)
+    ]
+    let liveBrands = allProfiles.compactMap { (brand, profiles) -> String? in
+        let live = profiles.filter { sessionAuthorizes($0, now: now) }
+        return live.isEmpty ? nil : brand.displayName
+    }
+    if !liveBrands.isEmpty {
+        return UICopy.menubarBrowsersLive(liveBrands.joined(separator: ", "))
+    }
+    let hasHistory = allProfiles.contains { _, profiles in !profiles.isEmpty }
+    if hasHistory {
+        return UICopy.MENUBAR_BROWSERS_NONE_CONNECTED
+    }
+    return UICopy.MENUBAR_BROWSERS_NONE_YET
+}
+
+public func performBrowserStoreOpen(
     brand: BrowserBrand,
     catalog: BrowserStoreCatalog,
     open: (URL, BrowserBrand) -> Bool
@@ -313,13 +484,13 @@ func performBrowserStoreOpen(
     return open(url, brand) ? .opened : .failed
 }
 
-func browserCapturePermitsPause(_ snapshot: BrowserHostSnapshotValue, now: Date) -> Bool {
-    guard snapshot.intakeEnabled, snapshot.capture == "permitted", !snapshot.shutdown, !snapshot.quiescence else { return false }
-    return sessionAuthorizes(snapshot, now: now) && !inferredFull(snapshot)
+public func browserCapturePermitsPause(_ snapshot: BrowserHostSnapshotValue, now: Date) -> Bool {
+    guard snapshot.intakeEnabled, !snapshot.shutdown, !snapshot.quiescence else { return false }
+    return true
 }
 
 extension StatusHealthSummary {
-    static func makeIncludingBrowser(
+    public static func makeIncludingBrowser(
         serviceMode: ServiceMode?,
         isRecording: Bool,
         isPaused: Bool,
@@ -360,34 +531,75 @@ extension StatusHealthSummary {
             snapshot: snapshot,
             now: now
         )
+        let deliverySubtitle: String? = verdict.showsDeliveryLine ? UICopy.SOURCES_BROWSER_DELIVERY_FAILED : nil
         switch verdict.lead {
         case .draining:
             return StatusHealthSummary(
                 severity: .calm,
-                title: UICopy.SOURCES_NONE,
-                subtitle: BrowserOwnerCopy.drainingReason,
+                title: UICopy.SOURCES_BROWSER_DRAINING,
+                subtitle: deliverySubtitle,
                 axValue: "browser_draining",
                 action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources")
             )
         case .ready:
-            return StatusHealthSummary(severity: .good, title: "on", subtitle: nil, axValue: "browser_ready")
+            return StatusHealthSummary(
+                severity: .good,
+                title: UICopy.SOURCES_BROWSER_HEADLINE_READY,
+                subtitle: deliverySubtitle,
+                axValue: "browser_ready"
+            )
+        case .waiting:
+            return StatusHealthSummary(
+                severity: .calm,
+                title: UICopy.SOURCES_BROWSER_HEADLINE_WAITING,
+                subtitle: deliverySubtitle,
+                axValue: "browser_waiting"
+            )
         case .custodyFull:
             return StatusHealthSummary(
                 severity: .warn,
-                title: "on",
-                subtitle: nil,
+                title: UICopy.SOURCES_BROWSER_FULL,
+                subtitle: deliverySubtitle,
                 axValue: "custody_full",
                 action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources")
             )
         case .paused:
-            return StatusHealthSummary(severity: .calm, title: "paused", subtitle: nil, axValue: "browser_paused")
-        case .hold:
-            return StatusHealthSummary(severity: .attention, title: "on", subtitle: nil, axValue: "browser_hold")
+            return StatusHealthSummary(
+                severity: .calm,
+                title: UICopy.SOURCES_BROWSER_PAUSED,
+                subtitle: deliverySubtitle,
+                axValue: "browser_paused"
+            )
+        case .hold(let reason):
+            let title = reason == "unaccepted_lost" ? UICopy.SOURCES_BROWSER_LOST_AND_HELD : UICopy.SOURCES_BROWSER_HELD
+            return StatusHealthSummary(
+                severity: .attention,
+                title: title,
+                subtitle: deliverySubtitle,
+                axValue: "browser_hold"
+            )
         case .shutdown:
-            return StatusHealthSummary(severity: .calm, title: "on", subtitle: nil, axValue: "browser_shutdown")
+            return StatusHealthSummary(
+                severity: .calm,
+                title: UICopy.SOURCES_BROWSER_INTAKE_OFF,
+                subtitle: deliverySubtitle,
+                axValue: "browser_shutdown"
+            )
         case .sessionClosed:
-            return StatusHealthSummary(severity: .calm, title: UICopy.SOURCES_OFF, subtitle: nil, axValue: "browser_closed")
-        case .mediaUnchanged, .intakeOff, .notPaired, .unavailable:
+            return StatusHealthSummary(
+                severity: .calm,
+                title: UICopy.SOURCES_BROWSER_INTAKE_OFF,
+                subtitle: deliverySubtitle,
+                axValue: "browser_closed"
+            )
+        case .intakeOff:
+            return StatusHealthSummary(
+                severity: .calm,
+                title: UICopy.SOURCES_BROWSER_INTAKE_OFF,
+                subtitle: deliverySubtitle,
+                axValue: "browser_off"
+            )
+        case .notPaired, .unavailable, .mediaUnchanged:
             return media
         }
     }
@@ -399,12 +611,12 @@ private func inferredFull(_ snapshot: BrowserHostSnapshotValue) -> Bool {
         if snapshot.failureCode == "resource_exhausted", !snapshot.custodyFull { return false }
         return snapshot.custodyFull
     }
-    return snapshot.failureCode == "queue_full"
+    return snapshot.failureCode == "queue_full" || snapshot.failureCode == "resource_exhausted"
 }
 
 private func ownerHold(_ snapshot: BrowserHostSnapshotValue) -> String? {
     switch snapshot.failureCode {
-    case "unaccepted_lost", "relay_unavailable", "journal_rejected", "local_io", "age_policy", "resource_exhausted":
+    case "unaccepted_lost", "relay_unavailable", "journal_rejected", "local_io", "age_policy":
         return snapshot.failureCode
     default:
         return nil
@@ -413,12 +625,15 @@ private func ownerHold(_ snapshot: BrowserHostSnapshotValue) -> String? {
 
 private func sessionAuthorizes(_ snapshot: BrowserHostSnapshotValue, now: Date) -> Bool {
     let profiles = snapshot.profiles.chrome + snapshot.profiles.edge + snapshot.profiles.firefox
-    if profiles.isEmpty { return true }
+    if profiles.isEmpty { return false }
     return profiles.contains { sessionAuthorizes($0, now: now) }
 }
 
 private func sessionAuthorizes(_ profile: BrowserHostProfile, now: Date) -> Bool {
-    guard profile.byeReason == nil, let expiry = profile.leaseExpiry, let seen = profile.lastSeen else { return false }
+    guard profile.handshake == .compatible,
+          profile.byeReason == nil,
+          let expiry = profile.leaseExpiry,
+          let seen = profile.lastSeen else { return false }
     return expiry.timeIntervalSince(seen) > 0 && expiry > now
 }
 

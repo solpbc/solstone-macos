@@ -167,6 +167,8 @@ public actor BrowserIntakeOwner {
     private var deliveryRunning = false
     private var deliveryPending = false
     private var intakeEnabled = true
+    private var statusChangeRunning = false
+    private var statusChangePending = false
     private var statusChangeHandler: (@Sendable () async -> Void)?
 
     private init(
@@ -266,17 +268,7 @@ public actor BrowserIntakeOwner {
         guard admissionOpen() else { return .refusal(BrowserIntakeLocalRefusal(code: "shutdown")) }
         guard started, !stopController.isStopped() else { return .refusal(BrowserIntakeLocalRefusal(code: "intake_off")) }
         do {
-            let reply: [String: Any]
-            if !intakeEnabled, direction == "extension_to_host" {
-                switch BrowserPayloadDecoder.decode(bytes: bytes, direction: direction, projection: authority.projection) {
-                case .accept(.batch):
-                    return .refusal(BrowserIntakeLocalRefusal(code: "intake_off"))
-                case .accept, .unsupported, .refuse:
-                    reply = try authority.accept(bytes: bytes, direction: direction)
-                }
-            } else {
-                reply = try authority.accept(bytes: bytes, direction: direction)
-            }
+            let reply = try authority.accept(bytes: bytes, direction: direction, admitNewBatches: intakeEnabled)
             if reply["type"] as? String == "refused" {
                 return .refusal(BrowserIntakeLocalRefusal(
                     code: reply["code"] as? String ?? "malformed",
@@ -298,6 +290,7 @@ public actor BrowserIntakeOwner {
 
     public func setIntakeEnabled(_ enabled: Bool) {
         intakeEnabled = enabled
+        notifyStatusChanged()
     }
 
     public func isIntakeEnabled() -> Bool {
@@ -310,6 +303,14 @@ public actor BrowserIntakeOwner {
 
     public func projectedStatus() -> [String: Any] {
         projectIntakePreference(in: authority.status())
+    }
+
+    public func projectedStateData() -> Data? {
+        let status = projectedStatus()
+        guard let message = try? BrowserPayloadDecoder.validatedHostMessage(status, projection: authority.projection) else {
+            return nil
+        }
+        return BrowserPayloadDecoder.encodeHostToExtension(message)
     }
 
     public func currentFacts() -> BrowserHostOwnerFacts {
@@ -450,7 +451,26 @@ public actor BrowserIntakeOwner {
 
     private func notifyStatusChanged() {
         guard let handler = statusChangeHandler else { return }
-        Task { await handler() }
+        if statusChangeRunning {
+            statusChangePending = true
+            return
+        }
+        statusChangeRunning = true
+        Task { [weak self] in
+            guard let self else { return }
+            await self.runStatusChangeLoop(handler)
+        }
+    }
+
+    private func runStatusChangeLoop(_ handler: @escaping @Sendable () async -> Void) async {
+        while true {
+            statusChangePending = false
+            await handler()
+            if !statusChangePending {
+                statusChangeRunning = false
+                return
+            }
+        }
     }
 
     private func observeLifecycle(workspaceCenter: NotificationCenter) {
@@ -518,6 +538,7 @@ public actor BrowserIntakeOwner {
     private func boundaryDidPass(epoch: UInt64) {
         guard started, stopController.isActive(epoch: epoch) else { return }
         authority.poll(now: clock.wallNow())
+        notifyStatusChanged()
         scheduleDelivery()
     }
 }

@@ -26,8 +26,7 @@ enum BrowserHostMain {
             reject("argv_rejected")
         }
 
-        let socketURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/Solstone/browser-intake/host.sock")
+        let socketURL = NativeHostPaths.socketURL()
         let socketPath = socketURL.path
         guard NativeHostSocketPath.fits(socketPath) else { reject("socket_path_too_long") }
         let connection = connect(path: socketPath)
@@ -59,6 +58,9 @@ enum BrowserHostMain {
 
     private static func relay(stdin: Int32, socket: Int32, stop: NativeHostStopFlag) {
         var reducer = NativeHostRelayReducer()
+        var stdinDecoder = NativeHostFrameDecoder(direction: .extensionToHost)
+        var stdinBuffer = [UInt8](repeating: 0, count: 65536)
+
         while true {
             if stop.value {
                 _ = reducer.reduce(.sigterm)
@@ -69,6 +71,10 @@ enum BrowserHostMain {
                 pollfd(fd: stdin, events: Int16(POLLIN), revents: 0)
             ]
             let ready = poll(&descriptors, nfds_t(descriptors.count), 250)
+            if stop.value {
+                _ = reducer.reduce(.sigterm)
+                return
+            }
             if ready < 0 {
                 if errno == EINTR { continue }
                 _ = reducer.reduce(.appLoss)
@@ -80,11 +86,20 @@ enum BrowserHostMain {
             // even when native-messaging stdin also has buffered input.
             if descriptors[0].revents & (Int16(POLLIN) | Int16(POLLHUP) | Int16(POLLERR)) != 0 {
                 do {
-                    guard let response = try NativeHostFrameIO.readFrame(from: socket, direction: .hostToExtension) else {
+                    guard let response = try NativeHostFrameIO.readFrame(
+                        from: socket,
+                        direction: .hostToExtension,
+                        shouldCancel: { stop.value }
+                    ) else {
                         _ = reducer.reduce(.appLoss)
                         return
                     }
-                    try NativeHostFrameIO.writeFrame(response.body, to: STDOUT_FILENO, direction: .hostToExtension)
+                    try NativeHostFrameIO.writeFrame(
+                        response.body,
+                        to: STDOUT_FILENO,
+                        direction: .hostToExtension,
+                        shouldCancel: { stop.value }
+                    )
                     if isBye(response.body) {
                         _ = reducer.reduce(.hostBye)
                         return
@@ -105,13 +120,30 @@ enum BrowserHostMain {
                 return
             }
             if descriptors[1].revents & (Int16(POLLIN) | Int16(POLLHUP) | Int16(POLLERR)) != 0 {
+                let amount = stdinBuffer.withUnsafeMutableBytes { raw in
+                    Darwin.read(stdin, raw.baseAddress!, raw.count)
+                }
+                if amount == 0 {
+                    _ = reducer.reduce(.stdinEOF)
+                    return
+                }
+                if amount < 0 {
+                    if errno == EINTR || errno == EAGAIN { continue }
+                    _ = reducer.reduce(.forwardFailure)
+                    return
+                }
                 do {
-                    guard let input = try NativeHostFrameIO.readFrame(from: stdin, direction: .extensionToHost) else {
-                        _ = reducer.reduce(.stdinEOF)
-                        return
+                    let chunk = Data(stdinBuffer[0..<amount])
+                    let frames = try stdinDecoder.append(chunk)
+                    for frameBody in frames {
+                        try NativeHostFrameIO.writeFrame(
+                            frameBody,
+                            to: socket,
+                            direction: .extensionToHost,
+                            shouldCancel: { stop.value }
+                        )
+                        _ = reducer.reduce(.extensionFrame)
                     }
-                    try NativeHostFrameIO.writeFrame(input.body, to: socket, direction: .extensionToHost)
-                    _ = reducer.reduce(.extensionFrame)
                 } catch {
                     _ = reducer.reduce(.forwardFailure)
                     return
@@ -129,7 +161,40 @@ enum BrowserHostMain {
         return object["type"] as? String
     }
 
+    private static func assertNoSymlinkAncestors(_ path: String) -> Bool {
+        var current = URL(fileURLWithPath: "/")
+        for component in path.split(separator: "/") {
+            current.appendPathComponent(String(component))
+            var info = stat()
+            if lstat(current.path, &info) == 0 {
+                guard (info.st_mode & S_IFMT) != S_IFLNK else { return false }
+            } else if errno != ENOENT {
+                return false
+            }
+        }
+        return true
+    }
+
     private static func connect(path: String) -> (descriptor: Int32?, error: Int32) {
+        guard assertNoSymlinkAncestors(path) else { return (nil, EPERM) }
+        let euid = geteuid()
+        let dirPath = (path as NSString).deletingLastPathComponent
+        var dirStat = stat()
+        guard lstat(dirPath, &dirStat) == 0,
+              (dirStat.st_mode & S_IFMT) == S_IFDIR,
+              (dirStat.st_mode & 0o777) == 0o700,
+              dirStat.st_uid == euid else {
+            return (nil, errno != 0 ? errno : EPERM)
+        }
+
+        var socketStat = stat()
+        guard lstat(path, &socketStat) == 0,
+              (socketStat.st_mode & S_IFMT) == S_IFSOCK,
+              (socketStat.st_mode & 0o777) == 0o600,
+              socketStat.st_uid == euid else {
+            return (nil, errno != 0 ? errno : EPERM)
+        }
+
         let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { return (nil, errno) }
         var noSigPipe: Int32 = 1
@@ -153,6 +218,33 @@ enum BrowserHostMain {
             Darwin.close(descriptor)
             return (nil, error)
         }
+
+        // Post-connect security verification
+        var peerUID: uid_t = 0
+        var peerGID: gid_t = 0
+        guard getpeereid(descriptor, &peerUID, &peerGID) == 0, peerUID == euid else {
+            Darwin.close(descriptor)
+            return (nil, EPERM)
+        }
+
+        var postSocketStat = stat()
+        var postDirStat = stat()
+        guard lstat(path, &postSocketStat) == 0,
+              postSocketStat.st_dev == socketStat.st_dev,
+              postSocketStat.st_ino == socketStat.st_ino,
+              (postSocketStat.st_mode & S_IFMT) == S_IFSOCK,
+              (postSocketStat.st_mode & 0o777) == 0o600,
+              postSocketStat.st_uid == euid,
+              lstat(dirPath, &postDirStat) == 0,
+              postDirStat.st_dev == dirStat.st_dev,
+              postDirStat.st_ino == dirStat.st_ino,
+              (postDirStat.st_mode & S_IFMT) == S_IFDIR,
+              (postDirStat.st_mode & 0o777) == 0o700,
+              postDirStat.st_uid == euid else {
+            Darwin.close(descriptor)
+            return (nil, EPERM)
+        }
+
         return (descriptor, 0)
     }
 

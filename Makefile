@@ -136,22 +136,36 @@ build:
 release:
 	swift build -c release
 
+SWIFT_BUILD_FLAGS ?=
+ifeq ($(BROWSER_PREVIEW),1)
+SWIFT_BUILD_FLAGS += -Xswiftc -DSOLSTONE_BROWSER_INTAKE_PREVIEW
+endif
+
 # Build universal binary (arm64 + x86_64)
 release-universal:
-	swift build -c release --arch arm64 --arch x86_64 --product solstone
-	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
+	swift build -c release --arch arm64 --arch x86_64 --product solstone $(SWIFT_BUILD_FLAGS)
+	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog $(SWIFT_BUILD_FLAGS)
+ifeq ($(BROWSER_PREVIEW),1)
+	swift build -c release --arch arm64 --arch x86_64 --product solstone-browser-host $(SWIFT_BUILD_FLAGS)
+endif
 
 # Debug executable with the production Developer ID signing and keychain plane.
 # This is used only by the explicit v3 live-probe bundle target below.
 debug-universal:
-	swift build -c debug --arch arm64 --arch x86_64 --product solstone
-	swift build -c debug --arch arm64 --arch x86_64 --product solstone-watchdog
+	swift build -c debug --arch arm64 --arch x86_64 --product solstone $(SWIFT_BUILD_FLAGS)
+	swift build -c debug --arch arm64 --arch x86_64 --product solstone-watchdog $(SWIFT_BUILD_FLAGS)
+ifeq ($(BROWSER_PREVIEW),1)
+	swift build -c debug --arch arm64 --arch x86_64 --product solstone-browser-host $(SWIFT_BUILD_FLAGS)
+endif
 
 # Local ad-hoc test builds only; never shipped; never set by any production target.
 # The binary matches production; bundle-adhoc selects the login-keychain SPL plane.
 release-universal-adhoc:
-	swift build -c release --arch arm64 --arch x86_64 --product solstone
-	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog
+	swift build -c release --arch arm64 --arch x86_64 --product solstone $(SWIFT_BUILD_FLAGS)
+	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog $(SWIFT_BUILD_FLAGS)
+ifeq ($(BROWSER_PREVIEW),1)
+	swift build -c release --arch arm64 --arch x86_64 --product solstone-browser-host $(SWIFT_BUILD_FLAGS)
+endif
 
 BROWSER_PREVIEW_APP := .build/browser-preview/Solstone.app
 BROWSER_HOST_CODESIGN_IDENTIFIER := app.solstone.observer.browser-host
@@ -161,17 +175,7 @@ BROWSER_HOST_CODESIGN_OPTIONS := --options runtime
 # The caller signs the nested helper with the identifier, entitlements, and
 # hardened-runtime options above before signing the outer preview app.
 release-browser-preview:
-	swift build -c release --product solstone -Xswiftc -DSOLSTONE_BROWSER_INTAKE_PREVIEW
-	swift build -c release --arch arm64 --arch x86_64 --product solstone-browser-host -Xswiftc -DSOLSTONE_BROWSER_INTAKE_PREVIEW
-	rm -rf .build/browser-preview
-	mkdir -p $(BROWSER_PREVIEW_APP)/Contents/MacOS $(BROWSER_PREVIEW_APP)/Contents/Resources/vendor/contracts/native-browser $(BROWSER_PREVIEW_APP)/Contents/Resources/vendor/crates/native-browser-frame/src
-	cp .build/apple/Products/Release/solstone $(BROWSER_PREVIEW_APP)/Contents/MacOS/solstone
-	cp .build/apple/Products/Release/solstone-browser-host $(BROWSER_PREVIEW_APP)/Contents/MacOS/solstone-browser-host
-	cp Sources/solstone/Info.plist $(BROWSER_PREVIEW_APP)/Contents/Info.plist
-	cp -R .build/apple/Products/Release/solstone_solstone.bundle $(BROWSER_PREVIEW_APP)/Contents/Resources/
-	cp vendor/contracts/native-browser/authority.json vendor/contracts/native-browser/envelope.schema.json vendor/contracts/native-browser/browser.schema.json vendor/contracts/native-browser/manifest.json $(BROWSER_PREVIEW_APP)/Contents/Resources/vendor/contracts/native-browser/
-	cp vendor/crates/native-browser-frame/src/constants.rs $(BROWSER_PREVIEW_APP)/Contents/Resources/vendor/crates/native-browser-frame/src/
-	cp -R vendor/contracts/native-browser/registration $(BROWSER_PREVIEW_APP)/Contents/Resources/vendor/contracts/native-browser/
+	@$(MAKE) bundle-dist BROWSER_PREVIEW=1
 
 release-universal-journal:
 	swift build -c release $(JOURNAL_RELEASE_APPLE_ARCH_FLAGS) --product journal
@@ -488,6 +492,18 @@ bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 		--identifier app.solstone.observer.watchdog \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		solstone.app/Contents/MacOS/solstone-watchdog
+ifeq ($(BROWSER_PREVIEW),1)
+	@cp .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone-browser-host solstone.app/Contents/MacOS/
+	@mkdir -p solstone.app/Contents/Resources/vendor/contracts/native-browser solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src
+	@cp vendor/contracts/native-browser/authority.json vendor/contracts/native-browser/envelope.schema.json vendor/contracts/native-browser/browser.schema.json vendor/contracts/native-browser/manifest.json solstone.app/Contents/Resources/vendor/contracts/native-browser/
+	@cp vendor/crates/native-browser-frame/src/constants.rs solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src/
+	@cp -R vendor/contracts/native-browser/registration solstone.app/Contents/Resources/vendor/contracts/native-browser/
+	@codesign --force --options runtime --timestamp \
+		--identifier app.solstone.observer.browser-host \
+		--entitlements Sources/solstone-browser-host/entitlements.plist \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/MacOS/solstone-browser-host
+endif
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		--entitlements "$(APP_ENTITLEMENTS_PLIST)" \
@@ -548,6 +564,18 @@ bundle-adhoc: release-universal-adhoc
 		--identifier app.solstone.observer.watchdog \
 		--sign "$(ADHOC_SIGN_ID)" \
 		solstone.app/Contents/MacOS/solstone-watchdog
+ifeq ($(BROWSER_PREVIEW),1)
+	@cp .build/apple/Products/Release/solstone-browser-host solstone.app/Contents/MacOS/
+	@mkdir -p solstone.app/Contents/Resources/vendor/contracts/native-browser solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src
+	@cp vendor/contracts/native-browser/authority.json vendor/contracts/native-browser/envelope.schema.json vendor/contracts/native-browser/browser.schema.json vendor/contracts/native-browser/manifest.json solstone.app/Contents/Resources/vendor/contracts/native-browser/
+	@cp vendor/crates/native-browser-frame/src/constants.rs solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src/
+	@cp -R vendor/contracts/native-browser/registration solstone.app/Contents/Resources/vendor/contracts/native-browser/
+	@codesign --force --options runtime --timestamp=none \
+		--identifier app.solstone.observer.browser-host \
+		--entitlements Sources/solstone-browser-host/entitlements.plist \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/MacOS/solstone-browser-host
+endif
 	@codesign --force --options runtime --timestamp=none \
 		--sign "$(ADHOC_SIGN_ID)" \
 		--entitlements "$(ADHOC_ENTITLEMENTS)" \

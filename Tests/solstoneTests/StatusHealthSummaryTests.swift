@@ -51,8 +51,8 @@ struct StatusHealthSummaryTests {
         let off = makeSummary(isRecording: false, selectedSources: [])
         #expect(off.severity == .calm)
         #expect(off.axValue == "sources_off")
-        #expect(off.title == "both sources are off")
-        #expect(off.subtitle == "nothing is going into your journal until you turn one back on.")
+        #expect(off.title == UICopy.SOURCES_NONE)
+        #expect(off.subtitle == UICopy.SOURCES_NONE_REASON)
         #expect(off.action?.settingsTab == "sources")
     }
 
