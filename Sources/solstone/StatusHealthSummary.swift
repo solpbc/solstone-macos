@@ -95,7 +95,7 @@ internal func coarseRelativeTime(_ date: Date, now: Date) -> String {
 internal func bundledStatusFooterText(permissionsGranted: Bool, microphoneCount: Int) -> String {
     let permissions = permissionsGranted ? "permissions granted" : "permissions need attention"
     let microphones = microphoneCount == 1 ? "1 microphone" : "\(microphoneCount) microphones"
-    return "everything stays on this Mac · \(permissions) · \(microphones)"
+    return "everything stays on this mac · \(permissions) · \(microphones)"
 }
 
 internal func externalStatusFooterText(serverURL: String?, pairedJournalAddress: String? = nil, permissionsGranted: Bool) -> String {
@@ -209,7 +209,7 @@ extension StatusHealthSummary {
             return .init(
                 severity: .attention,
                 title: "your journal needs a new link",
-                subtitle: "open your journal panel to connect this Mac again",
+                subtitle: "open your journal panel to connect this mac again",
                 axValue: MenubarStatusRowState.journalMigrationNeeded.axToken
             )
         } else {
@@ -395,7 +395,7 @@ extension StatusHealthSummary {
         }
         if isPaused {
             let subtitle = isBundled
-                ? "journal healthy on this Mac"
+                ? "journal healthy on this mac"
                 : (isSynced ? "synced to \(host)" : "paused · \(host)")
             return StatusHealthSummary(
                 severity: .warn,

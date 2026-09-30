@@ -11,7 +11,7 @@ struct UICopyTests {
     }
 
     @Test func journalModeThisMacLabelString() {
-        #expect(UICopy.JOURNAL_MODE_THIS_MAC_LABEL == "this Mac")
+        #expect(UICopy.JOURNAL_MODE_THIS_MAC_LABEL == "this mac")
     }
 
     @Test func journalModeAnotherMachineLabelString() {
@@ -21,7 +21,7 @@ struct UICopyTests {
     @Test func pairingRecoveryStrings() {
         #expect(UICopy.PAIRING_LINK_PLACEHOLDER == "paste pairing link")
         #expect(UICopy.PAIRING_NOTENTITLED_RECOVERY == "your journal is paired, but it isn\u{0027}t on the paid plan, so it can\u{0027}t sync over the internet. you can still reach it directly, without the plan, whenever your journal is reachable.")
-        #expect(UICopy.PAIRING_DISCONNECT_CONFIRM == "disconnect this Mac from your journal? your journal keeps everything. you can pair again anytime.")
+        #expect(UICopy.PAIRING_DISCONNECT_CONFIRM == "disconnect this mac from your journal? your journal keeps everything. you can pair again anytime.")
     }
 
     @Test func journalMarkStrings() {
@@ -31,7 +31,7 @@ struct UICopyTests {
         #expect(UICopy.JOURNAL_MARK_MISMATCH_BUTTON == "that doesn\u{0027}t match")
         #expect(UICopy.JOURNAL_MARK_CONNECTING == "connecting\u{2026}")
         #expect(UICopy.JOURNAL_MARK_MISMATCH_TITLE == "not connected")
-        #expect(UICopy.JOURNAL_MARK_MISMATCH_BODY == "you said this mark doesn\u{0027}t match the one your journal shows, so we didn\u{0027}t connect this Mac. you may have pasted the wrong link, or something isn\u{0027}t right. try again, or reach us and we\u{0027}ll help.")
+        #expect(UICopy.JOURNAL_MARK_MISMATCH_BODY == "you said this mark doesn\u{0027}t match the one your journal shows, so we didn\u{0027}t connect this mac. you may have pasted the wrong link, or something isn\u{0027}t right. try again, or reach us and we\u{0027}ll help.")
         #expect(UICopy.JOURNAL_MARK_MISMATCH_FRESH_LINK == "get a fresh link")
         #expect(UICopy.JOURNAL_MARK_MISMATCH_SUPPORT == "email support@solstone.app")
     }
@@ -120,14 +120,14 @@ struct UICopyTests {
     }
 
     @Test func settingsSetupSharedAndPermissionPaneCopyStrings() {
-        #expect(UICopy.SETTINGS_SETUP_SHARED_NOT_REQUIRED == "not needed on this Mac")
+        #expect(UICopy.SETTINGS_SETUP_SHARED_NOT_REQUIRED == "not needed on this mac")
         #expect(UICopy.SETTINGS_SETUP_SHARED_COULD_NOT_CHECK == "couldn't check")
         #expect(UICopy.SETTINGS_SETUP_SHARED_GRANTED == "granted")
         #expect(UICopy.SETTINGS_SETUP_SHARED_NOT_GRANTED == "not granted")
         #expect(UICopy.SETTINGS_SETUP_SHARED_CHECKING == "checking")
         #expect(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT == "if solstone is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old solstone entry and try enabling screen recording again.")
         #expect(UICopy.SETTINGS_PERMISSIONS_MIC_DENIED == "microphone access is off. allow solstone in Privacy & Security → Microphone.")
-        #expect(UICopy.SETTINGS_PERMISSIONS_MIC_RESTRICTED == "microphone access is restricted by this Mac.")
+        #expect(UICopy.SETTINGS_PERMISSIONS_MIC_RESTRICTED == "microphone access is restricted by this mac.")
         #expect(UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS == "open system settings →")
     }
 

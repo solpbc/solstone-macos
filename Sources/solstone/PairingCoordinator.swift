@@ -387,7 +387,7 @@ extension PairingFailure {
         case .invalidLink(let reason):
             return reason
         case .localSetup:
-            return "pairing couldn't start on this Mac. try again."
+            return "pairing couldn't start on this mac. try again."
         }
     }
 }

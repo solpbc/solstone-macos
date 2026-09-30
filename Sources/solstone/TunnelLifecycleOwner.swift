@@ -1796,7 +1796,7 @@ final class TunnelLifecycleOwner {
         if case .connected(let localPort, _) = state,
            establishedLoopbackPort == localPort,
            hasTransport {
-            let msg = isPairedHome ? "connected to your journal on this Mac" : "sync can connect through your journal"
+            let msg = isPairedHome ? "connected to your journal on this mac" : "sync can connect through your journal"
             return JournalConnectionVerdict(
                 severity: .good,
                 message: msg,
@@ -1853,7 +1853,7 @@ final class TunnelLifecycleOwner {
             case .keychainUnavailable:
                 return JournalConnectionVerdict(
                     severity: .attention,
-                    message: "paired, but this Mac couldn't read the pairing",
+                    message: "paired, but this mac couldn't read the pairing",
                     caption: nil,
                     axToken: PairingConnectionAXState.keychainUnavailable.axToken,
                     failureCause: .keychainUnavailable

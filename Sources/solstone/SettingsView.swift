@@ -1776,7 +1776,7 @@ struct SettingsView: View {
     }
 
     private var externalJournalStorageSection: some View {
-        GroupBox("kept on this Mac") {
+        GroupBox("kept on this mac") {
             VStack(alignment: .leading) {
                  LabeledContent("currently using") {
                      if let used = storageUsedMB {
@@ -2132,7 +2132,7 @@ struct SettingsView: View {
 
     private var pairingDisconnectConfirmText: String {
         if let mark = appState.confirmedMark {
-            return "disconnect this Mac from \(mark.words.joined(separator: " · "))? your journal keeps everything. you can pair again anytime."
+            return "disconnect this mac from \(mark.words.joined(separator: " · "))? your journal keeps everything. you can pair again anytime."
         }
         return UICopy.PAIRING_DISCONNECT_CONFIRM
     }
@@ -2157,7 +2157,7 @@ struct SettingsView: View {
             }
         case .saveFailed:
             VStack(alignment: .leading, spacing: 8) {
-                Text("pairing worked, but this Mac couldn't save it. try again.")
+                Text("pairing worked, but this mac couldn't save it. try again.")
                     .font(.caption)
                     .foregroundStyle(.red)
                 Button("retry") {
@@ -3206,7 +3206,7 @@ struct SettingsView: View {
             }
 
             if resolvedServiceMode(for: appState.config) == .external {
-                GroupBox("kept on this Mac") {
+                GroupBox("kept on this mac") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(storageGlanceText)
                         Text("unsynced segments are never deleted.")

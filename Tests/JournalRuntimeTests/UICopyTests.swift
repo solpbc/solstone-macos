@@ -12,7 +12,7 @@ struct JournalRuntimeUICopyTests {
         #expect(UICopy.JOURNAL_SPAWN_SERVICE_CHECK_FAILED == "couldn't verify journal service ownership")
         #expect(UICopy.JOURNAL_READINESS_TIMEOUT == "journal didn't become ready in time")
         #expect(UICopy.JOURNAL_SETUP_NEEDED_BEFORE_UPGRADE == "journal setup needed before upgrade can continue")
-        #expect(UICopy.INSTALLER_READINESS_GATE_FAILED == "couldn't get the journal ready for this Mac")
+        #expect(UICopy.INSTALLER_READINESS_GATE_FAILED == "couldn't get the journal ready for this mac")
         #expect(UICopy.installerVerifyIntegrityWarning(library: "tokenizers") == "couldn't get tokenizers ready; continuing")
     }
 }

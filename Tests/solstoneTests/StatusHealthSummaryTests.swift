@@ -14,7 +14,7 @@ struct StatusHealthSummaryTests {
 
         #expect(summary.severity == .attention)
         #expect(summary.title == "your journal needs a new link")
-        #expect(summary.subtitle == "open your journal panel to connect this Mac again")
+        #expect(summary.subtitle == "open your journal panel to connect this mac again")
         #expect(summary.axValue == MenubarStatusRowState.journalMigrationNeeded.axToken)
     }
 
