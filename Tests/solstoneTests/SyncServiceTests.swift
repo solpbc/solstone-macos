@@ -2951,12 +2951,13 @@ struct SyncServiceTests {
         let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
         #expect(IngestAcknowledgmentStore.read(from: ackURL) == nil)
 
-        // Inside 86400: no second POST
+        // Inside 86400: no second POST. The probe reads the service clock's day, which the advance can move past midnight.
         store.reset()
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
         clock.advance(by: 3600)
+        let probeDay = IngestDayKey.string(from: clock.now())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(probeDay), body: segmentsDayJSON(entries: []))
         await service.sync()
-        #expect(store.snapshotRequests().compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(today)])
+        #expect(store.snapshotRequests().compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(probeDay)])
 
         // After 86400 seconds: POSTs again
         store.reset()
@@ -3060,12 +3061,13 @@ struct SyncServiceTests {
         #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
         #expect(progress.offlineEvents.contains { $0.healthReason == expectedHealth })
 
-        // Clock + 30 minutes: zero POSTs and exactly one GET segments/{today}
+        // Clock + 30 minutes: zero POSTs and exactly one GET of the service clock's day
         store.reset()
-        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
         clock.advance(by: 1800)
+        let probeDay = IngestDayKey.string(from: clock.now())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(probeDay), body: segmentsDayJSON(entries: []))
         await service.sync()
-        #expect(store.snapshotRequests().compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(today)])
+        #expect(store.snapshotRequests().compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(probeDay)])
     }
 
     @Test
