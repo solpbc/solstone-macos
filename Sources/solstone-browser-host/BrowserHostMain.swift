@@ -41,7 +41,7 @@ enum BrowserHostMain {
         let stop = NativeHostStopFlag()
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-        source.setEventHandler { stop.stop() }
+        source.setEventHandler { @Sendable in stop.stop() }
         source.resume()
         defer { source.cancel() }
 
