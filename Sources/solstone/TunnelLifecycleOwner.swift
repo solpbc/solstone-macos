@@ -180,12 +180,20 @@ final class TunnelLifecycleOwner {
         )
     }
 
-    /// The journal the loaded pairing reaches, as the mark confirmation names it.
+    /// The journal the stored pairing reaches, as the mark confirmation names it.
     var cachedJournalMarkIdentity: String? {
-        guard case .loaded(let pairing) = cachedPairingOutcome else {
+        guard case .loaded(let pairing) = loadPairingCached() else {
             return nil
         }
         return journalMarkConfirmationIdentity(for: pairing)
+    }
+
+    /// The stored pairing's journal instance, for checking that a fetched mark is its own.
+    var storedPairingInstanceID: String? {
+        guard case .loaded(let pairing) = loadPairingCached() else {
+            return nil
+        }
+        return pairing.instanceID
     }
 
     /// The stored pairing's journal addresses, in the order it holds them.

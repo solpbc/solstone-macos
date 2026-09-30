@@ -40,7 +40,8 @@ extension JournalMarkConfirmationDriver {
                 }
             },
             fetchMark: { baseURL in
-                await fetcher.fetch(baseURL: baseURL)
+                guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return nil }
+                return await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected)
             }
         )
     }
@@ -91,7 +92,8 @@ extension JournalMarkConfirmationDriver {
                 await appState.resolveHomeBase()
             },
             fetchMark: { baseURL in
-                await fetcher.fetch(baseURL: baseURL)
+                guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return nil }
+                return await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected)
             }
         )
     }

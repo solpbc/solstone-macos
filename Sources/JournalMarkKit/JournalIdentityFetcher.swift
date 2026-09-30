@@ -31,7 +31,10 @@ public nonisolated struct JournalIdentityFetcher: Sendable {
         self.prepareRequest = prepareRequest
     }
 
-    public func fetch(baseURL: String) async -> JournalMark? {
+    /// Returns the mark of the journal at `baseURL`. With `expectedInstanceID`, only that
+    /// journal's mark counts: right after a re-pair the previous tunnel can still answer for a
+    /// moment, and showing its mark would ask the owner to confirm the wrong journal.
+    public func fetch(baseURL: String, expectedInstanceID: String? = nil) async -> JournalMark? {
         let baseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let urlString = "\(baseURL)/app/link/api/identity"
         guard let url = URL(string: urlString) else {
@@ -51,6 +54,11 @@ public nonisolated struct JournalIdentityFetcher: Sendable {
                 return nil
             }
             let decoded = try JSONDecoder().decode(JournalIdentityResponse.self, from: data)
+            if let expectedInstanceID,
+               decoded.instanceID?.caseInsensitiveCompare(expectedInstanceID) != .orderedSame {
+                Logger.journalMark.debug("journal-mark identity fetch unavailable: another-journal")
+                return nil
+            }
             guard decoded.committed else {
                 Logger.journalMark.debug("journal-mark identity fetch unavailable: uncommitted")
                 return nil

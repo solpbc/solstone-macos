@@ -21,6 +21,20 @@ struct JournalIdentityFetcherTests {
         #expect(request.timeoutInterval == 2)
     }
 
+    @Test func fetchRefusesAnotherJournalsMarkWhenAnInstanceIsExpected() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        JournalIdentityURLProtocol.store.enqueue(body: Self.identityJSON(committed: true, mark: Self.markObject()))
+        JournalIdentityURLProtocol.store.enqueue(body: Self.identityJSON(committed: true, mark: Self.markObject()))
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+
+        let other = await fetcher.fetch(baseURL: "http://127.0.0.1:7071", expectedInstanceID: "instance-456")
+        let own = await fetcher.fetch(baseURL: "http://127.0.0.1:7071", expectedInstanceID: "INSTANCE-123")
+
+        #expect(other == nil)
+        #expect(own?.words == ["afoot", "unfixed"])
+    }
+
     @Test func fetchReturnsNilWhenUncommitted() async {
         JournalIdentityURLProtocol.store.reset()
         defer { JournalIdentityURLProtocol.store.reset() }
