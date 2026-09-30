@@ -429,7 +429,7 @@ bump-release-journal:
 		echo "note: CHANGELOG-journal.md already has an entry for $$CHANGELOG_KEY; leaving it alone"; \
 	else \
 		TODAY="$$(date +%Y-%m-%d)"; \
-		awk -v k="$$CHANGELOG_KEY" -v d="$$TODAY" 'NR==1 {print; next} /^## \[/ && !inserted {print "## [" k "] - " d "\n\n### Added\n- (describe new journal-visible additions)\n\n### Changed\n- (describe journal behavior changes)\n\n### Fixed\n- (describe journal bug fixes)\n\n"; inserted=1} {print}' CHANGELOG-journal.md > CHANGELOG-journal.md.tmp && mv CHANGELOG-journal.md.tmp CHANGELOG-journal.md; \
+		awk -v k="$$CHANGELOG_KEY" -v d="$$TODAY" 'NR==1 {print; next} /^## \[/ && !/^## \[Unreleased\]/ && !inserted {print "## [" k "] - " d "\n\n### Added\n- (describe new journal-visible additions)\n\n### Changed\n- (describe journal behavior changes)\n\n### Fixed\n- (describe journal bug fixes)\n\n"; inserted=1} {print}' CHANGELOG-journal.md > CHANGELOG-journal.md.tmp && mv CHANGELOG-journal.md.tmp CHANGELOG-journal.md; \
 		echo "✓ CHANGELOG-journal.md: scaffolded entry for [$$CHANGELOG_KEY] — $$TODAY (FILL IN BEFORE COMMIT)"; \
 	fi
 	@echo ""
