@@ -19,7 +19,7 @@ enum BrowserHostCommand {
         guard tail.count <= 1 else { return nil }
         let mode: BrowserHostRegistrationMode
         if tail.isEmpty { mode = .production }
-        else if tail[0] == "--development" { mode = .development }
+        else if tail[0] == "--development", NativeHostMode.enabledModes.contains(.development) { mode = .development }
         else { return nil }
         return first == "browser-host-check" ? .check(mode) : .repair(mode)
     }

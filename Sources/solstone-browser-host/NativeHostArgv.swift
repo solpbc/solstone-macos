@@ -53,6 +53,14 @@ public enum NativeHostBrandHint: String, Sendable, Equatable {
 public enum NativeHostMode: String, Sendable, Equatable {
     case production
     case development
+
+    public static var enabledModes: Set<NativeHostMode> {
+#if SOLSTONE_BROWSER_DEVELOPMENT_HOST
+        [.production, .development]
+#else
+        [.production]
+#endif
+    }
 }
 
 public struct NativeHostIdentity: Sendable, Equatable {
@@ -83,7 +91,9 @@ public enum NativeHostArgv {
             let prodMatches = productionIDs.contains(where: { origin == "chrome-extension://\($0)/" })
             let devMatches = developmentIDs.contains(where: { origin == "chrome-extension://\($0)/" })
             if prodMatches != devMatches {
-                return NativeHostIdentity(brandHint: .chromium, mode: prodMatches ? .production : .development)
+                let mode: NativeHostMode = prodMatches ? .production : .development
+                guard NativeHostMode.enabledModes.contains(mode) else { throw NativeHostArgvError.rejected }
+                return NativeHostIdentity(brandHint: .chromium, mode: mode)
             }
             throw NativeHostArgvError.rejected
         }
@@ -96,7 +106,9 @@ public enum NativeHostArgv {
             let prodMatches = extensionID == allowlist.production.firefox
             let devMatches = extensionID == allowlist.development.firefox
             if prodMatches != devMatches {
-                return NativeHostIdentity(brandHint: .firefox, mode: prodMatches ? .production : .development)
+                let mode: NativeHostMode = prodMatches ? .production : .development
+                guard NativeHostMode.enabledModes.contains(mode) else { throw NativeHostArgvError.rejected }
+                return NativeHostIdentity(brandHint: .firefox, mode: mode)
             }
         }
         throw NativeHostArgvError.rejected
@@ -160,4 +172,3 @@ public enum NativeHostPaths {
 }
 
 #endif
-

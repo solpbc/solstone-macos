@@ -107,12 +107,24 @@ struct NativeHostArgvTests {
             #expect(try NativeHostArgv.parse(["chrome-extension://\(id)/"], allowlist: allowlist).mode == .production)
         }
         for id in [allowlist.development.chrome, allowlist.development.edge] {
+#if SOLSTONE_BROWSER_DEVELOPMENT_HOST
             #expect(try NativeHostArgv.parse(["chrome-extension://\(id)/"], allowlist: allowlist).mode == .development)
+#else
+            #expect(throws: NativeHostArgvError.rejected) {
+                try NativeHostArgv.parse(["chrome-extension://\(id)/"], allowlist: allowlist)
+            }
+#endif
         }
         #expect(try NativeHostArgv.parse(["/manifest with spaces.json", allowlist.production.firefox], allowlist: allowlist) ==
             NativeHostIdentity(brandHint: .firefox, mode: .production))
+#if SOLSTONE_BROWSER_DEVELOPMENT_HOST
         #expect(try NativeHostArgv.parse(["/manifest.json", allowlist.development.firefox], allowlist: allowlist) ==
             NativeHostIdentity(brandHint: .firefox, mode: .development))
+#else
+        #expect(throws: NativeHostArgvError.rejected) {
+            try NativeHostArgv.parse(["/manifest.json", allowlist.development.firefox], allowlist: allowlist)
+        }
+#endif
     }
 
     @Test func allowlistIsReadFromAuthorityHostsAndIds() throws {
@@ -242,15 +254,15 @@ struct NativeHostSessionsTests {
 struct NativeHostRegistrationTests {
     @Test func repairEscapesPathsSeparatesModesAndIsIdempotent() throws {
         let home = URL(fileURLWithPath: "/fake-home", isDirectory: true)
-        let helper = home.appendingPathComponent("Apps/A \"quoted\" helper/solstone-browser-host")
+        let helper = home.appendingPathComponent("Apps/A \"quoted\" helper.app/Contents/MacOS/solstone-browser-host")
         let fs = NativeHostMemoryFileSystem(home: home, helper: helper)
         let registration = BrowserHostRegistration(contractRoot: nativeHostVendorRoot(), home: home, helperURL: helper, fileSystem: fs)
 
-        let first = registration.repair(mode: .development)
+        let first = registration.repair(mode: .production)
         #expect(first.isComplete)
         #expect(first.changedAny)
         let writeCount = fs.writeCount
-        let second = registration.repair(mode: .development)
+        let second = registration.repair(mode: .production)
         #expect(second.isComplete)
         #expect(!second.changedAny)
         #expect(fs.writeCount == writeCount)
@@ -260,7 +272,7 @@ struct NativeHostRegistrationTests {
             let path = try #require(outcome.path)
             let data = try fs.read(URL(fileURLWithPath: path))
             let manifest = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-            #expect(manifest["name"] as? String == projection.devHosts.host)
+            #expect(manifest["name"] as? String == projection.prodHosts.host)
             #expect(manifest["path"] as? String == helper.path)
             #expect(String(decoding: data, as: UTF8.self).contains("\\\"quoted\\\""))
         }
@@ -268,13 +280,33 @@ struct NativeHostRegistrationTests {
 
     @Test func checkOnlyIsReadOnlyAndMissingDirectoriesAreIncomplete() {
         let home = URL(fileURLWithPath: "/fake-check-home", isDirectory: true)
-        let helper = home.appendingPathComponent("solstone-browser-host")
+        let helper = home.appendingPathComponent("Solstone.app/Contents/MacOS/solstone-browser-host")
         let fs = NativeHostMemoryFileSystem(home: home, helper: helper)
-        let report = BrowserHostRegistration(contractRoot: nativeHostVendorRoot(), home: home, helperURL: helper, fileSystem: fs).check(mode: .development)
+        let report = BrowserHostRegistration(contractRoot: nativeHostVendorRoot(), home: home, helperURL: helper, fileSystem: fs).check(mode: .production)
         #expect(report.outcomes.values.allSatisfy { $0.state == .changed && $0.reasonCode == "manifest_missing" })
         #expect(!report.outcomes.values.allSatisfy { $0.state == .ready })
         #expect(fs.writeCount == 0)
         #expect(fs.createCount == 0)
+    }
+
+    @Test func developmentRegistrationRequiresAnExplicitDevelopmentBuild() {
+        let home = URL(fileURLWithPath: "/fake-development-home", isDirectory: true)
+        let helper = home.appendingPathComponent("Solstone.app/Contents/MacOS/solstone-browser-host")
+        let fs = NativeHostMemoryFileSystem(home: home, helper: helper)
+        let registration = BrowserHostRegistration(contractRoot: nativeHostVendorRoot(), home: home, helperURL: helper, fileSystem: fs)
+        let report = registration.repair(mode: .development)
+#if SOLSTONE_BROWSER_DEVELOPMENT_HOST
+        #expect(report.isComplete)
+        #expect(report.changedAny)
+        #expect(registration.check(mode: .development).isComplete)
+#else
+        #expect(!report.isComplete)
+        #expect(!report.changedAny)
+        #expect(report.outcomes.values.allSatisfy { $0.state == .refused && $0.reasonCode == "development_host_disabled" })
+        #expect(registration.check(mode: .development).outcomes.values.allSatisfy { $0.state == .refused })
+        #expect(fs.writeCount == 0)
+        #expect(fs.createCount == 0)
+#endif
     }
 
     @Test func productionPathAndUnsafeRegistrationParentsAreRefusedWithoutWrites() {

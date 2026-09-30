@@ -959,7 +959,7 @@ public actor BrowserHostListener {
         self.rootURL = rootURL
         self.owner = owner
         self.projection = projection
-        self.acceptingModes = modes
+        self.acceptingModes = modes.intersection(NativeHostMode.enabledModes)
         if !registration.outcomes.isEmpty || self.registration.isEmpty {
             self.registration = Dictionary(uniqueKeysWithValues: registration.outcomes.map { key, value in
                 (key, BrowserHostRegistrationSummary(state: value.state, reasonCode: value.reasonCode))
@@ -1365,7 +1365,7 @@ public actor BrowserHostListener {
         decoded existing: BrowserDecodeResult? = nil
     ) async -> BrowserHostFirstMessageDecision {
         guard isFresh, isCurrent() else { return .close }
-        guard acceptingModes.contains(context.mode) else { return .close }
+        guard acceptingModes.contains(context.mode), NativeHostMode.enabledModes.contains(context.mode) else { return .close }
         let decoded = existing ?? BrowserPayloadDecoder.decode(bytes: body, direction: "extension_to_host", projection: projection)
         switch decoded {
         case .accept(.hello(let hello)):

@@ -622,19 +622,23 @@ public final class AppState {
 
             let bundleURL = Bundle.main.bundleURL
             let prodReport: BrowserHostRegistrationReport
-            let devReport: BrowserHostRegistrationReport
+            let devReport: BrowserHostRegistrationReport?
             if let contractRoot = BrowserContractProjection.vendorRootURL(bundleURL: bundleURL) {
                 let registration = BrowserHostRegistration(
                     contractRoot: contractRoot,
                     helperURL: bundleURL.appendingPathComponent("Contents/MacOS/solstone-browser-host")
                 )
-                _ = registration.repair(mode: .development)
                 _ = registration.repair(mode: .production)
                 prodReport = registration.check(mode: .production)
-                devReport = registration.check(mode: .development)
+                if NativeHostMode.enabledModes.contains(.development) {
+                    _ = registration.repair(mode: .development)
+                    devReport = registration.check(mode: .development)
+                } else {
+                    devReport = nil
+                }
             } else {
                 prodReport = BrowserHostRegistrationReport(outcomes: [:], changedAny: false)
-                devReport = BrowserHostRegistrationReport(outcomes: [:], changedAny: false)
+                devReport = nil
             }
 
             if isStale() { return }
@@ -1877,7 +1881,9 @@ public final class AppState {
 
             let helperURL = bundleURL.appendingPathComponent("Contents/MacOS/solstone-browser-host")
             let registration = BrowserHostRegistration(contractRoot: projection.rootURL, helperURL: helperURL)
-            _ = registration.repair(mode: .development)
+            if NativeHostMode.enabledModes.contains(.development) {
+                _ = registration.repair(mode: .development)
+            }
             let registrationReport = registration.repair(mode: .production)
             let listener = BrowserHostListener(
                 limits: BrowserHostLimits(projection: projection),
@@ -1898,7 +1904,7 @@ public final class AppState {
                 projection: projection,
                 registration: registrationReport,
                 generation: generation,
-                modes: [.production, .development]
+                modes: NativeHostMode.enabledModes
             )
         }
     }

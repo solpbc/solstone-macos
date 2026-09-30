@@ -230,7 +230,11 @@ struct BrowserHostPureAdmissionGateTests {
 struct BrowserHostPureCommandTests {
     @Test func commandParsingAndValidation() {
         #expect(BrowserHostCommand.command(arguments: ["solstone", "browser-host-check"]) != nil)
+#if SOLSTONE_BROWSER_DEVELOPMENT_HOST
         #expect(BrowserHostCommand.command(arguments: ["solstone", "browser-host-repair", "--development"]) != nil)
+#else
+        #expect(BrowserHostCommand.command(arguments: ["solstone", "browser-host-repair", "--development"]) == nil)
+#endif
         #expect(BrowserHostCommand.command(arguments: ["solstone", "browser-host-check", "--invalid"]) == nil)
         #expect(BrowserHostCommand.command(arguments: ["solstone", "browser-host-check", "--development", "extra"]) == nil)
 
@@ -340,6 +344,21 @@ struct BrowserHostPureDispatchTests {
             updateGate: updateGate
         )
         #expect(wrongModeDecision == .close)
+
+        let developmentContext = BrowserHostConnectionContext(brandHint: .chromium, mode: .development)
+        let developmentDecision = await BrowserHostListener.decideFirstMessage(
+            body: helloData,
+            context: developmentContext,
+            acceptingModes: [.production, .development],
+            isFresh: true,
+            projection: projection,
+            updateGate: updateGate
+        )
+#if SOLSTONE_BROWSER_DEVELOPMENT_HOST
+        if case .compatible = developmentDecision { } else { Issue.record("development host should be enabled") }
+#else
+        #expect(developmentDecision == .close)
+#endif
 
         // 5. Malformed payload returns .close
         let malformedDecision = await BrowserHostListener.decideFirstMessage(

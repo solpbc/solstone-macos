@@ -137,6 +137,13 @@ release:
 	swift build -c release
 
 SWIFT_BUILD_FLAGS ?=
+BROWSER_DEVELOPMENT_HOST ?= 0
+ifeq ($(BROWSER_DEVELOPMENT_HOST),1)
+ifneq ($(BROWSER_PREVIEW),1)
+$(error BROWSER_DEVELOPMENT_HOST=1 requires BROWSER_PREVIEW=1)
+endif
+SWIFT_BUILD_FLAGS += -Xswiftc -DSOLSTONE_BROWSER_DEVELOPMENT_HOST
+endif
 ifeq ($(BROWSER_PREVIEW),1)
 SWIFT_BUILD_FLAGS += -Xswiftc -DSOLSTONE_BROWSER_INTAKE_PREVIEW
 endif
@@ -500,10 +507,13 @@ bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 		solstone.app/Contents/MacOS/solstone-watchdog
 ifeq ($(BROWSER_PREVIEW),1)
 	@cp .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone-browser-host solstone.app/Contents/MacOS/
-	@mkdir -p solstone.app/Contents/Resources/vendor/contracts/native-browser solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src
+	@mkdir -p solstone.app/Contents/Resources/vendor/contracts/native-browser/registration solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src
 	@cp vendor/contracts/native-browser/authority.json vendor/contracts/native-browser/envelope.schema.json vendor/contracts/native-browser/browser.schema.json vendor/contracts/native-browser/manifest.json solstone.app/Contents/Resources/vendor/contracts/native-browser/
 	@cp vendor/crates/native-browser-frame/src/constants.rs solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src/
-	@cp -R vendor/contracts/native-browser/registration solstone.app/Contents/Resources/vendor/contracts/native-browser/
+	@cp -R vendor/contracts/native-browser/registration/production solstone.app/Contents/Resources/vendor/contracts/native-browser/registration/
+ifeq ($(BROWSER_DEVELOPMENT_HOST),1)
+	@cp -R vendor/contracts/native-browser/registration/dev solstone.app/Contents/Resources/vendor/contracts/native-browser/registration/
+endif
 	@codesign --force --options runtime --timestamp \
 		--identifier app.solstone.observer.browser-host \
 		--entitlements Sources/solstone-browser-host/entitlements.plist \
@@ -572,10 +582,13 @@ bundle-adhoc: release-universal-adhoc
 		solstone.app/Contents/MacOS/solstone-watchdog
 ifeq ($(BROWSER_PREVIEW),1)
 	@cp .build/apple/Products/Release/solstone-browser-host solstone.app/Contents/MacOS/
-	@mkdir -p solstone.app/Contents/Resources/vendor/contracts/native-browser solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src
+	@mkdir -p solstone.app/Contents/Resources/vendor/contracts/native-browser/registration solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src
 	@cp vendor/contracts/native-browser/authority.json vendor/contracts/native-browser/envelope.schema.json vendor/contracts/native-browser/browser.schema.json vendor/contracts/native-browser/manifest.json solstone.app/Contents/Resources/vendor/contracts/native-browser/
 	@cp vendor/crates/native-browser-frame/src/constants.rs solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src/
-	@cp -R vendor/contracts/native-browser/registration solstone.app/Contents/Resources/vendor/contracts/native-browser/
+	@cp -R vendor/contracts/native-browser/registration/production solstone.app/Contents/Resources/vendor/contracts/native-browser/registration/
+ifeq ($(BROWSER_DEVELOPMENT_HOST),1)
+	@cp -R vendor/contracts/native-browser/registration/dev solstone.app/Contents/Resources/vendor/contracts/native-browser/registration/
+endif
 	@codesign --force --options runtime --timestamp=none \
 		--identifier app.solstone.observer.browser-host \
 		--entitlements Sources/solstone-browser-host/entitlements.plist \

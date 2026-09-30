@@ -127,6 +127,9 @@ public struct BrowserHostRegistration: Sendable {
     }
 
     private func perform(mode: BrowserHostRegistrationMode, repair: Bool) -> BrowserHostRegistrationReport {
+        guard mode != .development || NativeHostMode.enabledModes.contains(.development) else {
+            return refusedAll("development_host_disabled")
+        }
         if mode == .production, !isBundledProductionHelper() {
             return refusedAll("helper_path_not_bundled")
         }
