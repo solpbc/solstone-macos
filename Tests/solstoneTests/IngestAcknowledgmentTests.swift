@@ -8,6 +8,25 @@ import Testing
 
 @Suite("Ingest acknowledgment")
 struct IngestAcknowledgmentTests {
+    @Test func removalHashesEvenWhenTheLocalVersionMatchesAndRejectsChangesDuringHash() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("120000_300_audio.m4a")
+        try Data("before".utf8).write(to: file)
+        let version = try #require(IngestLocalFileVersion.read(file))
+        let proof = IngestAcknowledgedFileProof(submitted: file.lastPathComponent, sha256: "before-hash", size: 6, localVersion: version)
+        var calls = 0
+        #expect(proof.matchesLocalFileForRemoval(file) { _ in calls += 1; return "before-hash" })
+        #expect(calls == 1)
+        #expect(!proof.matchesLocalFileForRemoval(file) { _ in "after-hash" })
+        #expect(!proof.matchesLocalFileForRemoval(file) { _ in
+            try? Data("after!".utf8).write(to: file, options: .atomic)
+            return "before-hash"
+        })
+        #expect(try Data(contentsOf: file) == Data("after!".utf8))
+    }
+
     @Test func unchangedFileSkipsHashButSameSizeRewriteRestoringMtimeDoesNot() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

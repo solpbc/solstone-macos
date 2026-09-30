@@ -312,6 +312,65 @@ struct SyncServiceTests {
         #expect(!FileManager.default.fileExists(atPath: seg.url.path))
     }
 
+    @Test func replacementAfterReceiptBeforeUnlinkSurvivesAndUploadsOnNextPass() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-replacement-before-unlink")
+        let segment = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let file = segment.url.appendingPathComponent(filename)
+        let originalSHA = try sha256(of: file)
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: filename, sha: originalSHA, size: 5))
+        let hookCalls = MutexValue<Int>(0)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24686") },
+            beforeRemovalStep: {
+                let count = hookCalls.withLock { value -> Int in value += 1; return value }
+                if count == 2 { try? Data("other".utf8).write(to: file, options: .atomic) }
+            }
+        )
+        await configure(service)
+        await service.sync()
+
+        #expect(hookCalls.withLock { $0 } >= 2)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect(try Data(contentsOf: file) == Data("other".utf8))
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+
+        store.reset()
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: filename, sha: try sha256(of: file), size: 5))
+        await service.sync()
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: segment.url.path))
+    }
+
+    @Test(arguments: [false, true])
+    func changedPayloadBeforePreserveStaysForUpload(addNewFile: Bool) async throws {
+        store.reset()
+        let parent = try makeTempDirectory("sync-replacement-before-preserve")
+        let root = parent.appendingPathComponent("captures", isDirectory: true)
+        let segment = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let file = segment.url.appendingPathComponent(filename)
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: filename, sha: try sha256(of: file), size: 5))
+        let changedFile = addNewFile ? segment.url.appendingPathComponent("120000_300_screen.mp4") : file
+        let hookCalls = MutexValue<Int>(0)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24686") },
+            beforeRemovalStep: {
+                let count = hookCalls.withLock { value -> Int in value += 1; return value }
+                if count == 1 { try? Data("other".utf8).write(to: changedFile, options: .atomic) }
+            }
+        )
+        await configurePreserving(service)
+        await service.sync()
+
+        #expect(hookCalls.withLock { $0 } >= 1)
+        #expect(try Data(contentsOf: changedFile) == Data("other".utf8))
+        #expect(!FileManager.default.fileExists(atPath: parent.appendingPathComponent("preserved-segments").path))
+    }
+
     @Test func removalAbortsCleanlyIfContextChangesMidRemoval() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-removal-abort-context")

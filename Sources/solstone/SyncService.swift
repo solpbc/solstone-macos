@@ -1281,7 +1281,7 @@ public actor SyncService {
                 }
                 guard fileType == .regularFile else { continue }
                 let covered = coveringProofs.first(where: { $0.submitted == name })?
-                    .matchesLocalFileForUpload(entry, sha256Calculator: client.sha256) ?? false
+                    .matchesLocalFileForRemoval(entry, sha256Calculator: client.sha256) ?? false
                 guard covered else {
                     Logger.upload.info("Segment \(segment, privacy: .public): \(name, privacy: .public) is not confirmed by the journal; the segment stays for a later upload")
                     return .failed
@@ -1353,12 +1353,28 @@ public actor SyncService {
             self.segmentBounds.removeValue(forKey: address)
 
             if preserveSyncedSegments {
+                // Recheck after the suspension before moving the folder out of the upload queue.
+                guard let currentEntries = try? FileManager.default.contentsOfDirectory(
+                    at: segmentURL, includingPropertiesForKeys: nil, options: []
+                ), currentEntries.allSatisfy({ entry in
+                    !IngestAcknowledgment.isUploadMediaName(entry.lastPathComponent, segment: segment) ||
+                    (ack.payload.files.first(where: { $0.submitted == entry.lastPathComponent })?
+                        .matchesLocalFileForRemoval(entry, sha256Calculator: client.sha256) ?? false)
+                }) else { return .failed }
                 return preserveSegmentDirectory(segmentURL, segment: segment) ? .finished : .failed
             }
 
             for url in nonAckConfirmedURLs {
                 await beforeRemovalStep()
                 guard !syncPaused, journalContext == context else { return .stopped }
+                // The receipt covers the uploaded bytes, not a replacement made while suspended.
+                if IngestAcknowledgment.isUploadMediaName(url.lastPathComponent, segment: segment) {
+                    guard ack.payload.files.first(where: { $0.submitted == url.lastPathComponent })?
+                        .matchesLocalFileForRemoval(url, sha256Calculator: client.sha256) == true else {
+                        Logger.upload.info("Segment \(segment, privacy: .public): \(url.lastPathComponent, privacy: .public) changed before removal; it stays for a later upload")
+                        return .failed
+                    }
+                }
                 do {
                     try removeItem(url)
                 } catch {

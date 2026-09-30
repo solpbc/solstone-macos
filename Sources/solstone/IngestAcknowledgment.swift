@@ -84,6 +84,13 @@ struct IngestAcknowledgedFileProof: Sendable, Equatable, Hashable {
         }
         return sha256Calculator(url) == sha256
     }
+
+    func matchesLocalFileForRemoval(_ url: URL, sha256Calculator: (URL) -> String?) -> Bool {
+        guard let before = IngestLocalFileVersion.read(url), before.size >= 0,
+              UInt64(before.size) == size,
+              sha256Calculator(url) == sha256 else { return false }
+        return IngestLocalFileVersion.read(url) == before
+    }
 }
 
 extension IngestAcknowledgedFileProof: Codable {
