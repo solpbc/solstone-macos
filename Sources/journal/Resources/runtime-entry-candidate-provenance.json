@@ -5,7 +5,7 @@
   "target": {
     "bundle_identifier": "app.solstone.journal",
     "bundle_short_version": "2.0.27",
-    "bundle_version": "63"
+    "bundle_version": "64"
   },
   "runtime_archive_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
