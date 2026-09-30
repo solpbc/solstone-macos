@@ -34,6 +34,7 @@ public enum BrowserIntakeCrashPoint: Sendable, Equatable {
     case afterFileSync
     case afterCommit
     case afterFinalizeSync
+    case afterRetiredPublication
     case failCommit
 }
 
@@ -48,6 +49,89 @@ enum BrowserIntakeIOPoint: Sendable, Equatable {
     case size
     case proof
     case finalizePublication
+    case retiredTransitionIntent
+    case retiredDiscardIntent
+    case retiredUnlink
+    case retiredDirectorySync
+}
+
+public struct BrowserRetiredCustodyIdentity: Sendable, Hashable, Codable {
+    public let generation: String
+    public let periodId: String
+    public let committedLength: Int
+
+    public init(generation: String, periodId: String, committedLength: Int) {
+        self.generation = generation
+        self.periodId = periodId
+        self.committedLength = committedLength
+    }
+}
+
+public struct BrowserRetiredCustodyScope: Sendable, Equatable, Codable {
+    public let identities: [BrowserRetiredCustodyIdentity]
+
+    public init(identities: [BrowserRetiredCustodyIdentity]) {
+        self.identities = identities.sorted {
+            ($0.generation, $0.periodId, $0.committedLength) < ($1.generation, $1.periodId, $1.committedLength)
+        }
+    }
+}
+
+public enum BrowserRetiredCustodyInventory: Sendable, Equatable {
+    case empty
+    case unavailable
+    case present(BrowserRetiredCustodyScope)
+}
+
+public struct BrowserActivePending: Sendable, Equatable {
+    public let identities: [BrowserRetiredCustodyIdentity]
+
+    public init(identities: [BrowserRetiredCustodyIdentity]) {
+        self.identities = identities
+    }
+}
+
+public enum BrowserRetiredDiscardResult: Sendable, Equatable {
+    case refused
+    case nothingRemoved
+    case partiallyRemoved
+    case fullyRemoved
+    case durabilityUnproven
+}
+
+private struct BrowserRetiredIntent: Codable {
+    struct Period: Codable, Equatable {
+        let generation: String
+        let periodId: String
+        let committedLength: Int
+        let sha256: String
+
+        var identity: BrowserRetiredCustodyIdentity {
+            BrowserRetiredCustodyIdentity(generation: generation, periodId: periodId, committedLength: committedLength)
+        }
+    }
+
+    let kind: String
+    var phase: String
+    var periods: [Period]
+}
+
+private struct BrowserRetiredDiscardIntent: Codable {
+    struct Period: Codable, Equatable {
+        let generation: String
+        let periodId: String
+        let committedLength: Int
+        let sha256: String
+
+        var identity: BrowserRetiredCustodyIdentity {
+            BrowserRetiredCustodyIdentity(generation: generation, periodId: periodId, committedLength: committedLength)
+        }
+    }
+
+    let kind: String
+    var phase: String
+    var outcome: String?
+    let periods: [Period]
 }
 
 final class BrowserIntakeIOInjector: @unchecked Sendable {
@@ -186,6 +270,15 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         lock.withLock { isStoreFailed = failed }
     }
 
+    @discardableResult
+    func setStoreFailed(_ failed: Bool, forGeneration generation: String) -> Bool {
+        lock.withLock {
+            guard BrowserOpaqueString.equals(activeGeneration, generation) else { return false }
+            isStoreFailed = failed
+            return true
+        }
+    }
+
     public func storeIsFailed() -> Bool {
         lock.withLock { isStoreFailed }
     }
@@ -262,6 +355,15 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         stagingReservations.removeValue(forKey: url)
     }
 
+    @discardableResult
+    func setDeliveryFailure(_ failure: String?, forGeneration generation: String) -> Bool {
+        lock.withLock {
+            guard BrowserOpaqueString.equals(activeGeneration, generation) else { return false }
+            deliveryFailure = failure
+            return true
+        }
+    }
+
     func setDeliveryFailure(_ failure: String?) {
         lock.withLock { deliveryFailure = failure }
     }
@@ -327,13 +429,37 @@ public final class BrowserIntakeStore: @unchecked Sendable {
             try Self.chmodPath(stagingDir, 0o700)
             try fsyncParentChecked(of: stagingDir)
 
+            let retiredDir = retiredRootURL()
+            stage = "retired-root"
+            try Self.assertNoSymlinkAncestors(retiredDir)
+            try assertRetiredDirectoryIfPresent(retiredDir)
+            try FileManager.default.createDirectory(at: retiredDir, withIntermediateDirectories: true)
+            try Self.chmodPath(retiredDir, 0o700)
+            try fsyncParentChecked(of: retiredDir)
+            let retiredPeriodsDir = retiredPeriodsRootURL()
+            try Self.assertNoSymlinkAncestors(retiredPeriodsDir)
+            try assertRetiredDirectoryIfPresent(retiredPeriodsDir)
+            try FileManager.default.createDirectory(at: retiredPeriodsDir, withIntermediateDirectories: true)
+            try Self.chmodPath(retiredPeriodsDir, 0o700)
+            try fsyncParentChecked(of: retiredPeriodsDir)
+
             let dbURL = rootURL.appendingPathComponent("intake.sqlite")
             stage = "database"
             try validateDatabasePaths()
-            let allowedRootNames: Set<String> = ["periods", "staging", "intake.sqlite", "intake.sqlite-wal", "intake.sqlite-shm", "intake.sqlite-journal"]
+            let allowedRootNames: Set<String> = ["periods", "staging", "retired", "intake.sqlite", "intake.sqlite-wal", "intake.sqlite-shm", "intake.sqlite-journal"]
             guard try FileManager.default.contentsOfDirectory(atPath: rootURL.path).allSatisfy(allowedRootNames.contains) else {
                 throw BrowserIntakeStoreError.localIO
             }
+            try validateRetiredTree()
+            try reclaimRetiredTemporaryFiles()
+            let transitionPath = retiredDir.appendingPathComponent("transition.json")
+            let transitionMarkerExists = FileManager.default.fileExists(atPath: transitionPath.path)
+            let preopenTransition = try readTransitionIntent()
+            if transitionMarkerExists && preopenTransition == nil { throw BrowserIntakeStoreError.localIO }
+            let discardPath = retiredDir.appendingPathComponent("discard-intent.json")
+            let discardMarkerExists = FileManager.default.fileExists(atPath: discardPath.path)
+            let preopenDiscard = try readDiscardIntent()
+            if discardMarkerExists && preopenDiscard == nil { throw BrowserIntakeStoreError.localIO }
             for directory in try FileManager.default.contentsOfDirectory(at: periodsDir, includingPropertiesForKeys: nil) {
                 guard UUID(uuidString: directory.lastPathComponent) != nil else { throw BrowserIntakeStoreError.localIO }
                 try Self.assertNoSymlinkAncestors(directory)
@@ -371,8 +497,12 @@ public final class BrowserIntakeStore: @unchecked Sendable {
             }
             // Opening an old WAL can recover/checkpoint it. Reserve that work
             // before SQLite can write, preserving an oversized store as-is.
-            guard Self.saturatingAdd(try directoryFootprintBytes(rootURL), metadataReservationBytes)
-                    <= projection.policy.spoolBytes else { throw BrowserIntakeStoreError.resourceExhausted }
+            let transitionPending = preopenTransition?.phase == "intent"
+            if !transitionPending {
+                guard try activePreopenFootprintBytes() <= projection.policy.spoolBytes else {
+                    throw BrowserIntakeStoreError.resourceExhausted
+                }
+            }
             if FileManager.default.fileExists(atPath: dbURL.path) {
                 try Self.assertRegularFile(dbURL)
             }
@@ -384,8 +514,15 @@ public final class BrowserIntakeStore: @unchecked Sendable {
 
             stage = "schema"
             try initSchema()
+            try attachRetiredCatalog()
             stage = "recovery"
+            try recoverRetiredIntentsBeforeLoad()
             try recoverAndLoadState()
+            try validateRetiredTree()
+            try validateRetiredCatalogFilesLocked()
+            guard try activePreopenFootprintBytes() <= projection.policy.spoolBytes else {
+                throw BrowserIntakeStoreError.resourceExhausted
+            }
         } catch {
             if let db { sqlite3_close_v2(db); self.db = nil }
             Logger.storage.error("Browser spool initialization failed at \(stage, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -611,6 +748,868 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         }
     }
 
+    private func retiredRootURL() -> URL {
+        rootURL.appendingPathComponent("retired", isDirectory: true)
+    }
+
+    private func retiredPeriodsRootURL() -> URL {
+        retiredRootURL().appendingPathComponent("periods", isDirectory: true)
+    }
+
+    private func retiredPeriodDirectoryURL(_ periodId: String) -> URL {
+        retiredPeriodsRootURL().appendingPathComponent(periodId, isDirectory: true)
+    }
+
+    private func retiredPayloadURL(_ periodId: String) -> URL {
+        retiredPeriodDirectoryURL(periodId).appendingPathComponent("browser_pages.jsonl")
+    }
+
+    private func assertRetiredNode(_ url: URL, kind: mode_t) throws {
+        try Self.assertNoSymlinkAncestors(url)
+        var info = stat()
+        guard lstat(url.path, &info) == 0,
+              info.st_mode & S_IFMT == kind,
+              info.st_uid == geteuid() else { throw BrowserIntakeStoreError.localIO }
+    }
+
+    private func assertRetiredDirectoryIfPresent(_ url: URL) throws {
+        var info = stat()
+        if lstat(url.path, &info) == 0 {
+            guard info.st_mode & S_IFMT == S_IFDIR, info.st_uid == geteuid() else {
+                throw BrowserIntakeStoreError.localIO
+            }
+            try Self.assertNoSymlinkAncestors(url)
+        } else if errno != ENOENT {
+            throw BrowserIntakeStoreError.localIO
+        }
+    }
+
+    private func isRetiredTempName(_ name: String, prefix: String) -> Bool {
+        guard name.hasPrefix(prefix), name.hasSuffix(".tmp") else { return false }
+        let middle = String(name.dropFirst(prefix.count).dropLast(4))
+        return UUID(uuidString: middle) != nil
+    }
+
+    private func validateRetiredTree() throws {
+        let retired = retiredRootURL()
+        try assertRetiredNode(retired, kind: S_IFDIR)
+        let rootNames = try FileManager.default.contentsOfDirectory(atPath: retired.path)
+        let hasCatalog = rootNames.contains("catalog.sqlite")
+        if !hasCatalog && rootNames.contains(where: { ["catalog.sqlite-wal", "catalog.sqlite-shm", "catalog.sqlite-journal"].contains($0) }) {
+            throw BrowserIntakeStoreError.localIO
+        }
+        for name in rootNames {
+            let child = retired.appendingPathComponent(name)
+            switch name {
+            case "periods":
+                try assertRetiredNode(child, kind: S_IFDIR)
+            case "catalog.sqlite", "catalog.sqlite-wal", "catalog.sqlite-shm", "catalog.sqlite-journal",
+                 "transition.json", "discard-intent.json":
+                try assertRetiredNode(child, kind: S_IFREG)
+            default:
+                if isRetiredTempName(name, prefix: ".transition.json.") ||
+                    isRetiredTempName(name, prefix: ".discard-intent.json.") {
+                    try assertRetiredNode(child, kind: S_IFREG)
+                } else {
+                    throw BrowserIntakeStoreError.localIO
+                }
+            }
+        }
+
+        let periodsRoot = retiredPeriodsRootURL()
+        try assertRetiredNode(periodsRoot, kind: S_IFDIR)
+        for directory in try FileManager.default.contentsOfDirectory(at: periodsRoot, includingPropertiesForKeys: nil) {
+            guard UUID(uuidString: directory.lastPathComponent) != nil else { throw BrowserIntakeStoreError.localIO }
+            try assertRetiredNode(directory, kind: S_IFDIR)
+            for child in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+                let name = child.lastPathComponent
+                let ackTemp = name.hasPrefix(".browser_ingest_ack.json.") && name.hasSuffix(".tmp") &&
+                    UUID(uuidString: String(name.dropFirst(".browser_ingest_ack.json.".count).dropLast(4))) != nil
+                guard name == "browser_pages.jsonl" || name == "browser_ingest_ack.json" || ackTemp else {
+                    throw BrowserIntakeStoreError.localIO
+                }
+                try assertRetiredNode(child, kind: S_IFREG)
+            }
+        }
+    }
+
+    private func reclaimRetiredTemporaryFiles() throws {
+        let retired = retiredRootURL()
+        let names = try FileManager.default.contentsOfDirectory(atPath: retired.path)
+        var changed = false
+        for name in names where isRetiredTempName(name, prefix: ".transition.json.") ||
+            isRetiredTempName(name, prefix: ".discard-intent.json.") {
+            let url = retired.appendingPathComponent(name)
+            try assertRetiredNode(url, kind: S_IFREG)
+            try FileManager.default.removeItem(at: url)
+            changed = true
+        }
+        if changed { try syncRetiredDirectory(retired) }
+    }
+
+    private func activePreopenFootprintBytes() throws -> Int {
+        let periods = try directoryFootprintBytes(rootURL.appendingPathComponent("periods", isDirectory: true))
+        let staging = try directoryFootprintBytes(rootURL.appendingPathComponent("staging", isDirectory: true))
+        var sqliteBytes = 0
+        for name in ["intake.sqlite", "intake.sqlite-wal", "intake.sqlite-shm", "intake.sqlite-journal"] {
+            let url = rootURL.appendingPathComponent(name)
+            try ioInjector.check(.size)
+            let actual = try Self.fileByteCount(url)
+            if let bytes = ioInjector.size(for: url, actual: actual) {
+                sqliteBytes = Self.saturatingAdd(sqliteBytes, bytes)
+            }
+        }
+        return Self.saturatingAdd(Self.saturatingAdd(Self.saturatingAdd(periods, staging), sqliteBytes), metadataReservationBytes)
+    }
+
+    private func attachRetiredCatalog() throws {
+        let catalogURL = retiredRootURL().appendingPathComponent("catalog.sqlite")
+        try Self.assertNoSymlinkAncestors(catalogURL)
+        let existed = FileManager.default.fileExists(atPath: catalogURL.path)
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "ATTACH DATABASE ? AS retired", -1, &stmt, nil) == SQLITE_OK,
+              let stmt else { throw BrowserIntakeStoreError.localIO }
+        defer { sqlite3_finalize(stmt) }
+        let path = Data(catalogURL.path.utf8)
+        let bound = path.withUnsafeBytes { raw in
+            sqlite3_bind_text(stmt, 1, raw.bindMemory(to: CChar.self).baseAddress, Int32(path.count), SQLITE_TRANSIENT)
+        }
+        guard bound == SQLITE_OK, sqlite3_step(stmt) == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
+        if existed {
+            let integrity = try query("PRAGMA retired.integrity_check") { stmt -> Bool in
+                guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+                return Self.readText(stmt, 0) == "ok"
+            }
+            guard integrity else { throw BrowserIntakeStoreError.localIO }
+            let tables = try query("SELECT name FROM retired.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'") { stmt in
+                var names = Set<String>()
+                while true {
+                    let rc = try stepChecked(stmt)
+                    if rc == SQLITE_DONE { return names }
+                    guard rc == SQLITE_ROW, let name = Self.readText(stmt, 0) else { throw BrowserIntakeStoreError.localIO }
+                    names.insert(name)
+                }
+            }
+            guard tables == Set(["periods", "period_contexts", "receipts", "batch_seen"]) else {
+                throw BrowserIntakeStoreError.localIO
+            }
+            let unexpectedObjects = try query("SELECT 1 FROM retired.sqlite_master WHERE type IN ('view', 'trigger', 'index') AND name NOT LIKE 'sqlite_autoindex_%' LIMIT 1") { stmt in
+                let rc = try stepChecked(stmt)
+                guard rc == SQLITE_ROW || rc == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
+                return rc == SQLITE_ROW
+            }
+            guard !unexpectedObjects else { throw BrowserIntakeStoreError.localIO }
+            let expectedColumns: [String: [String]] = [
+                "periods": ["period_id", "generation", "state", "requested_day", "requested_segment", "file_sha256", "size", "committed_length", "created_at_ms", "finalized_at_ms", "canonical_key", "finalize_timezone", "finalize_reason", "delivery_binding", "ack_durable", "delivered_at_ms", "cleanup_durable"],
+                "period_contexts": ["period_id", "inst", "ctx", "initialized_at_ms"],
+                "receipts": ["generation", "inst", "batch_id", "result", "period_id", "reason", "class", "queued_at_ms", "accepted_at_ms", "size_bytes"],
+                "batch_seen": ["generation", "inst", "batch_id", "queued_at_ms", "initial_age_ms", "elapsed_highwater_ms", "age_established", "first_seen_ms"]
+            ]
+            let expectedPrimaryKeys: [String: [String]] = [
+                "periods": ["period_id"],
+                "period_contexts": ["period_id", "inst", "ctx"],
+                "receipts": ["generation", "inst", "batch_id"],
+                "batch_seen": ["generation", "inst", "batch_id"]
+            ]
+            for (table, expected) in expectedColumns {
+                let columns = try query("PRAGMA retired.table_info(\(table))") { stmt in
+                    var rows: [(name: String, primaryKeyOrder: Int)] = []
+                    while true {
+                        let rc = try stepChecked(stmt)
+                        if rc == SQLITE_DONE { return rows }
+                        guard rc == SQLITE_ROW, let name = Self.readText(stmt, 1) else { throw BrowserIntakeStoreError.localIO }
+                        rows.append((name, Int(sqlite3_column_int(stmt, 5))))
+                    }
+                }
+                guard columns.map(\.name) == expected else { throw BrowserIntakeStoreError.localIO }
+                let primaryKey = columns.filter { $0.primaryKeyOrder > 0 }
+                    .sorted { $0.primaryKeyOrder < $1.primaryKeyOrder }.map(\.name)
+                guard primaryKey == expectedPrimaryKeys[table] else { throw BrowserIntakeStoreError.localIO }
+            }
+        }
+        try execute("PRAGMA retired.journal_mode = DELETE; PRAGMA retired.synchronous = FULL; PRAGMA retired.fullfsync = ON;")
+        try execute("""
+            CREATE TABLE IF NOT EXISTS retired.periods (
+                period_id TEXT PRIMARY KEY, generation TEXT NOT NULL, state TEXT NOT NULL,
+                requested_day TEXT, requested_segment TEXT, file_sha256 TEXT,
+                size INTEGER NOT NULL DEFAULT 0, committed_length INTEGER NOT NULL DEFAULT 0,
+                created_at_ms INTEGER NOT NULL, finalized_at_ms INTEGER, canonical_key TEXT,
+                finalize_timezone TEXT, finalize_reason TEXT, delivery_binding TEXT,
+                ack_durable INTEGER NOT NULL DEFAULT 0, delivered_at_ms INTEGER,
+                cleanup_durable INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS retired.period_contexts (
+                period_id TEXT NOT NULL, inst TEXT NOT NULL, ctx TEXT NOT NULL,
+                initialized_at_ms INTEGER NOT NULL, PRIMARY KEY (period_id, inst, ctx)
+            );
+            CREATE TABLE IF NOT EXISTS retired.receipts (
+                generation TEXT NOT NULL, inst TEXT NOT NULL, batch_id TEXT NOT NULL,
+                result TEXT NOT NULL, period_id TEXT, reason TEXT, class TEXT,
+                queued_at_ms INTEGER NOT NULL, accepted_at_ms INTEGER, size_bytes INTEGER NOT NULL,
+                PRIMARY KEY (generation, inst, batch_id)
+            );
+            CREATE TABLE IF NOT EXISTS retired.batch_seen (
+                generation TEXT NOT NULL, inst TEXT NOT NULL, batch_id TEXT NOT NULL,
+                queued_at_ms INTEGER NOT NULL, initial_age_ms INTEGER NOT NULL DEFAULT 0,
+                elapsed_highwater_ms INTEGER NOT NULL DEFAULT 0, age_established INTEGER NOT NULL DEFAULT 1,
+                first_seen_ms INTEGER, PRIMARY KEY (generation, inst, batch_id)
+            );
+            """)
+        let journal = try query("PRAGMA retired.journal_mode") { stmt -> String? in
+            guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+            return Self.readText(stmt, 0)
+        }
+        guard journal == "delete" else { throw BrowserIntakeStoreError.localIO }
+        let retiredSynchronous = try query("PRAGMA retired.synchronous") { stmt -> Bool in
+            guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+            return sqlite3_column_int(stmt, 0) == 2
+        }
+        let retiredFullSync = try query("PRAGMA retired.fullfsync") { stmt -> Bool in
+            guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+            return sqlite3_column_int(stmt, 0) == 1
+        }
+        guard retiredSynchronous, retiredFullSync else { throw BrowserIntakeStoreError.localIO }
+        try Self.chmodPath(catalogURL, 0o600)
+        try fsyncParentChecked(of: catalogURL)
+    }
+
+    private func syncRetiredDirectory(_ child: URL) throws {
+        try assertRetiredNode(child, kind: S_IFDIR)
+        try ioInjector.check(.retiredDirectorySync)
+        try syncDirectory(child)
+    }
+
+    private func syncActivePeriodDirectory() throws {
+        let directory = rootURL.appendingPathComponent("periods", isDirectory: true)
+        try Self.assertNoSymlinkAncestors(directory)
+        var info = stat()
+        guard lstat(directory.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else {
+            throw BrowserIntakeStoreError.localIO
+        }
+        try syncDirectory(directory)
+    }
+
+    private func syncDirectory(_ directory: URL) throws {
+        let fd = open(directory.path, O_RDONLY)
+        guard fd >= 0 else { throw BrowserIntakeStoreError.localIO }
+        defer { close(fd) }
+        guard fcntl(fd, F_FULLFSYNC) == 0 else { throw BrowserIntakeStoreError.localIO }
+    }
+
+    private func writeRetiredJSON(_ object: [String: Any], to url: URL, point: BrowserIntakeIOPoint) throws {
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        let directory = url.deletingLastPathComponent()
+        try assertRetiredNode(directory, kind: S_IFDIR)
+        let temporary = directory.appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
+        var renamed = false
+        defer {
+            if !renamed { try? FileManager.default.removeItem(at: temporary) }
+        }
+        try Self.assertNoSymlinkAncestors(temporary)
+        try ioInjector.check(point)
+        guard FileManager.default.createFile(atPath: temporary.path, contents: data) else {
+            throw BrowserIntakeStoreError.localIO
+        }
+        try Self.chmodPath(temporary, 0o600)
+        let handle = try FileHandle(forWritingTo: temporary)
+        defer { try? handle.close() }
+        try ioInjector.check(.sync)
+        try Self.fullSync(handle)
+        try Self.assertNoSymlinkAncestors(url)
+        try ioInjector.check(.write)
+        guard Darwin.rename(temporary.path, url.path) == 0 else { throw BrowserIntakeStoreError.localIO }
+        renamed = true
+        try BrowserIngestAckStore.syncParent(of: url, ioInjector: ioInjector)
+    }
+
+    private func parseRetiredPeriods(_ value: Any?) throws -> [BrowserRetiredIntent.Period] {
+        guard let values = value as? [[String: Any]] else { throw BrowserIntakeStoreError.localIO }
+        var result: [BrowserRetiredIntent.Period] = []
+        var seen = Set<String>()
+        for item in values {
+            guard let generation = item["generation"] as? String, !generation.isEmpty,
+                  let periodId = item["periodId"] as? String, UUID(uuidString: periodId) != nil,
+                  let committedLength = item["committedLength"] as? Int, committedLength > 0,
+                  let sha256 = item["sha256"] as? String, Self.isSHA256(sha256),
+                  seen.insert(periodId).inserted else { throw BrowserIntakeStoreError.localIO }
+            result.append(.init(generation: generation, periodId: periodId, committedLength: committedLength, sha256: sha256))
+        }
+        return result
+    }
+
+    private static func isSHA256(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+
+    private func readTransitionIntent() throws -> BrowserRetiredIntent? {
+        let url = retiredRootURL().appendingPathComponent("transition.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        try assertRetiredNode(url, kind: S_IFREG)
+        let data = try Data(contentsOf: url)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw BrowserIntakeStoreError.localIO
+        }
+        guard let kind = object["kind"] as? String else { throw BrowserIntakeStoreError.localIO }
+        guard kind == "browser-intake-retired-transition" else { return nil }
+        guard let phase = object["phase"] as? String, phase == "intent" || phase == "published" else {
+            throw BrowserIntakeStoreError.localIO
+        }
+        let periods = try parseRetiredPeriods(object["periods"])
+        guard !periods.isEmpty else { throw BrowserIntakeStoreError.localIO }
+        return BrowserRetiredIntent(kind: kind, phase: phase, periods: periods)
+    }
+
+    private func readDiscardIntent() throws -> BrowserRetiredDiscardIntent? {
+        let url = retiredRootURL().appendingPathComponent("discard-intent.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        try assertRetiredNode(url, kind: S_IFREG)
+        let data = try Data(contentsOf: url)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw BrowserIntakeStoreError.localIO
+        }
+        guard let kind = object["kind"] as? String else { throw BrowserIntakeStoreError.localIO }
+        guard kind == "browser-intake-retired-discard" else { return nil }
+        guard let phase = object["phase"] as? String,
+              ["intent", "complete"].contains(phase) else { throw BrowserIntakeStoreError.localIO }
+        let parsed = try parseRetiredPeriods(object["periods"])
+        guard !parsed.isEmpty else { throw BrowserIntakeStoreError.localIO }
+        let outcome = object["outcome"] as? String
+        if phase == "complete", !["nothingRemoved", "partiallyRemoved", "fullyRemoved", "durabilityUnproven"].contains(outcome ?? "") {
+            throw BrowserIntakeStoreError.localIO
+        }
+        return BrowserRetiredDiscardIntent(kind: kind, phase: phase, outcome: outcome, periods: parsed.map {
+            .init(generation: $0.generation, periodId: $0.periodId, committedLength: $0.committedLength, sha256: $0.sha256)
+        })
+    }
+
+    private func writeTransitionIntent(_ intent: BrowserRetiredIntent) throws {
+        try writeRetiredJSON([
+            "kind": intent.kind,
+            "phase": intent.phase,
+            "periods": intent.periods.map { [
+                "generation": $0.generation,
+                "periodId": $0.periodId,
+                "committedLength": $0.committedLength,
+                "sha256": $0.sha256
+            ] }
+        ], to: retiredRootURL().appendingPathComponent("transition.json"), point: .retiredTransitionIntent)
+    }
+
+    private func writeDiscardIntent(_ intent: BrowserRetiredDiscardIntent) throws {
+        try writeRetiredJSON([
+            "kind": intent.kind,
+            "phase": intent.phase,
+            "outcome": intent.outcome as Any? ?? NSNull(),
+            "periods": intent.periods.map { [
+                "generation": $0.generation,
+                "periodId": $0.periodId,
+                "committedLength": $0.committedLength,
+                "sha256": $0.sha256
+            ] }
+        ], to: retiredRootURL().appendingPathComponent("discard-intent.json"), point: .retiredDiscardIntent)
+    }
+
+    private func sqlQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "''"))'"
+    }
+
+    private func validateRetiredPayload(_ intent: BrowserRetiredIntent.Period, under directory: URL) throws {
+        try assertRetiredNode(directory, kind: S_IFDIR)
+        let payload = directory.appendingPathComponent("browser_pages.jsonl")
+        try assertRetiredNode(payload, kind: S_IFREG)
+        guard try Self.fileByteCount(payload) == intent.committedLength else { throw BrowserIntakeStoreError.localIO }
+        try ioInjector.check(.proof)
+        let data = try Data(contentsOf: payload)
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard BrowserOpaqueString.equals(digest, intent.sha256) else { throw BrowserIntakeStoreError.localIO }
+        for child in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+            let name = child.lastPathComponent
+            let ackTemp = name.hasPrefix(".browser_ingest_ack.json.") && name.hasSuffix(".tmp") &&
+                UUID(uuidString: String(name.dropFirst(".browser_ingest_ack.json.".count).dropLast(4))) != nil
+            guard name == "browser_pages.jsonl" || name == "browser_ingest_ack.json" || ackTemp else {
+                throw BrowserIntakeStoreError.localIO
+            }
+            try assertRetiredNode(child, kind: S_IFREG)
+        }
+    }
+
+    private func validateExistingActiveCatalogRow(_ period: BrowserRetiredIntent.Period) throws -> Bool {
+        try query("SELECT generation, committed_length, file_sha256 FROM periods WHERE period_id = \(sqlQuote(period.periodId))") { stmt in
+            let rc = try stepChecked(stmt)
+            if rc == SQLITE_DONE { return false }
+            guard rc == SQLITE_ROW,
+                  Self.readText(stmt, 0) == period.generation,
+                  sqlite3_column_int64(stmt, 1) == Int64(period.committedLength),
+                  Self.readText(stmt, 2) == period.sha256,
+                  try stepChecked(stmt) == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
+            return true
+        }
+    }
+
+    private func validateExistingRetiredCatalogRow(_ period: BrowserRetiredIntent.Period) throws -> Bool {
+        try query("SELECT generation, committed_length, file_sha256 FROM retired.periods WHERE period_id = \(sqlQuote(period.periodId))") { stmt in
+            let rc = try stepChecked(stmt)
+            if rc == SQLITE_DONE { return false }
+            guard rc == SQLITE_ROW,
+                  Self.readText(stmt, 0) == period.generation,
+                  sqlite3_column_int64(stmt, 1) == Int64(period.committedLength),
+                  Self.readText(stmt, 2) == period.sha256,
+                  try stepChecked(stmt) == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
+            return true
+        }
+    }
+
+    private func moveRowsToRetiredCatalog(_ intent: BrowserRetiredIntent) throws {
+        for item in intent.periods {
+            let active = try validateExistingActiveCatalogRow(item)
+            let retired = try validateExistingRetiredCatalogRow(item)
+            guard active || retired else {
+                throw BrowserIntakeStoreError.localIO
+            }
+        }
+        let generations = Set(intent.periods.map(\.generation))
+        try execute("BEGIN IMMEDIATE;")
+        do {
+            for item in intent.periods {
+                let pid = sqlQuote(item.periodId)
+                try execute("INSERT OR REPLACE INTO retired.periods SELECT * FROM periods WHERE period_id = \(pid);")
+                try execute("INSERT OR REPLACE INTO retired.period_contexts SELECT * FROM period_contexts WHERE period_id = \(pid);")
+            }
+            for generation in generations {
+                let gen = sqlQuote(generation)
+                try execute("INSERT OR REPLACE INTO retired.receipts SELECT * FROM receipts WHERE generation = \(gen);")
+                try execute("INSERT OR REPLACE INTO retired.batch_seen SELECT * FROM batch_seen WHERE generation = \(gen);")
+                try execute("DELETE FROM receipts WHERE generation = \(gen);")
+                try execute("DELETE FROM batch_seen WHERE generation = \(gen);")
+            }
+            for item in intent.periods {
+                let pid = sqlQuote(item.periodId)
+                try execute("DELETE FROM period_contexts WHERE period_id = \(pid);")
+                try execute("DELETE FROM periods WHERE period_id = \(pid);")
+            }
+            try execute("COMMIT;")
+        } catch {
+            try? rollbackIfActiveLocked()
+            throw error
+        }
+    }
+
+    private func retireDirectoryForTransition(_ item: BrowserRetiredIntent.Period) throws {
+        let activeDirectory = periodFileURL(for: item.periodId).deletingLastPathComponent()
+        let retiredDirectory = retiredPeriodDirectoryURL(item.periodId)
+        let activeExists = FileManager.default.fileExists(atPath: activeDirectory.path)
+        let retiredExists = FileManager.default.fileExists(atPath: retiredDirectory.path)
+        guard activeExists != retiredExists else { throw BrowserIntakeStoreError.localIO }
+        if activeExists {
+            try Self.assertNoSymlinkAncestors(activeDirectory)
+            try Self.assertRegularFile(periodFileURL(for: item.periodId))
+            var dirInfo = stat()
+            guard lstat(activeDirectory.path, &dirInfo) == 0, dirInfo.st_mode & S_IFMT == S_IFDIR,
+                  dirInfo.st_uid == geteuid() else { throw BrowserIntakeStoreError.localIO }
+            let sourceCheck = BrowserRetiredIntent.Period(generation: item.generation, periodId: item.periodId,
+                committedLength: item.committedLength, sha256: item.sha256)
+            // The active path is owner-checked only because this transition moves it.
+            try validateMovedActivePayload(sourceCheck, directory: activeDirectory)
+            guard Darwin.rename(activeDirectory.path, retiredDirectory.path) == 0 else { throw BrowserIntakeStoreError.localIO }
+        }
+        try validateRetiredPayload(item, under: retiredDirectory)
+    }
+
+    private func validateMovedActivePayload(_ item: BrowserRetiredIntent.Period, directory: URL) throws {
+        var dirInfo = stat()
+        guard lstat(directory.path, &dirInfo) == 0, dirInfo.st_uid == geteuid(), dirInfo.st_mode & S_IFMT == S_IFDIR else {
+            throw BrowserIntakeStoreError.localIO
+        }
+        let payload = directory.appendingPathComponent("browser_pages.jsonl")
+        try Self.assertNoSymlinkAncestors(payload)
+        var fileInfo = stat()
+        guard lstat(payload.path, &fileInfo) == 0, fileInfo.st_uid == geteuid(), fileInfo.st_mode & S_IFMT == S_IFREG,
+              Int(fileInfo.st_size) == item.committedLength else { throw BrowserIntakeStoreError.localIO }
+        try validatePayloadLocked(payload, length: item.committedLength, sha256: item.sha256)
+        for child in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+            let name = child.lastPathComponent
+            let ackTemp = name.hasPrefix(".browser_ingest_ack.json.") && name.hasSuffix(".tmp") &&
+                UUID(uuidString: String(name.dropFirst(".browser_ingest_ack.json.".count).dropLast(4))) != nil
+            guard name == "browser_pages.jsonl" || name == "browser_ingest_ack.json" || ackTemp else {
+                throw BrowserIntakeStoreError.localIO
+            }
+            var info = stat()
+            guard lstat(child.path, &info) == 0, info.st_uid == geteuid(),
+                  info.st_mode & S_IFMT == S_IFREG else { throw BrowserIntakeStoreError.localIO }
+        }
+    }
+
+    private func completeTransition(_ original: BrowserRetiredIntent) throws {
+        var intent = original
+        let discardIntent = try readDiscardIntent()
+        let discardScope = Set(discardIntent?.periods.map(\.periodId) ?? [])
+        var remaining: [BrowserRetiredIntent.Period] = []
+        for item in intent.periods {
+            let activePayloadExists = FileManager.default.fileExists(atPath: periodFileURL(for: item.periodId).path)
+            let retiredPayloadExists = FileManager.default.fileExists(atPath: retiredPayloadURL(item.periodId).path)
+            if discardScope.contains(item.periodId) && !activePayloadExists && !retiredPayloadExists {
+                continue
+            }
+            let activeExists = FileManager.default.fileExists(atPath: periodFileURL(for: item.periodId).deletingLastPathComponent().path)
+            let retiredExists = FileManager.default.fileExists(atPath: retiredPeriodDirectoryURL(item.periodId).path)
+            if intent.phase == "published", let discardIntent,
+               discardIntent.phase == "complete", discardScope.contains(item.periodId),
+               !(try transitionRowsAreRetired(item.periodId)) {
+                continue
+            }
+            if intent.phase == "published", !activeExists, !retiredExists,
+               !(try transitionRowsAreRetired(item.periodId)) {
+                continue
+            }
+            try retireDirectoryForTransition(item)
+            remaining.append(item)
+        }
+        intent.periods = remaining
+        if !remaining.isEmpty { try moveRowsToRetiredCatalog(intent) }
+        try syncActivePeriodDirectory()
+        try syncRetiredDirectory(retiredPeriodsRootURL())
+        if original.phase != "published" {
+            var published = original
+            published.phase = "published"
+            try writeTransitionIntent(published)
+            if crashPoint == .afterRetiredPublication {
+                throw NSError(domain: "BrowserIntakeStore", code: 98,
+                    userInfo: [NSLocalizedDescriptionKey: "Crash after retired publication"])
+            }
+        }
+        recalculateCounters()
+    }
+
+    private func transitionRowsAreRetired(_ periodId: String) throws -> Bool {
+        try query("SELECT 1 FROM retired.periods WHERE period_id = \(sqlQuote(periodId))") { stmt in
+            let rc = try stepChecked(stmt)
+            guard rc == SQLITE_ROW || rc == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
+            return rc == SQLITE_ROW
+        }
+    }
+
+    private func recoverRetiredIntentsBeforeLoad() throws {
+        if let transition = try readTransitionIntent() {
+            try completeTransition(transition)
+        } else if FileManager.default.fileExists(atPath: retiredRootURL().appendingPathComponent("transition.json").path) {
+            // A file at the reserved name with another kind is not an intent and
+            // must not be replaced or used to infer a transition.
+            throw BrowserIntakeStoreError.localIO
+        }
+        let discardPath = retiredRootURL().appendingPathComponent("discard-intent.json")
+        let discard = try readDiscardIntent()
+        if let discard, discard.phase == "intent" || discard.outcome == "durabilityUnproven" {
+            _ = try resumeDiscardIntent(discard)
+        } else if FileManager.default.fileExists(atPath: discardPath.path) && discard == nil {
+            throw BrowserIntakeStoreError.localIO
+        }
+    }
+
+    private func legacyRetiredGenerationsLocked() throws -> [String] {
+        try query("""
+            SELECT DISTINCT e.destination_generation
+            FROM epoch e JOIN periods p ON p.generation = e.destination_generation
+            WHERE e.status = 'retired' AND p.committed_length > 0
+            ORDER BY e.id
+            """) { stmt in
+            var result: [String] = []
+            while true {
+                let rc = try stepChecked(stmt)
+                if rc == SQLITE_DONE { return result }
+                guard rc == SQLITE_ROW, let generation = Self.readText(stmt, 0) else { throw BrowserIntakeStoreError.localIO }
+                result.append(generation)
+            }
+        }
+    }
+
+    private func periodIntentItemsLocked(generation: String) throws -> [BrowserRetiredIntent.Period] {
+        try query("SELECT period_id, committed_length, file_sha256, state, cleanup_durable FROM periods WHERE generation = \(sqlQuote(generation)) AND committed_length > 0 AND state IN ('finalized', 'delivered', 'removed') ORDER BY created_at_ms") { stmt in
+            var result: [BrowserRetiredIntent.Period] = []
+            while true {
+                let rc = try stepChecked(stmt)
+                if rc == SQLITE_DONE { return result }
+                guard rc == SQLITE_ROW, let pid = Self.readText(stmt, 0),
+                      let sha = Self.readText(stmt, 2), Self.isSHA256(sha),
+                      let state = Self.readText(stmt, 3) else { throw BrowserIntakeStoreError.localIO }
+                let length = Int(sqlite3_column_int64(stmt, 1))
+                guard length > 0 else { throw BrowserIntakeStoreError.localIO }
+                let file = periodFileURL(for: pid)
+                if FileManager.default.fileExists(atPath: file.path) {
+                    result.append(.init(generation: generation, periodId: pid, committedLength: length, sha256: sha))
+                } else {
+                    let cleanupDurable = sqlite3_column_int(stmt, 4) != 0
+                    guard (state == "delivered" || state == "removed") && cleanupDurable else {
+                        throw BrowserIntakeStoreError.localIO
+                    }
+                }
+            }
+        }
+    }
+
+    private func partitionRetiredGenerationLocked(_ generation: String) throws {
+        let openPeriods = try query("SELECT period_id FROM periods WHERE generation = \(sqlQuote(generation)) AND state = 'open'") { stmt in
+            var ids: [String] = []
+            while true {
+                let rc = try stepChecked(stmt)
+                if rc == SQLITE_DONE { return ids }
+                guard rc == SQLITE_ROW, let id = Self.readText(stmt, 0) else { throw BrowserIntakeStoreError.localIO }
+                ids.append(id)
+            }
+        }
+        for periodId in openPeriods {
+            let now = max(storedFloorMs, 1)
+            try finalizePeriodInternal(periodId: periodId, reason: "identity_retirement",
+                civilDate: Date(timeIntervalSince1970: Double(now) / 1000.0), timeZone: .current, openReplacement: false)
+        }
+        let items = try periodIntentItemsLocked(generation: generation)
+        guard !items.isEmpty else { return }
+        let intent = BrowserRetiredIntent(kind: "browser-intake-retired-transition", phase: "intent", periods: items)
+        try writeTransitionIntent(intent)
+        try completeTransition(intent)
+    }
+
+    private func recoverLegacyRetiredCustodyLocked() throws {
+        let generations = try legacyRetiredGenerationsLocked()
+        for generation in generations { try partitionRetiredGenerationLocked(generation) }
+    }
+
+    private func retiredCatalogIdentitiesLocked(validateFiles: Bool) throws -> [(BrowserRetiredCustodyIdentity, String)] {
+        let emptyRows = try query("SELECT COUNT(*) FROM retired.periods WHERE committed_length <= 0") { stmt in
+            guard try stepChecked(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+            return sqlite3_column_int64(stmt, 0)
+        }
+        guard emptyRows == 0 else { throw BrowserIntakeStoreError.localIO }
+        return try query("SELECT generation, period_id, committed_length, file_sha256 FROM retired.periods WHERE committed_length > 0 ORDER BY generation, period_id") { stmt in
+            var result: [(BrowserRetiredCustodyIdentity, String)] = []
+            while true {
+                let rc = try stepChecked(stmt)
+                if rc == SQLITE_DONE { return result }
+                guard rc == SQLITE_ROW, let generation = Self.readText(stmt, 0),
+                      let periodId = Self.readText(stmt, 1), UUID(uuidString: periodId) != nil,
+                      let sha = Self.readText(stmt, 3), Self.isSHA256(sha) else { throw BrowserIntakeStoreError.localIO }
+                let length = Int(sqlite3_column_int64(stmt, 2))
+                guard length > 0 else { throw BrowserIntakeStoreError.localIO }
+                let identity = BrowserRetiredCustodyIdentity(generation: generation, periodId: periodId, committedLength: length)
+                if validateFiles {
+                    try validateRetiredPayload(.init(generation: generation, periodId: periodId, committedLength: length, sha256: sha),
+                        under: retiredPeriodDirectoryURL(periodId))
+                }
+                result.append((identity, sha))
+            }
+        }
+    }
+
+    private func validateRetiredCatalogFilesLocked() throws {
+        let rows = try retiredCatalogIdentitiesLocked(validateFiles: false)
+        var byPeriod: [String: (BrowserRetiredCustodyIdentity, String)] = [:]
+        for row in rows {
+            guard byPeriod[row.0.periodId] == nil else { throw BrowserIntakeStoreError.localIO }
+            byPeriod[row.0.periodId] = row
+        }
+        let discardIds = Set((try readDiscardIntent()?.periods ?? []).map(\.periodId))
+        for identity in rows.map(\.0) {
+            guard FileManager.default.fileExists(atPath: retiredPeriodDirectoryURL(identity.periodId).path) ||
+                    discardIds.contains(identity.periodId) else { throw BrowserIntakeStoreError.localIO }
+        }
+        for directory in try FileManager.default.contentsOfDirectory(at: retiredPeriodsRootURL(), includingPropertiesForKeys: nil) {
+            let periodId = directory.lastPathComponent
+            let payload = directory.appendingPathComponent("browser_pages.jsonl")
+            let hasPayload = FileManager.default.fileExists(atPath: payload.path)
+            if hasPayload {
+                guard let (identity, sha) = byPeriod[periodId] else { throw BrowserIntakeStoreError.localIO }
+                try validateRetiredPayload(.init(generation: identity.generation, periodId: periodId,
+                    committedLength: identity.committedLength, sha256: sha), under: directory)
+            } else if byPeriod[periodId] != nil, !discardIds.contains(periodId) {
+                throw BrowserIntakeStoreError.localIO
+            }
+        }
+    }
+
+    public func retiredCustodyInventory() -> BrowserRetiredCustodyInventory {
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            try validateRetiredTree()
+            if let transition = try readTransitionIntent(), transition.phase == "intent" {
+                try completeTransition(transition)
+            }
+            if let discard = try readDiscardIntent(), discard.phase == "intent" || discard.outcome == "durabilityUnproven" {
+                _ = try resumeDiscardIntent(discard)
+            }
+            try validateRetiredCatalogFilesLocked()
+            let rows = try retiredCatalogIdentitiesLocked(validateFiles: false)
+            guard !rows.isEmpty else { return .empty }
+            return .present(BrowserRetiredCustodyScope(identities: rows.map(\.0)))
+        } catch {
+            isStoreFailed = true
+            return .unavailable
+        }
+    }
+
+    public func activePending() -> BrowserActivePending {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let generation = activeGeneration else { return BrowserActivePending(identities: []) }
+        do {
+            return BrowserActivePending(identities: try query("SELECT period_id, committed_length, state, cleanup_durable FROM periods WHERE generation = \(sqlQuote(generation)) AND committed_length > 0 AND state IN ('open', 'finalized', 'delivered', 'removed') ORDER BY created_at_ms") { stmt in
+                var identities: [BrowserRetiredCustodyIdentity] = []
+                while true {
+                    let rc = try stepChecked(stmt)
+                    if rc == SQLITE_DONE { return identities }
+                    guard rc == SQLITE_ROW, let periodId = Self.readText(stmt, 0),
+                          let state = Self.readText(stmt, 2) else { throw BrowserIntakeStoreError.localIO }
+                    let length = Int(sqlite3_column_int64(stmt, 1))
+                    let cleanupDurable = sqlite3_column_int(stmt, 3) != 0
+                    let held = state == "open" || state == "finalized" || !cleanupDurable ||
+                        FileManager.default.fileExists(atPath: periodFileURL(for: periodId).path)
+                    if held { identities.append(.init(generation: generation, periodId: periodId, committedLength: length)) }
+                }
+            })
+        } catch {
+            isStoreFailed = true
+            return BrowserActivePending(identities: [])
+        }
+    }
+
+    public func cancelRetiredCustodyDiscard() {
+        lock.withLock {}
+    }
+
+    public func discardRetiredCustody(_ scope: BrowserRetiredCustodyScope) throws -> BrowserRetiredDiscardResult {
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            try validateRetiredTree()
+            if let pending = try readDiscardIntent(), pending.phase == "intent" || pending.outcome == "durabilityUnproven" {
+                _ = try resumeDiscardIntent(pending)
+            }
+            try validateRetiredCatalogFilesLocked()
+            let live = try retiredCatalogIdentitiesLocked(validateFiles: true)
+            if scope.identities.isEmpty { return live.isEmpty ? .nothingRemoved : .refused }
+            let requested = scope.identities
+            guard Set(requested).count == requested.count,
+                  Set(live.map { $0.0 }) == Set(requested) else { return .refused }
+            let requestedSet = Set(requested)
+            let items = live.filter { requestedSet.contains($0.0) }.map { pair in
+                BrowserRetiredDiscardIntent.Period(generation: pair.0.generation, periodId: pair.0.periodId,
+                    committedLength: pair.0.committedLength, sha256: pair.1)
+            }
+            let intent = BrowserRetiredDiscardIntent(kind: "browser-intake-retired-discard", phase: "intent", outcome: nil, periods: items)
+            try writeDiscardIntent(intent)
+            return try resumeDiscardIntent(intent)
+        } catch {
+            if (error as? BrowserIntakeStoreError) == .localIO { isStoreFailed = true }
+            throw error
+        }
+    }
+
+    private func resumeDiscardIntent(_ original: BrowserRetiredDiscardIntent) throws -> BrowserRetiredDiscardResult {
+        guard original.kind == "browser-intake-retired-discard" else { throw BrowserIntakeStoreError.localIO }
+        if original.phase == "complete", original.outcome != "durabilityUnproven" {
+            switch original.outcome {
+            case "nothingRemoved": return .nothingRemoved
+            case "partiallyRemoved": return .partiallyRemoved
+            case "fullyRemoved": return .fullyRemoved
+            case "durabilityUnproven": return .durabilityUnproven
+            default: throw BrowserIntakeStoreError.localIO
+            }
+        }
+
+        var removed = Set<String>()
+        var unlinkFailed = false
+        for item in original.periods {
+            let directory = retiredPeriodDirectoryURL(item.periodId)
+            if !FileManager.default.fileExists(atPath: directory.path) {
+                removed.insert(item.periodId)
+                continue
+            }
+            try assertRetiredNode(directory, kind: S_IFDIR)
+            let payload = directory.appendingPathComponent("browser_pages.jsonl")
+            if FileManager.default.fileExists(atPath: payload.path) {
+                try validateRetiredPayload(.init(generation: item.generation, periodId: item.periodId,
+                    committedLength: item.committedLength, sha256: item.sha256), under: directory)
+                do {
+                    try ioInjector.check(.retiredUnlink)
+                    try FileManager.default.removeItem(at: payload)
+                    removed.insert(item.periodId)
+                } catch {
+                    unlinkFailed = true
+                    break
+                }
+            } else {
+                // A crash may have happened after unlink and before the catalog commit.
+                removed.insert(item.periodId)
+            }
+            // The acknowledgment is metadata. The explicitly selected payload
+            // is the retained material being discarded.
+        }
+
+        let directorySyncSucceeded: Bool
+        do {
+            for item in original.periods where removed.contains(item.periodId) {
+                let directory = retiredPeriodDirectoryURL(item.periodId)
+                if FileManager.default.fileExists(atPath: directory.path) {
+                    try syncRetiredDirectory(directory)
+                } else {
+                    try syncRetiredDirectory(retiredPeriodsRootURL())
+                }
+            }
+            directorySyncSucceeded = true
+        } catch {
+            directorySyncSucceeded = false
+        }
+        if !directorySyncSucceeded {
+            var completed = original
+            completed.phase = "complete"
+            completed.outcome = "durabilityUnproven"
+            try writeDiscardIntent(completed)
+            return .durabilityUnproven
+        }
+
+        try deleteRetiredCatalogRows(for: removed, intent: original)
+        let allRemoved = removed.count == original.periods.count && !unlinkFailed
+        let result: BrowserRetiredDiscardResult = allRemoved ? .fullyRemoved : (unlinkFailed ? .partiallyRemoved : (removed.isEmpty ? .nothingRemoved : .partiallyRemoved))
+        var completed = original
+        completed.phase = "complete"
+        switch result {
+        case .fullyRemoved: completed.outcome = "fullyRemoved"
+        case .partiallyRemoved: completed.outcome = "partiallyRemoved"
+        case .nothingRemoved: completed.outcome = "nothingRemoved"
+        case .durabilityUnproven, .refused: completed.outcome = "durabilityUnproven"
+        }
+        try writeDiscardIntent(completed)
+        return result
+    }
+
+    private func deleteRetiredCatalogRows(for removedIds: Set<String>, intent: BrowserRetiredDiscardIntent) throws {
+        guard !removedIds.isEmpty else { return }
+        try execute("BEGIN IMMEDIATE;")
+        do {
+            for item in intent.periods where removedIds.contains(item.periodId) {
+                let pid = sqlQuote(item.periodId)
+                try execute("DELETE FROM retired.period_contexts WHERE period_id = \(pid);")
+                try execute("DELETE FROM retired.receipts WHERE period_id = \(pid);")
+                try execute("DELETE FROM retired.periods WHERE period_id = \(pid);")
+                let gen = sqlQuote(item.generation)
+                try execute("""
+                    DELETE FROM retired.batch_seen
+                    WHERE generation = \(gen) AND NOT EXISTS (
+                        SELECT 1 FROM retired.receipts r WHERE r.generation = retired.batch_seen.generation
+                          AND r.inst = retired.batch_seen.inst AND r.batch_id = retired.batch_seen.batch_id
+                    );
+                    """)
+                try execute("""
+                    DELETE FROM retired.receipts WHERE generation = \(gen)
+                    AND NOT EXISTS (SELECT 1 FROM retired.periods p WHERE p.generation = retired.receipts.generation);
+                    """)
+            }
+            try execute("COMMIT;")
+        } catch {
+            try? rollbackIfActiveLocked()
+            throw error
+        }
+    }
+
 private static func fullSync(_ handle: FileHandle) throws {
         guard fcntl(handle.fileDescriptor, F_FULLFSYNC) == 0 else { throw BrowserIntakeStoreError.localIO }
     }
@@ -787,6 +1786,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
 
         try recoverPeriodFiles()
+        try recoverLegacyRetiredCustodyLocked()
         do {
             try reclaimAbandonedStaging()
             try reclaimEmptyUnreferencedPeriodDirectories()
@@ -808,7 +1808,7 @@ private static func fullSync(_ handle: FileHandle) throws {
 
         // A readable database with damaged custody must still project the held
         // data and local failure. Mutations and delivery remain fail-closed.
-        recalculateCounters()
+        recalculateCounters(clearStalenessWhenEmpty: true)
     }
 
     private func reclaimAbandonedStaging() throws {
@@ -835,6 +1835,15 @@ private static func fullSync(_ handle: FileHandle) throws {
             }
             for child in children { try FileManager.default.removeItem(at: child) }
             try FileManager.default.removeItem(at: directory)
+            guard !FileManager.default.fileExists(atPath: directory.path) else {
+                throw BrowserIntakeStoreError.localIO
+            }
+            let removedPath = directory.standardizedFileURL.path
+            stagingDirectories.removeAll { $0.standardizedFileURL.path == removedPath }
+            let reservedURLs = stagingReservations.keys.filter {
+                $0.standardizedFileURL.path == removedPath
+            }
+            for reservedURL in reservedURLs { stagingReservations.removeValue(forKey: reservedURL) }
         }
         if !directories.isEmpty { try fsyncParentChecked(of: stagingRoot.appendingPathComponent("reclaimed")) }
     }
@@ -1003,7 +2012,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
     }
 
-    private func recalculateCounters() {
+    private func recalculateCounters(clearStalenessWhenEmpty: Bool = false) {
         do {
             var payloadBytes = 0
             try query("SELECT period_id, committed_length, state FROM periods WHERE state IN ('open', 'finalized', 'delivered', 'removed')") { stmt in
@@ -1048,8 +2057,14 @@ private static func fullSync(_ handle: FileHandle) throws {
             }
 
             storedFloorMs = max(storedFloorMs, try optionalStateValue("floor_ms") ?? 0)
-            staleAnchorMs = try optionalStateValue("stale_anchor_ms") ?? 0
-            staleElapsedHighWaterMs = try optionalStateValue("stale_elapsed_ms") ?? 0
+            if heldPayloadBytes == 0 && clearStalenessWhenEmpty {
+                try execute("DELETE FROM spool_state WHERE key IN ('stale_anchor_ms', 'stale_elapsed_ms');")
+                staleAnchorMs = 0
+                staleElapsedHighWaterMs = 0
+            } else {
+                staleAnchorMs = try optionalStateValue("stale_anchor_ms") ?? 0
+                staleElapsedHighWaterMs = try optionalStateValue("stale_elapsed_ms") ?? 0
+            }
         } catch {
             isStoreFailed = true
             heldPayloadBytes = Int.max
@@ -1107,6 +2122,9 @@ private static func fullSync(_ handle: FileHandle) throws {
                 }
                 try validatePayloadLocked(periodFileURL(for: period.periodId), length: period.committedLength, sha256: digest)
             } catch {
+                if !BrowserOpaqueString.equals(activeGeneration, period.generation) {
+                    throw BrowserIntakeStoreError.staleGeneration
+                }
                 isStoreFailed = true
                 throw error
             }
@@ -1285,6 +2303,30 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
 
         let durableNowMs = try updateFloorMsLocked(wallNowMs: max(storedFloorMs, nowMs))
+        let hasPersistedHistory = try query("SELECT 1 FROM epoch LIMIT 1") { stmt in
+            let rc = try stepChecked(stmt)
+            guard rc == SQLITE_ROW || rc == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
+            return rc == SQLITE_ROW
+        }
+        if let previousGeneration = activeGeneration {
+            // With no held text, retiring cannot release payload or accepted
+            // receipt pages. Preserve the current generation when metadata
+            // alone leaves no room for its replacement.
+            if heldPayloadBytes == 0, try !metadataAdmissionFitsLocked(additionalBytes: 1) {
+                throw BrowserIntakeStoreError.resourceExhausted
+            }
+            try retireAndPartitionLocked(generation: previousGeneration, nowMs: durableNowMs, timeZone: .current)
+        } else if hasPersistedHistory {
+            let previousGeneration = try query("SELECT destination_generation FROM epoch ORDER BY id DESC LIMIT 1") { stmt -> String? in
+                let rc = try stepChecked(stmt)
+                if rc == SQLITE_DONE { return nil }
+                guard rc == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+                return Self.readText(stmt, 0)
+            }
+            if let previousGeneration {
+                try retireAndPartitionLocked(generation: previousGeneration, nowMs: durableNowMs, timeZone: .current)
+            }
+        }
         guard try !isQuotaFullLocked(additionalDedupBytes: 1) else { throw BrowserIntakeStoreError.resourceExhausted }
         let newGen = UUID().uuidString
         let newPeriodId = UUID().uuidString
@@ -1294,7 +2336,6 @@ private static func fullSync(_ handle: FileHandle) throws {
             try createEmptyPeriodFileLocked(newPeriodId)
             try execute("BEGIN IMMEDIATE;")
             transactionBegan = true
-            try execute("UPDATE epoch SET status = 'retired', retired_at_ms = \(durableNowMs) WHERE status = 'active';")
             try query("INSERT INTO epoch (identity_token, destination_generation, status, created_at_ms) VALUES (?, ?, 'active', ?)") { stmt in
                 try bindTextChecked(stmt, 1, digest)
                 try bindTextChecked(stmt, 2, newGen)
@@ -1361,21 +2402,67 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
 
         let durableNowMs = try updateFloorMsLocked(wallNowMs: max(storedFloorMs, nowMs))
-
-        if let openPid = currentOpenPeriodId {
-            try finalizePeriodInternal(
-                periodId: openPid,
-                reason: "identity_retirement",
-                civilDate: Date(timeIntervalSince1970: Double(durableNowMs) / 1000.0),
-                timeZone: timeZone,
-                openReplacement: false
-            )
+        let retiringGeneration: String?
+        if let activeGeneration {
+            retiringGeneration = activeGeneration
+        } else {
+            retiringGeneration = try query("SELECT destination_generation FROM epoch WHERE status = 'active' ORDER BY id DESC LIMIT 1") { stmt -> String? in
+                let rc = try stepChecked(stmt)
+                if rc == SQLITE_DONE { return nil }
+                guard rc == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+                return Self.readText(stmt, 0)
+            }
         }
-
-        try execute("UPDATE epoch SET status = 'retired', retired_at_ms = \(durableNowMs) WHERE status = 'active';")
-        self.activeGeneration = nil
+        try retireAndPartitionLocked(generation: retiringGeneration, nowMs: durableNowMs, timeZone: timeZone)
         self.activeIdentityToken = digest
-        self.currentOpenPeriodId = nil
+    }
+
+    private func retireAndPartitionLocked(generation: String?, nowMs: UInt64, timeZone: TimeZone) throws {
+        do {
+            try validateRetiredTree()
+            if let generation {
+                let openPeriods = try query("SELECT period_id FROM periods WHERE generation = \(sqlQuote(generation)) AND state = 'open'") { stmt in
+                    var ids: [String] = []
+                    while true {
+                        let rc = try stepChecked(stmt)
+                        if rc == SQLITE_DONE { return ids }
+                        guard rc == SQLITE_ROW, let id = Self.readText(stmt, 0) else { throw BrowserIntakeStoreError.localIO }
+                        ids.append(id)
+                    }
+                }
+                for periodId in openPeriods {
+                    try finalizePeriodInternal(periodId: periodId, reason: "identity_retirement",
+                        civilDate: Date(timeIntervalSince1970: Double(nowMs) / 1000.0),
+                        timeZone: timeZone, openReplacement: false)
+                }
+            }
+
+            try execute("BEGIN IMMEDIATE;")
+            do {
+                if let generation {
+                    try execute("UPDATE epoch SET status = 'retired', retired_at_ms = \(nowMs) WHERE destination_generation = \(sqlQuote(generation)) AND status = 'active';")
+                } else {
+                    try execute("UPDATE epoch SET status = 'retired', retired_at_ms = \(nowMs) WHERE status = 'active';")
+                }
+                try execute("DELETE FROM spool_state WHERE key IN ('stale_anchor_ms', 'stale_elapsed_ms');")
+                try execute("COMMIT;")
+            } catch {
+                try? rollbackIfActiveLocked()
+                throw error
+            }
+
+            activeGeneration = nil
+            currentOpenPeriodId = nil
+            deliveryFailure = nil
+            staleAnchorMs = 0
+            staleElapsedHighWaterMs = 0
+            if let generation { try partitionRetiredGenerationLocked(generation) }
+            recalculateCounters()
+            try reclaimAbandonedStaging()
+        } catch {
+            isStoreFailed = true
+            throw error
+        }
     }
 
     public func lookupReceipt(generation: String, inst: String, batchId: String) throws -> BrowserStoredReceipt? {
@@ -1391,30 +2478,47 @@ private static func fullSync(_ handle: FileHandle) throws {
         try bindTextChecked(stmt, 3, batchId)
         let rc = try stepChecked(stmt)
         if rc == SQLITE_ROW {
-                let result = Self.readText(stmt, 0) ?? ""
-                let periodId = Self.readText(stmt, 1)
-                let reason = Self.readText(stmt, 2)
-                let rClass = Self.readText(stmt, 3)
-                let queuedAtMs = UInt64(sqlite3_column_int64(stmt, 4))
-                let acceptedAtMs = sqlite3_column_type(stmt, 5) != SQLITE_NULL ? UInt64(sqlite3_column_int64(stmt, 5)) : nil
-                let sizeBytes = Int(sqlite3_column_int64(stmt, 6))
-
-                return BrowserStoredReceipt(
-                    generation: generation,
-                    inst: inst,
-                    batchId: batchId,
-                    result: result,
-                    periodId: periodId,
-                    reason: reason,
-                    receiptClass: rClass,
-                    queuedAtMs: queuedAtMs,
-                    acceptedAtMs: acceptedAtMs,
-                    sizeBytes: sizeBytes
-                )
-        } else if rc != SQLITE_DONE {
+            return Self.storedReceipt(from: stmt, generation: generation, inst: inst, batchId: batchId)
+        }
+        guard rc == SQLITE_DONE else {
             throw BrowserIntakeStoreError.localIO
         }
-        return nil
+        sqlite3_finalize(stmt)
+        stmt = nil
+        // Active generations cannot have rows in the retired catalog. Keep the
+        // common admission miss to its original single query.
+        if BrowserOpaqueString.equals(activeGeneration, generation) { return nil }
+        do {
+            try validateRetiredTree()
+            try prepareChecked("SELECT result, period_id, reason, class, queued_at_ms, accepted_at_ms, size_bytes FROM retired.receipts WHERE generation = ? AND inst = ? AND batch_id = ?", &stmt)
+            try bindTextChecked(stmt, 1, generation)
+            try bindTextChecked(stmt, 2, inst)
+            try bindTextChecked(stmt, 3, batchId)
+            let retiredRC = try stepChecked(stmt)
+            if retiredRC == SQLITE_ROW {
+                return Self.storedReceipt(from: stmt, generation: generation, inst: inst, batchId: batchId)
+            }
+            guard retiredRC == SQLITE_DONE else { throw BrowserIntakeStoreError.localIO }
+            return nil
+        } catch {
+            if (error as? BrowserIntakeStoreError) == .localIO { isStoreFailed = true }
+            throw error
+        }
+    }
+
+    private static func storedReceipt(from stmt: OpaquePointer?, generation: String, inst: String, batchId: String) -> BrowserStoredReceipt {
+        BrowserStoredReceipt(
+            generation: generation,
+            inst: inst,
+            batchId: batchId,
+            result: readText(stmt, 0) ?? "",
+            periodId: readText(stmt, 1),
+            reason: readText(stmt, 2),
+            receiptClass: readText(stmt, 3),
+            queuedAtMs: UInt64(sqlite3_column_int64(stmt, 4)),
+            acceptedAtMs: sqlite3_column_type(stmt, 5) != SQLITE_NULL ? UInt64(sqlite3_column_int64(stmt, 5)) : nil,
+            sizeBytes: Int(sqlite3_column_int64(stmt, 6))
+        )
     }
 
     public func isContextInitialized(periodId: String, inst: String, ctx: String) throws -> Bool {

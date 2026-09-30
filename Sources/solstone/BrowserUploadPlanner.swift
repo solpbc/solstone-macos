@@ -98,6 +98,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
             guard !Task.isCancelled, await !syncPausedProvider() else { continue }
             guard let day = period.requestedDay, !day.isEmpty,
                   let segment = period.requestedSegment, !segment.isEmpty else {
+                guard isCurrent(period: period, lease: nil) else { continue }
                 failStorage(period: period, error: BrowserIntakeStoreError.localIO)
                 continue
             }
@@ -128,7 +129,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
             }
         } catch {
             if logStaleProof(error, periodId: period.periodId) { return }
-            failStorage(period: period, error: error)
+            failStorage(period: period, error: error, lease: lease)
             return
         }
         if let binding {
@@ -137,16 +138,17 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                     try store.publishDeliveryAck(binding)
                 }
                 let listing = try await client.getSegmentsDay(serverURL: serverURL, day: day, source: "browser")
-                guard lease.isValid() else { return }
-                store.setDeliveryFailure(nil)
+                guard isCurrent(period: period, lease: lease) else { return }
+                recordDeliveryFailure(nil, period: period, lease: lease)
                 if listingMatches(listing, period: period, binding: binding),
                    store.getPeriod(periodId: period.periodId)?.ackDurable == true {
+                    guard isCurrent(period: period, lease: lease) else { return }
                     try store.releaseProven(periodId: period.periodId, binding: binding, nowMs: nowMs())
                 }
             } catch {
                 if logStaleProof(error, periodId: period.periodId) { return }
                 Logger.upload.error("Browser delivery reconciliation failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                store.setDeliveryFailure("relay_unavailable")
+                recordDeliveryFailure("relay_unavailable", period: period, lease: lease)
             }
             return
         }
@@ -162,11 +164,11 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
             }
             sourceSize = measured
         } catch {
-            failStorage(period: period, error: error)
+            failStorage(period: period, error: error, lease: lease)
             return
         }
         guard sourceSize > 0, sourceSize == period.committedLength else {
-            failStorage(period: period, error: BrowserIntakeStoreError.localIO)
+            failStorage(period: period, error: BrowserIntakeStoreError.localIO, lease: lease)
             return
         }
 
@@ -177,19 +179,23 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
             try store.registerStagingDirectory(stagingDirectory, reservedBytes: reservation)
         } catch let error as BrowserIntakeStoreError {
             Logger.storage.error("Browser staging reservation failed: \(error.localizedDescription, privacy: .public)")
-            store.setDeliveryFailure(error == .resourceExhausted ? "resource_exhausted" : "local_io")
+            recordDeliveryFailure(error == .resourceExhausted ? "resource_exhausted" : "local_io", period: period, lease: lease)
             return
         } catch {
             Logger.storage.error("Browser staging reservation failed: \(error.localizedDescription, privacy: .public)")
-            store.setDeliveryFailure("local_io")
+            recordDeliveryFailure("local_io", period: period, lease: lease)
             return
         }
         defer {
             do {
                 try store.releaseStagingDirectory(stagingDirectory)
             } catch {
-                Logger.storage.error("Browser upload staging cleanup failed for period \(period.periodId, privacy: .public)")
-                store.setStoreFailed(true)
+                if isCurrent(period: period, lease: lease) {
+                    Logger.storage.error("Browser upload staging cleanup failed for period \(period.periodId, privacy: .public)")
+                    _ = store.setStoreFailed(true, forGeneration: period.generation)
+                } else {
+                    Logger.upload.warning("Browser staging cleanup failed for stale period \(period.periodId, privacy: .public)")
+                }
             }
         }
 
@@ -213,12 +219,12 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                   prepared.stagedParts.count == 1,
                   stagedPart.size == UInt64(period.committedLength),
                   BrowserOpaqueString.equals(stagedPart.sha256, period.fileSha256) else {
-                failStorage(period: period, error: BrowserIntakeStoreError.localIO)
+                failStorage(period: period, error: BrowserIntakeStoreError.localIO, lease: lease)
                 return
             }
-            guard lease.isValid() else { return }
+            guard isCurrent(period: period, lease: lease) else { return }
             let result = await client.uploadStaged(prepared: prepared, lease: lease)
-            guard lease.isValid() else { return }
+            guard isCurrent(period: period, lease: lease) else { return }
 
             switch result {
             case .success(let info):
@@ -229,7 +235,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                     submittedSegment: prepared.submittedSegment
                 ), let part = prepared.stagedParts.first else {
                     Logger.upload.error("Browser upload response did not match period \(period.periodId, privacy: .public)")
-                    store.setDeliveryFailure("journal_rejected")
+                    recordDeliveryFailure("journal_rejected", period: period, lease: lease)
                     return
                 }
                 let ack = BrowserIngestAck(
@@ -246,7 +252,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                     status: response.status
                 )
                 try store.publishDeliveryAck(ack)
-                store.setDeliveryFailure(nil)
+                recordDeliveryFailure(nil, period: period, lease: lease)
             case .failure(let error):
                 if case .segmentScoped(.segmentRemoved) = classifyUpload(error), lease.isValid(),
                    let part = prepared.stagedParts.first {
@@ -263,18 +269,18 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                         canonicalKey: period.canonicalKey ?? segment,
                         status: .duplicate
                     )
-                    guard lease.isValid() else { return }
+                    guard isCurrent(period: period, lease: lease) else { return }
                     try store.removeProvenSegment(periodId: period.periodId, binding: proof, nowMs: nowMs())
                     return
                 }
                 let failure = classifyUpload(error)
                 Logger.upload.error("Browser upload failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                store.setDeliveryFailure(failureCode(for: failure))
+                recordDeliveryFailure(failureCode(for: failure), period: period, lease: lease)
             }
         } catch {
             if logStaleProof(error, periodId: period.periodId) { return }
             Logger.upload.error("Browser upload preparation failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            store.setDeliveryFailure(error as? BrowserIntakeStoreError == .resourceExhausted ? "resource_exhausted" : "local_io")
+            recordDeliveryFailure(error as? BrowserIntakeStoreError == .resourceExhausted ? "resource_exhausted" : "local_io", period: period, lease: lease)
         }
     }
 
@@ -318,9 +324,29 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
         return true
     }
 
-    private func failStorage(period: BrowserStoredPeriod, error: Error) {
+    private func isCurrent(period: BrowserStoredPeriod, lease: BrowserUploadLease?) -> Bool {
+        guard lease?.isValid() ?? true,
+              let permit = gate.currentPermit(),
+              BrowserOpaqueString.equals(permit.generation, period.generation) else {
+            Logger.upload.warning("Browser operation skipped for stale period \(period.periodId, privacy: .public)")
+            return false
+        }
+        return true
+    }
+
+    private func recordDeliveryFailure(_ failure: String?, period: BrowserStoredPeriod, lease: BrowserUploadLease) {
+        guard isCurrent(period: period, lease: lease) else { return }
+        if !store.setDeliveryFailure(failure, forGeneration: period.generation) {
+            Logger.upload.warning("Browser delivery state skipped for stale period \(period.periodId, privacy: .public)")
+        }
+    }
+
+    private func failStorage(period: BrowserStoredPeriod, error: Error, lease: BrowserUploadLease? = nil) {
+        guard isCurrent(period: period, lease: lease) else { return }
         Logger.storage.error("Browser spool read failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-        store.setStoreFailed(true)
+        if !store.setStoreFailed(true, forGeneration: period.generation) {
+            Logger.storage.error("Browser storage failure skipped for stale period \(period.periodId, privacy: .public)")
+        }
     }
 }
 

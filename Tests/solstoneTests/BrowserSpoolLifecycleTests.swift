@@ -596,6 +596,8 @@ struct BrowserSpoolLifecycleTests {
             direction: "extension_to_host"
         ))
         let periodId = try #require(accepted["period_id"] as? String)
+        let activePayload = fixture.owner.store.periodFileURL(for: periodId)
+        let originalPayload = try Data(contentsOf: activePayload)
         fixture.clock.advance(seconds: 301)
         #expect(await transport.waitUntilSuspended())
         let sentBeforeReplacement = transport.bytesSent
@@ -613,10 +615,14 @@ struct BrowserSpoolLifecycleTests {
         try await Task.sleep(for: .milliseconds(80))
         #expect(transport.bytesSent == sentBeforeReplacement)
         let ackURL = BrowserIngestAckStore.ackURL(
-            periodDirectory: fixture.owner.store.periodFileURL(for: periodId).deletingLastPathComponent()
+            periodDirectory: activePayload.deletingLastPathComponent()
         )
         #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
-        #expect(FileManager.default.fileExists(atPath: fixture.owner.store.periodFileURL(for: periodId).path))
+        let retiredPayload = fixture.root.appendingPathComponent("retired/periods/\(periodId)/browser_pages.jsonl")
+        let retiredAckURL = BrowserIngestAckStore.ackURL(periodDirectory: retiredPayload.deletingLastPathComponent())
+        #expect(FileManager.default.fileExists(atPath: retiredAckURL.path) == false)
+        #expect(!FileManager.default.fileExists(atPath: activePayload.path))
+        #expect(try Data(contentsOf: retiredPayload) == originalPayload)
 
         try fixture.owner.credentialDidChange(identityToken: "replacement-pairing")
         #expect(fixture.owner.store.getActiveGeneration() != oldGeneration)
@@ -1112,6 +1118,7 @@ struct BrowserSpoolLifecycleTests {
         ))
         let periodId = try #require(accepted["period_id"] as? String)
         let payload = replacement.owner.store.periodFileURL(for: periodId)
+        let originalPayload = try Data(contentsOf: payload)
         replacement.clock.advance(seconds: 301)
         #expect(await waitForPeriodState(replacement, periodId: periodId, state: "finalized"))
 
@@ -1136,7 +1143,11 @@ struct BrowserSpoolLifecycleTests {
         #expect(replacementProofCalls.current == 1)
         #expect(replacement.owner.store.getActiveGeneration() != oldGeneration)
         #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
-        #expect(FileManager.default.fileExists(atPath: payload.path))
+        let retiredPayload = replacement.root.appendingPathComponent("retired/periods/\(periodId)/browser_pages.jsonl")
+        let retiredAckURL = BrowserIngestAckStore.ackURL(periodDirectory: retiredPayload.deletingLastPathComponent())
+        #expect(FileManager.default.fileExists(atPath: retiredAckURL.path) == false)
+        #expect(!FileManager.default.fileExists(atPath: payload.path))
+        #expect(try Data(contentsOf: retiredPayload) == originalPayload)
         #expect(replacement.owner.store.storeIsFailed() == false)
 
         replacementInjector.setFailure(nil)
@@ -1146,7 +1157,7 @@ struct BrowserSpoolLifecycleTests {
         #expect(replacementTransport.attempts == 1)
         #expect(replacementTransport.hashes.count == 1)
         #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
-        #expect(FileManager.default.fileExists(atPath: payload.path))
+        #expect(try Data(contentsOf: retiredPayload) == originalPayload)
         replacement.owner.stop()
 
         let stopTransport = LifecycleTransport()
@@ -1361,6 +1372,8 @@ struct BrowserSpoolLifecycleTests {
         let accepted = try reply(await fixture.owner.accept(bytes: batch(original,
             id: "31313131313131313131313131313131", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
         let held = try #require(accepted["period_id"] as? String)
+        let oldPayload = fixture.owner.store.periodFileURL(for: held)
+        let originalPayload = try Data(contentsOf: oldPayload)
         let revisions = credentials.currentGenerations()
         _ = try credentials.updateRelayAccess(expectedPairingGen: revisions.pairingGeneration,
             expectedAccessGen: revisions.accessMutationGeneration, relayOrigin: "https://relay.example",
@@ -1369,9 +1382,10 @@ struct BrowserSpoolLifecycleTests {
         try credentials.save(paired)
         let replacement = try #require(fixture.owner.store.getActiveGeneration())
         #expect(replacement != original)
-        #expect(fixture.owner.store.getPeriod(periodId: held)?.generation == original)
-        #expect(fixture.owner.store.getPeriod(periodId: held)?.state == "finalized")
-        #expect(FileManager.default.fileExists(atPath: fixture.owner.store.periodFileURL(for: held).path))
+        #expect(fixture.owner.store.getPeriod(periodId: held) == nil)
+        #expect(!FileManager.default.fileExists(atPath: oldPayload.path))
+        let retiredPayload = fixture.root.appendingPathComponent("retired/periods/\(held)/browser_pages.jsonl")
+        #expect(try Data(contentsOf: retiredPayload) == originalPayload)
     }
 
     @Test func reloadMismatchKeepsCustodyAndClosesAdmission() async throws {

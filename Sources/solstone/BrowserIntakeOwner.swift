@@ -264,6 +264,22 @@ public actor BrowserIntakeOwner {
         admissionOpen = predicate
     }
 
+    public nonisolated func retiredCustodyInventory() -> BrowserRetiredCustodyInventory {
+        store.retiredCustodyInventory()
+    }
+
+    public nonisolated func activePending() -> BrowserActivePending {
+        store.activePending()
+    }
+
+    public nonisolated func cancelRetiredCustodyDiscard() {
+        store.cancelRetiredCustodyDiscard()
+    }
+
+    public nonisolated func discardRetiredCustody(_ scope: BrowserRetiredCustodyScope) throws -> BrowserRetiredDiscardResult {
+        try store.discardRetiredCustody(scope)
+    }
+
     public func accept(bytes: Data, direction: String) -> BrowserIntakeAcceptResult {
         accept(decoded: BrowserPayloadDecoder.decode(bytes: bytes, direction: direction, projection: authority.projection))
     }
