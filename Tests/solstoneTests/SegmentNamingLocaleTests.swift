@@ -12,14 +12,17 @@ struct SegmentNamingLocaleTests {
         let storage = StorageManager(baseDirectory: root)
         let zone = try #require(TimeZone(identifier: "America/Denver"))
         let first = try #require(ISO8601DateFormatter().date(from: "2026-11-01T07:15:00Z"))
-        let (directory, _) = try storage.createSegmentDirectory(segmentStartTime: first, timeZone: zone)
+        let (directory, prefix) = try storage.createSegmentDirectory(segmentStartTime: first, timeZone: zone)
+        #expect(prefix == "011500")
+        #expect(directory.lastPathComponent == "011500.incomplete")
         let media = directory.appendingPathComponent("audio.m4a")
         try Data("first hour".utf8).write(to: media)
         let zoneURL = directory.appendingPathComponent(StorageManager.captureZoneFileName)
         let savedZone = try Data(contentsOf: zoneURL)
-        #expect(throws: (any Error).self) {
-            try storage.createSegmentDirectory(segmentStartTime: first.addingTimeInterval(3600), timeZone: zone)
-        }
+
+        let (secondDirectory, secondPrefix) = try storage.createSegmentDirectory(segmentStartTime: first.addingTimeInterval(3600), timeZone: zone)
+        #expect(secondPrefix == "011501")
+        #expect(secondDirectory.lastPathComponent == "011501.incomplete")
         #expect(try Data(contentsOf: media) == Data("first hour".utf8))
         #expect(try Data(contentsOf: zoneURL) == savedZone)
     }

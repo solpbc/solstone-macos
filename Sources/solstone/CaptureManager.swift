@@ -110,6 +110,7 @@ public final class CaptureManager {
     private let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
     private let finalizer: any SegmentFinalizing
     private let rotationTimeoutSeconds: TimeInterval
+    private let captureZoneSource: CaptureZoneSource
     private let now: @Sendable () -> Date
     // Test-only bypass for fake segment factories without ScreenCaptureKit display state; defaults false.
     private let allowsEmptyDisplayConfigurationForTesting: Bool
@@ -182,6 +183,7 @@ public final class CaptureManager {
         recoveryCoordinator: IncompleteSegmentRecoveryCoordinator = .shared,
         finalizer: any SegmentFinalizing = RemixQueue.shared,
         rotationTimeoutSeconds: TimeInterval = 30,
+        captureZoneSource: CaptureZoneSource = .device,
         now: @escaping @Sendable () -> Date = Date.init,
         allowsEmptyDisplayConfigurationForTesting: Bool = false,
         microphoneDevices: @escaping @MainActor () -> [AudioInputDevice] = MicrophoneMonitor.listInputDevices,
@@ -200,6 +202,7 @@ public final class CaptureManager {
             recoveryCoordinator: recoveryCoordinator,
             finalizer: finalizer,
             rotationTimeoutSeconds: rotationTimeoutSeconds,
+            captureZoneSource: captureZoneSource,
             now: now,
             allowsEmptyDisplayConfigurationForTesting: allowsEmptyDisplayConfigurationForTesting,
             microphoneDevices: microphoneDevices,
@@ -231,6 +234,7 @@ public final class CaptureManager {
         recoveryCoordinator: IncompleteSegmentRecoveryCoordinator = .shared,
         finalizer: any SegmentFinalizing = RemixQueue.shared,
         rotationTimeoutSeconds: TimeInterval = 30,
+        captureZoneSource: CaptureZoneSource = .device,
         now: @escaping @Sendable () -> Date = Date.init,
         allowsEmptyDisplayConfigurationForTesting: Bool = false,
         microphoneDevices: @escaping @MainActor () -> [AudioInputDevice] = MicrophoneMonitor.listInputDevices,
@@ -247,6 +251,7 @@ public final class CaptureManager {
         self.recoveryCoordinator = recoveryCoordinator
         self.finalizer = finalizer
         self.rotationTimeoutSeconds = rotationTimeoutSeconds
+        self.captureZoneSource = captureZoneSource
         self.now = now
         self.allowsEmptyDisplayConfigurationForTesting = allowsEmptyDisplayConfigurationForTesting
         self.microphoneDevices = microphoneDevices
@@ -408,6 +413,15 @@ public final class CaptureManager {
         )
     }
 
+    private func captureZoneForNewSegment() -> TimeZone? {
+        do {
+            return try captureZoneSource.currentTimeZone()
+        } catch {
+            Logger.storage.warning("Failed to resolve capture time zone: \(error, privacy: .public)")
+            return nil
+        }
+    }
+
     /// Starts a new recording segment
     private func startNewSegment() async throws {
         if sessionSources.contains(.screen) {
@@ -418,7 +432,8 @@ public final class CaptureManager {
 
         // Create segment directory with current time (named HHMMSS.incomplete)
         let (segmentDir, timePrefix) = try storageManager.createSegmentDirectory(
-            segmentStartTime: now()
+            segmentStartTime: now(),
+            timeZone: captureZoneForNewSegment()
         )
 
         // Collect available mics
@@ -935,7 +950,10 @@ extension CaptureManager: CaptureLifecycleDelegate {
         let newSegmentDir: URL
         let newTimePrefix: String
         do {
-            (newSegmentDir, newTimePrefix) = try storageManager.createSegmentDirectory(segmentStartTime: now())
+            (newSegmentDir, newTimePrefix) = try storageManager.createSegmentDirectory(
+                segmentStartTime: now(),
+                timeZone: captureZoneForNewSegment()
+            )
         } catch {
             transitionToError("Failed to create segment directory: \(error.localizedDescription)", error: error, trigger: "rotation_failed")
             Logger.capture.error("Failed to rotate segment: \(error, privacy: .public)")

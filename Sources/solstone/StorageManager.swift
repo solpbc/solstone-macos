@@ -9,6 +9,7 @@ import SolstoneCore
 public final class StorageManager: Sendable {
     /// Base directory for all captures
     public let baseDirectory: URL
+    private let listDirectoryContents: @Sendable (URL) throws -> [String]
 
     static let captureZoneFileName = "capture_zone.json"
 
@@ -43,6 +44,57 @@ public final class StorageManager: Sendable {
         return formatter
     }()
 
+    private static let civilCalendar: Calendar = {
+        var cal = Calendar(identifier: .gregorian)
+        cal.locale = Locale(identifier: "en_US_POSIX")
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        return cal
+    }()
+
+    private static let civilDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static func nextCivilDay(after dateString: String) -> String {
+        guard let date = civilDateFormatter.date(from: dateString),
+              let nextDate = civilCalendar.date(byAdding: .day, value: 1, to: date) else {
+            return dateString
+        }
+        return civilDateFormatter.string(from: nextDate)
+    }
+
+    private static func incrementStem(_ stem: String) -> (bumpedStem: String, rolledOverDay: Bool) {
+        guard stem.count == 6,
+              let hh = Int(stem.prefix(2)),
+              let mm = Int(stem.dropFirst(2).prefix(2)),
+              let ss = Int(stem.suffix(2)) else {
+            return (stem, false)
+        }
+        var s = ss + 1
+        var m = mm
+        var h = hh
+        var rolledOver = false
+        if s >= 60 {
+            s = 0
+            m += 1
+            if m >= 60 {
+                m = 0
+                h += 1
+                if h >= 24 {
+                    h = 0
+                    rolledOver = true
+                }
+            }
+        }
+        let bumped = String(format: "%02d%02d%02d", h, m, s)
+        return (bumped, rolledOver)
+    }
+
     private static func segmentNaming(
         segmentStartTime: Date,
         timeZone: TimeZone
@@ -67,14 +119,19 @@ public final class StorageManager: Sendable {
         return (dateString, timePrefix, identifier, utcOffsetSeconds)
     }
 
-    public init(baseDirectory: URL? = nil) {
+    public init(
+        baseDirectory: URL? = nil,
+        listDirectoryContents: (@Sendable (URL) throws -> [String])? = nil
+    ) {
         if let baseDirectory {
             self.baseDirectory = baseDirectory
-            return
+        } else {
+            // ~/Library/Application Support/Solstone/captures/
+            self.baseDirectory = Self.defaultBaseDirectory
         }
-
-        // ~/Library/Application Support/Solstone/captures/
-        self.baseDirectory = Self.defaultBaseDirectory
+        self.listDirectoryContents = listDirectoryContents ?? { url in
+            try FileManager.default.contentsOfDirectory(atPath: url.path)
+        }
     }
 
     /// Creates the base directory if it doesn't exist
@@ -91,36 +148,84 @@ public final class StorageManager: Sendable {
         segmentStartTime: Date,
         timeZone: TimeZone? = nil
     ) throws -> (url: URL, timePrefix: String) {
-        let dateString: String
-        let timeString: String
+        let initialDateString: String
+        let initialTimeString: String
         let zoneRecord: CaptureZoneRecord?
 
         if let timeZone {
             let naming = Self.segmentNaming(segmentStartTime: segmentStartTime, timeZone: timeZone)
-            dateString = naming.dateString
-            timeString = naming.timePrefix
-            zoneRecord = CaptureZoneRecord(tz: naming.identifier, utc_offset_seconds: naming.utcOffsetSeconds)
-        } else if let dateTZ = Self.dateFormatter.timeZone,
-                  let timeTZ = Self.timeFormatter.timeZone,
-                  dateTZ.identifier == timeTZ.identifier,
-                  dateTZ.secondsFromGMT(for: segmentStartTime) == timeTZ.secondsFromGMT(for: segmentStartTime) {
-            let naming = Self.segmentNaming(segmentStartTime: segmentStartTime, timeZone: dateTZ)
-            dateString = naming.dateString
-            timeString = naming.timePrefix
+            initialDateString = naming.dateString
+            initialTimeString = naming.timePrefix
             zoneRecord = CaptureZoneRecord(tz: naming.identifier, utc_offset_seconds: naming.utcOffsetSeconds)
         } else {
-            // Disagreement or missing zone on static formatters: fall back to static formatters without recording zone
-            Logger.storage.warning("Date and time formatters have mismatched or nil time zones; formatting without zone record")
-            dateString = Self.dateFormatter.string(from: segmentStartTime)
-            timeString = Self.timeFormatter.string(from: segmentStartTime)
+            initialDateString = Self.dateFormatter.string(from: segmentStartTime)
+            initialTimeString = Self.timeFormatter.string(from: segmentStartTime)
             zoneRecord = nil
         }
 
+        var currentDateString = initialDateString
+        var currentTimeString = initialTimeString
+
+        // Scan for existing stems in the day directory and bump on collision.
+        var steps = 0
+        let maxSteps = 86400 // Cap search at 24 hours of sequential bumps
+
+        var cachedEntries: (day: String, entries: [String])? = nil
+
+        func entriesForDay(_ dayString: String) -> [String]? {
+            if let cached = cachedEntries, cached.day == dayString {
+                return cached.entries
+            }
+            let dayDir = baseDirectory.appendingPathComponent(dayString, isDirectory: true)
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: dayDir.path, isDirectory: &isDir), isDir.boolValue else {
+                cachedEntries = (dayString, [])
+                return []
+            }
+            do {
+                let entries = try listDirectoryContents(dayDir)
+                cachedEntries = (dayString, entries)
+                return entries
+            } catch {
+                Logger.storage.warning("Failed to list capture directory \(dayString, privacy: .public): \(error, privacy: .public)")
+                return nil
+            }
+        }
+
+        while steps < maxSteps {
+            let isOriginal = (currentDateString == initialDateString)
+            guard let entries = entriesForDay(currentDateString) else {
+                // Listing failed: if original day, do not bump; if later civil day, exclusive-create 000000 on that day.
+                if isOriginal {
+                    currentTimeString = initialTimeString
+                } else {
+                    currentTimeString = "000000"
+                }
+                break
+            }
+
+            let isTaken = entries.contains { $0.hasPrefix(currentTimeString) }
+            if !isTaken {
+                break
+            }
+
+            let (bumpedStem, rolledOver) = Self.incrementStem(currentTimeString)
+            currentTimeString = bumpedStem
+            if rolledOver {
+                currentDateString = Self.nextCivilDay(after: currentDateString)
+            }
+            steps += 1
+        }
+
+        if currentDateString != initialDateString || currentTimeString != initialTimeString {
+            Logger.storage.info("Capture stem collision resolved: \(initialTimeString, privacy: .public) -> \(currentTimeString, privacy: .public)")
+        }
+
         // Create date directory: YYYY-MM-DD
-        let dateDir = baseDirectory.appendingPathComponent(dateString, isDirectory: true)
+        let dateDir = baseDirectory.appendingPathComponent(currentDateString, isDirectory: true)
 
         // Create segment directory: HHMMSS.incomplete (duration added on completion)
-        let segmentDir = dateDir.appendingPathComponent("\(timeString).incomplete", isDirectory: true)
+        let segmentDir = dateDir.appendingPathComponent("\(currentTimeString).incomplete", isDirectory: true)
 
         try FileManager.default.createDirectory(at: dateDir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: segmentDir, withIntermediateDirectories: false)
@@ -137,7 +242,7 @@ public final class StorageManager: Sendable {
             }
         }
 
-        return (segmentDir, timeString)
+        return (segmentDir, currentTimeString)
     }
 
     /// Lists all segment directories for a given date
