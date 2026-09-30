@@ -328,6 +328,9 @@ public final class PairingCredentialStore: @unchecked Sendable {
     }
 
     static func identityToken(for pairing: StoredPairing) -> String {
-        [pairing.instanceID, pairing.clientCertPEM, pairing.clientKeyPEM, pairing.caChainPEM, String(pairing.pairedAt.timeIntervalSince1970)].joined(separator: "\u{0}")
+        // SPLKeychainStore persists ISO 8601 dates without fractional seconds.
+        // Use that durable precision before and after a credential reload.
+        let pairedAt = pairing.pairedAt.timeIntervalSince1970.rounded(.down)
+        return [pairing.instanceID, pairing.clientCertPEM, pairing.clientKeyPEM, pairing.caChainPEM, String(pairedAt)].joined(separator: "\u{0}")
     }
 }
