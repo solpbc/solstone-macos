@@ -4,13 +4,45 @@ import os
 
 extension JournalMarkConfirmationDriver {
     func confirm(appState: AppState) {
+        guard case .valid = phase else { return }
         confirm { mark in
             appState.setConfirmedMark(mark)
         }
+        appState.recordJournalMarkConfirmed()
     }
 
+    /// Continuing after a check that could not finish is the owner's answer too.
     func continueAnyway(appState: AppState) {
+        guard case .unverified = phase else { return }
         continueAnyway()
+        appState.recordJournalMarkConfirmed()
+    }
+
+    /// Asks again for a pairing whose question is still open, such as one left unanswered
+    /// when the app quit or settings closed. The pairing sends nothing until it is answered.
+    func startIfUnconfirmed(
+        appState: AppState,
+        fetcher: JournalIdentityFetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
+    ) {
+        guard !isPresented,
+              appState.needsJournalMarkConfirmation,
+              let journal = appState.tunnelLifecycleOwner.cachedJournalMarkIdentity else {
+            return
+        }
+        startIfNeeded(
+            for: "unconfirmed:\(journal)",
+            resolveHomeBase: {
+                switch await appState.resolveHomeBase() {
+                case .held:
+                    return .held
+                case .url(let baseURL):
+                    return .url(baseURL)
+                }
+            },
+            fetchMark: { baseURL in
+                await fetcher.fetch(baseURL: baseURL)
+            }
+        )
     }
 
     func cancelPairing(appState: AppState) async {

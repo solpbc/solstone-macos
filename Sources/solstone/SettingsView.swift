@@ -397,12 +397,14 @@ struct SettingsView: View {
             applyPendingSettingsTab()
             journalMarkRederiveEligible = appState.confirmedMark == nil && appState.tunnelLifecycleOwner.isTunnelManaged
             startJournalMarkRederiveIfNeeded()
+            journalMarkDriver.startIfUnconfirmed(appState: appState)
         }
         .onChange(of: appState.pairingCoordinator.state) { _, newValue in
             handlePairingStateChange(newValue)
         }
         .onChange(of: appState.pairingCoordinator.tunnelState) { _, _ in
             startJournalMarkRederiveIfNeeded()
+            journalMarkDriver.startIfUnconfirmed(appState: appState)
         }
         .onChange(of: selectedTab) { _, newValue in
             if newValue == .status {
@@ -614,6 +616,7 @@ struct SettingsView: View {
         guard journalMarkRederiveEligible,
               !journalMarkRederiveStarted,
               appState.confirmedMark == nil,
+              appState.isJournalMarkConfirmed,
               appState.tunnelLifecycleOwner.isTunnelManaged,
               case .connected = appState.pairingCoordinator.tunnelState
         else {

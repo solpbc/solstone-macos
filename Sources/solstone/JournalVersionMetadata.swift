@@ -189,6 +189,16 @@ internal func journalVersionMetadataIdentity(for pairing: StoredPairing) -> Stri
     ])
 }
 
+/// Names the journal a pairing reaches, the same across re-pairs to that journal:
+/// its instance and its CA chain, never this device's per-pairing certificate.
+internal func journalMarkConfirmationIdentity(for pairing: StoredPairing) -> String {
+    opaqueSHA256([
+        "journal-mark-confirmation-v1",
+        pairing.instanceID,
+        normalizedCAFingerprint(for: pairing.caChainPEM) ?? pairing.caChainPEM
+    ])
+}
+
 internal func sanitizedJournalVersion(_ value: String) -> String? {
     guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
         return nil

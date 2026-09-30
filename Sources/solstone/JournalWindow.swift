@@ -64,7 +64,7 @@ struct JournalWindowSceneRoot: View {
     ) {
         self.appState = appState
         self.resolveHomeBase = resolveHomeBase ?? { [appState] in
-            await appState.resolveHomeBase()
+            await appState.resolveJournalWindowBase()
         }
         self.connectionVerdict = connectionVerdict ?? { [appState] in
             appState.tunnelLifecycleOwner.connectionVerdict

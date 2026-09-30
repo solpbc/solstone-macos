@@ -54,22 +54,26 @@ struct AppStateSnapshotTests {
         #expect(AppState.ingestBaseURL(
             lifecycleState: .disconnected,
             localPort: 24680,
-            pairingIdentity: pairing
+            pairingIdentity: pairing,
+            journalMarkConfirmed: true
         ) == .held)
         #expect(AppState.ingestBaseURL(
             lifecycleState: .connected(localPort: 24680, via: .lan),
             localPort: nil,
-            pairingIdentity: pairing
+            pairingIdentity: pairing,
+            journalMarkConfirmed: true
         ) == .held)
         #expect(AppState.ingestBaseURL(
             lifecycleState: .connected(localPort: 24680, via: .lan),
             localPort: 24680,
-            pairingIdentity: nil
+            pairingIdentity: nil,
+            journalMarkConfirmed: true
         ) == .held)
         #expect(AppState.ingestBaseURL(
             lifecycleState: .connected(localPort: 24680, via: .lan),
             localPort: 24680,
-            pairingIdentity: pairing
+            pairingIdentity: pairing,
+            journalMarkConfirmed: true
         ) == .url("http://127.0.0.1:24680"))
 
         let state = AppState.forSnapshot(config: AppConfig(serverURL: "https://journal.example"))

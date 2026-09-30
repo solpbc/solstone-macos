@@ -43,6 +43,7 @@ final class PairingCoordinator {
     typealias RelayEndpointSource = @Sendable () -> URL
     typealias DeviceLabelSource = @Sendable () -> String
     typealias ClearLastSuccessfulJournalContact = @MainActor @Sendable () -> Void
+    typealias ClearJournalMarkConfirmation = @MainActor @Sendable () -> Void
 
     private(set) var state: PairingFlowState = .idle
     /// The one address a failed ceremony dialed, when the link named exactly one.
@@ -67,6 +68,8 @@ final class PairingCoordinator {
     @ObservationIgnored
     private let clearLastSuccessfulJournalContact: ClearLastSuccessfulJournalContact
     @ObservationIgnored
+    private let clearJournalMarkConfirmation: ClearJournalMarkConfirmation
+    @ObservationIgnored
     private var pendingSwitchPairing: StoredPairing?
     @ObservationIgnored
     private let classifiedLog: any ClassifiedLogSinking
@@ -88,6 +91,7 @@ final class PairingCoordinator {
         relayEndpoint: @escaping RelayEndpointSource = { SPLPairingDefaults.relayEndpointURL },
         deviceLabel: @escaping DeviceLabelSource = { SPLPairingDefaults.deviceLabel },
         clearLastSuccessfulJournalContact: @escaping ClearLastSuccessfulJournalContact = {},
+        clearJournalMarkConfirmation: @escaping ClearJournalMarkConfirmation = {},
         classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink(logger: pairingLog)
     ) {
         let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
@@ -102,6 +106,7 @@ final class PairingCoordinator {
         self.relayEndpoint = relayEndpoint
         self.deviceLabel = deviceLabel
         self.clearLastSuccessfulJournalContact = clearLastSuccessfulJournalContact
+        self.clearJournalMarkConfirmation = clearJournalMarkConfirmation
         self.classifiedLog = classifiedLog
     }
 
@@ -158,6 +163,7 @@ final class PairingCoordinator {
             return
         }
         pendingSwitchPairing = nil
+        clearJournalMarkConfirmation()
         clearLastSuccessfulJournalContact()
         await reactivate()
         state = .idle
@@ -202,6 +208,13 @@ final class PairingCoordinator {
     }
 
     private func activate(_ pairing: StoredPairing, successState: PairingFlowState) async {
+        // A new or switched pairing asks the owner to compare marks, and nothing is sent
+        // until they answer, so its answer starts empty before the credential exists.
+        // Pairing again with the journal this Mac already holds asks nothing: the owner
+        // already answered for that journal, and the answer is kept by journal, not by link.
+        if successState != .alreadyConnected {
+            clearJournalMarkConfirmation()
+        }
         do {
             try savePairing(pairing)
         } catch {

@@ -119,6 +119,7 @@ public final class AppState {
     private let loginService: any LoginItemService
     private let loginItemRegistrationReconciler: LoginItemRegistrationReconciler
     private let lastContactStore: any LastSuccessfulJournalContactStoring
+    private let journalMarkConfirmationStore: any JournalMarkConfirmationStoring
     private let recorder: DiagnosticEvidenceRecorder
     private let logAdapter: DiagnosticEvidenceLoggingAdapter
     private let isSnapshot: Bool
@@ -836,6 +837,12 @@ public final class AppState {
         )
         sameMachineMigrationLastResult = result
 
+        // The adoption asks no mark question, so it answers it: this is the journal the
+        // owner was already sending to from this Mac.
+        if case .pairingStarted = result {
+            recordJournalMarkConfirmed()
+        }
+
         if case .failed(let failure) = result {
             Logger.setup.debug("same-machine home migration did not complete: \(String(describing: failure), privacy: .public)")
         }
@@ -959,7 +966,8 @@ public final class AppState {
                 return Self.ingestBaseURL(
                     lifecycleState: owner.state,
                     localPort: owner.localPort,
-                    pairingIdentity: owner.cachedPairingIdentity
+                    pairingIdentity: owner.cachedPairingIdentity,
+                    journalMarkConfirmed: state.isJournalMarkConfirmed
                 )
             }
         }
@@ -968,11 +976,13 @@ public final class AppState {
     internal static func ingestBaseURL(
         lifecycleState: TunnelLifecycleState,
         localPort: Int?,
-        pairingIdentity: TunnelPairingIdentity?
+        pairingIdentity: TunnelPairingIdentity?,
+        journalMarkConfirmed: Bool
     ) -> ResolvedHomeBase {
         guard case .connected = lifecycleState,
               let localPort,
-              pairingIdentity != nil else {
+              pairingIdentity != nil,
+              journalMarkConfirmed else {
             return .held
         }
         return .url("http://127.0.0.1:\(localPort)")
@@ -985,7 +995,47 @@ public final class AppState {
               owner.cachedPairingIdentity != nil else {
             return false
         }
-        return true
+        return isJournalMarkConfirmed
+    }
+
+    /// Whether the owner has confirmed the paired journal's mark, or chose to continue
+    /// when the check could not finish. Nothing captured here is sent until they have.
+    internal var isJournalMarkConfirmed: Bool {
+        guard let journal = tunnelLifecycleOwner.cachedJournalMarkIdentity else {
+            return false
+        }
+        return journalMarkConfirmationStore.isConfirmed(journal)
+    }
+
+    /// A pairing whose mark question is still open: connected, so the mark can be fetched,
+    /// and not yet answered. The automatic same-machine adoption never asks.
+    internal var needsJournalMarkConfirmation: Bool {
+        guard tunnelLifecycleOwner.isTunnelManaged,
+              case .connected = tunnelLifecycleOwner.state,
+              !isAdoptingSameMachineHomeAutomatically else {
+            return false
+        }
+        return tunnelLifecycleOwner.cachedJournalMarkIdentity != nil && !isJournalMarkConfirmed
+    }
+
+    /// Records the owner's answer for the paired journal and lets held work go.
+    internal func recordJournalMarkConfirmed() {
+        guard let journal = tunnelLifecycleOwner.cachedJournalMarkIdentity else { return }
+        journalMarkConfirmationStore.confirm(journal)
+        uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
+        guard isPairedIngestReady else { return }
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        if let owner = browserIntakeOwner {
+            Task { await owner.scheduleDelivery() }
+        }
+#endif
+        guard automaticObservationPipelineEnabled else { return }
+        triggerTunnelConnectedSync(self)
+    }
+
+    internal func clearJournalMarkConfirmation() {
+        journalMarkConfirmationStore.clear()
+        uploadCoordinator?.updatePairedIngestIdentity(currentPairedIngestIdentity())
     }
 
     private func currentPairedIngestIdentity() -> TunnelPairingIdentity? {
@@ -995,6 +1045,30 @@ public final class AppState {
 
     internal func resolveHomeBase() async -> ResolvedHomeBase {
         await homeBaseURLResolver.resolve()
+    }
+
+    /// The journal window's base. The owner can type into a journal from there, so it waits
+    /// for the mark answer like everything else that sends; the mark check itself uses
+    /// `resolveHomeBase` and is never held by this.
+    internal func resolveJournalWindowBase() async -> ResolvedHomeBase {
+        Self.journalWindowBase(
+            homeBase: await resolveHomeBase(),
+            tunnelManaged: tunnelLifecycleOwner.isTunnelManaged,
+            pairingHeld: tunnelLifecycleOwner.cachedJournalMarkIdentity != nil,
+            journalMarkConfirmed: isJournalMarkConfirmed
+        )
+    }
+
+    internal static func journalWindowBase(
+        homeBase: ResolvedHomeBase,
+        tunnelManaged: Bool,
+        pairingHeld: Bool,
+        journalMarkConfirmed: Bool
+    ) -> ResolvedHomeBase {
+        guard tunnelManaged, pairingHeld, !journalMarkConfirmed else {
+            return homeBase
+        }
+        return .held
     }
 
     internal func resolveIngestBase() async -> ResolvedHomeBase {
@@ -1031,6 +1105,8 @@ public final class AppState {
         let fingerprintTarget = AppStateBridgeTarget()
         let recoveryCoordinator = IncompleteSegmentRecoveryCoordinator.shared
         let lastContactStore = UserDefaultsLastSuccessfulJournalContactStore()
+        let journalMarkConfirmationStore = UserDefaultsJournalMarkConfirmationStore()
+        self.journalMarkConfirmationStore = journalMarkConfirmationStore
         let lastDeliveryStore = UserDefaultsLastJournalDeliveryStore()
 
         self.pauseManager = pauseManager
@@ -1089,6 +1165,13 @@ public final class AppState {
                     state.clearLastSuccessfulJournalContact()
                 } else {
                     lastContactStore.clear()
+                }
+            },
+            clearJournalMarkConfirmation: { [fingerprintTarget, journalMarkConfirmationStore] in
+                if let state = fingerprintTarget.state {
+                    state.clearJournalMarkConfirmation()
+                } else {
+                    journalMarkConfirmationStore.clear()
                 }
             }
         )
@@ -1260,6 +1343,7 @@ public final class AppState {
         journalURLOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
         lastContactStore: (any LastSuccessfulJournalContactStoring)? = nil,
         lastDeliveryStore: (any LastJournalDeliveryStoring)? = nil,
+        journalMarkConfirmationStore: (any JournalMarkConfirmationStoring)? = nil,
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
@@ -1280,6 +1364,7 @@ public final class AppState {
             journalURLOpener: journalURLOpener,
             lastContactStore: lastContactStore,
             lastDeliveryStore: lastDeliveryStore,
+            journalMarkConfirmationStore: journalMarkConfirmationStore,
             pairingLoad: pairingLoad,
             recorder: recorder,
             screenPermissionProvider: screenPermissionProvider,
@@ -1355,6 +1440,7 @@ public final class AppState {
         journalURLOpener: @escaping @MainActor @Sendable (URL) -> Bool = { NSWorkspace.shared.open($0) },
         lastContactStore providedLastContactStore: (any LastSuccessfulJournalContactStoring)? = nil,
         lastDeliveryStore providedLastDeliveryStore: (any LastJournalDeliveryStoring)? = nil,
+        journalMarkConfirmationStore providedJournalMarkConfirmationStore: (any JournalMarkConfirmationStoring)? = nil,
         pairingOperation: PairingCoordinator.PairOperation? = nil,
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
         pairingSave: PairingCoordinator.SavePairing? = nil,
@@ -1405,6 +1491,9 @@ public final class AppState {
         )
         let lastContactStore = providedLastContactStore ?? InMemoryLastSuccessfulJournalContactStore()
         self.lastContactStore = lastContactStore
+        let journalMarkConfirmationStore = providedJournalMarkConfirmationStore
+            ?? InMemoryJournalMarkConfirmationStore(settled: false)
+        self.journalMarkConfirmationStore = journalMarkConfirmationStore
         self.recorder = recorder
         self.logAdapter = logAdapter
         let lastDeliveryStore = providedLastDeliveryStore ?? InMemoryLastJournalDeliveryStore()
@@ -1464,6 +1553,13 @@ public final class AppState {
             },
             clearLastSuccessfulJournalContact: { [lastContactStore] in
                 lastContactStore.clear()
+            },
+            clearJournalMarkConfirmation: { [fingerprintTarget, journalMarkConfirmationStore] in
+                if let state = fingerprintTarget.state {
+                    state.clearJournalMarkConfirmation()
+                } else {
+                    journalMarkConfirmationStore.clear()
+                }
             }
         )
 
