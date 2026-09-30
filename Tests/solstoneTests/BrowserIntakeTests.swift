@@ -1276,6 +1276,54 @@ struct BrowserIntakeAdmissionTests {
         #expect(try String(contentsOf: url, encoding: .utf8) == damaged)
     }
 
+    @Test func finalizedEnvelopeMatchesVendoredIngestAddressContract() throws {
+        let root = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let contract = vendorURL.appendingPathComponent("contracts/client-ingest")
+        let rawSchema = try Data(contentsOf: contract.appendingPathComponent("protocol.schema.json"))
+        let adoption = try #require(JSONSerialization.jsonObject(with: Data(contentsOf:
+            contract.appendingPathComponent("adoption.json"))) as? [String: Any])
+        #expect(SHA256.hash(data: rawSchema).map { String(format: "%02x", $0) }.joined()
+            == adoption["schema_sha256"] as? String)
+        let schema = try #require(JSONSerialization.jsonObject(with: rawSchema) as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: [String: Any]])
+
+        // The observing device's civil day crosses midnight in UTC+14.
+        let instant = Date(timeIntervalSince1970: 1700000000)
+        let zone = try #require(TimeZone(secondsFromGMT: 14 * 3600))
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: root.appendingPathComponent("spool"), projection: projection)
+        let authority = BrowserIntakeAuthority(store: store, projection: projection,
+            wallClock: { instant }, timeZone: zone)
+        let generation = try authority.publishEpoch(identityToken: "contract-address")
+        let batch: [String: Any] = ["type": "batch", "destination_generation": generation,
+            "inst": "address-inst", "batch_id": "abababababababababababababababab",
+            "queued_at_ms": 1700000000000 as UInt64,
+            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64,
+                "ctx": "address-ctx", "blocks": [["id": "b", "text": "address-vector"]]]]]
+        let accepted = try authority.accept(bytes: JSONSerialization.data(withJSONObject: batch), direction: "extension_to_host")
+        let id = try #require(accepted["period_id"] as? String)
+        try store.finalizePeriod(periodId: id, reason: "contract-vector", civilDate: instant, timeZone: zone)
+        let period = try #require(store.getPeriod(periodId: id))
+        let prepared = try IngestV3UploadRequestBuilder.build(baseURL: "http://127.0.0.1",
+            day: #require(period.requestedDay), segment: #require(period.requestedSegment),
+            selectedFiles: [store.periodFileURL(for: id)], meta: nil, source: "browser",
+            boundary: "ingest-address-vector", bodyURL: root.appendingPathComponent("multipart.body"))
+        let parts = try String(contentsOf: prepared.bodyURL, encoding: .utf8).components(separatedBy: "\r\n\r\n")
+        #expect(parts.count >= 2)
+        let envelopeText = try #require(parts.dropFirst().first).components(separatedBy: "\r\n--")[0]
+        let envelope = try #require(JSONSerialization.jsonObject(with: Data(envelopeText.utf8)) as? [String: Any])
+        for field in ["day", "segment"] {
+            let value = try #require(envelope[field] as? String)
+            let pattern = try #require(properties[field]?["pattern"] as? String)
+            #expect(value.range(of: pattern, options: .regularExpression) != nil)
+        }
+        #expect(envelope["day"] as? String == "20231115")
+        #expect(envelope["segment"] as? String == "121320_1")
+        #expect(envelope["source"] as? String == "browser")
+        #expect(envelope["meta"] == nil)
+    }
+
     @Test func test10_plannerRaceProofAndSegmentKey() async throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }

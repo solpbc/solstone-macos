@@ -1993,7 +1993,7 @@ private static func fullSync(_ handle: FileHandle) throws {
         let dayFormatter = DateFormatter()
         dayFormatter.locale = Locale(identifier: "en_US_POSIX")
         dayFormatter.calendar = Calendar(identifier: .gregorian)
-        dayFormatter.dateFormat = "yyyy-MM-dd"
+        dayFormatter.dateFormat = "yyyyMMdd"
         dayFormatter.timeZone = timeZone
         let dayStr = dayFormatter.string(from: civilDate)
 

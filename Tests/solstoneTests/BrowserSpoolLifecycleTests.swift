@@ -641,7 +641,7 @@ struct BrowserSpoolLifecycleTests {
         #expect(accepted["result"] as? String == "accepted")
         fixture.clock.advance(seconds: 301)
         #expect(await transport.waitForAttempts(1))
-        #expect(fixture.owner.store.getAllFinalizedPeriods().first?.requestedDay == "2023-11-15")
+        #expect(fixture.owner.store.getAllFinalizedPeriods().first?.requestedDay == "20231115")
         fixture.owner.stop()
     }
 
@@ -659,7 +659,7 @@ struct BrowserSpoolLifecycleTests {
         #expect(accepted["result"] as? String == "accepted")
         fixture.clock.advance(seconds: 201)
         #expect(await transport.waitForAttempts(1))
-        #expect(fixture.owner.store.getAllFinalizedPeriods().first?.requestedDay == "2023-11-15")
+        #expect(fixture.owner.store.getAllFinalizedPeriods().first?.requestedDay == "20231115")
         #expect(fixture.owner.store.storeIsFailed() == false)
         fixture.owner.stop()
     }
@@ -829,7 +829,7 @@ struct BrowserSpoolLifecycleTests {
         let period = try #require(fixture.owner.store.getPeriod(periodId: periodId))
         #expect(period.state == "finalized")
         #expect(period.finalizeTimeZone == "GMT")
-        #expect(period.requestedDay == "1969-12-31")
+        #expect(period.requestedDay == "19691231")
     }
 
     @Test func failedCommittedLengthReadNeverTruncatesToZero() async throws {

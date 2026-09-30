@@ -1,0 +1,8 @@
+{
+  "source_repository": "solpbc/solstone-journal",
+  "source_revision": "5989b1b44952475c8f8e218cda44cad9bf10669d",
+  "source_path": "core/crates/solstone-core/src/contract/schemas/protocol.schema.json",
+  "schema_identity": "solstone-journal-format:observer-ingest-envelope",
+  "schema_sha256": "0862f37b150bee53ac3caf447a2a1c769bb7eb68fbf2f6a288b554b3e8c37124",
+  "consumer_test": "BrowserIntakeAdmissionTests.finalizedEnvelopeMatchesVendoredIngestAddressContract"
+}
