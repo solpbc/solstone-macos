@@ -216,7 +216,7 @@ struct CaptureTimeZoneUploadTests {
         #expect(kolkataMeta["tz"] == IngestJSONValue.string("Asia/Kolkata"))
         #expect(kolkataMeta["utc_offset_seconds"] == IngestJSONValue.integer(19800))
 
-        // 2. Hand-built directory without zone file and sidecar .missing yields "meta":null
+        // 2. Hand-built directory without zone file and sidecar .missing omits meta (the journal refuses a non-object meta)
         let handBuiltDir = root.appendingPathComponent("handbuilt", isDirectory: true)
         try FileManager.default.createDirectory(at: handBuiltDir, withIntermediateDirectories: true)
         let (_, handBuiltBody) = try buildAndDecodeEnvelope(
@@ -225,7 +225,7 @@ struct CaptureTimeZoneUploadTests {
             segment: "120000_300",
             sidecar: .missing
         )
-        #expect(handBuiltBody.contains("\"meta\":null"))
+        #expect(!handBuiltBody.contains("\"meta\""))
 
         // 3. Denver directory with sidecar .present (mics + decoy tz/offset)
         let micValue = IngestJSONValue.object(["count": .integer(1), "devices": .array([.string("built-in-mic")])])

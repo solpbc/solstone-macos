@@ -50,7 +50,7 @@ struct IngestV3UploadRequestBuilder {
             try container.encode(day, forKey: .day)
             try container.encode(segment, forKey: .segment)
             try container.encode(files, forKey: .files)
-            try container.encode(meta, forKey: .meta)
+            try container.encodeIfPresent(meta, forKey: .meta)
             try container.encodeIfPresent(source, forKey: .source)
         }
 
