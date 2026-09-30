@@ -311,7 +311,7 @@ public struct UploadClient: Sendable {
         }
         request.setValue(bodySize.stringValue, forHTTPHeaderField: "Content-Length")
         let result: (Data, URLResponse?, Error?) = await withCheckedContinuation { continuation in
-            let delegate = BrowserLeaseUploadDelegate(bodyURL: prepared.bodyURL, lease: lease) { data, response, error in
+            let delegate = BrowserLeaseUploadDelegate { data, response, error in
                 continuation.resume(returning: (data, response, error))
             }
             let leasedSession = URLSession(
@@ -320,7 +320,11 @@ public struct UploadClient: Sendable {
                 delegateQueue: OperationQueue()
             )
             delegate.attach(session: leasedSession)
-            let task = leasedSession.uploadTask(withStreamedRequest: request)
+            // Let Foundation stream the finalized staging file. A custom
+            // InputStream subclass does not implement CFNetwork's native stream
+            // callbacks. The request/session remain pinned to this lease's route;
+            // revocation cancels its task and can never acknowledge custody.
+            let task = leasedSession.uploadTask(with: request, fromFile: prepared.bodyURL)
             lease.onInvalidate { task.cancel() }
             if !lease.isValid() { task.cancel() }
             task.resume()
@@ -409,8 +413,6 @@ public struct UploadClient: Sendable {
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
 private final class BrowserLeaseUploadDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private let bodyURL: URL
-    private let lease: BrowserUploadLease
     private let completion: @Sendable (Data, URLResponse?, Error?) -> Void
     private let lock = NSLock()
     private static let maximumResponseBytes = 1024 * 1024
@@ -420,9 +422,7 @@ private final class BrowserLeaseUploadDelegate: NSObject, URLSessionDataDelegate
     private var session: URLSession?
     private var completed = false
 
-    init(bodyURL: URL, lease: BrowserUploadLease, completion: @escaping @Sendable (Data, URLResponse?, Error?) -> Void) {
-        self.bodyURL = bodyURL
-        self.lease = lease
+    init(completion: @escaping @Sendable (Data, URLResponse?, Error?) -> Void) {
         self.completion = completion
     }
 
@@ -436,14 +436,6 @@ private final class BrowserLeaseUploadDelegate: NSObject, URLSessionDataDelegate
                     completionHandler: @escaping (URLRequest?) -> Void) {
         // Browser custody is authorized for one captured paired route only.
         completionHandler(nil)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
-        guard lease.isValid() else {
-            completionHandler(nil)
-            return
-        }
-        completionHandler(BrowserLeaseInputStream(url: bodyURL, lease: lease))
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
@@ -481,52 +473,6 @@ private final class BrowserLeaseUploadDelegate: NSObject, URLSessionDataDelegate
         guard let result else { return }
         completion(result.0, result.1, result.3)
         result.2?.finishTasksAndInvalidate()
-    }
-}
-
-private final class BrowserLeaseInputStream: InputStream, @unchecked Sendable {
-    private let fileURL: URL
-    private let lease: BrowserUploadLease
-    private var source: InputStream?
-
-    init(url: URL, lease: BrowserUploadLease) {
-        self.fileURL = url
-        self.lease = lease
-        super.init(data: Data())
-    }
-
-    override func open() {
-        guard lease.isValid(), let stream = InputStream(url: fileURL) else { return }
-        source = stream
-        stream.open()
-    }
-
-    override func close() {
-        source?.close()
-        source = nil
-    }
-
-    override var hasBytesAvailable: Bool {
-        lease.isValid() && (source?.hasBytesAvailable ?? false)
-    }
-
-    override var streamStatus: Stream.Status {
-        source?.streamStatus ?? .notOpen
-    }
-
-    override var streamError: Error? {
-        source?.streamError
-    }
-
-    override func read(_ buffer: UnsafeMutablePointer<UInt8>, maxLength len: Int) -> Int {
-        guard lease.isValid(), let source else { return -1 }
-        let count = source.read(buffer, maxLength: len)
-        guard lease.isValid() else { return -1 }
-        return count
-    }
-
-    override func getBuffer(_ buffer: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>, length len: UnsafeMutablePointer<Int>) -> Bool {
-        false
     }
 }
 #endif
