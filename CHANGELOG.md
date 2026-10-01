@@ -7,11 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- after you pair with a journal, nothing from this mac goes into it until you confirm its mark, or choose "continue anyway" when it can't be checked. if you quit or close settings before you answer, settings asks again the next time it opens. if this mac was already paired before this update, nothing changes.
+
 ### Fixed
 
 - if a moment changes on its way into your journal, the changed files stay on this mac for another attempt.
 - after you change time zones, each new moment goes into your journal under the time zone your mac is set to when that moment starts. a moment already underway keeps the time zone it started in.
 - when the clocks go back an hour, moments from the repeated hour now reach your journal. before, some of them could stay on this mac.
+- right after you switch journals, the mark you're asked to confirm is now always the new journal's. before, it could briefly show the previous journal's mark.
 
 ## [2.0.20] - 2026-09-30
 
