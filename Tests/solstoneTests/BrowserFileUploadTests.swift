@@ -3,6 +3,7 @@
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
 import Foundation
+import Darwin
 import Network
 import Testing
 @testable import solstone
@@ -11,6 +12,65 @@ import Testing
 /// the custom InputStream crash during the first installed browser upload.
 @Suite("Browser file upload", .timeLimit(.minutes(1)))
 struct BrowserFileUploadTests {
+    #if SOLSTONE_BROWSER_DEVELOPMENT_HOST
+    @Test func createdTaskCannotDispatchAfterLeaseRevocation() async throws {
+        let peer = try BrowserUploadHTTPPeer()
+        defer { peer.stop() }
+        let fixture = try BrowserFileUploadFixture(port: try await peer.start())
+        defer { fixture.clear() }
+        let barrier = try BrowserDispatchBarrierFixture(parent: fixture.root)
+        defer { barrier.close() }
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let (completions, continuation) = AsyncStream<Int?>.makeStream()
+        let task = session.uploadTask(with: fixture.prepared.request, fromFile: fixture.prepared.bodyURL) { _, _, error in
+            continuation.yield((error as? URLError)?.code.rawValue)
+            continuation.finish()
+        }
+        BrowserUploadDispatchTestBarrier.resume(task, lease: fixture.lease, directory: barrier.root.path)
+        let created = try barrier.created()
+        #expect(created["task_state"] as? Int == URLSessionTask.State.suspended.rawValue)
+        #expect(created["period_id"] as? String == fixture.lease.periodId)
+        #expect(created["lease_valid_at_creation"] as? Bool == true)
+        #expect(await peer.acceptedConnectionCount() == 0)
+        fixture.gate.invalidateCurrentLease()
+        try barrier.release()
+        var result = completions.makeAsyncIterator()
+        let code = try #require(await result.next())
+        #expect(code == URLError.cancelled.rawValue)
+        #expect(!fixture.lease.isValid())
+        #expect(await peer.acceptedConnectionCount() == 0)
+    }
+
+    @Test func releasedCreatedTaskReachesTheSameHTTPPeer() async throws {
+        let peer = try BrowserUploadHTTPPeer()
+        defer { peer.stop() }
+        let fixture = try BrowserFileUploadFixture(port: try await peer.start())
+        defer { fixture.clear() }
+        let barrier = try BrowserDispatchBarrierFixture(parent: fixture.root)
+        defer { barrier.close() }
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let (completions, continuation) = AsyncStream<Int?>.makeStream()
+        let task = session.uploadTask(with: fixture.prepared.request, fromFile: fixture.prepared.bodyURL) { _, _, error in
+            continuation.yield((error as? URLError)?.code.rawValue)
+            continuation.finish()
+        }
+        BrowserUploadDispatchTestBarrier.resume(task, lease: fixture.lease, directory: barrier.root.path)
+        #expect(try barrier.created()["lease_valid_at_creation"] as? Bool == true)
+        #expect(await peer.acceptedConnectionCount() == 0)
+        try barrier.release()
+        var requests = peer.requests.makeAsyncIterator()
+        #expect(try await requests.next() == Data(contentsOf: fixture.prepared.bodyURL))
+        await peer.respond(status: "503 Service Unavailable", body: Data("{}".utf8))
+        var results = completions.makeAsyncIterator()
+        let result = await results.next()
+        #expect(result != nil)
+        #expect(result! == nil)
+        #expect(await peer.acceptedConnectionCount() == 1)
+    }
+    #endif
+
     @Test func finalizedFileReachesRealHTTPPeer() async throws {
         let peer = try BrowserUploadHTTPPeer()
         defer { peer.stop() }
@@ -109,6 +169,9 @@ private actor BrowserUploadHTTPPeer {
     private let queue = DispatchQueue(label: "browser-file-upload-http-test")
     private var connection: NWConnection?
     private var received = Data()
+    private var connectionCount = 0
+
+    func acceptedConnectionCount() -> Int { connectionCount }
 
     init() throws {
         (requests, requestEvents) = AsyncThrowingStream.makeStream()
@@ -156,6 +219,7 @@ private actor BrowserUploadHTTPPeer {
     }
 
     private func accept(_ candidate: NWConnection) {
+        connectionCount += 1
         guard connection == nil else { candidate.cancel(); return }
         connection = candidate
         candidate.start(queue: queue)
@@ -193,4 +257,32 @@ private actor BrowserUploadHTTPPeer {
         connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
     }
 }
+
+#if SOLSTONE_BROWSER_DEVELOPMENT_HOST
+private struct BrowserDispatchBarrierFixture {
+    let root: URL
+    let descriptor: Int32
+
+    init(parent: URL) throws {
+        root = parent.appendingPathComponent("dispatch-barrier")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700])
+        let pipe = root.appendingPathComponent("release")
+        guard mkfifo(pipe.path, 0o600) == 0 else { throw POSIXError(.EIO) }
+        descriptor = open(pipe.path, O_RDWR | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { throw POSIXError(.EIO) }
+    }
+
+    func created() throws -> [String: Any] {
+        try #require(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("created.json"))) as? [String: Any])
+    }
+
+    func release() throws {
+        var byte: UInt8 = 0x52
+        guard write(descriptor, &byte, 1) == 1 else { throw POSIXError(.EIO) }
+    }
+
+    func close() { Darwin.close(descriptor) }
+}
+#endif
 #endif

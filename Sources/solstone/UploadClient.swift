@@ -327,7 +327,11 @@ public struct UploadClient: Sendable {
             let task = leasedSession.uploadTask(with: request, fromFile: prepared.bodyURL)
             lease.onInvalidate { task.cancel() }
             if !lease.isValid() { task.cancel() }
+            #if SOLSTONE_BROWSER_DEVELOPMENT_HOST
+            BrowserUploadDispatchTestBarrier.resume(task, lease: lease)
+            #else
             task.resume()
+            #endif
         }
 
         let (data, response, error) = result
