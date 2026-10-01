@@ -203,6 +203,7 @@ struct JournalAddressVisibilityTests {
             serviceMode: .external,
             isRecording: true,
             isPaused: false,
+            held: false,
             uploadStatus: .synced,
             pendingCount: 0,
             lastDeliveryOutcome: .delivered(Date(timeIntervalSince1970: 900)),

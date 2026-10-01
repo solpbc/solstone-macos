@@ -184,6 +184,7 @@ public enum UICopy {
     public static let MENUBAR_A11Y_AWAITING_MARK_CONFIRMATION = "solstone · confirm your journal's mark"
     public static let JOURNAL_MARK_HELD = "waiting for you to confirm your journal's mark"
     public static let JOURNAL_MARK_HELD_CAPTION = "nothing waiting goes into your journal until you do."
+    public static let JOURNAL_MARK_CONFIRM_ACTION = "confirm your journal's mark"
     public static let SETTINGS_OBSERVATION_OBSERVING = "on · reaching your journal"
     public static let SETTINGS_OBSERVATION_CONNECTING = "connecting"
     public static let SETTINGS_OBSERVATION_PAUSED = "paused"

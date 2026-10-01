@@ -271,14 +271,123 @@ struct StatusHealthSummaryTests {
         }
     }
 
+    @Test func heldRecordingUsesHeldCopyAndActionAcrossUploadStatuses() {
+        let statuses: [(UploadCoordinator.Status, Int)] = [
+            (.notSynced, 0),
+            (.syncing(checked: 1, total: 4), 0),
+            (.synced, 3),
+            (.uploading(segment: "s1"), 0),
+            (.retrying(segment: "s1", attempts: 2), 0),
+            (.offline("stale"), 0),
+            (.awaitingTunnel, 3)
+        ]
+
+        for (status, pending) in statuses {
+            let summary = makeSummary(isRecording: true, isPaused: false, held: true, uploadStatus: status, pendingCount: pending)
+            #expect(summary.severity == .calm)
+            #expect(summary.title == UICopy.JOURNAL_MARK_HELD)
+            #expect(summary.subtitle == UICopy.JOURNAL_MARK_HELD_CAPTION)
+            #expect(summary.axValue == "external_awaiting_mark_confirmation")
+            #expect(summary.action != nil)
+            if let action = summary.action {
+                #expect(action.label == UICopy.JOURNAL_MARK_CONFIRM_ACTION)
+                #expect(SettingsView.Tab(rawValue: action.settingsTab) == .service)
+                #expect(action.reasksJournalMark == true)
+            }
+        }
+    }
+
+    @Test func heldPausedUsesPausedCardMatchingNotSyncedPaused() {
+        let statuses: [UploadCoordinator.Status] = [.notSynced, .awaitingTunnel, .synced]
+        let baseline = makeSummary(isRecording: true, isPaused: true, held: false, uploadStatus: .notSynced)
+
+        for status in statuses {
+            let summary = makeSummary(isRecording: true, isPaused: true, held: true, uploadStatus: status)
+            #expect(summary.axValue == "paused")
+            #expect(summary == baseline)
+        }
+    }
+
+    @Test func unheldPausedSyncedDiffersFromNotSyncedAndOfflineIsAttention() {
+        let notSyncedPaused = makeSummary(isRecording: true, isPaused: true, held: false, uploadStatus: .notSynced)
+        let syncedPaused = makeSummary(isRecording: true, isPaused: true, held: false, uploadStatus: .synced)
+        #expect(syncedPaused != notSyncedPaused)
+
+        let offlinePaused = makeSummary(isRecording: true, isPaused: true, held: false, uploadStatus: .offline("offline"))
+        #expect(offlinePaused.axValue == "external_offline")
+    }
+
+    @Test func heldBundledYieldsMigrationCardWithoutAction() {
+        let heldBundled = makeSummary(serviceMode: .bundled, isRecording: true, isPaused: false, held: true)
+        let unheldBundled = makeSummary(serviceMode: .bundled, isRecording: true, isPaused: false, held: false)
+
+        #expect(heldBundled == unheldBundled)
+        #expect(heldBundled.action == nil)
+        #expect(heldBundled.axValue == MenubarStatusRowState.journalMigrationNeeded.axToken)
+    }
+
+    @Test func heldAttentionSetupWrapsWithHeldActionAndPreservesSetupToken() {
+        let verdict = SetupGroupVerdict.needsAttention(count: 2)
+        let heldUnwrapped = makeSummary(isRecording: true, isPaused: false, held: true, setupVerdict: nil)
+        let summary = makeSummary(isRecording: true, isPaused: false, held: true, setupVerdict: verdict)
+
+        #expect(summary.severity == .attention)
+        #expect(summary.title == verdict.text)
+        #expect(summary.subtitle == heldUnwrapped.title)
+        #expect(summary.action == heldUnwrapped.action)
+        #expect(summary.action != nil)
+        #expect(summary.axValue == verdict.axState.axToken)
+
+        let readySummary = makeSummary(isRecording: true, isPaused: false, held: true, setupVerdict: .ready)
+        #expect(readySummary == heldUnwrapped)
+    }
+
+    @Test func heldOffStatesMatchUnheldCards() {
+        let notRecordingHeld = makeSummary(isRecording: false, isPaused: false, held: true)
+        let notRecordingUnheld = makeSummary(isRecording: false, isPaused: false, held: false)
+        #expect(notRecordingHeld == notRecordingUnheld)
+
+        let sourcesOffHeld = makeSummary(isRecording: false, isPaused: false, held: true, selectedSources: [])
+        let sourcesOffUnheld = makeSummary(isRecording: false, isPaused: false, held: false, selectedSources: [])
+        #expect(sourcesOffHeld == sourcesOffUnheld)
+
+        let sourcesUnavailableHeld = makeSummary(isRecording: false, isPaused: false, held: true, selectedSources: .screen, permittedSources: .microphone)
+        let sourcesUnavailableUnheld = makeSummary(isRecording: false, isPaused: false, held: false, selectedSources: .screen, permittedSources: .microphone)
+        #expect(sourcesUnavailableHeld == sourcesUnavailableUnheld)
+
+        let captureErrorHeld = makeSummary(isRecording: false, isPaused: false, held: true, errorMessage: "fail")
+        let captureErrorUnheld = makeSummary(isRecording: false, isPaused: false, held: false, errorMessage: "fail")
+        #expect(captureErrorHeld == captureErrorUnheld)
+    }
+
+    @Test func healthActionEffectRoutesHeldActionToServiceAndTriggersReask() {
+        let sourcesAction = StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources", reasksJournalMark: false)
+        let sourcesEffect = healthActionEffect(sourcesAction)
+        #expect(sourcesEffect.tab == .sources)
+        #expect(sourcesEffect.postsReask == false)
+
+        let permissionsAction = StatusHealthAction(label: UICopy.PERMISSIONS_OPEN_ACTION, settingsTab: "permissions", reasksJournalMark: false)
+        let permissionsEffect = healthActionEffect(permissionsAction)
+        #expect(permissionsEffect.tab == .permissions)
+        #expect(permissionsEffect.postsReask == false)
+
+        let heldCard = makeSummary(isRecording: true, isPaused: false, held: true)
+        let heldAction = try! #require(heldCard.action)
+        let heldEffect = healthActionEffect(heldAction)
+        #expect(heldEffect.tab == .service)
+        #expect(heldEffect.postsReask == true)
+    }
+
     private func makeSummary(
         serviceMode: ServiceMode? = .external,
         isRecording: Bool = true,
         isPaused: Bool = false,
+        held: Bool = false,
         uploadStatus: UploadCoordinator.Status = .synced,
         pendingCount: Int = 0,
         lastDeliveryOutcome: LastJournalDeliveryOutcome = .delivered(statusSummaryRecentDelivery),
         serverURL: String? = statusSummaryServerURL,
+        pairedJournalAddress: String? = nil,
         now: Date = statusSummaryNow,
         selectedSources: CaptureSources = .all,
         permittedSources: CaptureSources = .all,
@@ -290,10 +399,12 @@ struct StatusHealthSummaryTests {
             serviceMode: serviceMode,
             isRecording: isRecording,
             isPaused: isPaused,
+            held: held,
             uploadStatus: uploadStatus,
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
             serverURL: serverURL,
+            pairedJournalAddress: pairedJournalAddress,
             now: now,
             selectedSources: selectedSources,
             permittedSources: permittedSources,

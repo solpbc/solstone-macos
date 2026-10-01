@@ -528,6 +528,7 @@ extension StatusHealthSummary {
         serviceMode: ServiceMode?,
         isRecording: Bool,
         isPaused: Bool,
+        held: Bool,
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
@@ -545,6 +546,7 @@ extension StatusHealthSummary {
             serviceMode: serviceMode,
             isRecording: isRecording,
             isPaused: isPaused,
+            held: held,
             uploadStatus: uploadStatus,
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
@@ -578,7 +580,7 @@ extension StatusHealthSummary {
                 title: UICopy.SOURCES_BROWSER_DRAINING,
                 subtitle: deliverySubtitle,
                 axValue: "browser_draining",
-                action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources")
+                action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources", reasksJournalMark: false)
             )
         case .ready:
             return StatusHealthSummary(
@@ -600,7 +602,7 @@ extension StatusHealthSummary {
                 title: UICopy.SOURCES_BROWSER_FULL,
                 subtitle: deliverySubtitle,
                 axValue: "custody_full",
-                action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources")
+                action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources", reasksJournalMark: false)
             )
         case .paused:
             return StatusHealthSummary(
@@ -641,7 +643,7 @@ extension StatusHealthSummary {
         case .notPaired, .unavailable:
             return StatusHealthSummary(severity: .attention, title: UICopy.SOURCES_BROWSER_CANNOT_START,
                 subtitle: deliverySubtitle, axValue: "browser_unavailable",
-                action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources"))
+                action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources", reasksJournalMark: false))
         case .unknown:
             return StatusHealthSummary(severity: .calm, title: UICopy.SOURCES_BROWSER_UNKNOWN,
                 subtitle: deliverySubtitle, axValue: "browser_unknown")

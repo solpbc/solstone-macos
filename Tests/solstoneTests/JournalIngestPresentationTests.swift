@@ -89,15 +89,30 @@ struct JournalIngestPresentationTests {
     }
 
     @Test func pausedAndDisconnectedSyncDoNotShowStaleSuccess() {
-        #expect(journalSyncStatusText(.synced, paused: true, ready: true) == "sync paused")
-        #expect(journalSyncStatusText(.synced, paused: false, ready: false) == "waiting for a connection")
-        #expect(journalSyncStatusText(.notSynced, paused: false, ready: true) == "sync hasn't checked yet")
-        #expect(journalSyncStatusText(.synced, paused: false, ready: true) == "sync check complete")
+        #expect(journalSyncStatusText(.synced, paused: true, ready: true, held: false) == "sync paused")
+        #expect(journalSyncStatusText(.synced, paused: false, ready: false, held: false) == "waiting for a connection")
+        #expect(journalSyncStatusText(.notSynced, paused: false, ready: true, held: false) == "sync hasn't checked yet")
+        #expect(journalSyncStatusText(.synced, paused: false, ready: true, held: false) == "sync check complete")
     }
 
     @Test func activityDoesNotExposeSegmentNamesOrClaimDelivery() {
-        #expect(journalSyncStatusText(.uploading(segment: "private-segment"), paused: false, ready: true) == "syncing to your journal…")
-        #expect(journalSyncStatusText(.retrying(segment: "private-segment", attempts: 2), paused: false, ready: true) == "waiting to retry")
+        #expect(journalSyncStatusText(.uploading(segment: "private-segment"), paused: false, ready: true, held: false) == "syncing to your journal…")
+        #expect(journalSyncStatusText(.retrying(segment: "private-segment", attempts: 2), paused: false, ready: true, held: false) == "waiting to retry")
+    }
+
+    @Test func heldSyncRowShowsHeldCopyAndHandRaisedIcon() {
+        #expect(journalSyncStatusText(.synced, paused: false, ready: false, held: true) == UICopy.JOURNAL_MARK_HELD)
+        #expect(journalSyncStatusSymbol(.synced, paused: false, ready: false, held: true) == JournalSyncStatusSymbol(systemName: "hand.raised.circle", usesSecondaryStyle: true))
+    }
+
+    @Test func heldPausedSyncRowShowsPausedCopyAndPauseIcon() {
+        #expect(journalSyncStatusText(.synced, paused: true, ready: false, held: true) == "sync paused")
+        #expect(journalSyncStatusSymbol(.synced, paused: true, ready: false, held: true) == JournalSyncStatusSymbol(systemName: "pause.circle", usesSecondaryStyle: true))
+    }
+
+    @Test func disconnectedSyncRowShowsConnectionWaitingAndPauseIcon() {
+        #expect(journalSyncStatusText(.synced, paused: false, ready: false, held: false) == "waiting for a connection")
+        #expect(journalSyncStatusSymbol(.synced, paused: false, ready: false, held: false) == JournalSyncStatusSymbol(systemName: "pause.circle", usesSecondaryStyle: true))
     }
 
     private var connectedTunnel: JournalConnectionVerdict {

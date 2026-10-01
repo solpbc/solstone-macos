@@ -277,15 +277,48 @@ struct OwnerSurfaceStatusTests {
         #expect(sourcesFooter(media: UICopy.SOURCES_NONE, lead: .waiting) == UICopy.SOURCES_BROWSER_HEADLINE_WAITING)
     }
 
+    @Test func browserOwnerLeadsMatchUnheldWhenNotRecording() {
+        let validProfile = BrowserHostProfile(lastSeen: now, handshake: .compatible, byeReason: nil, leaseExpiry: now.addingTimeInterval(30))
+
+        var shutdownSnap = BrowserHostSnapshotValue(capture: "permitted")
+        shutdownSnap.shutdown = true
+
+        let leadSnapshots: [(BrowserHostSnapshotValue, BrowserOwnerStatusLead)] = [
+            (BrowserHostSnapshotValue(intakeEnabled: false, capture: "intake_off", delivery: "kept_locally"), .draining),
+            (shutdownSnap, .shutdown),
+            (BrowserHostSnapshotValue(capture: "paused", listener: .available), .paused),
+            (BrowserHostSnapshotValue(capture: "not_paired", listener: .available), .notPaired),
+            (BrowserHostSnapshotValue(capture: "unavailable", listener: .available), .unavailable),
+            (BrowserHostSnapshotValue(intakeEnabled: false, capture: "intake_off", delivery: "idle"), .intakeOff),
+            (BrowserHostSnapshotValue(capture: "permitted", delivery: "idle", failureCode: "queue_full", listener: .available), .hold("queue_full")),
+            (BrowserHostSnapshotValue(capture: "permitted", delivery: "kept_locally", custodyFull: true, custodyPresent: true, listener: .available), .custodyFull),
+            (BrowserHostSnapshotValue(capture: "permitted", delivery: "idle", listener: .available), .waiting),
+            (BrowserHostSnapshotValue(capture: "permitted", delivery: "idle", profiles: BrowserHostProfileGroup(chrome: [validProfile]), listener: .available), .ready),
+            (BrowserHostSnapshotValue(intakeEnabled: true, capture: "other"), .unknown),
+            (BrowserHostSnapshotValue(intakeEnabled: false, capture: "other"), .mediaUnchanged)
+        ]
+
+        for (snapshot, expectedLead) in leadSnapshots {
+            let verdict = browserOwnerVerdict(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: snapshot, now: now)
+            #expect(verdict.lead == expectedLead)
+
+            let heldSummary = statusSummary(snapshot: snapshot, recording: false, sources: [], held: true)
+            let unheldSummary = statusSummary(snapshot: snapshot, recording: false, sources: [], held: false)
+            #expect(heldSummary == unheldSummary)
+        }
+    }
+
     private func statusSummary(
         snapshot: BrowserHostSnapshotValue,
         recording: Bool,
-        sources: CaptureSources
+        sources: CaptureSources,
+        held: Bool = false
     ) -> StatusHealthSummary {
         StatusHealthSummary.makeIncludingBrowser(
             serviceMode: nil,
             isRecording: recording,
             isPaused: false,
+            held: held,
             uploadStatus: .awaitingTunnel,
             pendingCount: 0,
             lastDeliveryOutcome: .noDeliveryYet,

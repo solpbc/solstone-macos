@@ -24,6 +24,7 @@ internal enum StatusDotSeverity: Equatable, Sendable {
 internal struct StatusHealthAction: Equatable, Sendable {
     let label: String
     let settingsTab: String
+    let reasksJournalMark: Bool
 }
 
 internal struct StatusHealthSummary: Equatable, Sendable {
@@ -110,6 +111,7 @@ extension StatusHealthSummary {
         serviceMode: ServiceMode?,
         isRecording: Bool,
         isPaused: Bool,
+        held: Bool,
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
@@ -132,7 +134,7 @@ extension StatusHealthSummary {
                 title: UICopy.SOURCES_NONE,
                 subtitle: UICopy.SOURCES_NONE_REASON,
                 axValue: "sources_off",
-                action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources")
+                action: StatusHealthAction(label: UICopy.SOURCES_OPEN_ACTION, settingsTab: "sources", reasksJournalMark: false)
             )
         }
 
@@ -146,7 +148,8 @@ extension StatusHealthSummary {
                 // solstone's own permissions pane, not to macOS System Settings.
                 action: StatusHealthAction(
                     label: UICopy.PERMISSIONS_OPEN_ACTION,
-                    settingsTab: "permissions"
+                    settingsTab: "permissions",
+                    reasksJournalMark: false
                 )
             )
         }
@@ -171,6 +174,7 @@ extension StatusHealthSummary {
             serviceMode: serviceMode,
             isRecording: isRecording,
             isPaused: isPaused,
+            held: held,
             uploadStatus: uploadStatus,
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
@@ -186,7 +190,8 @@ extension StatusHealthSummary {
             severity: .attention,
             title: setupVerdict.text,
             subtitle: operational.title,
-            axValue: setupVerdict.axState.axToken
+            axValue: setupVerdict.axState.axToken,
+            action: operational.action
         )
     }
 
@@ -194,6 +199,7 @@ extension StatusHealthSummary {
         serviceMode: ServiceMode?,
         isRecording: Bool,
         isPaused: Bool,
+        held: Bool,
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
@@ -213,6 +219,29 @@ extension StatusHealthSummary {
                 axValue: MenubarStatusRowState.journalMigrationNeeded.axToken
             )
         } else {
+            if held {
+                // isSynced: false so a stale .synced cannot name a journal that received nothing.
+                if let summary = captureFlagSummary(
+                    isRecording: isRecording,
+                    isPaused: isPaused,
+                    isBundled: false,
+                    host: host,
+                    isSynced: false
+                ) {
+                    return summary
+                }
+                return StatusHealthSummary(
+                    severity: .calm,
+                    title: UICopy.JOURNAL_MARK_HELD,
+                    subtitle: UICopy.JOURNAL_MARK_HELD_CAPTION,
+                    axValue: "external_awaiting_mark_confirmation",
+                    action: StatusHealthAction(
+                        label: UICopy.JOURNAL_MARK_CONFIRM_ACTION,
+                        settingsTab: "service",
+                        reasksJournalMark: true
+                    )
+                )
+            }
             switch uploadStatus {
             case .awaitingTunnel:
                 let subtitle = pendingCount > 0

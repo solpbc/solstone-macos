@@ -125,9 +125,15 @@ func journalPanelAffordances(for remedy: JournalPanelRemedy) -> JournalPanelAffo
     }
 }
 
+struct JournalSyncStatusSymbol: Equatable, Sendable {
+    let systemName: String
+    let usesSecondaryStyle: Bool
+}
+
 /// Activity describes this sync pass; only the delivery receipt proves an addition.
-func journalSyncStatusText(_ status: UploadCoordinator.Status, paused: Bool, ready: Bool) -> String {
+func journalSyncStatusText(_ status: UploadCoordinator.Status, paused: Bool, ready: Bool, held: Bool) -> String {
     if paused { return "sync paused" }
+    if held { return UICopy.JOURNAL_MARK_HELD }
     if !ready { return "waiting for a connection" }
     switch status {
     case .notSynced:
@@ -143,4 +149,33 @@ func journalSyncStatusText(_ status: UploadCoordinator.Status, paused: Bool, rea
     case .offline(let error):
         return error
     }
+}
+
+func journalSyncStatusSymbol(_ status: UploadCoordinator.Status, paused: Bool, ready: Bool, held: Bool) -> JournalSyncStatusSymbol {
+    if paused {
+        return JournalSyncStatusSymbol(systemName: "pause.circle", usesSecondaryStyle: true)
+    }
+    if held {
+        return JournalSyncStatusSymbol(systemName: "hand.raised.circle", usesSecondaryStyle: true)
+    }
+    if !ready {
+        return JournalSyncStatusSymbol(systemName: "pause.circle", usesSecondaryStyle: true)
+    }
+    let systemName = switch status {
+    case .notSynced:
+        "questionmark.circle"
+    case .synced:
+        "checkmark.circle"
+    case .syncing:
+        "arrow.triangle.2.circlepath"
+    case .uploading:
+        "arrow.up.circle"
+    case .retrying:
+        "exclamationmark.triangle"
+    case .awaitingTunnel:
+        "arrow.triangle.2.circlepath"
+    case .offline:
+        "xmark.circle"
+    }
+    return JournalSyncStatusSymbol(systemName: systemName, usesSecondaryStyle: false)
 }

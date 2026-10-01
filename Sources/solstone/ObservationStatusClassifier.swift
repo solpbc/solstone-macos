@@ -80,7 +80,7 @@ internal struct MenubarPresentation: Equatable {
     let attention: AttentionReason?
 
     var icon: MenubarIconState { observation.iconState }
-    var showsAttentionBadge: Bool { attention != nil }
+    var showsAttentionBadge: Bool { attention != nil || observation == .awaitingMarkConfirmation }
 
     var overlayState: MenubarIconOverlayState {
         showsAttentionBadge ? .attention : .none

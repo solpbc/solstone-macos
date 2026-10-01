@@ -52,12 +52,13 @@ struct MenubarIconOverlayStateTests {
                     observation: rowState,
                     attention: attention
                 )
-                let expectedOverlay: MenubarIconOverlayState = attention != nil
+                let expectedOverlay: MenubarIconOverlayState = (attention != nil || rowState == .awaitingMarkConfirmation)
                     ? .attention
                     : .none
 
                 #expect(presentation.icon == rowState.iconState)
                 #expect(presentation.overlayState == expectedOverlay)
+                #expect(presentation.showsAttentionBadge == (presentation.overlayState == .attention))
                 checked += 1
             }
         }

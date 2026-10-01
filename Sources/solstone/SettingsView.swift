@@ -136,6 +136,10 @@ private struct SettingsPaneScrollEdgeModifier: ViewModifier {
     }
 }
 
+func healthActionEffect(_ action: StatusHealthAction) -> (tab: SettingsView.Tab, postsReask: Bool) {
+    (SettingsView.Tab(rawValue: action.settingsTab) ?? .status, action.reasksJournalMark)
+}
+
 /// Settings window for configuring server upload
 struct SettingsView: View {
     enum Tab: String, Hashable, CaseIterable {
@@ -3092,6 +3096,7 @@ struct SettingsView: View {
             serviceMode: appState.config.serviceMode,
             isRecording: appState.isRecording,
             isPaused: appState.isPaused,
+            held: appState.needsJournalMarkConfirmation,
             uploadStatus: appState.uploadCoordinator.status,
             pendingCount: appState.uploadCoordinator.pendingCount,
             lastDeliveryOutcome: statusPrimaryDelivery(
@@ -3116,6 +3121,7 @@ struct SettingsView: View {
             serviceMode: appState.config.serviceMode,
             isRecording: appState.isRecording,
             isPaused: appState.isPaused,
+            held: appState.needsJournalMarkConfirmation,
             uploadStatus: appState.uploadCoordinator.status,
             pendingCount: appState.uploadCoordinator.pendingCount,
             lastDeliveryOutcome: appState.uploadCoordinator.lastJournalDeliveryOutcome,
@@ -3152,7 +3158,11 @@ struct SettingsView: View {
                 }
                 if let action = summary.action {
                     Button(action.label) {
-                        selectedTab = SettingsView.Tab(rawValue: action.settingsTab) ?? .status
+                        let effect = healthActionEffect(action)
+                        selectedTab = effect.tab
+                        if effect.postsReask {
+                            NotificationCenter.default.post(name: .reaskJournalMark, object: nil)
+                        }
                     }
                     .buttonStyle(.link)
                     .font(.caption)
@@ -3468,15 +3478,28 @@ struct SettingsView: View {
     private var uploadStatusView: some View {
         let status = appState.uploadCoordinator.status
         let pending = appState.uploadCoordinator.pendingCount
+        let symbol = journalSyncStatusSymbol(
+            status,
+            paused: appState.config.syncPaused,
+            ready: appState.isPairedIngestReady,
+            held: appState.needsJournalMarkConfirmation
+        )
 
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                if appState.config.syncPaused || !appState.isPairedIngestReady {
-                    Image(systemName: "pause.circle").foregroundStyle(.secondary)
+                if symbol.usesSecondaryStyle {
+                    Image(systemName: symbol.systemName)
+                        .foregroundStyle(.secondary)
                 } else {
-                    statusIcon(for: status)
+                    Image(systemName: symbol.systemName)
+                        .foregroundStyle(uploadStatusColor(for: status))
                 }
-                Text(journalSyncStatusText(status, paused: appState.config.syncPaused, ready: appState.isPairedIngestReady))
+                Text(journalSyncStatusText(
+                    status,
+                    paused: appState.config.syncPaused,
+                    ready: appState.isPairedIngestReady,
+                    held: appState.needsJournalMarkConfirmation
+                ))
                 Spacer()
             }
             .accessibilityIdentifier(AXID.Settings.Status.uploadState)
@@ -3511,26 +3534,19 @@ struct SettingsView: View {
         return 0
     }
 
-    private func statusIcon(for status: UploadCoordinator.Status) -> some View {
-        let (name, color): (String, Color) = switch status {
+    private func uploadStatusColor(for status: UploadCoordinator.Status) -> Color {
+        switch status {
         case .notSynced:
-            ("questionmark.circle", .gray)
+            .gray
         case .synced:
-            ("checkmark.circle", .green)
-        case .syncing:
-            ("arrow.triangle.2.circlepath", .blue)
-        case .uploading:
-            ("arrow.up.circle", .blue)
-        case .retrying:
-            ("exclamationmark.triangle", .orange)
-        case .awaitingTunnel:
-            ("arrow.triangle.2.circlepath", .orange)
+            .green
+        case .syncing, .uploading:
+            .blue
+        case .retrying, .awaitingTunnel:
+            .orange
         case .offline:
-            ("xmark.circle", .red)
+            .red
         }
-
-        return Image(systemName: name)
-            .foregroundStyle(color)
     }
 
 
