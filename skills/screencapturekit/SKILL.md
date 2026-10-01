@@ -39,16 +39,26 @@ Steps 4-6 must be this exact order. Adding output after starting is undefined. D
 
 ## 3. Content Filtering
 
-**Two-layer window exclusion** (`WindowExclusionDetector` in `WindowMask.swift`):
+**Apps kept out, chosen windows let back in** (`WindowExclusionManager`, `ExclusionPlanner` in `WindowExclusionPlan.swift`). The capture filter is always `SCContentFilter(display:excludingApplications:exceptingWindows:)`. A window of an excluded application that is not in `exceptingWindows` is never captured, including one created after the filter was applied; measured on macOS 27 at 1 FPS, a new private window of a kept-out browser reached 0 frames. That is the property everything below relies on.
 
-1. `CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)` — titles and owner names. Only reliable way to inspect window titles; `SCWindow` doesn't expose them.
-2. `SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)` — maps window IDs to `SCWindow` objects for `SCContentFilter`.
+1. `CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID)` gives titles, owner names, pids and layers. It is the only reliable way to read window titles; `SCWindow` doesn't expose them.
+2. `ExclusionPlanner.plan(...)` decides which pids are kept out and which window ids are let back in:
+   - excluded apps: kept out, nothing let back;
+   - a held browser: kept out, each layer-0 window let back once it reads ordinary, windows above the page (menus, tooltips) let back;
+   - an app with a title-pattern window: kept out, its other windows let back.
+3. `SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)` maps pids to `SCRunningApplication` and ids to `SCWindow`. Use `false`, so an excluded app that has no window on screen yet is still listed and kept out.
 
-**Private browsing** (`isPrivateBrowserWindow()`): Firefox only, a case-sensitive suffix match on the measured private-window form `" \u{2014} Private Browsing"` (English). Measured on macOS 27 with the app's own title reader: Safari 27, Chrome 154, Edge 153 and Brave 1.95 private windows show only the page title in `kCGWindowName`, so they have no row, and a bare substring match on words like "private" or "incognito" hid ordinary windows, so none is used. An ordinary Firefox window shows the bare page title, so a page whose own title ends in the private form is matched too; the title cannot tell the two apart. The Accessibility title does carry each browser's private marker, but reading it needs the Accessibility permission the app does not hold.
+**Private browsing.** It is matched per browser in `PrivateBrowser`, and only on forms measured on macOS 27 in English:
+- **Firefox:** a case-sensitive suffix on the window title, `" \u{2014} Private Browsing"`. An ordinary Firefox window shows the bare page title, so a page whose own title ends that way is matched too.
+- **Safari, Chrome, Edge and Brave:** they show only the page title in `kCGWindowName`. Their private mark is in the Accessibility title (`kAXTitleAttribute`), read by `AccessibilityTitleReader` and paired to the capture window by `_AXUIElementGetWindow`. A window is private only when its Accessibility title equals its window title plus the browser's own tail (`" - Google Chrome (Incognito)"`, `", Private Browsing"`, …). A page that titles itself with the tail reads the same text in both titles, so it is never matched.
+- **When this runs:** only when the owner turns on the setting's second level, and only while a real read works. `AXIsProcessTrusted()` goes stale in a running process in both directions, so never gate on it.
+- **Holding windows:** a new window of a held browser stays out until it is decided, at most `ExclusionPlanner.holdLimit` (2 s), and is then let in and still re-checked. Accessibility verdicts are cached per window, because a window's private mode never changes.
 
-**Dynamic updates** (`CaptureManager.swift`): 5-second polling timer (`tolerance = 2.0`). Also triggers on `didActivateApplicationNotification` / `didDeactivateApplicationNotification`. Only calls `updateContentFilter` when `Set<CGWindowID>` actually changes. Updates both video and audio streams.
+**Every segment starts excluded.** Video streams are per segment, so `CaptureManager` asks `filtersForNewSegment` for the start filter. ⛔ Never start a segment's stream with the nothing-excluded base filter and update it afterwards: the first frame lands before any update, and it kept excluded apps and private windows.
 
-**500ms stabilization delay**: After `startCapture()`, `isStreamReady` is false for 500ms. All filter updates check this flag. Without the delay, filter updates during startup fail silently or cause frame drops. See `startNewSegmentWithDirectory()`.
+**Dynamic updates:** a 1 s tick (`tolerance = 0.25`), plus app launch, activate and deactivate notifications. `updateContentFilter` runs only when the plan changes. **Video only:** the system-audio stream keeps the display's base filter, because keeping an application out of the audio filter would silence that app's audio.
+
+**500ms stabilization delay**: after `startCapture()`, `isStreamReady` is false for 500ms, and every filter *update* checks this flag. Without it, updates during startup fail silently or drop frames. The start filter is not an update, so a segment is excluded from its first frame regardless.
 
 ## 4. Frame Status Optimization
 
@@ -104,7 +114,7 @@ From `SystemAudioCaptureManager.swift`. Audio streams silently stop producing bu
 
 **SCShareableContent.current = permission check**: This is where TCC authorization is verified. Handle the throw at recording start, before any stream setup.
 
-**500ms stabilization is load-bearing**: `isStreamReady` flag in `CaptureManager` gates all `updateContentFilter` calls. Without the delay, initial window exclusion updates fail silently.
+**500ms stabilization is load-bearing**: `isStreamReady` in `WindowExclusionManager` gates every `updateContentFilter` call. Without the delay, updates made during startup fail silently. That is why the start filter carries the exclusions.
 
 **Concurrent rotation guard**: `isRotatingSegment` prevents overlapping rotations when display changes and timer fires race.
 

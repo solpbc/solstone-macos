@@ -169,6 +169,7 @@ public final class CaptureManager {
         excludedAppNames: [String] = [],
         excludePrivateBrowsing: Bool = true,
         excludedTitlePatterns: [String] = [],
+        excludePrivateBrowsingAccessibility: Bool = false,
         microphoneGain: Float = 2.0,
         verbose: Bool = false,
         segmentFactory: @escaping SegmentFactory = { outputDirectory, timePrefix, debugKeepRejectedAudio, silenceMusic, verbose in
@@ -196,6 +197,7 @@ public final class CaptureManager {
             excludedAppNames: excludedAppNames,
             excludePrivateBrowsing: excludePrivateBrowsing,
             excludedTitlePatterns: excludedTitlePatterns,
+            excludePrivateBrowsingAccessibility: excludePrivateBrowsingAccessibility,
             microphoneGain: microphoneGain,
             verbose: verbose,
             segmentFactory: segmentFactory,
@@ -220,6 +222,7 @@ public final class CaptureManager {
         excludedAppNames: [String] = [],
         excludePrivateBrowsing: Bool = true,
         excludedTitlePatterns: [String] = [],
+        excludePrivateBrowsingAccessibility: Bool = false,
         microphoneGain: Float = 2.0,
         verbose: Bool = false,
         segmentFactory: @escaping SegmentFactory = { outputDirectory, timePrefix, debugKeepRejectedAudio, silenceMusic, verbose in
@@ -266,6 +269,7 @@ public final class CaptureManager {
             excludedAppNames: excludedAppNames,
             excludePrivateBrowsing: excludePrivateBrowsing,
             excludedTitlePatterns: excludedTitlePatterns,
+            readsAccessibilityTitles: excludePrivateBrowsingAccessibility,
             verbose: verbose
         )
 
@@ -282,14 +286,9 @@ public final class CaptureManager {
 
         windowExclusionManager.configure(
             onFiltersChanged: { [weak self] newFilters in
+                // Video only. The system audio stream keeps the display's base filter: keeping an
+                // application out of the video filter would also silence that app's audio.
                 guard let self, self.sessionSources.contains(.screen), let segment = self.currentSegment else { return }
-                if let audioFilter = self.displays.first.flatMap({ newFilters[$0.displayID] }) {
-                    try await self.systemAudioCaptureManager.updateContentFilter(audioFilter)
-                } else {
-                    let displayID = self.displays.first.map { String($0.displayID) } ?? "nil"
-                    let keyList = newFilters.keys.sorted().map(String.init).joined(separator: ",")
-                    Logger.capture.error("Missing audio SCContentFilter for display \(displayID, privacy: .public); available filter keys=[\(keyList, privacy: .public)]")
-                }
                 try await segment.updateContentFilter(newFilters)
             },
             allDisplays: { [weak self] in self?.displays },
@@ -385,15 +384,18 @@ public final class CaptureManager {
     ///   - excludedAppNames: App names to always exclude
     ///   - excludePrivateBrowsing: Whether to exclude private browser windows
     ///   - excludedTitlePatterns: Patterns to match in any window title
+    ///   - excludePrivateBrowsingAccessibility: Whether to also match Safari, Chrome, Edge and Brave by their Accessibility titles
     public func updateWindowExclusions(
         excludedAppNames: [String],
         excludePrivateBrowsing: Bool,
-        excludedTitlePatterns: [String]
+        excludedTitlePatterns: [String],
+        excludePrivateBrowsingAccessibility: Bool
     ) {
         windowExclusionManager.updateExclusions(
             excludedAppNames: excludedAppNames,
             excludePrivateBrowsing: excludePrivateBrowsing,
-            excludedTitlePatterns: excludedTitlePatterns
+            excludedTitlePatterns: excludedTitlePatterns,
+            readsAccessibilityTitles: excludePrivateBrowsingAccessibility
         )
     }
 
@@ -470,9 +472,14 @@ public final class CaptureManager {
         segmentStartGeneration += 1
         let generation = segmentStartGeneration
 
-        // Reset stream ready flag for new segment
+        // Every segment's streams start with the current exclusions, so their first frame never
+        // holds an excluded app or a private window.
+        var screenFilters = filtersByDisplayID
         if sessionSources.contains(.screen) {
             windowExclusionManager.resetForNewSegment()
+            if !displays.isEmpty {
+                screenFilters = await windowExclusionManager.filtersForNewSegment(displays: displays, base: filtersByDisplayID)
+            }
         }
 
         // Create segment writer
@@ -500,7 +507,7 @@ public final class CaptureManager {
             let startedSources = try await segment.start(
                 sources: sessionSources,
                 displayInfos: displayInfos,
-                filters: sessionSources.contains(.screen) ? filtersByDisplayID : [:],
+                filters: sessionSources.contains(.screen) ? screenFilters : [:],
                 audioFilter: audioFilter,
                 mics: sessionSources.contains(.microphone) ? mics : [],
                 micCaptureManager: sessionSources.contains(.microphone) ? micCaptureManager : nil,

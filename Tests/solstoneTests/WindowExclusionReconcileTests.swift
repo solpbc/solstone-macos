@@ -10,81 +10,72 @@ import Testing
 struct WindowExclusionReconcileTests {
     private struct TestError: Error {}
 
+    private func manager() -> WindowExclusionManager {
+        WindowExclusionManager(excludedAppNames: [], excludePrivateBrowsing: false, excludedTitlePatterns: [])
+    }
+
+    private func plan(hidden: Set<pid_t>, excepted: Set<CGWindowID> = []) -> ExclusionPlan {
+        var plan = ExclusionPlan()
+        plan.hiddenPIDs = hidden
+        plan.exceptedWindowIDs = excepted
+        return plan
+    }
+
     @Test func failedApplyDoesNotCommitThenRetrySucceeds() async {
-        let manager = WindowExclusionManager(
-            excludedAppNames: [],
-            excludePrivateBrowsing: false,
-            excludedTitlePatterns: []
-        )
-        let ids: Set<CGWindowID> = [1, 2, 3]
+        let manager = manager()
+        let next = plan(hidden: [10], excepted: [1, 2])
         var applyCount = 0
 
-        await manager.reconcile(newIDs: ids) {
+        let failing: () async throws -> Bool = {
             applyCount += 1
             throw TestError()
         }
-
+        await manager.reconcile(plan: next, apply: failing)
         #expect(applyCount == 1)
-        #expect(manager.currentExcludedWindowIDs.isEmpty)
+        #expect(manager.currentPlan == .empty)
 
-        await manager.reconcile(newIDs: ids) {
-            applyCount += 1
-        }
-
+        await manager.reconcile(plan: next) { applyCount += 1; return true }
         #expect(applyCount == 2)
-        #expect(manager.currentExcludedWindowIDs == ids)
+        #expect(manager.currentPlan == next)
     }
 
-    @Test func repeatOfCommittedSetIsSuppressed() async {
-        let manager = WindowExclusionManager(
-            excludedAppNames: [],
-            excludePrivateBrowsing: false,
-            excludedTitlePatterns: []
-        )
-        let ids: Set<CGWindowID> = [7]
+    @Test func partialApplyIsNotCommittedSoTheNextTickRetries() async {
+        let manager = manager()
+        let next = plan(hidden: [42])
         var applyCount = 0
 
-        await manager.reconcile(newIDs: ids) {
-            applyCount += 1
-        }
+        await manager.reconcile(plan: next) { applyCount += 1; return false }
+        #expect(manager.currentPlan == .empty)
+        await manager.reconcile(plan: next) { applyCount += 1; return true }
+        #expect(applyCount == 2)
+        #expect(manager.currentPlan == next)
+    }
 
-        #expect(applyCount == 1)
-        #expect(manager.currentExcludedWindowIDs == ids)
+    @Test func aPlanIsResolvedOnlyWhenEveryAppAndWindowWasListed() {
+        let p = plan(hidden: [1, 2], excepted: [10])
+        #expect(p.isFullyResolved(listedPIDs: [1, 2, 3], listedWindowIDs: [10, 11]))
+        #expect(!p.isFullyResolved(listedPIDs: [1], listedWindowIDs: [10]))
+        #expect(!p.isFullyResolved(listedPIDs: [1, 2], listedWindowIDs: []))
+    }
 
-        await manager.reconcile(newIDs: ids) {
-            applyCount += 1
-        }
+    @Test func repeatOfCommittedPlanIsSuppressed() async {
+        let manager = manager()
+        let next = plan(hidden: [7])
+        var applyCount = 0
 
+        await manager.reconcile(plan: next) { applyCount += 1; return true }
+        await manager.reconcile(plan: next) { applyCount += 1; return true }
         #expect(applyCount == 1)
     }
 
     @Test func distinctTransitionsEachCommitOnce() async {
-        let manager = WindowExclusionManager(
-            excludedAppNames: [],
-            excludePrivateBrowsing: false,
-            excludedTitlePatterns: []
-        )
+        let manager = manager()
         var applyCount = 0
 
-        await manager.reconcile(newIDs: [1]) {
-            applyCount += 1
-        }
-
-        #expect(applyCount == 1)
-        #expect(manager.currentExcludedWindowIDs == [1])
-
-        await manager.reconcile(newIDs: [1, 2]) {
-            applyCount += 1
-        }
-
-        #expect(applyCount == 2)
-        #expect(manager.currentExcludedWindowIDs == [1, 2])
-
-        await manager.reconcile(newIDs: []) {
-            applyCount += 1
-        }
-
+        await manager.reconcile(plan: plan(hidden: [1])) { applyCount += 1; return true }
+        await manager.reconcile(plan: plan(hidden: [1], excepted: [5])) { applyCount += 1; return true }
+        await manager.reconcile(plan: .empty) { applyCount += 1; return true }
         #expect(applyCount == 3)
-        #expect(manager.currentExcludedWindowIDs.isEmpty)
+        #expect(manager.currentPlan == .empty)
     }
 }

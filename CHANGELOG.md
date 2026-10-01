@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- when a new segment started, every five minutes, its first frame could include windows you keep out of your journal: windows of excluded apps, windows matching a title pattern, and Firefox private windows. a new window in an app you were already using could also show for a few seconds before it was kept out. now excluded apps and Firefox private windows are kept out from the first frame, and a window matching a title pattern within about a second. those frames may already be in your journal.
 - you can press Escape to leave the journal mark question unanswered.
 - while a pairing waits for you to confirm your journal's mark, the status and journal pages in settings say so, and the menu-bar icon shows that something needs you. before, they said the connection to your journal wasn't ready.
 

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import CoreGraphics
+import Foundation
 import Testing
 @testable import solstone
 @testable import SolstoneCore
@@ -210,17 +211,25 @@ struct ExcludedAppPickerTests {
             return
         }
 
-        let detector = WindowExclusionDetector(
-            appNames: [tvRecord.ownerName, codeRecord.ownerName],
-            detectPrivateBrowsing: false,
-            titlePatterns: [],
-            windowRecordProvider: { records }
+        // Picker names match the window owner name, with no bundle id needed.
+        let windows = [tvRecord, codeRecord, finderRecord].enumerated().map { index, record in
+            ExclusionWindow(id: record.windowID, pid: pid_t(900 + index), ownerName: record.ownerName, title: record.title, layer: 0)
+        }
+        var planner = ExclusionPlanner()
+        let plan = planner.plan(
+            windows: windows,
+            apps: [],
+            settings: ExclusionSettings(
+                excludedAppNames: [tvRecord.ownerName, codeRecord.ownerName],
+                excludePrivateBrowsing: false,
+                accessibilityTitlesWorking: false,
+                titlePatterns: []
+            ),
+            accessibilityTitles: [:],
+            now: Date()
         )
 
-        let excludedIDs = detector.detectExcludedWindowIDs()
-
-        #expect(excludedIDs.contains(tvRecord.windowID))
-        #expect(excludedIDs.contains(codeRecord.windowID))
-        #expect(!excludedIDs.contains(finderRecord.windowID))
+        #expect(plan.hiddenPIDs == [900, 901])
+        #expect(plan.exceptedWindowIDs.isEmpty)
     }
 }

@@ -4,56 +4,82 @@
 import Testing
 @testable import solstone
 
-/// Every title below was read from a real window on macOS 27: the private titles from a private
-/// window on a real page, the ordinary titles from an ordinary window of the same browser.
-@Suite("WindowExclusionDetector.isPrivateBrowserWindow")
+/// Every title below was read from a real window on macOS 27 in English: the window title the app
+/// reads for capture, and, for Safari, Chrome, Edge and Brave, the window's Accessibility title.
+@Suite("Private browser window verdicts")
 struct WindowExclusionTests {
-    // MARK: - Firefox: the one browser that writes private mode into its title
+    // MARK: - Firefox: the private mark is in the window title
 
     @Test(arguments: [
         "Example Domain \u{2014} Private Browsing",
         "Mozilla Firefox \u{2014} Private Browsing",
     ])
-    func firefoxPrivateWindowIsExcluded(title: String) {
-        #expect(WindowExclusionDetector.isPrivateBrowserWindow(ownerName: "firefox", windowTitle: title))
+    func firefoxPrivateWindowIsPrivate(title: String) {
+        #expect(PrivateBrowser.firefoxVerdict(windowTitle: title) == .privateWindow)
     }
 
     @Test(arguments: [
         "Mozilla Firefox",
+        "Example Domain",
         "Private browsing - Wikipedia",
         "Private Browsing - Use Firefox without saving history | Firefox Help",
-        "Incognito (band) - Wikipedia",
-        "Private equity - Wikipedia",
+        "Private browsing - Incognito (InPrivate) explained",
         "Private Browsing",
         "Private Browsing \u{2014} Example Domain",
         "Example Domain - Private Browsing",
     ])
-    func firefoxOrdinaryWindowIsNotExcluded(title: String) {
-        #expect(!WindowExclusionDetector.isPrivateBrowserWindow(ownerName: "firefox", windowTitle: title))
+    func firefoxOrdinaryWindowIsOrdinary(title: String) {
+        #expect(PrivateBrowser.firefoxVerdict(windowTitle: title) == .ordinary)
     }
 
-    // MARK: - Browsers whose private windows show no marker in the title
+    @Test func firefoxWindowWithoutATitleIsUndecided() {
+        #expect(PrivateBrowser.firefoxVerdict(windowTitle: "") == .undecided)
+    }
 
-    /// Their private windows read the bare page title, so the title check can never see them,
-    /// and an ordinary window must never be excluded for words in its page title.
+    // MARK: - Safari, Chrome, Edge, Brave: the mark is in the Accessibility title
+
+    /// (browser, window title, Accessibility title) of a real private window.
     @Test(arguments: [
-        ("safari", "Example Domain"),
-        ("safari", "Private equity - Wikipedia"),
-        ("google chrome", "Example Domain"),
-        ("google chrome", "Incognito (band) - Wikipedia"),
-        ("microsoft edge", "Example Domain"),
-        ("microsoft edge", "Private browsing - Wikipedia"),
-        ("brave browser", "Example Domain"),
-        ("brave browser", "Private browsing - Wikipedia"),
+        (PrivateBrowser.chrome, "Example Domain", "Example Domain - Google Chrome (Incognito)"),
+        (PrivateBrowser.chrome, "Untitled", "Untitled - Google Chrome (Incognito)"),
+        (PrivateBrowser.edge, "Example Domain", "Example Domain - Microsoft Edge (InPrivate)"),
+        (PrivateBrowser.brave, "Example Domain", "Example Domain - Brave (Private)"),
+        (PrivateBrowser.safari, "Example Domain", "Example Domain, Private Browsing"),
+        (PrivateBrowser.safari, "Start Page", "Start Page, Private Browsing"),
     ])
-    func unmarkedBrowserIsNeverExcluded(owner: String, title: String) {
-        #expect(!WindowExclusionDetector.isPrivateBrowserWindow(ownerName: owner, windowTitle: title))
+    func accessibilityPrivateWindowIsPrivate(browser: PrivateBrowser, title: String, accessibilityTitle: String) {
+        #expect(browser.accessibilityVerdict(windowTitle: title, accessibilityTitle: accessibilityTitle) == .privateWindow)
     }
 
-    // MARK: - Non-browsers
+    /// Real ordinary windows, including pages that title themselves with each browser's private tail.
+    @Test(arguments: [
+        (PrivateBrowser.chrome, "Example Domain", "Example Domain - Google Chrome"),
+        (PrivateBrowser.chrome, "Forged - Google Chrome (Incognito)", "Forged - Google Chrome (Incognito) - Google Chrome"),
+        (PrivateBrowser.chrome, "Private browsing - Incognito (InPrivate) explained", "Private browsing - Incognito (InPrivate) explained - Google Chrome"),
+        (PrivateBrowser.edge, "Forged - Microsoft Edge (InPrivate)", "Forged - Microsoft Edge (InPrivate) - Microsoft Edge"),
+        (PrivateBrowser.edge, "Example Domain", "Example Domain - Microsoft Edge"),
+        (PrivateBrowser.brave, "Forged - Brave (Private)", "Forged - Brave (Private) - Brave"),
+        (PrivateBrowser.brave, "Welcome to Brave", "Welcome to Brave - Brave"),
+        (PrivateBrowser.safari, "Forged, Private Browsing", "Forged, Private Browsing"),
+        (PrivateBrowser.safari, "Example Domain", "Example Domain"),
+    ])
+    func accessibilityOrdinaryWindowIsOrdinary(browser: PrivateBrowser, title: String, accessibilityTitle: String) {
+        #expect(browser.accessibilityVerdict(windowTitle: title, accessibilityTitle: accessibilityTitle) == .ordinary)
+    }
 
-    @Test func nonBrowserWithTheFirefoxFormIsNotExcluded() {
-        #expect(!WindowExclusionDetector.isPrivateBrowserWindow(
-            ownerName: "terminal", windowTitle: "notes \u{2014} Private Browsing"))
+    @Test func chromeProfileNameAfterTheOrdinaryTailIsOrdinary() {
+        #expect(PrivateBrowser.chrome.accessibilityVerdict(
+            windowTitle: "Example Domain", accessibilityTitle: "Example Domain - Google Chrome - Work") == .ordinary)
+    }
+
+    /// Titles caught mid-change, or in a form never measured, are neither.
+    @Test(arguments: [
+        (PrivateBrowser.chrome, "Example Domain", ""),
+        (PrivateBrowser.chrome, "Example Domain", "Untitled - Google Chrome (Incognito)"),
+        (PrivateBrowser.safari, "Example Domain", "Loading, Private Browsing"),
+        (PrivateBrowser.edge, "Example Domain", "Something else entirely"),
+    ])
+    func mismatchedTitlesAreUndecided(browser: PrivateBrowser, title: String, accessibilityTitle: String) {
+        #expect(browser.accessibilityVerdict(windowTitle: title, accessibilityTitle: accessibilityTitle) == .undecided)
     }
 }

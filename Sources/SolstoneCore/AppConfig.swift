@@ -55,7 +55,7 @@ public struct AppConfig: Sendable {
     public static let knownKeys: [String] = [
         "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled", "isBrowserIntakeEnabled",
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
-        "excludePrivateBrowsing", "serverURL", "serverKey",
+        "excludePrivateBrowsing", "excludePrivateBrowsingAccessibility", "serverURL", "serverKey",
         "syncPaused", "debugSegments",
         "debugKeepRejectedAudio", "preserveSyncedSegments", "microphoneGain", "silenceMusic",
         "serviceMode", "journalPath",
@@ -70,6 +70,7 @@ public struct AppConfig: Sendable {
         static let excludedApps = "excludedApps"
         static let excludedTitlePatterns = "excludedTitlePatterns"
         static let excludePrivateBrowsing = "excludePrivateBrowsing"
+        static let excludePrivateBrowsingAccessibility = "excludePrivateBrowsingAccessibility"
         static let serverURL = "serverURL"
         static let syncPaused = "syncPaused"
         static let debugSegments = "debugSegments"
@@ -123,6 +124,11 @@ public struct AppConfig: Sendable {
     /// Only Firefox shows one on the Mac (measured), so owner copy names only Firefox.
     public var excludePrivateBrowsing: Bool
 
+    /// Also match Safari, Chrome, Edge and Brave private windows by their Accessibility titles.
+    /// Off unless the owner turns it on in the private-window setting, the only place the
+    /// Accessibility permission is ever asked for.
+    public var excludePrivateBrowsingAccessibility: Bool
+
     // MARK: - Server Upload Configuration
 
     /// Observer server URL (e.g., "https://solstone.example.com")
@@ -173,6 +179,7 @@ public struct AppConfig: Sendable {
         excludedApps: [AppEntry] = [],
         excludedTitlePatterns: [String] = [],
         excludePrivateBrowsing: Bool = true,
+        excludePrivateBrowsingAccessibility: Bool = false,
         serverURL: String? = nil,
         serverKey: String? = nil,
         syncPaused: Bool = false,
@@ -192,6 +199,7 @@ public struct AppConfig: Sendable {
         self.excludedApps = excludedApps
         self.excludedTitlePatterns = excludedTitlePatterns
         self.excludePrivateBrowsing = excludePrivateBrowsing
+        self.excludePrivateBrowsingAccessibility = excludePrivateBrowsingAccessibility
         self.serverURL = serverURL
         self.serverKey = serverKey
         self.syncPaused = syncPaused
@@ -240,6 +248,7 @@ public struct AppConfig: Sendable {
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
             excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool ?? true,
+            excludePrivateBrowsingAccessibility: defaults.bool(forKey: Keys.excludePrivateBrowsingAccessibility),
             serverURL: serverURL,
             serverKey: defaults.string(forKey: Keys.serverKey),
             syncPaused: defaults.bool(forKey: Keys.syncPaused),
@@ -310,6 +319,7 @@ public struct AppConfig: Sendable {
 
         defaults.set(excludedTitlePatterns, forKey: Keys.excludedTitlePatterns)
         defaults.set(excludePrivateBrowsing, forKey: Keys.excludePrivateBrowsing)
+        defaults.set(excludePrivateBrowsingAccessibility, forKey: Keys.excludePrivateBrowsingAccessibility)
         defaults.set(serverURL, forKey: Keys.serverURL)
         defaults.set(serverKey, forKey: Keys.serverKey)
         if let serviceMode {

@@ -542,11 +542,13 @@ public final class AppState {
         // Update window exclusions immediately if they changed
         if newConfig.excludedAppNames != oldConfig.excludedAppNames ||
            newConfig.excludePrivateBrowsing != oldConfig.excludePrivateBrowsing ||
+           newConfig.excludePrivateBrowsingAccessibility != oldConfig.excludePrivateBrowsingAccessibility ||
            newConfig.excludedTitlePatterns != oldConfig.excludedTitlePatterns {
             capture.captureManager.updateWindowExclusions(
                 excludedAppNames: newConfig.excludedAppNames,
                 excludePrivateBrowsing: newConfig.excludePrivateBrowsing,
-                excludedTitlePatterns: newConfig.excludedTitlePatterns
+                excludedTitlePatterns: newConfig.excludedTitlePatterns,
+                excludePrivateBrowsingAccessibility: newConfig.excludePrivateBrowsingAccessibility
             )
         }
 
@@ -1302,6 +1304,7 @@ public final class AppState {
             excludedAppNames: config.excludedAppNames,
             excludePrivateBrowsing: config.excludePrivateBrowsing,
             excludedTitlePatterns: config.excludedTitlePatterns,
+            excludePrivateBrowsingAccessibility: config.excludePrivateBrowsingAccessibility,
             microphoneGain: config.microphoneGain,
             verbose: false,
             recoveryCoordinator: recoveryCoordinator
