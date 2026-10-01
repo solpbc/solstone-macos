@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.21] - 2026-10-01
+
 ### Changed
 
 - when this mac disconnects or pairs again, and it can reach your journal, it asks the journal to drop this mac's old entry from the devices list. this mac now asks you before it switches to another journal.
