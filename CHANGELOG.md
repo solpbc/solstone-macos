@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- the private-browsing setting can also keep private windows in Safari, Chrome, Edge and Brave, set to English, out of your journal. it is off unless you turn it on, and turning it on is the only time the solstone app on your mac asks for Accessibility access (called Device Control and Data Access on macOS 27). the app uses that access only to read the window titles these browsers give to accessibility tools, and to check that the access works; those titles stay on your mac.
+
 ### Fixed
 
 - when a new segment started, every five minutes, its first frame could include windows you keep out of your journal: windows of excluded apps, windows matching a title pattern, and Firefox private windows. a new window in an app you were already using could also show for a few seconds before it was kept out. now excluded apps and Firefox private windows are kept out from the first frame, and a window matching a title pattern within about a second. those frames may already be in your journal.

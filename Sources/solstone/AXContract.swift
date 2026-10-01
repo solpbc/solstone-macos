@@ -125,6 +125,10 @@ enum AXContract {
         AXID.Settings.Privacy.titlePatternField,
         AXID.Settings.Privacy.titlePatternAdd,
         AXID.Settings.Privacy.privateBrowsing,
+        AXID.Settings.Privacy.privateBrowsingAccessibility,
+        AXID.Settings.Privacy.privateBrowsingAccessibilityState,
+        AXID.Settings.Privacy.privateBrowsingAccessibilityOpenSettings,
+        AXID.Settings.Privacy.privateBrowsingAccessibilityReopen,
         AXID.Settings.Status.healthSummary,
         AXID.Settings.Status.healthSummaryAction,
         AXID.Settings.Status.observingState,
@@ -324,7 +328,8 @@ enum AXContract {
             "UpdateActivity": UpdateActivity.axTokens,
             "FrequencyOption": FrequencyOption.allCases.map(\.rawValue),
             "UpdateStatus": UpdateStatus.axTokens,
-            "ExcludedAppPickerAvailability": ExcludedAppPickerAvailability.allCases.map(\.axToken)
+            "ExcludedAppPickerAvailability": ExcludedAppPickerAvailability.allCases.map(\.axToken),
+            "PrivateWindowAccessibilityState": PrivateWindowAccessibilityState.allCases.map(\.axToken)
         ]
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         result["BrowserProfileAXState"] = BrowserProfileAXState.allCases.map(\.axToken)
@@ -350,6 +355,7 @@ enum AXContract {
             AXID.Settings.Observer.notificationDeniedState: .freeform,
             AXID.Settings.Observer.storageUsedState: .numeric,
             AXID.Settings.Privacy.excludedAppsPickerState: .enum("ExcludedAppPickerAvailability"),
+            AXID.Settings.Privacy.privateBrowsingAccessibilityState: .enum("PrivateWindowAccessibilityState"),
             AXID.Settings.Service.journalNameState: .freeform,
             AXID.Settings.Service.journalMarkState: .freeform,
             AXID.Settings.Service.journalConnectionState: .enum("PairingConnectionAXState"),

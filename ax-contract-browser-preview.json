@@ -173,6 +173,10 @@
       "settings.privacy.excludedApps.list",
       "settings.privacy.excludedApps.picker",
       "settings.privacy.excludedApps.picker.state",
+      "settings.privacy.privateBrowsing.accessibility",
+      "settings.privacy.privateBrowsing.accessibility.openSettings",
+      "settings.privacy.privateBrowsing.accessibility.reopen",
+      "settings.privacy.privateBrowsing.accessibility.state",
       "settings.privacy.privateBrowsing.exclude",
       "settings.privacy.titlePatterns.add",
       "settings.privacy.titlePatterns.field",
@@ -383,6 +387,10 @@
     "settings.privacy.excludedApps.picker.state" : {
       "kind" : "enum",
       "vocabulary" : "ExcludedAppPickerAvailability"
+    },
+    "settings.privacy.privateBrowsing.accessibility.state" : {
+      "kind" : "enum",
+      "vocabulary" : "PrivateWindowAccessibilityState"
     },
     "settings.service.external.connectionTest.state" : {
       "kind" : "enum",
@@ -749,6 +757,12 @@
       "switched",
       "save_failed",
       "failed"
+    ],
+    "PrivateWindowAccessibilityState" : [
+      "off",
+      "waiting",
+      "working",
+      "not_working"
     ],
     "SettingsObservationAXState" : [
       "off",

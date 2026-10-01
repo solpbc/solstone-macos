@@ -164,6 +164,10 @@ enum AXID {
             static let titlePatternField = "settings.privacy.titlePatterns.field"
             static let titlePatternAdd = "settings.privacy.titlePatterns.add"
             static let privateBrowsing = "settings.privacy.privateBrowsing.exclude"
+            static let privateBrowsingAccessibility = "settings.privacy.privateBrowsing.accessibility"
+            static let privateBrowsingAccessibilityState = "settings.privacy.privateBrowsing.accessibility.state"
+            static let privateBrowsingAccessibilityOpenSettings = "settings.privacy.privateBrowsing.accessibility.openSettings"
+            static let privateBrowsingAccessibilityReopen = "settings.privacy.privateBrowsing.accessibility.reopen"
 
             static func excludedApp(_ value: String) -> String {
                 "settings.privacy.excludedApps.app.\(value)"

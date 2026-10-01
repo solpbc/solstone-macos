@@ -187,6 +187,9 @@ struct SettingsView: View {
     // Privacy tab state
     @State private var newTitlePattern = ""
     @State private var newExcludedApp = ""
+    @State private var privateWindowAccessibilityState: PrivateWindowAccessibilityState = .off
+    @State private var privateWindowAccessibilityAskedThisSession = false
+    @State private var privateWindowAccessibilityHasWorked = false
 
     // Service tab state
     @State private var observerURL = ""
@@ -2950,16 +2953,154 @@ struct SettingsView: View {
             GroupBox("private browsing") {
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("keep private windows out of your journal: Firefox set to English", isOn: excludePrivateBrowsingBinding)
-                        .help("reads the window title and matches private windows in Firefox set to English. Safari, Chrome, Edge and Brave don't show private mode in the title it reads, and other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps.")
+                        .help("reads the window title and matches private windows in Firefox set to English. Safari, Chrome, Edge and Brave don't show private mode in that title; the option below checks them another way. other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps.")
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsing)
-                    Text("this reads the window title and matches private windows in Firefox. that was checked on Firefox 156 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. Safari 27, Chrome 154, Edge 153 and Brave 153 don't show private mode in the window title this setting reads, and other browsers are not matched, so their private windows reach your journal. a web page can end its own title the way Firefox marks a private window, and then an ordinary Firefox window showing it is kept out too. to keep every window of a browser out of your journal, add that browser to the excluded apps above.")
+                    Text("this reads the window title and keeps Firefox private windows out of your journal. a new Firefox window is kept out of your journal for a moment while it is checked.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    DisclosureGroup("details") {
+                        Text("checked on Firefox 157 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a web page can end its own title the way Firefox marks a private window, and then an ordinary Firefox window showing it is kept out too. Safari, Chrome, Edge and Brave don't show private mode in that title; the option below checks them another way. other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps above.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .font(.caption)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("also check Safari, Chrome, Edge and Brave", isOn: excludePrivateBrowsingAccessibilityBinding)
+                            .disabled(!appState.config.excludePrivateBrowsing)
+                            .accessibilityHint("turning this on asks for Accessibility access, which lets an app see and control everything on this mac. solstone uses it only to read these browsers' window titles and to check that the access works.")
+                            .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibility)
+                        Text(Self.privateWindowAccessibilityExplanation)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        DisclosureGroup("details") {
+                            Text("checked on Safari 27, Chrome 154, Edge 154 and Brave 1.96 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a new window from these browsers is kept out of your journal for a moment while it is checked. turning this off stops the reads; to remove the access too, turn solstone off in System Settings, under Privacy & Security, in Accessibility (Device Control and Data Access on macOS 27).")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .font(.caption)
+
+                        if privateWindowAccessibilityState != .off {
+                            privateWindowAccessibilityStatus
+                        }
+                        AXStateCompanion(
+                            id: AXID.Settings.Privacy.privateBrowsingAccessibilityState,
+                            value: privateWindowAccessibilityState.axToken
+                        )
+                    }
+                    .padding(.leading, 20)
+                    .padding(.top, 8)
                 }
                 .padding(.vertical, 4)
+                .task(id: privateWindowAccessibilityEnabled) {
+                    await watchPrivateWindowAccessibility()
+                }
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private static let privateWindowAccessibilityExplanation = "this needs Accessibility access (called Device Control and Data Access on macOS 27), which lets an app see and control everything on this mac, far more than window titles. solstone uses it only to read the window titles these browsers give to accessibility tools, and to check that the access works; those titles stay on this mac. turning this on asks for it, and allowing it needs your mac's password."
+
+    @ViewBuilder
+    private var privateWindowAccessibilityStatus: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch privateWindowAccessibilityState {
+            case .waiting:
+                Label {
+                    Text("waiting for Accessibility access. allow solstone in System Settings; it asks for your mac's password. until then, private windows in Safari, Chrome, Edge and Brave reach your journal.")
+                } icon: {
+                    Image(systemName: "hourglass").foregroundStyle(.secondary)
+                }
+                .font(.caption)
+                HStack {
+                    Button("open System Settings") { AccessibilityTitleReader.openSystemSettings() }
+                        .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityOpenSettings)
+                    Button("already allowed? reopen solstone") { relaunchApp() }
+                        .buttonStyle(.link)
+                        .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityReopen)
+                }
+            case .working:
+                Label {
+                    Text("on: solstone can read these browsers' window titles, so their private windows are kept out of your journal.")
+                } icon: {
+                    Image(systemName: "checkmark.circle").foregroundStyle(.green)
+                }
+                .font(.caption)
+            case .notWorking:
+                Label {
+                    Text("not working: solstone can't read these browsers' window titles, so their private windows reach your journal.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                }
+                .font(.caption)
+                HStack {
+                    Button("reopen solstone") { relaunchApp() }
+                        .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityReopen)
+                    Button("open System Settings") { AccessibilityTitleReader.openSystemSettings() }
+                        .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityOpenSettings)
+                }
+                Text("if solstone is on in System Settings and reopening doesn't help, remove solstone from that list with the minus button, then turn this option off and on again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .off:
+                EmptyView()
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private var privateWindowAccessibilityEnabled: Bool {
+        appState.config.excludePrivateBrowsing && appState.config.excludePrivateBrowsingAccessibility
+    }
+
+    /// Re-reads whether Accessibility reads work while the option is on and this pane is open, and
+    /// announces each change of state to VoiceOver.
+    private func watchPrivateWindowAccessibility() async {
+        guard privateWindowAccessibilityEnabled else {
+            privateWindowAccessibilityState = .off
+            return
+        }
+        let reader = AccessibilityTitleReader()
+        while !Task.isCancelled {
+            let works = await Task.detached { reader.health() == .working }.value
+            if works { privateWindowAccessibilityHasWorked = true }
+            let next = PrivateWindowAccessibilityState.after(
+                readWorks: works,
+                askedThisSession: privateWindowAccessibilityAskedThisSession,
+                hasWorkedSinceAsking: privateWindowAccessibilityHasWorked
+            )
+            if next != privateWindowAccessibilityState {
+                if privateWindowAccessibilityState != .off || privateWindowAccessibilityAskedThisSession {
+                    switch next {
+                    case .working: diagnosticAnnouncement("private windows in Safari, Chrome, Edge and Brave are kept out of your journal")
+                    case .notWorking: diagnosticAnnouncement("checking Safari, Chrome, Edge and Brave is not working, so their private windows reach your journal")
+                    case .waiting, .off: break
+                    }
+                }
+                privateWindowAccessibilityState = next
+            }
+            try? await Task.sleep(for: .seconds(2))
+        }
+    }
+
+    private var excludePrivateBrowsingAccessibilityBinding: Binding<Bool> {
+        Binding(
+            get: { appState.config.excludePrivateBrowsing && appState.config.excludePrivateBrowsingAccessibility },
+            set: { newValue in
+                var config = appState.config
+                config.excludePrivateBrowsingAccessibility = newValue
+                appState.updateConfig(config)
+                // The only place solstone ever asks for Accessibility access: the owner turning this on.
+                if newValue {
+                    privateWindowAccessibilityAskedThisSession = true
+                    privateWindowAccessibilityHasWorked = false
+                    AccessibilityTitleReader.ask()
+                }
+            }
+        )
     }
 
     private var excludePrivateBrowsingBinding: Binding<Bool> {
