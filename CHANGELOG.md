@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- after you pair with a journal, nothing from this mac goes into it until you confirm its mark, or choose "continue anyway" when it can't be checked. if you quit or close settings before you answer, settings asks again the next time it opens. if this mac was already paired before this update, nothing changes.
+- after you pair with a journal, nothing from this mac goes into it until you confirm its mark, or choose "continue anyway" when it can't be checked. if you close settings before you answer, the menu says "confirm your journal's mark" while this mac can reach your journal, and choosing that asks again. if this mac was already paired before this update, nothing changes.
 - when this mac disconnects or pairs again, and it can reach your journal, it asks the journal to drop this mac's old entry from the devices list. this mac now asks you before it switches to another journal.
 
 ### Fixed
