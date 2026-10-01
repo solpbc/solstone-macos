@@ -255,6 +255,14 @@ struct MenuContentTests {
         }
     }
 
+    @Test func answeringTheMarkGoesFromHeldToOnWithoutAnOfflineStep() {
+        #expect(classified(isPairedIngestReady: false, uploadStatus: .notSynced, journalMarkHeld: true) == .awaitingMarkConfirmation)
+        #expect(classified(isPairedIngestReady: true, uploadStatus: .notSynced) == .observing)
+        #expect(classified(isPairedIngestReady: false, uploadStatus: .notSynced) == .offline)
+        #expect(classified(isPairedIngestReady: true, uploadStatus: .offline("offline")) == .offline)
+        #expect(classified(isPairedIngestReady: true, uploadStatus: .retrying(segment: "s1", attempts: 2)) == .offline)
+    }
+
     @Test func noJournalOnRecordIsLocalOnlyAndThirdBucketFollowsUploadStatus() {
         #expect(classified(hasJournalOnRecord: false, uploadStatus: .synced) == .localOnly)
 
