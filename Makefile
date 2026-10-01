@@ -137,6 +137,9 @@ release:
 	swift build -c release
 
 SWIFT_BUILD_FLAGS ?=
+# The browser path ships in owner builds with production extension ids only.
+# BROWSER_DEVELOPMENT_HOST=1 adds the development host and stays out of releases.
+BROWSER_PREVIEW ?= 1
 BROWSER_DEVELOPMENT_HOST ?= 0
 ifeq ($(BROWSER_DEVELOPMENT_HOST),1)
 ifneq ($(BROWSER_PREVIEW),1)
@@ -276,7 +279,7 @@ ci:
 	@./scripts/run-ci.sh
 
 ci-release:
-	@./scripts/run-ci.sh -c release -Xswiftc -DSOLSTONE_TEST_SUPPORT
+	@./scripts/run-ci.sh -c release -Xswiftc -DSOLSTONE_TEST_SUPPORT $(SWIFT_BUILD_FLAGS)
 
 .PHONY: ci-release
 
