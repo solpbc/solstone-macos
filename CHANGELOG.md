@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- after you pair with a journal, nothing from this mac goes into it until you confirm its mark, or choose "continue anyway" when it can't be checked. if you close settings before you answer, the menu says "confirm your journal's mark" while this mac can reach your journal, and choosing that asks again. if this mac was already paired before this update, nothing changes.
 - when this mac disconnects or pairs again, and it can reach your journal, it asks the journal to drop this mac's old entry from the devices list. this mac now asks you before it switches to another journal.
 
 ### Fixed
 
+- this is a security fix: after you pair with a journal, nothing from this mac goes into it until you confirm it's your journal: confirm its mark, or choose "continue anyway" when the mark can't be checked. before, what was waiting on this mac could start going to the journal as soon as pairing finished, even to a journal you then said wasn't yours. if you close settings before you answer, the menu says "confirm your journal's mark" while this mac can reach your journal, and choosing that asks again. if this mac was already paired before this update, you won't be asked.
 - if a moment changes on its way into your journal, the changed files stay on this mac for another attempt.
 - after you change time zones, each new moment goes into your journal under the time zone your mac is set to when that moment starts. a moment already underway keeps the time zone it started in.
 - when the clocks go back an hour, moments from the repeated hour now reach your journal. before, some of them could stay on this mac.
