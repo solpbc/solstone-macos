@@ -136,7 +136,7 @@ run_tests() {
   echo "==> swift test"
   # Suite-level parallelism overloads short deterministic fixture deadlines.
   # Individual concurrency/race tests still drive their own competing tasks.
-  swift test --no-parallel "${CI_SWIFT_ARGUMENTS[@]}" 2>&1
+  swift test --no-parallel ${CI_SWIFT_ARGUMENTS[@]+"${CI_SWIFT_ARGUMENTS[@]}"} 2>&1
   echo "==> python unittest"
   python3 -m unittest discover scripts/tests 2>&1
 }
