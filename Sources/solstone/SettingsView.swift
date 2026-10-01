@@ -478,7 +478,6 @@ struct SettingsView: View {
             journalMarkDriver.cancel()
         }) {
             journalMarkSheet
-                .interactiveDismissDisabled(true)
         }
         .onDisappear {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- you can press Escape to leave the journal mark question unanswered.
 - while a pairing waits for you to confirm your journal's mark, the status and journal pages in settings say so, and the menu-bar icon shows that something needs you. before, they said the connection to your journal wasn't ready.
 
 ## [2.0.21] - 2026-10-01
