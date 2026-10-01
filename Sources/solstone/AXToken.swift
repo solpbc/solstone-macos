@@ -830,6 +830,11 @@ extension BrowserHostRegistrationState {
     }
 }
 
+public enum BrowserRetiredAXState: String, CaseIterable, Sendable {
+    case unknown, empty, held, confirming, discarding, discarded, failed
+    public var axToken: String { rawValue }
+}
+
 public enum BrowserRepairAXState: String, CaseIterable, Sendable {
     case idle
     case inFlight = "in_flight"

@@ -66,7 +66,7 @@ struct AXContractTests {
         let root = URL(fileURLWithPath: "Sources/solstone", isDirectory: true)
         let axidURL = root.appendingPathComponent("AXID.swift")
         let source = try String(contentsOf: axidURL, encoding: .utf8)
-        let registered = Set(AXContract.enumerableIDs)
+        let registered = Set(AXContract.staticIDs)
         let missing = staticAXIDLeaves(in: source)
             .filter { !registered.contains($0.literal) }
 
@@ -74,7 +74,7 @@ struct AXContractTests {
             let message = missing
                 .map { "\($0.literal) (\($0.name))" }
                 .joined(separator: ", ")
-            Issue.record("AXID static identifiers missing from AXContract.enumerableIDs: \(message)")
+            Issue.record("AXID static identifiers missing from AXContract.staticIDs: \(message)")
         }
         #expect(missing.isEmpty)
     }

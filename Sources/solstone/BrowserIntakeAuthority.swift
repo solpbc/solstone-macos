@@ -12,6 +12,11 @@ public enum BrowserIdentityChangeMode: Sendable {
     case reload
 }
 
+struct BrowserIntakeOperationError: Error {
+    let underlying: any Error
+    let generation: String?
+}
+
 public final class BrowserIntakeAuthority: @unchecked Sendable {
     private let lock = NSLock()
     public let store: BrowserIntakeStore
@@ -98,16 +103,23 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         self.wallClock = clock
     }
 
-    public func setTimeZone(_ tz: TimeZone) throws {
+    public func setTimeZone(_ tz: TimeZone, attachFailureGeneration: Bool = false) throws {
         lock.lock()
         defer { lock.unlock() }
-        if tz != self.timeZone {
-            let now = wallClock()
-            if let pid = store.getOpenPeriodId(), try store.periodFileByteCount(periodId: pid) > 0 {
-                try store.finalizePeriod(periodId: pid, reason: "timezone_change", civilDate: now, timeZone: self.timeZone)
+        do {
+            if tz != self.timeZone {
+                let now = wallClock()
+                if let pid = store.getOpenPeriodId(), try store.periodFileByteCount(periodId: pid) > 0 {
+                    try store.finalizePeriod(periodId: pid, reason: "timezone_change", civilDate: now, timeZone: self.timeZone)
+                }
+                self.timeZone = tz
+                self.lastRotationDate = now
             }
-            self.timeZone = tz
-            self.lastRotationDate = now
+        } catch {
+            if attachFailureGeneration {
+                throw BrowserIntakeOperationError(underlying: error, generation: store.getActiveGeneration())
+            }
+            throw error
         }
     }
 
@@ -140,18 +152,20 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     public func reconcileIdentity(_ token: String?, mode: BrowserIdentityChangeMode) throws {
         closeAdmission()
         store.closeDeliveryProofs()
-        guard !store.storeIsFailed() else { return }
+        guard !store.storeIsFailed() else { throw BrowserIntakeStoreError.localIO }
         switch mode {
         case .replace:
-            // Even re-pairing to the same journal starts a new authority epoch.
-            // The replacement token is published only after credential save.
-            try retireIfTokenChanged(newToken: nil)
+            // Same-journal replacement keeps its admitted generation. The
+            // credential fence is published only after the save has succeeded.
+            try retireIfTokenChanged(newToken: token)
         case .reload:
             guard let token else { return }
-            let digest = BrowserIntakeStore.identityDigest(of: token)
-            if let stored = store.getActiveIdentityToken() {
-                guard BrowserOpaqueString.equals(stored, digest) else { return }
+            if store.getActiveGeneration() != nil {
+                guard store.matchesActiveJournal(identityToken: token) else { return }
             } else if store.hasPersistedIdentityHistory() {
+                // A reload cannot undo retirement or assign the loaded pairing
+                // to old custody. Only a completed credential save publishes a
+                // new generation after retirement.
                 return
             }
             _ = try publishEpoch(identityToken: token)
@@ -276,7 +290,8 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     }
 
     public func accept(decoded decodeResult: BrowserDecodeResult, admitNewBatches: Bool = true,
-                       sessionIsCurrent: @Sendable () -> Bool = { true }) throws -> [String: Any] {
+                       sessionIsCurrent: @Sendable () -> Bool = { true },
+                       attachFailureGeneration: Bool = false) throws -> [String: Any] {
         switch decodeResult {
         case .refuse(let refusal):
             return refusalReply(refusal)
@@ -313,7 +328,14 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 guard sessionIsCurrent() else { return refusalReply(BrowserRefusal(code: "shutdown")) }
                 let now = wallClock()
                 let nowMs = BrowserAgeStamp.wallMilliseconds(now)
-                return try processBatch(batch: batch, nowMs: nowMs, civilDate: now, admitNewBatches: admitNewBatches)
+                do {
+                    return try processBatch(batch: batch, nowMs: nowMs, civilDate: now, admitNewBatches: admitNewBatches)
+                } catch {
+                    if attachFailureGeneration {
+                        throw BrowserIntakeOperationError(underlying: error, generation: store.getActiveGeneration())
+                    }
+                    throw error
+                }
             }
         }
     }

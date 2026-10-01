@@ -7,6 +7,7 @@ import SPLTunnel
 public enum PairingCredentialStoreError: Error, Equatable, Sendable {
     case staleGeneration
     case noPairingFound
+    case retirementConfirmationRequired
     case underlying(String)
 }
 
@@ -40,17 +41,20 @@ public final class PairingCredentialStore: @unchecked Sendable {
     // installation. No credential lock spans a callback or async network work.
     // Hooks must not call an identity operation on this store recursively.
     private let browserIdentityLock = NSLock()
-    private var beforeIdentityMutation: (@Sendable (String?) throws -> Void)?
+    private var browserMutationLock: NSLock?
+    private var beforeIdentityMutation: (@Sendable (String?, Bool) throws -> Void)?
     private var afterIdentityMutation: (@Sendable (String?) -> Void)?
     private var afterCredentialLoad: (@Sendable (String?) -> Void)?
 
     func installBrowserHooks(
-        beforeMutation: @escaping @Sendable (String?) throws -> Void,
+        mutationLock: NSLock? = nil,
+        beforeMutation: @escaping @Sendable (String?, Bool) throws -> Void,
         afterMutation: @escaping @Sendable (String?) -> Void,
         afterLoad: @escaping @Sendable (String?) -> Void
     ) {
         browserIdentityLock.lock()
         defer { browserIdentityLock.unlock() }
+        browserMutationLock = mutationLock
         beforeIdentityMutation = beforeMutation
         afterIdentityMutation = afterMutation
         afterCredentialLoad = afterLoad
@@ -119,10 +123,12 @@ public final class PairingCredentialStore: @unchecked Sendable {
         return loaded
     }
 
-    public func save(_ pairing: StoredPairing, expectedGeneration: UInt64? = nil) throws {
+    public func save(_ pairing: StoredPairing, expectedGeneration: UInt64? = nil, browserWarningWasPresented: Bool = false) throws {
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         browserIdentityLock.lock()
         defer { browserIdentityLock.unlock() }
+        browserMutationLock?.lock()
+        defer { browserMutationLock?.unlock() }
         #endif
         let token = Self.identityToken(for: pairing)
         lock.lock()
@@ -136,12 +142,19 @@ public final class PairingCredentialStore: @unchecked Sendable {
             throw PairingCredentialStoreError.staleGeneration
         }
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let wasBrowserCredentialReadable = browserCredentialReadable
         browserCredentialReadable = false
         let hook = beforeIdentityMutation
         if let hook {
             holdsLock = false
             lock.unlock()
-            try hook(token)
+            do { try hook(token, browserWarningWasPresented) }
+            catch {
+                if error as? PairingCredentialStoreError == .retirementConfirmationRequired {
+                    lock.withLock { browserCredentialReadable = wasBrowserCredentialReadable }
+                }
+                throw error
+            }
             lock.lock()
             holdsLock = true
             if let expectedGeneration, expectedGeneration != storedPairingGeneration {
@@ -167,10 +180,12 @@ public final class PairingCredentialStore: @unchecked Sendable {
         #endif
     }
 
-    public func delete(expectedGeneration: UInt64? = nil, expectedAccessGeneration: UInt64? = nil) throws {
+    public func delete(expectedGeneration: UInt64? = nil, expectedAccessGeneration: UInt64? = nil, browserWarningWasPresented: Bool = false) throws {
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         browserIdentityLock.lock()
         defer { browserIdentityLock.unlock() }
+        browserMutationLock?.lock()
+        defer { browserMutationLock?.unlock() }
         #endif
         lock.lock()
         var holdsLock = true
@@ -188,12 +203,19 @@ public final class PairingCredentialStore: @unchecked Sendable {
             throw PairingCredentialStoreError.staleGeneration
         }
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let wasBrowserCredentialReadable = browserCredentialReadable
         browserCredentialReadable = false
         let hook = beforeIdentityMutation
         if let hook {
             holdsLock = false
             lock.unlock()
-            try hook(nil)
+            do { try hook(nil, browserWarningWasPresented) }
+            catch {
+                if error as? PairingCredentialStoreError == .retirementConfirmationRequired {
+                    lock.withLock { browserCredentialReadable = wasBrowserCredentialReadable }
+                }
+                throw error
+            }
             lock.lock()
             holdsLock = true
             if let expectedGeneration, expectedGeneration != storedPairingGeneration {
@@ -297,19 +319,28 @@ public final class PairingCredentialStore: @unchecked Sendable {
         return (pairing: updated, newAccessGen: storedAccessGeneration)
     }
 
-    public func noteExternalPairingChange(_ pairing: StoredPairing?) throws {
+    public func noteExternalPairingChange(_ pairing: StoredPairing?, browserWarningWasPresented: Bool = false) throws {
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         browserIdentityLock.lock()
         defer { browserIdentityLock.unlock() }
+        browserMutationLock?.lock()
+        defer { browserMutationLock?.unlock() }
         #endif
         let token = pairing.map { Self.identityToken(for: $0) }
         lock.lock()
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let wasBrowserCredentialReadable = browserCredentialReadable
         browserCredentialReadable = false
         let hook = beforeIdentityMutation
         if let hook {
             lock.unlock()
-            try hook(token)
+            do { try hook(token, browserWarningWasPresented) }
+            catch {
+                if error as? PairingCredentialStoreError == .retirementConfirmationRequired {
+                    lock.withLock { browserCredentialReadable = wasBrowserCredentialReadable }
+                }
+                throw error
+            }
             lock.lock()
         }
         #endif
@@ -331,6 +362,6 @@ public final class PairingCredentialStore: @unchecked Sendable {
         // SPLKeychainStore persists ISO 8601 dates without fractional seconds.
         // Use that durable precision before and after a credential reload.
         let pairedAt = pairing.pairedAt.timeIntervalSince1970.rounded(.down)
-        return [pairing.instanceID, pairing.clientCertPEM, pairing.clientKeyPEM, pairing.caChainPEM, String(pairedAt)].joined(separator: "\u{0}")
+        return ["browser-pairing-v2", journalMarkConfirmationIdentity(for: pairing), pairing.instanceID, pairing.clientCertPEM, pairing.clientKeyPEM, pairing.caChainPEM, String(pairedAt)].joined(separator: "\u{0}")
     }
 }

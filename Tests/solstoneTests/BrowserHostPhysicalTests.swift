@@ -644,12 +644,20 @@ struct BrowserHostListenerRestartTests {
             #expect(accepted["result"] as? String == "accepted")
             let periodID = try #require(accepted["period_id"] as? String)
             let receipt = try fixture.owner.store.lookupReceipt(generation: generationA, inst: "physical-instance", batchId: acceptedID)
-            try fixture.owner.credentialWillChange(identityToken: "replacement-physical-identity")
+            let activePayload = fixture.owner.store.periodFileURL(for: periodID)
+            let payload = try Data(contentsOf: activePayload)
+            try fixture.owner.credentialWillChange(identityToken: "replacement-physical-identity", browserWarningWasPresented: true)
             try fixture.owner.credentialDidChange(identityToken: "replacement-physical-identity")
             let generationB = try #require(fixture.owner.store.getActiveGeneration())
             #expect(generationA != generationB)
             await fixture.listener.refreshSnapshot()
-            let payload = try Data(contentsOf: fixture.owner.store.periodFileURL(for: periodID))
+            let retiredPayload = fixture.root.appendingPathComponent("spool/retired/periods/\(periodID)/browser_pages.jsonl")
+            #expect(try Data(contentsOf: retiredPayload) == payload)
+            #expect(!FileManager.default.fileExists(atPath: activePayload.path))
+            #expect(fixture.owner.store.getPeriod(periodId: periodID) == nil)
+            #expect(fixture.owner.store.retiredCustodyInventory() == .present(.init(identities: [
+                .init(generation: generationA, periodId: periodID, committedLength: payload.count)
+            ])))
             let directory = fixture.root.appendingPathComponent("spool/periods")
             let inventory = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
             let new = try fixture.openConnection()
@@ -669,8 +677,13 @@ struct BrowserHostListenerRestartTests {
             #expect(fixture.owner.store.getActiveGeneration() == generationB)
             #expect(try fixture.owner.store.lookupReceipt(generation: generationA, inst: "physical-instance", batchId: acceptedID) == receipt)
             #expect(try fixture.owner.store.lookupReceipt(generation: generationA, inst: "physical-instance", batchId: neverID) == nil)
-            #expect(try Data(contentsOf: fixture.owner.store.periodFileURL(for: periodID)) == payload)
+            #expect(try Data(contentsOf: retiredPayload) == payload)
             #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted() == inventory)
+            let successorID = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            try await physicalWrite(physicalBatch(generation: generationB, inst: "physical-instance", id: successorID), to: new)
+            #expect(try await physicalMessage("accepted", from: new)["result"] as? String == "accepted")
+            #expect(try fixture.owner.store.lookupReceipt(generation: generationB, inst: "physical-instance", batchId: successorID)?.result == "accepted")
+            #expect(try Data(contentsOf: retiredPayload) == payload)
         }
     }
 

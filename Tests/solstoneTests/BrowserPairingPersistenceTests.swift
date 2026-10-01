@@ -11,8 +11,21 @@ import Testing
 private final class SerializedBrowserPairingStore: PairingStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var data: Data?
+    private var saveGate: BrowserPairingWriteGate?
+
+    func suspendNextSave(_ gate: BrowserPairingWriteGate) {
+        lock.withLock { saveGate = gate }
+    }
 
     func save(_ pairing: StoredPairing) throws {
+        let gate = lock.withLock { () -> BrowserPairingWriteGate? in
+            defer { saveGate = nil }
+            return saveGate
+        }
+        if let gate {
+            gate.entered.signal()
+            guard gate.release.wait(timeout: .now() + 5) == .success else { throw URLError(.timedOut) }
+        }
         // Match the released SPLKeychainStore's durable date representation.
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -32,9 +45,24 @@ private final class SerializedBrowserPairingStore: PairingStoring, @unchecked Se
     }
 }
 
+private final class BrowserPairingWriteGate: @unchecked Sendable {
+    let entered = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+    let stopStarted = DispatchSemaphore(value: 0)
+    let stopFinished = DispatchSemaphore(value: 0)
+
+    func waitFor(_ semaphore: DispatchSemaphore, seconds: TimeInterval) async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: semaphore.wait(timeout: .now() + seconds) == .success)
+            }
+        }
+    }
+}
+
 @Suite("BrowserPairingPersistence", .serialized)
 struct BrowserPairingPersistenceTests {
-    @Test(arguments: [0.0, 0.001, 0.987])
+    @MainActor @Test(arguments: [0.0, 0.001, 0.987])
     func savedPairingReloadPreservesAdmissionAndExplicitReplacement(fraction: Double) async throws {
         let original = StoredPairing(
             instanceID: "pairing-persistence-journal",
@@ -48,7 +76,8 @@ struct BrowserPairingPersistenceTests {
             localEndpoints: [],
             pairedAt: Date(timeIntervalSince1970: 1_700_000_100 + fraction)
         )
-        let credentials = PairingCredentialStore(store: SerializedBrowserPairingStore())
+        let backingStore = SerializedBrowserPairingStore()
+        let credentials = PairingCredentialStore(store: backingStore)
         let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let projection = try BrowserContractProjection(rootURL: repository.appendingPathComponent("vendor"))
@@ -106,15 +135,56 @@ struct BrowserPairingPersistenceTests {
         let held = try Data(contentsOf: file)
         #expect(!held.isEmpty)
 
-        // An explicit save still retires authority even for identical credentials.
         try credentials.save(original)
-        let replacement = try #require(owner.store.getActiveGeneration())
-        #expect(replacement != generation)
-        #expect(owner.store.getPeriod(periodId: period)?.state == "finalized")
+        #expect(owner.authority.isAdmissionOpen())
+        #expect(owner.store.getActiveGeneration() == generation)
         #expect(try Data(contentsOf: file) == held)
+        #expect(owner.retiredCustodyInventory() == .empty)
+        #expect(throws: PairingCredentialStoreError.retirementConfirmationRequired) { try credentials.delete() }
+        #expect(owner.authority.isAdmissionOpen())
+        #expect(owner.store.getActiveGeneration() == generation)
+        #expect(credentials.currentPairing() == original)
+        let replacement = generation
+        let retired = file
         _ = try credentials.load()
         #expect(owner.authority.isAdmissionOpen())
         #expect(owner.store.getActiveGeneration() == replacement)
+        let writeGate = BrowserPairingWriteGate()
+        backingStore.suspendNextSave(writeGate)
+        let writing = Task.detached { try credentials.save(original) }
+        try #require(await writeGate.waitFor(writeGate.entered, seconds: 3))
+        // The generation stays, admission and delivery are fenced until the
+        // credential write and its after hook finish. Stop waits for both.
+        #expect(owner.store.getActiveGeneration() == replacement)
+        #expect(!owner.authority.isAdmissionOpen())
+        let stopping = Task.detached {
+            writeGate.stopStarted.signal()
+            owner.stop()
+            writeGate.stopFinished.signal()
+        }
+        try #require(await writeGate.waitFor(writeGate.stopStarted, seconds: 3))
+        #expect(!(await writeGate.waitFor(writeGate.stopFinished, seconds: 0.05)))
+        writeGate.release.signal()
+        try await writing.value
+        await stopping.value
+        await owner.stopAndDrain()
+        let stoppedReplacement = try #require(owner.store.getActiveGeneration())
+        #expect(stoppedReplacement == replacement)
+        #expect(!owner.authority.isAdmissionOpen())
+        #expect(throws: BrowserIntakeStoreError.staleGeneration) { try credentials.save(original) }
+        #expect(throws: BrowserIntakeStoreError.staleGeneration) { try credentials.delete() }
+        #expect(credentials.currentPairing()?.instanceID == original.instanceID)
+        _ = try credentials.load()
+        await owner.resumeAfterFailedUpdate(credentialSnapshot: .init(identityToken: PairingCredentialStore.identityToken(for: loaded)), paused: false)
+        #expect(owner.authority.isAdmissionOpen())
+        #expect(owner.store.getActiveGeneration() == stoppedReplacement)
+        #expect(try Data(contentsOf: retired) == held)
+        owner.store.setStoreFailed(true)
+        #expect(throws: BrowserIntakeStoreError.localIO) { try credentials.save(original) }
+        #expect(throws: BrowserIntakeStoreError.localIO) { try credentials.delete() }
+        #expect(owner.store.getActiveGeneration() == stoppedReplacement)
+        #expect(credentials.currentPairing()?.instanceID == original.instanceID)
+        #expect(try Data(contentsOf: retired) == held)
         await owner.stopAndDrain()
     }
 }

@@ -224,6 +224,11 @@
       "settings.sources.browsers.firefox",
       "settings.sources.browsers.group",
       "settings.sources.browsers.repair",
+      "settings.sources.browsers.retired",
+      "settings.sources.browsers.retired.cancel",
+      "settings.sources.browsers.retired.confirm",
+      "settings.sources.browsers.retired.discard",
+      "settings.sources.browsers.retired.failure",
       "settings.sources.browsers.store.chrome",
       "settings.sources.browsers.store.edge",
       "settings.sources.browsers.store.firefox",
@@ -436,6 +441,10 @@
       "kind" : "enum",
       "vocabulary" : "BrowserRepairAXState"
     },
+    "settings.sources.browsers.retired" : {
+      "kind" : "enum",
+      "vocabulary" : "BrowserRetiredAXState"
+    },
     "settings.sources.browsers.store.chrome" : {
       "kind" : "enum",
       "vocabulary" : "BrowserStoreLaunchAXState"
@@ -583,6 +592,15 @@
       "idle",
       "in_flight",
       "repaired",
+      "failed"
+    ],
+    "BrowserRetiredAXState" : [
+      "unknown",
+      "empty",
+      "held",
+      "confirming",
+      "discarding",
+      "discarded",
       "failed"
     ],
     "BrowserStoreLaunchAXState" : [

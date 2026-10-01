@@ -51,6 +51,11 @@ enum AXContract {
         AXID.Settings.Sources.browserStoreChrome,
         AXID.Settings.Sources.browserStoreEdge,
         AXID.Settings.Sources.browserStoreFirefox,
+        AXID.Settings.Sources.browserRetiredState,
+        AXID.Settings.Sources.browserRetiredDiscard,
+        AXID.Settings.Sources.browserRetiredConfirm,
+        AXID.Settings.Sources.browserRetiredCancel,
+        AXID.Settings.Sources.browserRetiredFailure,
         AXID.Settings.Permissions.screenRecordingState,
         AXID.Settings.Permissions.screenRecordingEnable,
         AXID.Settings.Permissions.screenRecordingRestartNow,
@@ -324,6 +329,7 @@ enum AXContract {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         result["BrowserProfileAXState"] = BrowserProfileAXState.allCases.map(\.axToken)
         result["BrowserRepairAXState"] = BrowserRepairAXState.axTokens
+        result["BrowserRetiredAXState"] = BrowserRetiredAXState.allCases.map(\.axToken)
         result["BrowserStoreLaunchAXState"] = BrowserStoreLaunchAXState.axTokens
         result["BrowserHostRegistrationState"] = BrowserHostRegistrationState.axTokens
 #endif
@@ -404,6 +410,7 @@ enum AXContract {
             result[id] = .enum("BrowserProfileAXState")
         }
         result[AXID.Settings.Sources.browserRepair] = .enum("BrowserRepairAXState")
+        result[AXID.Settings.Sources.browserRetiredState] = .enum("BrowserRetiredAXState")
         for id in [AXID.Settings.Sources.browserStoreChrome, AXID.Settings.Sources.browserStoreEdge, AXID.Settings.Sources.browserStoreFirefox] {
             result[id] = .enum("BrowserStoreLaunchAXState")
         }
@@ -422,6 +429,7 @@ enum AXContract {
         keys.formUnion([
             AXID.Settings.Sources.browserChrome, AXID.Settings.Sources.browserEdge,
             AXID.Settings.Sources.browserFirefox, AXID.Settings.Sources.browserRepair,
+            AXID.Settings.Sources.browserRetiredState,
             AXID.Settings.Sources.browserStoreChrome, AXID.Settings.Sources.browserStoreEdge,
             AXID.Settings.Sources.browserStoreFirefox
         ])

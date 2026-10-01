@@ -310,11 +310,11 @@ struct JournalMarkConfirmationGateTests {
         events: GateEventLog
     ) -> PairingCoordinator {
         let remaining = GateOutcomes(outcomes)
-        return PairingCoordinator(
+        let coordinator = PairingCoordinator(
             pair: { _, _, _ in try await remaining.next() },
             loadPairing: { try store.load() },
             savePairing: { pairing in
-                MainActor.assumeIsolated { events.record("save") }
+                events.record("save")
                 try store.save(pairing)
             },
             deletePairing: { try store.delete() },
@@ -322,15 +322,20 @@ struct JournalMarkConfirmationGateTests {
             deviceLabel: { "test mac" },
             clearJournalMarkConfirmation: { events.record("clear") }
         )
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        coordinator.pendingBrowserMaterial = { false }
+#endif
+        return coordinator
     }
 }
 
-@MainActor
-private final class GateEventLog {
-    private(set) var entries: [String] = []
+private final class GateEventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    var entries: [String] { lock.withLock { recorded } }
 
     func record(_ entry: String) {
-        entries.append(entry)
+        lock.withLock { recorded.append(entry) }
     }
 }
 

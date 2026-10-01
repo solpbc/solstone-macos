@@ -38,6 +38,12 @@ public enum UICopy {
     public static let SOURCES_BROWSER_PAUSED = "paused with the rest of the solstone app. pausing doesn't hold back what's already taken in."
     public static let SOURCES_BROWSER_DELIVERY_FAILED = "kept on this mac, not reaching your journal right now"
     public static let SOURCES_BROWSER_REGISTRATION_BROKEN = "your browsers can't find the solstone app on this mac."
+    public static let SOURCES_BROWSER_RETIRED = "some browser pages were kept for a journal this mac was paired with before. they won't go into any journal, and they stay on this mac until you discard them."
+    public static let SOURCES_BROWSER_DISCARD = "discard"
+    public static let SOURCES_BROWSER_DISCARD_CONFIRM = "discard these browser pages? they're gone from this mac for good, and nothing in any journal changes."
+    public static let SOURCES_BROWSER_DISCARDED = "discarded"
+    public static let SOURCES_BROWSER_DISCARD_FAILED = "couldn't finish discarding. what's left is still on this mac."
+    public static let PAIRING_BROWSER_RETIREMENT_WARNING = "browser pages still waiting on this mac won't go into any journal after this."
 
     // Repair
     public static let SOURCES_BROWSER_REPAIR_ACTION = "repair"
@@ -124,6 +130,7 @@ public enum UICopy {
     public static let PAIRING_LINK_PLACEHOLDER = "paste pairing link"
     public static let PAIRING_NOTENTITLED_RECOVERY = "your journal is paired, but it isn't on the paid plan, so it can't sync over the internet. you can still reach it directly, without the plan, whenever your journal is reachable."
     public static let PAIRING_DISCONNECT_CONFIRM = "disconnect this mac from your journal? your journal keeps everything. you can pair again anytime."
+    public static let PAIRING_SAVE_FAILED = "pairing worked, but this mac couldn't save it. try again."
     public static let JOURNAL_MARK_CONFIRM_QUESTION = "does this match your journal?"
     public static let JOURNAL_MARK_CONFIRM_SUBTEXT = "your journal shows this same mark in its network app. it should match, exactly."
     public static let JOURNAL_MARK_CONFIRM_BUTTON = "yes, this is my journal"

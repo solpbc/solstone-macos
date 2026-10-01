@@ -585,30 +585,34 @@ struct BrowserIntakeAdmissionTests {
         try authority2.retireIfTokenChanged(newToken: "token-1")
         #expect(store2.getActiveGeneration() == gen)
 
+        let activeFileURL = store2.periodFileURL(for: pid1)
+        let originalBytes = try Data(contentsOf: activeFileURL)
         try authority2.retireIfTokenChanged(newToken: "token-2")
         let statDiff = authority2.status()
         #expect(statDiff["capture"] as? String == "unavailable")
         #expect(statDiff["destination_generation"] is NSNull)
         #expect(statDiff["period_id"] is NSNull)
-        #expect(statDiff["delivery"] as? String == "kept_locally")
+        #expect(statDiff["delivery"] as? String == "unknown")
 
-        let openFileURL = store2.periodFileURL(for: pid1)
-        #expect(FileManager.default.fileExists(atPath: openFileURL.path))
+        let retiredFileURL = tempRoot.appendingPathComponent("retired/periods/\(pid1)/browser_pages.jsonl")
+        #expect(!FileManager.default.fileExists(atPath: activeFileURL.path))
+        #expect(try Data(contentsOf: retiredFileURL) == originalBytes)
         try authority2.retireIfTokenChanged(newToken: nil)
         let statNil = authority2.status()
         #expect(statNil["capture"] as? String == "not_paired")
         #expect(statNil["destination_generation"] is NSNull)
         #expect(statNil["period_id"] is NSNull)
-        #expect(FileManager.default.fileExists(atPath: openFileURL.path))
+        #expect(try Data(contentsOf: retiredFileURL) == originalBytes)
 
         let store3 = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let authority3 = BrowserIntakeAuthority(store: store3, projection: projection, wallClock: { clock.now })
         #expect(store3.getActiveGeneration() == nil)
         let reopened = authority3.status()
         #expect(reopened["capture"] as? String == "unavailable")
-        #expect(reopened["delivery"] as? String == "kept_locally")
+        #expect(reopened["delivery"] as? String == "unknown")
         #expect(reopened["destination_generation"] is NSNull)
         #expect(reopened["period_id"] is NSNull)
+        #expect(try Data(contentsOf: retiredFileURL) == originalBytes)
 
         let staleBatch: [String: Any] = [
             "type": "batch",
@@ -702,8 +706,10 @@ struct BrowserIntakeAdmissionTests {
         let readData = gate.readBodyData(fileURL: p1FileURL, permit: permit)
         #expect(readData.isEmpty)
 
-        // File remains on disk untouched
-        let remainingBytes = try Data(contentsOf: p1FileURL)
+        // Retired custody remains byte-exact outside active period lookup.
+        let retiredFileURL = tempRoot.appendingPathComponent("retired/periods/\(pid1)/browser_pages.jsonl")
+        #expect(!FileManager.default.fileExists(atPath: p1FileURL.path))
+        let remainingBytes = try Data(contentsOf: retiredFileURL)
         #expect(remainingBytes == originalBytes)
 
         // Status is unavailable
@@ -1365,7 +1371,9 @@ struct BrowserIntakeAdmissionTests {
         }
         await planner.planAndUpload()
         #expect(transport.prepareCount == 1)
-        #expect(try Data(contentsOf: fileURL) == original)
+        let retiredFileURL = tempRoot.appendingPathComponent("retired/periods/\(pid)/browser_pages.jsonl")
+        #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+        #expect(try Data(contentsOf: retiredFileURL) == original)
         #expect(authority.status()["capture"] as? String == "unavailable")
 
         _ = try authority.publishEpoch(identityToken: "token-2")
@@ -1589,14 +1597,6 @@ struct BrowserMetadataCapacityTests {
         #expect(state["capture"] as? String == "intake_off")
         #expect(try physicalBytes(url) < 256 * 4096 * 3 + 64 * 1024)
         #expect(store.projectedSpoolBytes() < projection.policy.spoolBytes)
-        let periodsRoot = url.appendingPathComponent("periods")
-        let directoriesBefore = try FileManager.default.contentsOfDirectory(atPath: periodsRoot.path)
-        for index in 1...20 {
-            #expect(throws: BrowserIntakeStoreError.resourceExhausted) {
-                try store.publishEpoch(identityToken: "refused-capacity-pairing-\(index)", nowMs: now)
-            }
-        }
-        #expect(try FileManager.default.contentsOfDirectory(atPath: periodsRoot.path) == directoriesBefore)
         #expect(store.getActiveGeneration() == generation)
         age.changeBoot()
         #expect(try store.updateFloorMs(wallNowMs: now + 1000) >= now + 1000)
@@ -1608,6 +1608,33 @@ struct BrowserMetadataCapacityTests {
         #expect(store.getActiveGeneration() == generation)
         let accepted = try authority.accept(bytes: snapshot(generation: generation, id: 1, now: store.getFloorMs()), direction: "extension_to_host")
         #expect(accepted["result"] as? String == "accepted")
+        #expect(!store.storeIsFailed())
+    }
+
+    @Test func metadataOnlyRetirementReleasesSuccessorAdmission() throws {
+        let url = try root()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: url, projection: projection,
+            ioInjector: BrowserIntakeIOInjector(), metadataPageLimit: 256)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now })
+        let generationA = try authority.publishEpoch(identityToken: "metadata-full-a")
+        #expect(try fillMetadata(store, generation: generationA, now: store.getFloorMs()) > 1)
+        #expect(store.isQuotaFull())
+        #expect(store.getEarliestHeldMs() == 0)
+        try authority.reconcileIdentity("metadata-full-b", mode: .replace)
+        let generationB = try authority.publishEpoch(identityToken: "metadata-full-b")
+        authority.reopenAdmission()
+        #expect(generationB != generationA)
+        #expect(!store.isQuotaFull())
+        #expect(store.retiredCustodyInventory() == .empty)
+        let result = try authority.accept(bytes: snapshot(generation: generationB, id: 1, now: store.getFloorMs()), direction: "extension_to_host")
+        #expect(result["result"] as? String == "accepted")
+        let period = try #require(result["period_id"] as? String)
+        try store.finalizePeriod(periodId: period, reason: "metadata-successor", civilDate: clock.now,
+            timeZone: TimeZone(secondsFromGMT: 0)!)
+        #expect(store.getPeriod(periodId: period)?.state == "finalized")
         #expect(!store.storeIsFailed())
     }
 
@@ -1738,8 +1765,10 @@ struct BrowserMetadataCapacityTests {
             ioInjector: BrowserIntakeIOInjector(), ageClock: age.now, metadataPageLimit: 256)
         #expect(reopened.getFloorMs() == floor)
         #expect(reopened.getActiveGeneration() == nil)
-        #expect(reopened.getPeriod(periodId: periodID)?.state == "finalized")
-        #expect(try Data(contentsOf: payloadURL) == original)
+        #expect(reopened.getPeriod(periodId: periodID) == nil)
+        let retiredURL = url.appendingPathComponent("retired/periods/\(periodID)/browser_pages.jsonl")
+        #expect(!reopened.getAllFinalizedPeriods().contains { $0.periodId == periodID })
+        #expect(try Data(contentsOf: retiredURL) == original)
         #expect(try reopened.lookupReceipt(generation: generation, inst: String(repeating: "i", count: 128), batchId: String(format: "%032x", 1))?.result == "accepted")
         let newAuthority = BrowserIntakeAuthority(store: reopened, projection: projection, wallClock: { clock.now })
         try newAuthority.reconcileIdentity("replacement-capacity-identity", mode: .reload)

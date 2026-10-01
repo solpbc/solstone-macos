@@ -655,7 +655,7 @@ struct PairingCoordinatorTests {
         endSelfRetirement: @escaping @MainActor @Sendable () -> Void = {},
         classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
     ) -> PairingCoordinator {
-        PairingCoordinator(
+        let coordinator = PairingCoordinator(
             pair: { pairURL, deviceLabel, relayEndpoint in
                 try await script.pair(pairURL: pairURL, deviceLabel: deviceLabel, relayEndpoint: relayEndpoint)
             },
@@ -679,6 +679,10 @@ struct PairingCoordinatorTests {
             endSelfRetirement: endSelfRetirement,
             classifiedLog: classifiedLog
         )
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        coordinator.pendingBrowserMaterial = { false }
+#endif
+        return coordinator
     }
 }
 

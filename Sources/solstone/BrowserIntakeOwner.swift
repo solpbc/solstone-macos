@@ -51,6 +51,9 @@ public enum BrowserIntakeAcceptResult: Sendable, Equatable {
 }
 
 private final class BrowserIntakeStopController: @unchecked Sendable {
+    // Credential before/write/after and updater stop share this lock. A stop
+    // cannot split successful retirement from publication of its replacement.
+    let credentialMutationLock = NSLock()
     private let lock = NSLock()
     private let store: BrowserIntakeStore
     private let authority: BrowserIntakeAuthority
@@ -109,6 +112,8 @@ private final class BrowserIntakeStopController: @unchecked Sendable {
     }
 
     func stop() {
+        credentialMutationLock.lock()
+        defer { credentialMutationLock.unlock() }
         let resources = lock.withLock { () -> (Task<Void, Never>?, Task<Void, Never>?, [(NotificationCenter, NSObjectProtocol)])? in
             guard !stopped else { return nil }
             stopped = true
@@ -264,6 +269,22 @@ public actor BrowserIntakeOwner {
         admissionOpen = predicate
     }
 
+    public nonisolated func retiredCustodyInventory() -> BrowserRetiredCustodyInventory {
+        store.retiredCustodyInventory()
+    }
+
+    public nonisolated func activePending() -> BrowserActivePending? {
+        store.activePending()
+    }
+
+    public nonisolated func cancelRetiredCustodyDiscard() {
+        store.cancelRetiredCustodyDiscard()
+    }
+
+    public nonisolated func discardRetiredCustody(_ scope: BrowserRetiredCustodyScope) throws -> BrowserRetiredDiscardResult {
+        try store.discardRetiredCustody(scope)
+    }
+
     public func accept(bytes: Data, direction: String) -> BrowserIntakeAcceptResult {
         accept(decoded: BrowserPayloadDecoder.decode(bytes: bytes, direction: direction, projection: authority.projection))
     }
@@ -273,7 +294,8 @@ public actor BrowserIntakeOwner {
         guard sessionIsCurrent() else { return .refusal(BrowserIntakeLocalRefusal(code: "shutdown")) }
         guard started, !stopController.isStopped() else { return .refusal(BrowserIntakeLocalRefusal(code: "intake_off")) }
         do {
-            let reply = try authority.accept(decoded: decoded, admitNewBatches: intakeEnabled, sessionIsCurrent: sessionIsCurrent)
+            let reply = try authority.accept(decoded: decoded, admitNewBatches: intakeEnabled, sessionIsCurrent: sessionIsCurrent,
+                attachFailureGeneration: true)
             if reply["type"] as? String == "refused" {
                 return .refusal(BrowserIntakeLocalRefusal(
                     code: reply["code"] as? String ?? "malformed",
@@ -287,7 +309,10 @@ public actor BrowserIntakeOwner {
         } catch let refusal as BrowserIntakeLocalRefusal {
             return .refusal(refusal)
         } catch {
-            store.setStoreFailed(true)
+            try? store.ioInjector.check(.ownerFailurePublication)
+            if let failure = error as? BrowserIntakeOperationError, let generation = failure.generation {
+                _ = store.setStoreFailed(true, forGeneration: generation)
+            }
             Logger.storage.error("Browser intake accept failed: \(error.localizedDescription, privacy: .public)")
             return .refusal(BrowserIntakeLocalRefusal(code: "local_io"))
         }
@@ -359,9 +384,9 @@ public actor BrowserIntakeOwner {
     }
 
     nonisolated func bindCredentials(_ credentialStore: PairingCredentialStore) {
-        credentialStore.installBrowserHooks(beforeMutation: { [weak self] newToken in
-            guard let self else { return }
-            try self.credentialWillChange(identityToken: newToken)
+        credentialStore.installBrowserHooks(mutationLock: stopController.credentialMutationLock, beforeMutation: { [weak self] newToken, warningWasPresented in
+            guard let self else { throw BrowserIntakeStoreError.localIO }
+            try self.credentialWillChange(identityToken: newToken, browserWarningWasPresented: warningWasPresented)
         }, afterMutation: { [weak self] token in
             guard let self else { return }
             do {
@@ -380,16 +405,27 @@ public actor BrowserIntakeOwner {
 
     }
 
-    public nonisolated func credentialWillChange(identityToken: String?) throws {
-        guard !stopController.isStopped() else { return }
+    public nonisolated func credentialWillChange(identityToken: String?, browserWarningWasPresented: Bool = false) throws {
+        guard !stopController.isStopped() else { throw BrowserIntakeStoreError.staleGeneration }
+        let wasAdmissionOpen = authority.isAdmissionOpen()
         authority.closeAdmission()
+        // Closing authority waits for accepted batches to commit. Inspect the
+        // resulting material before any retirement or credential write.
+        guard let pending = store.activePending() else { throw BrowserIntakeStoreError.localIO }
+        let retiresCurrentJournal = identityToken.map { !store.matchesActiveJournal(identityToken: $0) } ?? true
+        if retiresCurrentJournal && !browserWarningWasPresented && !pending.identities.isEmpty {
+            if wasAdmissionOpen {
+                authority.reopenAdmission()
+            }
+            throw PairingCredentialStoreError.retirementConfirmationRequired
+        }
         gate.invalidateCurrentLease()
         store.closeDeliveryProofs()
         try authority.reconcileIdentity(identityToken, mode: .replace)
     }
 
     public nonisolated func credentialDidChange(identityToken: String?) throws {
-        guard !stopController.isStopped() else { return }
+        guard !stopController.isStopped() else { throw BrowserIntakeStoreError.staleGeneration }
         guard let identityToken else { return }
         do {
             _ = try authority.publishEpoch(identityToken: identityToken)
@@ -509,12 +545,14 @@ public actor BrowserIntakeOwner {
         let newZone = clock.timeZone()
         guard newZone != timeZone else { return }
         do {
-            try authority.setTimeZone(newZone)
+            try authority.setTimeZone(newZone, attachFailureGeneration: true)
             timeZone = newZone
             startBoundaryWaiter()
             scheduleDelivery()
         } catch {
-            store.setStoreFailed(true)
+            if let failure = error as? BrowserIntakeOperationError, let generation = failure.generation {
+                _ = store.setStoreFailed(true, forGeneration: generation)
+            }
             Logger.storage.error("Browser intake timezone transition failed: \(error.localizedDescription, privacy: .public)")
         }
     }

@@ -72,6 +72,16 @@ public final class AppState {
     public private(set) var browserIntakeStore: BrowserIntakeStore?
     public private(set) var browserIntakeAuthority: BrowserIntakeAuthority?
     public let browserHostSnapshot = BrowserHostSnapshot()
+    var browserRetiredCustody = BrowserRetiredCustodyInteraction<BrowserRetiredCustodyScope>()
+    private var browserPendingMaterial: Bool?
+    @ObservationIgnored private var browserRetiredRefreshRevision: UInt64 = 0
+    @ObservationIgnored private var browserRetiredRefreshRunning = false
+    @ObservationIgnored private var browserRetiredDiscardCompletion:
+        (request: BrowserRetiredCustodyInteraction<BrowserRetiredCustodyScope>.DiscardRequest,
+         store: BrowserIntakeStore, durablyCompleted: Bool)?
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+    @ObservationIgnored var browserRetiredDiscardResultBarrier: @Sendable () async -> Void = {}
+#endif
     @ObservationIgnored private let browserRepairValidity = BrowserRepairValidity()
     var browserRepair = BrowserRepairController() {
         didSet {
@@ -571,6 +581,72 @@ public final class AppState {
     @ObservationIgnored internal var configSaver: (AppConfig) throws -> Void = { try $0.save() }
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    func refreshBrowserRetiredCustody() {
+        browserRetiredRefreshRevision &+= 1
+        beginBrowserRetiredRefreshIfNeeded()
+    }
+
+    private func beginBrowserRetiredRefreshIfNeeded() {
+        guard !browserRetiredRefreshRunning else { return }
+        guard let store = browserIntakeStore else {
+            browserRetiredCustody.observe(.unknown)
+            return
+        }
+        browserRetiredRefreshRunning = true
+        let revision = browserRetiredRefreshRevision
+        let window = browserRetiredCustody.viewRevision
+        Task.detached(priority: .utility) { [weak self, store] in
+            let pending = store.activePending().map { !$0.identities.isEmpty }
+            let inventory = store.retiredCustodyInventory()
+            await MainActor.run {
+                guard let self else { return }
+                self.browserRetiredRefreshRunning = false
+                if self.browserIntakeStore === store,
+                   revision == self.browserRetiredRefreshRevision,
+                   window == self.browserRetiredCustody.viewRevision {
+                    self.browserRetiredCustody.observe(Self.browserRetiredMaterial(inventory))
+                    self.browserPendingMaterial = inventory == .unavailable ? nil : pending
+                    if let completion = self.browserRetiredDiscardCompletion, completion.store === store {
+                        self.browserRetiredDiscardCompletion = nil
+                        self.browserRetiredCustody.finishDiscard(completion.request,
+                            durablyCompleted: completion.durablyCompleted, inventory: Self.browserRetiredMaterial(inventory))
+                    }
+                }
+                if revision != self.browserRetiredRefreshRevision {
+                    self.beginBrowserRetiredRefreshIfNeeded()
+                }
+            }
+        }
+    }
+
+    private static func browserRetiredMaterial(_ inventory: BrowserRetiredCustodyInventory) -> BrowserRetiredMaterial<BrowserRetiredCustodyScope> {
+        switch inventory {
+        case .unavailable: return .unknown
+        case .empty: return .empty
+        case .present(let scope): return .present(scope)
+        }
+    }
+
+    func confirmBrowserRetiredDiscard() {
+        guard let store = browserIntakeStore, let request = browserRetiredCustody.beginDiscard() else { return }
+        // Earlier measurements cannot overwrite the operation's fresh result.
+        browserRetiredRefreshRevision &+= 1
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        let resultBarrier = browserRetiredDiscardResultBarrier
+#endif
+        Task.detached(priority: .utility) { [weak self, store] in
+            let result = store.discardRetiredCustodyAndMeasure(request.scope)
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+            await resultBarrier()
+#endif
+            await MainActor.run {
+                guard let self, self.browserIntakeStore === store else { return }
+                self.browserRetiredDiscardCompletion = (request, store, result.durablyCompleted)
+                self.refreshBrowserRetiredCustody()
+            }
+        }
+    }
+
     public func setBrowserIntakeEnabled(_ enabled: Bool) {
         var newConfig = config
         newConfig.isBrowserIntakeEnabled = enabled
@@ -1924,10 +2000,19 @@ public final class AppState {
         let planner = owner.planner
         self.browserIntakeOwner = owner
         self.browserIntakeCredentialStore = credentialStore
+        if self.browserIntakeStore !== store {
+            self.browserRetiredCustody = .init()
+            self.browserRetiredDiscardCompletion = nil
+            self.browserPendingMaterial = nil
+        }
         self.browserIntakeStore = store
         self.browserIntakeAuthority = authority
         self.browserUploadGate = gate
         self.browserUploadPlanner = planner
+        pairingCoordinator.pendingBrowserMaterial = { [weak self] in
+            self?.browserPendingMaterial
+        }
+        refreshBrowserRetiredCustody()
 
         owner.bindCredentials(credentialStore)
         authority.setPaused(pauseManager.isPaused)
