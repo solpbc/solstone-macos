@@ -31,19 +31,58 @@ extension JournalMarkConfirmationDriver {
         }
         startIfNeeded(
             for: "unconfirmed:\(journal)",
-            resolveHomeBase: {
-                switch await appState.resolveHomeBase() {
-                case .held:
-                    return .held
-                case .url(let baseURL):
-                    return .url(baseURL)
-                }
-            },
-            fetchMark: { baseURL in
-                guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return nil }
-                return await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected)
-            }
+            resolveHomeBase: unconfirmedHomeBaseResolver(appState),
+            fetchMark: unconfirmedMarkFetcher(appState, fetcher)
         )
+    }
+
+    func reaskUnconfirmed(
+        journal: String,
+        resolveHomeBase: @escaping HomeBaseResolver,
+        fetchMark: @escaping MarkFetcher
+    ) {
+        guard !isPresented else { return }
+        resetForNewPairAttempt()
+        startIfNeeded(
+            for: "unconfirmed:\(journal)",
+            resolveHomeBase: resolveHomeBase,
+            fetchMark: fetchMark
+        )
+    }
+
+    func reaskUnconfirmed(
+        appState: AppState,
+        fetcher: JournalIdentityFetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
+    ) {
+        guard let journal = appState.needsJournalMarkConfirmation
+            ? appState.tunnelLifecycleOwner.cachedJournalMarkIdentity
+            : nil else { return }
+        reaskUnconfirmed(
+            journal: journal,
+            resolveHomeBase: unconfirmedHomeBaseResolver(appState),
+            fetchMark: unconfirmedMarkFetcher(appState, fetcher)
+        )
+    }
+
+    private func unconfirmedHomeBaseResolver(_ appState: AppState) -> HomeBaseResolver {
+        {
+            switch await appState.resolveHomeBase() {
+            case .held:
+                return .held
+            case .url(let baseURL):
+                return .url(baseURL)
+            }
+        }
+    }
+
+    private func unconfirmedMarkFetcher(
+        _ appState: AppState,
+        _ fetcher: JournalIdentityFetcher
+    ) -> MarkFetcher {
+        { baseURL in
+            guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return nil }
+            return await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected)
+        }
     }
 
     func cancelPairing(appState: AppState) async {

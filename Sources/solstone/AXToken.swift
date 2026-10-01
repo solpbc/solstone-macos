@@ -122,6 +122,7 @@ internal enum MenubarStatusRowState: CaseIterable {
     case offline
     case paused
     case observing
+    case awaitingMarkConfirmation
 }
 
 internal enum SettingsObservationAXState: CaseIterable {
@@ -134,6 +135,7 @@ internal enum SettingsObservationAXState: CaseIterable {
     case attention
     case savedLocally
     case error
+    case awaitingMarkConfirmation
 
     init(_ rowState: MenubarStatusRowState) {
         switch rowState {
@@ -159,6 +161,8 @@ internal enum SettingsObservationAXState: CaseIterable {
             self = .savedLocally
         case .error:
             self = .error
+        case .awaitingMarkConfirmation:
+            self = .awaitingMarkConfirmation
         }
     }
 }
@@ -682,7 +686,7 @@ extension MenubarStatusRowState {
         switch self {
         case .stopped:
             return .paused
-        case .observing:
+        case .observing, .awaitingMarkConfirmation:
             return .recording
         case .starting, .connectionWaiting:
             return .connecting
@@ -723,6 +727,8 @@ extension MenubarStatusRowState {
             return "paused"
         case .observing:
             return "on"
+        case .awaitingMarkConfirmation:
+            return "awaiting_mark_confirmation"
         }
     }
 }
@@ -748,6 +754,8 @@ extension SettingsObservationAXState {
             return "on_saved_locally"
         case .error:
             return "error"
+        case .awaitingMarkConfirmation:
+            return "on_awaiting_mark_confirmation"
         }
     }
 
@@ -771,6 +779,8 @@ extension SettingsObservationAXState {
             return UICopy.SETTINGS_OBSERVATION_SAVED_LOCALLY
         case .error:
             return UICopy.SETTINGS_OBSERVATION_ERROR
+        case .awaitingMarkConfirmation:
+            return UICopy.JOURNAL_MARK_HELD
         }
     }
 }

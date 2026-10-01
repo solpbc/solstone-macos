@@ -2,7 +2,9 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Observation
 import JournalMarkKit
+import os
 import SolstoneCore
 import SPLTunnel
 import Testing
@@ -14,6 +16,116 @@ import Testing
 struct JournalMarkConfirmationGateTests {
     private let connected = TunnelLifecycleState.connected(localPort: 24680, via: .relay)
     private let identity = TunnelPairingIdentity(instanceID: "instance", fingerprint: "fingerprint")
+
+    @Test func heldIsOnlyAConnectedUnansweredOwnerPairing() {
+        #expect(AppState.needsJournalMarkConfirmation(
+            tunnelManaged: true,
+            lifecycleState: connected,
+            adoptingAutomatically: false,
+            journalIdentity: "journal",
+            journalMarkConfirmed: false
+        ))
+
+        #expect(!AppState.needsJournalMarkConfirmation(
+            tunnelManaged: true,
+            lifecycleState: .disconnected,
+            adoptingAutomatically: false,
+            journalIdentity: "journal",
+            journalMarkConfirmed: false
+        ))
+        #expect(!AppState.needsJournalMarkConfirmation(
+            tunnelManaged: true,
+            lifecycleState: .connecting,
+            adoptingAutomatically: false,
+            journalIdentity: "journal",
+            journalMarkConfirmed: false
+        ))
+        #expect(!AppState.needsJournalMarkConfirmation(
+            tunnelManaged: true,
+            lifecycleState: .error(.revoked),
+            adoptingAutomatically: false,
+            journalIdentity: "journal",
+            journalMarkConfirmed: false
+        ))
+        #expect(!AppState.needsJournalMarkConfirmation(
+            tunnelManaged: true,
+            lifecycleState: connected,
+            adoptingAutomatically: false,
+            journalIdentity: "journal",
+            journalMarkConfirmed: true
+        ))
+        #expect(!AppState.needsJournalMarkConfirmation(
+            tunnelManaged: true,
+            lifecycleState: connected,
+            adoptingAutomatically: true,
+            journalIdentity: "journal",
+            journalMarkConfirmed: false
+        ))
+        #expect(!AppState.needsJournalMarkConfirmation(
+            tunnelManaged: false,
+            lifecycleState: connected,
+            adoptingAutomatically: false,
+            journalIdentity: "journal",
+            journalMarkConfirmed: false
+        ))
+        #expect(!AppState.needsJournalMarkConfirmation(
+            tunnelManaged: true,
+            lifecycleState: connected,
+            adoptingAutomatically: false,
+            journalIdentity: nil,
+            journalMarkConfirmed: false
+        ))
+    }
+
+    @Test func answeringOrClearingTheMarkIsObservable() {
+        let answerState = AppState.forSnapshot(
+            initialTunnelPairing: pairing(),
+            journalMarkConfirmationStore: InMemoryJournalMarkConfirmationStore(settled: true)
+        )
+        let answerNotified = OSAllocatedUnfairLock(initialState: false)
+        withObservationTracking {
+            _ = answerState.isJournalMarkConfirmed
+        } onChange: {
+            answerNotified.withLock { $0 = true }
+        }
+        answerState.recordJournalMarkConfirmed()
+        #expect(answerNotified.withLock { $0 })
+
+        let clearState = AppState.forSnapshot(
+            initialTunnelPairing: pairing(),
+            journalMarkConfirmationStore: InMemoryJournalMarkConfirmationStore(settled: true)
+        )
+        #expect(!clearState.isJournalMarkConfirmed)
+        let clearNotified = OSAllocatedUnfairLock(initialState: false)
+        withObservationTracking {
+            _ = clearState.isJournalMarkConfirmed
+        } onChange: {
+            clearNotified.withLock { $0 = true }
+        }
+        clearState.clearJournalMarkConfirmation()
+        #expect(!clearState.isJournalMarkConfirmed)
+        #expect(clearNotified.withLock { $0 })
+    }
+
+    @Test func readingAnUnsettledMarkDoesNotPublish() {
+        let store = InMemoryJournalMarkConfirmationStore(settled: false)
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing(), journalMarkConfirmationStore: store)
+        let notified = OSAllocatedUnfairLock(initialState: false)
+        withObservationTracking {
+            #expect(state.isJournalMarkConfirmed)
+        } onChange: {
+            notified.withLock { $0 = true }
+        }
+        #expect(store.settled)
+        #expect(!notified.withLock { $0 })
+    }
+
+    @Test func heldLineShowsOnlyWhenHeldAndTheSheetIsDown() {
+        #expect(SettingsView.journalMarkHeldLineVisible(needsJournalMarkConfirmation: true, markSheetPresented: false))
+        #expect(!SettingsView.journalMarkHeldLineVisible(needsJournalMarkConfirmation: true, markSheetPresented: true))
+        #expect(!SettingsView.journalMarkHeldLineVisible(needsJournalMarkConfirmation: false, markSheetPresented: false))
+        #expect(!SettingsView.journalMarkHeldLineVisible(needsJournalMarkConfirmation: false, markSheetPresented: true))
+    }
 
     @Test func ingestIsHeldOverAConnectedPairingUntilTheMarkIsConfirmed() {
         #expect(AppState.ingestBaseURL(

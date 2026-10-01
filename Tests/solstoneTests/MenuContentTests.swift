@@ -87,6 +87,7 @@ struct MenuContentTests {
             (.permissions, "sol-ring-icon-attention-template"),
             (.offline, "sol-ring-icon-offline-template"),
             (.error, "sol-ring-icon-error-template"),
+            (.awaitingMarkConfirmation, "sol-ring-template"),
         ]
 
         #expect(cases.count == MenubarStatusRowState.allCases.count)
@@ -118,6 +119,7 @@ struct MenuContentTests {
             (.permissions, .attention),
             (.offline, .savedLocally),
             (.error, .error),
+            (.awaitingMarkConfirmation, .awaitingMarkConfirmation),
         ]
 
         #expect(cases.count == MenubarStatusRowState.allCases.count)
@@ -144,7 +146,7 @@ struct MenuContentTests {
 
     @Test func settingsObservationAXStateVocabularyDropsStarting() {
         let tokens = SettingsObservationAXState.allCases.map(\.axToken)
-        #expect(tokens.count == 9)
+        #expect(tokens.count == 10)
         #expect(!tokens.contains("starting"))
         #expect(SettingsObservationAXState(.starting).axToken == "connecting")
         #expect(SettingsObservationAXState(.connectionWaiting).axToken == "connecting")
@@ -468,6 +470,77 @@ struct MenuContentTests {
     @Test func journalClientRowsUseExpectedAXTokens() {
         #expect(MenubarStatusRowState.journalMigrationNeeded.axToken == "journal_migration_needed")
         #expect(MenubarStatusRowState.connectionWaiting.axToken == "connection_waiting")
+        #expect(MenubarStatusRowState.awaitingMarkConfirmation.axToken == "awaiting_mark_confirmation")
+        #expect(SettingsObservationAXState.awaitingMarkConfirmation.axToken == "on_awaiting_mark_confirmation")
+    }
+
+    @Test func heldPairingWinsOverDeliveryRows() {
+        for status in representativeUploadStatuses() {
+            #expect(classified(uploadStatus: status, journalMarkHeld: true) == .awaitingMarkConfirmation)
+            #expect(classified(uploadStatus: status, journalMarkHeld: false) == row(forUploadStatus: status))
+        }
+
+        #expect(classified(
+            journalConnectionAXToken: PairingConnectionAXState.connecting.axToken,
+            journalMarkHeld: true
+        ) == .awaitingMarkConfirmation)
+        #expect(classified(
+            journalFailureCause: .noRoute,
+            journalMarkHeld: true
+        ) == .awaitingMarkConfirmation)
+    }
+
+    @Test func heldPairingKeepsHigherPrecedenceRows() {
+        #expect(classified(permissionsNeedAttention: true, journalMarkHeld: true) == .permissions)
+        #expect(classified(errorMessage: "boom", journalMarkHeld: true) == .error)
+        #expect(classified(initialPermissionCheckComplete: false, journalMarkHeld: true) == .starting)
+        #expect(classified(serviceMode: .bundled, journalMarkHeld: true) == .journalMigrationNeeded)
+        #expect(classified(isPaused: true, journalMarkHeld: true) == .paused)
+        #expect(classified(syncPaused: true, journalMarkHeld: true) == .syncPaused)
+        #expect(classified(hasJournalOnRecord: false, journalMarkHeld: true) == .localOnly)
+
+        #expect(classified(
+            isRecording: false,
+            journalMarkHeld: true,
+            browserIntakePermitted: true,
+            browserOnlyIntake: true
+        ) == classified(
+            isRecording: false,
+            journalMarkHeld: false,
+            browserIntakePermitted: true,
+            browserOnlyIntake: true
+        ))
+        #expect(classified(
+            isRecording: false,
+            journalMarkHeld: true,
+            browserIntakePermitted: true,
+            browserOnlyIntake: true
+        ) == .observing)
+        #expect(classified(
+            isRecording: false,
+            journalMarkHeld: true,
+            browserIntakePaused: true
+        ) == .paused)
+        #expect(classified(isRecording: false, journalMarkHeld: true) == .stopped)
+    }
+
+    @Test func heldPairingAccessibilityLabelNamesTheMark() {
+        let plainLabel = statusAccessibilityLabel(
+            presentation: MenubarPresentation(observation: .awaitingMarkConfirmation, attention: nil),
+            errorMessage: nil
+        )
+        #expect(plainLabel == UICopy.MENUBAR_A11Y_AWAITING_MARK_CONFIRMATION)
+        #expect(plainLabel != UICopy.MENUBAR_A11Y_OBSERVING_SAVED_LOCALLY)
+
+        let updateLabel = statusAccessibilityLabel(
+            presentation: MenubarPresentation(
+                observation: .awaitingMarkConfirmation,
+                attention: .updateAvailable
+            ),
+            errorMessage: nil
+        )
+        #expect(updateLabel.hasPrefix(UICopy.MENUBAR_A11Y_AWAITING_MARK_CONFIRMATION))
+        #expect(updateLabel.hasSuffix(UICopy.SETTINGS_ATTENTION_UPDATE_AVAILABLE))
     }
 
     @Test @MainActor func settingsRowLabelTargetCellsSurfaced() {
@@ -584,7 +657,11 @@ private func classified(
     journalConnectionAXToken: String? = nil,
     journalFailureCause: JournalConnectionFailureCause? = nil,
     isPairedIngestReady: Bool = false,
-    uploadStatus: UploadCoordinator.Status = .synced
+    uploadStatus: UploadCoordinator.Status = .synced,
+    journalMarkHeld: Bool = false,
+    browserIntakePermitted: Bool = false,
+    browserIntakePaused: Bool = false,
+    browserOnlyIntake: Bool = false
 ) -> MenubarStatusRowState {
     classifyObservationRowState(
         permissionsNeedAttention: permissionsNeedAttention,
@@ -598,7 +675,11 @@ private func classified(
         uploadStatus: uploadStatus,
         hasJournalOnRecord: hasJournalOnRecord,
         journalConnectionAXToken: journalConnectionAXToken,
-        journalFailureCause: journalFailureCause
+        journalFailureCause: journalFailureCause,
+        browserIntakePermitted: browserIntakePermitted,
+        browserIntakePaused: browserIntakePaused,
+        browserOnlyIntake: browserOnlyIntake,
+        journalMarkHeld: journalMarkHeld
     )
 }
 

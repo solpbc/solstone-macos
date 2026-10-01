@@ -435,6 +435,10 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openSettingsWindow)) { _ in
             applyPendingSettingsTab()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .reaskJournalMark)) { _ in
+            selectedTab = .service
+            journalMarkDriver.reaskUnconfirmed(appState: appState)
+        }
         .sheet(isPresented: Binding(
             get: { journalMarkDriver.isPresented },
             set: { newValue in
@@ -1379,6 +1383,17 @@ struct SettingsView: View {
                     }
                 }
 
+                if Self.journalMarkHeldLineVisible(
+                    needsJournalMarkConfirmation: appState.needsJournalMarkConfirmation,
+                    markSheetPresented: journalMarkDriver.isPresented
+                ) {
+                    Text(UICopy.JOURNAL_MARK_HELD)
+                        .accessibilityIdentifier(AXID.Settings.Service.journalMarkHeld)
+                    Text(UICopy.JOURNAL_MARK_HELD_CAPTION)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 let affordances = journalPanelAffordancesForPresentation
 
                 if affordances.showRelink && !pairingCanUnpair {
@@ -1433,6 +1448,13 @@ struct SettingsView: View {
 
         externalJournalSyncSection
         externalJournalStorageSection
+    }
+
+    static func journalMarkHeldLineVisible(
+        needsJournalMarkConfirmation: Bool,
+        markSheetPresented: Bool
+    ) -> Bool {
+        needsJournalMarkConfirmation && !markSheetPresented
     }
 
     @ViewBuilder

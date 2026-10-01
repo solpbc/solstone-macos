@@ -5,5 +5,6 @@ import Foundation
 
 extension Notification.Name {
     static let openSettingsWindow = Notification.Name("app.solstone.observer.openSettings")
+    static let reaskJournalMark = Notification.Name("app.solstone.observer.reaskJournalMark")
     static let openJournalWindow = Notification.Name("app.solstone.observer.openJournal")
 }

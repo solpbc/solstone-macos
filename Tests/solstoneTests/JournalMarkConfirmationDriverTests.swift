@@ -128,6 +128,117 @@ struct JournalMarkConfirmationDriverTests {
         #expect(driver.phase == .connecting)
     }
 
+    @Test func theHeldRowReasksACancelledQuestion() {
+        let driver = makeDriver(deadlineSeconds: 30)
+
+        driver.startIfNeeded(for: "unconfirmed:J", resolveHomeBase: heldResolver(), fetchMark: neverFetch())
+        #expect(driver.isPresented)
+
+        driver.cancel()
+        #expect(!driver.isPresented)
+
+        driver.startIfNeeded(for: "unconfirmed:J", resolveHomeBase: heldResolver(), fetchMark: neverFetch())
+        #expect(!driver.isPresented)
+
+        driver.reaskUnconfirmed(journal: "J", resolveHomeBase: heldResolver(), fetchMark: neverFetch())
+        #expect(driver.isPresented)
+        #expect(driver.phase == .connecting)
+
+        driver.cancel()
+        driver.startIfNeeded(for: "unconfirmed:J", resolveHomeBase: heldResolver(), fetchMark: neverFetch())
+        #expect(!driver.isPresented)
+    }
+
+    @Test func theHeldRowLeavesAnOpenQuestionAlone() async throws {
+        let baseURL = "http://127.0.0.1:7071"
+
+        let validDriver = makeDriver(deadlineSeconds: 30)
+        let validFetcher = MarkFetchScript([.uiTestSample])
+        validDriver.startIfNeeded(
+            for: "unconfirmed:J",
+            resolveHomeBase: { .url(baseURL) },
+            fetchMark: { url in await validFetcher.fetch(baseURL: url) }
+        )
+        try await waitUntil(timeout: .seconds(2)) {
+            await MainActor.run {
+                if case .valid = validDriver.phase { return true }
+                return false
+            }
+        }
+        let validPhase = validDriver.phase
+        let validFetchCount = await validFetcher.requestedBaseURLs.count
+        validDriver.reaskUnconfirmed(
+            journal: "J",
+            resolveHomeBase: { .url(baseURL) },
+            fetchMark: { url in await validFetcher.fetch(baseURL: url) }
+        )
+        #expect(validDriver.isPresented)
+        #expect(validDriver.phase == validPhase)
+        #expect(await validFetcher.requestedBaseURLs.count == validFetchCount)
+        validDriver.cancel()
+
+        let unverifiedDriver = makeDriver(deadlineSeconds: 0.05)
+        let unverifiedFetcher = MarkFetchScript([nil])
+        unverifiedDriver.startIfNeeded(
+            for: "unconfirmed:J",
+            resolveHomeBase: { .url(baseURL) },
+            fetchMark: { url in await unverifiedFetcher.fetch(baseURL: url) }
+        )
+        try await waitUntil(timeout: .seconds(2)) {
+            await MainActor.run {
+                if case .unverified = unverifiedDriver.phase { return true }
+                return false
+            }
+        }
+        let unverifiedPhase = unverifiedDriver.phase
+        let unverifiedFetchCount = await unverifiedFetcher.requestedBaseURLs.count
+        unverifiedDriver.reaskUnconfirmed(
+            journal: "J",
+            resolveHomeBase: { .url(baseURL) },
+            fetchMark: { url in await unverifiedFetcher.fetch(baseURL: url) }
+        )
+        #expect(unverifiedDriver.isPresented)
+        #expect(unverifiedDriver.phase == unverifiedPhase)
+        #expect(await unverifiedFetcher.requestedBaseURLs.count == unverifiedFetchCount)
+        unverifiedDriver.cancel()
+
+        let connectingDriver = makeDriver(deadlineSeconds: 30)
+        let resolverEntries = ResolverEntryCounter()
+        let connectingFetcher = MarkFetchScript([])
+        let heldResolver: JournalMarkConfirmationDriver.HomeBaseResolver = {
+            await resolverEntries.recordEntry()
+            try? await Task.sleep(for: .seconds(30))
+            return .held
+        }
+        let neverFetch: JournalMarkConfirmationDriver.MarkFetcher = { url in
+            await connectingFetcher.fetch(baseURL: url)
+        }
+        connectingDriver.startIfNeeded(
+            for: "unconfirmed:J",
+            resolveHomeBase: heldResolver,
+            fetchMark: neverFetch
+        )
+        try await waitUntil(timeout: .seconds(2)) {
+            await resolverEntries.entryCount() == 1
+        }
+        let resolverCount = await resolverEntries.entryCount()
+        let connectingFetchCount = await connectingFetcher.requestedBaseURLs.count
+        connectingDriver.reaskUnconfirmed(
+            journal: "J",
+            resolveHomeBase: heldResolver,
+            fetchMark: neverFetch
+        )
+        #expect(connectingDriver.isPresented)
+        #expect(connectingDriver.phase == .connecting)
+        #expect(await connectingFetcher.requestedBaseURLs.count == connectingFetchCount)
+        #expect(await resolverEntries.entryCount() == resolverCount)
+        for _ in 0..<3 {
+            await Task.yield()
+        }
+        #expect(await resolverEntries.entryCount() == resolverCount)
+        connectingDriver.cancel()
+    }
+
     @Test func duplicateSuccessEmissionOnlyStartsOneAttemptAndEntersUnverified() async throws {
         let driver = makeDriver(deadlineSeconds: 0.05)
 
@@ -488,5 +599,17 @@ struct JournalMarkConfirmationDriverTests {
             guard !responses.isEmpty else { return nil }
             return responses.removeFirst()
         }
+    }
+}
+
+private actor ResolverEntryCounter {
+    private var entries = 0
+
+    func recordEntry() {
+        entries += 1
+    }
+
+    func entryCount() -> Int {
+        entries
     }
 }

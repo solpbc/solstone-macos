@@ -1001,6 +1001,7 @@ public final class AppState {
     /// Whether the owner has confirmed the paired journal's mark, or chose to continue
     /// when the check could not finish. Nothing captured here is sent until they have.
     internal var isJournalMarkConfirmed: Bool {
+        access(keyPath: \.isJournalMarkConfirmed)
         guard let journal = tunnelLifecycleOwner.cachedJournalMarkIdentity else {
             return false
         }
@@ -1010,32 +1011,52 @@ public final class AppState {
     /// A pairing whose mark question is still open: connected, so the mark can be fetched,
     /// and not yet answered. The automatic same-machine adoption never asks.
     internal var needsJournalMarkConfirmation: Bool {
-        guard tunnelLifecycleOwner.isTunnelManaged,
-              case .connected = tunnelLifecycleOwner.state,
-              !isAdoptingSameMachineHomeAutomatically else {
+        Self.needsJournalMarkConfirmation(
+            tunnelManaged: tunnelLifecycleOwner.isTunnelManaged,
+            lifecycleState: tunnelLifecycleOwner.state,
+            adoptingAutomatically: isAdoptingSameMachineHomeAutomatically,
+            journalIdentity: tunnelLifecycleOwner.cachedJournalMarkIdentity,
+            journalMarkConfirmed: isJournalMarkConfirmed
+        )
+    }
+
+    internal static func needsJournalMarkConfirmation(
+        tunnelManaged: Bool,
+        lifecycleState: TunnelLifecycleState,
+        adoptingAutomatically: Bool,
+        journalIdentity: String?,
+        journalMarkConfirmed: Bool
+    ) -> Bool {
+        guard tunnelManaged,
+              case .connected = lifecycleState,
+              !adoptingAutomatically else {
             return false
         }
-        return tunnelLifecycleOwner.cachedJournalMarkIdentity != nil && !isJournalMarkConfirmed
+        return journalIdentity != nil && !journalMarkConfirmed
     }
 
     /// Records the owner's answer for the paired journal and lets held work go.
     internal func recordJournalMarkConfirmed() {
         guard let journal = tunnelLifecycleOwner.cachedJournalMarkIdentity else { return }
-        journalMarkConfirmationStore.confirm(journal)
-        uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
-        guard isPairedIngestReady else { return }
+        withMutation(keyPath: \.isJournalMarkConfirmed) {
+            journalMarkConfirmationStore.confirm(journal)
+            uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
+            guard isPairedIngestReady else { return }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        if let owner = browserIntakeOwner {
-            Task { await owner.scheduleDelivery() }
-        }
+            if let owner = browserIntakeOwner {
+                Task { await owner.scheduleDelivery() }
+            }
 #endif
-        guard automaticObservationPipelineEnabled else { return }
-        triggerTunnelConnectedSync(self)
+            guard automaticObservationPipelineEnabled else { return }
+            triggerTunnelConnectedSync(self)
+        }
     }
 
     internal func clearJournalMarkConfirmation() {
-        journalMarkConfirmationStore.clear()
-        uploadCoordinator?.updatePairedIngestIdentity(currentPairedIngestIdentity())
+        withMutation(keyPath: \.isJournalMarkConfirmed) {
+            journalMarkConfirmationStore.clear()
+            uploadCoordinator?.updatePairedIngestIdentity(currentPairedIngestIdentity())
+        }
     }
 
     private func currentPairedIngestIdentity() -> TunnelPairingIdentity? {

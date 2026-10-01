@@ -224,6 +224,14 @@ struct MenuContent: View {
                 .accessibilityValue(rowState.axToken)
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
 #endif
+
+        case .awaitingMarkConfirmation:
+            Button(UICopy.MENUBAR_AWAITING_MARK_CONFIRMATION) {
+                openSettings(tab: "journal")
+                NotificationCenter.default.post(name: .reaskJournalMark, object: nil)
+            }
+            .accessibilityIdentifier(AXID.Menubar.journalMarkHeldButton)
+            .accessibilityValue(rowState.axToken)
         }
     }
 

@@ -19,7 +19,8 @@ internal func classifyObservationRowState(
     journalFailureCause: JournalConnectionFailureCause? = nil,
     browserIntakePermitted: Bool = false,
     browserIntakePaused: Bool = false,
-    browserOnlyIntake: Bool = false
+    browserOnlyIntake: Bool = false,
+    journalMarkHeld: Bool = false
 ) -> MenubarStatusRowState {
     let mediaActive = isRecording || isPaused
     let suppressPermissionGate = browserOnlyIntake && browserIntakePermitted && !mediaActive
@@ -48,6 +49,9 @@ internal func classifyObservationRowState(
     }
     if !hasJournalOnRecord {
         return .localOnly
+    }
+    if journalMarkHeld {
+        return .awaitingMarkConfirmation
     }
     if !isPairedIngestReady {
         if journalConnectionAXToken == PairingConnectionAXState.connecting.axToken {
@@ -257,7 +261,8 @@ extension AppState {
             journalFailureCause: verdict.failureCause,
             browserIntakePermitted: browserRowPermitted,
             browserIntakePaused: browserRowPaused,
-            browserOnlyIntake: browserOnly
+            browserOnlyIntake: browserOnly,
+            journalMarkHeld: needsJournalMarkConfirmation
         )
     }
 

@@ -98,6 +98,7 @@
       "menubar.status.icon.overlay.state",
       "menubar.status.icon.state",
       "menubar.status.journal.state",
+      "menubar.status.journalMarkHeld",
       "menubar.status.journalMigrationNeeded",
       "menubar.status.localOnly",
       "menubar.status.offline",
@@ -190,6 +191,7 @@
       "settings.service.journal.handoff.start",
       "settings.service.journal.handoff.state",
       "settings.service.journal.mark.state",
+      "settings.service.journal.markHeld",
       "settings.service.journal.name.state",
       "settings.service.journal.open",
       "settings.service.journal.pairAnotherDevice",
@@ -694,7 +696,8 @@
       "sync_paused",
       "offline",
       "paused",
-      "on"
+      "on",
+      "awaiting_mark_confirmation"
     ],
     "PairingConnectionAXState" : [
       "disconnected",
@@ -738,7 +741,8 @@
       "on_no_journal",
       "attention",
       "on_saved_locally",
-      "error"
+      "error",
+      "on_awaiting_mark_confirmation"
     ],
     "SetupCheckRowAXState" : [
       "ready",

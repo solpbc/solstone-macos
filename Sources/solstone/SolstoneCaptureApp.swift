@@ -320,6 +320,8 @@ internal func statusAccessibilityLabel(
         UICopy.MENUBAR_A11Y_PAUSED
     case .observing:
         UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED
+    case .awaitingMarkConfirmation:
+        UICopy.MENUBAR_A11Y_AWAITING_MARK_CONFIRMATION
     }
 
     var components = [baseLabel]
