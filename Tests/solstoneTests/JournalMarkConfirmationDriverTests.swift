@@ -468,7 +468,7 @@ struct JournalMarkConfirmationDriverTests {
         [
             .idle,
             .pairing,
-            .switchConfirmPending(newInstanceID: "new"),
+            .switchConfirmPending,
             .alreadyConnected,
             .saveFailed,
             .failed(.network),

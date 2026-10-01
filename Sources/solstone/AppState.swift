@@ -1173,6 +1173,15 @@ public final class AppState {
                 } else {
                     journalMarkConfirmationStore.clear()
                 }
+            },
+            retireOwnCredential: { [owner = tunnelLifecycleOwner] pairing in
+                if case .connected(let localPort, _) = owner.state {
+                    owner.beginSelfRetirement(pairingGeneration: owner.credentialStore.currentGenerations().pairingGeneration)
+                    _ = await JournalSelfRetirement().retire(pairing: pairing, localPort: localPort)
+                }
+            },
+            endSelfRetirement: { [owner = tunnelLifecycleOwner] in
+                owner.endSelfRetirement()
             }
         )
         let homeBaseURLResolver = Self.makeHomeBaseURLResolver(target: homeBaseURLTarget)
@@ -1560,6 +1569,15 @@ public final class AppState {
                 } else {
                     journalMarkConfirmationStore.clear()
                 }
+            },
+            retireOwnCredential: { [owner = tunnelLifecycleOwner] pairing in
+                if case .connected(let localPort, _) = owner.state {
+                    owner.beginSelfRetirement(pairingGeneration: owner.credentialStore.currentGenerations().pairingGeneration)
+                    _ = await JournalSelfRetirement().retire(pairing: pairing, localPort: localPort)
+                }
+            },
+            endSelfRetirement: { [owner = tunnelLifecycleOwner] in
+                owner.endSelfRetirement()
             }
         )
 

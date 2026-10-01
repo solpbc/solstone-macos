@@ -90,7 +90,7 @@ struct SameMachineHomeMigrationTests {
         let pairStart = PairStartRecorder(responses: [
             .success(sameMachinePairStartResponse(pairLink: loopbackDirectPairLink))
         ])
-        let submit = PairLinkSubmitRecorder(result: .switchConfirmPending(newInstanceID: "new-home"))
+        let submit = PairLinkSubmitRecorder(result: .switchConfirmPending)
 
         let result = await performSameMachineHomePairing(
             baseURL: ServiceMode.bundledServiceURL,

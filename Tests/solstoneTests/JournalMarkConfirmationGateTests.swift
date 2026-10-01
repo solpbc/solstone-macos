@@ -170,13 +170,14 @@ struct JournalMarkConfirmationGateTests {
         #expect(events.entries == ["clear", "save"])
     }
 
-    @Test func pairingAgainWithTheSameJournalKeepsTheAnswer() async {
+    @Test func pairingAgainWithTheSameJournalKeepsTheAnswer() async throws {
         let events = GateEventLog()
         let instanceID = "11111111-1111-1111-1111-111111111111"
         let store = PairingStore(pairing: pairing(instanceID: instanceID))
         let coordinator = makeCoordinator(store: store, outcomes: [pairing(instanceID: instanceID)], events: events)
 
-        await coordinator.submitPairingLink(gateRelayPairLink)
+        // Same journal is the CA pin on the link, not the instance id.
+        await coordinator.submitPairingLink(try relayPairLink(caPEM: testCACertPEM))
 
         #expect(coordinator.state == .alreadyConnected)
         #expect(events.entries == ["save"])

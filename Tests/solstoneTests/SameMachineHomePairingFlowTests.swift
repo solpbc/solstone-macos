@@ -87,7 +87,7 @@ struct SameMachineHomePairingFlowTests {
 
     @Test func switchStatesReportFailureWithoutSuccess() async {
         for finalState in [
-            PairingFlowState.switchConfirmPending(newInstanceID: "new-home"),
+            PairingFlowState.switchConfirmPending,
             .switched
         ] {
             let pairStart = PairStartRecorder(responses: [

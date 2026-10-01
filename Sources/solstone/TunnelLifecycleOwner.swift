@@ -156,6 +156,7 @@ final class TunnelLifecycleOwner {
 #endif
 
 
+    private var selfRetiringPairingGeneration: UInt64? = nil
     private var isIntentionallyRetiring = false
     private var rejectedAttemptIDs: Set<UInt64> = []
     private var coalescedReconnectInFlight = false
@@ -497,6 +498,14 @@ final class TunnelLifecycleOwner {
                 await self?.connect()
             }
         }
+    }
+
+    public func beginSelfRetirement(pairingGeneration: UInt64) {
+        selfRetiringPairingGeneration = pairingGeneration
+    }
+
+    public func endSelfRetirement() {
+        selfRetiringPairingGeneration = nil
     }
 
     public func retryRevokedPairingRetirement() async {
@@ -1675,6 +1684,11 @@ final class TunnelLifecycleOwner {
     }
 
     private func retirePairingAndFailRevoked(expectedPairing: UInt64? = nil, expectedAccess: UInt64? = nil) async {
+        let generationUnderTest = expectedPairing ?? credentialStore.currentGenerations().pairingGeneration
+        if let selfRetiringPairingGeneration, generationUnderTest == selfRetiringPairingGeneration {
+            await disconnectCurrentTransport()
+            return
+        }
         var removed = false
         do {
             if let expectedPairing, let expectedAccess {

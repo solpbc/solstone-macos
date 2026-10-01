@@ -267,7 +267,7 @@ struct AXIDTests {
         [
             .idle,
             .pairing,
-            .switchConfirmPending(newInstanceID: "instance-2"),
+            .switchConfirmPending,
             .paired,
             .alreadyConnected,
             .switched,

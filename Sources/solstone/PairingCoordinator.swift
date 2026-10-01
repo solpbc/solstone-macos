@@ -12,7 +12,7 @@ private let pairingLog = Logger(subsystem: SolstoneLogSubsystem.observerSPL, cat
 enum PairingFlowState: Equatable, Sendable {
     case idle
     case pairing
-    case switchConfirmPending(newInstanceID: String)
+    case switchConfirmPending
     case paired
     case alreadyConnected
     case switched
@@ -44,6 +44,8 @@ final class PairingCoordinator {
     typealias DeviceLabelSource = @Sendable () -> String
     typealias ClearLastSuccessfulJournalContact = @MainActor @Sendable () -> Void
     typealias ClearJournalMarkConfirmation = @MainActor @Sendable () -> Void
+    typealias RetireOwnCredential = @MainActor @Sendable (StoredPairing) async -> Void
+    typealias EndSelfRetirement = @MainActor @Sendable () -> Void
 
     private(set) var state: PairingFlowState = .idle
     /// The one address a failed ceremony dialed, when the link named exactly one.
@@ -70,7 +72,11 @@ final class PairingCoordinator {
     @ObservationIgnored
     private let clearJournalMarkConfirmation: ClearJournalMarkConfirmation
     @ObservationIgnored
-    private var pendingSwitchPairing: StoredPairing?
+    private let retireOwnCredential: RetireOwnCredential
+    @ObservationIgnored
+    private let endSelfRetirement: EndSelfRetirement
+    @ObservationIgnored
+    private var pendingSwitchLink: PairURL?
     @ObservationIgnored
     private let classifiedLog: any ClassifiedLogSinking
 
@@ -92,6 +98,8 @@ final class PairingCoordinator {
         deviceLabel: @escaping DeviceLabelSource = { SPLPairingDefaults.deviceLabel },
         clearLastSuccessfulJournalContact: @escaping ClearLastSuccessfulJournalContact = {},
         clearJournalMarkConfirmation: @escaping ClearJournalMarkConfirmation = {},
+        retireOwnCredential: @escaping RetireOwnCredential = { _ in },
+        endSelfRetirement: @escaping EndSelfRetirement = {},
         classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink(logger: pairingLog)
     ) {
         let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
@@ -107,11 +115,28 @@ final class PairingCoordinator {
         self.deviceLabel = deviceLabel
         self.clearLastSuccessfulJournalContact = clearLastSuccessfulJournalContact
         self.clearJournalMarkConfirmation = clearJournalMarkConfirmation
+        self.retireOwnCredential = retireOwnCredential
+        self.endSelfRetirement = endSelfRetirement
         self.classifiedLog = classifiedLog
     }
 
+    static func linkNamesJournal(_ pairURL: PairURL, of stored: StoredPairing) -> Bool {
+        let certificates: [SecCertificate]
+        do {
+            certificates = try CertChain.certificates(fromPEM: stored.caChainPEM)
+        } catch {
+            return false
+        }
+        for certificate in certificates {
+            if CertChain.pinMatches(certificate: certificate, pin: pairURL.caPin) {
+                return true
+            }
+        }
+        return false
+    }
+
     func submitPairingLink(_ rawLink: String) async {
-        pendingSwitchPairing = nil
+        pendingSwitchLink = nil
         failedAddress = nil
 
         let pairURL: PairURL
@@ -135,34 +160,67 @@ final class PairingCoordinator {
         }
 
         guard let stored else {
-            await runCeremony(pairURL, stored: nil)
+            guard let newPairing = await runCeremony(pairURL) else { return }
+            await activate(newPairing, successState: .paired)
             return
         }
 
-        await runCeremony(pairURL, stored: stored)
+        if Self.linkNamesJournal(pairURL, of: stored) {
+            guard let newPairing = await runCeremony(pairURL) else { return }
+            await retireOwnCredential(stored)
+            await activate(newPairing, successState: .alreadyConnected)
+        } else {
+            pendingSwitchLink = pairURL
+            state = .switchConfirmPending
+        }
     }
 
     func confirmSwitch() async {
-        guard let pairing = pendingSwitchPairing else {
+        guard let link = pendingSwitchLink else {
             return
         }
-        await activate(pairing, successState: .switched)
+        guard let newPairing = await runCeremony(link) else {
+            return
+        }
+        let stored: StoredPairing?
+        do {
+            stored = try loadPairing()
+        } catch {
+            pairingLog.error("pairing load failed during switch confirmation: \(String(describing: type(of: error)), privacy: .public)")
+            stored = nil
+        }
+        if let stored {
+            await retireOwnCredential(stored)
+        }
+        await activate(newPairing, successState: .switched)
     }
 
     func cancelSwitch() {
-        pendingSwitchPairing = nil
+        pendingSwitchLink = nil
         state = .idle
     }
 
     func unpair() async {
+        let stored: StoredPairing?
+        do {
+            stored = try loadPairing()
+        } catch {
+            pairingLog.error("pairing load failed before unpair: \(String(describing: type(of: error)), privacy: .public)")
+            stored = nil
+        }
+        if let stored {
+            await retireOwnCredential(stored)
+        }
         do {
             try deletePairing()
         } catch {
             pairingLog.error("pairing delete failed: \(String(describing: type(of: error)), privacy: .public)")
+            endSelfRetirement()
             state = .failed(.localSetup)
             return
         }
-        pendingSwitchPairing = nil
+        endSelfRetirement()
+        pendingSwitchLink = nil
         clearJournalMarkConfirmation()
         clearLastSuccessfulJournalContact()
         await reactivate()
@@ -174,11 +232,10 @@ final class PairingCoordinator {
         return try PairURL(string: trimmed)
     }
 
-    private func runCeremony(_ pairURL: PairURL, stored: StoredPairing?) async {
+    private func runCeremony(_ pairURL: PairURL) async -> StoredPairing? {
         state = .pairing
-        let newPairing: StoredPairing
         do {
-            newPairing = try await pair(pairURL, deviceLabel(), relayEndpoint())
+            return try await pair(pairURL, deviceLabel(), relayEndpoint())
         } catch {
             classifiedLog.emit(
                 ClassifiedLogEmission(
@@ -190,21 +247,8 @@ final class PairingCoordinator {
             let failure = Self.failure(for: error)
             failedAddress = failure == .homeUnreachable ? Self.singleCandidateAddress(pairURL) : nil
             state = .failed(failure)
-            return
+            return nil
         }
-
-        guard let stored else {
-            await activate(newPairing, successState: .paired)
-            return
-        }
-
-        if stored.instanceID.caseInsensitiveCompare(newPairing.instanceID) == .orderedSame {
-            await activate(newPairing, successState: .alreadyConnected)
-            return
-        }
-
-        pendingSwitchPairing = newPairing
-        state = .switchConfirmPending(newInstanceID: newPairing.instanceID)
     }
 
     private func activate(_ pairing: StoredPairing, successState: PairingFlowState) async {
@@ -219,11 +263,13 @@ final class PairingCoordinator {
             try savePairing(pairing)
         } catch {
             pairingLog.error("pairing save failed: \(String(describing: type(of: error)), privacy: .public)")
+            endSelfRetirement()
             state = .saveFailed
             return
         }
 
-        pendingSwitchPairing = nil
+        endSelfRetirement()
+        pendingSwitchLink = nil
         clearLastSuccessfulJournalContact()
         await reactivate()
         state = successState

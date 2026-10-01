@@ -779,14 +779,15 @@ func pairing(
     relayEndpoint: String = "ws://relay.example",
     relayEnrollment: RelayEnrollment? = nil,
     localEndpoints: [LocalEndpoint] = [LocalEndpoint(host: "127.0.0.1", port: 1234, scope: "local")],
-    caChainPEM: String = testCACertPEM
+    caChainPEM: String = testCACertPEM,
+    clientCertPEM: String = "cert"
 ) -> StoredPairing {
     StoredPairing(
         instanceID: instanceID,
         homeLabel: "test-home",
         relayEndpoint: relayEndpoint,
         fingerprint: "fingerprint",
-        clientCertPEM: "cert",
+        clientCertPEM: clientCertPEM,
         clientKeyPEM: "key",
         caChainPEM: caChainPEM,
         relayEnrollment: relayEnrollment ?? .enrolled(deviceToken: deviceToken, expiresAt: nil),

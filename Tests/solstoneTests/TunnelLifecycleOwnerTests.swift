@@ -2702,6 +2702,41 @@ struct TunnelLifecycleOwnerTests {
         await owner.stop()
     }
 
+    @Test func selfRetirementSuppressesRevocationUntilSaveAndEndRetirement() async throws {
+        let initialPairing = pairing(deviceToken: "token-1")
+        let store = PairingStore(pairing: initialPairing)
+        let transport = FakeTunnelTransport(connection: .init(localPort: 11111, via: .relay))
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 11111, via: .relay) }
+
+        let gen = owner.credentialStore.currentGenerations().pairingGeneration
+        owner.beginSelfRetirement(pairingGeneration: gen)
+
+        transport.emit(.failed(.revoked))
+        try await waitUntil { transport.disconnectCount >= 1 }
+
+        #expect(!store.deleted)
+        #expect(owner.hasPersistedPairing)
+        #expect(owner.state != .error(.revoked))
+
+        await owner.retryRevokedPairingRetirement()
+        #expect(!store.deleted)
+        #expect(owner.hasPersistedPairing)
+        #expect(owner.state != .error(.revoked))
+
+        let updatedPairing = pairing(deviceToken: "token-2")
+        try owner.credentialStore.save(updatedPairing)
+        owner.endSelfRetirement()
+
+        await owner.retryRevokedPairingRetirement()
+        #expect(store.deleted)
+        #expect(owner.state == .error(.revoked))
+
+        await owner.stop()
+    }
+
     private func waitBrieflyUntil(_ condition: @escaping @MainActor @Sendable () async -> Bool) async {
         try? await waitUntil(timeout: .milliseconds(200), condition)
     }
