@@ -250,6 +250,21 @@ final class JournalWindowModel {
         isConfigured ? nil : "nothing here yet. creating your journal comes next."
     }
 
+    /// The runner's own reason for a stop it chose, shown above start. Other stop diagnostics carry
+    /// raw command output and stay out of the window.
+    var stoppedReason: String? {
+        guard runDisplay == .stopped,
+              case .stopped(let diagnostic) = supervisor.runtimeStatus,
+              let excerpt = diagnostic.outputExcerpt,
+              Self.ownerStopReasons.contains(excerpt) else { return nil }
+        return excerpt
+    }
+
+    private static let ownerStopReasons: Set<String> = [
+        UICopy.JOURNAL_CHILD_CONTAINMENT_UNRESOLVED,
+        UICopy.JOURNAL_CHILD_BREAKER_TRIPPED,
+    ]
+
     var homeOffer: JournalHomeOffer {
         guard isConfigured else { return .unconfigured }
         switch runDisplay {

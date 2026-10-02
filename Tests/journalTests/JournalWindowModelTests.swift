@@ -166,6 +166,34 @@ struct JournalWindowModelTests {
         #expect(model.homeOffer == .start)
     }
 
+    @Test func stoppedReasonShowsOnlyTheRunnersOwnStopReasons() async throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let supervisor = JournalSupervisor(
+            gate: MockSingleSupervisorGate(),
+            materializer: MockRuntimeMaterializer(result: .success(try makeRuntime())),
+            runner: MockSupervisedChildRunner(),
+            readinessGate: MockJournalReadinessGate(result: .ready)
+        )
+        _ = configureInMemoryReceiptContext(supervisor)
+        let model = makeModel(config: fixture.config, supervisor: supervisor)
+        _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
+        supervisor.applyRuntimeStatus(.running)
+        #expect(model.stoppedReason == nil)
+
+        for reason in [UICopy.JOURNAL_CHILD_CONTAINMENT_UNRESOLVED, UICopy.JOURNAL_CHILD_BREAKER_TRIPPED] {
+            supervisor.applyRuntimeStatus(.stopped(JournalDiagnostic(commandLabel: "journal start --hosted-parent", outputExcerpt: reason)))
+            #expect(model.homeOffer == .start)
+            #expect(model.stoppedReason == reason)
+        }
+
+        supervisor.applyRuntimeStatus(.stopped(JournalDiagnostic(commandLabel: "journal", outputExcerpt: "raw command output")))
+        #expect(model.stoppedReason == nil)
+
+        supervisor.applyRuntimeStatus(.stoppedByUser)
+        #expect(model.stoppedReason == nil)
+    }
+
     @Test func homeOfferFollowsConfiguredRunDisplay() async throws {
         let unconfigured = makeUnconfiguredFixture()
         defer { unconfigured.clear() }

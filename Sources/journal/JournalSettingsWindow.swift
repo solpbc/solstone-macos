@@ -117,6 +117,10 @@ struct JournalSettingsWindow: View {
                     .controlSize(.large)
                     .accessibilityIdentifier(AXID.Journal.Home.openJournal)
                 case .start:
+                    if let stoppedReason = model.stoppedReason {
+                        Text(stoppedReason)
+                            .foregroundStyle(.secondary)
+                    }
                     Button {
                         model.startJournal()
                     } label: {
@@ -182,15 +186,23 @@ struct JournalSettingsWindow: View {
             Text("run state")
                 .font(.title2.weight(.semibold))
 
-            statusLine(model.runDisplay.label, systemImage: "circle.fill")
-            AXStateCompanion(id: AXID.Journal.RunState.displayState, value: model.runDisplay.axToken)
-
-            if model.runDisplay == .blocked, let blockedReason = model.supervisor.blockedReason {
-                Text(blockedReason)
-                    .foregroundStyle(.secondary)
-                AXStateCompanion(id: AXID.Journal.RunState.blockedReasonState, value: blockedReason)
-            } else {
-                AXStateCompanion(id: AXID.Journal.RunState.blockedReasonState, value: "")
+            VStack(alignment: .leading, spacing: 6) {
+                statusLine(model.runDisplay.label, systemImage: "circle.fill")
+                if model.runDisplay == .blocked, let blockedReason = model.supervisor.blockedReason {
+                    Text(blockedReason)
+                        .foregroundStyle(.secondary)
+                }
+                if let stoppedReason = model.stoppedReason {
+                    Text(stoppedReason)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    AXStateCompanion(id: AXID.Journal.RunState.displayState, value: model.runDisplay.axToken)
+                    AXStateCompanion(
+                        id: AXID.Journal.RunState.blockedReasonState,
+                        value: model.runDisplay == .blocked ? (model.supervisor.blockedReason ?? "") : ""
+                    )
+                }
             }
 
             HStack(spacing: 8) {
