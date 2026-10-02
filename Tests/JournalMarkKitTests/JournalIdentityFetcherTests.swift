@@ -46,6 +46,18 @@ struct JournalIdentityFetcherTests {
         #expect(mark == nil)
     }
 
+    @Test func expectedIdentityRejectsMissingInstanceIDEvenWithTheSameMark() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        let body = Self.identityJSON(committed: true, mark: Self.markObject())
+        var object = try! JSONSerialization.jsonObject(with: Data(body.utf8)) as! [String: Any]
+        object.removeValue(forKey: "instance_id")
+        let missingID = String(data: try! JSONSerialization.data(withJSONObject: object), encoding: .utf8)!
+        JournalIdentityURLProtocol.store.enqueue(body: missingID)
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+        #expect(await fetcher.fetch(baseURL: "http://127.0.0.1:7071", expectedInstanceID: "instance-123") == nil)
+    }
+
     @Test func fetchReturnsNilWhenMarkNull() async {
         JournalIdentityURLProtocol.store.reset()
         defer { JournalIdentityURLProtocol.store.reset() }

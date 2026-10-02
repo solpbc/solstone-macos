@@ -68,6 +68,7 @@ public final class UpdateController {
     private let announceUpdateVersion: (@MainActor (String) -> Void)?
 
     private var updater: (any SparkleUpdating)?
+    @ObservationIgnored private var sessionObservation: NSKeyValueObservation?
     private var updaterStarted = false
     private var pendingChoiceReply: ((SPUUserUpdateChoice) -> Void)?
     private var pendingReplyRequiresFinalization = false
@@ -825,6 +826,7 @@ public final class UpdateController {
     }
 
     private var sparkleSessionInProgress: Bool {
+        access(keyPath: \.sparkleSessionInProgress)
         if let sessionLivenessProvider { return sessionLivenessProvider() }
         return updater?.sessionInProgress ?? false
     }
@@ -909,9 +911,8 @@ public final class UpdateController {
             return
         }
 
-        guard !reconciledStatus.matches(availableVersion: version, outcome: .found) else { return }
-
-        availableUpdate = AvailableUpdate(version: version, releaseNotes: releaseNotes)
+        let notes = releaseNotes ?? (availableUpdate?.version == version ? availableUpdate?.releaseNotes : nil)
+        availableUpdate = AvailableUpdate(version: version, releaseNotes: notes)
         reconciledStatus.availableVersion = version
         reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .found)
         persistStatus()
@@ -944,8 +945,6 @@ public final class UpdateController {
     }
 
     private func recordUpToDateCheck(now: Date = Date()) {
-        guard !reconciledStatus.matches(availableVersion: nil, outcome: .upToDate) else { return }
-
         availableUpdate = nil
         reconciledStatus.availableVersion = nil
         reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .upToDate)
@@ -986,6 +985,14 @@ public final class UpdateController {
         }
 
         self.updater = updater
+        if sessionObservation == nil, let sparkle = updater as? SPUUpdater {
+            sessionObservation = sparkle.observe(\.sessionInProgress, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    // Sparkle remains the authority; notify readers of the computed value.
+                    self?.withMutation(keyPath: \.sparkleSessionInProgress) {}
+                }
+            }
+        }
 
         do {
             try updater.start()

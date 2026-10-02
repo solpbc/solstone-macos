@@ -21,7 +21,7 @@ public extension UpdatesCopyProvider {
 
     static let journal = UpdatesCopyProvider(
         appDisplayName: "journal",
-        releaseNotesURL: URL(string: "https://solstone.app/releases/macos")!,
+        releaseNotesURL: URL(string: "https://solstone.app/releases/journal-macos")!,
         deferralLine: "deferred, will continue after your journal is ready."
     )
 }
@@ -60,8 +60,8 @@ public struct UpdatesCopy: Sendable {
     public var actionCheckNow: String { "check now" }
     public var actionCheckAgain: String { "check again" }
     public var actionDownload: String { "download" }
-    public var actionInstall: String { "install" }
-    public var actionRelaunchToInstall: String { "relaunch to install" }
+    public var actionInstall: String { "install and restart \(provider.appDisplayName)" }
+    public var actionRelaunchToInstall: String { "restart \(provider.appDisplayName) to install" }
     public var actionCancel: String { "cancel" }
     public var actionDismiss: String { "dismiss" }
     public var actionRetry: String { "retry" }
@@ -69,6 +69,8 @@ public struct UpdatesCopy: Sendable {
 
     public var autoUpdateGroupTitle: String { "automatic updates" }
     public var autoCheckToggleLabel: String { "check for updates automatically" }
+    public var automaticChecksOff: String { "automatic checks are off. you can still check manually." }
+    public var actionEnableAutomaticChecks: String { "enable automatic checks" }
     public var autoDownloadToggleLabel: String { "download updates in the background" }
     public var frequencyPickerLabel: String { "how often" }
     public var frequencyDay: String { "every day" }
@@ -85,7 +87,7 @@ public struct UpdatesCopy: Sendable {
     }
 
     public func lastCheckedUpToDate(relative: String) -> String {
-        "last checked \(relative) · \(provider.appDisplayName) is up to date"
+        "last checked \(relative) · no update found"
     }
 
     public func lastCheckedUpdateFound(relative: String, version: String) -> String {
@@ -178,10 +180,16 @@ public struct UpdatesCopy: Sendable {
         "ready to install v\(version)"
     }
 
-    public var readyToInstallSubtitle: String { "the update is downloaded and ready when you are." }
+    public var restartExplanation: String {
+        provider.appDisplayName == "journal"
+            ? "your journal will be unavailable while the journal app restarts."
+            : "intake will pause while the solstone app restarts."
+    }
+
+    public var readyToInstallSubtitle: String { "the update is downloaded and ready when you are. \(restartExplanation)" }
 
     public var stagedReadySubtitle: String {
-        "the update is downloaded and will install when \(provider.appDisplayName) relaunches."
+        "the update is downloaded and will install when \(provider.appDisplayName) relaunches. \(restartExplanation)"
     }
 
     public func installingTitle(version: String) -> String {
@@ -197,7 +205,9 @@ public struct UpdatesCopy: Sendable {
     public var actionReasonDownloadFinishing: String { "a download is finishing up" }
     public var actionReasonInstallHandoff: String { "an install handoff is already in progress" }
     public var actionReasonUpdateChoicePending: String { "an update needs a choice first" }
-    public var actionReasonUpdateInProgress: String { "an update is already in progress" }
+    public var actionReasonChecking: String { "checking for updates" }
+    public var actionReasonExtracting: String { "preparing the downloaded update" }
+    public var actionReasonUpdateInProgress: String { "waiting for the updater to finish" }
 
     public func byteProgress(receivedBytes: UInt64, totalBytes: UInt64?) -> String {
         let formatter = ByteCountFormatter()

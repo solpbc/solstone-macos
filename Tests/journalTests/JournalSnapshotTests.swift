@@ -9,7 +9,7 @@ import JournalRuntimeTestSupport
 import os
 import SwiftUI
 import Testing
-import UpdateKit
+@testable import UpdateKit
 @testable import journal
 
 private func runGit(_ args: String...) throws -> String {
@@ -87,6 +87,44 @@ struct JournalSnapshotTests {
         try await renderFirstRunMarkReveal()
         try await renderFirstRunLockedHome()
         try await renderFirstRunAdoptLanding()
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JOURNAL_UPDATE_UX_GUI"] == "1"))
+    func updateAttentionMatrix() async throws {
+        let model = try configuredModel(mark: .uiTestSample, name: "home base")
+        let suite = "journal-update-snapshots-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let controller = UpdateController(
+            feedURL: "https://updates.solstone.app/solstone-journal-macos/appcast.xml",
+            publicKey: Data(repeating: 0, count: 32).base64EncodedString(),
+            log: Logger.updates, errorDomain: "journal.update-snapshots", defaults: defaults
+        ) { _, _ in JournalUpdateWindowUpdater() }
+        controller.automaticChecksEnabled = false
+        let fixtures: [(String, ReconciledUpdateStatus.Outcome, Bool, Bool)] = [
+            ("available", .found, true, false), ("staged", .staged, true, false),
+            ("failed", .failed, false, false), ("failed-available", .failed, true, false),
+            ("deferred", .found, true, true), ("current", .upToDate, false, false)
+        ]
+        for (name, outcome, hasVersion, deferred) in fixtures {
+            controller.applyDebugFixture(
+                activity: .idle,
+                availableUpdate: hasVersion ? .init(version: "9.9.9", releaseNotes: nil) : nil,
+                lastCheck: .init(checkedAt: Date(), outcome: outcome),
+                deferredInstallIntent: deferred ? .init(version: "9.9.9", requestedAt: Date()) : nil
+            )
+            for pane in [JournalPane.home, .updates] {
+                model.selectedPane = pane
+                try await render(
+                    ZStack {
+                        SunArcBackgroundView()
+                        JournalSettingsWindow(model: model, updateController: controller, openURL: { _ in true })
+                    }.frame(width: size.width, height: size.height),
+                    size: size,
+                    to: "journal-update-\(pane.rawValue)-\(name).png"
+                )
+            }
+        }
     }
 
     /// The sun arc in both appearances at the spec's five check times (Denver 2026-09-23:
@@ -516,4 +554,14 @@ private struct SnapshotFixture {
 private final class SnapshotFakeLoginItemManager: LoginItemManaging {
     func register() throws {}
     func unregister() throws {}
+}
+
+@MainActor
+private final class JournalUpdateWindowUpdater: SparkleUpdating {
+    var automaticallyChecksForUpdates = false
+    var automaticallyDownloadsUpdates = false
+    var updateCheckInterval: TimeInterval = 86_400
+    var sessionInProgress = false
+    func checkForUpdates() {}
+    func start() throws {}
 }

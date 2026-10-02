@@ -16,6 +16,7 @@ enum AXID {
         }
 
         enum Home {
+            static let updates = "journal.home.updates"
             static let markCard = "journal.home.mark.card"
             static let nameState = "journal.home.name.state"
             static let runDisplayGlanceState = "journal.home.runDisplay.glance.state"
