@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - changing networks, or a vpn starting up, no longer interrupts a connection to your journal that still works.
 - when you pair this mac again while the journal it was paired with can't be reached, the new pairing now takes effect right away. before, it could keep trying the old one until the app was restarted.
 - the menu no longer shows "offline (saved locally)" while something on its way to your journal starts over on a connection that works.
+- when the solstone app on your mac has fallen back to the relay or a vpn, it now tries to reach your journal over your local network again within ten minutes, or right away when your mac changes networks, and moves back if it can. anything already on its way to your journal gets up to two minutes to finish on the old connection, then starts over on the new one.
 
 ## [2.0.21] - 2026-10-01
 
