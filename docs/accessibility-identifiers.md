@@ -65,6 +65,8 @@ Text(value)
 
 A label-less zero-size `AXGroup` does not vend `AXValue` to XCUITest; the companion must be a value-bearing, labeled, non-zero element. The non-empty label keeps the element serializable even when the value is empty (e.g. storage not loaded yet).
 
+Use `AXStateCompanion(id:value:)` from `SolstoneCore`, never the bare recipe above. A companion's label is its identifier and its value is a machine token, so a VoiceOver user would hear both. `AXStateCompanion` publishes only when the `solstone.ax.stateCompanions` defaults key is true, in the app's own domain or as `-solstone.ax.stateCompanions YES` at launch. Without the key it renders a 1×1 clear view hidden from accessibility, with the same footprint, so a harness drives the layout a person sees. The release gate sets the key in both apps' domains after every clean. A harness that finds every `.state` id absent while visible controls are present should check the key first.
+
 Use an existing always-rendered `Text`, `LabeledContent`, or composite row instead when that host is cleaner. For composites, apply grouping first, then identifier and value on the grouped container.
 
 Containers whose children must remain independently queryable stay ungrouped. This includes installer step rows, doctor checklist rows, microphone device rows, and privacy list entries.

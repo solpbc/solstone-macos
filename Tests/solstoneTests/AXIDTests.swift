@@ -301,3 +301,27 @@ struct AXIDTests {
     }
 
 }
+
+@Suite("AX state companion publication")
+struct AXStateCompanionPublicationTests {
+    private func scratchDefaults() -> UserDefaults {
+        let name = "solstone.tests.axStateCompanion.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    @Test func companionsStayUnpublishedWithoutTheKey() {
+        #expect(!AXStateCompanion.published(in: scratchDefaults()))
+    }
+
+    @Test func companionsPublishWhenTheHarnessSetsTheKey() {
+        let defaults = scratchDefaults()
+        defaults.set(true, forKey: AXStateCompanion.publishKey)
+        #expect(AXStateCompanion.published(in: defaults))
+    }
+
+    @Test func theKeyMatchesWhatTheReleaseGateWrites() {
+        #expect(AXStateCompanion.publishKey == "solstone.ax.stateCompanions")
+    }
+}

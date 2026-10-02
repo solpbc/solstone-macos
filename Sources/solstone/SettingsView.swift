@@ -3037,10 +3037,11 @@ struct SettingsView: View {
                 }
                 .font(.caption)
                 HStack {
-                    Button("reopen solstone") { relaunchApp() }
-                        .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityReopen)
                     Button("open System Settings") { AccessibilityTitleReader.openSystemSettings() }
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityOpenSettings)
+                    Button("already allowed? reopen solstone") { relaunchApp() }
+                        .buttonStyle(.link)
+                        .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityReopen)
                 }
                 Text("if solstone is on in System Settings and reopening doesn't help, remove solstone from that list with the minus button, then turn this option off and on again.")
                     .font(.caption)

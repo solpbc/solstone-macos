@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- with VoiceOver on, the journal app no longer reads out hidden labels meant for automated testing between the real controls.
+
 ## [2.0.28 (build 66)] - 2026-10-01
 
 ### Changed
