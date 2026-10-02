@@ -28,9 +28,14 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     func hasMicrophone(deviceUID: String) -> Bool
     func activeMicrophoneUIDs() -> [String]
     var onTerminalStop: (@MainActor () -> Void)? { get set }
+    var onCaptureIssue: (@MainActor (String) -> Void)? { get set }
 }
 
 public extension CaptureSegmentWriting {
+    var onCaptureIssue: (@MainActor (String) -> Void)? {
+        get { nil }
+        set {}
+    }
     var onTerminalStop: (@MainActor () -> Void)? {
         get { nil }
         set {}
@@ -145,6 +150,8 @@ public final class CaptureManager {
 
     /// Called when an underlying stream encounters a terminal stop (e.g. macOS Stop Sharing)
     public var onTerminalStreamStop: (@MainActor () -> Void)?
+    public var onAudioCaptureIssue: (@MainActor (String?) -> Void)?
+    public private(set) var currentAudioCaptureIssue: String?
 
     public func handleTerminalStreamStop() {
         onTerminalStreamStop?()
@@ -479,8 +486,14 @@ public final class CaptureManager {
             silenceMusic(),
             verbose
         )
+        currentAudioCaptureIssue = nil
         segment.onTerminalStop = { [weak self] in
             self?.handleTerminalStreamStop()
+        }
+        segment.onCaptureIssue = { [weak self, weak segment] message in
+            guard let self, let segment, self.currentSegment?.outputDirectory == segment.outputDirectory else { return }
+            self.currentAudioCaptureIssue = message
+            self.onAudioCaptureIssue?(message)
         }
         currentSegment = segment
 
@@ -506,6 +519,7 @@ public final class CaptureManager {
             guard generation == segmentStartGeneration else { throw CancellationError() }
             guard !startedSources.isEmpty else { throw CaptureError.noSourcesAvailable }
             self.activeSources = startedSources
+            self.onAudioCaptureIssue?(currentAudioCaptureIssue)
         } catch {
             guard generation == segmentStartGeneration else { throw error }
             currentSegment = nil

@@ -39,6 +39,13 @@ public final class ExternalMicCapture: @unchecked Sendable {
         set { callbackLock.withLock { _onCaptureError = newValue } }
     }
     private var _onCaptureError: ((Error) -> Void)?
+    private struct Destinations: @unchecked Sendable {
+        let audio: ((AVAudioPCMBuffer, CMTime) -> Void)?
+        let error: ((Error) -> Void)?
+    }
+    public func setCallbacks(audio: ((AVAudioPCMBuffer, CMTime) -> Void)?, error: ((Error) -> Void)?) {
+        callbackLock.withLock { _onAudioBuffer = audio; _onCaptureError = error }
+    }
     private var running = false
     private var captureRequested = false
     public var isCapturing: Bool { callbackLock.withLock { running } }
@@ -300,39 +307,60 @@ public final class ExternalMicCapture: @unchecked Sendable {
             Logger.audio.info("\(self.device.name, privacy: .public): Receiving audio buffers")
         }
 
-        // Deep copy buffer
-        guard let bufferCopy = deepCopy(buffer) else { return }
-
-        // Dispatch processing to writer queue
-        writerQueue.async { [weak self] in
-            self?.processAndSend(buffer: bufferCopy, monoFormat: monoFormat)
+        // Snapshot and queue admission share the detach lock. The subsequent
+        // drain barrier therefore includes every admitted old-segment buffer.
+        callbackLock.withLock {
+            let destination = Destinations(audio: _onAudioBuffer, error: _onCaptureError)
+            guard destination.audio != nil else { return }
+            guard let bufferCopy = Self.copyPCMBuffer(buffer) else {
+                writerQueue.async { destination.error?(NSError(domain: "SolstoneAudioConversion", code: 2)) }
+                return
+            }
+            writerQueue.async { [weak self] in
+                self?.processAndSend(buffer: bufferCopy, monoFormat: monoFormat, destination: destination)
+            }
         }
     }
 
-    /// Deep copy an audio buffer
-    private func deepCopy(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+    /// Copy the actual layout, including integer and interleaved hardware PCM.
+    internal static func copyPCMBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else { return nil }
         copy.frameLength = buffer.frameLength
-
-        if let srcData = buffer.floatChannelData, let dstData = copy.floatChannelData {
-            let channelCount = Int(buffer.format.channelCount)
-            let frameLength = Int(buffer.frameLength)
-            for ch in 0..<channelCount {
-                memcpy(dstData[ch], srcData[ch], frameLength * MemoryLayout<Float>.size)
+        let source = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: buffer.audioBufferList))
+        let destination = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+        guard source.count == destination.count else { return nil }
+        for index in source.indices {
+            let size = Int(source[index].mDataByteSize)
+            guard size <= Int(destination[index].mDataByteSize), source[index].mNumberChannels == destination[index].mNumberChannels else { return nil }
+            if size > 0 {
+                guard let src = source[index].mData, let dst = destination[index].mData else { return nil }
+                memcpy(dst, src, size)
             }
         }
         return copy
     }
 
+    public func drain() async {
+        await withCheckedContinuation { continuation in
+            writerQueue.async { continuation.resume() }
+        }
+    }
+
+    #if DEBUG || SOLSTONE_TEST_SUPPORT
+    internal func _suspendProcessingForTesting() { isRunning = true; writerQueue.suspend() }
+    internal func _resumeProcessingForTesting() { writerQueue.resume() }
+    internal func _enqueueForTesting(_ buffer: AVAudioPCMBuffer) { handleAudioBuffer(buffer, monoFormat: buffer.format) }
+    #endif
+
     /// Process buffer and send to callback
-    private func processAndSend(buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat) {
+    private func processAndSend(buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat, destination: Destinations) {
         guard isRunning else { return }
 
         // Track buffer count for diagnostics
         bufferCount += 1
 
         // Get callback with lock - if nil, discard the buffer
-        let callback = onAudioBuffer
+        let callback = destination.audio
 
         // Log periodic status (every 60 seconds)
         let now = Date()
@@ -346,7 +374,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
         // Convert to mono if needed and resample to target rate
         guard let monoBuffer = convertToMono(buffer, targetFormat: monoFormat) else {
-            onCaptureError?(NSError(domain: "SolstoneAudioConversion", code: 1))
+            destination.error?(NSError(domain: "SolstoneAudioConversion", code: 1))
             Logger.audio.warning("\(self.device.name, privacy: .public): convertToMono failed")
             return
         }
@@ -384,7 +412,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         let sourceFormat = buffer.format
 
         // If formats match, just return the buffer
-        if sourceFormat.sampleRate == targetFormat.sampleRate && sourceFormat.channelCount == 1 {
+        if sourceFormat.isEqual(targetFormat) {
             return buffer
         }
 
@@ -397,8 +425,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         let converter: AVAudioConverter
         if let cached = cachedConverter,
            let cachedFormat = cachedSourceFormat,
-           cachedFormat.sampleRate == sourceFormat.sampleRate,
-           cachedFormat.channelCount == sourceFormat.channelCount {
+           cachedFormat.isEqual(sourceFormat) {
             // Reuse cached converter
             converter = cached
         } else {
@@ -461,7 +488,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         mono.frameLength = buffer.frameLength
         vDSP_vclr(destination[0], 1, frames)
         for channel in 0..<Int(buffer.format.channelCount) {
-            vDSP_vadd(destination[0], 1, source[channel], 1, destination[0], 1, frames)
+            vDSP_vadd(destination[0], 1, source[channel], vDSP_Stride(buffer.stride), destination[0], 1, frames)
         }
         return mono
     }

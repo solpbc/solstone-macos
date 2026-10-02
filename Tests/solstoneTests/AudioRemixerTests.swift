@@ -9,25 +9,6 @@ import Testing
 
 @Suite("AudioRemixer")
 struct AudioRemixerTests {
-    @Test func filterReadableAudioInputsSkipsUnreadableAndKeepsGood() async throws {
-        let root = try makeTempDirectory("audio-remixer-readable")
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let good = root.appendingPathComponent("120000_audio_system.m4a")
-        let corrupt = root.appendingPathComponent("120000_audio_bad.m4a")
-        try await makeTinyValidM4A(at: good)
-        try corruptM4A(at: corrupt)
-
-        let goodInput = makeInput(url: good, sourceID: "system")
-        let corruptInput = makeInput(url: corrupt, sourceID: "bad")
-
-        let result = await filterReadableAudioInputs([goodInput, corruptInput])
-
-        #expect(result.unreadable.count == 1)
-        #expect(result.unreadable.map(\.url) == [corrupt])
-        #expect(result.readable.map(\.url) == [good])
-    }
-
     @Test func remixWithOnlyUnreadableInputsThrowsUnreadableSources() async throws {
         let root = try makeTempDirectory("audio-remixer-unreadable")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -49,8 +30,6 @@ struct AudioRemixerTests {
                 to: output
             )
             Issue.record("expected unreadableSources")
-        } catch AudioRemixerError.noTracksToWrite {
-            Issue.record("must not be noTracksToWrite")
         } catch AudioRemixerError.unreadableSources(let sourceIDs) {
             #expect(sourceIDs == ["first", "second"])
             #expect(!FileManager.default.fileExists(atPath: output.path))

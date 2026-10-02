@@ -9,7 +9,7 @@ description: >
 
 ## H.264 Video Encoding
 
-`VideoWriter` wraps AVAssetWriter for 1fps screen capture to `.mp4`. Source: `Sources/solstone/VideoWriter.swift`, `SolstoneCapture/.../ScreenshotCapturer.swift`
+`VideoWriter` wraps AVAssetWriter for 1fps screen capture to `.mp4`. Source: `Sources/solstone/VideoWriter.swift`, `Sources/solstone/ScreenshotCapturer.swift`
 
 - **Codec:** `AVVideoCodecType.h264` (hardware-accelerated). BT.709 color. Frame reordering disabled.
 - **Pixel format:** `kCVPixelFormatType_420YpCbCr8BiPlanarFullRange` — native hardware encoder format. SCStream delivers this directly, no CPU color conversion.
@@ -19,11 +19,13 @@ description: >
 
 ## Persistent AVAudioEngine
 
-`MicrophoneCaptureManager` keeps `ExternalMicCapture` instances (each wrapping `AVAudioEngine`) alive across segment rotations. Only the `onAudioBuffer` callback changes. Source: `Sources/solstone/ExternalMicCapture.swift`, `SolstoneCapture/.../MicrophoneCaptureManager.swift`
+`MicrophoneCaptureManager` keeps `ExternalMicCapture` instances (each wrapping `AVAudioEngine`) alive across segment rotations. Data and error destinations change together. Source: `Sources/solstone/ExternalMicCapture.swift`, `Sources/solstone/MicrophoneCaptureManager.swift`
 
 **Why:** Stopping/restarting AVAudioEngine causes audible clicks/pops in system audio playback during segment rotation. Persistent engines eliminate this.
 
-**Callback swapping:** `onAudioBuffer` is NSLock-protected. At rotation: `clearAllCallbacks()` (nil = discard), then `setCallback(for:callback:)` wires to new segment's writer.
+**Callback swapping:** paired data/error destinations and queue admission share an NSLock. At rotation, `clearAllCallbacksAndDrain()` detaches destinations and drains admitted buffers before closing writers; `setCallback(for:callback:onError:)` wires the next segment.
+
+**Segment evidence:** `AudioCaptureRecorder` writes initial source intent, first distinct failures and terminal counters to the same time-prefix `_meta.json`. Its serial checkpoint queue is drained and sealed before finalization; late callbacks cannot change it. Frames count original writer input, including backpressure drops and final silence flush. Interrupted counters are lower bounds, not proof of silence. The native producer test regenerates/checks [the schema](../../contracts/audio-capture-v1.schema.json) and [example](../../contracts/audio-capture-v1.example.json), mirrored into journal reader fixtures. Remix state is separate from recording lifecycle, and prior copy errors never grant deletion authority.
 
 **Hardware format detection — critical ordering:**
 1. Access `engine.inputNode` (triggers initialization)

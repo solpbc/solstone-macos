@@ -52,17 +52,21 @@ public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked
     public func stream(_: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of outputType: SCStreamOutputType) {
         switch outputType {
         case .audio:
-            logLock.lock()
-            systemAudioBufferCount += 1
-            totalBufferCount += 1
-            logAudioBuffersIfNeeded()
-            let callback = _onAudioBuffer
-            logLock.unlock()
-            callback?(sb)
-
+            deliverAudio(sb)
         default:
             return
         }
+    }
+
+    /// Detaching waits for admitted buffers to enqueue on their segment writer.
+    /// The destination must enqueue promptly and must not change this callback.
+    internal func deliverAudio(_ buffer: CMSampleBuffer) {
+        logLock.lock()
+        defer { logLock.unlock() }
+        systemAudioBufferCount += 1
+        totalBufferCount += 1
+        logAudioBuffersIfNeeded()
+        _onAudioBuffer?(buffer)
     }
 
     /// Logs audio buffer counts every 60 seconds (must be called with logLock held)

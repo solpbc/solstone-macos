@@ -9,6 +9,42 @@ import Testing
 @Suite("SegmentWriter timeout discipline")
 @MainActor
 struct SegmentWriterTimeoutTests {
+    @Test func failedAudioStartupKeepsHealthyScreensAndDurableEvidence() async throws {
+        let dir = try makeTempDirectory("segment-partial-start")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screenshot = FakeScreenshotCapturer()
+        let audio = FakeAudioManager(behavior: .throwOnSystemAudioStart)
+        let writer = makeWriter(dir: dir, capturer: screenshot, audioManager: audio)
+        try await startWriter(writer)
+        let result = await writer.finishCapture()
+        #expect(result != nil)
+        #expect(screenshot.finishCount.count == 1)
+        let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: dir.appendingPathComponent("120000_meta.json"))) as? [String: Any]
+        let capture = try #require(meta?["audio_capture"] as? [String: Any])
+        #expect(capture["state"] as? String == "partial")
+        let system = try #require((capture["sources"] as? [[String: Any]])?.first)
+        #expect(system["expected"] as? Bool == true)
+        #expect(system["started"] as? Bool == false)
+        #expect((system["failures"] as? [[String: Any]])?.first?["stage"] as? String == "start")
+    }
+
+    @Test func additionsAreRejectedWhileScreenshotStopIsStillPending() async throws {
+        let dir = try makeTempDirectory("segment-close-admission")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let screenshot = FakeScreenshotCapturer(behavior: .hangStop)
+        let audio = FakeAudioManager()
+        let writer = makeWriter(dir: dir, capturer: screenshot, audioManager: audio, capturerStopTimeoutSeconds: 0.02)
+        try await startWriter(writer)
+        let finish = Task { await writer.finishCapture() }
+        await screenshot.stopCount.waitUntilCount(1)
+        let mic = AudioInputDevice(id: 0, name: "test", uid: "test", manufacturer: nil, sampleRate: 48_000, transportType: .virtual)
+        do {
+            try writer.addMicrophone(mic)
+            Issue.record("a closing segment admitted a new microphone")
+        } catch SegmentWriter.SegmentError.segmentFinishing {}
+        #expect(audio.addMicrophoneCount.count == 0)
+        _ = await finish.value
+    }
     @Test func finishCaptureReturnsWhenCapturerStopHangs() async throws {
         let dir = try makeTempDirectory("segment-stop-hang")
         defer { try? FileManager.default.removeItem(at: dir) }

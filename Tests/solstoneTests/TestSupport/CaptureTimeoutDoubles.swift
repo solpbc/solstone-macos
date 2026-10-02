@@ -185,6 +185,7 @@ final class FakeAudioManager: SegmentAudioManaging, @unchecked Sendable {
     enum Behavior: Sendable {
         case normal
         case hangFinishAll
+        case throwOnSystemAudioStart
         case throwOnMicrophoneStart
     }
 
@@ -201,6 +202,7 @@ final class FakeAudioManager: SegmentAudioManaging, @unchecked Sendable {
 
     func startSystemAudio() throws -> String {
         startSystemAudioCount.increment()
+        if case .throwOnSystemAudioStart = behavior { throw SyntheticRemixError() }
         return "system"
     }
 
@@ -244,6 +246,8 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
     let startBehavior: FakeSegmentStartBehavior
     let startsPersistentSystemAudio: PersistentAudioStart
     let startGate: OneShotContinuationGate?
+    let captureIssueOnStart: String?
+    var onCaptureIssue: (@MainActor (String) -> Void)?
     let finishGate: OneShotContinuationGate?
     let startCount = LockedCounter()
     let finishCaptureCount = LockedCounter()
@@ -255,7 +259,8 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         startBehavior: FakeSegmentStartBehavior = .normal,
         startsPersistentSystemAudio: PersistentAudioStart = .no,
         startGate: OneShotContinuationGate? = nil,
-        finishGate: OneShotContinuationGate? = nil
+        finishGate: OneShotContinuationGate? = nil,
+        captureIssueOnStart: String? = nil
     ) {
         self.outputDirectory = outputDirectory
         self.finishBehaviors = LockedArray(finishBehaviors)
@@ -263,6 +268,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         self.startsPersistentSystemAudio = startsPersistentSystemAudio
         self.startGate = startGate
         self.finishGate = finishGate
+        self.captureIssueOnStart = captureIssueOnStart
     }
 
     func start(
@@ -275,6 +281,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         systemAudioCaptureManager: SystemAudioCaptureManager?
     ) async throws -> CaptureSources {
         startCount.increment()
+        if let captureIssueOnStart { onCaptureIssue?(captureIssueOnStart) }
         retainedSystemAudioCaptureManager = systemAudioCaptureManager
         let startBeforeGate = startsPersistentSystemAudio == .beforeGate
             || startsPersistentSystemAudio == .bothSides

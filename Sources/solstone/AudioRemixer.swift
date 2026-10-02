@@ -19,24 +19,6 @@ public struct AudioRemixerInput: Sendable {
     }
 }
 
-internal func filterReadableAudioInputs(_ inputs: [AudioRemixerInput]) async -> (readable: [AudioRemixerInput], unreadable: [AudioRemixerInput]) {
-    var readable: [AudioRemixerInput] = []
-    var unreadable: [AudioRemixerInput] = []
-
-    for input in inputs {
-        let tracks = try? await AVURLAsset(url: input.url).loadTracks(withMediaType: .audio)
-        guard let tracks, !tracks.isEmpty else {
-            Logger.audio.warning("Unreadable audio source skipped: \(input.url.lastPathComponent, privacy: .public)")
-            unreadable.append(input)
-            continue
-        }
-
-        readable.append(input)
-    }
-
-    return (readable, unreadable)
-}
-
 /// Content-free disposition for each source, persisted before raw cleanup.
 public struct AudioSourceRemixResult: Codable, Sendable {
     public let sourceID: String
@@ -209,9 +191,7 @@ public final class AudioRemixer: Sendable {
 /// Errors for AudioRemixer
 public enum AudioRemixerError: Error, LocalizedError {
     case noInputs
-    case noTracksToWrite
     case unreadableSources(sourceIDs: [String])
-    case failedToStartReader(Error?)
     case failedToStartWriter(Error?)
     case writeFailed(Error?)
 
@@ -219,12 +199,8 @@ public enum AudioRemixerError: Error, LocalizedError {
         switch self {
         case .noInputs:
             return "No input files provided"
-        case .noTracksToWrite:
-            return "No tracks to write after filtering"
         case let .unreadableSources(sourceIDs):
             return "\(sourceIDs.count) audio source(s) unreadable: \(sourceIDs.joined(separator: ", "))"
-        case let .failedToStartReader(error):
-            return "Failed to start reader: \(error?.localizedDescription ?? "unknown error")"
         case let .failedToStartWriter(error):
             return "Failed to start writer: \(error?.localizedDescription ?? "unknown error")"
         case let .writeFailed(error):

@@ -33,6 +33,11 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     private let gain: Float
 
     private var isFinishing = false
+    private var diagnostics: AudioCaptureRecorder?
+
+    public func bindDiagnostics(_ recorder: AudioCaptureRecorder) {
+        lock.withLock { diagnostics = recorder }
+    }
 
     /// Initialize with shared capture manager (preferred - keeps mics running across segments)
     public init(
@@ -92,7 +97,8 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             url: url,
             trackType: .systemAudio,
             segmentStartTime: startTime,
-            verbose: verbose
+            verbose: verbose,
+            onStatistics: { [diagnostics] in diagnostics?.statistics(sourceID, $0) }
         )
 
         sourceWriters[sourceID] = SourceWriter(writer: writer)
@@ -123,6 +129,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         guard !isFinishing else { throw SegmentWriter.SegmentError.segmentFinishing }
 
         let sourceID = device.uid
+        diagnostics?.expect(sourceID, kind: "microphone")
 
         // Already exists
         if sourceWriters[sourceID]?.attached == true {
@@ -136,7 +143,8 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             url: url,
             trackType: .microphone(name: device.name, deviceUID: device.uid),
             segmentStartTime: startTime,
-            verbose: verbose
+            verbose: verbose,
+            onStatistics: { [diagnostics] in diagnostics?.statistics(sourceID, $0) }
         )
 
         do {
@@ -147,16 +155,16 @@ public final class PerSourceAudioManager: @unchecked Sendable {
                 try startMicrophoneCapture?(device)
 
                 // Wire callback to this segment's writer
-                captureManager.setCallback(for: device.uid) { [weak writer] buffer, time in
+                captureManager.setCallback(for: device.uid, callback: { [weak writer] buffer, time in
                     writer?.appendPCMBuffer(buffer, presentationTime: time)
-                }
+                }, onError: { [diagnostics] in diagnostics?.failure(sourceID, stage: "capture", error: $0) })
                 Logger.audio.info("Wired mic callback: \(device.name, privacy: .public)")
             } else {
                 // Legacy path: create capture per segment
                 let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
-                capture.onAudioBuffer = { [weak writer] buffer, time in
+                capture.setCallbacks(audio: { [weak writer] buffer, time in
                     writer?.appendPCMBuffer(buffer, presentationTime: time)
-                }
+                }, error: { [diagnostics] in diagnostics?.failure(sourceID, stage: "capture", error: $0) })
                 try capture.start()
                 legacyCapture = capture
                 Logger.audio.info("Started mic capture (legacy): \(device.name, privacy: .public)")
@@ -164,6 +172,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
             sourceWriters[sourceID] = SourceWriter(writer: writer, legacyCapture: legacyCapture)
             micMetadata[sourceID] = device
+            diagnostics?.started(sourceID)
         } catch {
             if existing == nil { try? FileManager.default.removeItem(at: url) }
             throw error
@@ -184,6 +193,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
         source.attached = false
         sourceWriters[deviceUID] = source
+        diagnostics?.failure(deviceUID, stage: "disconnect", error: NSError(domain: "SolstoneAudioDevice", code: 1))
 
         lock.unlock()
 
@@ -220,7 +230,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
         // Clear all mic callbacks (engines keep running, just no destination)
         // This prevents audio from being written to the old segment's writers
-        captureManager?.clearAllCallbacks()
+        await captureManager?.clearAllCallbacksAndDrain()
 
         // Finish all writers and collect timing info
         var inputs: [AudioRemixerInput] = []

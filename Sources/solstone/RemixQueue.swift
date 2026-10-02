@@ -223,17 +223,15 @@ public actor RemixQueue {
                 reconciliation = .audioLoss(sourceIDs.count)
                 unreadableSourceIDs = sourceIDs
                 discoveryFailures += sourceIDs.map { .failure(sourceID: $0, stage: "reader", error: nil) }
-            } catch AudioRemixerError.noTracksToWrite {
-                Logger.storage.info("No audio tracks to write (all silent)")
-            } catch is TimeoutError {
+            } catch let error as TimeoutError {
                 Logger.storage.error("Background remix timed out for \(job.segmentDirectory.lastPathComponent, privacy: .public); marking segment failed")
-                await markIncompleteSegmentAsFailed(job.segmentDirectory)
-                await onSegmentComplete?(job.segmentDirectory, .failed("audio remix timed out; segment preserved for recovery"))
+                await preserveFailedRemix(job, segmentKey: segmentKey, inputs: job.audioInputs, stage: "remix_timeout", error: error,
+                    message: "audio remix timed out; segment preserved for recovery")
                 return
             } catch {
                 Logger.storage.error("Background remix failed for \(job.segmentDirectory.lastPathComponent, privacy: .public): \(error, privacy: .public)")
-                await markIncompleteSegmentAsFailed(job.segmentDirectory)
-                await onSegmentComplete?(job.segmentDirectory, .failed("audio remix failed; segment preserved for recovery"))
+                await preserveFailedRemix(job, segmentKey: segmentKey, inputs: job.audioInputs, stage: "remix", error: error,
+                    message: "audio remix failed; segment preserved for recovery")
                 return
             }
         } else {
@@ -267,13 +265,11 @@ public actor RemixQueue {
                         Logger.storage.error("reconstruction audio source(s) unreadable for \(job.timePrefix, privacy: .public): \(sourceIDs.joined(separator: ", "), privacy: .public); finalizing screen-only with loss record")
                         reconciliation = .audioLoss(sourceIDs.count)
                         unreadableSourceIDs = sourceIDs
-                discoveryFailures += sourceIDs.map { .failure(sourceID: $0, stage: "reader", error: nil) }
-                    } catch AudioRemixerError.noTracksToWrite {
-                        Logger.storage.info("reconstruction found all sources silent for \(job.timePrefix, privacy: .public); finalizing screen-only")
+                        discoveryFailures += sourceIDs.map { .failure(sourceID: $0, stage: "reader", error: nil) }
                     } catch {
                         Logger.storage.error("reconstruction remix failed for \(job.timePrefix, privacy: .public), marking segment failed: \(error, privacy: .public)")
-                        await markIncompleteSegmentAsFailed(job.segmentDirectory)
-                        await onSegmentComplete?(job.segmentDirectory, .failed("audio reconciliation failed; segment preserved for recovery"))
+                        await preserveFailedRemix(job, segmentKey: segmentKey, inputs: inputs, stage: "reconstruction", error: error,
+                            message: "audio reconciliation failed; segment preserved for recovery")
                         return
                     }
                 case .unreadable:
@@ -282,7 +278,7 @@ public actor RemixQueue {
                     Logger.storage.info("audio source(s) present but unreadable for \(job.timePrefix, privacy: .public): \(sourceIDs.joined(separator: ", "), privacy: .public); finalizing screen-only with loss record")
                     reconciliation = .audioLoss(sourceIDs.count)
                     unreadableSourceIDs = sourceIDs
-                discoveryFailures += sourceIDs.map { .failure(sourceID: $0, stage: "reader", error: nil) }
+                    discoveryFailures += sourceIDs.map { .failure(sourceID: $0, stage: "reader", error: nil) }
                     // fall through — no markIncompleteSegmentAsFailed, no return
                 }
             }
@@ -349,6 +345,8 @@ public actor RemixQueue {
             await onSegmentComplete?(finalDirectory, reconciliation)
         } catch {
             Logger.storage.warning("Failed to rename segment directory: \(error, privacy: .public)")
+            await markIncompleteSegmentAsFailed(job.segmentDirectory)
+            await onSegmentComplete?(job.segmentDirectory, .failed("segment files could not be finalized; segment preserved for recovery"))
         }
     }
 
@@ -384,6 +382,18 @@ public actor RemixQueue {
         } else {
             return nil
         }
+    }
+
+    private func preserveFailedRemix(_ job: RemixJob, segmentKey: String, inputs: [AudioRemixerInput],
+                                     stage: String, error: Error, message: String) async {
+        let outcomes = inputs.map { AudioSourceRemixResult.failure(sourceID: $0.timingInfo.trackType.sourceID,
+            stage: stage, error: error, state: "failed") }
+        do {
+            try writeMetadataIfNeeded(segmentDirectory: job.segmentDirectory, timePrefix: job.timePrefix,
+                segmentKey: segmentKey, micMetadataJSON: job.micMetadataJSON, unreadableSourceIDs: nil, remixSources: outcomes)
+        } catch { Logger.storage.error("Could not persist terminal remix failure; keeping all audio sources") }
+        await markIncompleteSegmentAsFailed(job.segmentDirectory)
+        await onSegmentComplete?(job.segmentDirectory, .failed(message))
     }
 
     private func writeMetadataIfNeeded(segmentDirectory: URL, timePrefix: String, segmentKey: String,
