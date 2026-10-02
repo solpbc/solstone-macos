@@ -378,7 +378,14 @@ struct IndependentCapturePipelineTests {
         #expect(active == .microphone)
         #expect(screen.stopCount.count > 0)
         #expect(audio.addMicrophoneCount.count == 1)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+        #expect(await writer.finishCapture() != nil)
+        let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        #expect(!files.contains { $0.hasSuffix(".mp4") || $0.hasSuffix(".m4a") })
+        let metadata = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("120000_meta.json"))) as? [String: Any]
+        let capture = try #require(metadata?["audio_capture"] as? [String: Any])
+        #expect(capture["state"] as? String == "partial")
+        let system = try #require((capture["sources"] as? [[String: Any]])?.first { $0["source_id"] as? String == "system" })
+        #expect((system["failures"] as? [[String: Any]])?.contains { $0["stage"] as? String == "screen_start" } == true)
     }
 
     @Test func screenOnlyNeverAttachesMicrophones() async throws {
