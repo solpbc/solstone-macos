@@ -941,6 +941,34 @@ struct JournalWindowWebKitTests {
         #expect(webView.customUserAgent?.isEmpty ?? true)
     }
 
+    @Test func installedHostContractLoadsFromBothPackagedLayoutsWithoutDevelopmentFallback() throws {
+        let bytes = try #require(JournalWebHostContract.packagedBytes())
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for (layout, usesContents) in [("nested", true), ("flat", false)] {
+            let appURL = root.appendingPathComponent(layout).appendingPathComponent("solstone.app")
+            let contentsURL = appURL.appendingPathComponent("Contents")
+            let nestedBundleURL = contentsURL.appendingPathComponent("Resources/solstone_solstone.bundle")
+            let resourceRootURL = usesContents ? nestedBundleURL.appendingPathComponent("Contents") : nestedBundleURL
+            let contractURL = resourceRootURL.appendingPathComponent(usesContents ? "Resources/Resources/host-contract.json" : "Resources/host-contract.json")
+            try FileManager.default.createDirectory(at: contractURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let appInfo: [String: String] = ["CFBundleIdentifier": "app.solstone.navigationqualification.fixture", "CFBundlePackageType": "APPL"]
+            let resourceInfo: [String: String] = ["CFBundleIdentifier": "app.solstone.navigationqualification.fixture.resources", "CFBundlePackageType": "BNDL"]
+            try PropertyListSerialization.data(fromPropertyList: appInfo, format: .xml, options: 0).write(to: contentsURL.appendingPathComponent("Info.plist"))
+            try PropertyListSerialization.data(fromPropertyList: resourceInfo, format: .xml, options: 0).write(to: resourceRootURL.appendingPathComponent("Info.plist"))
+            try bytes.write(to: contractURL)
+            let appBundle = try #require(Bundle(url: appURL))
+            #expect(JournalWebHostContract.packagedBytes(appBundle: appBundle) == bytes)
+            try FileManager.default.removeItem(at: contractURL)
+            #expect(JournalWebHostContract.packagedBytes(appBundle: appBundle) == nil)
+            let configuration = JournalWebView.makeConfiguration(
+                dataStore: JournalWindowWebsiteDataStore.sharedNonPersistent,
+                hostContractBytes: JournalWebHostContract.packagedBytes(appBundle: appBundle)
+            )
+            #expect(configuration.applicationNameForUserAgent == nil)
+        }
+    }
+
     @Test func invalidHostContractDoesNotAdvertiseAndEmitsReason() throws {
         func assertFailure(
             bytes: Data?,

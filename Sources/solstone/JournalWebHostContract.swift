@@ -11,8 +11,21 @@ internal enum JournalWebHostContract {
         case unsupported
     }
 
-    static func packagedBytes(bundle: Bundle = .module) -> Data? {
-        guard let url = bundle.url(
+    static func packagedBytes(appBundle: Bundle = .main) -> Data? {
+        let resourceBundle: Bundle
+        if appBundle.bundleURL.pathExtension.lowercased() == "app" {
+            // Both app packaging routes put the SwiftPM bundle in Contents/Resources.
+            // A missing installed resource must not resolve through the build checkout.
+            guard let resourcesURL = appBundle.resourceURL,
+                  let installedBundle = Bundle(url: resourcesURL.appendingPathComponent("solstone_solstone.bundle"))
+            else {
+                return nil
+            }
+            resourceBundle = installedBundle
+        } else {
+            resourceBundle = .module
+        }
+        guard let url = resourceBundle.url(
             forResource: "host-contract",
             withExtension: "json",
             subdirectory: "Resources"
