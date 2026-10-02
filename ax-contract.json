@@ -239,7 +239,6 @@
       "settings.sources.microphoneCapture.enabled",
       "settings.sources.screenCapture.enabled",
       "settings.sources.status",
-      "settings.status.debug.keepRejectedAudio",
       "settings.status.debug.oneMinuteSegments",
       "settings.status.health.summary.action",
       "settings.status.health.summary.state",
@@ -287,7 +286,9 @@
       "updates.deferredInstall.state",
       "updates.downloadProgress.state",
       "updates.extractProgress.state",
+      "updates.pairedJournalVersion",
       "updates.preferences.automaticChecks",
+      "updates.preferences.automaticChecks.enable",
       "updates.preferences.automaticDownloads",
       "updates.preferences.frequency",
       "updates.preferences.frequency.state",
@@ -695,6 +696,7 @@
     ],
     "PrivateWindowAccessibilityState" : [
       "off",
+      "checking",
       "waiting",
       "working",
       "not_working"

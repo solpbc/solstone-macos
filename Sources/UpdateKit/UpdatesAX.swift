@@ -1,4 +1,5 @@
 public enum UpdatesAXID {
+    public static let pairedJournalVersion = "updates.pairedJournalVersion"
     public static let statusState = "updates.status.state"
     public static let unavailable = "updates.status.unavailable"
     public static let notRunning = "updates.status.notrunning"
@@ -21,6 +22,7 @@ public enum UpdatesAXID {
     public static let extractProgress = "updates.extractProgress.state"
     public static let deferredInstallState = "updates.deferredInstall.state"
     public static let automaticChecks = "updates.preferences.automaticChecks"
+    public static let enableAutomaticChecks = "updates.preferences.automaticChecks.enable"
     public static let frequencyPicker = "updates.preferences.frequency"
     public static let frequencyState = "updates.preferences.frequency.state"
     public static let automaticDownloads = "updates.preferences.automaticDownloads"

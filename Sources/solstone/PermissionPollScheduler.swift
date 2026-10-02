@@ -12,6 +12,8 @@ internal struct PermissionPollScheduler {
     let armPolling: @MainActor @Sendable (@escaping Pass) -> Cancellation
 
     static func live(
+        interval: TimeInterval = 5.0,
+        tolerance: TimeInterval = 2.0,
         scheduleTimer: @escaping @MainActor @Sendable (
             _ interval: TimeInterval,
             _ repeats: Bool,
@@ -30,8 +32,8 @@ internal struct PermissionPollScheduler {
                 }
             }
             delivery()
-            let timer = scheduleTimer(5.0, true, delivery)
-            timer.tolerance = 2.0
+            let timer = scheduleTimer(interval, true, delivery)
+            timer.tolerance = tolerance
             return { timer.invalidate() }
         }
     }
