@@ -12,6 +12,7 @@ enum AXContract {
         "DO NOT EDIT. Generated from Sources/journal/AXID.swift + AXToken.swift. Run `make ax-contract` to regenerate; `make ci` fails on drift."
 
     static let staticIDs: [String] = [
+        AXID.Journal.Home.updates,
         AXID.Journal.Home.markCard,
         AXID.Journal.Home.nameState,
         AXID.Journal.Home.runDisplayGlanceState,
@@ -107,6 +108,7 @@ enum AXContract {
         UpdatesAXID.extractProgress,
         UpdatesAXID.deferredInstallState,
         UpdatesAXID.automaticChecks,
+        UpdatesAXID.enableAutomaticChecks,
         UpdatesAXID.frequencyPicker,
         UpdatesAXID.frequencyState,
         UpdatesAXID.automaticDownloads,

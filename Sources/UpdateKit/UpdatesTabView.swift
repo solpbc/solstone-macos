@@ -378,6 +378,18 @@ public struct UpdatesTabView: View {
                 Toggle(copy.autoCheckToggleLabel, isOn: $controller.automaticChecksEnabled)
                     .accessibilityIdentifier(UpdatesAXID.automaticChecks)
 
+                if !controller.automaticChecksEnabled {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(copy.automaticChecksOff)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button(copy.actionEnableAutomaticChecks) {
+                            controller.automaticChecksEnabled = true
+                        }
+                        .accessibilityIdentifier(UpdatesAXID.enableAutomaticChecks)
+                    }
+                }
+
                 Picker(copy.frequencyPickerLabel, selection: frequencyBinding) {
                     ForEach(FrequencyOption.allCases) { option in
                         Text(option.label(copy: copy)).tag(option)
@@ -741,6 +753,15 @@ public func updatesPaneReason(
 
     if liveness.hasPendingChoiceReply {
         return copy.actionReasonUpdateChoicePending
+    }
+
+    switch liveness.activity {
+    case .checking: return copy.actionReasonChecking
+    case .downloading: return copy.actionReasonDownloadInProgress
+    case .extracting: return copy.actionReasonExtracting
+    case .installing: return copy.actionReasonInstallHandoff
+    case .readyToInstall: return copy.actionReasonUpdateChoicePending
+    case .idle: break
     }
 
     return copy.actionReasonUpdateInProgress

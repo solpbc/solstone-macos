@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- updates settings now show your paired journal's version and help you open its app on this mac or find update instructions. solstone and your journal update separately.
+- update actions name the app that restarts, and settings explain when automatic checks are off.
+
+### Fixed
+
+- update controls now refresh when the updater finishes a session. the last-check time refreshes even when another check finds the same result.
+
 ## [2.0.22] - 2026-10-02
 
 ### Added

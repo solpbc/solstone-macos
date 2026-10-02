@@ -1110,6 +1110,79 @@ struct UpdateControllerTests {
         #expect(!controller.exclusiveOperationInProgress)
     }
 
+    @Test func realSparkleSessionChangesNotifyObservationReaders() async throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        var sparkle: SPUUpdater?
+        let controller = UpdateController(
+            feedURL: validFeedURL, publicKey: validPublicKey,
+            log: updateKitTestLog, errorDomain: updateKitTestErrorDomain,
+            defaults: isolatedDefaults.defaults
+        ) { driver, delegate in
+            let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: driver, delegate: delegate)
+            sparkle = updater
+            return updater
+        }
+        let updater = try #require(sparkle)
+        // Drive the pinned framework's real Objective-C setter/KVO boundary,
+        // without a network check or installing an update in the test host.
+        for live in [true, false] {
+            let notified = LockedValue<Bool>()
+            withObservationTracking {
+                _ = controller.updatesPaneLiveness.sparkleSessionInProgress
+            } onChange: {
+                notified.set(true)
+            }
+            updater.setValue(live, forKey: "sessionInProgress")
+            try await waitUntil(timeout: .seconds(2)) { notified.current == true }
+            #expect(controller.updatesPaneLiveness.sparkleSessionInProgress == live)
+        }
+    }
+
+    @Test func repeatedSuccessfulChecksPersistFreshTimestamps() throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        func restoredController() -> UpdateController {
+            UpdateController(
+                feedURL: validFeedURL, publicKey: validPublicKey,
+                log: updateKitTestLog, errorDomain: updateKitTestErrorDomain,
+                defaults: isolatedDefaults.defaults
+            ) { _, _ in SpyUpdater() }
+        }
+        let old = Date(timeIntervalSince1970: 100)
+        for outcome in [ReconciledUpdateStatus.Outcome.upToDate, .found] {
+            let status = ReconciledUpdateStatus(
+                availableVersion: outcome == .found ? "99.0" : nil,
+                lastCheck: .init(checkedAt: old, outcome: outcome)
+            )
+            isolatedDefaults.defaults.set(try JSONEncoder().encode(status), forKey: statusKey)
+            let controller = restoredController()
+            if outcome == .found {
+                controller.ingestFoundUpdate(version: "99.0", releaseNotes: nil)
+            } else {
+                controller.ingestCycleFinished(error: sparkleError(.noUpdateError))
+            }
+            let checked = try #require(controller.lastCheckedAt)
+            #expect(checked > old)
+            let reopened = restoredController()
+            #expect(reopened.lastCheckedAt == checked)
+            #expect(reopened.reconciledStatus.lastCheck?.outcome == outcome)
+            controller.ingestCycleFinished(error: sparkleError(.installationCanceledError))
+            controller.ingestCycleFinished(error: nil)
+            #expect(controller.lastCheckedAt == checked)
+        }
+    }
+
+    @Test func durableAttentionCoversAllPendingAndFailureStates() {
+        let attention: [DurableUpdateStatus] = [
+            .available(version: "99", releaseNotes: nil), .staged(version: "99", releaseNotes: nil),
+            .deferred(version: "99"), .failedWithAvailable(version: "99"), .failed
+        ]
+        for status in attention { #expect(status.needsAttention) }
+        #expect(!DurableUpdateStatus.idle.needsAttention)
+        #expect(!DurableUpdateStatus.upToDate.needsAttention)
+    }
+
     private func makeController() -> UpdateController {
         clearDefaults()
         let spy = SpyUpdater()

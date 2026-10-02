@@ -523,8 +523,12 @@ struct SettingsView: View {
                 appState.refreshMicrophoneAuthorization()
             }
         case .updates:
-            UpdatesTabView(controller: updateController, copy: UpdatesCopy(provider: .solstone))
-                .onAppear { appState.markSettingsTabVisited(.updates) }
+            VStack(alignment: .leading, spacing: 16) {
+                JournalUpdateDestinationView(owner: appState.tunnelLifecycleOwner)
+                Divider()
+                UpdatesTabView(controller: updateController, copy: UpdatesCopy(provider: .solstone))
+            }
+            .onAppear { appState.markSettingsTabVisited(.updates) }
         case .help:
             helpTab
                 .onAppear { appState.markSettingsTabVisited(.help) }

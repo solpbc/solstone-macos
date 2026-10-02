@@ -26,7 +26,15 @@ struct JournalSettingsWindow: View {
         NavigationSplitView(columnVisibility: .constant(.all)) {
             List(selection: $model.selectedPane) {
                 ForEach(JournalPane.allCases) { pane in
-                    Label(pane.title, systemImage: pane.systemImage)
+                    HStack {
+                        Label(pane.title, systemImage: pane.systemImage)
+                        if pane == .updates, updateController.durableUpdateStatus.needsAttention {
+                            Spacer()
+                            Image(systemName: "circle.fill")
+                                .font(.system(size: 6))
+                                .accessibilityLabel("update needs attention")
+                        }
+                    }
                         .tag(pane)
                         .accessibilityIdentifier(AXID.Journal.Sidebar.tab(pane))
                         .overlay {
@@ -96,6 +104,17 @@ struct JournalSettingsWindow: View {
                 AXStateCompanion(id: AXID.Journal.Home.runDisplayGlanceState, value: model.runDisplay.axToken)
             }
 
+            if let message = updateAttentionMessage {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(message)
+                        Button("view journal updates") { model.selectedPane = .updates }
+                            .accessibilityIdentifier(AXID.Journal.Home.updates)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
             switch model.homeOffer {
             case .unconfigured:
                 if let message = model.unconfiguredMessage {
@@ -138,6 +157,17 @@ struct JournalSettingsWindow: View {
                     EmptyView()
                 }
             }
+        }
+    }
+
+    private var updateAttentionMessage: String? {
+        switch updateController.durableUpdateStatus {
+        case .available(let version, _): "the journal app \(version) is available."
+        case .staged(let version, _): "the journal app \(version) is downloaded and ready to install."
+        case .deferred: "your journal update will continue after your journal is ready."
+        case .failedWithAvailable(let version): "the update check failed. the journal app \(version) was found earlier."
+        case .failed: "the journal update check failed."
+        case .idle, .upToDate: nil
         }
     }
 

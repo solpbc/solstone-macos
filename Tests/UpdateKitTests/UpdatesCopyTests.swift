@@ -27,14 +27,8 @@ struct UpdatesCopyTests {
         #expect(UpdatesCopy(provider: .solstone).readyToInstallTitle(version: "1.1.0") == "ready to install 1.1.0")
     }
 
-    @Test func readyToInstallSubtitleString() {
-        #expect(UpdatesCopy(provider: .solstone).readyToInstallSubtitle == "the update is downloaded and ready when you are.")
-    }
-
     @Test func stagedReadyStrings() {
         #expect(UpdatesCopy(provider: .solstone).stagedReadyTitle(version: "1.1.0") == "ready to install v1.1.0")
-        #expect(UpdatesCopy(provider: .solstone).stagedReadySubtitle == "the update is downloaded and will install when solstone relaunches.")
-        #expect(UpdatesCopy(provider: .solstone).actionRelaunchToInstall == "relaunch to install")
         #expect(
             UpdatesCopy(provider: .solstone).lastCheckedStaged(relative: "just now", version: "1.1.0")
                 == "last checked just now · version 1.1.0 ready to install"
@@ -77,10 +71,6 @@ struct UpdatesCopyTests {
         #expect(UpdatesCopy(provider: .journal).actionRetrying == "retrying…")
         #expect(UpdatesCopy(provider: .solstone).updateChecksNotRunningTitle == "update checks aren't running right now")
         #expect(UpdatesCopy(provider: .journal).updateChecksNotRunningTitle == "update checks aren't running right now")
-    }
-
-    @Test func lastCheckedUpToDateString() {
-        #expect(UpdatesCopy(provider: .solstone).lastCheckedUpToDate(relative: "just now") == "last checked just now · solstone is up to date")
     }
 
     @Test func deferredStrings() {

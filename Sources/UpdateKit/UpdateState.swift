@@ -48,6 +48,13 @@ public enum DurableUpdateStatus: Equatable, Sendable {
     case failed
     case upToDate
     case idle
+
+    public var needsAttention: Bool {
+        switch self {
+        case .available, .staged, .deferred, .failedWithAvailable, .failed: true
+        case .idle, .upToDate: false
+        }
+    }
 }
 
 public struct ReconciledUpdateStatus: Codable, Equatable, Sendable {
