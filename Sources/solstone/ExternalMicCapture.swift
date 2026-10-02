@@ -34,6 +34,14 @@ public final class ExternalMicCapture: @unchecked Sendable {
         }
     }
     private var _onAudioBuffer: ((_ buffer: AVAudioPCMBuffer, _ time: CMTime) -> Void)?
+    public var onCaptureError: ((Error) -> Void)? {
+        get { callbackLock.withLock { _onCaptureError } }
+        set { callbackLock.withLock { _onCaptureError = newValue } }
+    }
+    private var _onCaptureError: ((Error) -> Void)?
+    private var running = false
+    private var captureRequested = false
+    public var isCapturing: Bool { callbackLock.withLock { running } }
     private let callbackLock = NSLock()
 
     private let engine: AVAudioEngine
@@ -44,7 +52,10 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private var cachedConverter: AVAudioConverter?
     private var cachedSourceFormat: AVAudioFormat?
 
-    private var isRunning = false
+    private var isRunning: Bool {
+        get { isCapturing }
+        set { callbackLock.withLock { running = newValue } }
+    }
     private var isRecovering = false  // Prevents recursive recovery attempts
     #if DEBUG || SOLSTONE_TEST_SUPPORT
     /// Test-only: records teardown call order ("engine.stop", "removeTap").
@@ -103,9 +114,17 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
     /// Start capturing from this microphone
     public func start() throws {
+        callbackLock.withLock { captureRequested = true }
         try writerQueue.sync {
             guard !isRunning else { return }
-            try startCapture()
+            do {
+                guard callbackLock.withLock({ captureRequested }) else { throw CancellationError() }
+                try startCapture()
+            } catch {
+                teardownEngine()
+                onCaptureError?(error)
+                throw error
+            }
         }
     }
 
@@ -195,6 +214,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
     /// Stop capturing
     public func stop() {
+        callbackLock.withLock { captureRequested = false }
         writerQueue.sync {
             teardownEngine()
             if isRunning {
@@ -210,7 +230,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
     @objc private func handleConfigChange() {
         writerQueue.async { [weak self] in
             guard let self = self else { return }
-            guard self.isRunning, !self.isRecovering else { return }
+            guard self.callbackLock.withLock({ self.captureRequested }), !self.isRecovering else { return }
 
             self.isRecovering = true
             Logger.audio.info("\(self.device.name, privacy: .public): Config change detected, re-pinning to hardware...")
@@ -222,13 +242,19 @@ public final class ExternalMicCapture: @unchecked Sendable {
             self.cachedConverter = nil
             self.cachedSourceFormat = nil
 
-            // Re-initialize with our pinned device
-            do {
-                self.isRunning = false  // Allow startCapture to proceed
-                try self.startCapture()
-                Logger.audio.info("\(self.device.name, privacy: .public): Successfully recovered after config change")
-            } catch {
-                Logger.audio.error("\(self.device.name, privacy: .public): Failed to recover after config change: \(error, privacy: .public)")
+            self.isRunning = false
+            for delay in [0.0, 0.2, 0.5] {
+                if delay > 0 { Thread.sleep(forTimeInterval: delay) }
+                guard self.callbackLock.withLock({ self.captureRequested }) else { break }
+                do {
+                    try self.startCapture()
+                    Logger.audio.notice("Microphone recovered after configuration change")
+                    break
+                } catch {
+                    self.teardownEngine()
+                    self.onCaptureError?(error)
+                    Logger.audio.error("Microphone configuration recovery failed: \(error, privacy: .public)")
+                }
             }
 
             self.isRecovering = false
@@ -320,6 +346,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
         // Convert to mono if needed and resample to target rate
         guard let monoBuffer = convertToMono(buffer, targetFormat: monoFormat) else {
+            onCaptureError?(NSError(domain: "SolstoneAudioConversion", code: 1))
             Logger.audio.warning("\(self.device.name, privacy: .public): convertToMono failed")
             return
         }

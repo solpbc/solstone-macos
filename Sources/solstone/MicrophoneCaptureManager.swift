@@ -29,12 +29,15 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         lock.lock()
 
         // Already running - nothing to do
-        if captures[device.uid] != nil {
+        if captures[device.uid]?.isCapturing == true {
             lock.unlock()
             if verbose { Logger.audio.debug("Capture already running for \(device.name, privacy: .public)") }
             return
         }
+        let failedCapture = captures.removeValue(forKey: device.uid)
+        let captureGain = gain
         lock.unlock()
+        failedCapture?.stop()
 
         // Retry with increasing delays if device isn't ready yet
         // Create a fresh capture for each attempt (AVAudioEngine can't recover from failed state)
@@ -48,7 +51,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
             }
 
             // Create fresh capture for each attempt
-            let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
+            let capture = ExternalMicCapture(device: device, gain: captureGain, verbose: verbose)
 
             do {
                 try capture.start()
@@ -111,6 +114,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
 
         for capture in allCaptures {
             capture.onAudioBuffer = nil
+            capture.onCaptureError = nil
         }
         if verbose { Logger.audio.debug("Cleared all mic callbacks") }
     }
@@ -130,7 +134,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     public func hasCapture(for deviceUID: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return captures[deviceUID] != nil
+        return captures[deviceUID]?.isCapturing == true
     }
 
     /// Get all active device UIDs
@@ -138,7 +142,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     public func activeDeviceUIDs() -> [String] {
         lock.lock()
         defer { lock.unlock() }
-        return Array(captures.keys)
+        return captures.compactMap { $0.value.isCapturing ? $0.key : nil }
     }
 
     /// Stop all captures (called when recording stops entirely)
