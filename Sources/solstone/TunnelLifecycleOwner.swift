@@ -299,6 +299,13 @@ final class TunnelLifecycleOwner {
     private let unlockNotificationName: Notification.Name
     @ObservationIgnored
     private var establishedLoopbackPort: Int?
+    /// The pairing the installed transport was built from, and whether its
+    /// candidates could include the relay. A relay-access answer is compared
+    /// against this, not the store.
+    @ObservationIgnored
+    private var installedPairing: StoredPairing?
+    @ObservationIgnored
+    private var installedRelayEligible = false
     @ObservationIgnored
     private var establishmentInFlight = false
     @ObservationIgnored
@@ -606,6 +613,12 @@ final class TunnelLifecycleOwner {
             else { return }
             switch status {
             case .ready(let ready):
+                if installedTransportUses(ready, storedPairing: pairing) {
+                    // The live transport already dials the relay with exactly this
+                    // access. Rebuilding it would redial every path and cut any
+                    // request in flight for nothing.
+                    return
+                }
                 do {
                     let (persisted, _) = try credentialStore.updateRelayAccess(
                         expectedPairingGen: target.pairingGeneration,
@@ -628,6 +641,14 @@ final class TunnelLifecycleOwner {
                     splOwnerLog.error("relay access save failed: \(String(describing: type(of: error)), privacy: .public)")
                 }
             case .notConfigured:
+                if pendingDurableClear == nil, pairing.relayEnrollment == .unavailable,
+                   !installedTransportDialsRelay {
+                    // Nothing holds relay access: neither the store nor the live
+                    // transport. Disabling again would only disconnect.
+                    liveRelayEligible = false
+                    relayAccessStatus = .unavailable
+                    return
+                }
                 await performLiveDisable(deadline: deadline, burstID: burstID)
             }
         case .ready(let updatedPairing, let pairingGen, _, let newAccessGen):
@@ -665,6 +686,35 @@ final class TunnelLifecycleOwner {
         case .ignored:
             break
         }
+    }
+
+    /// Whether the installed transport was built from this relay access, and the
+    /// store still holds the same access.
+    private func installedTransportUses(_ ready: ReadyRelayAccess, storedPairing: StoredPairing) -> Bool {
+        guard installedTransportDialsRelay,
+              pendingDurableClear == nil,
+              let installedPairing,
+              Self.relayAccess(of: installedPairing, matches: ready),
+              Self.relayAccess(of: storedPairing, matches: ready) else {
+            return false
+        }
+        return true
+    }
+
+    private var installedTransportDialsRelay: Bool {
+        guard transport != nil, let installedPairing, installedRelayEligible else { return false }
+        if case .enrolled = installedPairing.relayEnrollment { return true }
+        return false
+    }
+
+    private static func relayAccess(of pairing: StoredPairing, matches ready: ReadyRelayAccess) -> Bool {
+        guard case .enrolled(let deviceToken, _) = pairing.relayEnrollment,
+              deviceToken == ready.deviceToken,
+              let storedOrigin = URL(string: pairing.relayEndpoint),
+              let normalized = try? RelayAccessValidation.normalizedOrigin(storedOrigin) else {
+            return false
+        }
+        return normalized == ready.relayOrigin
     }
 
     private func performLiveDisable(deadline: ContinuousClock.Instant = .now + .seconds(15), burstID: UInt64? = nil) async {
@@ -797,6 +847,8 @@ final class TunnelLifecycleOwner {
         transportIncarnation &+= 1
         transport = candidate
         establishedLoopbackPort = connection.localPort
+        installedPairing = pairing
+        installedRelayEligible = liveRelayEligible
         observe(candidate, generation: transportIncarnation, initialBurstID: burstID)
         if let oldTransport, oldTransport !== candidate { Task { await oldTransport.disconnect() } }
         publishingOptionalBurstID = burstID
@@ -1744,6 +1796,8 @@ final class TunnelLifecycleOwner {
         journalVersion.disconnected()
         stopProbe()
         establishedLoopbackPort = nil
+        installedPairing = nil
+        installedRelayEligible = false
         inFlightConnectTask?.cancel()
         inFlightConnectTask = nil
         let retainedCandidate = self.retainedCandidate

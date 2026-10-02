@@ -847,9 +847,9 @@ extension JournalRelayAccessTests {
         ), encoding: .utf8)!
     }
 
-    @Test("Healthy responses settle across real supervisor replacement, then external reconnect starts another burst")
+    @Test("New relay access replaces the live transport once; unchanged access on a later connection replaces nothing")
     @MainActor
-    func healthyRealSupervisorBurstSettles() async throws {
+    func relayAccessReplacesOnlyWhenItChanges() async throws {
         let http = ObserverURLProtocolStore()
         http.registerRoute(path: "/app/network/api/relay/access", body: Self.freshReadyBody())
         http.registerRoute(path: "/app/network/api/clients/self", body: Self.actualMetadataBody)
@@ -865,8 +865,9 @@ extension JournalRelayAccessTests {
             loopbackSession: makeTestSession(store: http)
         )
         owner.start()
-        do { try await waitUntil { supervisors.count >= 3 } } catch {
-            Issue.record("initial burst supervisors=\(supervisors.count) children=\(supervisors.children.count) requests=\(http.snapshotRequests().map { $0.url?.path ?? "?" }) state=\(owner.state)")
+        let accessRequests = { http.snapshotRequests().filter { $0.url?.path.hasSuffix("/relay/access") == true }.count }
+        do { try await waitUntil { supervisors.count >= 2 && accessRequests() >= 2 } } catch {
+            Issue.record("initial burst supervisors=\(supervisors.count) requests=\(http.snapshotRequests().map { $0.url?.path ?? "?" }) state=\(owner.state)")
             await owner.stop()
             throw error
         }
@@ -875,18 +876,18 @@ extension JournalRelayAccessTests {
             let metadataBusy = await owner.clientSelfSequencer.isBusy
             return !accessBusy && !metadataBusy
         }
-        let firstCount = http.snapshotRequests().count
         try await Task.sleep(for: .milliseconds(150))
-        #expect(http.snapshotRequests().count == firstCount)
-        #expect(supervisors.count == 3)
-        #expect(http.snapshotRequests().filter { $0.url?.path.hasSuffix("/relay/access") == true }.count == 2)
-        let retiredChildCount = supervisors.children.count
-        await supervisors[0].requestReconnect()
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(supervisors.children.count == retiredChildCount)
-        await supervisors[2].requestReconnect()
-        do { try await waitUntil { supervisors.count >= 5 } } catch {
-            Issue.record("external burst supervisors=\(supervisors.count) children=\(supervisors.children.count) requests=\(http.snapshotRequests().map { $0.url?.path ?? "?" }) state=\(owner.state)")
+        // The stored "old-token" differs from the journal's answer: one replacement, and the
+        // burst's second answer is the same access, so nothing more.
+        #expect(supervisors.count == 2)
+        #expect(accessRequests() == 2)
+        #expect(supervisors.children.sessions.last?.pairing?.relayEndpoint == "https://new-relay.solstone.test")
+
+        // A later reconnect asks again, gets the same access, and keeps the live transport.
+        let requestsBefore = accessRequests()
+        await supervisors[1].requestReconnect()
+        do { try await waitUntil { accessRequests() > requestsBefore } } catch {
+            Issue.record("reconnect burst never asked for relay access; supervisors=\(supervisors.count)")
             await owner.stop()
             throw error
         }
@@ -895,11 +896,52 @@ extension JournalRelayAccessTests {
             let metadataBusy = await owner.clientSelfSequencer.isBusy
             return !accessBusy && !metadataBusy
         }
-        #expect(supervisors.count == 5)
-        for child in supervisors.children.sessions.dropFirst() {
-            #expect(child.pairing?.clientCertPEM == initial.clientCertPEM)
-            #expect(child.pairing?.relayEndpoint == "https://new-relay.solstone.test")
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(supervisors.count == 2)
+        await owner.stop()
+    }
+
+    @Test("A journal without relay disables live relay once; later answers that say the same disconnect nothing")
+    @MainActor
+    func notConfiguredDisablesOnlyOnce() async throws {
+        let http = ObserverURLProtocolStore()
+        http.registerRoute(path: "/app/network/api/relay/access", body: #"{"protocol_version":2,"status":"not_configured"}"#)
+        http.registerRoute(path: "/app/network/api/clients/self", body: Self.actualMetadataBody)
+        let initial = pairing(instanceID: "test-instance", deviceToken: "old-token")
+        let disk = PairingStore(pairing: initial)
+        let credentials = PairingCredentialStore(store: disk)
+        let supervisors = ActualSupervisorRecorder(useActualSupervisor: true)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentials,
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: { SPLTunnelTransport(makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }) },
+            pathMonitoringSource: NoopPathMonitoringSource(), probe: { _, _ in true },
+            loopbackSession: makeTestSession(store: http)
+        )
+        owner.start()
+        let accessRequests = { http.snapshotRequests().filter { $0.url?.path.hasSuffix("/relay/access") == true }.count }
+        try await waitUntil { supervisors.count >= 2 && accessRequests() >= 2 }
+        try await waitUntil {
+            let accessBusy = await owner.relayAccessSequencer.isBusy
+            let metadataBusy = await owner.clientSelfSequencer.isBusy
+            return !accessBusy && !metadataBusy
         }
+        try await Task.sleep(for: .milliseconds(150))
+        // The first answer retires the relay-capable transport; the second finds nothing to disable.
+        #expect(supervisors.count == 2)
+        #expect(disk.currentPairing?.relayEnrollment == .unavailable)
+        #expect(owner.relayAccessStatus == .unavailable)
+
+        let requestsBefore = accessRequests()
+        await supervisors[1].requestReconnect()
+        try await waitUntil { accessRequests() > requestsBefore }
+        try await waitUntil {
+            let accessBusy = await owner.relayAccessSequencer.isBusy
+            let metadataBusy = await owner.clientSelfSequencer.isBusy
+            return !accessBusy && !metadataBusy
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(supervisors.count == 2)
         await owner.stop()
     }
 
