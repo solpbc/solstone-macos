@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - you can press Escape to leave the journal mark question unanswered.
 - with VoiceOver on, settings and the journal window no longer read out hidden labels meant for automated testing between the real controls.
 - while a pairing waits for you to confirm your journal's mark, the status and journal pages in settings say so, and the menu-bar icon shows that something needs you. before, they said the connection to your journal wasn't ready.
+- the solstone app on your mac now keeps its connection to your journal through short network stalls. a pause of a few seconds on wi-fi, a vpn or the relay used to make it reconnect several times in a row, and anything on its way to your journal at that moment had to start over.
+- changing networks, or a vpn starting up, no longer interrupts a connection to your journal that still works.
+- when you pair this mac again while the journal it was paired with can't be reached, the new pairing now takes effect right away. before, it could keep trying the old one until the app was restarted.
+- the menu no longer shows "offline (saved locally)" while something on its way to your journal starts over on a connection that works.
 
 ## [2.0.21] - 2026-10-01
 
