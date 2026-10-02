@@ -105,6 +105,17 @@ final class SPLTunnelTransport: TunnelTransporting {
         }
     }
 
+    /// How long a silent carrier may stay quiet before it counts as gone: a ping
+    /// every 2 s, and loss once five go unanswered (about 10 s). Wi-Fi, VPN and
+    /// relay paths routinely stall for a second or two; a tighter limit tore down
+    /// carriers that were still working, and every teardown redials every path.
+    /// While a request is waiting on the journal the library still allows up to
+    /// 30 s. The relay path is watched too, because a relay tunnel can end
+    /// without the close ever reaching this side.
+    static let sessionPolicy = SessionPolicy(
+        keepalive: KeepalivePolicy(interval: .seconds(2), missedLimit: 5, runsOnRelayPath: true)
+    )
+
     private let clientInfo: SPLClientInfo
     private let policy: SessionPolicy
     private let onPeerStreamReset: PeerStreamResetObserver?
@@ -119,7 +130,7 @@ final class SPLTunnelTransport: TunnelTransporting {
 
     init(
         clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
-        policy: SessionPolicy = SessionPolicy(keepalive: KeepalivePolicy(runsOnRelayPath: true)),
+        policy: SessionPolicy = SPLTunnelTransport.sessionPolicy,
         onPeerStreamReset: PeerStreamResetObserver? = nil,
         makeSession: @escaping @Sendable (StoredPairing, SPLClientInfo, SessionPolicy) -> any TunnelReconnecting = {
             TunnelSupervisor(pairing: $0, clientInfo: $1, policy: $2)
