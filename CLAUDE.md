@@ -67,7 +67,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 - **SystemAudioStreamOutput** - SCStreamOutput routing system audio to SingleTrackAudioWriter
 - **ExternalMicCapture** - AVAudioEngine capture for all microphones
 - **MicrophoneMonitor** - CoreAudio device enumeration
-- **WindowMask** - Filters out specific app windows from capture
+- **WindowExclusionManager** - Keeps excluded apps, title-pattern windows and private browser windows out of capture from the first frame of every segment (`ExclusionPlanner` in `WindowExclusionPlan.swift` decides; `AccessibilityTitleReader` serves the opt-in Safari, Chrome, Edge and Brave check)
 
 ## Key Design Patterns
 

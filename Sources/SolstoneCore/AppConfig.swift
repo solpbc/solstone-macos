@@ -541,7 +541,7 @@ public struct AppConfig: Sendable {
 
     // MARK: - App Exclusion Methods
 
-    /// Returns the names of excluded apps (for WindowMaskDetector)
+    /// Returns the names of excluded apps (for WindowExclusionManager)
     public var excludedAppNames: [String] {
         excludedApps.map { $0.name }
     }
