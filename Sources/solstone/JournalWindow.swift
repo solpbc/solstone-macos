@@ -248,7 +248,7 @@ private struct JournalWindowView: View {
     }
 }
 
-private struct JournalWebView: NSViewRepresentable {
+struct JournalWebView: NSViewRepresentable {
     let session: JournalWindowSession
     let loadCommand: JournalWindowLoadCommand?
     let openExternalURL: JournalWindowExternalURLOpener
@@ -289,7 +289,11 @@ private struct JournalWebView: NSViewRepresentable {
         coordinator.tearDown()
     }
 
-    private static func makeConfiguration(dataStore: WKWebsiteDataStore) -> WKWebViewConfiguration {
+    static func makeConfiguration(
+        dataStore: WKWebsiteDataStore,
+        hostContractBytes: Data? = JournalWebHostContract.packagedBytes(),
+        logSink: any ClassifiedLogSinking = LoggerClassifiedLogSink.journal
+    ) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         configuration.userContentController = WKUserContentController()
@@ -298,6 +302,9 @@ private struct JournalWebView: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.allowsAirPlayForMediaPlayback = false
         configuration.mediaTypesRequiringUserActionForPlayback = .all
+        if let product = JournalWebHostContract.userAgentProduct(from: hostContractBytes, logSink: logSink) {
+            configuration.applicationNameForUserAgent = product
+        }
         return configuration
     }
 

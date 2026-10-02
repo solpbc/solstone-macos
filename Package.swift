@@ -86,7 +86,8 @@ let package = Package(
             exclude: [
                 "Info.plist",
                 "entitlements.plist",
-                "app.solstone.observer.watchdog.plist"
+                "app.solstone.observer.watchdog.plist",
+                "host-contract.provenance.json"
             ],
             resources: [
                 .copy("Resources")

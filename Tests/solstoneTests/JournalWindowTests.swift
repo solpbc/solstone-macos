@@ -418,7 +418,8 @@ struct JournalWindowCompositionTests {
 
     @Test func seamDirectLoadInCurrentWindowRegistersGenerationForSwiftUIDedupe() async {
         let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example/root") })
-        let seam = makeJournalWindowSeam(session: session)
+        var opened: [URL] = []
+        let seam = JournalWindowWebViewSeam(session: session, openExternalURL: { opened.append($0) })
         _ = await session.open(destination: .root)!
 
         let result = seam.decideNewWindowNavigationAction(
@@ -439,6 +440,34 @@ struct JournalWindowCompositionTests {
         #expect(session.loadCommand == command)
         seam.registerAppInitiatedLoad(navigation: NSObject(), generation: command.generation)
         #expect(seam.prepareLoadCommandForUpdate(session.loadCommand) == nil)
+        #expect(opened.isEmpty)
+    }
+
+    @Test func offOriginNavigationOpensExternallyWithoutChangingLoadedSession() async {
+        var opened: [URL] = []
+        let session = JournalWindowSession(resolveHomeBase: { .url("https://journal.example") })
+        let seam = JournalWindowWebViewSeam(session: session, openExternalURL: { opened.append($0) })
+        let command = await session.open(destination: .root)!
+        completeJournalWindowLoad(command, seam: seam)
+
+        let state = session.state
+        let generation = session.generation
+        let destination = session.destination
+        let url = URL(string: "https://outside.example/handoff")!
+        let result = seam.decideNavigationAction(
+            requestURL: url,
+            targetFrameIsMainFrame: true,
+            targetFrameIsNil: false,
+            shouldPerformDownload: false,
+            isUserInitiated: false
+        )
+
+        #expect(result == .cancel)
+        #expect(opened == [url])
+        #expect(state == .loaded)
+        #expect(session.state == state)
+        #expect(session.generation == generation)
+        #expect(session.destination == destination)
     }
 
     @Test func newWindowAllowedActionDoesNotBeginNavigation() async {
@@ -892,6 +921,68 @@ struct JournalWindowRoutingTests {
 @Suite("JournalWindow WebKit")
 @MainActor
 struct JournalWindowWebKitTests {
+    @Test func packagedHostContractSetsApplicationNameForUserAgent() throws {
+        let sink = RecordingClassifiedLogSink()
+        let product = JournalWebHostContract.userAgentProduct(
+            from: JournalWebHostContract.packagedBytes(),
+            logSink: sink
+        )
+        #expect(product != nil)
+        #expect(sink.emissions.isEmpty)
+
+        let configuration = JournalWebView.makeConfiguration(
+            dataStore: JournalWindowWebsiteDataStore.sharedNonPersistent
+        )
+        #expect(configuration.applicationNameForUserAgent == product)
+        #expect(configuration.websiteDataStore === JournalWindowWebsiteDataStore.sharedNonPersistent)
+        #expect(configuration.websiteDataStore.isPersistent == false)
+        #expect(configuration.preferences.javaScriptCanOpenWindowsAutomatically == false)
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        #expect(webView.customUserAgent?.isEmpty ?? true)
+    }
+
+    @Test func invalidHostContractDoesNotAdvertiseAndEmitsReason() throws {
+        func assertFailure(
+            bytes: Data?,
+            reason: String,
+            sentinel: String? = nil
+        ) throws {
+            let sink = RecordingClassifiedLogSink()
+            let configuration = JournalWebView.makeConfiguration(
+                dataStore: JournalWindowWebsiteDataStore.sharedNonPersistent,
+                hostContractBytes: bytes,
+                logSink: sink
+            )
+
+            #expect(configuration.applicationNameForUserAgent == nil)
+            #expect(sink.emissions.count == 1)
+            let emission = try #require(sink.emissions.first)
+            #expect(emission.level == .error)
+            #expect(emission.classification == "journal-web-host-contract")
+            #expect(emission.publicFields == ["reason": reason])
+
+            let fields = emission.publicFields.keys.sorted().map { key in
+                "\(key)=\(emission.publicFields[key, default: ""])"
+            }
+            let text = ([emission.classification, emission.level.rawValue] + fields).joined(separator: " ")
+            if let sentinel {
+                #expect(!text.contains(sentinel))
+            }
+        }
+
+        try assertFailure(bytes: nil, reason: "missing")
+        try assertFailure(
+            bytes: Data("not-json SENTINEL-MALFORMED-9f3c".utf8),
+            reason: "malformed",
+            sentinel: "SENTINEL-MALFORMED-9f3c"
+        )
+        try assertFailure(
+            bytes: Data("{\"version\":2,\"user_agent_product\":\"SENTINEL-UNSUPPORTED-9f3c\"}".utf8),
+            reason: "unsupported",
+            sentinel: "SENTINEL-UNSUPPORTED-9f3c"
+        )
+    }
+
     @Test func sharedWebsiteDataStoreIsNonPersistentAndReused() {
         let first = JournalWindowWebsiteDataStore.sharedNonPersistent
         let second = JournalWindowWebsiteDataStore.sharedNonPersistent
@@ -915,6 +1006,7 @@ struct JournalWindowWebKitTests {
         #expect(wireUpContains(source, "decisionHandler(.deny)"))
         #expect(wireUpContains(source, "createWebViewWith configuration"))
         #expect(wireUpContains(source, "decidePolicyFor navigationResponse"))
+        #expect(!source.contains("customUserAgent"))
     }
 }
 
