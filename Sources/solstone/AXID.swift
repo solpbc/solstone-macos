@@ -219,7 +219,6 @@ enum AXID {
             static let resyncAll = "settings.status.upload.resyncAll"
             static let storageSettings = "settings.status.storage.settings"
             static let debugOneMinuteSegments = "settings.status.debug.oneMinuteSegments"
-            static let debugKeepRejectedAudio = "settings.status.debug.keepRejectedAudio"
         }
 
         enum Help {

@@ -161,7 +161,6 @@ enum AXContract {
         AXID.Settings.Status.resyncAll,
         AXID.Settings.Status.storageSettings,
         AXID.Settings.Status.debugOneMinuteSegments,
-        AXID.Settings.Status.debugKeepRejectedAudio,
         AXID.Settings.Help.agentInstructions,
         AXID.Settings.Help.copyAgentInstructions,
         AXID.Settings.Help.diagnosticsDisclosure,

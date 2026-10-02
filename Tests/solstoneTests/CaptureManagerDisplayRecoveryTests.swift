@@ -17,7 +17,7 @@ struct CaptureManagerDisplayRecoveryTests {
         let segmentBox = LockedValue<FakeCaptureSegment>()
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 let segment = FakeCaptureSegment(outputDirectory: outputDirectory)
                 segmentBox.set(segment)
                 return segment

@@ -46,7 +46,6 @@ public final class CaptureManager {
     public typealias SegmentFactory = @MainActor @Sendable (
         _ outputDirectory: URL,
         _ timePrefix: String,
-        _ debugKeepRejectedAudio: Bool,
         _ silenceMusic: Bool,
         _ verbose: Bool
     ) -> any CaptureSegmentWriting
@@ -122,9 +121,6 @@ public final class CaptureManager {
     /// Persistent system audio capture manager - keeps SCStream alive across segment rotations
     private let systemAudioCaptureManager: SystemAudioCaptureManager
 
-    /// Closure to check debug setting for keeping rejected audio tracks
-    private let debugKeepRejectedAudio: @Sendable () -> Bool
-
     /// Closure to check if music silencing is enabled
     private let silenceMusic: @Sendable () -> Bool
 
@@ -164,7 +160,6 @@ public final class CaptureManager {
 
     public convenience init(
         storageManager: StorageManager,
-        debugKeepRejectedAudio: @escaping @Sendable () -> Bool = { false },
         silenceMusic: @escaping @Sendable () -> Bool = { true },
         excludedAppNames: [String] = [],
         excludePrivateBrowsing: Bool = true,
@@ -172,11 +167,10 @@ public final class CaptureManager {
         excludePrivateBrowsingAccessibility: Bool = false,
         microphoneGain: Float = 2.0,
         verbose: Bool = false,
-        segmentFactory: @escaping SegmentFactory = { outputDirectory, timePrefix, debugKeepRejectedAudio, silenceMusic, verbose in
+        segmentFactory: @escaping SegmentFactory = { outputDirectory, timePrefix, silenceMusic, verbose in
             SegmentWriter(
                 outputDirectory: outputDirectory,
                 timePrefix: timePrefix,
-                debugKeepRejectedAudio: debugKeepRejectedAudio,
                 silenceMusic: silenceMusic,
                 verbose: verbose
             )
@@ -192,7 +186,6 @@ public final class CaptureManager {
     ) {
         self.init(
             storageManager: storageManager,
-            debugKeepRejectedAudio: debugKeepRejectedAudio,
             silenceMusic: silenceMusic,
             excludedAppNames: excludedAppNames,
             excludePrivateBrowsing: excludePrivateBrowsing,
@@ -217,7 +210,6 @@ public final class CaptureManager {
 
     internal init(
         storageManager: StorageManager,
-        debugKeepRejectedAudio: @escaping @Sendable () -> Bool = { false },
         silenceMusic: @escaping @Sendable () -> Bool = { true },
         excludedAppNames: [String] = [],
         excludePrivateBrowsing: Bool = true,
@@ -225,11 +217,10 @@ public final class CaptureManager {
         excludePrivateBrowsingAccessibility: Bool = false,
         microphoneGain: Float = 2.0,
         verbose: Bool = false,
-        segmentFactory: @escaping SegmentFactory = { outputDirectory, timePrefix, debugKeepRejectedAudio, silenceMusic, verbose in
+        segmentFactory: @escaping SegmentFactory = { outputDirectory, timePrefix, silenceMusic, verbose in
             SegmentWriter(
                 outputDirectory: outputDirectory,
                 timePrefix: timePrefix,
-                debugKeepRejectedAudio: debugKeepRejectedAudio,
                 silenceMusic: silenceMusic,
                 verbose: verbose
             )
@@ -247,7 +238,6 @@ public final class CaptureManager {
         isScreenLocked: @escaping @MainActor () -> Bool = CaptureLifecycleManager.defaultIsScreenLocked
     ) {
         self.storageManager = storageManager
-        self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.silenceMusic = silenceMusic
         self.verbose = verbose
         self.segmentFactory = segmentFactory
@@ -486,7 +476,6 @@ public final class CaptureManager {
         let segment = segmentFactory(
             segmentDir,
             timePrefix,
-            debugKeepRejectedAudio(),
             silenceMusic(),
             verbose
         )
@@ -663,7 +652,6 @@ public final class CaptureManager {
             timePrefix: result.timePrefix,
             capturedDurationSeconds: result.capturedDurationSeconds,
             audioInputs: result.audioInputs,
-            debugKeepRejected: result.debugKeepRejected,
             silenceMusic: result.silenceMusic,
             micMetadataJSON: result.micMetadataJSON
         )

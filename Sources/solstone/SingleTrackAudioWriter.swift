@@ -53,6 +53,25 @@ public struct AudioTrackTimingInfo: Sendable {
     }
 }
 
+public struct AudioRecordingFailure: Codable, Sendable, Equatable {
+    public let stage: String
+    public let domain: String
+    public let code: Int
+    public var count: Int = 1
+}
+
+public struct AudioWriterStatistics: Codable, Sendable {
+    public var receivedFrames: Int = 0
+    public var acceptedFrames: Int = 0
+    public var droppedFrames: Int = 0
+    public var writerStatus: String = "recording"
+    public var failures: [AudioRecordingFailure] = []
+    enum CodingKeys: String, CodingKey {
+        case receivedFrames = "received_frames", acceptedFrames = "accepted_frames"
+        case droppedFrames = "dropped_frames", writerStatus = "writer_status", failures
+    }
+}
+
 /// Writes audio from a single source to its own M4A file
 /// Tracks timing offset for later remix alignment
 public final class SingleTrackAudioWriter: @unchecked Sendable {
@@ -62,6 +81,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private let trackType: AudioTrackType
     private let segmentStartTime: CMTime
     private let verbose: Bool
+    private let onStatistics: (@Sendable (AudioWriterStatistics) -> Void)?
+    private var statistics = AudioWriterStatistics()
 
     private var sessionStarted = false
     private var isFinished = false
@@ -104,7 +125,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     ///   - trackType: The type of audio track
     ///   - segmentStartTime: The segment's start time (for offset calculation)
     ///   - verbose: Enable verbose logging
-    public init(url: URL, trackType: AudioTrackType, segmentStartTime: CMTime, verbose: Bool = false) throws {
+    public init(url: URL, trackType: AudioTrackType, segmentStartTime: CMTime, verbose: Bool = false,
+                onStatistics: (@Sendable (AudioWriterStatistics) -> Void)? = nil) throws {
         // Remove existing file if present
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
@@ -115,6 +137,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         self.trackType = trackType
         self.segmentStartTime = segmentStartTime
         self.verbose = verbose
+        self.onStatistics = onStatistics
 
         // Create the single audio input
         let input = AVAssetWriterInput(mediaType: .audio, outputSettings: Self.audioSettings)
@@ -141,22 +164,29 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             return
         }
 
-        // Start session on first buffer
+        let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+        statistics.receivedFrames += numSamples
         let currentTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         if !sessionStarted {
-            if writer.status == .unknown {
-                writer.startWriting()
+            guard writer.status == .unknown, writer.startWriting() else {
+                recordFailure(stage: "start", error: writer.error, dropped: numSamples)
+                lock.unlock()
+                return
             }
-            writer.startSession(atSourceTime: .zero)
+            do {
+                try ObjCExceptionCatcher.`try` { writer.startSession(atSourceTime: .zero) }
+            } catch {
+                recordFailure(stage: "start", error: error, dropped: numSamples)
+                lock.unlock()
+                return
+            }
             sessionStarted = true
             firstBufferTime = currentTime
-            if verbose { Logger.audio.debug("Started audio recording: \(self.trackType.displayName, privacy: .public)") }
         }
-        lastBufferTime = currentTime
+        let duration = sampleDuration(sampleBuffer)
+        lastBufferTime = CMTimeAdd(currentTime, duration)
 
         let firstTime = firstBufferTime ?? currentTime
-        let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
-
         // Check if this buffer is silent
         let isSilent = isBufferSilent(sampleBuffer)
 
@@ -189,27 +219,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             flushSilence(firstTime: firstTime)
         }
 
-        // Append while still holding the lock so this cannot race
-        // extractTimingState(), which sets isFinished under this same lock
-        // before finish() marks the input finished and ends the session. The
-        // ObjC barrier additionally contains the sleep/lock case where the
-        // writer still reports .writing but its underlying session is already
-        // invalid (same class as 28effae).
-        if input.isReadyForMoreMediaData {
-            let adjustedTime = CMTimeSubtract(currentTime, firstTime)
-            if let retimedBuffer = createRetimedSampleBuffer(sampleBuffer, newTime: adjustedTime) {
-#if DEBUG || SOLSTONE_TEST_SUPPORT
-                _appendAttemptCountForTesting += 1
-#endif
-                do {
-                    try ObjCExceptionCatcher.`try` {
-                        input.append(retimedBuffer)
-                    }
-                } catch {
-                    Logger.audio.error("Audio append threw for \(self.trackType.displayName, privacy: .public), dropping buffer: \(error.localizedDescription, privacy: .public)")
-                }
-            }
-        }
+        let adjustedTime = CMTimeSubtract(currentTime, firstTime)
+        if let retimedBuffer = createRetimedSampleBuffer(sampleBuffer, newTime: adjustedTime) {
+            appendChecked(retimedBuffer, frames: numSamples)
+        } else { recordFailure(stage: "retime", error: nil, dropped: numSamples) }
         lock.unlock()
     }
 
@@ -266,38 +279,60 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     /// Flush accumulated silence as a single silent buffer
     /// Must be called with lock held
     private func flushSilence(firstTime: CMTime) {
-        guard silenceAccumulatedSamples > 0,
-              let startTime = silenceStartTime,
-              let formatDesc = lastSilentBufferFormat else {
-            silenceStartTime = nil
-            silenceAccumulatedSamples = 0
+        let frames = silenceAccumulatedSamples
+        defer { silenceStartTime = nil; silenceAccumulatedSamples = 0 }
+        guard frames > 0, let startTime = silenceStartTime, let formatDesc = lastSilentBufferFormat else {
+            if frames > 0 { recordFailure(stage: "silence", error: nil, dropped: frames) }
             return
         }
-
-        // Create a single silent buffer for the accumulated duration
         let adjustedTime = CMTimeSubtract(startTime, firstTime)
+        if let silentBuffer = createSilentBuffer(sampleCount: frames, presentationTime: adjustedTime,
+                                                formatDescription: formatDesc, sampleRate: lastSilentBufferSampleRate) {
+            appendChecked(silentBuffer, frames: frames)
+        } else { recordFailure(stage: "silence", error: nil, dropped: frames) }
+    }
 
-        if let silentBuffer = createSilentBuffer(
-            sampleCount: silenceAccumulatedSamples,
-            presentationTime: adjustedTime,
-            formatDescription: formatDesc,
-            sampleRate: lastSilentBufferSampleRate
-        ) {
-            if input.isReadyForMoreMediaData {
-                // Same defense-in-depth ObjC barrier as the non-silent append path.
-                do {
-                    try ObjCExceptionCatcher.`try` {
-                        input.append(silentBuffer)
-                    }
-                } catch {
-                    Logger.audio.error("Silent-buffer append threw for \(self.trackType.displayName, privacy: .public), dropping silence: \(error.localizedDescription, privacy: .public)")
-                }
-            }
+    private func appendChecked(_ buffer: CMSampleBuffer, frames: Int) {
+        guard writer.status == .writing else {
+            recordFailure(stage: "writer", error: writer.error, dropped: frames)
+            return
         }
+        guard input.isReadyForMoreMediaData else {
+            recordFailure(stage: "backpressure", error: writer.error, dropped: frames)
+            return
+        }
+        do {
+            var accepted = false
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+            _appendAttemptCountForTesting += 1
+#endif
+            try ObjCExceptionCatcher.`try` { accepted = input.append(buffer) }
+            if accepted { statistics.acceptedFrames += frames }
+            else { recordFailure(stage: "append", error: writer.error, dropped: frames) }
+        } catch { recordFailure(stage: "append", error: error, dropped: frames) }
+    }
 
-        // Reset silence state
-        silenceStartTime = nil
-        silenceAccumulatedSamples = 0
+    /// Called with lock held. Bound distinct failure records; publish the first
+    /// occurrence immediately, then the coalesced totals at finish.
+    private func recordFailure(stage: String, error: Error?, dropped: Int = 0) {
+        statistics.droppedFrames += dropped
+        let native = error as NSError?
+        let failure = AudioRecordingFailure(stage: stage, domain: native?.domain ?? "SolstoneAudioWriter", code: native?.code ?? 1)
+        if let index = statistics.failures.firstIndex(where: { $0.stage == failure.stage && $0.domain == failure.domain && $0.code == failure.code }) {
+            statistics.failures[index].count += 1
+        } else if statistics.failures.count < 16 {
+            statistics.failures.append(failure)
+            onStatistics?(statistics)
+            Logger.audio.notice("Audio writer issue: \(stage, privacy: .public), code \(failure.code, privacy: .public)")
+        }
+    }
+
+    private func sampleDuration(_ sample: CMSampleBuffer) -> CMTime {
+        if let format = CMSampleBufferGetFormatDescription(sample),
+           let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee, asbd.mSampleRate > 0 {
+            return CMTime(value: Int64(CMSampleBufferGetNumSamples(sample)), timescale: Int32(asbd.mSampleRate))
+        }
+        return CMSampleBufferGetDuration(sample)
     }
 
     /// Create a silent CMSampleBuffer with the given parameters
@@ -334,7 +369,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         // Create sample buffer
         var silentBuffer: CMSampleBuffer?
         var timing = CMSampleTimingInfo(
-            duration: CMTimeMake(value: Int64(sampleCount), timescale: Int32(sampleRate)),
+            duration: CMTimeMake(value: 1, timescale: Int32(sampleRate)),
             presentationTimeStamp: presentationTime,
             decodeTimeStamp: CMTime.invalid
         )
@@ -364,6 +399,11 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     public func appendPCMBuffer(_ buffer: AVAudioPCMBuffer, presentationTime: CMTime) {
         // Convert PCM buffer to CMSampleBuffer
         guard let sampleBuffer = createSampleBuffer(from: buffer, presentationTime: presentationTime) else {
+            lock.withLock {
+                guard !isFinished else { return }
+                statistics.receivedFrames += Int(buffer.frameLength)
+                recordFailure(stage: "convert", error: nil, dropped: Int(buffer.frameLength))
+            }
             Logger.audio.warning("Failed to convert PCM buffer to CMSampleBuffer for \(self.trackType.displayName, privacy: .public)")
             return
         }
@@ -398,6 +438,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
                     }
                 }
             } catch {
+                lock.withLock { recordFailure(stage: "finish", error: error) }
                 Logger.audio.error("Audio finalize threw for \(self.trackType.displayName, privacy: .public), dropping segment audio: \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -434,13 +475,20 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             try? FileManager.default.removeItem(at: outputURL)
         }
 
+        let finalStatistics = lock.withLock { () -> AudioWriterStatistics in
+            statistics.writerStatus = statistics.receivedFrames == 0 && statistics.failures.isEmpty ? "no_audio"
+                : (writer.status == .completed ? "completed" : "failed")
+            if wasStarted && writer.status != .completed { recordFailure(stage: "finish", error: writer.error) }
+            return statistics
+        }
+        onStatistics?(finalStatistics)
         onComplete?()
 
         return AudioTrackTimingInfo(
             startOffset: startOffset,
             endOffset: endOffset,
             trackType: trackType,
-            hasAudio: wasStarted
+            hasAudio: finalStatistics.acceptedFrames > 0
         )
     }
 
@@ -484,7 +532,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private func createRetimedSampleBuffer(_ sampleBuffer: CMSampleBuffer, newTime: CMTime) -> CMSampleBuffer? {
         var newSampleBuffer: CMSampleBuffer?
         var timingInfo = CMSampleTimingInfo(
-            duration: CMSampleBufferGetDuration(sampleBuffer),
+            duration: CMTimeMultiplyByRatio(sampleDuration(sampleBuffer), multiplier: 1, divisor: Int32(max(1, CMSampleBufferGetNumSamples(sampleBuffer)))),
             presentationTimeStamp: newTime,
             decodeTimeStamp: CMTime.invalid
         )
@@ -568,7 +616,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         // Create sample buffer
         var sampleBuffer: CMSampleBuffer?
         var timing = CMSampleTimingInfo(
-            duration: CMTimeMake(value: Int64(frameCount), timescale: Int32(format.sampleRate)),
+            duration: CMTimeMake(value: 1, timescale: Int32(format.sampleRate)),
             presentationTimeStamp: presentationTime,
             decodeTimeStamp: CMTime.invalid
         )

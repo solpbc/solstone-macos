@@ -37,392 +37,172 @@ internal func filterReadableAudioInputs(_ inputs: [AudioRemixerInput]) async -> 
     return (readable, unreadable)
 }
 
-/// Result of the remix operation
-public struct AudioRemixerResult: Sendable {
-    /// Number of tracks written to output
-    public let tracksWritten: Int
-    /// Number of tracks skipped (no audio or no speech)
-    public let tracksSkipped: Int
-    /// URLs of source files that were processed
-    public let sourceFiles: [URL]
+/// Content-free disposition for each source, persisted before raw cleanup.
+public struct AudioSourceRemixResult: Codable, Sendable {
+    public let sourceID: String
+    public var state: String
+    public var stage: String?
+    public var errorDomain: String?
+    public var errorCode: Int?
+    public var framesCopied: Int = 0
+    public var musicAnalysis: String?
 
-    public init(tracksWritten: Int, tracksSkipped: Int, sourceFiles: [URL]) {
-        self.tracksWritten = tracksWritten
-        self.tracksSkipped = tracksSkipped
-        self.sourceFiles = sourceFiles
+    enum CodingKeys: String, CodingKey {
+        case sourceID = "source_id", state, stage
+        case errorDomain = "error_domain", errorCode = "error_code"
+        case framesCopied = "frames_copied", musicAnalysis = "music_analysis"
+    }
+    static func failure(sourceID: String, stage: String, error: Error?, state: String = "unreadable") -> Self {
+        let native = error as NSError?
+        return Self(sourceID: sourceID, state: state, stage: stage, errorDomain: native?.domain, errorCode: native?.code)
     }
 }
 
-/// Combines multiple single-track M4A files into a single multi-track M4A
-/// Handles timing alignment and speech detection
+public struct AudioRemixerResult: Sendable {
+    public let tracksWritten: Int
+    public let tracksSkipped: Int
+    /// Only sources fully copied to a completed output qualify for cleanup.
+    public let sourceFiles: [URL]
+    public let sources: [AudioSourceRemixResult]
+    public init(tracksWritten: Int, tracksSkipped: Int, sourceFiles: [URL], sources: [AudioSourceRemixResult] = []) {
+        self.tracksWritten = tracksWritten
+        self.tracksSkipped = tracksSkipped
+        self.sourceFiles = sourceFiles
+        self.sources = sources
+    }
+}
+
+/// Combines readable sources; classification never authorizes file disposal.
 public final class AudioRemixer: Sendable {
     private let verbose: Bool
-
-    /// If true, move rejected files to rejected/ subfolder instead of deleting
-    private let debugKeepRejected: Bool
-
-    /// Audio settings for output (AAC, 48kHz, mono)
     private static nonisolated(unsafe) let audioSettings: [String: Any] = [
-        AVFormatIDKey: kAudioFormatMPEG4AAC,
-        AVSampleRateKey: 48_000,
-        AVNumberOfChannelsKey: 1,
-        AVEncoderBitRateKey: 64_000,
+        AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48_000,
+        AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000,
     ]
+    public init(verbose: Bool = false) { self.verbose = verbose }
 
-    public init(
-        verbose: Bool = false,
-        debugKeepRejected: Bool = false
-    ) {
-        self.verbose = verbose
-        self.debugKeepRejected = debugKeepRejected
-    }
-
-    /// Remix multiple tracks into a single output file
-    /// - Parameters:
-    ///   - inputs: Array of track inputs with timing info
-    ///   - outputURL: Destination M4A file
-    ///   - deleteSourceFiles: If true, delete source files after successful remix
-    ///   - silenceMusic: If true, silence music-only portions in system audio tracks
-    /// - Returns: Remix result with track counts
-    public func remix(
-        inputs: [AudioRemixerInput],
-        to outputURL: URL,
-        deleteSourceFiles: Bool = true,
-        silenceMusic: Bool = true
-    ) async throws -> AudioRemixerResult {
-        let remixStart = ContinuousClock.now
-
-        guard !inputs.isEmpty else {
-            throw AudioRemixerError.noInputs
-        }
-
-        let readableInputs = await filterReadableAudioInputs(inputs)
-        let inputs = readableInputs.readable
-        let outputDirectory = outputURL.deletingLastPathComponent()
-
-        // Filter inputs - skip tracks with no audio or no speech
-        let filterStart = ContinuousClock.now
-        var tracksToProcess: [(input: AudioRemixerInput, asset: AVURLAsset)] = []
-        var skippedCount = readableInputs.unreadable.count
-        // Silence ranges for system audio tracks (keyed by index in tracksToProcess)
-        var silenceRangesMap: [Int: [CMTimeRange]] = [:]
-
-        for input in inputs {
-            // Skip tracks that never received any audio
-            guard input.timingInfo.hasAudio else {
-                Logger.audio.info("Dropping track with no audio: \(input.timingInfo.trackType.displayName, privacy: .public)")
-                skippedCount += 1
-                continue
-            }
-
-            // Check if file exists
-            guard FileManager.default.fileExists(atPath: input.url.path) else {
-                Logger.audio.warning("Audio file not found: \(input.url.lastPathComponent, privacy: .public)")
-                skippedCount += 1
-                continue
-            }
-
-            let asset = AVURLAsset(url: input.url)
-
-            // Analyze for speech using SystemAudioAnalyzer
-            let result = await SystemAudioAnalyzer.shared.analyze(url: input.url)
-            if !result.hasSpeech {
-                Logger.audio.info("Dropping track with no speech: \(input.timingInfo.trackType.displayName, privacy: .public)")
-                handleRejectedFile(input.url, reason: "no-speech", outputDirectory: outputDirectory)
-                skippedCount += 1
-                continue
-            }
-
-            // For system audio, store silence ranges if music silencing is enabled
-            if silenceMusic, case .systemAudio = input.timingInfo.trackType {
-                let trackIndex = tracksToProcess.count
-                if !result.silenceRanges.isEmpty {
-                    silenceRangesMap[trackIndex] = result.silenceRanges
-                    if verbose { Logger.audio.debug("System audio has \(result.silenceRanges.count, privacy: .public) silence range(s)") }
-                }
-            }
-
-            tracksToProcess.append((input, asset))
-        }
-
-        let filterDuration = filterStart.duration(to: .now)
-        Logger.audio.info("Speech analysis completed in \(filterDuration.formatted(.units(allowed: [.seconds, .milliseconds])), privacy: .public): \(tracksToProcess.count, privacy: .public) to process, \(skippedCount, privacy: .public) skipped")
-
-        guard !tracksToProcess.isEmpty else {
-            if !readableInputs.unreadable.isEmpty {
-                throw AudioRemixerError.unreadableSources(sourceIDs: readableInputs.unreadable.map(\.timingInfo.trackType.sourceID))
-            }
-            throw AudioRemixerError.noTracksToWrite
-        }
-
-        // Create temporary output URL
-        let writeStart = ContinuousClock.now
-        let tempURL = outputURL.deletingLastPathComponent()
-            .appendingPathComponent(UUID().uuidString + ".m4a")
-
-        // Track whether we should clean up the temp file
-        var cleanupTempFile = true
-        defer {
-            if cleanupTempFile {
-                Logger.audio.warning("Cleaning up temp file after remix failure")
-                try? FileManager.default.removeItem(at: tempURL)
-            }
-        }
-
-        // Create asset writer
+    public func remix(inputs: [AudioRemixerInput], to outputURL: URL,
+                      silenceMusic: Bool = true) async throws -> AudioRemixerResult {
+        guard !inputs.isEmpty else { throw AudioRemixerError.noInputs }
+        let tempURL = outputURL.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".m4a")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
         let writer = try AVAssetWriter(url: tempURL, fileType: .m4a)
+        var outcomes = inputs.map { AudioSourceRemixResult(sourceID: $0.timingInfo.trackType.sourceID, state: "pending") }
+        var pairs: [(index: Int, reader: AVAssetReader, output: AVAssetReaderTrackOutput,
+                     input: AVAssetWriterInput, offset: CMTime, silence: [CMTimeRange])] = []
 
-        // Create readers and writers for each track
-        var trackPairs: [(
-            reader: AVAssetReaderTrackOutput,
-            writer: AVAssetWriterInput,
-            assetReader: AVAssetReader,
-            startOffset: CMTime,
-            trackType: AudioTrackType
-        )] = []
-        var writeSideUnreadableIDs: [String] = []
-
-        for (input, asset) in tracksToProcess {
-            let audioTracks: [AVAssetTrack]
+        for (index, source) in inputs.enumerated() {
+            let asset = AVURLAsset(url: source.url)
+            let reader: AVAssetReader
+            let output: AVAssetReaderTrackOutput
             do {
-                audioTracks = try await asset.loadTracks(withMediaType: .audio)
-            } catch {
-                Logger.audio.warning("Failed to load audio tracks in \(input.url.lastPathComponent, privacy: .public): \(error, privacy: .public)")
-                writeSideUnreadableIDs.append(input.timingInfo.trackType.sourceID)
-                continue
-            }
-            guard let sourceTrack = audioTracks.first else {
-                Logger.audio.warning("No audio track in: \(input.url.lastPathComponent, privacy: .public)")
-                writeSideUnreadableIDs.append(input.timingInfo.trackType.sourceID)
-                continue
-            }
-
-            // Create reader
-            let assetReader: AVAssetReader
-            do {
-                assetReader = try AVAssetReader(asset: asset)
-            } catch {
-                Logger.audio.warning("Failed to create AVAssetReader for \(input.url.lastPathComponent, privacy: .public): \(error, privacy: .public)")
-                writeSideUnreadableIDs.append(input.timingInfo.trackType.sourceID)
-                continue
-            }
-
-            // Create reader output with PCM decode
-            let readerOutput = AVAssetReaderTrackOutput(
-                track: sourceTrack,
-                outputSettings: [
-                    AVFormatIDKey: kAudioFormatLinearPCM,
-                    AVLinearPCMBitDepthKey: 32,
-                    AVLinearPCMIsFloatKey: true,
-                    AVLinearPCMIsNonInterleaved: false,
-                ]
-            )
-
-            if assetReader.canAdd(readerOutput) {
-                assetReader.add(readerOutput)
-            } else {
-                Logger.audio.warning("Cannot add reader output for \(input.url.lastPathComponent, privacy: .public)")
-                writeSideUnreadableIDs.append(input.timingInfo.trackType.sourceID)
-                continue
-            }
-
-            // Create writer input
-            let writerInput = AVAssetWriterInput(mediaType: .audio, outputSettings: Self.audioSettings)
-            writerInput.expectsMediaDataInRealTime = false
-
-            if writer.canAdd(writerInput) {
-                writer.add(writerInput)
-                trackPairs.append((
-                    reader: readerOutput,
-                    writer: writerInput,
-                    assetReader: assetReader,
-                    startOffset: input.timingInfo.startOffset,
-                    trackType: input.timingInfo.trackType
-                ))
-            } else {
-                Logger.audio.warning("Cannot add writer input for \(input.url.lastPathComponent, privacy: .public)")
-                writeSideUnreadableIDs.append(input.timingInfo.trackType.sourceID)
-                continue
-            }
-        }
-
-        guard !trackPairs.isEmpty else {
-            var combinedIDs = readableInputs.unreadable.map(\.timingInfo.trackType.sourceID)
-            for id in writeSideUnreadableIDs where !combinedIDs.contains(id) {
-                combinedIDs.append(id)
-            }
-            throw AudioRemixerError.unreadableSources(sourceIDs: combinedIDs)
-        }
-
-        // Start all readers
-        for pair in trackPairs {
-            guard pair.assetReader.startReading() else {
-                throw AudioRemixerError.failedToStartReader(pair.assetReader.error)
-            }
-        }
-
-        // Start writing
-        guard writer.startWriting() else {
-            throw AudioRemixerError.failedToStartWriter(writer.error)
-        }
-
-        writer.startSession(atSourceTime: .zero)
-
-        // Process tracks interleaved - AVAssetWriter needs data from all tracks roughly together
-        var finishedTracks = Set<Int>()
-        var pendingSamples = [Int: CMSampleBuffer]()
-
-        while finishedTracks.count < trackPairs.count {
-            for (idx, pair) in trackPairs.enumerated() {
-                guard !finishedTracks.contains(idx) else { continue }
-
-                // Get pending sample or read new one
-                let sampleBuffer: CMSampleBuffer?
-                if let pending = pendingSamples[idx] {
-                    sampleBuffer = pending
-                } else {
-                    sampleBuffer = pair.reader.copyNextSampleBuffer()
-                }
-
-                if var buffer = sampleBuffer {
-                    if pair.writer.isReadyForMoreMediaData {
-                        // Apply music silencing for system audio tracks
-                        if silenceMusic,
-                           case .systemAudio = pair.trackType,
-                           let silenceRanges = silenceRangesMap[idx] {
-                            let sampleTime = CMSampleBufferGetPresentationTimeStamp(buffer)
-                            if silenceRanges.contains(where: { CMTimeRangeContainsTime($0, time: sampleTime) }) {
-                                if let zeroed = AudioBufferUtils.silencedCopy(of: buffer) {
-                                    buffer = zeroed
-                                }
-                            }
-                        }
-
-                        // Retime buffer to apply start offset
-                        if let retimedBuffer = retimeBuffer(buffer, offset: pair.startOffset) {
-                            pair.writer.append(retimedBuffer)
-                        }
-                        pendingSamples.removeValue(forKey: idx)
-                    } else {
-                        // Hold onto sample for next iteration
-                        pendingSamples[idx] = buffer
-                    }
-                } else {
-                    // No more samples for this track
-                    pair.writer.markAsFinished()
-                    finishedTracks.insert(idx)
-                }
-            }
-
-            // Small yield to prevent tight loop
-            try await Task.sleep(nanoseconds: 1_000_000) // 1ms
-        }
-
-        // Wait for writing to complete
-        await writer.finishWriting()
-
-        guard writer.status == .completed else {
-            throw AudioRemixerError.writeFailed(writer.error)
-        }
-
-        // Cancel all readers
-        for pair in trackPairs {
-            pair.assetReader.cancelReading()
-        }
-
-        // Disable cleanup - we're about to move the file into place
-        cleanupTempFile = false
-
-        // Remove existing output if present
-        let fm = FileManager.default
-        if fm.fileExists(atPath: outputURL.path) {
-            try fm.removeItem(at: outputURL)
-        }
-        try fm.moveItem(at: tempURL, to: outputURL)
-
-        Logger.audio.info("Remixed \(trackPairs.count, privacy: .public) track(s) to \(outputURL.lastPathComponent, privacy: .public)")
-
-        // Delete source files if requested
-        let sourceURLs = inputs.map(\.url)
-        if deleteSourceFiles {
-            for url in sourceURLs {
-                // Only try to delete if file exists (may have been cleaned up by SingleTrackAudioWriter)
-                guard fm.fileExists(atPath: url.path) else {
+                guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
+                    outcomes[index] = .failure(sourceID: source.timingInfo.trackType.sourceID, stage: "reader", error: nil)
                     continue
                 }
-                do {
-                    try fm.removeItem(at: url)
-                    if verbose { Logger.audio.debug("Deleted source: \(url.lastPathComponent, privacy: .public)") }
-                } catch {
-                    Logger.audio.warning("Failed to delete source \(url.lastPathComponent, privacy: .public): \(error, privacy: .public)")
+                reader = try AVAssetReader(asset: asset)
+                output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                    AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 32,
+                    AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false,
+                ])
+                guard reader.canAdd(output) else {
+                    outcomes[index] = .failure(sourceID: source.timingInfo.trackType.sourceID, stage: "reader", error: reader.error)
+                    continue
                 }
+                reader.add(output)
+            } catch {
+                outcomes[index] = .failure(sourceID: source.timingInfo.trackType.sourceID, stage: "reader", error: error)
+                continue
             }
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: Self.audioSettings)
+            input.expectsMediaDataInRealTime = false
+            guard writer.canAdd(input) else {
+                outcomes[index] = .failure(sourceID: source.timingInfo.trackType.sourceID, stage: "writer", error: writer.error, state: "partial")
+                continue
+            }
+            writer.add(input)
+            var ranges: [CMTimeRange] = []
+            if silenceMusic, case .systemAudio = source.timingInfo.trackType {
+                let analysis = await SystemAudioAnalyzer.shared.analyze(url: source.url)
+                ranges = analysis.silenceRanges
+                outcomes[index].musicAnalysis = analysis.status
+            }
+            pairs.append((index, reader, output, input, source.timingInfo.startOffset, ranges))
         }
-
-        let writeDuration = writeStart.duration(to: .now)
-        let totalDuration = remixStart.duration(to: .now)
-        Logger.audio.info("Remix write completed in \(writeDuration.formatted(.units(allowed: [.seconds, .milliseconds])), privacy: .public), total remix time: \(totalDuration.formatted(.units(allowed: [.seconds, .milliseconds])), privacy: .public)")
-
-        return AudioRemixerResult(
-            tracksWritten: trackPairs.count,
-            tracksSkipped: skippedCount,
-            sourceFiles: sourceURLs
-        )
-    }
-
-    // MARK: - Private
-
-    /// Handle a rejected audio file - either delete or move to rejected/ subfolder
-    private func handleRejectedFile(_ url: URL, reason: String, outputDirectory: URL) {
+        defer { for pair in pairs { pair.reader.cancelReading() } }
+        guard !pairs.isEmpty else {
+            if outcomes.allSatisfy({ $0.state == "unreadable" }) {
+                throw AudioRemixerError.unreadableSources(sourceIDs: outcomes.map(\.sourceID))
+            }
+            throw AudioRemixerError.writeFailed(writer.error)
+        }
+        guard writer.startWriting() else { throw AudioRemixerError.failedToStartWriter(writer.error) }
+        writer.startSession(atSourceTime: .zero)
+        var finished = Set<Int>()
+        for pair in pairs where !pair.reader.startReading() {
+            outcomes[pair.index] = .failure(sourceID: outcomes[pair.index].sourceID, stage: "reader", error: pair.reader.error)
+            pair.input.markAsFinished()
+            finished.insert(pair.index)
+        }
+        var pending: [Int: CMSampleBuffer] = [:]
+        while finished.count < pairs.count {
+            try Task.checkCancellation()
+            guard writer.status == .writing else { throw AudioRemixerError.writeFailed(writer.error) }
+            for pair in pairs where !finished.contains(pair.index) {
+                guard let sample = pending[pair.index] ?? pair.output.copyNextSampleBuffer() else {
+                    if pair.reader.status == .completed {
+                        if outcomes[pair.index].state == "pending" { outcomes[pair.index].state = "complete" }
+                    } else {
+                        let copied = outcomes[pair.index].framesCopied
+                        outcomes[pair.index] = .failure(sourceID: outcomes[pair.index].sourceID, stage: "reader", error: pair.reader.error,
+                                                        state: copied > 0 ? "partial" : "unreadable")
+                        outcomes[pair.index].framesCopied = copied
+                    }
+                    pair.input.markAsFinished()
+                    finished.insert(pair.index)
+                    continue
+                }
+                guard pair.input.isReadyForMoreMediaData else { pending[pair.index] = sample; continue }
+                var transformed = sample
+                if !pair.silence.isEmpty {
+                    guard let silenced = AudioBufferUtils.silencedCopy(of: sample, ranges: pair.silence) else {
+                        throw AudioRemixerError.writeFailed(nil)
+                    }
+                    transformed = silenced
+                }
+                guard let retimed = retimeBuffer(transformed, offset: pair.offset) else {
+                    throw AudioRemixerError.writeFailed(nil)
+                }
+                guard pair.input.append(retimed) else { throw AudioRemixerError.writeFailed(writer.error) }
+                outcomes[pair.index].framesCopied += CMSampleBufferGetNumSamples(sample)
+                pending.removeValue(forKey: pair.index)
+            }
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        if outcomes.allSatisfy({ $0.state == "unreadable" }) {
+            writer.cancelWriting()
+            throw AudioRemixerError.unreadableSources(sourceIDs: outcomes.map(\.sourceID))
+        }
+        await writer.finishWriting()
+        guard writer.status == .completed else { throw AudioRemixerError.writeFailed(writer.error) }
         let fm = FileManager.default
-
-        guard fm.fileExists(atPath: url.path) else { return }
-
-        if debugKeepRejected {
-            // Move to rejected/ subfolder
-            let rejectedDir = outputDirectory.appendingPathComponent("rejected")
-            do {
-                try fm.createDirectory(at: rejectedDir, withIntermediateDirectories: true)
-                let destURL = rejectedDir.appendingPathComponent("\(reason)_\(url.lastPathComponent)")
-                try fm.moveItem(at: url, to: destURL)
-                if verbose { Logger.audio.debug("Moved rejected file to: \(destURL.lastPathComponent, privacy: .public)") }
-            } catch {
-                Logger.audio.warning("Failed to move rejected file: \(error, privacy: .public)")
-                // Fall back to deletion
-                try? fm.removeItem(at: url)
-            }
-        } else {
-            // Delete the file
-            do {
-                try fm.removeItem(at: url)
-                if verbose { Logger.audio.debug("Deleted rejected file: \(url.lastPathComponent, privacy: .public)") }
-            } catch {
-                Logger.audio.warning("Failed to delete rejected file: \(error, privacy: .public)")
-            }
-        }
+        if fm.fileExists(atPath: outputURL.path) { try fm.removeItem(at: outputURL) }
+        try fm.moveItem(at: tempURL, to: outputURL)
+        let complete = inputs.enumerated().compactMap { outcomes[$0.offset].state == "complete" ? $0.element.url : nil }
+        let written = outcomes.filter { $0.framesCopied > 0 }.count
+        Logger.audio.notice("Remixed \(written, privacy: .public) audio sources; \(inputs.count - complete.count, privacy: .public) incomplete")
+        return AudioRemixerResult(tracksWritten: written, tracksSkipped: inputs.count - written, sourceFiles: complete, sources: outcomes)
     }
 
-    /// Retime a sample buffer by adding an offset to its presentation time
     private func retimeBuffer(_ sampleBuffer: CMSampleBuffer, offset: CMTime) -> CMSampleBuffer? {
-        let originalTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        let newTime = CMTimeAdd(originalTime, offset)
-
-        var newSampleBuffer: CMSampleBuffer?
-        var timingInfo = CMSampleTimingInfo(
-            duration: CMSampleBufferGetDuration(sampleBuffer),
-            presentationTimeStamp: newTime,
-            decodeTimeStamp: CMTime.invalid
-        )
-
-        let status = CMSampleBufferCreateCopyWithNewTiming(
-            allocator: kCFAllocatorDefault,
-            sampleBuffer: sampleBuffer,
-            sampleTimingEntryCount: 1,
-            sampleTimingArray: &timingInfo,
-            sampleBufferOut: &newSampleBuffer
-        )
-
-        return status == noErr ? newSampleBuffer : nil
+        var timing = CMSampleTimingInfo()
+        guard CMSampleBufferGetSampleTimingInfo(sampleBuffer, at: 0, timingInfoOut: &timing) == noErr else { return nil }
+        timing.presentationTimeStamp = CMTimeAdd(timing.presentationTimeStamp, offset)
+        if timing.decodeTimeStamp.isNumeric { timing.decodeTimeStamp = CMTimeAdd(timing.decodeTimeStamp, offset) }
+        var result: CMSampleBuffer?
+        let status = CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault, sampleBuffer: sampleBuffer,
+            sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleBufferOut: &result)
+        return status == noErr ? result : nil
     }
 }
 

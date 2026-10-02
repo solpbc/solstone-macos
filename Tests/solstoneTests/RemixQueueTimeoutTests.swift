@@ -20,12 +20,12 @@ struct RemixQueueTimeoutTests {
         if !orphan { #expect(inputs.count == 1) }
         let outcome = LockedValue<SegmentReconciliation>()
         let remixer = FakeRemixer(.success)
-        let queue = RemixQueue { _, _ in remixer }
+        let queue = RemixQueue { _ in remixer }
         await queue.setOnSegmentComplete { _, reconciliation in outcome.set(reconciliation) }
         await queue.enqueue(RemixQueue.RemixJob(
             segmentDirectory: dir, timePrefix: "120000",
             capturedDurationSeconds: orphan ? nil : 2, audioInputs: inputs,
-            debugKeepRejected: false, silenceMusic: true, micMetadataJSON: nil
+            silenceMusic: true, micMetadataJSON: nil
         ))
         await queue.waitForCompletion()
         let result = try #require(outcome.current)
@@ -57,7 +57,7 @@ struct RemixQueueTimeoutTests {
         let gate = RemixGate()
         let fakeRemixer = FakeRemixer(.gatedSuccess(gate))
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, _ in
             completionCount.increment()
         }
@@ -94,7 +94,7 @@ struct RemixQueueTimeoutTests {
         let behaviors = LockedArray<FakeRemixer.Behavior>([.hang, .success])
         let completionCount = LockedCounter()
         let outcomes = LockedArray<SegmentReconciliation>([])
-        let queue = RemixQueue(remixTimeoutSeconds: 0.25) { _, _ in
+        let queue = RemixQueue(remixTimeoutSeconds: 0.25) { _ in
             FakeRemixer(behaviors.removeFirst(default: .success))
         }
         await queue.setOnSegmentComplete { _, reconciliation in
@@ -128,7 +128,7 @@ struct RemixQueueTimeoutTests {
 
         let completionCount = LockedCounter()
         let completedOutcome = LockedValue<SegmentReconciliation>()
-        let queue = RemixQueue { _, _ in
+        let queue = RemixQueue { _ in
             FakeRemixer(.throwing(SyntheticRemixError()))
         }
         await queue.setOnSegmentComplete { _, reconciliation in
@@ -165,7 +165,7 @@ struct RemixQueueTimeoutTests {
 
         let completionCount = LockedCounter()
         let completedURL = LockedValue<URL>()
-        let queue = RemixQueue { _, _ in
+        let queue = RemixQueue { _ in
             FakeRemixer(.throwing(AudioRemixerError.noTracksToWrite))
         }
         await queue.setOnSegmentComplete { url, _ in
@@ -196,7 +196,7 @@ struct RemixQueueTimeoutTests {
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
         let completedOutcome = LockedValue<SegmentReconciliation>()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, reconciliation in
             completedOutcome.set(reconciliation)
             completionCount.increment()
@@ -228,7 +228,7 @@ struct RemixQueueTimeoutTests {
 
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, _ in
             completionCount.increment()
         }
@@ -255,7 +255,7 @@ struct RemixQueueTimeoutTests {
 
         let fakeRemixer = FakeRemixer(.throwing(AudioRemixerError.noTracksToWrite))
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, _ in
             completionCount.increment()
         }
@@ -286,7 +286,7 @@ struct RemixQueueTimeoutTests {
         let completionCount = LockedCounter()
         let completedURL = LockedValue<URL>()
         let completedOutcome = LockedValue<SegmentReconciliation>()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { url, reconciliation in
             completedURL.set(url)
             completedOutcome.set(reconciliation)
@@ -325,7 +325,7 @@ struct RemixQueueTimeoutTests {
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
         let completedOutcome = LockedValue<SegmentReconciliation>()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, reconciliation in
             completedOutcome.set(reconciliation)
             completionCount.increment()
@@ -360,7 +360,7 @@ struct RemixQueueTimeoutTests {
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
         let completedOutcome = LockedValue<SegmentReconciliation>()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, reconciliation in
             completedOutcome.set(reconciliation)
             completionCount.increment()
@@ -403,7 +403,7 @@ struct RemixQueueTimeoutTests {
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
         let completedOutcome = LockedValue<SegmentReconciliation>()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, reconciliation in
             completedOutcome.set(reconciliation)
             completionCount.increment()
@@ -429,7 +429,7 @@ struct RemixQueueTimeoutTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let dir = try makeDir(root: root, name: "120000.incomplete")
-        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+        let queue = RemixQueue { _ in FakeRemixer(.success) }
 
         await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000", capturedDurationSeconds: 7))
         await queue.waitForCompletion()
@@ -442,7 +442,7 @@ struct RemixQueueTimeoutTests {
         defer { try? FileManager.default.removeItem(at: root) }
 
         let dir = try makeDir(root: root, name: "120000.incomplete")
-        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+        let queue = RemixQueue { _ in FakeRemixer(.success) }
 
         await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000", capturedDurationSeconds: 999))
         await queue.waitForCompletion()
@@ -456,7 +456,7 @@ struct RemixQueueTimeoutTests {
 
         let dir = try makeDir(root: root, name: "120000.incomplete")
         try await makeTinyValidMP4(at: dir.appendingPathComponent("120000_display_42_screen.mp4"), seconds: 0.2)
-        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+        let queue = RemixQueue { _ in FakeRemixer(.success) }
 
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
@@ -476,7 +476,7 @@ struct RemixQueueTimeoutTests {
                 try await Task.sleep(for: .seconds(60))
                 return CMTime(seconds: 1, preferredTimescale: 600)
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
 
@@ -493,7 +493,7 @@ struct RemixQueueTimeoutTests {
 
         let dir = try makeDir(root: root, name: "120000.incomplete")
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+        let queue = RemixQueue { _ in FakeRemixer(.success) }
         await queue.setOnSegmentComplete { _, _ in
             completionCount.increment()
         }
@@ -519,7 +519,7 @@ struct RemixQueueTimeoutTests {
         let completionCount = LockedCounter()
         let queue = RemixQueue(
             durationLoader: { _ in throw SyntheticRemixError() }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
         await queue.setOnSegmentComplete { _, _ in
@@ -549,7 +549,7 @@ struct RemixQueueTimeoutTests {
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
         let completedOutcome = LockedValue<SegmentReconciliation>()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, reconciliation in
             completedOutcome.set(reconciliation)
             completionCount.increment()
@@ -594,7 +594,7 @@ struct RemixQueueTimeoutTests {
 
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, _ in
             completionCount.increment()
         }
@@ -625,7 +625,7 @@ struct RemixQueueTimeoutTests {
 
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, _ in
             completionCount.increment()
         }
@@ -662,7 +662,7 @@ struct RemixQueueTimeoutTests {
 
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, _ in
             completionCount.increment()
         }
@@ -698,7 +698,7 @@ struct RemixQueueTimeoutTests {
         )
 
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _, _ in FakeRemixer(.success) }
+        let queue = RemixQueue { _ in FakeRemixer(.success) }
         await queue.setOnSegmentComplete { _, _ in
             completionCount.increment()
         }
@@ -734,7 +734,7 @@ struct RemixQueueTimeoutTests {
                     throw SyntheticRemixError()
                 }
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
         await queue.setOnSegmentComplete { _, reconciliation in
@@ -774,7 +774,7 @@ struct RemixQueueTimeoutTests {
                     throw SyntheticRemixError()
                 }
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
         await queue.setOnSegmentComplete { _, reconciliation in
@@ -819,7 +819,7 @@ struct RemixQueueTimeoutTests {
                     throw SyntheticRemixError()
                 }
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
 
@@ -841,7 +841,7 @@ struct RemixQueueTimeoutTests {
         let completionCount = LockedCounter()
         let queue = RemixQueue(
             durationLoader: { _ in throw SyntheticRemixError() }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
         await queue.setOnSegmentComplete { _, _ in
@@ -884,7 +884,7 @@ struct RemixQueueTimeoutTests {
                     throw SyntheticRemixError()
                 }
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
 
@@ -916,7 +916,7 @@ struct RemixQueueTimeoutTests {
                 try await Task.sleep(for: .seconds(60))
                 return CMTime(seconds: 1, preferredTimescale: 600)
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
 
@@ -952,7 +952,7 @@ struct RemixQueueTimeoutTests {
                     throw SyntheticRemixError()
                 }
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
 
@@ -991,7 +991,7 @@ struct RemixQueueTimeoutTests {
                     throw SyntheticRemixError()
                 }
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
 
@@ -1028,7 +1028,7 @@ struct RemixQueueTimeoutTests {
                     throw SyntheticRemixError()
                 }
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
 
@@ -1054,7 +1054,7 @@ struct RemixQueueTimeoutTests {
                 try await Task.sleep(for: .seconds(60))
                 return CMTime(seconds: 1, preferredTimescale: 600)
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
 
@@ -1085,7 +1085,7 @@ struct RemixQueueTimeoutTests {
         let completedOutcome = LockedValue<SegmentReconciliation>()
         let queue = RemixQueue(
             durationLoader: { _ in CMTime.invalid }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
         await queue.setOnSegmentComplete { _, reconciliation in
@@ -1118,7 +1118,7 @@ struct RemixQueueTimeoutTests {
         let fakeRemixer = FakeRemixer(.success)
         let completionCount = LockedCounter()
         let completedOutcome = LockedValue<SegmentReconciliation>()
-        let queue = RemixQueue { _, _ in fakeRemixer }
+        let queue = RemixQueue { _ in fakeRemixer }
         await queue.setOnSegmentComplete { _, reconciliation in
             completedOutcome.set(reconciliation)
             completionCount.increment()
@@ -1163,7 +1163,6 @@ struct RemixQueueTimeoutTests {
                     )
                 )
             ],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: nil
         )
@@ -1179,7 +1178,6 @@ struct RemixQueueTimeoutTests {
             timePrefix: timePrefix,
             capturedDurationSeconds: capturedDurationSeconds,
             audioInputs: [],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: nil
         )
@@ -1191,7 +1189,6 @@ struct RemixQueueTimeoutTests {
             timePrefix: timePrefix,
             capturedDurationSeconds: nil,
             audioInputs: [],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: nil
         )
@@ -1242,7 +1239,7 @@ struct RemixQueueTimeoutTests {
 
         let micsJSON = "{\"mics\":[{\"device_name\":\"BuiltInMic\",\"device_uid\":\"second\",\"sample_rate\":48000,\"transport_type\":\"builtin\"}]}"
         let recordingRemixer = RecordingRemixer()
-        let queue = RemixQueue { _, _ in recordingRemixer }
+        let queue = RemixQueue { _ in recordingRemixer }
         let outcome = LockedValue<SegmentReconciliation>()
         await queue.setOnSegmentComplete { _, reconciliation in
             outcome.set(reconciliation)
@@ -1256,7 +1253,6 @@ struct RemixQueueTimeoutTests {
                 makeInput(url: first, sourceID: "first"),
                 makeInput(url: second, sourceID: "second"),
             ],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: micsJSON
         )
@@ -1314,7 +1310,7 @@ struct RemixQueueTimeoutTests {
         try corruptM4A(at: second)
 
         let recordingRemixer = RecordingRemixer()
-        let queue = RemixQueue { _, _ in recordingRemixer }
+        let queue = RemixQueue { _ in recordingRemixer }
         let outcome = LockedValue<SegmentReconciliation>()
         await queue.setOnSegmentComplete { _, reconciliation in
             outcome.set(reconciliation)
@@ -1328,7 +1324,6 @@ struct RemixQueueTimeoutTests {
                 makeInput(url: first, sourceID: "first"),
                 makeInput(url: second, sourceID: "second"),
             ],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: nil
         )
@@ -1354,7 +1349,7 @@ struct RemixQueueTimeoutTests {
         #expect(Set(loss["source_ids"] as? [String] ?? []) == Set(["first", "second"]))
     }
 
-    @Test func liveTruncatedInputsWithMalformedMicsWritesValidLossMetadata() async throws {
+    @Test func malformedMetadataPreservesSegmentInsteadOfAuthorizingCleanup() async throws {
         let root = try makeTempDirectory("remix-live-truncated-bad-mics")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1366,7 +1361,7 @@ struct RemixQueueTimeoutTests {
         try corruptM4A(at: first)
 
         let recordingRemixer = RecordingRemixer()
-        let queue = RemixQueue { _, _ in recordingRemixer }
+        let queue = RemixQueue { _ in recordingRemixer }
         let outcome = LockedValue<SegmentReconciliation>()
         await queue.setOnSegmentComplete { _, reconciliation in
             outcome.set(reconciliation)
@@ -1377,7 +1372,6 @@ struct RemixQueueTimeoutTests {
             timePrefix: "120000",
             capturedDurationSeconds: 1,
             audioInputs: [makeInput(url: first, sourceID: "first")],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: "{ not valid json"
         )
@@ -1386,20 +1380,12 @@ struct RemixQueueTimeoutTests {
         await queue.waitForCompletion()
 
         let reconciliation = try #require(outcome.current)
-        guard case .audioLoss(let count) = reconciliation else {
-            Issue.record("expected .audioLoss, got: \(reconciliation)")
-            return
-        }
-        #expect(count == 1)
+        guard case .failed = reconciliation else { Issue.record("expected preserved metadata failure"); return }
+        let failed = root.appendingPathComponent("120000.failed")
+        #expect(FileManager.default.fileExists(atPath: failed.path))
+        #expect(FileManager.default.fileExists(atPath: failed.appendingPathComponent(first.lastPathComponent).path))
+        #expect(try finalizedSegmentDirectory(in: root, timePrefix: "120000") == nil)
 
-        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
-        let metaURL = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_meta.json")
-        #expect(FileManager.default.fileExists(atPath: metaURL.path))
-        let metaData = try Data(contentsOf: metaURL)
-        let meta = try #require(try JSONSerialization.jsonObject(with: metaData) as? [String: Any])
-        let loss = try #require(meta["unreadable_audio_sources"] as? [String: Any])
-        #expect(loss["count"] as? Int == 1)
-        #expect(loss["source_ids"] as? [String] == ["first"])
     }
 
     @Test func bothLiveAndReconstructionUnreadableSourcesReachNamedDisposition() async throws {
@@ -1414,7 +1400,7 @@ struct RemixQueueTimeoutTests {
         try corruptM4A(at: liveAudio)
 
         let liveRemixer = RecordingRemixer()
-        let liveQueue = RemixQueue { _, _ in liveRemixer }
+        let liveQueue = RemixQueue { _ in liveRemixer }
         let liveOutcome = LockedValue<SegmentReconciliation>()
         await liveQueue.setOnSegmentComplete { _, reconciliation in
             liveOutcome.set(reconciliation)
@@ -1425,7 +1411,6 @@ struct RemixQueueTimeoutTests {
             timePrefix: "120000",
             capturedDurationSeconds: 1,
             audioInputs: [makeInput(url: liveAudio, sourceID: "system")],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: nil
         ))
@@ -1452,14 +1437,14 @@ struct RemixQueueTimeoutTests {
 
         let reconFiles = try FileManager.default.contentsOfDirectory(at: reconDir, includingPropertiesForKeys: nil)
         let readiness = await classifyAudioSources(in: reconFiles, timePrefix: "120500", verbose: false)
-        guard case .ready(let reconInputs) = readiness else {
+        guard case .ready(let reconInputs, _) = readiness else {
             Issue.record("classifyAudioSources must return .ready for video-only container named audio.m4a, got: \(readiness)")
             return
         }
         #expect(reconInputs.count == 1)
 
         let reconRemixer = RecordingRemixer()
-        let reconQueue = RemixQueue { _, _ in reconRemixer }
+        let reconQueue = RemixQueue { _ in reconRemixer }
         let reconOutcome = LockedValue<SegmentReconciliation>()
         await reconQueue.setOnSegmentComplete { _, reconciliation in
             reconOutcome.set(reconciliation)
@@ -1470,7 +1455,6 @@ struct RemixQueueTimeoutTests {
             timePrefix: "120500",
             capturedDurationSeconds: nil,
             audioInputs: [],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: nil
         ))
@@ -1493,7 +1477,7 @@ struct RemixQueueTimeoutTests {
         #expect(reconLoss["source_ids"] as? [String] == ["system"])
     }
 
-    @Test func mixedTruncatedAndSilentInputsThrowsUnreadableSourcesAndFinalizes() async throws {
+    @Test func mixedTruncatedAndSilentInputsPreserveReadableAudioWithLossMetadata() async throws {
         let root = try makeTempDirectory("remix-mixed-truncated-silent")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1507,7 +1491,7 @@ struct RemixQueueTimeoutTests {
         try await makeTinyValidM4A(at: silentAudio, seconds: 1.2)
 
         let recordingRemixer = RecordingRemixer()
-        let queue = RemixQueue { _, _ in recordingRemixer }
+        let queue = RemixQueue { _ in recordingRemixer }
         let outcome = LockedValue<SegmentReconciliation>()
         await queue.setOnSegmentComplete { _, reconciliation in
             outcome.set(reconciliation)
@@ -1521,7 +1505,6 @@ struct RemixQueueTimeoutTests {
                 makeInput(url: badAudio, sourceID: "bad-source"),
                 makeInput(url: silentAudio, sourceID: "silent-source"),
             ],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: nil
         )
@@ -1529,19 +1512,7 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(job)
         await queue.waitForCompletion()
 
-        let thrown = recordingRemixer.thrown
-        guard let remixerError = thrown as? AudioRemixerError else {
-            Issue.record("expected AudioRemixerError, got: \(String(describing: thrown))")
-            return
-        }
-        if case .noTracksToWrite = remixerError {
-            Issue.record("mixed truncated+silent must not throw noTracksToWrite")
-        }
-        guard case .unreadableSources(let sourceIDs) = remixerError else {
-            Issue.record("expected unreadableSources, got: \(remixerError)")
-            return
-        }
-        #expect(sourceIDs == ["bad-source"])
+        #expect(recordingRemixer.thrown == nil)
 
         let reconciliation = try #require(outcome.current)
         guard case .audioLoss(let count) = reconciliation else {
@@ -1560,7 +1531,7 @@ struct RemixQueueTimeoutTests {
         #expect(loss["source_ids"] as? [String] == ["bad-source"])
     }
 
-    @Test func systemAudioAnalyzerReportsNoSpeechOnSilentFixture() async throws {
+    @Test func systemAudioAnalyzerPreservesSilentFixture() async throws {
         let root = try makeTempDirectory("analyzer-silent-fixture")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1568,10 +1539,10 @@ struct RemixQueueTimeoutTests {
         try await makeTinyValidM4A(at: silentAudio, seconds: 1.2)
 
         let result = await SystemAudioAnalyzer.shared.analyze(url: silentAudio)
-        #expect(!result.hasSpeech, "SystemAudioAnalyzer must report hasSpeech == false on silent fixture")
+        #expect(result.silenceRanges.isEmpty)
     }
 
-    @Test func realRemixerWithSilentSourcesThrowsNoTracksToWriteAndFinalizesWithoutLossMeta() async throws {
+    @Test func realRemixerPreservesSilentSourcesAndRecordsCompleteCopies() async throws {
         let root = try makeTempDirectory("remix-real-silent-sources")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1585,7 +1556,7 @@ struct RemixQueueTimeoutTests {
         try await makeTinyValidM4A(at: silentSecond, seconds: 1.2)
 
         let recordingRemixer = RecordingRemixer()
-        let queue = RemixQueue { _, _ in recordingRemixer }
+        let queue = RemixQueue { _ in recordingRemixer }
         let outcome = LockedValue<SegmentReconciliation>()
         await queue.setOnSegmentComplete { _, reconciliation in
             outcome.set(reconciliation)
@@ -1599,7 +1570,6 @@ struct RemixQueueTimeoutTests {
                 makeInput(url: silentFirst, sourceID: "first"),
                 makeInput(url: silentSecond, sourceID: "second"),
             ],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: nil
         )
@@ -1607,15 +1577,7 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(job)
         await queue.waitForCompletion()
 
-        let thrown = recordingRemixer.thrown
-        guard let remixerError = thrown as? AudioRemixerError else {
-            Issue.record("expected AudioRemixerError, got: \(String(describing: thrown))")
-            return
-        }
-        guard case .noTracksToWrite = remixerError else {
-            Issue.record("expected noTracksToWrite for purely silent inputs, got: \(remixerError)")
-            return
-        }
+        #expect(recordingRemixer.thrown == nil)
 
         let reconciliation = try #require(outcome.current)
         guard case .normal = reconciliation else {
@@ -1625,7 +1587,13 @@ struct RemixQueueTimeoutTests {
 
         let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
         let metaURL = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_meta.json")
-        #expect(!FileManager.default.fileExists(atPath: metaURL.path))
+        let meta = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: metaURL)) as? [String: Any])
+        #expect(meta["unreadable_audio_sources"] == nil)
+        let capture = try #require(meta["audio_capture"] as? [String: Any])
+        let sources = try #require(capture["remix"] as? [[String: Any]])
+        #expect(sources.count == 2)
+        #expect(sources.allSatisfy { $0["state"] as? String == "complete" })
+        #expect(FileManager.default.fileExists(atPath: finalDir.appendingPathComponent("120000_1_audio.m4a").path))
     }
 
     @MainActor
@@ -1655,7 +1623,7 @@ struct RemixQueueTimeoutTests {
                     throw SyntheticRemixError()
                 }
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
 
@@ -1690,7 +1658,7 @@ struct RemixQueueTimeoutTests {
                     throw SyntheticRemixError()
                 }
             }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
         await queue.setOnSegmentComplete { _, _ in
@@ -1717,7 +1685,7 @@ struct RemixQueueTimeoutTests {
         let completionCount = LockedCounter()
         let queue = RemixQueue(
             durationLoader: { _ in throw SyntheticRemixError() }
-        ) { _, _ in
+        ) { _ in
             FakeRemixer(.success)
         }
         await queue.setOnSegmentComplete { _, _ in
@@ -1739,8 +1707,8 @@ final class RecordingRemixer: AudioRemixing, @unchecked Sendable {
     private let lock = NSLock()
     private var _thrown: (any Error)?
 
-    init(verbose: Bool = false, debugKeepRejected: Bool = false) {
-        self.inner = AudioRemixer(verbose: verbose, debugKeepRejected: debugKeepRejected)
+    init(verbose: Bool = false) {
+        self.inner = AudioRemixer(verbose: verbose)
     }
 
     var thrown: (any Error)? {
@@ -1750,14 +1718,12 @@ final class RecordingRemixer: AudioRemixing, @unchecked Sendable {
     func remix(
         inputs: [AudioRemixerInput],
         to outputURL: URL,
-        deleteSourceFiles: Bool,
         silenceMusic: Bool
     ) async throws -> AudioRemixerResult {
         do {
             return try await inner.remix(
                 inputs: inputs,
                 to: outputURL,
-                deleteSourceFiles: deleteSourceFiles,
                 silenceMusic: silenceMusic
             )
         } catch {

@@ -63,7 +63,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 - **AudioDeviceMonitor.swift** - Monitors audio device additions/removals
 - **VideoWriter** - H.264 hardware encoding to .mp4
 - **SingleTrackAudioWriter** - Single-source M4A recording with timing metadata
-- **AudioRemixer** - Combines individual M4A files into multi-track output, dropping tracks with no speech
+- **AudioRemixer** - Combines readable M4A sources into multi-track output; the finalizer disposes fully copied sources after saving their outcomes
 - **SystemAudioStreamOutput** - SCStreamOutput routing system audio to SingleTrackAudioWriter
 - **ExternalMicCapture** - AVAudioEngine capture for all microphones
 - **MicrophoneMonitor** - CoreAudio device enumeration
