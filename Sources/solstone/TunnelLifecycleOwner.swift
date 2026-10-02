@@ -1541,7 +1541,7 @@ final class TunnelLifecycleOwner {
     private func handlePathStatus(_ status: NetworkPathStatus) {
         let previous = currentPathSignature
         currentPathSignature = status.signature
-        guard case .connected = state,
+        guard case .connected(let localPort, _) = state,
               status.isSatisfied,
               let previous,
               previous.bucket != status.bucket
@@ -1549,8 +1549,19 @@ final class TunnelLifecycleOwner {
             return
         }
 
+        // An interface change does not mean this carrier died; a VPN coming up
+        // or a second interface joining changes the bucket too. Ask the journal
+        // over the carrier first, and redial only when it does not answer.
+        let incarnation = transportIncarnation
         Task { @MainActor [weak self] in
-            await self?.transport?.requestReconnect()
+            guard let self else { return }
+            let answered = await self.probe(localPort, Self.probeTimeout)
+            guard self.running, self.transportIncarnation == incarnation,
+                  case .connected(let port, _) = self.state, port == localPort else { return }
+            splOwnerLog.notice("path change probe ok=\(answered, privacy: .public) reconnect=\(!answered, privacy: .public)")
+            guard !answered else { return }
+            self.health = .degraded
+            await self.transport?.requestReconnect()
         }
     }
 

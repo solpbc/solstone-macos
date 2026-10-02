@@ -1238,10 +1238,38 @@ struct TunnelLifecycleOwnerTests {
         #expect(exhaustedTransport.disconnectCount >= 1)
     }
 
+    @Test func pathBucketChangeKeepsACarrierThatStillAnswers() async throws {
+        let pathSource = FakePathMonitoringSource()
+        let transport = FakeTunnelTransport()
+        let probes = ProbeCounter()
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            pathSource: pathSource,
+            probe: { _, _ in await probes.record(); return true }
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 8080, via: .relay) }
+        let wifiStatus = NetworkPathStatus(bucket: .wifi, isSatisfied: true, isExpensive: false, isConstrained: false)
+        pathSource.emit(wifiStatus)
+        try await waitUntil { currentPathSignature(of: owner) == wifiStatus.signature }
+        #expect(await probes.count == 0)
+        pathSource.emit(NetworkPathStatus(bucket: .other, isSatisfied: true, isExpensive: false, isConstrained: false))
+        try await waitUntil(timeout: .seconds(5)) { await probes.count >= 1 }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(transport.requestReconnectCount == 0)
+        #expect(owner.state == .connected(localPort: 8080, via: .relay))
+        await owner.stop()
+    }
+
     @Test func pathBucketChangeWhileConnectedRequestsReconnectOnceAndDuplicatesAreIgnored() async throws {
         let pathSource = FakePathMonitoringSource()
         let transport = FakeTunnelTransport()
-        let owner = makeOwner(factory: FakeTransportFactory([transport]), pathSource: pathSource)
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            pathSource: pathSource,
+            probe: { _, _ in false }
+        )
 
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: 8080, via: .relay) }
@@ -1279,7 +1307,11 @@ struct TunnelLifecycleOwnerTests {
             clientInfo: SPLClientInfo(userAgent: "solstone-macos/test"),
             makeSession: { _, _, _ in supervisor }
         )
-        let owner = makeOwner(factory: FakeTransportFactory([transport]), pathSource: pathSource)
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            pathSource: pathSource,
+            probe: { _, _ in false }
+        )
         let wifiStatus = NetworkPathStatus(bucket: .wifi, isSatisfied: true, isExpensive: false, isConstrained: false)
         let wiredStatus = NetworkPathStatus(bucket: .wired, isSatisfied: true, isExpensive: false, isConstrained: false)
 
@@ -2791,4 +2823,9 @@ private final class TunnelConnectedEdgeObserver {
         }
         return false
     }
+}
+
+private actor ProbeCounter {
+    private(set) var count = 0
+    func record() { count += 1 }
 }
