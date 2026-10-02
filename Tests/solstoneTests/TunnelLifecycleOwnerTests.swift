@@ -1256,7 +1256,7 @@ struct TunnelLifecycleOwnerTests {
         #expect(await probes.count == 0)
         pathSource.emit(NetworkPathStatus(bucket: .other, isSatisfied: true, isExpensive: false, isConstrained: false))
         try await waitUntil(timeout: .seconds(5)) { await probes.count >= 1 }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitUntil { transport.requestUpgradeCount == 1 }
         #expect(transport.requestReconnectCount == 0)
         #expect(owner.state == .connected(localPort: 8080, via: .relay))
         await owner.stop()

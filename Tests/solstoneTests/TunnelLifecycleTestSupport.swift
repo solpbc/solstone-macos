@@ -372,6 +372,12 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
             _ = try? await connect(endpoints: lastEndpoints)
         }
     }
+
+    private(set) var requestUpgradeCount = 0
+
+    func requestUpgrade() async {
+        requestUpgradeCount += 1
+    }
 }
 
 final class SessionRecorder: @unchecked Sendable {
@@ -601,6 +607,12 @@ final class FakeTunnelTransport: TunnelTransporting {
 
     func requestReconnect() async {
         requestReconnectCount += 1
+    }
+
+    private(set) var requestUpgradeCount = 0
+
+    func requestUpgrade() async {
+        requestUpgradeCount += 1
     }
 
     func inboundActivitySnapshot() async -> UInt64 {
@@ -841,6 +853,10 @@ extension FakeTunnelReconnectingSession: TunnelGeneration {
 
     func connectedEndpoint() async -> TransportEndpoint? {
         recordedEndpoints.last?.first
+    }
+
+    func isTransferring(quiet _: Duration, pendingLimit _: Duration) async -> Bool {
+        false
     }
 }
 

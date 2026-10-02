@@ -38,6 +38,7 @@ private final class RetriesUntilDisconnectedTransport: TunnelTransporting {
     }
 
     func requestReconnect() async {}
+    func requestUpgrade() async {}
     func inboundActivitySnapshot() async -> UInt64 { 0 }
 }
 

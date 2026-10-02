@@ -1559,7 +1559,11 @@ final class TunnelLifecycleOwner {
             guard self.running, self.transportIncarnation == incarnation,
                   case .connected(let port, _) = self.state, port == localPort else { return }
             splOwnerLog.notice("path change probe ok=\(answered, privacy: .public) reconnect=\(!answered, privacy: .public)")
-            guard !answered else { return }
+            guard !answered else {
+                // The carrier works; a new interface may still offer a better path.
+                await self.transport?.requestUpgrade()
+                return
+            }
             self.health = .degraded
             await self.transport?.requestReconnect()
         }

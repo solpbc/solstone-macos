@@ -38,6 +38,8 @@ protocol TunnelTransporting: AnyObject, Sendable {
     ) async throws -> TunnelTransportConnection
     func disconnect() async
     func requestReconnect() async
+    /// Try the pairing's better paths without disturbing the working carrier.
+    func requestUpgrade() async
     func inboundActivitySnapshot() async -> UInt64
 }
 
@@ -52,6 +54,7 @@ extension TunnelTransporting {
 
 protocol TunnelReconnecting: TunnelSessioning, MuxStreamOpening {
     func requestReconnect() async
+    func requestUpgrade() async
     func attemptStateUpdates() async -> AsyncStream<TunnelSupervisorAttemptState>
 }
 
@@ -112,8 +115,13 @@ final class SPLTunnelTransport: TunnelTransporting {
     /// While a request is waiting on the journal the library still allows up to
     /// 30 s. The relay path is watched too, because a relay tunnel can end
     /// without the close ever reaching this side.
+    ///
+    /// A carrier on a worse path than the pairing offers (the relay, or a VPN
+    /// address when the LAN address answers again) moves back to the better
+    /// path once it connects, without cutting requests in flight.
     static let sessionPolicy = SessionPolicy(
-        keepalive: KeepalivePolicy(interval: .seconds(2), missedLimit: 5, runsOnRelayPath: true)
+        keepalive: KeepalivePolicy(interval: .seconds(2), missedLimit: 5, runsOnRelayPath: true),
+        returnsToBetterPath: true
     )
 
     private let clientInfo: SPLClientInfo
@@ -218,6 +226,10 @@ final class SPLTunnelTransport: TunnelTransporting {
 
     func requestReconnect() async {
         await session?.requestReconnect()
+    }
+
+    func requestUpgrade() async {
+        await session?.requestUpgrade()
     }
 
     func inboundActivitySnapshot() async -> UInt64 {
