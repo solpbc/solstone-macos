@@ -135,6 +135,11 @@ public final class AppState {
     private let isSnapshot: Bool
     private let automaticObservationPipelineEnabled: Bool
     public private(set) var config: AppConfig
+    /// The private-window Accessibility option's progress in this run of the app: whether the owner
+    /// turned it on (which asks macOS), and whether a read has worked since. Kept here, not in the
+    /// Settings view, so closing Settings while macOS asks still reads "waiting" when it reopens.
+    @ObservationIgnored var privateWindowAccessibilityAskedThisSession = false
+    @ObservationIgnored var privateWindowAccessibilityHasWorkedSinceAsking = false
     private var debugAudioHolder: DebugSettingHolder!
     private var silenceMusicHolder: DebugSettingHolder!
     private var didAttemptSameMachineMigration = false

@@ -188,8 +188,6 @@ struct SettingsView: View {
     @State private var newTitlePattern = ""
     @State private var newExcludedApp = ""
     @State private var privateWindowAccessibilityState: PrivateWindowAccessibilityState = .off
-    @State private var privateWindowAccessibilityAskedThisSession = false
-    @State private var privateWindowAccessibilityHasWorked = false
 
     // Service tab state
     @State private var observerURL = ""
@@ -3067,14 +3065,14 @@ struct SettingsView: View {
         let reader = AccessibilityTitleReader()
         while !Task.isCancelled {
             let works = await Task.detached { reader.health() == .working }.value
-            if works { privateWindowAccessibilityHasWorked = true }
+            if works { appState.privateWindowAccessibilityHasWorkedSinceAsking = true }
             let next = PrivateWindowAccessibilityState.after(
                 readWorks: works,
-                askedThisSession: privateWindowAccessibilityAskedThisSession,
-                hasWorkedSinceAsking: privateWindowAccessibilityHasWorked
+                askedThisSession: appState.privateWindowAccessibilityAskedThisSession,
+                hasWorkedSinceAsking: appState.privateWindowAccessibilityHasWorkedSinceAsking
             )
             if next != privateWindowAccessibilityState {
-                if privateWindowAccessibilityState != .off || privateWindowAccessibilityAskedThisSession {
+                if privateWindowAccessibilityState != .off || appState.privateWindowAccessibilityAskedThisSession {
                     switch next {
                     case .working: diagnosticAnnouncement("private windows in Safari, Chrome, Edge and Brave are kept out of your journal")
                     case .notWorking: diagnosticAnnouncement("checking Safari, Chrome, Edge and Brave is not working, so their private windows reach your journal")
@@ -3096,8 +3094,8 @@ struct SettingsView: View {
                 appState.updateConfig(config)
                 // The only place solstone ever asks for Accessibility access: the owner turning this on.
                 if newValue {
-                    privateWindowAccessibilityAskedThisSession = true
-                    privateWindowAccessibilityHasWorked = false
+                    appState.privateWindowAccessibilityAskedThisSession = true
+                    appState.privateWindowAccessibilityHasWorkedSinceAsking = false
                     AccessibilityTitleReader.ask()
                 }
             }
