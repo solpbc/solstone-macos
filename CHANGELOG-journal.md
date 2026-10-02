@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.29 (build 67)] - 2026-10-02
+
+### Changed
+- updated the bundled journal to [2.0.29](https://solstone.app/releases#v2.0.29) →
+
 ### Fixed
 - with VoiceOver on, the journal app no longer reads out hidden labels meant for automated testing between the real controls.
 - when your journal stops unexpectedly several times within a minute, or not all of its processes can be confirmed closed, the home and run state pages now say so, above the start button.
