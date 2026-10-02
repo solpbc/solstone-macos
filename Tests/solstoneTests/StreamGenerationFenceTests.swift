@@ -138,10 +138,9 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
 
     @Test func stopBumpHappensBeforeFirstAwait() async throws {
         let restartStopGate = OneShotContinuationGate()
-        let stopGate = OneShotContinuationGate()
         let hookGate = OneShotContinuationGate()
         let hookCount = LockedCounter()
-        let oldStream = FakeCaptureStream(stopGates: [restartStopGate, stopGate])
+        let oldStream = FakeCaptureStream(stopGates: [restartStopGate])
         let factory = FakeCaptureStreamFactory([oldStream, FakeCaptureStream()])
         let manager = SystemAudioCaptureManager(streamFactory: factory.factory)
         try await manager.start(filter: SCContentFilter())
@@ -155,10 +154,10 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
         }
         await oldStream.stopCount.waitUntilCount(1)
 
-        let stopTask = Task { @MainActor in
-            await manager.stop()
-        }
-        await oldStream.stopCount.waitUntilCount(2)
+        let generationBeforeStop = manager._streamGenerationForTesting
+        await manager.stop()
+        #expect(manager._streamGenerationForTesting == generationBeforeStop + 1)
+        #expect(oldStream.stopCount.count == 1)
 
         restartStopGate.release()
         try await waitUntil(timeout: .seconds(2)) {
@@ -171,10 +170,8 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
         #expect(manager._restartDecisionTraceForTesting.contains(suppressedTrace))
         #expect(hookCount.count == 0)
 
-        stopGate.release()
         hookGate.release()
         await restartTask.value
-        await stopTask.value
     }
 
     @Test func systemAudioStopTimeoutDropsRefsAndAdmitsFollowup() async throws {

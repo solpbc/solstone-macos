@@ -13,7 +13,8 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Active source writer (capture is managed by MicrophoneCaptureManager for mics)
     private struct SourceWriter {
         let writer: SingleTrackAudioWriter
-        var finished: Bool = false
+        var attached: Bool = true
+        var legacyCapture: ExternalMicCapture?
     }
 
     private var sourceWriters: [String: SourceWriter] = [:]  // keyed by source ID
@@ -31,11 +32,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Microphone gain for legacy path (when captureManager is nil)
     private let gain: Float
 
-    /// Completed track inputs for remix (populated during finishAll)
-    private var completedInputs: [AudioRemixerInput] = []
-
-    /// In-flight mid-segment mic-removal finish tasks, awaited by finishAll before snapshot
-    private var pendingRemovalTasks: [Task<Void, Never>] = []
+    private var isFinishing = false
 
     /// Initialize with shared capture manager (preferred - keeps mics running across segments)
     public init(
@@ -80,6 +77,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     public func startSystemAudio() throws -> String {
         lock.lock()
         defer { lock.unlock() }
+        guard !isFinishing else { throw SegmentWriter.SegmentError.segmentFinishing }
 
         let sourceID = AudioTrackType.systemSourceID
 
@@ -106,7 +104,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Append system audio sample buffer
     public func appendSystemAudio(_ sampleBuffer: CMSampleBuffer) {
         lock.lock()
-        guard let source = sourceWriters[AudioTrackType.systemSourceID], !source.finished else {
+        guard let source = sourceWriters[AudioTrackType.systemSourceID], !isFinishing else {
             lock.unlock()
             return
         }
@@ -121,20 +119,20 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// - Returns: The source ID (device UID)
     public func addMicrophone(_ device: AudioInputDevice) throws -> String {
         lock.lock()
+        defer { lock.unlock() }
+        guard !isFinishing else { throw SegmentWriter.SegmentError.segmentFinishing }
 
         let sourceID = device.uid
 
         // Already exists
-        if sourceWriters[sourceID] != nil {
-            lock.unlock()
+        if sourceWriters[sourceID]?.attached == true {
             return sourceID
         }
 
         let url = makeURL(for: sourceID)
         let startTime = segmentStartTime ?? CMClockGetTime(CMClockGetHostTimeClock())
-        lock.unlock()
-
-        let writer = try SingleTrackAudioWriter(
+        let existing = sourceWriters[sourceID]
+        let writer = try existing?.writer ?? SingleTrackAudioWriter(
             url: url,
             trackType: .microphone(name: device.name, deviceUID: device.uid),
             segmentStartTime: startTime,
@@ -142,6 +140,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         )
 
         do {
+            var legacyCapture: ExternalMicCapture?
             // Use shared capture manager if available (keeps engine running across segments)
             if let captureManager = captureManager {
                 // Start capture if not already running
@@ -159,15 +158,14 @@ public final class PerSourceAudioManager: @unchecked Sendable {
                     writer?.appendPCMBuffer(buffer, presentationTime: time)
                 }
                 try capture.start()
+                legacyCapture = capture
                 Logger.audio.info("Started mic capture (legacy): \(device.name, privacy: .public)")
             }
 
-            lock.lock()
-            sourceWriters[sourceID] = SourceWriter(writer: writer)
+            sourceWriters[sourceID] = SourceWriter(writer: writer, legacyCapture: legacyCapture)
             micMetadata[sourceID] = device
-            lock.unlock()
         } catch {
-            try? FileManager.default.removeItem(at: url)
+            if existing == nil { try? FileManager.default.removeItem(at: url) }
             throw error
         }
 
@@ -175,32 +173,18 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     }
 
     /// Remove a microphone mid-segment (graceful stop)
-    /// The writer will be finished and its timing info preserved for remix
+    /// Keep the writer until segment finish so a rejoin cannot replace prior audio.
     /// Called when a mic is disconnected during recording
     public func removeMicrophone(deviceUID: String) {
         lock.lock()
-        guard var source = sourceWriters[deviceUID], !source.finished else {
+        guard var source = sourceWriters[deviceUID], source.attached, !isFinishing else {
             lock.unlock()
             return
         }
 
-        // Mark as finished to prevent further writes
-        source.finished = true
+        source.attached = false
         sourceWriters[deviceUID] = source
 
-        let writer = source.writer
-
-        // Register the removal task before releasing the lock so finishAll()
-        // cannot observe a finished source without a task to await.
-        let task = Task {
-            let timingInfo = await writer.finish()
-            let input = AudioRemixerInput(url: writer.url, timingInfo: timingInfo)
-
-            self.storeCompletedInput(input, deviceUID: deviceUID)
-
-            Logger.audio.info("Removed mic mid-segment: \(timingInfo.trackType.displayName, privacy: .public)")
-        }
-        pendingRemovalTasks.append(task)
         lock.unlock()
 
         // Clear callback and stop capture (device is disconnected)
@@ -208,21 +192,14 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             captureManager.setCallback(for: deviceUID, callback: nil)
             captureManager.stopCapture(deviceUID: deviceUID)
         }
-    }
-
-    /// Store a completed input (thread-safe helper for async context)
-    private func storeCompletedInput(_ input: AudioRemixerInput, deviceUID: String) {
-        lock.lock()
-        completedInputs.append(input)
-        sourceWriters.removeValue(forKey: deviceUID)
-        lock.unlock()
+        source.legacyCapture?.stop()
     }
 
     /// Check if a microphone is currently being recorded
     public func hasMicrophone(deviceUID: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return sourceWriters[deviceUID] != nil
+        return sourceWriters[deviceUID]?.attached == true && !isFinishing
     }
 
     /// Get list of currently active microphone UIDs
@@ -230,7 +207,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return sourceWriters.compactMap { key, source in
-            key != AudioTrackType.systemSourceID && !source.finished ? key : nil
+            key != AudioTrackType.systemSourceID && source.attached && !isFinishing ? key : nil
         }
     }
 
@@ -238,23 +215,18 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Note: Mic captures are NOT stopped here - they persist across segments
     /// - Returns: Array of remix inputs with timing info
     public func finishAll() async -> [AudioRemixerInput] {
-        // Await any in-flight mid-segment mic removals so their finished tracks are
-        // in completedInputs before we snapshot, and none can append after clearState().
-        let removals = takePendingRemovalTasks()
-        for task in removals { await task.value }
-
-        let (writers, previousInputs) = extractWritersAndInputs()
+        let writers = takeWritersForFinish()
+        guard !writers.isEmpty else { return [] }
 
         // Clear all mic callbacks (engines keep running, just no destination)
         // This prevents audio from being written to the old segment's writers
         captureManager?.clearAllCallbacks()
 
         // Finish all writers and collect timing info
-        var inputs = previousInputs  // Include any previously completed (mid-segment removed mics)
+        var inputs: [AudioRemixerInput] = []
 
         for (_, source) in writers {
-            guard !source.finished else { continue }
-
+            source.legacyCapture?.stop()
             let timingInfo = await source.writer.finish()
             let input = AudioRemixerInput(url: source.writer.url, timingInfo: timingInfo)
             inputs.append(input)
@@ -276,29 +248,20 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         return inputs
     }
 
-    private func takePendingRemovalTasks() -> [Task<Void, Never>] {
+    private func takeWritersForFinish() -> [String: SourceWriter] {
         lock.lock()
-        let tasks = pendingRemovalTasks
-        pendingRemovalTasks.removeAll()
-        lock.unlock()
-        return tasks
-    }
-
-    /// Extract writers and completed inputs (thread-safe helper for async context)
-    private func extractWritersAndInputs() -> ([String: SourceWriter], [AudioRemixerInput]) {
-        lock.lock()
+        defer { lock.unlock() }
+        guard !isFinishing else { return [:] }
+        isFinishing = true
         let writers = sourceWriters
-        let inputs = completedInputs
-        lock.unlock()
-        return (writers, inputs)
+        sourceWriters.removeAll()
+        return writers
     }
 
     /// Clear all state after finishAll (thread-safe helper for async context)
     private func clearState() {
         lock.lock()
         sourceWriters.removeAll()
-        completedInputs.removeAll()
-        pendingRemovalTasks.removeAll()
         micMetadata.removeAll()
         lock.unlock()
     }
@@ -323,6 +286,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     }
 
 #if DEBUG || SOLSTONE_TEST_SUPPORT
+    internal func _sourceWriterForTesting(_ sourceID: String) -> SingleTrackAudioWriter? {
+        lock.withLock { sourceWriters[sourceID]?.writer }
+    }
     /// Test-only: inject a pre-built source writer + device metadata directly into
     /// segment state, bypassing addMicrophone's hardware capture. Excluded from shipping builds.
     internal func _addSourceWriterForTesting(_ writer: SingleTrackAudioWriter, device: AudioInputDevice) {
