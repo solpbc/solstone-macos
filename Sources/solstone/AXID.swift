@@ -246,6 +246,7 @@ enum AXID {
             static let diagnosticsIngestRouteRow = "settings.help.diagnostics.ingestRoute.row"
             static let diagnosticsJournalLinkRow = "settings.help.diagnostics.journalLink.row"
             static let diagnosticsRecentStateCodesRow = "settings.help.diagnostics.recentStateCodes.row"
+            static let diagnosticsLocalCapturesRow = "settings.help.diagnostics.localCaptures.row"
             static let diagnosticsJournalAddressesRow = "settings.help.diagnostics.journalAddresses.row"
             static let diagnosticsRelayRow = "settings.help.diagnostics.relay.row"
             static let diagnosticsAddressesTriedRow = "settings.help.diagnostics.addressesTried.row"

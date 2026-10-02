@@ -189,7 +189,7 @@ struct MenuContentTests {
             ("connectionWaiting", classified(uploadStatus: .awaitingTunnel)),
             ("syncPaused", classified(syncPaused: true)),
             ("localOnly", classified(hasJournalOnRecord: false)),
-            ("offline", classified(uploadStatus: .notSynced)),
+            ("offline", classified(isPairedIngestReady: false, uploadStatus: .notSynced)),
             ("observing", classified(uploadStatus: .synced)),
         ]
 
@@ -227,6 +227,7 @@ struct MenuContentTests {
         let connectingRow = classified(
             hasJournalOnRecord: true,
             journalConnectionAXToken: connecting.axToken,
+            isPairedIngestReady: false,
             uploadStatus: .synced
         )
         #expect(connectingRow == .connectionWaiting)
@@ -240,6 +241,7 @@ struct MenuContentTests {
             let row = classified(
                 hasJournalOnRecord: true,
                 journalFailureCause: verdict.failureCause,
+                isPairedIngestReady: false,
                 uploadStatus: .synced
             )
             #expect(row == .offline, "\(String(describing: cause)) should be offline, not observing from last-sync")
@@ -247,10 +249,10 @@ struct MenuContentTests {
             #expect(row != .observing)
         }
 
-        // Remaining cell (nil token, nil cause) follows the upload-status switch and may be observing.
+        // Without readiness, stale delivery success cannot make the connection green.
         for status in representativeUploadStatuses() {
-            let actual = classified(hasJournalOnRecord: true, uploadStatus: status)
-            #expect(actual == row(forUploadStatus: status))
+            let actual = classified(hasJournalOnRecord: true, isPairedIngestReady: false, uploadStatus: status)
+            #expect(actual == .offline)
             #expect(actual != .localOnly)
         }
     }
@@ -665,7 +667,7 @@ private func classified(
     hasJournalOnRecord: Bool = true,
     journalConnectionAXToken: String? = nil,
     journalFailureCause: JournalConnectionFailureCause? = nil,
-    isPairedIngestReady: Bool = false,
+    isPairedIngestReady: Bool = true,
     uploadStatus: UploadCoordinator.Status = .synced,
     journalMarkHeld: Bool = false,
     browserIntakePermitted: Bool = false,
@@ -695,7 +697,7 @@ private func classified(
 private func representativeUploadStatuses() -> [UploadCoordinator.Status] {
     let probe: UploadCoordinator.Status = .notSynced
     switch probe {
-    case .notSynced, .syncing, .synced, .uploading, .retrying, .offline, .awaitingTunnel:
+    case .notSynced, .syncing, .synced, .uploading, .retrying, .offline, .awaitingTunnel, .blocked:
         return [
             .notSynced,
             .syncing(checked: 1, total: 2),
@@ -704,17 +706,20 @@ private func representativeUploadStatuses() -> [UploadCoordinator.Status] {
             .retrying(segment: "s1", attempts: 2),
             .offline("offline"),
             .awaitingTunnel,
+            .blocked("upload exceeds journal limits"),
         ]
     }
 }
 
 private func row(forUploadStatus status: UploadCoordinator.Status) -> MenubarStatusRowState {
     switch status {
-    case .synced, .syncing, .uploading:
+    case .blocked:
+        return .error
+    case .synced, .syncing, .uploading, .notSynced, .retrying:
         return .observing
     case .awaitingTunnel:
         return .connectionWaiting
-    case .notSynced, .retrying, .offline:
+    case .offline:
         return .offline
     }
 }

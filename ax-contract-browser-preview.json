@@ -126,6 +126,7 @@
       "settings.help.diagnostics.lastJournalConnection.row",
       "settings.help.diagnostics.lastJournalConnection.state",
       "settings.help.diagnostics.lastJournalConnection.timestamp.state",
+      "settings.help.diagnostics.localCaptures.row",
       "settings.help.diagnostics.microphone.row",
       "settings.help.diagnostics.microphone.state",
       "settings.help.diagnostics.preview",
@@ -824,7 +825,8 @@
       "uploading",
       "retrying",
       "awaiting_tunnel",
-      "offline"
+      "offline",
+      "blocked"
     ]
   }
 }

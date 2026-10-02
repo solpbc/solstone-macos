@@ -25,6 +25,42 @@ struct SyncServiceTests {
 
     private let store = ObserverURLProtocolStore()
 
+    @Test func oversizedCaptureRemainsBlockedAfterIndependentDelivery() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-over-limit")
+        let eligible = try makeSegment(root: root, segmentName: "120000_300")
+        let blocked = try makeSegment(root: root, segmentName: "130000_300")
+        let large = blocked.url.appendingPathComponent("130000_300_audio.m4a")
+        let handle = try FileHandle(forWritingTo: large)
+        try handle.truncate(atOffset: UInt64(IngestProtocolV3.maxPartBytes) + 1)
+        try handle.close()
+        let before = try sha256(of: large)
+        let filename = "120000_300_audio.m4a"
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200,
+                            body: uploadResponseJSON(filename: filename, sha: try sha256(of: eligible.url.appendingPathComponent(filename)), size: 5))
+        let failed = blocked.url.deletingLastPathComponent().appendingPathComponent("110000_300.failed")
+        try FileManager.default.createDirectory(at: failed, withIntermediateDirectories: true)
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24680") })
+        await configure(service)
+        let progress = ProgressCollector()
+        let listen = Task { for await event in await service.progressStream { progress.append(event) } }
+        defer { listen.cancel() }
+        await service.sync()
+        for _ in 0..<100 {
+            if progress.allEvents.contains(where: { if case .syncBlocked = $0 { return true }; return false }) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(progress.containsUploadSucceeded)
+        #expect(!progress.containsSyncComplete)
+        #expect(progress.allEvents.contains { if case .syncBlocked(1, _) = $0 { return true }; return false })
+        #expect(try sha256(of: large) == before)
+        #expect(!FileManager.default.fileExists(atPath: eligible.url.path))
+        let inventory = await service.readDiagnosticBacklog()
+        #expect(inventory.pendingCaptures == 1)
+        #expect(inventory.oldestPendingFolder != nil)
+        #expect(inventory.preservedFailureFolders == 1)
+    }
+
     @Test func successfulUploadDeletesSegmentDirectoryImmediately() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-immediate-delete-clean")

@@ -540,6 +540,8 @@ extension StatusHealthSummary {
         errorMessage: String? = nil,
         setupVerdict: SetupGroupVerdict? = nil,
         lastHealthReason: ObserverHealthFailureReason? = nil,
+        isPairedIngestReady: Bool = true,
+        journalConnectionAXToken: String? = nil,
         snapshot: BrowserHostSnapshotValue
     ) -> StatusHealthSummary {
         let media = StatusHealthSummary.make(
@@ -557,7 +559,9 @@ extension StatusHealthSummary {
             permittedSources: permittedSources,
             errorMessage: errorMessage,
             setupVerdict: setupVerdict,
-            lastHealthReason: lastHealthReason
+            lastHealthReason: lastHealthReason,
+            isPairedIngestReady: isPairedIngestReady,
+            journalConnectionAXToken: journalConnectionAXToken
         )
         if isRecording || isPaused { return media }
         let verdict = browserOwnerVerdict(

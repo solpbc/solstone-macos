@@ -18,6 +18,7 @@ internal enum DiagnosticReportRowID: CaseIterable, Hashable, Sendable {
     case relay
     case addressesTried
     case connectedThrough
+    case localCaptures
     case recentStateCodes
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     case browserPages
@@ -67,6 +68,7 @@ internal struct DiagnosticReportInput: Equatable, Sendable {
     let now: Date
     var activeSources: CaptureSources? = nil
     var connection: DiagnosticConnectionInput = .unpaired
+    var backlog: SyncService.DiagnosticBacklog? = nil
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     var browserRows: [BrowserDiagnosticRow]? = nil
 #endif
@@ -198,6 +200,11 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
         )
     ] + connectionRows + [
         DiagnosticReportRow(
+            id: .localCaptures,
+            label: "segments on this mac",
+            value: diagnosticBacklogValue(input.backlog, now: input.now)
+        ),
+        DiagnosticReportRow(
             id: .recentStateCodes,
             label: UICopy.SETTINGS_DIAGNOSTICS_RECENT_STATE_CODES,
             value: diagnosticEvidenceValue(input.evidence)
@@ -242,6 +249,13 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
         lastJournalContactState: input.lastJournalContact.diagnosticAXState,
         lastJournalContactTimestamp: input.lastJournalContact.connectedAt
     )
+}
+
+internal func diagnosticBacklogValue(_ backlog: SyncService.DiagnosticBacklog?, now: Date) -> String {
+    guard let backlog, let count = backlog.pendingCaptures,
+          let preserved = backlog.preservedFailureFolders else { return "unavailable" }
+    let age = backlog.oldestPendingFolder.map { String(Int(max(0, now.timeIntervalSince($0)))) } ?? "unavailable"
+    return "pending=\(count) · oldest_pending_folder_age_s=\(age) · preserved_failure_folders=\(preserved) (delivery unknown)"
 }
 
 internal func performDiagnosticCopy(

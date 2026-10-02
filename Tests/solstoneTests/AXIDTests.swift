@@ -250,7 +250,8 @@ struct AXIDTests {
             .uploading(segment: "segment"),
             .retrying(segment: "segment", attempts: 2),
             .awaitingTunnel,
-            .offline("offline")
+            .offline("offline"),
+            .blocked("blocked")
         ]
     }
 

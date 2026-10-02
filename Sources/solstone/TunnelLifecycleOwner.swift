@@ -88,22 +88,11 @@ private final class RelayOutcomeTarget {
 @MainActor
 @Observable
 final class TunnelLifecycleOwner {
-    private static let probeInterval: Duration = .seconds(30)
+    static let probeInterval: Duration = .seconds(30)
     private static let probeTimeout: Duration = .seconds(3)
-    private static let degradedProbeInterval: Duration = .seconds(5)
-    private static let forcedReconnectDegradedProbeIntervalCap: Duration = .seconds(120)
-    private static let silentProbeFailureLimit = 3
-    private static let activeInboundProbeFailureLimit = 6
+    static let degradedProbeInterval: Duration = .seconds(5)
     private static let loopbackRetryDelays: [Duration] = [.milliseconds(100), .milliseconds(300)]
     private static let establishmentRetryDelays: [Duration] = [.seconds(1), .seconds(5), .seconds(10), .seconds(30)]
-    static let probeWatchdogPolicy = ProbeWatchdogPolicy(
-        healthyInterval: probeInterval,
-        degradedInterval: degradedProbeInterval,
-        silentFailureLimit: silentProbeFailureLimit,
-        activeInboundFailureLimit: activeInboundProbeFailureLimit,
-        forcedReconnectDegradedIntervalCap: forcedReconnectDegradedProbeIntervalCap,
-        jitterRange: 1.0...1.0
-    )
 
     let journalVersion = JournalVersionMetadata()
     private(set) var state: TunnelLifecycleState = .disconnected {
@@ -122,6 +111,7 @@ final class TunnelLifecycleOwner {
     var isProxyStarting: Bool { proxyStartAttemptID == transportAttemptID }
     private(set) var isBackingOff = false
     private(set) var connectionVerdict: JournalConnectionVerdict = .neutral
+    private let recorder: DiagnosticEvidenceRecorder
     private(set) var isTunnelManaged = false
     private(set) var isPairedHome = false
     private(set) var relayAccessStatus: PairingRelayAccessStatus = .noPairing
@@ -319,7 +309,7 @@ final class TunnelLifecycleOwner {
     @ObservationIgnored
     private var cachedPairingOutcome: PairingLoadOutcome?
     @ObservationIgnored
-    private var probeWatchdog = ProbeWatchdog(policy: TunnelLifecycleOwner.probeWatchdogPolicy)
+    private var probeGeneration: UInt64 = 0
 
     init(
         keychainStore: SPLKeychainStore = SPLPairingKeychain.store(),
@@ -331,6 +321,7 @@ final class TunnelLifecycleOwner {
         tokenRefresher: TunnelDeviceTokenRefreshing? = nil,
         makeTransport: (@MainActor @Sendable () -> any TunnelTransporting)? = nil,
         onPeerStreamReset: PeerStreamResetObserver? = nil,
+        recorder: DiagnosticEvidenceRecorder = .dormant,
         pathMonitoringSource: (any PathMonitoringSource)? = nil,
         probe: @escaping @Sendable (Int, Duration) async -> Bool = TunnelLifecycleOwner.httpStatusProbe(localPort:timeout:),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
@@ -344,6 +335,7 @@ final class TunnelLifecycleOwner {
     ) {
         let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
         self.credentialStore = store
+        self.recorder = recorder
         self.loadPairing = loadPairing ?? { try store.load() }
         self.savePairing = savePairing ?? { try store.save($0) }
         self.deletePairing = deletePairing ?? { try store.delete() }
@@ -480,12 +472,14 @@ final class TunnelLifecycleOwner {
 
     public func requestCoalescedReconnect() async {
         if let transport {
+            recorder.enqueue(.tunnelReconnectManual)
             await transport.requestReconnect()
             return
         }
 
         guard running else { return }
         guard !coalescedReconnectInFlight else { return }
+        recorder.enqueue(.tunnelReconnectManual)
         coalescedReconnectInFlight = true
 
         if establishmentInFlight {
@@ -523,22 +517,13 @@ final class TunnelLifecycleOwner {
     }
 
     func handleWakeOrUnlock() async {
-        guard running,
-              case .connected(let localPort, _) = state
-        else {
-            return
-        }
-
+        guard running, case .connected(let localPort, _) = state else { return }
+        let generation = probeGeneration
+        let incarnation = transportIncarnation
         let succeeded = await probe(localPort, Self.probeTimeout)
-        if succeeded {
-            health = .healthy
-            splOwnerLog.notice("wake probe ok local_port=\(localPort, privacy: .public)")
-            return
-        }
-
-        health = .degraded
-        splOwnerLog.notice("wake probe failed local_port=\(localPort, privacy: .public) reconnect=true")
-        await transport?.requestReconnect()
+        guard probeResultIsCurrent(localPort: localPort, generation: generation, incarnation: incarnation) else { return }
+        health = succeeded ? .healthy : .degraded
+        splOwnerLog.notice("wake probe ok=\(succeeded, privacy: .public) local_port=\(localPort, privacy: .public) reconnect=false")
     }
 
     private func handleStateTransition(old: TunnelLifecycleState, new: TunnelLifecycleState) {
@@ -857,7 +842,6 @@ final class TunnelLifecycleOwner {
         state = .connected(localPort: connection.localPort, via: connection.via)
         publishingOptionalBurstID = nil
         health = initialHealth
-        probeWatchdog.noteConnectionEstablished()
         startProbe()
     }
 
@@ -1306,7 +1290,6 @@ final class TunnelLifecycleOwner {
                 state = .connected(localPort: port, via: Self.route(for: via))
                 connectedThrough = JournalConnectedThrough(via)
                 if !wasConnected {
-                    probeWatchdog.noteConnectionEstablished()
                     startProbe()
                 }
             } else if !establishmentInFlight {
@@ -1320,6 +1303,7 @@ final class TunnelLifecycleOwner {
             let currentRevision = credentialStore.currentGenerations()
             guard currentRevision.pairingGeneration == pairingRevision else { return }
             splOwnerLog.notice("tunnel failed error=\(String(describing: type(of: error)), privacy: .public)")
+            recorder.enqueue(.tunnelCarrierFailed)
             switch error {
             case .authRefreshRequired:
                 beginReactiveTokenRefresh()
@@ -1549,23 +1533,17 @@ final class TunnelLifecycleOwner {
             return
         }
 
-        // An interface change does not mean this carrier died; a VPN coming up
-        // or a second interface joining changes the bucket too. Ask the journal
-        // over the carrier first, and redial only when it does not answer.
+        // HTTP journal health cannot establish carrier liveness. Try a better
+        // route without tearing down the working carrier, even if HTTP is slow.
         let incarnation = transportIncarnation
+        let generation = probeGeneration
         Task { @MainActor [weak self] in
             guard let self else { return }
             let answered = await self.probe(localPort, Self.probeTimeout)
-            guard self.running, self.transportIncarnation == incarnation,
-                  case .connected(let port, _) = self.state, port == localPort else { return }
-            splOwnerLog.notice("path change probe ok=\(answered, privacy: .public) reconnect=\(!answered, privacy: .public)")
-            guard !answered else {
-                // The carrier works; a new interface may still offer a better path.
-                await self.transport?.requestUpgrade()
-                return
-            }
-            self.health = .degraded
-            await self.transport?.requestReconnect()
+            guard self.probeResultIsCurrent(localPort: localPort, generation: generation, incarnation: incarnation) else { return }
+            self.health = answered ? .healthy : .degraded
+            splOwnerLog.notice("path change probe ok=\(answered, privacy: .public) reconnect=false")
+            await self.transport?.requestUpgrade()
         }
     }
 
@@ -1574,7 +1552,7 @@ final class TunnelLifecycleOwner {
             return
         }
         probeTask = Task { @MainActor [weak self] in
-            var interval = Self.probeWatchdogPolicy.healthyInterval
+            var interval = Self.probeInterval
             while let self, !Task.isCancelled {
                 do {
                     try await self.sleep(interval)
@@ -1594,49 +1572,30 @@ final class TunnelLifecycleOwner {
     }
 
     private func stopProbe() {
+        // Also fence wake/path results across reconnects that retain the same
+        // transport wrapper and loopback port.
+        probeGeneration &+= 1
         probeTask?.cancel()
         probeTask = nil
     }
 
-    private func runProbe(localPort: Int) async -> Duration {
-        guard let transport else {
-            return Self.probeWatchdogPolicy.healthyInterval
-        }
-        let before = await transport.inboundActivitySnapshot()
-        let succeeded = await probe(localPort, Self.probeTimeout)
-        let inboundMoving: Bool
-        if succeeded {
-            inboundMoving = false
-        } else {
-            let after = await transport.inboundActivitySnapshot()
-            inboundMoving = after != before
-        }
-
-        let verdict = probeWatchdog.evaluate(
-            probeSucceeded: succeeded,
-            inboundAdvanced: inboundMoving,
-            activeLocalTransfers: 0
-        )
-        applyProbeHealth(verdict.health)
-        if verdict.action == .reconnect {
-            let failureLimit = inboundMoving
-                ? Self.probeWatchdogPolicy.activeInboundFailureLimit
-                : Self.probeWatchdogPolicy.silentFailureLimit
-            splOwnerLog.notice("watchdog probe failed limit=\(failureLimit, privacy: .public) inbound_moving=\(inboundMoving, privacy: .public) reconnect=true")
-            await transport.requestReconnect()
-        }
-        return verdict.nextInterval
+    private func probeResultIsCurrent(localPort: Int, generation: UInt64, incarnation: UInt64) -> Bool {
+        running && !Task.isCancelled && probeGeneration == generation &&
+            transportIncarnation == incarnation && self.localPort == localPort &&
+            establishedLoopbackPort == localPort && transport != nil
     }
 
-    private func applyProbeHealth(_ probeHealth: ProbeHealth) {
-        switch probeHealth {
-        case .healthy:
-            health = .healthy
-        case .degraded:
-            health = .degraded
-        case .unknown:
-            break
+    private func runProbe(localPort: Int) async -> Duration {
+        let generation = probeGeneration
+        let incarnation = transportIncarnation
+        let succeeded = await probe(localPort, Self.probeTimeout)
+        guard probeResultIsCurrent(localPort: localPort, generation: generation, incarnation: incarnation) else {
+            return Self.probeInterval
         }
+        // The SDK keepalive owns carrier loss. A slow HTTP endpoint only
+        // degrades journal health and shortens the next health check.
+        health = succeeded ? .healthy : .degraded
+        return succeeded ? Self.probeInterval : Self.degradedProbeInterval
     }
 
     private func usableCandidates(for pairing: StoredPairing) -> [TransportEndpoint] {

@@ -43,6 +43,7 @@ struct DiagnosticReportTests {
         journal intake: http_404
         journal intake address: /app/devices/ingest
         journal link: nothing turned away or ended early
+        segments on this mac: unavailable
         recent state codes: app.launch · first 1970-01-01T00:15:00.000Z · last 1970-01-01T00:15:50.000Z · repeat 3
         """)
         #expect(report.screenRecordingState == .granted)

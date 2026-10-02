@@ -193,15 +193,10 @@ struct SnapshotTests {
     }
 
     @Test func statusIconUpdateAvailableRecordingBadging() throws {
-        let state = AppState.forSnapshot(config: AppConfig(
-            serverURL: "https://solstone.example.com",
-            serverKey: "sk-test-key-1234",
-            serviceMode: .external
-        ))
-        markPermissionsReady(state)
-        state.isRecording = true
-        state.uploadCoordinator.status = .synced
-        let presentation = state.menubarPresentation(
+        let presentation = classifyMenubarPresentation(
+            observation: .observing,
+            permissionsNeedAttention: false,
+            journalNeedsAttention: false,
             durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
         )
         #expect(presentation.icon == .recording)

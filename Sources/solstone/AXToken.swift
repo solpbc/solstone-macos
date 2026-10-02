@@ -271,7 +271,8 @@ extension UploadCoordinator.Status {
         "uploading",
         "retrying",
         "awaiting_tunnel",
-        "offline"
+        "offline",
+        "blocked"
     ]
 
     var axToken: String {
@@ -290,6 +291,8 @@ extension UploadCoordinator.Status {
             return "awaiting_tunnel"
         case .offline:
             return "offline"
+        case .blocked:
+            return "blocked"
         }
     }
 }

@@ -1253,7 +1253,8 @@ public final class AppState {
                 Task { @MainActor in
                     recorder.enqueue(diagnosticEvidenceCode(forPeerStreamReset: reason))
                 }
-            }
+            },
+            recorder: recorder
         )
         self.tunnelLifecycleOwner = tunnelLifecycleOwner
         self.credentialStore = splCredentialStore

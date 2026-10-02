@@ -33,7 +33,7 @@ internal func observerHealthFailureReason(from error: Error) -> ObserverHealthFa
             return .uploadInvalidURL
         case .noFiles:
             return .uploadNoFiles
-        case .invalidRequest:
+        case .invalidRequest, .preparationFailed:
             return .uploadFailed
         case .invalidResponse:
             return .uploadInvalidResponse
@@ -92,6 +92,7 @@ public final class UploadCoordinator {
         case retrying(segment: String, attempts: Int)
         case offline(String)    // Can't reach server
         case awaitingTunnel
+        case blocked(String)    // Preserved local capture needs attention
     }
 
     // MARK: - Observable State
@@ -369,6 +370,10 @@ public final class UploadCoordinator {
 
     // MARK: - Event Handling
 
+    public func readDiagnosticBacklog() async -> SyncService.DiagnosticBacklog {
+        await syncService.readDiagnosticBacklog()
+    }
+
     private func startEventListener() {
         eventTask = Task { [weak self] in
             guard let self = self else { return }
@@ -426,6 +431,14 @@ public final class UploadCoordinator {
             pendingCount = 0
             recentErrorCount = 0
             clearIngestFailure()
+
+        case .syncBlocked(let count, let reason):
+            pendingCount = count
+            let message = reason.localizedDescription
+            status = .blocked(message)
+            lastError = message
+            lastErrorReason = reason == .invalidRequest ? "capture.upload_exceeds_limits" : "capture.upload_preparation_failed"
+            recorder.enqueue(reason == .invalidRequest ? .syncUploadExceedsLimits : .syncUploadPreparationFailed)
 
         case .offline(_, let healthReason, let requestedPath):
             recordIngestFailure(healthReason: healthReason, requestedPath: requestedPath)

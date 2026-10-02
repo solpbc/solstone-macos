@@ -122,7 +122,9 @@ extension StatusHealthSummary {
         permittedSources: CaptureSources = .all,
         errorMessage: String? = nil,
         setupVerdict: SetupGroupVerdict? = nil,
-        lastHealthReason: ObserverHealthFailureReason? = nil
+        lastHealthReason: ObserverHealthFailureReason? = nil,
+        isPairedIngestReady: Bool = true,
+        journalConnectionAXToken: String? = nil
     ) -> StatusHealthSummary {
         // The owner turning every source off is a choice, not a fault — but it is also the one
         // state in which nothing reaches the journal at all, so it leads the card and says why.
@@ -175,7 +177,11 @@ extension StatusHealthSummary {
             isRecording: isRecording,
             isPaused: isPaused,
             held: held,
-            uploadStatus: uploadStatus,
+            uploadStatus: statusForCurrentConnection(
+                uploadStatus,
+                ready: isPairedIngestReady,
+                axToken: journalConnectionAXToken
+            ),
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
             serverURL: serverURL,
@@ -243,6 +249,13 @@ extension StatusHealthSummary {
                 )
             }
             switch uploadStatus {
+            case .blocked(let reason):
+                return .init(
+                    severity: .attention,
+                    title: reason,
+                    subtitle: "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") kept on this mac",
+                    axValue: "external_blocked"
+                )
             case .awaitingTunnel:
                 let subtitle = pendingCount > 0
                     ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here"
@@ -307,7 +320,7 @@ extension StatusHealthSummary {
                     : "retrying the last upload"
                 return .init(
                     severity: .warn,
-                    title: "trouble reaching \(host) · retrying",
+                    title: "catching up · retrying an upload",
                     subtitle: subtitle,
                     axValue: "external_retrying"
                 )
@@ -402,6 +415,18 @@ extension StatusHealthSummary {
                     )
                 }
             }
+        }
+    }
+
+    private static func statusForCurrentConnection(
+        _ status: UploadCoordinator.Status,
+        ready: Bool,
+        axToken: String?
+    ) -> UploadCoordinator.Status {
+        switch classifyJournalConnection(isPairedIngestReady: ready, uploadStatus: status, journalConnectionAXToken: axToken) {
+        case .connectionWaiting: return .awaitingTunnel
+        case .offline: return .offline("connection unavailable")
+        default: return status
         }
     }
 

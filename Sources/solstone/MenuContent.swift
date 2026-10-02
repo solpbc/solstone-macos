@@ -123,6 +123,12 @@ struct MenuContent: View {
                 }
                 .foregroundStyle(.red)
                 .accessibilityIdentifier(AXID.Menubar.errorButton)
+            } else if case .blocked(let reason) = appState.uploadCoordinator.status {
+                Button(UICopy.menubarErrorOpenSettings(reason)) {
+                    openSettings(tab: "status")
+                }
+                .foregroundStyle(.red)
+                .accessibilityIdentifier(AXID.Menubar.errorButton)
             } else {
                 Button(UICopy.MENUBAR_OBSERVATION_WEDGE_OPEN_SETTINGS) {
                     openSettings(tab: "status")

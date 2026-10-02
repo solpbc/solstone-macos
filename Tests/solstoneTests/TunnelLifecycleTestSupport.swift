@@ -932,3 +932,16 @@ final class AccessHTTPReplyBarrier: @unchecked Sendable {
     }
     func release() { condition.lock(); released = true; condition.broadcast(); condition.unlock() }
 }
+
+actor ControlledHealthProbe {
+    private var continuation: CheckedContinuation<Bool, Never>?
+    private(set) var count = 0
+    func run() async -> Bool {
+        count += 1
+        return await withCheckedContinuation { continuation = $0 }
+    }
+    func complete(_ result: Bool) {
+        continuation?.resume(returning: result)
+        continuation = nil
+    }
+}

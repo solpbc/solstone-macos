@@ -3163,7 +3163,8 @@ struct SettingsView: View {
         return observationRecoveryPresentation(
             observationRowState: appState.observationRowState,
             errorMessage: appState.errorMessage,
-            tryAgainInFlight: tryAgainInFlight
+            tryAgainInFlight: tryAgainInFlight,
+            uploadStatus: appState.uploadCoordinator.status
         ) == nil
     }
 
@@ -3257,6 +3258,8 @@ struct SettingsView: View {
             errorMessage: appState.errorMessage,
             setupVerdict: setupPresentation.verdict,
             lastHealthReason: appState.uploadCoordinator.lastHealthReason,
+            isPairedIngestReady: appState.isPairedIngestReady,
+            journalConnectionAXToken: appState.tunnelLifecycleOwner.connectionVerdict.axToken,
             snapshot: appState.browserHostSnapshot.value
         )
 #else
@@ -3278,7 +3281,9 @@ struct SettingsView: View {
             permittedSources: appState.capture.permittedSources,
             errorMessage: appState.errorMessage,
             setupVerdict: setupPresentation.verdict,
-            lastHealthReason: appState.uploadCoordinator.lastHealthReason
+            lastHealthReason: appState.uploadCoordinator.lastHealthReason,
+            isPairedIngestReady: appState.isPairedIngestReady,
+            journalConnectionAXToken: appState.tunnelLifecycleOwner.connectionVerdict.axToken
         )
 #endif
     }
@@ -3522,7 +3527,8 @@ struct SettingsView: View {
                     if let recovery = observationRecoveryPresentation(
                         observationRowState: appState.observationRowState,
                         errorMessage: appState.errorMessage,
-                        tryAgainInFlight: tryAgainInFlight
+                        tryAgainInFlight: tryAgainInFlight,
+                        uploadStatus: appState.uploadCoordinator.status
                     ) {
                         Text(recovery.reason)
                             .font(.caption)
@@ -3674,7 +3680,7 @@ struct SettingsView: View {
             .blue
         case .retrying, .awaitingTunnel:
             .orange
-        case .offline:
+        case .offline, .blocked:
             .red
         }
     }
@@ -3906,6 +3912,7 @@ struct SettingsView: View {
         diagnosticsLoading = true
         Task { @MainActor in
             let evidence = await appState.readDiagnosticEvidence()
+            let backlog = await appState.uploadCoordinator.readDiagnosticBacklog()
             guard shouldPublishDiagnosticLoad(
                 loadGeneration,
                 activeGeneration: diagnosticLoadGeneration,
@@ -3940,6 +3947,7 @@ struct SettingsView: View {
                 now: Date()
             )
 #endif
+            reportInput.backlog = backlog
             diagnosticReport = buildDiagnosticReport(reportInput)
             diagnosticsLoading = false
         }
@@ -4179,6 +4187,8 @@ struct SettingsView: View {
             return AXID.Settings.Help.diagnosticsJournalLinkRow
         case .recentStateCodes:
             return AXID.Settings.Help.diagnosticsRecentStateCodesRow
+        case .localCaptures:
+            return AXID.Settings.Help.diagnosticsLocalCapturesRow
         case .journalAddresses:
             return AXID.Settings.Help.diagnosticsJournalAddressesRow
         case .relay:

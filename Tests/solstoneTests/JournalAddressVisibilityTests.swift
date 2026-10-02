@@ -268,7 +268,7 @@ struct JournalAddressVisibilityTests {
         #expect(failing.rows.map(\.id) == [
             .appVersion, .screenRecording, .microphone, .screenAndAudio, .lastDelivery,
             .lastJournalConnection, .ingestReason, .ingestRoute, .journalLink,
-            .journalAddresses, .relay, .addressesTried, .recentStateCodes
+            .journalAddresses, .relay, .addressesTried, .localCaptures, .recentStateCodes
         ])
         #expect(failing.text.contains("""
         journal link: nothing turned away or ended early
@@ -277,6 +277,7 @@ struct JournalAddressVisibilityTests {
         relay: on · link.solstone.app
         addresses tried: 192.168.1.20:7657
                          [fd00::1]:7657
+        segments on this mac: unavailable
         recent state codes: no recent state codes
         """))
 

@@ -148,6 +148,8 @@ func journalSyncStatusText(_ status: UploadCoordinator.Status, paused: Bool, rea
         return "waiting for a connection"
     case .offline(let error):
         return error
+    case .blocked(let reason):
+        return reason
     }
 }
 
@@ -176,6 +178,8 @@ func journalSyncStatusSymbol(_ status: UploadCoordinator.Status, paused: Bool, r
         "arrow.triangle.2.circlepath"
     case .offline:
         "xmark.circle"
+    case .blocked:
+        "exclamationmark.triangle"
     }
     return JournalSyncStatusSymbol(systemName: systemName, usesSecondaryStyle: false)
 }

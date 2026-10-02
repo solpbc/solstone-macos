@@ -184,6 +184,7 @@ enum AXContract {
         AXID.Settings.Help.diagnosticsIngestRouteRow,
         AXID.Settings.Help.diagnosticsJournalLinkRow,
         AXID.Settings.Help.diagnosticsRecentStateCodesRow,
+        AXID.Settings.Help.diagnosticsLocalCapturesRow,
         AXID.Settings.Help.diagnosticsJournalAddressesRow,
         AXID.Settings.Help.diagnosticsRelayRow,
         AXID.Settings.Help.diagnosticsAddressesTriedRow,

@@ -32,6 +32,7 @@ public enum UploadError: Error, LocalizedError, Equatable {
     case invalidURL
     case noFiles
     case invalidRequest
+    case preparationFailed
     case invalidResponse
     case serverError(IngestServerError)
 
@@ -43,6 +44,8 @@ public enum UploadError: Error, LocalizedError, Equatable {
             return "No files to upload"
         case .invalidRequest:
             return "upload exceeds journal limits"
+        case .preparationFailed:
+            return "couldn't prepare files for upload"
         case .invalidResponse:
             return "invalid journal response"
         case .serverError(let serverError):
@@ -62,7 +65,8 @@ public struct UploadClient: Sendable {
     public static func defaultSessionConfiguration() -> URLSessionConfiguration {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 300  // 5 min for large files
-        config.timeoutIntervalForResource = 600  // 10 min total
+        // Keep Foundation's seven-day resource budget. Progressing uploads may
+        // need more than ten minutes; the five-minute idle timeout still applies.
         config.httpMaximumConnectionsPerHost = BoundedLoopbackClient.uploadConnectionsPerHost
         return config
     }

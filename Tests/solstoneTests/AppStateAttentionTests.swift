@@ -230,13 +230,14 @@ struct AppStateAttentionTests {
             durableUpdateStatus: .available(version: "1.3.9", releaseNotes: nil)
         )
 
-        #expect(presentation.observation == .observing)
+        // A dormant snapshot owner has no live route; stale sync cannot make it green.
+        #expect(presentation.observation == .offline)
         #expect(presentation.attention == .updateAvailable)
-        #expect(presentation.icon == .recording)
+        #expect(presentation.icon == .offline)
         #expect(presentation.overlayState == .attention)
     }
 
-    @Test func updateAttentionStatusesReachRecordingIcon() {
+    @Test func updateAttentionStatusesPreserveDisconnectedOwnerIcon() {
         let statuses: [(String, DurableUpdateStatus)] = [
             ("available", .available(version: "1.3.9", releaseNotes: nil)),
             ("staged", .staged(version: "1.3.9", releaseNotes: nil)),
@@ -255,7 +256,7 @@ struct AppStateAttentionTests {
 
             let presentation = state.menubarPresentation(durableUpdateStatus: status)
 
-            #expect(presentation.icon == .recording, "\(name) should preserve the recording icon")
+            #expect(presentation.icon == .offline, "\(name) should preserve the disconnected owner's icon")
             #expect(presentation.showsAttentionBadge, "\(name) should show the attention badge")
         }
     }

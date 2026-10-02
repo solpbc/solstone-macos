@@ -53,15 +53,29 @@ internal func classifyObservationRowState(
     if journalMarkHeld {
         return .awaitingMarkConfirmation
     }
+    return classifyJournalConnection(
+        isPairedIngestReady: isPairedIngestReady,
+        uploadStatus: uploadStatus,
+        journalConnectionAXToken: journalConnectionAXToken
+    )
+}
+
+/// Shared by the menu and Settings: upload success is delivery evidence,
+/// never proof that the current tunnel is still ready.
+internal func classifyJournalConnection(
+    isPairedIngestReady: Bool,
+    uploadStatus: UploadCoordinator.Status,
+    journalConnectionAXToken: String?
+) -> MenubarStatusRowState {
     if !isPairedIngestReady {
         if journalConnectionAXToken == PairingConnectionAXState.connecting.axToken {
             return .connectionWaiting
         }
-        if journalFailureCause != nil {
-            return .offline
-        }
+        return .offline
     }
     switch uploadStatus {
+    case .blocked:
+        return .error
     case .synced, .syncing, .uploading:
         return .observing
     case .notSynced where isPairedIngestReady, .retrying where isPairedIngestReady:
@@ -232,9 +246,11 @@ internal struct ObservationRecoveryPresentation: Equatable {
 internal func observationRecoveryPresentation(
     observationRowState: MenubarStatusRowState,
     errorMessage: String?,
-    tryAgainInFlight: Bool
+    tryAgainInFlight: Bool,
+    uploadStatus: UploadCoordinator.Status? = nil
 ) -> ObservationRecoveryPresentation? {
     guard observationRowState == .error else { return nil }
+    if errorMessage == nil, case .blocked = uploadStatus { return nil }
     return ObservationRecoveryPresentation(
         reason: errorMessage ?? UICopy.SETTINGS_OBSERVATION_RECOVERY_FALLBACK,
         buttonLabel: tryAgainInFlight ? UICopy.SETTINGS_TRY_AGAIN_IN_FLIGHT : UICopy.SETTINGS_TRY_AGAIN,

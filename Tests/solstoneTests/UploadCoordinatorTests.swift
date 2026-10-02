@@ -12,6 +12,17 @@ import SolstoneCore
 struct UploadCoordinatorTests {
     private let store = ObserverURLProtocolStore()
 
+    @Test func completedPassRetainsLocalBlockerAfterSuccessfulContact() throws {
+        let coordinator = try makeCoordinator(now: Date(timeIntervalSince1970: 1_700_000_000))
+        coordinator.handleProgressEvent(.uploadFailed(segment: "s", error: "limits", healthReason: .uploadFailed, requestedPath: IngestProtocolV3.uploadPath))
+        coordinator.handleProgressEvent(.journalContactSucceeded)
+        coordinator.handleProgressEvent(.syncBlocked(pendingCount: 1, reason: .invalidRequest))
+        #expect(coordinator.status == .blocked("upload exceeds journal limits"))
+        #expect(coordinator.pendingCount == 1)
+        #expect(coordinator.lastErrorReason == "capture.upload_exceeds_limits")
+        #expect(coordinator.lastSyncedAt != nil)
+    }
+
     @Test func syncCompleteDoesNotUpdateLastSyncedAt() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
         let coordinator = try makeCoordinator(now: fixed)

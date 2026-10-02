@@ -74,7 +74,7 @@ public func classifyUpload(_ error: Error) -> UploadAttemptClass {
 
     if let uploadError = error as? UploadError {
         switch uploadError {
-        case .invalidURL, .noFiles, .invalidRequest, .invalidResponse:
+        case .invalidURL, .noFiles, .invalidRequest, .preparationFailed, .invalidResponse:
             return .transport
         case .serverError(let serverError):
             let statusCode = serverError.statusCode
@@ -125,7 +125,7 @@ public func classifyDayRead(_ error: Error, day: String) -> DayReadClass {
 
     if let uploadError = error as? UploadError {
         switch uploadError {
-        case .invalidURL, .noFiles, .invalidRequest:
+        case .invalidURL, .noFiles, .invalidRequest, .preparationFailed:
             return .transport
         case .invalidResponse:
             return .undecoded

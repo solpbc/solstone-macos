@@ -99,9 +99,10 @@ struct IngestV3UploadRequestBuilder {
         var fileBytes = 0
         for file in selectedFiles {
             let filenameBytes = file.lastPathComponent.lengthOfBytes(using: .utf8)
+            guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size >= 0 else {
+                throw UploadError.preparationFailed
+            }
             guard filenameBytes <= IngestProtocolV3.maxFilenameBytes,
-                  let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-                  size >= 0,
                   size <= IngestProtocolV3.maxPartBytes else {
                 throw UploadError.invalidRequest
             }
@@ -114,7 +115,7 @@ struct IngestV3UploadRequestBuilder {
 
         let fileManager = FileManager.default
         try ioHooks?.beforeWrite()
-        guard fileManager.createFile(atPath: bodyURL.path, contents: nil) else { throw UploadError.invalidRequest }
+        guard fileManager.createFile(atPath: bodyURL.path, contents: nil) else { throw UploadError.preparationFailed }
         let bodyHandle = try FileHandle(forWritingTo: bodyURL)
         defer { try? bodyHandle.close() }
 
@@ -170,8 +171,10 @@ struct IngestV3UploadRequestBuilder {
         try ioHooks?.beforeSync()
         if let ioHooks { try ioHooks.sync(bodyHandle) }
         else { try bodyHandle.synchronize() }
-        guard let bodySize = try? bodyURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-              bodySize <= IngestProtocolV3.maxConnectionBodyBytes else {
+        guard let bodySize = try? bodyURL.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+            throw UploadError.preparationFailed
+        }
+        guard bodySize <= IngestProtocolV3.maxConnectionBodyBytes else {
             throw UploadError.invalidRequest
         }
 

@@ -9,6 +9,12 @@ import SolstoneCore
 
 @Suite("UploadClient", .serialized)
 struct UploadClientTests {
+    @Test func progressingTransfersRetainALongerBudgetThanTheIdleTimeout() {
+        let config = UploadClient.defaultSessionConfiguration()
+        #expect(config.timeoutIntervalForRequest == 300)
+        #expect(config.timeoutIntervalForResource > 600)
+        #expect(config.timeoutIntervalForResource > config.timeoutIntervalForRequest)
+    }
     private let store = ObserverURLProtocolStore()
     private let client = UploadClient()
     private let localAddressMessage = "can't reach your journal at this address. check that it's running and reachable."

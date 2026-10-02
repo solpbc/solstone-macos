@@ -19,6 +19,7 @@ public actor SyncService {
         case uploadFailed(segment: String, error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)
         case journalContactSucceeded
         case syncComplete
+        case syncBlocked(pendingCount: Int, reason: UploadError)
         case offline(error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)
         case awaitingTunnel
         /// Local content cannot establish a complete transfer: no selectable media,
@@ -48,6 +49,44 @@ public actor SyncService {
     internal struct DiscoverySnapshot: Sendable {
         var candidatesByDay: [String: [DiscoveredCandidate]]
         var failure: Error?
+        var preservedFailureFolders: Int = 0
+    }
+
+    public struct DiagnosticBacklog: Equatable, Sendable {
+        let pendingCaptures: Int?
+        let oldestPendingFolder: Date?
+        let preservedFailureFolders: Int?
+    }
+
+    /// Read-only inventory. Pending means local captures without a current
+    /// matching custody proof. Renamed failure folders have unknown delivery
+    /// status and are reported separately, never submitted by this reader.
+    public func readDiagnosticBacklog() -> DiagnosticBacklog {
+        let snapshot = discover()
+        guard snapshot.failure == nil else {
+            return .init(pendingCaptures: nil, oldestPendingFolder: nil, preservedFailureFolders: nil)
+        }
+        var pending = 0
+        var oldest: Date?
+        var datesComplete = true
+        for candidate in snapshot.candidatesByDay.values.flatMap({ $0 }) {
+            let segment = candidate.segmentURL.lastPathComponent
+            let metadata = readSegmentMetadata(segmentURL: candidate.segmentURL, segment: segment)
+            guard !candidate.media.isEmpty || metadata != .missing else { continue }
+            if let context = journalContext, metadata != .unreadable,
+               !segmentNeedsUpload(segmentURL: candidate.segmentURL, day: candidate.day, segment: segment,
+                                   filesToUpload: candidate.media, metadataState: metadata, context: context) {
+                continue
+            }
+            pending += 1
+            if let created = try? candidate.segmentURL.resourceValues(forKeys: [.creationDateKey]).creationDate {
+                oldest = oldest.map { min($0, created) } ?? created
+            } else {
+                datesComplete = false
+            }
+        }
+        return .init(pendingCaptures: pending, oldestPendingFolder: datesComplete ? oldest : nil,
+                     preservedFailureFolders: snapshot.preservedFailureFolders)
     }
 
     internal enum SegmentMetadataState: Sendable, Equatable {
@@ -58,6 +97,7 @@ public actor SyncService {
 
     private enum UploadRetryOutcome: Sendable {
         case succeeded
+        case blocked(Error)
         case transport(Error)
         case deviceScoped(DeviceScope, Error)
         case segmentScoped(SegmentScope, Error)
@@ -267,6 +307,8 @@ public actor SyncService {
         }
 
         let snapshot = discover()
+        var blockedUploads = 0
+        var uploadBlockReason: UploadError?
 
         // Local Finish: process already-confirmed segments before tunnel/probe checks
         var candidatesByDay = snapshot.candidatesByDay
@@ -499,6 +541,13 @@ public actor SyncService {
                     )
 
                     switch outcome {
+                    case .blocked(let error):
+                        blockedUploads += 1
+                        if error as? UploadError == .invalidRequest {
+                            uploadBlockReason = .invalidRequest
+                        } else if uploadBlockReason == nil {
+                            uploadBlockReason = .preparationFailed
+                        }
                     case .succeeded:
                         progressContinuation.yield(.journalContactSucceeded)
                         hasYieldedContact = true
@@ -653,6 +702,10 @@ public actor SyncService {
             return
         }
 
+        if blockedUploads > 0 {
+            progressContinuation.yield(.syncBlocked(pendingCount: blockedUploads, reason: uploadBlockReason ?? .preparationFailed))
+            return
+        }
         progressContinuation.yield(.syncComplete)
         Logger.upload.info("Sync complete")
     }
@@ -821,7 +874,7 @@ public actor SyncService {
                 healthReason: healthReason,
                 requestedPath: IngestProtocolV3.uploadPath
             ))
-            return .transport(error)
+            return .blocked(error)
         }
 
         var attempts = 0
@@ -967,6 +1020,7 @@ public actor SyncService {
     internal func discover() -> DiscoverySnapshot {
         var candidatesByDay: [String: [DiscoveredCandidate]] = [:]
         var firstFailure: Error?
+        var preservedFailureFolders = 0
 
         func recordFailure(_ error: Error) {
             if firstFailure == nil {
@@ -1021,7 +1075,11 @@ public actor SyncService {
 
                 let dirName = segmentURL.lastPathComponent
                 // A .failed folder (also a numbered {segment}.{n}.failed) can be a delivered segment that still holds a leftover file. Discovery still does not enter it.
-                if dirName.hasSuffix(".incomplete") || dirName.hasSuffix(".failed") {
+                if dirName.hasSuffix(".failed") {
+                    preservedFailureFolders += 1
+                    continue
+                }
+                if dirName.hasSuffix(".incomplete") {
                     continue
                 }
 
@@ -1064,7 +1122,8 @@ public actor SyncService {
             }
         }
 
-        return DiscoverySnapshot(candidatesByDay: candidatesByDay, failure: firstFailure)
+        return DiscoverySnapshot(candidatesByDay: candidatesByDay, failure: firstFailure,
+                                 preservedFailureFolders: preservedFailureFolders)
     }
 
     /// Convert local segment path to server format

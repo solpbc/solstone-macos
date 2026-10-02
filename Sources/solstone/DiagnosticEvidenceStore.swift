@@ -42,6 +42,10 @@ internal enum DiagnosticEvidenceCode: String, Codable, Equatable, Sendable, Case
     // Any other reason the journal reset a tunnel stream. Recorded so the code
     // above means something: a lone flag cannot be read as a distinction.
     case tunnelStreamReset = "tunnel.stream_reset"
+    case tunnelReconnectManual = "tunnel.reconnect.manual"
+    case tunnelCarrierFailed = "tunnel.carrier_failed"
+    case syncUploadExceedsLimits = "sync.upload_exceeds_limits"
+    case syncUploadPreparationFailed = "sync.upload_preparation_failed"
 }
 
 internal struct DiagnosticEvidenceEntry: Equatable, Sendable {

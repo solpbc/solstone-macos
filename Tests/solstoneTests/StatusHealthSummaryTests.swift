@@ -9,6 +9,37 @@ private let statusSummaryServerURL = "https://x.example:5015"
 
 @Suite("StatusHealthSummary")
 struct StatusHealthSummaryTests {
+    @Test func blockedUploadNamesTheCauseAndDoesNotOfferCaptureRestart() {
+        let status = UploadCoordinator.Status.blocked("upload exceeds journal limits")
+        let summary = makeSummary(uploadStatus: status, pendingCount: 1)
+        #expect(summary.severity == .attention)
+        #expect(summary.title == "upload exceeds journal limits")
+        #expect(summary.axValue == "external_blocked")
+        #expect(classifyJournalConnection(isPairedIngestReady: true, uploadStatus: status, journalConnectionAXToken: nil) == .error)
+        #expect(observationRecoveryPresentation(observationRowState: .error, errorMessage: nil, tryAgainInFlight: false, uploadStatus: status) == nil)
+        #expect(observationRecoveryPresentation(observationRowState: .error, errorMessage: "capture stopped", tryAgainInFlight: false, uploadStatus: status) != nil)
+    }
+    @Test func currentConnectionOverridesStaleDeliverySuccessInBothSurfaces() {
+        for connecting in [true, false] {
+            let token = connecting ? PairingConnectionAXState.connecting.axToken : nil
+            let summary = StatusHealthSummary.make(
+                serviceMode: .external, isRecording: true, isPaused: false, held: false,
+                uploadStatus: .synced, pendingCount: 0,
+                lastDeliveryOutcome: .delivered(statusSummaryRecentDelivery),
+                serverURL: statusSummaryServerURL, now: statusSummaryNow,
+                isPairedIngestReady: false, journalConnectionAXToken: token
+            )
+            #expect(summary.severity == (connecting ? .warn : .attention))
+            #expect(summary.axValue == (connecting ? "external_awaiting_tunnel" : "external_offline"))
+            #expect(classifyJournalConnection(isPairedIngestReady: false, uploadStatus: .synced, journalConnectionAXToken: token) == (connecting ? .connectionWaiting : .offline))
+        }
+        #expect(classifyJournalConnection(isPairedIngestReady: true, uploadStatus: .retrying(segment: "s", attempts: 1), journalConnectionAXToken: nil) == .observing)
+        let retry = makeSummary(uploadStatus: .retrying(segment: "s", attempts: 1))
+        #expect(retry.severity == .warn)
+        #expect(retry.axValue == "external_retrying")
+        let delivered = makeSummary(uploadStatus: .synced)
+        #expect(delivered.severity == .good)
+    }
     @Test func bundledModeAlwaysReportsMigrationNeeded() {
         let summary = makeSummary(serviceMode: .bundled, isRecording: false, isPaused: true, uploadStatus: .synced)
 
