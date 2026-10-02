@@ -340,6 +340,7 @@ public final class SegmentWriter {
     /// Add a microphone during recording (no segment rotation needed)
     /// - Parameter device: The audio input device to add
     public func addMicrophone(_ device: AudioInputDevice) throws {
+        guard finishTask == nil else { throw SegmentError.segmentFinishing }
         guard let manager = audioManager else {
             throw SegmentError.failedToCreateAudioOutput
         }
@@ -519,6 +520,7 @@ public final class SegmentWriter {
     public enum SegmentError: Error, LocalizedError {
         case failedToCreateScreenshotCapturer(displayID: CGDirectDisplayID)
         case failedToCreateAudioOutput
+        case segmentFinishing
         case missingContentFilter(displayID: CGDirectDisplayID)
 
         public var errorDescription: String? {
@@ -527,6 +529,8 @@ public final class SegmentWriter {
                 return "Failed to create screenshot capturer for display \(displayID)"
             case .failedToCreateAudioOutput:
                 return "Failed to create audio output"
+            case .segmentFinishing:
+                return "this segment has finished accepting audio."
             case .missingContentFilter(let displayID):
                 return "Missing SCContentFilter for display \(displayID)"
             }
