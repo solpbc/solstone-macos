@@ -239,7 +239,6 @@
       "settings.sources.microphoneCapture.enabled",
       "settings.sources.screenCapture.enabled",
       "settings.sources.status",
-      "settings.status.debug.keepRejectedAudio",
       "settings.status.debug.oneMinuteSegments",
       "settings.status.health.summary.action",
       "settings.status.health.summary.state",

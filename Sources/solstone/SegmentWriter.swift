@@ -37,7 +37,6 @@ public struct SegmentCaptureResult: Sendable {
     public let timePrefix: String
     public let capturedDurationSeconds: Int?
     public let audioInputs: [AudioRemixerInput]
-    public let debugKeepRejected: Bool
     public let silenceMusic: Bool
     public let micMetadataJSON: String?
 }
@@ -110,9 +109,6 @@ public final class SegmentWriter {
     private let screenshotCapturerFactory: ScreenshotCapturerFactory
     private let audioManagerFactory: AudioManagerFactory
 
-    /// When true, move rejected audio tracks to rejected/ subfolder instead of deleting
-    private let debugKeepRejectedAudio: Bool
-
     /// When true, silence music-only portions of system audio during remix
     private let silenceMusic: Bool
 
@@ -132,13 +128,11 @@ public final class SegmentWriter {
     /// - Parameters:
     ///   - outputDirectory: Directory to write segment files to (with .incomplete suffix)
     ///   - timePrefix: Time prefix for file naming (e.g., "143022")
-    ///   - debugKeepRejectedAudio: Move rejected audio tracks to rejected/ subfolder instead of deleting
     ///   - silenceMusic: Silence music-only portions of system audio during remix
     ///   - verbose: Enable verbose logging
     public init(
         outputDirectory: URL,
         timePrefix: String,
-        debugKeepRejectedAudio: Bool = false,
         silenceMusic: Bool = true,
         verbose: Bool = false,
         capturerStopTimeoutSeconds: TimeInterval = 5,
@@ -148,7 +142,6 @@ public final class SegmentWriter {
     ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
-        self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.silenceMusic = silenceMusic
         self.verbose = verbose
         self.capturerStopTimeoutSeconds = capturerStopTimeoutSeconds
@@ -474,7 +467,6 @@ public final class SegmentWriter {
             timePrefix: timePrefix,
             capturedDurationSeconds: capturedDurationSeconds,
             audioInputs: audioInputs,
-            debugKeepRejected: debugKeepRejectedAudio,
             silenceMusic: silenceMusic,
             micMetadataJSON: micMetadataJSON
         )

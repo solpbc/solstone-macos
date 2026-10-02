@@ -9,7 +9,7 @@ description: >
 
 ## H.264 Video Encoding
 
-`VideoWriter` wraps AVAssetWriter for 1fps screen capture to `.mp4`. Source: `SolstoneCaptureCore/.../VideoWriter.swift`, `SolstoneCapture/.../ScreenshotCapturer.swift`
+`VideoWriter` wraps AVAssetWriter for 1fps screen capture to `.mp4`. Source: `Sources/solstone/VideoWriter.swift`, `SolstoneCapture/.../ScreenshotCapturer.swift`
 
 - **Codec:** `AVVideoCodecType.h264` (hardware-accelerated). BT.709 color. Frame reordering disabled.
 - **Pixel format:** `kCVPixelFormatType_420YpCbCr8BiPlanarFullRange` — native hardware encoder format. SCStream delivers this directly, no CPU color conversion.
@@ -19,7 +19,7 @@ description: >
 
 ## Persistent AVAudioEngine
 
-`MicrophoneCaptureManager` keeps `ExternalMicCapture` instances (each wrapping `AVAudioEngine`) alive across segment rotations. Only the `onAudioBuffer` callback changes. Source: `SolstoneCaptureCore/.../ExternalMicCapture.swift`, `SolstoneCapture/.../MicrophoneCaptureManager.swift`
+`MicrophoneCaptureManager` keeps `ExternalMicCapture` instances (each wrapping `AVAudioEngine`) alive across segment rotations. Only the `onAudioBuffer` callback changes. Source: `Sources/solstone/ExternalMicCapture.swift`, `SolstoneCapture/.../MicrophoneCaptureManager.swift`
 
 **Why:** Stopping/restarting AVAudioEngine causes audible clicks/pops in system audio playback during segment rotation. Persistent engines eliminate this.
 
@@ -45,7 +45,7 @@ description: >
 
 ## Per-Source Audio Architecture
 
-Each audio source records to its own M4A during a segment. `PerSourceAudioManager` orchestrates `SingleTrackAudioWriter` instances. Source: `SolstoneCapture/.../PerSourceAudioManager.swift`, `SolstoneCaptureCore/.../SingleTrackAudioWriter.swift`
+Each audio source records to its own M4A during a segment. `PerSourceAudioManager` orchestrates `SingleTrackAudioWriter` instances. Source: `SolstoneCapture/.../PerSourceAudioManager.swift`, `Sources/solstone/SingleTrackAudioWriter.swift`
 
 **Why individual files:** (1) No lock contention — callbacks from different sources never compete. (2) Per-source silence detection — drop a silent mic without affecting system audio. (3) Each track records its own timing offset.
 
@@ -53,25 +53,25 @@ Each audio source records to its own M4A during a segment. `PerSourceAudioManage
 
 **Timing offset tracking:** `SingleTrackAudioWriter` records `segmentStartTime` (from `CMClockGetHostTimeClock()`) and `firstBufferTime` (PTS of first buffer). Difference becomes `startOffset` in `AudioTrackTimingInfo` for remix alignment. Buffers retimed to `.zero` within each file.
 
-**Silence batching (non-obvious):** Silent buffers (RMS < 0.001, ~-60dB) are accumulated, not encoded individually. Flushed as one synthetic buffer when: (a) 48000 samples (1s) accumulate, or (b) non-silent buffer arrives. Reduces encoder invocations for quiet mics. Built via `calloc` -> `CMBlockBufferCreateWithMemoryBlock` -> `CMSampleBufferCreate`.
+**Silence batching (non-obvious):** Silent buffers (RMS < 0.001, ~-60dB) are accumulated, not encoded individually. Flushed as one synthetic buffer when: (a) 48000 samples (1s) accumulate, or (b) non-silent buffer arrives, or (c) the writer finishes. Reduces encoder invocations for quiet mics. Built via `calloc` -> `CMBlockBufferCreateWithMemoryBlock` -> `CMSampleBufferCreate`.
 
 **Audio pipeline:** Each audio source writes directly to its own M4A file. No muting or silencing logic exists in the audio pipeline — pause stops all capture entirely.
 
 ## AudioRemixer
 
-Merges per-source M4A files into single multi-track M4A. Source: `SolstoneCaptureCore/.../AudioRemixer.swift`
+Merges per-source M4A files into single multi-track M4A. Source: `Sources/solstone/AudioRemixer.swift`
 
-**Pipeline:** Filter (drop hasAudio=false) -> speech analysis -> drop no-speech tracks -> store silence ranges for system audio -> `AVAssetReader`+`AVAssetReaderTrackOutput` per input (PCM Float32) -> `AVAssetWriter` with one input per track -> interleaved read/write -> atomic rename (temp UUID -> final URL).
+**Pipeline:** Load readable audio tracks -> optional system music analysis -> `AVAssetReader` PCM Float32 output per source -> one writer input per source -> interleaved checked read/write -> completed output -> per-source outcomes. The finalizer persists outcomes before deleting fully copied source files. Negative speech classification never deletes a readable recording.
 
 **Interleaved reading (non-obvious):** AVAssetWriter with multiple inputs expects data from all tracks roughly together in time. Draining one track before starting another stalls the writer. The loop iterates round-robin: one buffer per track per iteration. If `isReadyForMoreMediaData` is false, buffer goes into `pendingSamples[idx]` for retry next iteration. 1ms `Task.sleep` prevents CPU spin.
 
 **Timing alignment:** Each buffer retimed via `CMSampleBufferCreateCopyWithNewTiming`, adding track's `startOffset` to PTS. Aligns tracks that started at different points within the segment.
 
-**Music silencing:** `zeroBuffer()` creates a new CMSampleBuffer with identical timing but zeroed data via `CMAudioSampleBufferCreateReadyWithPacketDescriptions`. Buffer PTS checked against silence ranges with `CMTimeRangeContainsTime`.
+**Music silencing:** `AudioBufferUtils.silencedCopy(of:ranges:)` zeroes only PCM frames wholly inside confirmed music intervals. Other frames in the same buffer remain intact. Incomplete/failed analysis returns no silence ranges.
 
 ## SoundAnalysis Integration
 
-`SystemAudioAnalyzer` classifies audio using on-device SoundAnalysis. Source: `SolstoneCaptureCore/.../SystemAudioAnalyzer.swift`
+`SystemAudioAnalyzer` classifies audio using on-device SoundAnalysis. Source: `Sources/solstone/SystemAudioAnalyzer.swift`
 
 - `SNAudioFileAnalyzer(url:)` processes completed M4A files (fast, on-device, no internet)
 - `SNClassifySoundRequest(classifierIdentifier: .version1)` — pre-trained classifier
@@ -83,11 +83,11 @@ Merges per-source M4A files into single multi-track M4A. Source: `SolstoneCaptur
 **Range processing:**
 1. Collect music-only `CMTimeRange` values
 2. Sort by start time (`CMTimeCompare` returns -1/0/1, not boolean)
-3. Merge adjacent ranges within **5-second gap** — bridges classification fluctuations
+3. Merge overlapping or exactly adjacent ranges; never bridge a positive gap. Subtract speech-positive and unknown overlapping windows
 4. Shrink each range by **0.2s padding** at both ends — prevents clipping speech edges
 5. Discard negative-duration ranges (too short to survive padding)
 
-**Fail-open:** If analysis fails, return `.unavailable` (hasSpeech=true, empty silenceRanges). Audio kept as-is. Never discard audio due to analysis failure.
+**Fail-open:** If analysis fails, is malformed, or has incomplete coverage, return `.unavailable` (empty silenceRanges). Audio kept as-is. Never discard audio due to analysis failure.
 
 ## CMTime Patterns
 

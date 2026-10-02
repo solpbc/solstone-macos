@@ -30,7 +30,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 factoryCalls.increment()
                 if factoryCalls.count == 1 {
                     return FakeCaptureSegment(
@@ -100,7 +100,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 newStartCount.increment()
                 return FakeCaptureSegment(outputDirectory: outputDirectory)
             },
@@ -162,7 +162,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 let segment = FakeCaptureSegment(
                     outputDirectory: outputDirectory,
                     finishBehaviors: [.normal(outputDirectory)],
@@ -236,7 +236,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 newStartCount.increment()
                 return FakeCaptureSegment(outputDirectory: outputDirectory)
             },
@@ -304,7 +304,7 @@ struct CaptureManagerRotationWatchdogTests {
         let firstNow = fixedDate(second: 6)
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 FakeCaptureSegment(outputDirectory: outputDirectory)
             },
             recoveryCoordinator: IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery }),
@@ -372,7 +372,7 @@ struct CaptureManagerRotationWatchdogTests {
         now.set(firstNow)
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 factoryCalls.increment()
                 now.set(firstNow.addingTimeInterval(Double(factoryCalls.count)))
                 return FakeCaptureSegment(outputDirectory: outputDirectory)
@@ -451,7 +451,7 @@ struct CaptureManagerRotationWatchdogTests {
         let coordinator = IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery })
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 FakeCaptureSegment(outputDirectory: outputDirectory)
             },
             recoveryCoordinator: coordinator,
@@ -472,7 +472,7 @@ struct CaptureManagerRotationWatchdogTests {
         let coordinator = IncompleteSegmentRecoveryCoordinator(recoveryFactory: { recovery })
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 FakeCaptureSegment(outputDirectory: outputDirectory)
             },
             recoveryCoordinator: coordinator,
@@ -498,7 +498,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 let segment = FakeCaptureSegment(
                     outputDirectory: outputDirectory,
                     startBehavior: .throwPartway
@@ -544,7 +544,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 factoryCalls.increment()
                 if factoryCalls.count == 2 {
                     return FakeCaptureSegment(
@@ -612,7 +612,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 FakeCaptureSegment(
                     outputDirectory: outputDirectory,
                     startsPersistentSystemAudio: .beforeGate,
@@ -662,7 +662,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 FakeCaptureSegment(outputDirectory: outputDirectory)
             },
             finalizer: finalizer,
@@ -700,7 +700,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 FakeCaptureSegment(
                     outputDirectory: outputDirectory,
                     startsPersistentSystemAudio: .bothSides,
@@ -760,7 +760,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 FakeCaptureSegment(
                     outputDirectory: outputDirectory,
                     startBehavior: .throwPartway,
@@ -800,7 +800,7 @@ struct CaptureManagerRotationWatchdogTests {
 
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 factoryCalls.increment()
                 return FakeCaptureSegment(outputDirectory: outputDirectory)
             },

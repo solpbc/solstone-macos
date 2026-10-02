@@ -317,7 +317,6 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
             timePrefix: String(directory.lastPathComponent.prefix(6)),
             capturedDurationSeconds: 1,
             audioInputs: [],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: nil
         )
@@ -366,7 +365,6 @@ final class FakeRemixer: AudioRemixing, @unchecked Sendable {
     func remix(
         inputs: [AudioRemixerInput],
         to outputURL: URL,
-        deleteSourceFiles: Bool,
         silenceMusic: Bool
     ) async throws -> AudioRemixerResult {
         remixCount.increment()

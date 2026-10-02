@@ -3587,9 +3587,6 @@ struct SettingsView: View {
                     Toggle("1-minute segments", isOn: debugSegmentsBinding)
                         .help("use 1-minute segments instead of 5-minute for testing")
                         .accessibilityIdentifier(AXID.Settings.Status.debugOneMinuteSegments)
-                    Toggle("keep rejected audio", isOn: debugKeepRejectedBinding)
-                        .help("move rejected mic tracks to rejected/ folder instead of deleting")
-                        .accessibilityIdentifier(AXID.Settings.Status.debugKeepRejectedAudio)
                 }
                 .padding(.vertical, 4)
             }
@@ -3615,16 +3612,6 @@ struct SettingsView: View {
         )
     }
 
-    private var debugKeepRejectedBinding: Binding<Bool> {
-        Binding(
-            get: { appState.config.debugKeepRejectedAudio },
-            set: { newValue in
-                var config = appState.config
-                config.debugKeepRejectedAudio = newValue
-                appState.updateConfig(config)
-            }
-        )
-    }
     #endif
 
     // MARK: - Upload Status

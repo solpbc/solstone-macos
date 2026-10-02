@@ -31,7 +31,7 @@ struct AudioSourceReadinessTests {
 
         let result = await classifyAudioSources(in: files, timePrefix: "120000", verbose: false)
 
-        if case .ready(let inputs) = result {
+        if case .ready(let inputs, _) = result {
             #expect(inputs.count == 1)
         } else {
             Issue.record("Expected ready")
@@ -63,7 +63,7 @@ struct AudioSourceReadinessTests {
 
         let result = await classifyAudioSources(in: files, timePrefix: "120000", verbose: false)
 
-        if case .ready(let inputs) = result {
+        if case .ready(let inputs, _) = result {
             #expect(inputs.count == 1)
         } else {
             Issue.record("Expected ready with one readable input")

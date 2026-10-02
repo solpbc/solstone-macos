@@ -33,20 +33,20 @@ struct SilenceRangeTests {
     }
 
     @Test func adjacentRangesMerge() {
-        // Two ranges 3s apart (< 5s merge threshold) should merge
+        // Touching ranges merge; positive gaps never do.
         let input = [
             range(start: 10.0, duration: 5.0),   // [10, 15)
-            range(start: 18.0, duration: 5.0),    // [18, 23) — 3s gap
+            range(start: 15.0, duration: 5.0),    // [15, 20), touching
         ]
         let result = analyzer.computeSilenceRanges(from: input, padding: 0.0)
-        // Merged: [10, 23) = duration 13
+        // Merged: [10, 20)
         #expect(result.count == 1)
         #expect(abs(CMTimeGetSeconds(result[0].start) - 10.0) < 0.001)
-        #expect(abs(CMTimeGetSeconds(result[0].duration) - 13.0) < 0.001)
+        #expect(abs(CMTimeGetSeconds(result[0].duration) - 10.0) < 0.001)
     }
 
     @Test func largeGapKeepsRangesSeparate() {
-        // Two ranges 10s apart (> 5s merge threshold) stay separate
+        // A positive gap stays intact.
         let input = [
             range(start: 10.0, duration: 5.0),   // [10, 15)
             range(start: 25.0, duration: 5.0),    // [25, 30) — 10s gap
@@ -66,14 +66,14 @@ struct SilenceRangeTests {
         // Three ranges: first two merge, third is separate
         let input = [
             range(start: 0.0, duration: 3.0),    // [0, 3)
-            range(start: 5.0, duration: 3.0),     // [5, 8) — 2s gap, merges
-            range(start: 20.0, duration: 3.0),    // [20, 23) — 12s gap, separate
+            range(start: 3.0, duration: 3.0),     // [3, 6), touching
+            range(start: 20.0, duration: 3.0),    // [20, 23), separate
         ]
         let result = analyzer.computeSilenceRanges(from: input, padding: 0.0)
         #expect(result.count == 2)
-        // First merged range: [0, 8)
+        // First merged range: [0, 6)
         #expect(abs(CMTimeGetSeconds(result[0].start) - 0.0) < 0.001)
-        #expect(abs(CMTimeGetSeconds(result[0].duration) - 8.0) < 0.001)
+        #expect(abs(CMTimeGetSeconds(result[0].duration) - 6.0) < 0.001)
         // Second range: [20, 23)
         #expect(abs(CMTimeGetSeconds(result[1].start) - 20.0) < 0.001)
         #expect(abs(CMTimeGetSeconds(result[1].duration) - 3.0) < 0.001)
@@ -82,13 +82,13 @@ struct SilenceRangeTests {
     @Test func unsortedInputGetsSorted() {
         // Input out of order should still merge correctly
         let input = [
-            range(start: 18.0, duration: 5.0),
+            range(start: 15.0, duration: 5.0),
             range(start: 10.0, duration: 5.0),
         ]
         let result = analyzer.computeSilenceRanges(from: input, padding: 0.0)
-        // 3s gap → merged to [10, 23)
+        // Touching ranges merge to [10, 20)
         #expect(result.count == 1)
         #expect(abs(CMTimeGetSeconds(result[0].start) - 10.0) < 0.001)
-        #expect(abs(CMTimeGetSeconds(result[0].duration) - 13.0) < 0.001)
+        #expect(abs(CMTimeGetSeconds(result[0].duration) - 10.0) < 0.001)
     }
 }

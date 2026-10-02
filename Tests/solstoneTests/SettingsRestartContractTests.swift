@@ -27,7 +27,6 @@ struct SettingsRestartContractTests {
             "excludePrivateBrowsing",
             "syncPaused",
             "debugSegments",
-            "debugKeepRejectedAudio",
             "preserveSyncedSegments",
             "loginItemEnabled",
             "observerName",

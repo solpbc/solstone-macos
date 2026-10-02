@@ -186,7 +186,7 @@ struct IndependentCapturePipelineTests {
         let segmentBox = LockedValue<FakeCaptureSegment>()
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 let segment = FakeCaptureSegment(outputDirectory: outputDirectory)
                 segmentBox.set(segment)
                 return segment
@@ -222,7 +222,7 @@ struct IndependentCapturePipelineTests {
         let segmentBox = LockedValue<FakeCaptureSegment>()
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 let segment = FakeCaptureSegment(outputDirectory: outputDirectory)
                 segmentBox.set(segment)
                 return segment
@@ -440,7 +440,7 @@ struct IndependentCapturePipelineTests {
         let root = try makeTempDirectory("source-display-init-failure")
         defer { try? FileManager.default.removeItem(at: root) }
         let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { path, _, _, _, _ in FakeCaptureSegment(outputDirectory: path) },
+            segmentFactory: { path, _, _, _ in FakeCaptureSegment(outputDirectory: path) },
             finalizer: FakeFinalizer(), microphoneDevices: { [] },
             shareableContentProvider: { throw CaptureManager.CaptureError.noDisplaysAvailable })
         let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
