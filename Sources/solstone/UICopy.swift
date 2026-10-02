@@ -155,6 +155,8 @@ public enum UICopy {
     public static let SETTINGS_TAB_ATTENTION_A11Y = "needs attention"
     public static let SETTINGS_TAB_UPDATES_DONE_A11Y = "solstone is up to date"
     public static let SETTINGS_ATTENTION_PERMISSIONS = "permissions needed"
+    public static let SETTINGS_ATTENTION_PRIVATE_WINDOWS = "can't check private windows in Safari, Chrome, Edge and Brave"
+    public static let PRIVATE_WINDOWS_CHECKING = "checking Accessibility access…"
     public static let SETTINGS_ATTENTION_JOURNAL = "journal setup needed"
     public static let SETTINGS_ATTENTION_UPDATE_AVAILABLE = "update available"
     public static let SETTINGS_ATTENTION_UPDATE_CHECK_FAILED = "update check failed"

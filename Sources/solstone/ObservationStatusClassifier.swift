@@ -77,7 +77,7 @@ internal func classifyObservationRowState(
 }
 
 internal enum AttentionReason: Equatable, CaseIterable {
-    case permissions, journal, updateAvailable, updateCheckFailed
+    case permissions, privateWindows, journal, updateAvailable, updateCheckFailed
 }
 
 internal struct MenubarPresentation: Equatable {
@@ -96,14 +96,16 @@ internal func classifyMenubarPresentation(
     observation: MenubarStatusRowState,
     permissionsNeedAttention: Bool,
     journalNeedsAttention: Bool,
-    durableUpdateStatus: DurableUpdateStatus
+    durableUpdateStatus: DurableUpdateStatus,
+    privateWindowsNeedAttention: Bool = false
 ) -> MenubarPresentation {
     MenubarPresentation(
         observation: observation,
         attention: firstAttentionReason(
             permissionsNeedAttention: permissionsNeedAttention,
             journalNeedsAttention: journalNeedsAttention,
-            durableUpdateStatus: durableUpdateStatus
+            durableUpdateStatus: durableUpdateStatus,
+            privateWindowsNeedAttention: privateWindowsNeedAttention
         )
     )
 }
@@ -111,9 +113,11 @@ internal func classifyMenubarPresentation(
 private func firstAttentionReason(
     permissionsNeedAttention: Bool,
     journalNeedsAttention: Bool,
-    durableUpdateStatus: DurableUpdateStatus
+    durableUpdateStatus: DurableUpdateStatus,
+    privateWindowsNeedAttention: Bool
 ) -> AttentionReason? {
     if permissionsNeedAttention { return .permissions }
+    if privateWindowsNeedAttention { return .privateWindows }
     if journalNeedsAttention { return .journal }
     return updateAttentionReason(for: durableUpdateStatus)
 }
@@ -154,7 +158,7 @@ internal func attentionToSurface(
             }
         }
         return reason
-    case .updateAvailable, .updateCheckFailed:
+    case .privateWindows, .updateAvailable, .updateCheckFailed:
         return reason
     }
 }
@@ -165,6 +169,7 @@ internal func attentionSuffix(
 ) -> String {
     switch reason {
     case .permissions: return UICopy.SETTINGS_ATTENTION_PERMISSIONS
+    case .privateWindows: return UICopy.SETTINGS_ATTENTION_PRIVATE_WINDOWS
     case .journal:
         if let verdict, verdict.failureCause != nil {
             return verdict.message
@@ -276,7 +281,9 @@ extension AppState {
             observation: observationRowState,
             permissionsNeedAttention: permissionsNeedAttention,
             journalNeedsAttention: serviceNeedsAttention,
-            durableUpdateStatus: durableUpdateStatus
+            durableUpdateStatus: durableUpdateStatus,
+            privateWindowsNeedAttention: privateWindowAccessibilityEnabled
+                && privateWindowAccessibilityMonitor.needsAttention
         )
     }
 }

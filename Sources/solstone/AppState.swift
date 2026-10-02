@@ -135,11 +135,7 @@ public final class AppState {
     private let isSnapshot: Bool
     private let automaticObservationPipelineEnabled: Bool
     public private(set) var config: AppConfig
-    /// The private-window Accessibility option's progress in this run of the app: whether the owner
-    /// turned it on (which asks macOS), and whether a read has worked since. Kept here, not in the
-    /// Settings view, so closing Settings while macOS asks still reads "waiting" when it reopens.
-    @ObservationIgnored var privateWindowAccessibilityAskedThisSession = false
-    @ObservationIgnored var privateWindowAccessibilityHasWorkedSinceAsking = false
+    internal var privateWindowAccessibilityMonitor = PrivateWindowAccessibilityMonitor()
     private var debugAudioHolder: DebugSettingHolder!
     private var silenceMusicHolder: DebugSettingHolder!
     private var didAttemptSameMachineMigration = false
@@ -201,6 +197,22 @@ public final class AppState {
 
     /// Set by SetupView to tell SettingsView which tab to open to
     public var pendingSettingsTab: String?
+    internal var pendingPrivateWindowSettingsTarget: UUID?
+
+    internal var privateWindowAccessibilityEnabled: Bool {
+        config.excludePrivateBrowsing && config.excludePrivateBrowsingAccessibility
+    }
+
+    internal func requestPrivateWindowSettingsRecovery() {
+        pendingSettingsTab = "privacy"
+        pendingPrivateWindowSettingsTarget = UUID()
+        NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+    }
+
+    private func reconcilePrivateWindowAccessibility() {
+        guard !isSnapshot else { return }
+        privateWindowAccessibilityMonitor.setEnabled(privateWindowAccessibilityEnabled)
+    }
 
     /// Set to true after the first permission check completes, so startup UI knows real state
     public internal(set) var initialPermissionCheckComplete: Bool {
@@ -529,6 +541,7 @@ public final class AppState {
         let browserIntakeChanged = oldConfig.isBrowserIntakeEnabled != newConfig.isBrowserIntakeEnabled
 #endif
         config = newConfig
+        reconcilePrivateWindowAccessibility()
         uploadCoordinator.updateConfig(newConfig)
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
@@ -1428,10 +1441,12 @@ public final class AppState {
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
         uploadCoordinator.refreshLastSuccessfulJournalContact()
         uploadCoordinator.refreshLastJournalDelivery()
+        reconcilePrivateWindowAccessibility()
     }
 
     deinit {
         MainActor.assumeIsolated {
+            privateWindowAccessibilityMonitor.stop()
             notificationRequestTask?.cancel()
             if let activationObserver {
                 NotificationCenter.default.removeObserver(activationObserver)

@@ -407,14 +407,14 @@ struct SparkleDeferralTests {
         #expect(recoveryCalls == 0)
     }
 
-    @Test func recoveryFiresOnceOnCancelAfterCommittedInstall() async {
+    @Test(.timeLimit(.minutes(1))) func recoveryFiresOnceOnCancelAfterCommittedInstall() async {
         let signal = ExclusiveSignal()
         let gate = PreInstallFinalizerGate()
         let controller = makeController(
             exclusivity: signal,
             preInstallFinalizer: gate.run,
             installFailureRecovery: {
-                gate.events.append("recovery")
+                gate.recordRecovery()
             }
         )
         controller.applyDebugFixture(
@@ -434,9 +434,7 @@ struct SparkleDeferralTests {
         await yieldUntil { gate.events.contains("sparkle-install") }
 
         controller.cancel()
-        for _ in 0..<20 {
-            await Task.yield()
-        }
+        await gate.waitForRecovery()
         #expect(gate.events.contains("recovery"))
         controller.presentUpdaterError(NSError(domain: "test", code: 1))
         await Task.yield()
@@ -444,14 +442,14 @@ struct SparkleDeferralTests {
         #expect(count(gate.events, "recovery") == 1)
     }
 
-    @Test func recoveryFiresOnceOnDismissAfterCommittedInstall() async {
+    @Test(.timeLimit(.minutes(1))) func recoveryFiresOnceOnDismissAfterCommittedInstall() async {
         let signal = ExclusiveSignal()
         let gate = PreInstallFinalizerGate()
         let controller = makeController(
             exclusivity: signal,
             preInstallFinalizer: gate.run,
             installFailureRecovery: {
-                gate.events.append("recovery")
+                gate.recordRecovery()
             }
         )
         controller.applyDebugFixture(
@@ -471,9 +469,7 @@ struct SparkleDeferralTests {
         await yieldUntil { gate.events.contains("sparkle-install") }
 
         controller.dismiss()
-        for _ in 0..<20 {
-            await Task.yield()
-        }
+        await gate.waitForRecovery()
         #expect(gate.events.contains("recovery"))
         controller.presentUpdaterError(NSError(domain: "test", code: 1))
         await Task.yield()
@@ -1397,6 +1393,26 @@ private final class TerminationBeganSignal {
 private final class PreInstallFinalizerGate {
     var events: [String] = []
     private var continuation: CheckedContinuation<Void, Never>?
+    func recordRecovery() {
+        events.append("recovery")
+    }
+
+    func waitForRecovery() async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while !events.contains("recovery") {
+            guard clock.now < deadline else {
+                Issue.record("committed install recovery did not complete")
+                return
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(1))
+            } catch {
+                Issue.record("committed install recovery wait cancelled")
+                return
+            }
+        }
+    }
 
     var started: Bool {
         events.contains("finalizer-start")
