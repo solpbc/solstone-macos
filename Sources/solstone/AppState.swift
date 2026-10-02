@@ -1137,8 +1137,12 @@ public final class AppState {
         }
     }
 
+    /// The sync identity is the paired journal whose mark the owner answered, not
+    /// whether its carrier is up right now. A carrier that drops and returns must
+    /// not reset upload hold-offs or discard an answer already received; while it
+    /// is down, the home-base resolver holds sends.
     private func currentPairedIngestIdentity() -> TunnelPairingIdentity? {
-        guard isPairedIngestReady else { return nil }
+        guard isJournalMarkConfirmed else { return nil }
         return tunnelLifecycleOwner.cachedPairingIdentity
     }
 

@@ -64,9 +64,10 @@ internal func classifyObservationRowState(
     switch uploadStatus {
     case .synced, .syncing, .uploading:
         return .observing
-    case .notSynced where isPairedIngestReady:
+    case .notSynced where isPairedIngestReady, .retrying where isPairedIngestReady:
         // Connected and the first pass hasn't run yet, as right after the mark is
-        // answered: nothing has failed, so this is not offline.
+        // answered, or an upload is being tried again over a working connection:
+        // nothing is offline. A pass that cannot reach the journal reports offline.
         return .observing
     case .awaitingTunnel:
         return .connectionWaiting
