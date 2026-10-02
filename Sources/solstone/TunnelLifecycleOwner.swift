@@ -467,10 +467,12 @@ final class TunnelLifecycleOwner {
             guard let self else { return }
             await self.clientSelfSequencer.cancel()
             await self.relayAccessSequencer.cancel()
-            await previous?.value
-            guard self.running, !Task.isCancelled else { return }
             let attempt = self.transportAttemptID
+            // Retire the old transport before waiting on the old start task. An
+            // attempt still dialing the old pairing keeps retrying until its
+            // transport is disconnected; cancelling the task alone does not end it.
             await self.disconnectCurrentTransport()
+            await previous?.value
             guard self.running, !Task.isCancelled, self.transportAttemptID == attempt else { return }
             await self.connectFromStoredPairing()
         }
