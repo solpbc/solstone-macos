@@ -286,10 +286,13 @@ struct TunnelLifecycleOwnerTests {
         #expect(await sleeper.establishmentSleepCount == 1)
     }
 
-    @Test func bootstrapStopsAfterFirstSuccessAndDoesNotOwnerReconnectAgain() async throws {
+    @Test func localListenerConstructionFailureRetriesOutsideSDKThenStopsAfterSuccess() async throws {
         let sleeper = ManualSleeper()
+        // LoopbackProxy constructs NWListener after SDK connect succeeds. Its
+        // throwing initializer can return a raw OS error before listener callbacks
+        // wrap failures in LoopbackProxyError; the SDK never sees this boundary.
         let transport = FakeTunnelTransport(results: [
-            .failure(SessionError.unreachable),
+            .failure(NSError(domain: NSPOSIXErrorDomain, code: Int(EMFILE), userInfo: nil)),
             .success(.init(localPort: 51515, via: .relay)),
         ])
         let owner = makeOwner(factory: FakeTransportFactory([transport]), sleep: { try await sleeper.sleep($0) })
