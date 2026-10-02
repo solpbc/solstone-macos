@@ -9,8 +9,11 @@ Status: design only. No implementation in this document.
 > the goal "keep exactly one reconnect loop: `TunnelSession.monitorAndReconnect`" (the
 > package splits this into a single-shot `TunnelSession` plus a `TunnelSupervisor` that
 > owns the reconnect loop), and the `SPLTunnelTests` test plan. The app-layer
-> lifecycle-owner design is otherwise still accurate. Kept as a point-in-time record —
-> do not update it to track the package.
+> lifecycle-owner design also predates the 2026-10-02 probe change: HTTP probe
+> failures now report degraded health without reconnecting; satisfied path changes
+> request a safe upgrade. SDK keepalive owns carrier-loss recovery. The probe and
+> path reconnect instructions below are historical. Keep the original design body
+> as a point-in-time record.
 
 ## Goals
 
