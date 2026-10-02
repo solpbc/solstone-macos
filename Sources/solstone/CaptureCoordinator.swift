@@ -139,6 +139,7 @@ public final class CaptureCoordinator {
     }
 
     public func activate() {
+        captureManager.onAudioCaptureIssue = { [weak self] message in self?.bannerSink(message) }
         captureManager.onStateChanged = { [weak self] state in
             self?.handleCaptureStateChange(state)
         }
@@ -182,7 +183,7 @@ public final class CaptureCoordinator {
             isPaused = false
             isUserPaused = false
             captureError = nil
-            bannerSink(nil)
+            bannerSink(captureManager.currentAudioCaptureIssue)
             stopPermissionPolling()
         case .paused(let reasons):
             isRecording = true

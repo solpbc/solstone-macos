@@ -58,6 +58,7 @@ public extension SegmentScreenshotCapturing {
 }
 
 public protocol SegmentAudioManaging: AnyObject, Sendable {
+    func bindDiagnostics(_ recorder: AudioCaptureRecorder)
     func setSegmentStartTime(_ time: CMTime)
     func startSystemAudio() throws -> String
     func appendSystemAudio(_ sampleBuffer: CMSampleBuffer)
@@ -67,6 +68,10 @@ public protocol SegmentAudioManaging: AnyObject, Sendable {
     func activeMicrophoneUIDs() -> [String]
     func getMicMetadata() -> [[String: Any]]
     func finishAll() async -> [AudioRemixerInput]
+}
+
+public extension SegmentAudioManaging {
+    func bindDiagnostics(_ recorder: AudioCaptureRecorder) {}
 }
 
 extension ScreenshotCapturer: SegmentScreenshotCapturing {}
@@ -99,9 +104,11 @@ public final class SegmentWriter {
     public let timePrefix: String
 
     public var onTerminalStop: (@MainActor () -> Void)?
+    public var onCaptureIssue: (@MainActor (String) -> Void)?
 
     private var screenshotCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
     private var audioManager: (any SegmentAudioManaging)?
+    private var audioDiagnostics: AudioCaptureRecorder?
     private var systemAudioCaptureManager: SystemAudioCaptureManager?
     private let verbose: Bool
     private let capturerStopTimeoutSeconds: TimeInterval
@@ -216,10 +223,23 @@ public final class SegmentWriter {
         var screenError: Error?
         var micError: Error?
 
+        var expected: [(id: String, kind: String)] = []
+        if sources.contains(.screen) { expected.append(("system", "system")) }
+        if sources.contains(.microphone) {
+            expected += mics.map { ($0.uid, "microphone") }
+            if mics.isEmpty { expected.append(("microphone", "microphone")) }
+        }
+        let diagnostics = try AudioCaptureRecorder(directory: outputDirectory, timePrefix: timePrefix, expected: expected,
+            onFirstFailure: { [weak self] in
+                Task { @MainActor in self?.onCaptureIssue?("audio may be incomplete for this segment.") }
+            })
+        audioDiagnostics = diagnostics
+
         var manager: (any SegmentAudioManaging)?
         if sources.contains(.microphone) || sources.contains(.screen) {
             manager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
             self.audioManager = manager
+            manager?.bindDiagnostics(diagnostics)
             let segmentStartTime = CMClockGetTime(CMClockGetHostTimeClock())
             manager?.setSegmentStartTime(segmentStartTime)
         } else {
@@ -231,15 +251,22 @@ public final class SegmentWriter {
         if sources.contains(.screen) {
             do {
                 guard !displayInfos.isEmpty else { throw CaptureManager.CaptureError.noDisplaysAvailable }
-                if let manager {
-                    _ = try manager.startSystemAudio()
-                }
-                if let sysAudioManager = systemAudioCaptureManager, let audioFilter {
-                    self.systemAudioCaptureManager = sysAudioManager
-                    try await sysAudioManager.start(filter: audioFilter)
-                    sysAudioManager.setCallback { [weak manager] buffer in
-                        manager?.appendSystemAudio(buffer)
+                // Audio failure must not tear down otherwise healthy screenshots.
+                do {
+                    if let manager { _ = try manager.startSystemAudio() }
+                    if let sysAudioManager = systemAudioCaptureManager, let audioFilter {
+                        self.systemAudioCaptureManager = sysAudioManager
+                        sysAudioManager.setCallback(onError: { diagnostics.failure("system", stage: "capture", error: $0) }) { [weak manager] buffer in
+                            manager?.appendSystemAudio(buffer)
+                        }
+                        try await sysAudioManager.start(filter: audioFilter)
+                        diagnostics.started("system")
+                    } else {
+                        diagnostics.failure("system", stage: "start", error: NSError(domain: "SolstoneAudioCapture", code: 2))
                     }
+                } catch {
+                    diagnostics.failure("system", stage: "start", error: error)
+                    Logger.capture.error("System audio failed to start; continuing screenshot capture")
                 }
 
                 for info in displayInfos {
@@ -266,6 +293,7 @@ public final class SegmentWriter {
                 successfulSources.insert(.screen)
             } catch {
                 screenError = error
+                diagnostics.failure("system", stage: "screen_start", error: error)
                 Logger.capture.error("Failed to start screen capture subsystem: \(error, privacy: .public)")
                 // Use the same bounded cleanup as a failed whole-segment start.
                 await self.systemAudioCaptureManager?.stop()
@@ -276,6 +304,7 @@ public final class SegmentWriter {
                 manager = nil
                 if sources.contains(.microphone) && !mics.isEmpty {
                     let microphoneManager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
+                    microphoneManager.bindDiagnostics(diagnostics)
                     microphoneManager.setSegmentStartTime(CMClockGetTime(CMClockGetHostTimeClock()))
                     manager = microphoneManager
                     self.audioManager = microphoneManager
@@ -292,13 +321,18 @@ public final class SegmentWriter {
 
         // Microphone subsystem
         if sources.contains(.microphone) {
+            if mics.isEmpty {
+                diagnostics.failure("microphone", stage: "start", error: NSError(domain: "SolstoneAudioDevice", code: 2))
+            }
             if let manager {
                 var startedAnyMic = false
                 for device in mics {
                     do {
                         _ = try manager.addMicrophone(device)
+                        diagnostics.started(device.uid)
                         startedAnyMic = true
                     } catch {
+                        diagnostics.failure(device.uid, stage: "start", error: error)
                         Logger.capture.warning("Failed to start mic \(device.name, privacy: .public): \(error, privacy: .public)")
                     }
                 }
@@ -314,6 +348,7 @@ public final class SegmentWriter {
             if let manager {
                 await rollbackStart(manager: manager, capturers: constructedCapturers)
             }
+            try diagnostics.seal(failed: true)
             if let screenError {
                 throw screenError
             }
@@ -337,7 +372,14 @@ public final class SegmentWriter {
         guard let manager = audioManager else {
             throw SegmentError.failedToCreateAudioOutput
         }
-        _ = try manager.addMicrophone(device)
+        audioDiagnostics?.expect(device.uid, kind: "microphone")
+        do {
+            _ = try manager.addMicrophone(device)
+            audioDiagnostics?.started(device.uid)
+        } catch {
+            audioDiagnostics?.failure(device.uid, stage: "start", error: error)
+            throw error
+        }
     }
 
     /// Remove a microphone during recording (graceful stop)
@@ -429,11 +471,13 @@ public final class SegmentWriter {
                 audioInputs = try await withTimeout(seconds: audioFinishTimeoutSeconds) {
                     await manager.finishAll()
                 }
-            } catch is TimeoutError {
+            } catch let error as TimeoutError {
                 Logger.capture.warning("Timed out finishing audio writers; proceeding without audio inputs")
+                audioDiagnostics?.finishFailure(error)
                 audioInputs = []
             } catch {
                 Logger.capture.warning("Failed to finish audio writers: \(error, privacy: .public)")
+                audioDiagnostics?.finishFailure(error)
                 audioInputs = []
             }
         }
@@ -460,6 +504,13 @@ public final class SegmentWriter {
             capturedDurationSeconds = nil
         }
 
+        do { try audioDiagnostics?.seal() }
+        catch {
+            Logger.capture.error("Segment audio metadata could not be saved; preserving failed segment")
+            onCaptureIssue?("segment metadata could not be saved; segment preserved for recovery")
+            await markIncompleteSegmentAsFailed(outputDirectory)
+            return nil
+        }
         Logger.capture.info("Capture finished, queued for background remix: \(self.outputDirectory.lastPathComponent, privacy: .public)")
 
         return SegmentCaptureResult(

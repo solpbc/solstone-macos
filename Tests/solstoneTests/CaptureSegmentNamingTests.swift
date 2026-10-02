@@ -528,7 +528,7 @@ struct CaptureSegmentNamingTests {
         #expect(entries == ["120000.incomplete"])
     }
 
-    @Test func olderEntries() async throws {
+    @Test func olderEntriesPreserveBothFinalizedAndFailedRecovery() async throws {
         let previousDuration = SegmentWriter.segmentDuration
         SegmentWriter.segmentDuration = 300
         defer { SegmentWriter.segmentDuration = previousDuration }
@@ -563,14 +563,14 @@ struct CaptureSegmentNamingTests {
         #expect(recovered == 1)
         await queue.waitForCompletion()
 
-        #expect(FileManager.default.fileExists(atPath: incDir.path))
-        let notFailedDir = dayDir.appendingPathComponent("023000.failed", isDirectory: true)
-        #expect(!FileManager.default.fileExists(atPath: notFailedDir.path))
+        #expect(!FileManager.default.fileExists(atPath: incDir.path))
+        let failedDir = dayDir.appendingPathComponent("023000.failed", isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
 
-        let incDirContents = try FileManager.default.contentsOfDirectory(atPath: incDir.path)
+        let incDirContents = try FileManager.default.contentsOfDirectory(atPath: failedDir.path)
         var foundMatchingMedia = false
         for file in incDirContents {
-            let fileURL = incDir.appendingPathComponent(file)
+            let fileURL = failedDir.appendingPathComponent(file)
             if let data = try? Data(contentsOf: fileURL), data == incMediaBytes {
                 foundMatchingMedia = true
                 break

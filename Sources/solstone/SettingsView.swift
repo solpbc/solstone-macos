@@ -187,7 +187,9 @@ struct SettingsView: View {
     // Privacy tab state
     @State private var newTitlePattern = ""
     @State private var newExcludedApp = ""
-    @State private var privateWindowAccessibilityState: PrivateWindowAccessibilityState = .off
+    @FocusState private var privateWindowKeyboardFocused: Bool
+    @AccessibilityFocusState private var privateWindowAccessibilityFocused: Bool
+    @State private var privateWindowAnnouncements = PrivateWindowAccessibilityAnnouncementPolicy()
 
     // Service tab state
     @State private var observerURL = ""
@@ -387,12 +389,14 @@ struct SettingsView: View {
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
             .modifier(SettingsPaneScrollEdgeModifier())
         } detail: {
-            ScrollView {
-                detailContent
-                    .padding(20)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    detailContent(scrollProxy: proxy)
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .modifier(SettingsPaneScrollEdgeModifier())
             }
-            .modifier(SettingsPaneScrollEdgeModifier())
         }
         .frame(minWidth: 720, minHeight: 500)
         .task {
@@ -436,6 +440,7 @@ struct SettingsView: View {
             journalMarkDriver.startIfUnconfirmed(appState: appState)
         }
         .onChange(of: selectedTab) { _, newValue in
+            if newValue != .privacy { appState.pendingPrivateWindowSettingsTarget = nil }
             if newValue == .status {
                 refreshSetupProbes()
             }
@@ -463,6 +468,12 @@ struct SettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .openSettingsWindow)) { _ in
             applyPendingSettingsTab()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
+            privateWindowAnnouncements.reset(to: privateWindowAccessibilityState)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
+            privateWindowAnnouncements.reset(to: privateWindowAccessibilityState)
         }
         .onReceive(NotificationCenter.default.publisher(for: .reaskJournalMark)) { _ in
             selectedTab = .service
@@ -494,7 +505,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var detailContent: some View {
+    private func detailContent(scrollProxy: ScrollViewProxy) -> some View {
         switch selectedTab {
         case .status:
             statusTab.onAppear {
@@ -516,7 +527,10 @@ struct SettingsView: View {
         case .microphones:
             microphoneTab.onAppear { appState.markSettingsTabVisited(.microphones) }
         case .privacy:
-            privacyTab.onAppear { appState.markSettingsTabVisited(.privacy) }
+            privacyTab(scrollProxy: scrollProxy).onAppear {
+                appState.markSettingsTabVisited(.privacy)
+                privateWindowAnnouncements.reset(to: privateWindowAccessibilityState)
+            }
         case .permissions:
             permissionsTab.onAppear {
                 appState.markSettingsTabVisited(.permissions)
@@ -2814,7 +2828,7 @@ struct SettingsView: View {
 
     // MARK: - Privacy Tab
 
-    private var privacyTab: some View {
+    private func privacyTab(scrollProxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             GroupBox("excluded apps") {
                 VStack(alignment: .leading, spacing: 8) {
@@ -2971,6 +2985,8 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Toggle("also check Safari, Chrome, Edge and Brave", isOn: excludePrivateBrowsingAccessibilityBinding)
                             .disabled(!appState.config.excludePrivateBrowsing)
+                            .focused($privateWindowKeyboardFocused)
+                            .accessibilityFocused($privateWindowAccessibilityFocused)
                             .accessibilityHint("turning this on asks for Accessibility access, which lets an app see and control everything on this mac. solstone uses it only to read these browsers' window titles and to check that the access works.")
                             .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibility)
                         Text(Self.privateWindowAccessibilityExplanation)
@@ -2994,10 +3010,23 @@ struct SettingsView: View {
                     }
                     .padding(.leading, 20)
                     .padding(.top, 8)
+                    .id(AXID.Settings.Privacy.privateBrowsingAccessibility)
+                    .task(id: appState.pendingPrivateWindowSettingsTarget) {
+                        guard let target = appState.pendingPrivateWindowSettingsTarget else { return }
+                        await Task.yield()
+                        guard !Task.isCancelled, selectedTab == .privacy,
+                              appState.pendingPrivateWindowSettingsTarget == target else { return }
+                        scrollProxy.scrollTo(AXID.Settings.Privacy.privateBrowsingAccessibility, anchor: .center)
+                        privateWindowKeyboardFocused = true
+                        privateWindowAccessibilityFocused = true
+                        appState.pendingPrivateWindowSettingsTarget = nil
+                    }
                 }
                 .padding(.vertical, 4)
-                .task(id: privateWindowAccessibilityEnabled) {
-                    await watchPrivateWindowAccessibility()
+                .onChange(of: privateWindowAccessibilityState) { _, state in
+                    if let message = privateWindowAnnouncements.observe(state, isVisible: privateWindowPrivacyIsVisible) {
+                        diagnosticAnnouncement(message)
+                    }
                 }
             }
         }
@@ -3010,7 +3039,15 @@ struct SettingsView: View {
     private var privateWindowAccessibilityStatus: some View {
         VStack(alignment: .leading, spacing: 6) {
             switch privateWindowAccessibilityState {
+            case .checking:
+                Label(UICopy.PRIVATE_WINDOWS_CHECKING, systemImage: "hourglass")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             case .waiting:
+                if appState.privateWindowAccessibilityMonitor.needsAttention {
+                    Text(UICopy.SETTINGS_ATTENTION_PRIVATE_WINDOWS)
+                        .font(.caption)
+                }
                 Label {
                     Text("waiting for Accessibility access. allow solstone in System Settings; it asks for your mac's password. until then, private windows in Safari, Chrome, Edge and Brave reach your journal.")
                 } icon: {
@@ -3033,11 +3070,13 @@ struct SettingsView: View {
                 .font(.caption)
             case .notWorking:
                 Label {
-                    Text("not working: solstone can't read these browsers' window titles, so their private windows reach your journal.")
+                    Text(UICopy.SETTINGS_ATTENTION_PRIVATE_WINDOWS)
                 } icon: {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                 }
                 .font(.caption)
+                Text("their private windows reach your journal.")
+                    .font(.caption)
                 HStack {
                     Button("open System Settings") { AccessibilityTitleReader.openSystemSettings() }
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityOpenSettings)
@@ -3055,37 +3094,14 @@ struct SettingsView: View {
         .padding(.top, 2)
     }
 
-    private var privateWindowAccessibilityEnabled: Bool {
-        appState.config.excludePrivateBrowsing && appState.config.excludePrivateBrowsingAccessibility
+    private var privateWindowAccessibilityState: PrivateWindowAccessibilityState {
+        appState.privateWindowAccessibilityEnabled ? appState.privateWindowAccessibilityMonitor.state : .off
     }
 
-    /// Re-reads whether Accessibility reads work while the option is on and this pane is open, and
-    /// announces each change of state to VoiceOver.
-    private func watchPrivateWindowAccessibility() async {
-        guard privateWindowAccessibilityEnabled else {
-            privateWindowAccessibilityState = .off
-            return
-        }
-        let reader = AccessibilityTitleReader()
-        while !Task.isCancelled {
-            let works = await Task.detached { reader.health() == .working }.value
-            if works { appState.privateWindowAccessibilityHasWorkedSinceAsking = true }
-            let next = PrivateWindowAccessibilityState.after(
-                readWorks: works,
-                askedThisSession: appState.privateWindowAccessibilityAskedThisSession,
-                hasWorkedSinceAsking: appState.privateWindowAccessibilityHasWorkedSinceAsking
-            )
-            if next != privateWindowAccessibilityState {
-                if privateWindowAccessibilityState != .off || appState.privateWindowAccessibilityAskedThisSession {
-                    switch next {
-                    case .working: diagnosticAnnouncement("private windows in Safari, Chrome, Edge and Brave are kept out of your journal")
-                    case .notWorking: diagnosticAnnouncement("checking Safari, Chrome, Edge and Brave is not working, so their private windows reach your journal")
-                    case .waiting, .off: break
-                    }
-                }
-                privateWindowAccessibilityState = next
-            }
-            try? await Task.sleep(for: .seconds(2))
+    private var privateWindowPrivacyIsVisible: Bool {
+        selectedTab == .privacy && !NSApp.isHidden && NSApp.windows.contains {
+            $0.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
+                && $0.isVisible && !$0.isMiniaturized
         }
     }
 
@@ -3093,13 +3109,13 @@ struct SettingsView: View {
         Binding(
             get: { appState.config.excludePrivateBrowsing && appState.config.excludePrivateBrowsingAccessibility },
             set: { newValue in
+                let shouldAsk = newValue && !appState.privateWindowAccessibilityEnabled
+                if shouldAsk { appState.privateWindowAccessibilityMonitor.prepareForOwnerEnable() }
                 var config = appState.config
                 config.excludePrivateBrowsingAccessibility = newValue
                 appState.updateConfig(config)
                 // The only place solstone ever asks for Accessibility access: the owner turning this on.
-                if newValue {
-                    appState.privateWindowAccessibilityAskedThisSession = true
-                    appState.privateWindowAccessibilityHasWorkedSinceAsking = false
+                if shouldAsk {
                     AccessibilityTitleReader.ask()
                 }
             }

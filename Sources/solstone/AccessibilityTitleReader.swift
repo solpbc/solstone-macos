@@ -85,6 +85,7 @@ struct AccessibilityTitleReader: Sendable {
 /// the setting never reads "on" while it is doing nothing.
 public enum PrivateWindowAccessibilityState: String, CaseIterable, Equatable, Sendable {
     case off
+    case checking
     /// Turned on in this session and not working yet: the owner is still answering macOS.
     case waiting
     case working
@@ -94,6 +95,7 @@ public enum PrivateWindowAccessibilityState: String, CaseIterable, Equatable, Se
     public var axToken: String {
         switch self {
         case .off: return "off"
+        case .checking: return "checking"
         case .waiting: return "waiting"
         case .working: return "working"
         case .notWorking: return "not_working"

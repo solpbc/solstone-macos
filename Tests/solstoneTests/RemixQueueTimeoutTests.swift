@@ -108,6 +108,12 @@ struct RemixQueueTimeoutTests {
         await queue.waitForCompletion()
 
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed").path))
+        let timeoutMeta = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("120000.failed/120000_meta.json"))) as? [String: Any]
+        let timeoutCapture = try #require(timeoutMeta?["audio_capture"] as? [String: Any])
+        let timeoutRow = try #require((timeoutCapture["remix"] as? [[String: Any]])?.first)
+        #expect(timeoutRow["stage"] as? String == "remix_timeout")
+        #expect(timeoutRow["state"] as? String == "failed")
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed/120000_audio_system.m4a").path))
         #expect(await queue.isProcessingForTesting == false)
         #expect(completionCount.count == 2)
         #expect(outcomes.all.contains { reconciliation in
@@ -149,39 +155,31 @@ struct RemixQueueTimeoutTests {
             return
         }
         #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent("120000_audio_system.m4a").path))
+        let metadata = try JSONSerialization.jsonObject(with: Data(contentsOf: failedDir.appendingPathComponent("120000_meta.json"))) as? [String: Any]
+        let capture = try #require(metadata?["audio_capture"] as? [String: Any])
+        let row = try #require((capture["remix"] as? [[String: Any]])?.first)
+        #expect(row["stage"] as? String == "remix")
+        #expect(row["state"] as? String == "failed")
         #expect(!FileManager.default.fileExists(atPath: dir.path))
         #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
     }
 
-    @Test func noTracksToWriteJobFinalizesAndUploadsVideoOnly() async throws {
-        let root = try makeTempDirectory("remix-queue-no-tracks")
+    @Test func directoryPromotionFailurePreservesFilesAndReportsFailure() async throws {
+        let root = try makeTempDirectory("remix-queue-directory-collision")
         defer { try? FileManager.default.removeItem(at: root) }
-
         let dir = try makeDir(root: root, name: "120000.incomplete")
-        let audio = dir.appendingPathComponent("120000_audio_system.m4a")
-        let screen = dir.appendingPathComponent("120000_display_42_screen.mp4")
-        try Data("audio".utf8).write(to: audio)
-        try Data("video".utf8).write(to: screen)
-
-        let completionCount = LockedCounter()
-        let completedURL = LockedValue<URL>()
-        let queue = RemixQueue { _ in
-            FakeRemixer(.throwing(AudioRemixerError.noTracksToWrite))
-        }
-        await queue.setOnSegmentComplete { url, _ in
-            completedURL.set(url)
-            completionCount.increment()
-        }
-
-        await queue.enqueue(makeJob(dir: dir, timePrefix: "120000", inputURL: audio))
-
+        try Data("video".utf8).write(to: dir.appendingPathComponent("120000_screen.mp4"))
+        let existing = try makeDir(root: root, name: "120000_1")
+        try Data("existing".utf8).write(to: existing.appendingPathComponent("sentinel"))
+        let outcome = LockedValue<SegmentReconciliation>()
+        let queue = RemixQueue()
+        await queue.setOnSegmentComplete { _, reconciliation in outcome.set(reconciliation) }
+        await queue.enqueue(makeEmptyJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
-
-        let finalURL = try #require(completedURL.current)
-        #expect(finalURL.lastPathComponent.hasPrefix("120000_"))
-        #expect(FileManager.default.fileExists(atPath: finalURL.path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed").path))
-        #expect(try FileManager.default.contentsOfDirectory(atPath: finalURL.path).contains { $0.hasSuffix("_screen.mp4") })
+        guard case .failed = outcome.current else { Issue.record("expected visible finalization failure"); return }
+        let failed = root.appendingPathComponent("120000.failed")
+        #expect(FileManager.default.fileExists(atPath: failed.appendingPathComponent("120000_1_screen.mp4").path))
+        #expect(try Data(contentsOf: existing.appendingPathComponent("sentinel")) == Data("existing".utf8))
     }
 
     @Test func emptyInputsWithAudioSourcesReconstructsAndFinalizes() async throws {
@@ -244,7 +242,7 @@ struct RemixQueueTimeoutTests {
         #expect(!FileManager.default.fileExists(atPath: finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_audio.m4a").path))
     }
 
-    @Test func emptyInputsWithSilentAudioSourcesFinalizesScreenOnly() async throws {
+    @Test func emptyInputsWithSilentAudioSourcesPreservesConsolidatedAudio() async throws {
         let root = try makeTempDirectory("remix-queue-silent-reconstruct")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -253,9 +251,8 @@ struct RemixQueueTimeoutTests {
         try await makeTinyValidM4A(at: dir.appendingPathComponent("120000_audio_BuiltInMicrophoneDevice.m4a"))
         try Data("video".utf8).write(to: dir.appendingPathComponent("120000_display_42_screen.mp4"))
 
-        let fakeRemixer = FakeRemixer(.throwing(AudioRemixerError.noTracksToWrite))
         let completionCount = LockedCounter()
-        let queue = RemixQueue { _ in fakeRemixer }
+        let queue = RemixQueue()
         await queue.setOnSegmentComplete { _, _ in
             completionCount.increment()
         }
@@ -269,6 +266,14 @@ struct RemixQueueTimeoutTests {
         #expect(completionCount.count == 1)
         #expect(FileManager.default.fileExists(atPath: finalDir.path))
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed").path))
+        let audio = finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_audio.m4a")
+        let tracks = try await AVURLAsset(url: audio).loadTracks(withMediaType: .audio)
+        #expect(!tracks.isEmpty)
+        let metadata = try JSONSerialization.jsonObject(with: Data(contentsOf: finalDir.appendingPathComponent("\(finalDir.lastPathComponent)_meta.json"))) as? [String: Any]
+        let capture = try #require(metadata?["audio_capture"] as? [String: Any])
+        let rows = try #require(capture["remix"] as? [[String: Any]])
+        #expect(rows.count == 2)
+        #expect(rows.allSatisfy { $0["state"] as? String == "complete" })
     }
 
     @Test func emptyInputsWithFailedReconstructionMarksFailedAndReportsOutcome() async throws {
@@ -683,7 +688,7 @@ struct RemixQueueTimeoutTests {
         #expect(try Data(contentsOf: finalDir.appendingPathComponent("\(segmentKey)_audio.m4a")) == existingAudioBytes)
     }
 
-    @Test func orphanCommitFailureLeavesIncompleteDirectoryAndDoesNotComplete() async throws {
+    @Test func orphanCommitFailurePreservesSegmentAndReportsFailure() async throws {
         let root = try makeTempDirectory("remix-queue-commit-failure")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -698,16 +703,20 @@ struct RemixQueueTimeoutTests {
         )
 
         let completionCount = LockedCounter()
+        let outcome = LockedValue<SegmentReconciliation>()
         let queue = RemixQueue { _ in FakeRemixer(.success) }
-        await queue.setOnSegmentComplete { _, _ in
+        await queue.setOnSegmentComplete { _, reconciliation in
             completionCount.increment()
+            outcome.set(reconciliation)
         }
 
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
 
-        #expect(completionCount.count == 0)
-        #expect(FileManager.default.fileExists(atPath: dir.path))
+        #expect(completionCount.count == 1)
+        guard case .failed = outcome.current else { Issue.record("expected failed reconciliation"); return }
+        let failed = root.appendingPathComponent("120000.failed")
+        #expect(FileManager.default.fileExists(atPath: failed.appendingPathComponent("\(segmentKey)_display_42_screen.mp4").path))
         #expect(await queue.inFlightPaths().isEmpty)
     }
 
@@ -1264,9 +1273,6 @@ struct RemixQueueTimeoutTests {
         guard let remixerError = thrown as? AudioRemixerError else {
             Issue.record("expected AudioRemixerError, got: \(String(describing: thrown))")
             return
-        }
-        if case .noTracksToWrite = remixerError {
-            Issue.record("truncated polarity must not be noTracksToWrite")
         }
         guard case .unreadableSources(let sourceIDs) = remixerError else {
             Issue.record("expected unreadableSources, got: \(remixerError)")

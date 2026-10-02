@@ -12,6 +12,30 @@ import Testing
 struct SystemAudioRecoveryTests {
     private var failure: Error { NSError(domain: "AudioRecoveryTest", code: 1) }
 
+    @Test func detachmentWaitsForAdmittedSystemAudio() async throws {
+        let output = SystemAudioStreamOutput()
+        let entered = LockedCounter(), accepted = LockedCounter(), detaching = LockedCounter(), detached = LockedCounter()
+        let release = DispatchSemaphore(value: 0)
+        output.onAudioBuffer = { _ in entered.increment(); release.wait(); accepted.increment() }
+        let delivery = Task.detached { output.deliverAudio(try makeNonSilentAudioSampleBuffer(seconds: 0.02)) }
+        await entered.waitUntilCount(1)
+        let detach = Task.detached {
+            detaching.increment()
+            output.onAudioBuffer = nil
+            detached.increment()
+        }
+        await detaching.waitUntilCount(1)
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(detached.count == 0)
+        release.signal()
+        try await delivery.value
+        await detach.value
+        #expect(accepted.count == 1)
+        #expect(detached.count == 1)
+        output.deliverAudio(try makeNonSilentAudioSampleBuffer(seconds: 0.02))
+        #expect(accepted.count == 1)
+    }
+
     @Test func errorRecoveryKeepsCurrentDestinationAfterReusedStart() async throws {
         let factory = FakeCaptureStreamFactory([FakeCaptureStream(), FakeCaptureStream()])
         let manager = SystemAudioCaptureManager(streamFactory: factory.factory)
@@ -71,8 +95,7 @@ struct SystemAudioRecoveryTests {
         manager._restartParkHookForTesting = {}
         let errors = LockedCounter()
         let received = LockedCounter()
-        manager.onCaptureError = { _ in errors.increment() }
-        manager.setCallback { _ in received.increment() }
+        manager.setCallback(onError: { _ in errors.increment() }) { _ in received.increment() }
         await manager._handleStreamErrorForTesting(failure)
         #expect(!manager.isRunning)
         #expect(errors.count == 2)

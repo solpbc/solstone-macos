@@ -232,8 +232,9 @@ public final class SystemAudioCaptureManager {
     }
 
     /// Wire up a new callback (called when new segment starts)
-    public func setCallback(_ callback: @escaping (CMSampleBuffer) -> Void) {
+    public func setCallback(onError: ((Error) -> Void)? = nil, _ callback: @escaping (CMSampleBuffer) -> Void) {
         onAudioBuffer = callback
+        onCaptureError = onError
         Logger.audio.info("[SystemAudio] Wired callback to new segment (stream running: \(self.isRunning, privacy: .public))")
     }
 

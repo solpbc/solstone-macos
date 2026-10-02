@@ -42,9 +42,13 @@ struct MenuContent: View {
                 .accessibilityIdentifier(AXID.Menubar.openJournalButton)
             }
             Button {
-                openWindow(id: "settings")
-                appState.didOpenWindow(.settings)
-                NSApp.activate(ignoringOtherApps: true)
+                if menubarPresentation.attention == .privateWindows {
+                    appState.requestPrivateWindowSettingsRecovery()
+                } else {
+                    openWindow(id: "settings")
+                    appState.didOpenWindow(.settings)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
             } label: {
                 let label = settingsRowLabel(
                     observation: menubarPresentation.observation,

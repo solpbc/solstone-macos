@@ -736,7 +736,8 @@ struct CaptureManagerRotationWatchdogTests {
         startGate.release()
         try await waitUntil(timeout: .seconds(5)) {
             await MainActor.run {
-                secondStream.startCount.count == 1 && !manager.isSystemAudioRunningForTesting
+                secondStream.startCount.count == 1 && secondStream.stopCount.count == 1
+                    && !manager.isSystemAudioRunningForTesting
             }
         }
         #expect(streamFactory.createdStreams.count == 2)

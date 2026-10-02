@@ -94,7 +94,8 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     ///   - callback: The callback to receive audio buffers, or nil to pause
     public func setCallback(
         for deviceUID: String,
-        callback: ((_ buffer: AVAudioPCMBuffer, _ time: CMTime) -> Void)?
+        callback: ((_ buffer: AVAudioPCMBuffer, _ time: CMTime) -> Void)?,
+        onError: ((Error) -> Void)? = nil
     ) {
         lock.lock()
         let capture = captures[deviceUID]
@@ -103,20 +104,29 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         if capture == nil {
             Logger.audio.warning("setCallback: No capture found for deviceUID \(deviceUID, privacy: .public)")
         }
-        capture?.onAudioBuffer = callback
+        capture?.setCallbacks(audio: callback, error: onError)
     }
 
     /// Clear all callbacks (called during segment rotation before writers change)
     public func clearAllCallbacks() {
+        _ = detachCallbacks()
+    }
+
+    public func clearAllCallbacksAndDrain() async {
+        let detached = detachCallbacks()
+        for capture in detached { await capture.drain() }
+    }
+
+    private func detachCallbacks() -> [ExternalMicCapture] {
         lock.lock()
         let allCaptures = Array(captures.values)
         lock.unlock()
 
         for capture in allCaptures {
-            capture.onAudioBuffer = nil
-            capture.onCaptureError = nil
+            capture.setCallbacks(audio: nil, error: nil)
         }
         if verbose { Logger.audio.debug("Cleared all mic callbacks") }
+        return allCaptures
     }
 
     /// Get the capture for a device (if running)

@@ -762,6 +762,7 @@
     ],
     "PrivateWindowAccessibilityState" : [
       "off",
+      "checking",
       "waiting",
       "working",
       "not_working"
