@@ -242,8 +242,8 @@ struct IncompleteSegmentRecoveryTests {
             try FileManager.default.removeItem(at: file)
         }
 
-        let queue = RemixQueue { _, _ in
-            AudioRemixer(verbose: false, debugKeepRejected: false)
+        let queue = RemixQueue { _ in
+            AudioRemixer(verbose: false)
         }
         let recovery = IncompleteSegmentRecovery(capturesDirectory: root, finalizer: queue)
 

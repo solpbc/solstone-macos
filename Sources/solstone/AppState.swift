@@ -140,7 +140,6 @@ public final class AppState {
     /// Settings view, so closing Settings while macOS asks still reads "waiting" when it reopens.
     @ObservationIgnored var privateWindowAccessibilityAskedThisSession = false
     @ObservationIgnored var privateWindowAccessibilityHasWorkedSinceAsking = false
-    private var debugAudioHolder: DebugSettingHolder!
     private var silenceMusicHolder: DebugSettingHolder!
     private var didAttemptSameMachineMigration = false
     private static let sameMachineMigrationRetryDelays: [Duration] = [
@@ -536,7 +535,6 @@ public final class AppState {
             Task { await owner.scheduleDelivery() }
         }
 #endif
-        debugAudioHolder.value = newConfig.debugKeepRejectedAudio
         silenceMusicHolder.value = newConfig.silenceMusic
 
         // Update mic gain immediately if it changed
@@ -1304,11 +1302,9 @@ public final class AppState {
         }
 
         // Create thread-safe holders for settings that are read at segment creation time
-        let debugAudioHolder = DebugSettingHolder(value: config.debugKeepRejectedAudio)
         let silenceMusicHolder = DebugSettingHolder(value: config.silenceMusic)
         let captureManager = CaptureManager(
             storageManager: storageManager,
-            debugKeepRejectedAudio: { debugAudioHolder.value },
             silenceMusic: { silenceMusicHolder.value },
             excludedAppNames: config.excludedAppNames,
             excludePrivateBrowsing: config.excludePrivateBrowsing,
@@ -1318,7 +1314,6 @@ public final class AppState {
             verbose: false,
             recoveryCoordinator: recoveryCoordinator
         )
-        self.debugAudioHolder = debugAudioHolder
         self.silenceMusicHolder = silenceMusicHolder
         let capture = CaptureCoordinator(
             captureManager: captureManager,
@@ -1617,9 +1612,7 @@ public final class AppState {
         let lastDeliveryStore = providedLastDeliveryStore ?? InMemoryLastJournalDeliveryStore()
         self.notificationAuthorizationStatus = notificationStatus
         self.recoveryCoordinator = .shared
-        let debugAudioHolder = DebugSettingHolder(value: false)
         let silenceMusicHolder = DebugSettingHolder(value: true)
-        self.debugAudioHolder = debugAudioHolder
         self.silenceMusicHolder = silenceMusicHolder
         let captureManager = CaptureManager(storageManager: storageManager)
         let capture = CaptureCoordinator(

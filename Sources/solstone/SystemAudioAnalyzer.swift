@@ -1,159 +1,125 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import AVFoundation
 import CoreMedia
 import Foundation
 import SoundAnalysis
 import os
 
-/// Result of system audio analysis
 public struct SystemAudioAnalysisResult: Sendable {
-    /// Whether any speech was detected above threshold
-    public let hasSpeech: Bool
-    /// Time ranges where music is dominant and speech is absent (should be silenced)
     public let silenceRanges: [CMTimeRange]
-
-    /// Unavailable result (analysis failed)
-    public static let unavailable = SystemAudioAnalysisResult(hasSpeech: true, silenceRanges: [])
+    public let status: String
+    public static let unavailable = SystemAudioAnalysisResult(silenceRanges: [], status: "unavailable")
 }
 
-/// Analyzes system audio for speech and music, computing silence ranges
-/// for music-dominant portions while preserving speech
+/// Classification may suppress confirmed music; it never decides whether to keep audio.
 public final class SystemAudioAnalyzer: Sendable {
-    /// Shared instance
     public static let shared = SystemAudioAnalyzer()
-
     private init() {}
 
-    /// Analyze system audio file for speech presence and music silencing ranges
-    /// - Parameters:
-    ///   - url: URL to the audio file
-    ///   - speechThreshold: Minimum confidence to consider speech detected (default 0.3)
-    ///   - musicThreshold: Minimum confidence to consider music dominant (default 0.6)
-    ///   - paddingSeconds: Margin around speech segments to preserve (default 0.2)
-    /// - Returns: Analysis result with speech detection and silence ranges
-    public func analyze(
-        url: URL,
-        speechThreshold: Double = 0.3,
-        musicThreshold: Double = 0.6,
-        paddingSeconds: Double = 0.2
-    ) async -> SystemAudioAnalysisResult {
+    public func analyze(url: URL, speechThreshold: Double = 0.3, musicThreshold: Double = 0.6,
+                        paddingSeconds: Double = 0.2) async -> SystemAudioAnalysisResult {
         do {
+            let duration = try await AVURLAsset(url: url).load(.duration)
             let analyzer = try SNAudioFileAnalyzer(url: url)
             let request = try SNClassifySoundRequest(classifierIdentifier: .version1)
-
-            let observer = ClassificationObserver(
-                speechThreshold: speechThreshold,
-                musicThreshold: musicThreshold
-            )
+            let observer = ClassificationObserver(speechThreshold: speechThreshold, musicThreshold: musicThreshold)
             try analyzer.add(request, withObserver: observer)
-
-            // analyze() processes the entire file at high speed
-            await analyzer.analyze()
-
-            // Compute silence ranges with padding
-            let silenceRanges = computeSilenceRanges(
-                from: observer.musicOnlyRanges,
-                padding: paddingSeconds
-            )
-
+            let succeeded = await analyzer.analyze()
+            let snapshot = observer.snapshot()
+            guard succeeded, snapshot.completed, !snapshot.failed, !snapshot.malformed else {
+                return .unavailable
+            }
+            let covered = computeSilenceRanges(from: snapshot.coverage, padding: 0)
+            let complete = covered.count == 1 && CMTimeCompare(covered[0].start, .zero) <= 0
+                && CMTimeCompare(CMTimeRangeGetEnd(covered[0]), duration) >= 0
             return SystemAudioAnalysisResult(
-                hasSpeech: observer.hasSpeech,
-                silenceRanges: silenceRanges
+                silenceRanges: complete ? computeSilenceRanges(from: snapshot.music, padding: paddingSeconds, protecting: snapshot.protected) : [],
+                status: complete ? "complete" : "incomplete"
             )
         } catch {
-            Logger.audio.debug("SystemAudioAnalyzer failed: \(error.localizedDescription, privacy: .public), failing open")
+            Logger.audio.notice("Music analysis unavailable; preserving audio")
             return .unavailable
         }
     }
 
-    /// Merge adjacent silence ranges and apply padding (shrink ranges at boundaries)
-    func computeSilenceRanges(
-        from ranges: [CMTimeRange],
-        padding: Double
-    ) -> [CMTimeRange] {
-        guard !ranges.isEmpty else { return [] }
-
-        let paddingTime = CMTime(seconds: padding, preferredTimescale: 48_000)
-
-        // Sort ranges by start time
-        let sorted = ranges.sorted { CMTimeCompare($0.start, $1.start) < 0 }
-
-        // Merge adjacent/overlapping ranges
+    /// Union confirmed intervals without bridging gaps, then subtract speech/unknown windows.
+    func computeSilenceRanges(from ranges: [CMTimeRange], padding: Double,
+                              protecting protectedRanges: [CMTimeRange] = []) -> [CMTimeRange] {
+        let sorted = ranges.filter { $0.start.isNumeric && $0.duration.isNumeric && CMTimeCompare($0.duration, .zero) > 0 }
+            .sorted { CMTimeCompare($0.start, $1.start) < 0 }
         var merged: [CMTimeRange] = []
-        var current = sorted[0]
-
-        for range in sorted.dropFirst() {
-            let currentEnd = CMTimeAdd(current.start, current.duration)
-            // If ranges overlap or are adjacent (within 5 seconds), merge them
-            // This bridges over brief gaps where classification fluctuated
-            let gap = CMTimeSubtract(range.start, currentEnd)
-            let mergeThreshold = CMTime(seconds: 5.0, preferredTimescale: 48_000)
-
-            if CMTimeCompare(gap, mergeThreshold) <= 0 {
-                // Merge: extend current range to include this one
-                let newEnd = CMTimeAdd(range.start, range.duration)
-                let maxEnd = CMTimeCompare(currentEnd, newEnd) > 0 ? currentEnd : newEnd
-                current = CMTimeRange(start: current.start, duration: CMTimeSubtract(maxEnd, current.start))
-            } else {
-                // Gap is large enough, save current and start new
-                merged.append(current)
-                current = range
+        for range in sorted {
+            if let last = merged.last, CMTimeCompare(range.start, CMTimeRangeGetEnd(last)) <= 0 {
+                let end = CMTimeMaximum(CMTimeRangeGetEnd(last), CMTimeRangeGetEnd(range))
+                merged[merged.count - 1] = CMTimeRange(start: last.start, end: end)
+            } else { merged.append(range) }
+        }
+        for protected in protectedRanges {
+            merged = merged.flatMap { range -> [CMTimeRange] in
+                let overlap = CMTimeRangeGetIntersection(range, otherRange: protected)
+                guard overlap.duration.isNumeric, CMTimeCompare(overlap.duration, .zero) > 0 else { return [range] }
+                var pieces: [CMTimeRange] = []
+                if CMTimeCompare(range.start, overlap.start) < 0 { pieces.append(CMTimeRange(start: range.start, end: overlap.start)) }
+                if CMTimeCompare(CMTimeRangeGetEnd(overlap), CMTimeRangeGetEnd(range)) < 0 {
+                    pieces.append(CMTimeRange(start: CMTimeRangeGetEnd(overlap), end: CMTimeRangeGetEnd(range)))
+                }
+                return pieces
             }
         }
-        merged.append(current)
-
-        // Apply padding: shrink each range at both ends
-        var padded: [CMTimeRange] = []
-        for range in merged {
-            let newStart = CMTimeAdd(range.start, paddingTime)
-            let newDuration = CMTimeSubtract(range.duration, CMTimeMultiply(paddingTime, multiplier: 2))
-
-            // Only keep range if it still has positive duration after padding
-            if CMTimeCompare(newDuration, .zero) > 0 {
-                padded.append(CMTimeRange(start: newStart, duration: newDuration))
-            }
+        let pad = CMTime(seconds: max(0, padding), preferredTimescale: 48_000)
+        return merged.compactMap { range in
+            let start = CMTimeAdd(range.start, pad)
+            let end = CMTimeSubtract(CMTimeRangeGetEnd(range), pad)
+            return CMTimeCompare(end, start) > 0 ? CMTimeRange(start: start, end: end) : nil
         }
-
-        return padded
     }
 }
 
-/// Observer that collects speech and music classifications
-private class ClassificationObserver: NSObject, SNResultsObserving {
-    let speechThreshold: Double
-    let musicThreshold: Double
-
-    private(set) var hasSpeech = false
-    private(set) var musicOnlyRanges: [CMTimeRange] = []
-
+private final class ClassificationObserver: NSObject, SNResultsObserving {
+    struct Snapshot {
+        var music: [CMTimeRange] = []
+        var protected: [CMTimeRange] = []
+        var coverage: [CMTimeRange] = []
+        var completed = false
+        var failed = false
+        var malformed = false
+    }
+    private let lock = NSLock()
+    private var state = Snapshot()
+    private let speechThreshold: Double
+    private let musicThreshold: Double
     init(speechThreshold: Double, musicThreshold: Double) {
         self.speechThreshold = speechThreshold
         self.musicThreshold = musicThreshold
     }
-
+    func snapshot() -> Snapshot { lock.withLock { state } }
     func request(_ request: SNRequest, didProduce result: SNResult) {
-        guard let classification = result as? SNClassificationResult else { return }
-
-        let speechConfidence = classification.classification(forIdentifier: "speech")?.confidence ?? 0
-        let musicConfidence = classification.classification(forIdentifier: "music")?.confidence ?? 0
-
-        // Track if any speech detected
-        if speechConfidence > speechThreshold {
-            hasSpeech = true
-        }
-
-        // Track ranges where music is dominant and speech is absent
-        if musicConfidence > musicThreshold && speechConfidence < speechThreshold {
-            musicOnlyRanges.append(classification.timeRange)
+        lock.withLock {
+            guard let result = result as? SNClassificationResult,
+                  result.timeRange.start.isNumeric, result.timeRange.duration.isNumeric,
+                  CMTimeRangeGetEnd(result.timeRange).isNumeric,
+                  CMTimeCompare(result.timeRange.start, .zero) >= 0,
+                  CMTimeCompare(result.timeRange.duration, .zero) > 0 else {
+                state.malformed = true
+                return
+            }
+            let range = result.timeRange
+            guard let speech = result.classification(forIdentifier: "speech")?.confidence,
+                  let music = result.classification(forIdentifier: "music")?.confidence,
+                  speech.isFinite, music.isFinite, (0...1).contains(speech), (0...1).contains(music) else {
+                state.protected.append(range)
+                return
+            }
+            state.coverage.append(range)
+            if music > musicThreshold && speech < speechThreshold { state.music.append(range) }
+            else { state.protected.append(range) }
         }
     }
-
     func request(_ request: SNRequest, didFailWithError error: Error) {
-        Logger.audio.debug("SystemAudioAnalyzer request failed: \(error.localizedDescription, privacy: .public)")
+        lock.withLock { state.failed = true }
+        Logger.audio.notice("Music analysis failed; preserving audio")
     }
-
-    func requestDidComplete(_ request: SNRequest) {
-        // Analysis complete
-    }
+    func requestDidComplete(_ request: SNRequest) { lock.withLock { state.completed = true } }
 }

@@ -11,7 +11,6 @@ public protocol AudioRemixing: Sendable {
     func remix(
         inputs: [AudioRemixerInput],
         to outputURL: URL,
-        deleteSourceFiles: Bool,
         silenceMusic: Bool
     ) async throws -> AudioRemixerResult
 }
@@ -39,7 +38,7 @@ public enum SegmentReconciliation: Sendable {
 /// Manages background audio remix operations
 /// Processes jobs sequentially to avoid CPU contention
 public actor RemixQueue {
-    public typealias RemixerFactory = @Sendable (_ verbose: Bool, _ debugKeepRejected: Bool) -> any AudioRemixing
+    public typealias RemixerFactory = @Sendable (_ verbose: Bool) -> any AudioRemixing
     public typealias DurationLoader = @Sendable (_ url: URL) async throws -> CMTime
 
     /// Data needed to process a remix in the background
@@ -48,7 +47,6 @@ public actor RemixQueue {
         let timePrefix: String
         let capturedDurationSeconds: Int?
         let audioInputs: [AudioRemixerInput]
-        let debugKeepRejected: Bool
         let silenceMusic: Bool
         let micMetadataJSON: String?
     }
@@ -82,8 +80,8 @@ public actor RemixQueue {
         durationLoader: @escaping DurationLoader = { url in
             try await AVURLAsset(url: url).load(.duration)
         },
-        remixerFactory: @escaping RemixerFactory = { verbose, debugKeepRejected in
-            AudioRemixer(verbose: verbose, debugKeepRejected: debugKeepRejected)
+        remixerFactory: @escaping RemixerFactory = { verbose in
+            AudioRemixer(verbose: verbose)
         }
     ) {
         self.remixTimeoutSeconds = remixTimeoutSeconds
@@ -205,23 +203,26 @@ public actor RemixQueue {
         let audioOutputURL = job.segmentDirectory.appendingPathComponent("\(segmentKey)_audio.m4a")
         var reconciliation: SegmentReconciliation = .normal
         var unreadableSourceIDs: [String]?
+        var remixResult: AudioRemixerResult?
+        var discoveryFailures: [AudioSourceRemixResult] = []
 
         if !job.audioInputs.isEmpty {
             do {
-                let remixer = remixerFactory(false, job.debugKeepRejected)
+                let remixer = remixerFactory(false)
                 let result = try await withTimeout(seconds: remixTimeoutSeconds) {
                     try await remixer.remix(
                         inputs: job.audioInputs,
                         to: audioOutputURL,
-                        deleteSourceFiles: true,
                         silenceMusic: job.silenceMusic
                     )
                 }
+                remixResult = result
                 Logger.storage.info("Remix complete: \(result.tracksWritten, privacy: .public) tracks, \(result.tracksSkipped, privacy: .public) skipped")
             } catch AudioRemixerError.unreadableSources(let sourceIDs) {
                 Logger.storage.error("audio source(s) unreadable for \(job.timePrefix, privacy: .public): \(sourceIDs.joined(separator: ", "), privacy: .public); finalizing screen-only with loss record")
                 reconciliation = .audioLoss(sourceIDs.count)
                 unreadableSourceIDs = sourceIDs
+                discoveryFailures += sourceIDs.map { .failure(sourceID: $0, stage: "reader", error: nil) }
             } catch AudioRemixerError.noTracksToWrite {
                 Logger.storage.info("No audio tracks to write (all silent)")
             } catch is TimeoutError {
@@ -244,24 +245,29 @@ public actor RemixQueue {
                 switch await classifyAudioSources(in: files, timePrefix: job.timePrefix, verbose: false) {
                 case .noSources:
                     break  // genuinely audio-less: finalize screen-only
-                case .ready(let inputs):
+                case .ready(let inputs, let unreadableFiles):
+                    discoveryFailures = unreadableFiles.map {
+                        .failure(sourceID: parseTrackType(from: $0.lastPathComponent, timePrefix: job.timePrefix).sourceID,
+                                 stage: "reconstruction", error: nil)
+                    }
                     Logger.storage.warning("audioInputs empty but \(inputs.count, privacy: .public) readable audio source(s) on disk for \(job.timePrefix, privacy: .public); reconstructing")
                     do {
-                        let remixer = remixerFactory(false, job.debugKeepRejected)
+                        let remixer = remixerFactory(false)
                         let result = try await withTimeout(seconds: remixTimeoutSeconds) {
                             try await remixer.remix(
                                 inputs: inputs,
                                 to: audioOutputURL,
-                                deleteSourceFiles: true,
                                 silenceMusic: job.silenceMusic
                             )
                         }
+                        remixResult = result
                         Logger.storage.info("reconstruction recovered \(result.tracksWritten, privacy: .public) track(s) for \(job.timePrefix, privacy: .public)")
                         reconciliation = .recovered(result.tracksWritten)
                     } catch AudioRemixerError.unreadableSources(let sourceIDs) {
                         Logger.storage.error("reconstruction audio source(s) unreadable for \(job.timePrefix, privacy: .public): \(sourceIDs.joined(separator: ", "), privacy: .public); finalizing screen-only with loss record")
                         reconciliation = .audioLoss(sourceIDs.count)
                         unreadableSourceIDs = sourceIDs
+                discoveryFailures += sourceIDs.map { .failure(sourceID: $0, stage: "reader", error: nil) }
                     } catch AudioRemixerError.noTracksToWrite {
                         Logger.storage.info("reconstruction found all sources silent for \(job.timePrefix, privacy: .public); finalizing screen-only")
                     } catch {
@@ -276,18 +282,33 @@ public actor RemixQueue {
                     Logger.storage.info("audio source(s) present but unreadable for \(job.timePrefix, privacy: .public): \(sourceIDs.joined(separator: ", "), privacy: .public); finalizing screen-only with loss record")
                     reconciliation = .audioLoss(sourceIDs.count)
                     unreadableSourceIDs = sourceIDs
+                discoveryFailures += sourceIDs.map { .failure(sourceID: $0, stage: "reader", error: nil) }
                     // fall through — no markIncompleteSegmentAsFailed, no return
                 }
             }
         }
 
-        // Write metadata file if we have mic metadata or audio loss
-        writeMetadataIfNeeded(
-            segmentDirectory: job.segmentDirectory,
-            segmentKey: segmentKey,
-            micMetadataJSON: job.micMetadataJSON,
-            unreadableSourceIDs: unreadableSourceIDs
-        )
+        let results = discoveryFailures + (remixResult?.sources ?? [])
+        let unreadable = Set((unreadableSourceIDs ?? []) + results.filter { $0.state == "unreadable" }.map(\.sourceID))
+        if !unreadable.isEmpty {
+            unreadableSourceIDs = unreadable.sorted()
+            reconciliation = .audioLoss(unreadable.count)
+        }
+        do {
+            try writeMetadataIfNeeded(segmentDirectory: job.segmentDirectory, timePrefix: job.timePrefix,
+                                      segmentKey: segmentKey, micMetadataJSON: job.micMetadataJSON,
+                                      unreadableSourceIDs: unreadableSourceIDs, remixSources: results)
+        } catch {
+            Logger.storage.error("Segment metadata could not be saved; preserving audio sources: \(error, privacy: .public)")
+            await markIncompleteSegmentAsFailed(job.segmentDirectory)
+            await onSegmentComplete?(job.segmentDirectory, .failed("segment metadata could not be saved; segment preserved for recovery"))
+            return
+        }
+        // Cleanup is authorized only after output completion and durable outcomes.
+        for source in remixResult?.sourceFiles ?? [] {
+            do { try fm.removeItem(at: source) }
+            catch { Logger.storage.warning("Could not remove remixed source: \(error, privacy: .public)") }
+        }
 
         // Rename segment files to include duration
         do {
@@ -310,7 +331,10 @@ public actor RemixQueue {
                 try fm.moveItem(at: fileURL, to: newFileURL)
             }
         } catch {
-            Logger.storage.warning("Failed to rename segment files: \(error, privacy: .public)")
+            Logger.storage.error("Failed to rename segment files: \(error, privacy: .public)")
+            await markIncompleteSegmentAsFailed(job.segmentDirectory)
+            await onSegmentComplete?(job.segmentDirectory, .failed("segment files could not be finalized; segment preserved for recovery"))
+            return
         }
 
         // Rename directory from HHMMSS.incomplete to HHMMSS_duration
@@ -362,51 +386,51 @@ public actor RemixQueue {
         }
     }
 
-    private func writeMetadataIfNeeded(
-        segmentDirectory: URL,
-        segmentKey: String,
-        micMetadataJSON: String?,
-        unreadableSourceIDs: [String]?
-    ) {
-        let metaURL = segmentDirectory.appendingPathComponent("\(segmentKey)_meta.json")
-
-        if let sourceIDs = unreadableSourceIDs {
-            let lossDict: [String: Any] = [
-                "count": sourceIDs.count,
-                "source_ids": sourceIDs,
-            ]
-
-            var rootDict: [String: Any] = [
-                "unreadable_audio_sources": lossDict,
-            ]
-
-            if let micJSON = micMetadataJSON {
-                if let data = micJSON.data(using: .utf8),
-                   let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                {
-                    for (k, v) in parsed {
-                        if k != "unreadable_audio_sources" {
-                            rootDict[k] = v
-                        }
-                    }
-                } else {
-                    Logger.storage.warning("Malformed micMetadataJSON for \(segmentKey, privacy: .public); writing loss metadata without mics")
-                }
-            }
-
-            do {
-                let data = try JSONSerialization.data(withJSONObject: rootDict, options: [.sortedKeys])
-                try data.write(to: metaURL, options: .atomic)
-            } catch {
-                Logger.storage.warning("Failed to write metadata file with loss key: \(error, privacy: .public)")
-            }
-        } else if let metadataJSON = micMetadataJSON {
-            do {
-                try metadataJSON.write(to: metaURL, atomically: true, encoding: .utf8)
-            } catch {
-                Logger.storage.warning("Failed to write metadata file: \(error, privacy: .public)")
-            }
+    private func writeMetadataIfNeeded(segmentDirectory: URL, timePrefix: String, segmentKey: String,
+                                       micMetadataJSON: String?, unreadableSourceIDs: [String]?,
+                                       remixSources: [AudioSourceRemixResult]) throws {
+        let metaURL = segmentDirectory.appendingPathComponent("\(timePrefix)_meta.json")
+        let finalMetaURL = segmentDirectory.appendingPathComponent("\(segmentKey)_meta.json")
+        let fm = FileManager.default
+        var root: [String: Any] = [:]
+        // Interrupted finalization may already have the duration-stamped sidecar.
+        for url in [finalMetaURL, metaURL] where fm.fileExists(atPath: url.path) {
+            let existing = try JSONSerialization.jsonObject(with: Data(contentsOf: url))
+            guard let dictionary = existing as? [String: Any] else { throw CocoaError(.fileReadCorruptFile) }
+            if let older = root["audio_capture"] as? [String: Any], let newer = dictionary["audio_capture"] as? [String: Any] {
+                let capture = mergeAudioCaptureMetadata(older, newer)
+                root.merge(dictionary) { _, current in current }
+                root["audio_capture"] = capture
+            } else { root.merge(dictionary) { _, current in current } }
         }
+        if let json = micMetadataJSON, let data = json.data(using: .utf8) {
+            guard let dictionary = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            root.merge(dictionary) { _, current in current }
+        }
+        if !remixSources.isEmpty {
+            var capture = root["audio_capture"] as? [String: Any] ?? ["version": 1, "state": "unknown", "sources": []]
+            let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(remixSources)) as! [[String: Any]]
+            capture = mergeAudioCaptureMetadata(capture, ["remix": encoded, "state": capture["state"] ?? "unknown"])
+            if (capture["state"] as? String) == "recording" { capture["state"] = "interrupted" }
+            root["audio_capture"] = capture
+        } else if var capture = root["audio_capture"] as? [String: Any], (capture["state"] as? String) == "recording" {
+            capture["state"] = "interrupted"
+            root["audio_capture"] = capture
+        }
+        if unreadableSourceIDs != nil || root["unreadable_audio_sources"] != nil {
+            let ids = unreadableSourceIDs ?? []
+            let previous = (root["unreadable_audio_sources"] as? [String: Any])?["source_ids"] as? [String] ?? []
+            let currentRows = (root["audio_capture"] as? [String: Any])?["remix"] as? [[String: Any]] ?? []
+            let readable = Set(currentRows.filter { ($0["state"] as? String) != "unreadable" }.compactMap { $0["source_id"] as? String })
+            let merged = Array(Set(previous + ids).subtracting(readable)).sorted()
+            if merged.isEmpty { root.removeValue(forKey: "unreadable_audio_sources") }
+            else { root["unreadable_audio_sources"] = ["count": merged.count, "source_ids": merged] }
+        }
+        guard !root.isEmpty else { return }
+        try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys]).write(to: metaURL, options: .atomic)
+        if finalMetaURL != metaURL, fm.fileExists(atPath: finalMetaURL.path) { try fm.removeItem(at: finalMetaURL) }
     }
 }
 

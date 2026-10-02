@@ -111,7 +111,7 @@ struct CaptureManagerCommitTests {
         let preparedSegment = LockedValue<FakeCaptureSegment>()
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 let segment = FakeCaptureSegment(outputDirectory: outputDirectory)
                 preparedSegment.set(segment)
                 return segment
@@ -186,7 +186,7 @@ struct CaptureManagerCommitTests {
         let root = try makeTempDirectory("capture-manager-commit")
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 FakeCaptureSegment(outputDirectory: outputDirectory)
             },
             finalizer: finalizer,

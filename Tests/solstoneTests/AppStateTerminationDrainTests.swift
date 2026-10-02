@@ -59,7 +59,7 @@ struct AppStateTerminationDrainTests {
         let finalizerAndDrainer = RecordingTerminationFinalizerDrainer()
         let manager = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { outputDirectory, _, _, _, _ in
+            segmentFactory: { outputDirectory, _, _, _ in
                 FakeCaptureSegment(outputDirectory: outputDirectory)
             },
             finalizer: finalizerAndDrainer,

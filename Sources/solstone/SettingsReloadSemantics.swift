@@ -23,7 +23,6 @@ public enum SettingsReloadSemantics {
         "excludePrivateBrowsingAccessibility": .live,
         "syncPaused": .live,
         "debugSegments": .live,
-        "debugKeepRejectedAudio": .live,
         "preserveSyncedSegments": .live,
         "observerName": .live,
         "loginItemEnabled": .live,

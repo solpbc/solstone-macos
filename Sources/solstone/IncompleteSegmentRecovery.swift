@@ -94,7 +94,6 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
                     timePrefix: timePrefix,
                     capturedDurationSeconds: nil,
                     audioInputs: [],
-                    debugKeepRejected: false,
                     silenceMusic: true,
                     micMetadataJSON: nil
                 )

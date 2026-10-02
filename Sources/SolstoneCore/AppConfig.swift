@@ -57,7 +57,7 @@ public struct AppConfig: Sendable {
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
         "excludePrivateBrowsing", "excludePrivateBrowsingAccessibility", "serverURL", "serverKey",
         "syncPaused", "debugSegments",
-        "debugKeepRejectedAudio", "preserveSyncedSegments", "microphoneGain", "silenceMusic",
+        "preserveSyncedSegments", "microphoneGain", "silenceMusic",
         "serviceMode", "journalPath",
         "observerName"
     ]
@@ -75,7 +75,6 @@ public struct AppConfig: Sendable {
         static let syncPaused = "syncPaused"
         static let debugSegments = "debugSegments"
         static let serverKey = "serverKey"
-        static let debugKeepRejectedAudio = "debugKeepRejectedAudio"
         static let preserveSyncedSegments = "preserveSyncedSegments"
         static let microphoneGain = "microphoneGain"
         static let silenceMusic = "silenceMusic"
@@ -143,9 +142,6 @@ public struct AppConfig: Sendable {
     /// When true, use 1-minute segments instead of 5-minute (for testing)
     public var debugSegments: Bool
 
-    /// When true, move rejected audio tracks to rejected/ folder instead of deleting
-    public var debugKeepRejectedAudio: Bool
-
     /// When true, a segment the journal confirmed is moved to the preserved-segments folder instead of being removed
     public var preserveSyncedSegments: Bool
 
@@ -184,7 +180,6 @@ public struct AppConfig: Sendable {
         serverKey: String? = nil,
         syncPaused: Bool = false,
         debugSegments: Bool = false,
-        debugKeepRejectedAudio: Bool = false,
         preserveSyncedSegments: Bool = false,
         microphoneGain: Float = 2.0,
         silenceMusic: Bool = true,
@@ -204,7 +199,6 @@ public struct AppConfig: Sendable {
         self.serverKey = serverKey
         self.syncPaused = syncPaused
         self.debugSegments = debugSegments
-        self.debugKeepRejectedAudio = debugKeepRejectedAudio
         self.preserveSyncedSegments = preserveSyncedSegments
         self.microphoneGain = microphoneGain
         self.silenceMusic = silenceMusic
@@ -253,7 +247,6 @@ public struct AppConfig: Sendable {
             serverKey: defaults.string(forKey: Keys.serverKey),
             syncPaused: defaults.bool(forKey: Keys.syncPaused),
             debugSegments: defaults.bool(forKey: Keys.debugSegments),
-            debugKeepRejectedAudio: defaults.bool(forKey: Keys.debugKeepRejectedAudio),
             preserveSyncedSegments: defaults.bool(forKey: Keys.preserveSyncedSegments),
             microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float ?? 2.0,
             silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true,
@@ -339,7 +332,6 @@ public struct AppConfig: Sendable {
         }
         defaults.set(syncPaused, forKey: Keys.syncPaused)
         defaults.set(debugSegments, forKey: Keys.debugSegments)
-        defaults.set(debugKeepRejectedAudio, forKey: Keys.debugKeepRejectedAudio)
         defaults.set(preserveSyncedSegments, forKey: Keys.preserveSyncedSegments)
         defaults.set(microphoneGain, forKey: Keys.microphoneGain)
         defaults.set(silenceMusic, forKey: Keys.silenceMusic)
@@ -387,7 +379,6 @@ public struct AppConfig: Sendable {
                     serverKey: legacyConfig.serverKey,
                     syncPaused: legacyConfig.syncPaused ?? false,
                     debugSegments: legacyConfig.debugSegments ?? false,
-                    debugKeepRejectedAudio: legacyConfig.debugKeepRejectedAudio ?? false,
                     microphoneGain: legacyConfig.microphoneGain ?? 2.0,
                     silenceMusic: legacyConfig.silenceMusic ?? true
                 )
@@ -590,7 +581,6 @@ private struct LegacyJSONConfig: Codable {
     var serverKey: String?
     var syncPaused: Bool?
     var debugSegments: Bool?
-    var debugKeepRejectedAudio: Bool?
     var microphoneGain: Float?
     var silenceMusic: Bool?
 }

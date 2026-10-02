@@ -64,7 +64,6 @@ struct CaptureSegmentNamingTests {
                 timePrefix: timePrefix,
                 capturedDurationSeconds: 300,
                 audioInputs: [],
-                debugKeepRejected: false,
                 silenceMusic: true,
                 micMetadataJSON: nil
             )
@@ -127,7 +126,7 @@ struct CaptureSegmentNamingTests {
         let coordinator = IncompleteSegmentRecoveryCoordinator(recoveryFactory: { NoopRecovery() })
         let manager = CaptureManager(
             storageManager: storage,
-            segmentFactory: { dir, prefix, _, _, _ in NamingCaptureSegment(outputDirectory: dir, timePrefix: prefix) },
+            segmentFactory: { dir, prefix, _, _ in NamingCaptureSegment(outputDirectory: dir, timePrefix: prefix) },
             recoveryCoordinator: coordinator,
             finalizer: queue,
             captureZoneSource: zoneSource,
@@ -212,7 +211,7 @@ struct CaptureSegmentNamingTests {
         let coordinator = IncompleteSegmentRecoveryCoordinator(recoveryFactory: { NoopRecovery() })
         let manager = CaptureManager(
             storageManager: storage,
-            segmentFactory: { dir, prefix, _, _, _ in NamingCaptureSegment(outputDirectory: dir, timePrefix: prefix) },
+            segmentFactory: { dir, prefix, _, _ in NamingCaptureSegment(outputDirectory: dir, timePrefix: prefix) },
             recoveryCoordinator: coordinator,
             finalizer: queue,
             captureZoneSource: zoneSource,
@@ -321,7 +320,7 @@ struct CaptureSegmentNamingTests {
 
         let manager = CaptureManager(
             storageManager: storage,
-            segmentFactory: { dir, prefix, _, _, _ in NamingCaptureSegment(outputDirectory: dir, timePrefix: prefix) },
+            segmentFactory: { dir, prefix, _, _ in NamingCaptureSegment(outputDirectory: dir, timePrefix: prefix) },
             recoveryCoordinator: coordinator,
             finalizer: queue,
             captureZoneSource: zoneSource,
@@ -427,7 +426,6 @@ struct CaptureSegmentNamingTests {
             timePrefix: prefix,
             capturedDurationSeconds: 300,
             audioInputs: [],
-            debugKeepRejected: false,
             silenceMusic: true,
             micMetadataJSON: nil
         )
@@ -596,7 +594,7 @@ struct CaptureSegmentNamingTests {
         let coordinator = IncompleteSegmentRecoveryCoordinator(recoveryFactory: { NoopRecovery() })
         let manager = CaptureManager(
             storageManager: storage,
-            segmentFactory: { dir, prefix, _, _, _ in NamingCaptureSegment(outputDirectory: dir, timePrefix: prefix) },
+            segmentFactory: { dir, prefix, _, _ in NamingCaptureSegment(outputDirectory: dir, timePrefix: prefix) },
             recoveryCoordinator: coordinator,
             finalizer: queue,
             captureZoneSource: zoneSource,
