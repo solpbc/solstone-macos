@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.22] - 2026-10-02
+
 ### Added
 
 - the private-browsing setting can also keep private windows in Safari, Chrome, Edge and Brave, set to English, out of your journal. it is off unless you turn it on, and turning it on is the only time the solstone app on your mac asks for Accessibility access (called Device Control and Data Access on macOS 27). the app uses that access only to read the window titles these browsers give to accessibility tools, and to check that the access works; those titles stay on your mac.
