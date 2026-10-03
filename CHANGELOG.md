@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.23] - 2026-10-03
+
 ### Added
 - "about solstone" now shows the versions of the solstone app on your mac and of your journal, and the system each one runs on, in a short block with a copy button, so you can paste it when you ask for help. settings shows the same block, and a problem report includes it.
 
