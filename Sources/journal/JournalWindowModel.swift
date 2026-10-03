@@ -133,6 +133,9 @@ final class JournalWindowModel {
     typealias DiskUsageFetch = @Sendable (URL) async -> Int64
     typealias HealthFetch = @Sendable (URL, [String: String]?) async -> JournalHealthCheckResult
     typealias VersionFetch = @Sendable (URL, [String: String]?) async -> String?
+    typealias VersionExecutableURLProvider = @Sendable () -> URL?
+    typealias AboutStringProvider = @Sendable () -> String
+    typealias AboutArchProvider = @Sendable () -> String?
     typealias MachineNameProvider = @Sendable () -> String
     typealias NowProvider = @Sendable () -> Date
     typealias IdentityMarkObserver = @MainActor @Sendable (JournalMark) -> Void
@@ -146,6 +149,10 @@ final class JournalWindowModel {
     @ObservationIgnored private let fetchDiskUsage: DiskUsageFetch
     @ObservationIgnored private let fetchHealth: HealthFetch
     @ObservationIgnored private let fetchVersion: VersionFetch
+    @ObservationIgnored private let versionExecutableURL: VersionExecutableURLProvider
+    @ObservationIgnored private let aboutOSVersion: AboutStringProvider
+    @ObservationIgnored private let aboutArch: AboutArchProvider
+    @ObservationIgnored private let appBuild: String?
     @ObservationIgnored private let machineNameProvider: MachineNameProvider
     @ObservationIgnored private let now: NowProvider
     @ObservationIgnored private let diskCacheDuration: TimeInterval
@@ -160,8 +167,7 @@ final class JournalWindowModel {
     var identityMark: JournalMark?
     var diskUsageBytes: Int64?
     var healthDisplay: JournalHealthDisplay = .unknown
-    var runtimeVersion = "unknown"
-    var appVersion: String
+    var journalVersion = "unknown"
 
     private var hasLoadedConfig = false
     private var identityFetchStarted = false
@@ -179,6 +185,12 @@ final class JournalWindowModel {
         fetchDiskUsage: DiskUsageFetch? = nil,
         fetchHealth: HealthFetch? = nil,
         fetchVersion: VersionFetch? = nil,
+        versionExecutableURL: @escaping VersionExecutableURLProvider = { JournalCommandLine.currentExecutableURL() },
+        aboutOSVersion: @escaping AboutStringProvider = {
+            SolstoneCoreAbout.numericOSVersion(ProcessInfo.processInfo.operatingSystemVersion)
+        },
+        aboutArch: @escaping AboutArchProvider = { SolstoneCoreAbout.nativeMacOSArch() },
+        appBuild: String? = Bundle.main.infoDictionary?["CFBundleVersion"] as? String,
         devicesModel: JournalDevicesModel? = nil,
         onIdentityMark: IdentityMarkObserver? = nil,
         machineNameProvider: @escaping MachineNameProvider = {
@@ -187,8 +199,7 @@ final class JournalWindowModel {
             return ProcessInfo.processInfo.hostName
         },
         now: @escaping NowProvider = { Date() },
-        diskCacheDuration: TimeInterval = 30,
-        appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        diskCacheDuration: TimeInterval = 30
     ) {
         let defaultIdentityFetcher = JournalIdentityFetcher(session: identitySession)
         let trimmedBaseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -207,12 +218,26 @@ final class JournalWindowModel {
         self.fetchVersion = fetchVersion ?? { binary, environment in
             await JournalHealthCheck.version(journalBinary: binary, environment: environment)
         }
+        self.versionExecutableURL = versionExecutableURL
+        self.aboutOSVersion = aboutOSVersion
+        self.aboutArch = aboutArch
+        self.appBuild = appBuild.flatMap { $0.isEmpty ? nil : $0 }
         self.machineNameProvider = machineNameProvider
         self.now = now
         self.diskCacheDuration = diskCacheDuration
         self.onIdentityMark = onIdentityMark
-        self.appVersion = appVersion
         self.devicesModel = devicesModel ?? JournalDevicesModel(client: JournalDevicesClient(baseURL: trimmedBaseURL))
+    }
+
+    var aboutBlock: String {
+        SolstoneCoreAbout.renderLine(
+            name: "journal",
+            version: journalVersion == "unknown" ? nil : journalVersion,
+            build: appBuild,
+            os: "macos",
+            osVersion: aboutOSVersion(),
+            arch: aboutArch()
+        )
     }
 
     var isConfigured: Bool {
@@ -425,21 +450,26 @@ final class JournalWindowModel {
     }
 
     func refreshRunState() async {
-        guard let binary = supervisor.journalBinaryURL else {
+        if let binary = supervisor.journalBinaryURL {
+            let environment = supervisor.journalRuntimeEnvironment
+            switch await fetchHealth(binary, environment) {
+            case .healthy:
+                healthDisplay = .healthy
+            case .stopped:
+                healthDisplay = .stopped
+            case .unknown:
+                healthDisplay = .unknown
+            }
+        } else {
             healthDisplay = .unknown
-            runtimeVersion = "unknown"
-            return
         }
-        let environment = supervisor.journalRuntimeEnvironment
-        switch await fetchHealth(binary, environment) {
-        case .healthy:
-            healthDisplay = .healthy
-        case .stopped:
-            healthDisplay = .stopped
-        case .unknown:
-            healthDisplay = .unknown
+
+        if let executableURL = versionExecutableURL() {
+            let commandURL = JournalCommandLine.commandLineURL(executableURL: executableURL)
+            journalVersion = await fetchVersion(commandURL, nil) ?? "unknown"
+        } else {
+            journalVersion = "unknown"
         }
-        runtimeVersion = await fetchVersion(binary, environment) ?? "unknown"
     }
 
     private func applyConfig(_ config: JournalConfig) {

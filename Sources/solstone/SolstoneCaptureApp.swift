@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import AppKit
 import SwiftUI
 import UserNotifications
 import os
@@ -263,8 +264,15 @@ struct SolstoneCaptureApp: App {
         .defaultPosition(.center)
 
         Window("about solstone", id: "about") {
-            if startup != nil {
-                AboutView()
+            if let startup {
+                AboutView(
+                    aboutBlock: { AboutPresentation.captureBlock(journal: startup.appState.tunnelLifecycleOwner.journalVersion) },
+                    clipboardWrite: { text in
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        return pasteboard.setString(text, forType: .string)
+                    }
+                )
             } else {
                 Color.clear
             }

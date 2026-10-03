@@ -148,7 +148,7 @@ enum AXContract {
         AXID.Settings.Status.setupLastDeliveryState,
         AXID.Settings.Status.setupLastDeliveryTimestamp,
         AXID.Settings.Status.setupManageJournal,
-        AXID.Settings.Status.setupAppVersionState,
+        AXID.Settings.Status.setupAboutState,
         AXID.Settings.Status.uploadJournalState,
         AXID.Settings.Status.uploadState,
         AXID.Settings.Status.uploadChecked,
@@ -201,7 +201,7 @@ enum AXContract {
         AXID.Settings.Help.browserFootnote,
         AXID.Settings.Help.supportSite,
         AXID.Settings.Help.supportEmail,
-        AXID.Settings.Help.versionState,
+        AXID.Settings.Help.aboutState,
         AXID.Settings.Help.logExport,
         AXID.Settings.Help.logExportPreview,
         AXID.Settings.Help.logExportSave,
@@ -237,7 +237,9 @@ enum AXContract {
         UpdatesAXID.debugStatePicker,
         AXID.About.logo,
         AXID.About.title,
-        AXID.About.versionState,
+        AXID.About.aboutState,
+        AXID.About.aboutCopy,
+        AXID.About.aboutCopyFeedback,
         AXID.About.sourceCode,
         AXID.About.website
     ]
@@ -380,7 +382,7 @@ enum AXContract {
             AXID.Settings.Status.setupMicrophoneState: .enum("SetupCheckRowAXState"),
             AXID.Settings.Status.setupLastDeliveryState: .enum("LastJournalDeliveryAXState"),
             AXID.Settings.Status.setupLastDeliveryTimestamp: .numeric,
-            AXID.Settings.Status.setupAppVersionState: .freeform,
+            AXID.Settings.Status.setupAboutState: .freeform,
             AXID.Settings.Status.uploadJournalState: .freeform,
             AXID.Settings.Status.uploadState: .enum("UploadCoordinator.Status"),
             AXID.Settings.Status.uploadChecked: .numeric,
@@ -397,7 +399,7 @@ enum AXContract {
             AXID.Settings.Help.diagnosticsLastDeliveryTimestamp: .numeric,
             AXID.Settings.Help.diagnosticsLastJournalConnectionState: .enum("LastJournalContactAXState"),
             AXID.Settings.Help.diagnosticsLastJournalConnectionTimestamp: .numeric,
-            AXID.Settings.Help.versionState: .freeform,
+            AXID.Settings.Help.aboutState: .freeform,
             AXID.Settings.Help.logExportState: .enum("LogExportAXState"),
             AXID.Settings.Help.logExportFailureReason: .freeform,
             UpdatesAXID.statusState: .enum("UpdateStatus"),
@@ -411,7 +413,8 @@ enum AXContract {
             UpdatesAXID.frequencyState: .enum("FrequencyOption"),
             // updates.debug.state is a DEBUG picker control, not a product state-value companion.
             UpdatesAXID.debugStatePicker: .freeform,
-            AXID.About.versionState: .freeform
+            AXID.About.aboutState: .freeform,
+            AXID.About.aboutCopyFeedback: .freeform
         ]
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         for id in [AXID.Settings.Sources.browserChrome, AXID.Settings.Sources.browserEdge, AXID.Settings.Sources.browserFirefox] {

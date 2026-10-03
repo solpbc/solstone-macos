@@ -240,9 +240,23 @@ public actor JournalClientSelfSequencer {
         case failure
     }
 
+    private enum AboutFailureReason: String, Sendable {
+        case transport
+        case http
+        case decode
+        case mismatch
+        case stale
+    }
+
+    private enum AboutFetchResult: Sendable {
+        case resource(SolstoneCoreAbout.Resource)
+        case failure(AboutFailureReason)
+    }
+
     private let session: URLSession
     private let deadline: Duration
     private let onJournalMetadataUpdated: @Sendable (String, UInt64, String?, String?, Bool, ContinuousClock.Instant, MetadataPublicationFence) async -> Void
+    private let onJournalAboutUpdated: @Sendable (TargetConnection, SolstoneCoreAbout.Resource, ContinuousClock.Instant) async -> String?
 
     private var activeTarget: TargetConnection?
     private var inFlight = false
@@ -255,11 +269,13 @@ public actor JournalClientSelfSequencer {
     public init(
         session: URLSession = BoundedLoopbackClient.sharedSession,
         deadline: Duration = BoundedLoopbackClient.defaultDeadline,
-        onJournalMetadataUpdated: @escaping @Sendable (String, UInt64, String?, String?, Bool, ContinuousClock.Instant, MetadataPublicationFence) async -> Void
+        onJournalMetadataUpdated: @escaping @Sendable (String, UInt64, String?, String?, Bool, ContinuousClock.Instant, MetadataPublicationFence) async -> Void,
+        onJournalAboutUpdated: @escaping @Sendable (TargetConnection, SolstoneCoreAbout.Resource, ContinuousClock.Instant) async -> String? = { _, _, _ in nil }
     ) {
         self.session = session
         self.deadline = deadline
         self.onJournalMetadataUpdated = onJournalMetadataUpdated
+        self.onJournalAboutUpdated = onJournalAboutUpdated
     }
 
     public var isBusy: Bool {
@@ -338,11 +354,13 @@ public actor JournalClientSelfSequencer {
         snapshot: ClientSelfReportedSnapshot,
         jobGen: UInt64
     ) async throws {
+        let jobDeadline = ContinuousClock.now + deadline
+        startAboutRead(target: target, jobGen: jobGen, jobDeadline: jobDeadline)
+
         guard let url = URL(string: "http://127.0.0.1:\(target.localPort)/app/network/api/clients/self") else {
             return
         }
 
-        let jobDeadline = ContinuousClock.now + deadline
         let getRemaining = jobDeadline - ContinuousClock.now
         guard getRemaining > .zero else { return }
 
@@ -438,6 +456,75 @@ public actor JournalClientSelfSequencer {
                 deadline: retryPutRemaining,
                 jobDeadline: jobDeadline
             )
+        }
+    }
+
+    private func startAboutRead(
+        target: TargetConnection,
+        jobGen: UInt64,
+        jobDeadline: ContinuousClock.Instant
+    ) {
+        let session = self.session
+        let callback = onJournalAboutUpdated
+        Task { [weak self] in
+            let result = await Self.fetchAbout(session: session, target: target, deadline: jobDeadline)
+            guard let self else { return }
+            await self.finishAboutRead(result, target: target, jobGen: jobGen, deadline: jobDeadline, callback: callback)
+        }
+    }
+
+    private static func fetchAbout(
+        session: URLSession,
+        target: TargetConnection,
+        deadline: ContinuousClock.Instant
+    ) async -> AboutFetchResult {
+        guard (1...65535).contains(target.localPort),
+              let url = URL(string: "http://127.0.0.1:\(target.localPort)/api/system/about") else {
+            return .failure(.transport)
+        }
+        let remaining = deadline - ContinuousClock.now
+        guard remaining > .zero else { return .failure(.stale) }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.attachLoopbackCapability()
+        do {
+            let (data, response) = try await BoundedLoopbackClient.execute(
+                request: request,
+                session: session,
+                deadline: remaining
+            )
+            guard response.statusCode == 200 else { return .failure(.http) }
+            guard let resource = SolstoneCoreAbout.decodeResource(data) else { return .failure(.decode) }
+            return .resource(resource)
+        } catch {
+            return .failure(.transport)
+        }
+    }
+
+    private func finishAboutRead(
+        _ result: AboutFetchResult,
+        target: TargetConnection,
+        jobGen: UInt64,
+        deadline: ContinuousClock.Instant,
+        callback: @escaping @Sendable (TargetConnection, SolstoneCoreAbout.Resource, ContinuousClock.Instant) async -> String?
+    ) async {
+        guard activeTarget == target, jobGeneration == jobGen,
+              ContinuousClock.now < deadline else {
+            Logger.journal.error("journal about failed reason=stale")
+            return
+        }
+        switch result {
+        case .failure(let reason):
+            Logger.journal.error("journal about failed reason=\(reason.rawValue, privacy: .public)")
+        case .resource(let resource):
+            if let reason = await callback(target, resource, deadline) {
+                let permitted: Set<String> = ["transport", "http", "decode", "mismatch", "stale"]
+                let token = permitted.contains(reason) ? reason : "stale"
+                Logger.journal.error("journal about failed reason=\(token, privacy: .public)")
+            }
         }
     }
 

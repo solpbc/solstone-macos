@@ -10,6 +10,9 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         public var delay: Duration
         public var error: URLError?
         public var beforeReply: (@Sendable () -> Void)? = nil
+        public var holdBodyAfterHeaders = false
+        public var afterHeaders: (@Sendable () -> Void)? = nil
+        public var onStopLoading: (@Sendable () -> Void)? = nil
     }
 
     public let token = UUID().uuidString
@@ -39,7 +42,10 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         body: String = "",
         delay: Duration = .zero,
         error: URLError? = nil,
-        beforeReply: (@Sendable () -> Void)? = nil
+        beforeReply: (@Sendable () -> Void)? = nil,
+        holdBodyAfterHeaders: Bool = false,
+        afterHeaders: (@Sendable () -> Void)? = nil,
+        onStopLoading: (@Sendable () -> Void)? = nil
     ) {
         lock.withLock {
             routeHandlers.append({ req in
@@ -49,7 +55,10 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
                     data: Data(body.utf8),
                     delay: delay,
                     error: error,
-                    beforeReply: beforeReply
+                    beforeReply: beforeReply,
+                    holdBodyAfterHeaders: holdBodyAfterHeaders,
+                    afterHeaders: afterHeaders,
+                    onStopLoading: onStopLoading
                 )
             })
         }
@@ -62,7 +71,10 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         body: String = "",
         delay: Duration = .zero,
         error: URLError? = nil,
-        beforeReply: (@Sendable () -> Void)? = nil
+        beforeReply: (@Sendable () -> Void)? = nil,
+        holdBodyAfterHeaders: Bool = false,
+        afterHeaders: (@Sendable () -> Void)? = nil,
+        onStopLoading: (@Sendable () -> Void)? = nil
     ) {
         registerRoute(
             matching: { req in
@@ -74,7 +86,10 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
             body: body,
             delay: delay,
             error: error,
-            beforeReply: beforeReply
+            beforeReply: beforeReply,
+            holdBodyAfterHeaders: holdBodyAfterHeaders,
+            afterHeaders: afterHeaders,
+            onStopLoading: onStopLoading
         )
     }
 
@@ -172,6 +187,7 @@ private final class ObserverURLProtocolStoreRegistry: @unchecked Sendable {
 final class ObserverURLProtocol: URLProtocol, @unchecked Sendable {
     private let deliveryLock = NSRecursiveLock()
     private var stopped = false
+    private var onStopLoading: (@Sendable () -> Void)?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -185,6 +201,7 @@ final class ObserverURLProtocol: URLProtocol, @unchecked Sendable {
         }
 
         let next = store.next(for: request)
+        onStopLoading = next.onStopLoading
         Thread.detachNewThread { [self] in
             next.beforeReply?()
             if next.delay > .zero {
@@ -204,6 +221,8 @@ final class ObserverURLProtocol: URLProtocol, @unchecked Sendable {
                     headerFields: ["Content-Type": "application/json"]
                 )!
                 client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                next.afterHeaders?()
+                if next.holdBodyAfterHeaders { return }
                 if !next.data.isEmpty {
                     client?.urlProtocol(self, didLoad: next.data)
                 }
@@ -213,7 +232,12 @@ final class ObserverURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {
-        deliveryLock.withLock { stopped = true }
+        let callback = deliveryLock.withLock { () -> (@Sendable () -> Void)? in
+            guard !stopped else { return nil }
+            stopped = true
+            return onStopLoading
+        }
+        callback?()
     }
 }
 

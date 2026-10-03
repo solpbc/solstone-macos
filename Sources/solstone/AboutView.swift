@@ -5,9 +5,22 @@ import SwiftUI
 
 /// About window showing app identity, version, and copyright
 struct AboutView: View {
-    private var version: String { AppVersion.short }
+    enum CopyState: Equatable {
+        case copied
+        case failed
+    }
+
+    let aboutBlock: () -> String
+    let clipboardWrite: (String) -> Bool
+    @State private var copyState: CopyState?
+
+    init(aboutBlock: @escaping () -> String, clipboardWrite: @escaping (String) -> Bool) {
+        self.aboutBlock = aboutBlock
+        self.clipboardWrite = clipboardWrite
+    }
 
     var body: some View {
+        let displayedBlock = aboutBlock()
         VStack(spacing: 0) {
             VStack(spacing: 8) {
                 bundleImage("AppIcon")
@@ -24,12 +37,25 @@ struct AboutView: View {
 
             Spacer().frame(height: 16)
 
-            VStack(spacing: 4) {
-                Text("version \(version)")
+            VStack(spacing: 6) {
+                Text(displayedBlock)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .accessibilityIdentifier(AXID.About.versionState)
-                    .accessibilityValue(version)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier(AXID.About.aboutState)
+                    .accessibilityValue(displayedBlock)
+
+                Button("copy") {
+                    let snapshot = aboutBlock()
+                    copyState = clipboardWrite(snapshot) ? .copied : .failed
+                }
+                .accessibilityIdentifier(AXID.About.aboutCopy)
+                if let copyState {
+                    Text(copyState == .copied ? "copied" : "couldn't copy. select the text and copy it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier(AXID.About.aboutCopyFeedback)
+                }
 
                 Text("by sol pbc")
                     .font(.callout)

@@ -8,18 +8,31 @@ import SwiftUI
 import UpdateKit
 
 struct JournalSettingsWindow: View {
+    private enum AboutCopyState: Equatable {
+        case copied
+        case failed
+    }
+
     @Bindable var model: JournalWindowModel
     @Bindable var updateController: UpdateController
     var openURL: @MainActor (URL) -> Bool
+    private let clipboardWrite: @MainActor (String) -> Bool
+    @State private var aboutCopyState: AboutCopyState?
 
     init(
         model: JournalWindowModel,
         updateController: UpdateController,
-        openURL: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
+        openURL: @escaping @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) },
+        clipboardWrite: @escaping @MainActor (String) -> Bool = { text in
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            return pasteboard.setString(text, forType: .string)
+        }
     ) {
         self.model = model
         self.updateController = updateController
         self.openURL = openURL
+        self.clipboardWrite = clipboardWrite
     }
 
     var body: some View {
@@ -261,11 +274,26 @@ struct JournalSettingsWindow: View {
             infoRow("health", value: model.healthDisplay.label)
             AXStateCompanion(id: AXID.Journal.RunState.healthState, value: model.healthDisplay.axToken)
 
-            infoRow("runtime version", value: model.runtimeVersion)
-            AXStateCompanion(id: AXID.Journal.RunState.runtimeVersionState, value: model.runtimeVersion)
-
-            infoRow("app version", value: model.appVersion)
-            AXStateCompanion(id: AXID.Journal.RunState.appVersionState, value: model.appVersion)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(model.aboutBlock)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier(AXID.Journal.RunState.aboutState)
+                    .accessibilityValue(model.aboutBlock)
+                AXStateCompanion(id: AXID.Journal.RunState.aboutState, value: model.aboutBlock)
+                Button("copy") {
+                    let snapshot = model.aboutBlock
+                    aboutCopyState = clipboardWrite(snapshot) ? .copied : .failed
+                }
+                .accessibilityIdentifier(AXID.Journal.RunState.aboutCopy)
+                if let aboutCopyState {
+                    let message = aboutCopyState == .copied ? "copied" : "couldn't copy. select the text and copy it."
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier(AXID.Journal.RunState.aboutCopyFeedbackState)
+                    AXStateCompanion(id: AXID.Journal.RunState.aboutCopyFeedbackState, value: message)
+                }
+            }
         }
     }
 

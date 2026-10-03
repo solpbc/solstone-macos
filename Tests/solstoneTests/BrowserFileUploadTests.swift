@@ -141,7 +141,7 @@ private struct BrowserFileUploadFixture: Sendable {
             credentialIsCurrent: { true })
         routes.update(route)
         let capturedRoute = route, capturedRoutes = routes, capturedGate = gate
-        routes.setOnChange { capturedGate.invalidateCurrentLease() }
+        routes.setOnChange { _, _ in capturedGate.invalidateCurrentLease() }
         let candidateLease = gate.makeLease(permit: permit, periodId: "file-period",
             routeCheck: { capturedRoutes.matches(capturedRoute) })
         lease = try #require(candidateLease)

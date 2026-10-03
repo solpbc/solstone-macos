@@ -5,6 +5,7 @@
 import Darwin
 import Foundation
 import SolstoneCore
+import Synchronization
 import Testing
 @testable import solstone
 
@@ -309,6 +310,7 @@ private struct PhysicalTransport: BrowserUploadTransport {
 private final class PhysicalListenerFixture {
     let root: URL
     let owner: BrowserIntakeOwner
+    let routeState: BrowserIntakeRouteState
     let projection: BrowserContractProjection
     let snapshot: BrowserHostSnapshot
     let listener: BrowserHostListener
@@ -317,14 +319,17 @@ private final class PhysicalListenerFixture {
     init(sleeper: @escaping BrowserHostListener.Sleeper = { try? await Task.sleep(for: $0) },
          uptime: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          publicationWillEnqueue: @escaping @Sendable () async -> Void = {},
-         beforeBatchAdmission: @escaping @Sendable () async -> Void = {}) async throws {
+         beforeBatchAdmission: @escaping @Sendable () async -> Void = {},
+         routeState: BrowserIntakeRouteState = BrowserIntakeRouteState()) async throws {
         root = try physicalRoot()
         let vendor = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("vendor")
         projection = try BrowserContractProjection(rootURL: vendor)
+        self.routeState = routeState
         owner = try BrowserIntakeOwner.start(spoolRoot: root.appendingPathComponent("spool"), projection: projection,
             credentialSnapshot: BrowserCredentialSnapshot(identityToken: "physical-test-identity"),
-            transport: PhysicalTransport(), routeResolver: HomeBaseURLResolver { .url("http://127.0.0.1:1") }, syncPaused: { true })
+            transport: PhysicalTransport(), routeResolver: HomeBaseURLResolver { .url("http://127.0.0.1:1") }, syncPaused: { true },
+            routeState: routeState)
         snapshot = await MainActor.run { BrowserHostSnapshot() }
         listener = BrowserHostListener(limits: BrowserHostLimits(projection: projection), snapshot: snapshot,
             updateGate: BrowserHostUpdateGate(checkForUpdates: {}), sleeper: sleeper, uptime: uptime,
@@ -364,13 +369,218 @@ private func withPhysicalListener(
     uptime: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
     publicationWillEnqueue: @escaping @Sendable () async -> Void = {},
     beforeBatchAdmission: @escaping @Sendable () async -> Void = {},
+    routeState: BrowserIntakeRouteState = BrowserIntakeRouteState(),
     _ operation: (PhysicalListenerFixture) async throws -> Void
 ) async throws {
     let fixture = try await PhysicalListenerFixture(sleeper: sleeper, uptime: uptime,
                                                    publicationWillEnqueue: publicationWillEnqueue,
-                                                   beforeBatchAdmission: beforeBatchAdmission)
+                                                   beforeBatchAdmission: beforeBatchAdmission,
+                                                   routeState: routeState)
     do { try await operation(fixture); await fixture.cleanup() }
     catch { await fixture.cleanup(); throw error }
+}
+
+@Suite("AboutSnapshot")
+struct AboutSnapshotTests {
+    private var bundleURL: URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("vendor/contracts/solstone-core-about/bundle")
+    }
+
+    @Test func nativeFixturesValidateNestedSnapshotSeparatelyFromCoreEnvelope() throws {
+        let fixtures = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: bundleURL.appendingPathComponent("native-about.json"))
+        ) as! [String: Any]
+        let projection = try BrowserContractProjection(rootURL: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("vendor"))
+
+        for raw in fixtures["valid"] as! [[String: Any]] {
+            let data = try JSONSerialization.data(withJSONObject: raw)
+            #expect(SolstoneCoreAbout.decodeNativeSnapshot(data) != nil)
+        }
+        for raw in fixtures["invalid"] as! [[String: Any]] {
+            let data = try JSONSerialization.data(withJSONObject: raw)
+            #expect(SolstoneCoreAbout.decodeNativeSnapshot(data) == nil)
+        }
+
+        let envelopes = fixtures["envelopes"] as! [[String: Any]]
+        for (index, envelope) in envelopes.enumerated() {
+            let message: BrowserHostToExtensionMessage
+            do {
+                message = try BrowserPayloadDecoder.validatedHostMessage(envelope, projection: projection)
+            } catch {
+                let reason = (error as? BrowserIntakeLocalRefusal)?.code ?? error.localizedDescription
+                throw NSError(domain: "AboutSnapshot.envelopes[\(index)]", code: 1, userInfo: [NSLocalizedDescriptionKey: reason])
+            }
+            let data = BrowserPayloadDecoder.encodeHostToExtension(message)
+            let encoded = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            #expect(encoded["type"] as? String == envelope["type"] as? String)
+            if envelope["future_root"] != nil {
+                #expect(encoded["future_root"] as? Bool == true)
+            }
+            if let about = envelope["about"] {
+                let aboutData = try JSONSerialization.data(withJSONObject: about)
+                let containsUnknownNestedKey = (about as? [String: Any])?.keys.contains("hostname") ?? false
+                #expect((SolstoneCoreAbout.decodeNativeSnapshot(aboutData) != nil) != containsUnknownNestedKey)
+            }
+        }
+
+        let extraNested = envelopes[4]
+        let extraNestedMessage = try BrowserPayloadDecoder.validatedHostMessage(extraNested, projection: projection)
+        let extraNestedBytes = BrowserPayloadDecoder.encodeHostToExtension(extraNestedMessage)
+        let extraNestedObject = try JSONSerialization.jsonObject(with: extraNestedBytes) as! [String: Any]
+        #expect(SolstoneCoreAbout.decodeNativeSnapshot(try JSONSerialization.data(withJSONObject: extraNestedObject["about"]!)) == nil)
+
+        for envelope in fixtures["invalid_core_envelopes"] as! [[String: Any]] {
+            #expect(throws: BrowserIntakeLocalRefusal.self) {
+                try BrowserPayloadDecoder.validatedHostMessage(envelope, projection: projection)
+            }
+            #expect(SolstoneCoreAbout.decodeNativeSnapshot(try JSONSerialization.data(withJSONObject: envelope["about"]!)) != nil)
+        }
+    }
+
+    @Test func metadataOnlyUpdatePublishesAndEmissionDoesNotRenewObservation() async throws {
+        @MainActor final class Probe {
+            let journal: JournalVersionMetadata
+            let identity: String
+            private let suiteName: String
+            private let defaults: UserDefaults
+
+            init(owner: BrowserIntakeOwner, now: @escaping @Sendable () -> Date, continuation: AsyncStream<Void>.Continuation) {
+                identity = "about-snapshot-test-\(UUID().uuidString)"
+                suiteName = "AboutSnapshot.\(UUID().uuidString)"
+                defaults = UserDefaults(suiteName: suiteName)!
+                journal = JournalVersionMetadata(defaults: defaults, now: now)
+                journal.setIdentity(identity)
+                journal.onAboutChanged = { [weak journal] factsAccepted in
+                    Task {
+                        let routeEpoch = await owner.aboutRouteEpoch()
+                        guard let journal else { return }
+                        let snapshot = journal.nativeAboutSnapshot(os: "macos", osVersion: "15.6", arch: "arm64")
+                        await owner.updateAboutSnapshot(snapshot, factsAccepted: factsAccepted, routeEpoch: routeEpoch)
+                        _ = continuation.yield(())
+                    }
+                }
+            }
+
+            func clear() {
+                defaults.removePersistentDomain(forName: suiteName)
+            }
+        }
+
+        try await withPhysicalListener { fixture in
+            await fixture.start()
+            let fd = try await fixture.connect()
+            defer { Darwin.close(fd) }
+
+            let observation = Date(timeIntervalSince1970: 1_700_000_000)
+            let factsObservation = Date(timeIntervalSince1970: 1_700_000_030)
+            let refreshedObservation = Date(timeIntervalSince1970: 1_700_000_100)
+            let clock = Mutex([observation, factsObservation, refreshedObservation])
+            let owner = fixture.owner
+            let (publicationStream, continuation) = AsyncStream<Void>.makeStream()
+            defer { continuation.finish() }
+            let probe = await MainActor.run {
+                Probe(owner: owner, now: { clock.withLock { $0.removeFirst() } }, continuation: continuation)
+            }
+            defer { Task { @MainActor in probe.clear() } }
+            var publicationIterator = publicationStream.makeAsyncIterator()
+
+            await MainActor.run {
+                _ = probe.journal.applyDirectly(identity: probe.identity, version: "2.0.0", name: "Journal")
+            }
+            _ = await publicationIterator.next()
+            let state = try await physicalMessage("state", from: fd)
+            let about = try #require(state["about"] as? [String: Any])
+            #expect(about["journal_line"] as? String == "journal 2.0.0")
+            #expect(about["journal_seen_at_epoch_secs"] as? Int == 1_700_000_000)
+            #expect(!(about["journal_line"] as! String).contains("last seen"))
+
+            let resource = try #require(SolstoneCoreAbout.decodeResource(Data(
+                #"{"protocol_version":1,"version":"2.0.0","build":"12","os":"ubuntu","os_version":"24.04","arch":"amd64","about":"journal 2.0.0 · ubuntu 24.04 · x86_64"}"#.utf8
+            )))
+            let factResult = await MainActor.run {
+                probe.journal.receiveAbout(resource, identity: probe.identity, generation: probe.journal.currentGeneration())
+            }
+            #expect(factResult == .accepted)
+            _ = await publicationIterator.next()
+            #expect(await MainActor.run { probe.journal.versionObservedAt == observation })
+            #expect(await MainActor.run { probe.journal.hostFactsAcceptedAt == factsObservation })
+            await fixture.listener.refreshSnapshot()
+            let emitted = try await physicalMessage("state", from: fd)
+            let emittedAbout = try #require(emitted["about"] as? [String: Any])
+            #expect(emittedAbout["journal_line"] as? String == "journal 2.0.0 · ubuntu 24.04 · x86_64")
+            #expect(emittedAbout["journal_seen_at_epoch_secs"] as? Int == 1_700_000_000)
+            #expect(await MainActor.run { probe.journal.versionObservedAt == observation })
+
+            await MainActor.run {
+                _ = probe.journal.applyDirectly(
+                    identity: probe.identity, version: "2.0.0", name: nil, preserveName: true
+                )
+            }
+            _ = await publicationIterator.next()
+            #expect(await MainActor.run { probe.journal.versionObservedAt == refreshedObservation })
+            #expect(await MainActor.run { probe.journal.hostFactsAcceptedAt == factsObservation })
+            let updatedState = try await physicalMessage("state", from: fd)
+            let updatedAbout = try #require(updatedState["about"] as? [String: Any])
+            #expect(updatedAbout["journal_seen_at_epoch_secs"] as? Int == 1_700_000_100)
+        }
+    }
+
+    @Test func destinationTransitionPublishesUnknownUntilNewFactsArrive() async throws {
+        let routeState = BrowserIntakeRouteState()
+        try await withPhysicalListener(routeState: routeState) { fixture in
+            await fixture.start()
+            let fd = try await fixture.connect()
+            defer { Darwin.close(fd) }
+
+            let routeA = BrowserIntakeRouteCapability(
+                serverURL: "http://127.0.0.1:5015", identityDigest: "destination-a",
+                pairingGeneration: 1, transportIncarnation: 1, credentialIsCurrent: { true }
+            )
+            _ = routeState.update(routeA)
+            await fixture.listener.refreshSnapshot()
+            _ = try await physicalMessage("state", from: fd)
+
+            let known = SolstoneCoreAbout.nativeSnapshot(
+                os: "macos", osVersion: "15.6", arch: "arm64", journalVersion: "2.0.0",
+                journalCurrent: true, versionObservedAt: Date(timeIntervalSince1970: 1_700_000_000)
+            )
+            let firstEpoch = await fixture.owner.aboutRouteEpoch()
+            await fixture.owner.updateAboutSnapshot(known, factsAccepted: true, routeEpoch: firstEpoch)
+            _ = try await physicalMessage("state", from: fd)
+
+            let sameDestination = BrowserIntakeRouteCapability(
+                serverURL: "http://127.0.0.1:5015", identityDigest: "destination-a",
+                pairingGeneration: 1, transportIncarnation: 2, credentialIsCurrent: { true }
+            )
+            _ = routeState.update(sameDestination)
+            await fixture.listener.refreshSnapshot()
+            let retained = try await physicalMessage("state", from: fd)
+            #expect((retained["about"] as? [String: Any])?["journal_line"] as? String == "journal 2.0.0")
+
+            let routeB = BrowserIntakeRouteCapability(
+                serverURL: "http://127.0.0.1:5016", identityDigest: "destination-b",
+                pairingGeneration: 2, transportIncarnation: 2, credentialIsCurrent: { true }
+            )
+            _ = routeState.update(routeB)
+            await fixture.listener.refreshSnapshot()
+            let pending = try await physicalMessage("state", from: fd)
+            let pendingAbout = try #require(pending["about"] as? [String: Any])
+            #expect(pendingAbout["journal_line"] as? String == "journal unknown")
+            #expect(pendingAbout["journal_current"] as? Bool == false)
+            #expect(pendingAbout["journal_seen_at_epoch_secs"] is NSNull)
+
+            let currentEpoch = await fixture.owner.aboutRouteEpoch()
+            let versionOnly = SolstoneCoreAbout.nativeSnapshot(
+                os: "macos", osVersion: "15.6", arch: "arm64", journalVersion: "3.0.0",
+                journalCurrent: true, versionObservedAt: Date(timeIntervalSince1970: 1_700_000_100)
+            )
+            await fixture.owner.updateAboutSnapshot(versionOnly, factsAccepted: false, routeEpoch: currentEpoch)
+            let accepted = try await physicalMessage("state", from: fd)
+            #expect((accepted["about"] as? [String: Any])?["journal_line"] as? String == "journal 3.0.0")
+        }
+    }
 }
 
 private actor PhysicalPublicationSuspension {

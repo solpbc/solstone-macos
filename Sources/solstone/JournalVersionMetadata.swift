@@ -5,6 +5,7 @@ import CryptoKit
 import Foundation
 import Observation
 import SPLTunnel
+import SolstoneCore
 
 /// Connection freshness is memory-only; a saved observation is always last known on launch.
 @MainActor
@@ -14,17 +15,45 @@ final class JournalVersionMetadata {
         let identity: String
         let version: String
         let name: String?
+        let hostBuild: String?
+        let hostOS: String?
+        let hostOSVersion: String?
+        let hostArch: String?
+        let versionObservedAt: Date?
+        let hostFactsAcceptedAt: Date?
 
-        init(identity: String, version: String, name: String? = nil) {
+        init(
+            identity: String,
+            version: String,
+            name: String? = nil,
+            hostBuild: String? = nil,
+            hostOS: String? = nil,
+            hostOSVersion: String? = nil,
+            hostArch: String? = nil,
+            versionObservedAt: Date? = nil,
+            hostFactsAcceptedAt: Date? = nil
+        ) {
             self.identity = identity
             self.version = version
             self.name = name
+            self.hostBuild = hostBuild
+            self.hostOS = hostOS
+            self.hostOSVersion = hostOSVersion
+            self.hostArch = hostArch
+            self.versionObservedAt = versionObservedAt
+            self.hostFactsAcceptedAt = hostFactsAcceptedAt
         }
 
         enum CodingKeys: String, CodingKey {
             case identity
             case version
             case name
+            case hostBuild = "host_build"
+            case hostOS = "host_os"
+            case hostOSVersion = "host_os_version"
+            case hostArch = "host_arch"
+            case versionObservedAt = "version_observed_at"
+            case hostFactsAcceptedAt = "host_facts_accepted_at"
         }
 
         init(from decoder: Decoder) throws {
@@ -32,12 +61,39 @@ final class JournalVersionMetadata {
             identity = try container.decode(String.self, forKey: .identity)
             version = try container.decode(String.self, forKey: .version)
             name = try container.decodeIfPresent(String.self, forKey: .name)
+            hostBuild = try? container.decodeIfPresent(String.self, forKey: .hostBuild)
+            hostOS = try? container.decodeIfPresent(String.self, forKey: .hostOS)
+            hostOSVersion = try? container.decodeIfPresent(String.self, forKey: .hostOSVersion)
+            hostArch = try? container.decodeIfPresent(String.self, forKey: .hostArch)
+            versionObservedAt = try? container.decodeIfPresent(Date.self, forKey: .versionObservedAt)
+            hostFactsAcceptedAt = try? container.decodeIfPresent(Date.self, forKey: .hostFactsAcceptedAt)
         }
+    }
+
+    enum AboutAcceptResult: Equatable {
+        case accepted
+        case pending
+        case mismatch
+        case stale
+    }
+
+    private struct PendingAbout {
+        let identity: String
+        let generation: UInt64
+        let resource: SolstoneCoreAbout.Resource
     }
 
     private(set) var version: String?
     private(set) var journalName: String?
     private(set) var isCurrent = false
+    private(set) var hostBuild: String?
+    private(set) var hostOS: String?
+    private(set) var hostOSVersion: String?
+    private(set) var hostArch: String?
+    private(set) var versionObservedAt: Date?
+    private(set) var hostFactsAcceptedAt: Date?
+    private(set) var factsGeneration: UInt64 = 0
+    @ObservationIgnored var onAboutChanged: (@MainActor @Sendable (Bool) -> Void)?
     var displayValue: String {
         guard let version else { return "unknown" }
         return isCurrent ? version : "\(version) (last known)"
@@ -45,15 +101,19 @@ final class JournalVersionMetadata {
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let fetch: @Sendable (Int) async -> String?
+    @ObservationIgnored private let now: @Sendable () -> Date
     @ObservationIgnored private var identity: String?
     @ObservationIgnored private var generation: UInt64 = 0
     @ObservationIgnored private var activePort: Int?
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var pendingAbout: PendingAbout?
     private static let storageKey = "journalVersionMetadata"
 
     init(defaults: UserDefaults = .standard,
+         now: @escaping @Sendable () -> Date = { Date() },
          fetch: @escaping @Sendable (Int) async -> String? = { await JournalVersionStatusClient.fetch(localPort: $0) }) {
         self.defaults = defaults
+        self.now = now
         self.fetch = fetch
     }
 
@@ -62,32 +122,51 @@ final class JournalVersionMetadata {
             if value == nil { clear() }
             return
         }
-        disconnected()
+        bumpGeneration()
         identity = value
         version = nil
         journalName = nil
+        clearFacts()
+        versionObservedAt = nil
+        hostFactsAcceptedAt = nil
         if let value, let data = defaults.data(forKey: Self.storageKey),
            let record = try? JSONDecoder().decode(Record.self, from: data),
            record.identity == value, let saved = sanitizedJournalVersion(record.version) {
             version = saved
             journalName = record.name.flatMap(sanitizedJournalName)
+            hostBuild = record.hostBuild
+            hostOS = record.hostOS
+            hostOSVersion = record.hostOSVersion
+            hostArch = record.hostArch
+            versionObservedAt = record.versionObservedAt
+            hostFactsAcceptedAt = record.hostFactsAcceptedAt
         } else {
             defaults.removeObject(forKey: Self.storageKey)
         }
+        notifyAboutChanged(factsAccepted: false)
     }
 
     func clear() {
-        disconnected()
+        bumpGeneration()
         identity = nil
         version = nil
         journalName = nil
+        clearFacts()
+        versionObservedAt = nil
         defaults.removeObject(forKey: Self.storageKey)
+        notifyAboutChanged(factsAccepted: false)
     }
 
     func disconnected() {
+        bumpGeneration()
+        notifyAboutChanged(factsAccepted: false)
+    }
+
+    private func bumpGeneration() {
         generation &+= 1
         activePort = nil
         isCurrent = false
+        pendingAbout = nil
         task?.cancel()
         task = nil
     }
@@ -100,6 +179,7 @@ final class JournalVersionMetadata {
         activePort = localPort
     }
 
+    @discardableResult
     func applyDirectly(
         identity: String,
         generation expectedGeneration: UInt64? = nil,
@@ -107,28 +187,160 @@ final class JournalVersionMetadata {
         name: String?,
         markCurrent: Bool = true,
         preserveName: Bool = false
-    ) {
-        guard self.identity == identity else { return }
-        if let expectedGeneration, self.generation != expectedGeneration { return }
-        let currentVersion = version.flatMap(sanitizedJournalVersion) ?? self.version
+    ) -> AboutAcceptResult? {
+        guard self.identity == identity else { return .stale }
+        if let expectedGeneration, self.generation != expectedGeneration { return .stale }
+        let acceptedVersion = version.flatMap(sanitizedJournalVersion)
+        let currentVersion = acceptedVersion ?? self.version
         let currentName = preserveName ? self.journalName : name.flatMap(sanitizedJournalName)
 
         if let currentVersion {
+            let changed = self.version != currentVersion
+            if changed {
+                clearFacts()
+            }
             self.version = currentVersion
             self.journalName = currentName
             self.isCurrent = markCurrent
+            self.versionObservedAt = now()
 
-            if let data = try? JSONEncoder().encode(Record(identity: identity, version: currentVersion, name: currentName)) {
-                self.defaults.set(data, forKey: Self.storageKey)
+            persistRecord(identity: identity)
+            notifyAboutChanged(factsAccepted: false)
+
+            var aboutResult: AboutAcceptResult?
+            if let pendingAbout {
+                self.pendingAbout = nil
+                if Self.versionsMatch(pendingAbout.resource.version, currentVersion) {
+                    aboutResult = commitFacts(pendingAbout.resource, identity: identity, generation: expectedGeneration ?? self.generation)
+                } else {
+                    aboutResult = .mismatch
+                }
             }
+            return aboutResult
         }
+        return nil
+    }
+
+    func receiveAbout(
+        _ resource: SolstoneCoreAbout.Resource,
+        identity: String,
+        generation expectedGeneration: UInt64
+    ) -> AboutAcceptResult {
+        guard self.identity == identity, generation == expectedGeneration else { return .stale }
+        guard SolstoneCoreAbout.renderLine(
+            name: "journal",
+            version: resource.version,
+            build: resource.build,
+            os: resource.os,
+            osVersion: resource.osVersion,
+            arch: resource.arch
+        ) == resource.about else { return .mismatch }
+
+        guard let version else {
+            pendingAbout = PendingAbout(identity: identity, generation: expectedGeneration, resource: resource)
+            return .pending
+        }
+        guard Self.versionsMatch(resource.version, version) else { return .mismatch }
+        return commitFacts(resource, identity: identity, generation: expectedGeneration)
+    }
+
+    func ownerFacingJournalLine(now date: Date) -> String {
+        guard let version else { return "journal unknown" }
+        let hasObservation = versionObservedAt != nil
+        let age: String? = {
+            guard !isCurrent, let versionObservedAt, versionObservedAt <= date else { return nil }
+            return coarseRelativeTime(versionObservedAt, now: date)
+        }()
+        return SolstoneCoreAbout.renderLine(
+            name: "journal",
+            version: version,
+            build: hasObservation ? hostBuild : nil,
+            os: hasObservation ? hostOS : nil,
+            osVersion: hasObservation ? hostOSVersion : nil,
+            arch: hasObservation ? hostArch : nil,
+            age: age
+        )
+    }
+
+    func nativeAboutSnapshot(os: String, osVersion: String, arch: String?) -> SolstoneCoreAbout.NativeSnapshot {
+        SolstoneCoreAbout.nativeSnapshot(
+            os: os,
+            osVersion: osVersion,
+            arch: arch,
+            journalVersion: version,
+            journalBuild: hostBuild,
+            journalOS: hostOS,
+            journalOSVersion: hostOSVersion,
+            journalArch: hostArch,
+            journalCurrent: isCurrent,
+            versionObservedAt: versionObservedAt
+        )
+    }
+
+    private static func versionsMatch(_ lhs: String, _ rhs: String) -> Bool {
+        func stripped(_ value: String) -> Substring { value.drop(while: { $0 == "v" }) }
+        return stripped(lhs) == stripped(rhs)
+    }
+
+    @discardableResult
+    private func commitFacts(
+        _ resource: SolstoneCoreAbout.Resource,
+        identity: String,
+        generation expectedGeneration: UInt64
+    ) -> AboutAcceptResult {
+        guard self.identity == identity, generation == expectedGeneration else { return .stale }
+        guard let version, Self.versionsMatch(resource.version, version),
+              SolstoneCoreAbout.renderLine(
+                name: "journal", version: resource.version, build: resource.build,
+                os: resource.os, osVersion: resource.osVersion, arch: resource.arch
+              ) == resource.about else { return .mismatch }
+        hostBuild = resource.build
+        hostOS = resource.os
+        hostOSVersion = resource.osVersion
+        hostArch = resource.arch
+        hostFactsAcceptedAt = now()
+        factsGeneration &+= 1
+        persistRecord(identity: identity)
+        notifyAboutChanged(factsAccepted: true)
+        return .accepted
+    }
+
+    private func clearFacts() {
+        hostBuild = nil
+        hostOS = nil
+        hostOSVersion = nil
+        hostArch = nil
+        hostFactsAcceptedAt = nil
+    }
+
+    private func persistRecord(identity: String) {
+        guard let version else { return }
+        let record = Record(
+            identity: identity,
+            version: version,
+            name: journalName,
+            hostBuild: hostBuild,
+            hostOS: hostOS,
+            hostOSVersion: hostOSVersion,
+            hostArch: hostArch,
+            versionObservedAt: versionObservedAt,
+            hostFactsAcceptedAt: hostFactsAcceptedAt
+        )
+        if let data = try? JSONEncoder().encode(record) {
+            defaults.set(data, forKey: Self.storageKey)
+        }
+    }
+
+    private func notifyAboutChanged(factsAccepted: Bool) {
+        onAboutChanged?(factsAccepted)
     }
 
     @discardableResult
     func connected(localPort: Int) -> Task<Void, Never>? {
         guard let identity, activePort != localPort else { return task }
-        disconnected()
+        bumpGeneration()
         activePort = localPort
+        notifyAboutChanged(factsAccepted: false)
         let expectedGeneration = generation
         let fetch = self.fetch
         let request = Task { @MainActor [weak self] in

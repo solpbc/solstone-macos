@@ -206,7 +206,7 @@ enum AXID {
             static let setupLastDeliveryState = "settings.status.setup.lastDelivery.state"
             static let setupLastDeliveryTimestamp = "settings.status.setup.lastDelivery.timestamp.state"
             static let setupManageJournal = "settings.status.setup.manageJournal"
-            static let setupAppVersionState = "settings.status.setup.app.version.state"
+            static let setupAboutState = "settings.status.setup.about.state"
             static let uploadJournalState = "settings.status.upload.journal.state"
             static let uploadState = "settings.status.upload.state"
             static let uploadChecked = "settings.status.upload.checked.state"
@@ -262,7 +262,7 @@ enum AXID {
             static let iconStateAttention = "settings.help.iconState.attention"
             static let supportSite = "settings.help.support.site"
             static let supportEmail = "settings.help.support.email"
-            static let versionState = "settings.help.version.state"
+            static let aboutState = "settings.help.about.state"
             static let logExport = "settings.help.log.export"
             static let logExportPreview = "settings.help.log.export.preview"
             static let logExportSave = "settings.help.log.export.save"
@@ -274,7 +274,9 @@ enum AXID {
     enum About {
         static let logo = "about.identity.logo"
         static let title = "about.identity.title"
-        static let versionState = "about.identity.version.state"
+        static let aboutState = "about.identity.block.state"
+        static let aboutCopy = "about.identity.copy"
+        static let aboutCopyFeedback = "about.identity.copy.feedback.state"
         static let sourceCode = "about.link.sourceCode"
         static let website = "about.link.website"
     }

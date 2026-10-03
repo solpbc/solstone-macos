@@ -73,9 +73,11 @@
       }
     ],
     "static" : [
+      "about.identity.block.state",
+      "about.identity.copy",
+      "about.identity.copy.feedback.state",
       "about.identity.logo",
       "about.identity.title",
-      "about.identity.version.state",
       "about.link.sourceCode",
       "about.link.website",
       "journal.browser.connectJournal",
@@ -104,6 +106,7 @@
       "menubar.status.offline",
       "menubar.status.permissions",
       "menubar.status.row.state",
+      "settings.help.about.state",
       "settings.help.agentInstructions",
       "settings.help.agentInstructions.copy",
       "settings.help.browserFootnote",
@@ -149,7 +152,6 @@
       "settings.help.log.export.state",
       "settings.help.support.email",
       "settings.help.support.site",
-      "settings.help.version.state",
       "settings.microphones.audioProcessing.silenceMusic",
       "settings.microphones.gain.picker",
       "settings.microphones.gain.state",
@@ -245,7 +247,7 @@
       "settings.status.health.summary.state",
       "settings.status.observing.nextSegment.state",
       "settings.status.observing.state",
-      "settings.status.setup.app.version.state",
+      "settings.status.setup.about.state",
       "settings.status.setup.journalApp.action",
       "settings.status.setup.journalApp.state",
       "settings.status.setup.journalLink.action",
@@ -303,7 +305,10 @@
     ]
   },
   "states" : {
-    "about.identity.version.state" : {
+    "about.identity.block.state" : {
+      "kind" : "freeform"
+    },
+    "about.identity.copy.feedback.state" : {
       "kind" : "freeform"
     },
     "journal.browser.navigation.state" : {
@@ -325,6 +330,9 @@
     "menubar.status.row.state" : {
       "kind" : "enum",
       "vocabulary" : "MenubarStatusRowState"
+    },
+    "settings.help.about.state" : {
+      "kind" : "freeform"
     },
     "settings.help.diagnostics.copyResult.state" : {
       "kind" : "enum",
@@ -362,9 +370,6 @@
     "settings.help.log.export.state" : {
       "kind" : "enum",
       "vocabulary" : "LogExportAXState"
-    },
-    "settings.help.version.state" : {
-      "kind" : "freeform"
     },
     "settings.microphones.gain.state" : {
       "kind" : "numeric"
@@ -445,7 +450,7 @@
       "kind" : "enum",
       "vocabulary" : "SettingsObservationAXState"
     },
-    "settings.status.setup.app.version.state" : {
+    "settings.status.setup.about.state" : {
       "kind" : "freeform"
     },
     "settings.status.setup.journalApp.state" : {

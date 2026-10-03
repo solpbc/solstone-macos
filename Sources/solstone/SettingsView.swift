@@ -3349,6 +3349,10 @@ struct SettingsView: View {
         .accessibilityValue(summary.axValue)
     }
 
+    private var aboutBlock: String {
+        AboutPresentation.captureBlock(journal: appState.tunnelLifecycleOwner.journalVersion)
+    }
+
     private var setupGroup: some View {
         let presentation = setupSnapshotPresentation
         return GroupBox(UICopy.SETTINGS_SETUP_GROUP_TITLE) {
@@ -3373,14 +3377,13 @@ struct SettingsView: View {
 
                 Divider()
 
-                HStack {
-                    Text("app version \(AppVersion.short)")
+                HStack(alignment: .top) {
+                    Text(aboutBlock)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    AXStateCompanion(
-                        id: AXID.Settings.Status.setupAppVersionState,
-                        value: AppVersion.short
-                    )
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier(AXID.Settings.Status.setupAboutState)
+                        .accessibilityValue(aboutBlock)
                     Spacer(minLength: 8)
                     Button(UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION) {
                         selectedTab = .service
@@ -3754,14 +3757,12 @@ struct SettingsView: View {
                     }
                     Link("support@solstone.app", destination: URL(string: "mailto:support@solstone.app?subject=solstone%20(macOS)")!)
                         .accessibilityIdentifier(AXID.Settings.Help.supportEmail)
-                    Text("version \(AppVersion.short)")
+                    Text(aboutBlock)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .accessibilityIdentifier(AXID.Settings.Help.versionState)
-                        .accessibilityValue(AppVersion.short)
-                    Text("journal version \(appState.tunnelLifecycleOwner.journalVersion.displayValue)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier(AXID.Settings.Help.aboutState)
+                        .accessibilityValue(aboutBlock)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
@@ -3970,6 +3971,7 @@ struct SettingsView: View {
     }
 
     private func openProblemReport() {
+        let aboutSnapshot = aboutBlock
         Task { @MainActor in
             let evidence = await appState.readDiagnosticEvidence()
             let recent: String? = switch evidence {
@@ -3986,7 +3988,8 @@ struct SettingsView: View {
                 build: AppVersion.build,
                 osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
                 state: state,
-                recent: recent
+                recent: recent,
+                about: aboutSnapshot
             ))
         }
     }

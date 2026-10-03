@@ -1001,7 +1001,11 @@ struct SnapshotTests {
     private let aboutSize = CGSize(width: 300, height: 390)
 
     @Test func about() throws {
-        try render(AboutView(), size: aboutSize, to: "about.png")
+        try render(
+            AboutView(aboutBlock: { "solstone macos app 2.0.0 · macos 15.6 · arm64\njournal unknown" }, clipboardWrite: { _ in false }),
+            size: aboutSize,
+            to: "about.png"
+        )
     }
 
     private func setupProbeSnapshot(

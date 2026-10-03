@@ -465,8 +465,8 @@ func makeModel(
         fetchDiskUsage: { _ in 0 },
         fetchHealth: { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
         fetchVersion: { _, _ in nil },
-        machineNameProvider: { "machine-name" },
-        appVersion: "test-app"
+        appBuild: "67",
+        machineNameProvider: { "machine-name" }
     )
     let setupRunner = FakeSetupRunner(trace: trace, error: setupError)
     let fakeInitClient = FakeInitClient(

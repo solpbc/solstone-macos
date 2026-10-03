@@ -11,7 +11,8 @@ nonisolated enum SupportReportURL {
         build: String,
         osVersion: String,
         state: String,
-        recent: String?
+        recent: String?,
+        about: String
     ) -> URL {
         var fields = [
             ("report", "v1"),
@@ -33,6 +34,7 @@ nonisolated enum SupportReportURL {
         if let recent, !recent.isEmpty {
             fields.append(("recent", String(recent.prefix(4000))))
         }
+        fields.append(("about", about))
         let fragment = fields.map { key, value in
             "\(formEncode(key))=\(formEncode(value))"
         }.joined(separator: "&")

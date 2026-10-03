@@ -118,12 +118,13 @@
       "journal.ritual.setup.progress",
       "journal.ritual.setup.retry",
       "journal.ritual.setup.step.state",
-      "journal.runState.appVersion.state",
+      "journal.runState.about.copy",
+      "journal.runState.about.copyFeedback.state",
+      "journal.runState.about.state",
       "journal.runState.blockedReason.state",
       "journal.runState.display.state",
       "journal.runState.health.state",
       "journal.runState.restart",
-      "journal.runState.runtimeVersion.state",
       "journal.runState.start",
       "journal.runState.stop",
       "journal.startup.launchAtLogin",
@@ -254,7 +255,10 @@
     "journal.ritual.setup.step.state" : {
       "kind" : "freeform"
     },
-    "journal.runState.appVersion.state" : {
+    "journal.runState.about.copyFeedback.state" : {
+      "kind" : "freeform"
+    },
+    "journal.runState.about.state" : {
       "kind" : "freeform"
     },
     "journal.runState.blockedReason.state" : {
@@ -267,9 +271,6 @@
     "journal.runState.health.state" : {
       "kind" : "enum",
       "vocabulary" : "JournalHealthDisplay"
-    },
-    "journal.runState.runtimeVersion.state" : {
-      "kind" : "freeform"
     },
     "journal.sidebar.tab.{pane}.state" : {
       "kind" : "enum",

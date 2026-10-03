@@ -1380,9 +1380,6 @@ public enum BrowserPayloadDecoder {
         if val is NSNull {
             return "null"
         }
-        if let b = val as? Bool {
-            return b ? "true" : "false"
-        }
         if let num = val as? NSNumber {
             if CFGetTypeID(num) == CFBooleanGetTypeID() {
                 return num.boolValue ? "true" : "false"
@@ -1391,6 +1388,9 @@ public enum BrowserPayloadDecoder {
                 return String(format: "%.0f", num.doubleValue)
             }
             return "\(num)"
+        }
+        if let b = val as? Bool {
+            return b ? "true" : "false"
         }
         if let s = val as? String {
             return escapeJsonString(s)

@@ -176,8 +176,8 @@ private func makeWindowModel(config: JournalAppConfig, supervisor: JournalSuperv
         fetchDiskUsage: { _ in 0 },
         fetchHealth: { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
         fetchVersion: { _, _ in nil },
-        machineNameProvider: { "machine-name" },
-        appVersion: "test-app"
+        appBuild: "67",
+        machineNameProvider: { "machine-name" }
     )
 }
 

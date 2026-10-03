@@ -22,26 +22,49 @@ struct BrowserIntakeRouteCapability: Sendable {
 }
 
 final class BrowserIntakeRouteState: @unchecked Sendable {
+    private struct AboutRouteKey: Equatable {
+        let serverURL: String
+        let identityDigest: String
+    }
+
     private let lock = NSLock()
     private var route: BrowserIntakeRouteCapability?
-    private var onChange: (@Sendable () -> Void)?
+    private var lastAboutRouteKey: AboutRouteKey?
+    private var aboutEpochValue: UInt64 = 0
+    private var onChange: (@Sendable (BrowserIntakeRouteCapability?, BrowserIntakeRouteCapability?) -> Void)?
 
-    func setOnChange(_ action: @escaping @Sendable () -> Void) {
+    func setOnChange(_ action: @escaping @Sendable (BrowserIntakeRouteCapability?, BrowserIntakeRouteCapability?) -> Void) {
         lock.withLock { onChange = action }
     }
 
     @discardableResult
     func update(_ route: BrowserIntakeRouteCapability?) -> Bool {
-        let result = lock.withLock { () -> (Bool, (@Sendable () -> Void)?) in
-            if let current = self.route, let route, current.namesSameConnection(as: route) { return (false, nil) }
-            if self.route == nil && route == nil { return (false, nil) }
+        let result = lock.withLock { () -> (Bool, (@Sendable (BrowserIntakeRouteCapability?, BrowserIntakeRouteCapability?) -> Void)?, BrowserIntakeRouteCapability?, BrowserIntakeRouteCapability?) in
+            if let route {
+                let key = AboutRouteKey(serverURL: route.serverURL, identityDigest: route.identityDigest)
+                if lastAboutRouteKey != key {
+                    lastAboutRouteKey = key
+                    aboutEpochValue &+= 1
+                }
+            }
+            if let current = self.route, let route, current.namesSameConnection(as: route) { return (false, nil, nil, nil) }
+            if self.route == nil && route == nil { return (false, nil, nil, nil) }
+            let previous = self.route
             self.route = route
-            return (true, onChange)
+            return (true, onChange, previous, route)
         }
         // Invalidate transport tasks outside the route lock. A reader already
         // sees the revoked capability even before cancellation is delivered.
-        result.1?()
+        result.1?(result.2, result.3)
         return result.0
+    }
+
+    func currentRoute() -> BrowserIntakeRouteCapability? {
+        lock.withLock { route }
+    }
+
+    func aboutEpoch() -> UInt64 {
+        lock.withLock { aboutEpochValue }
     }
 
     func snapshot(for permit: BrowserUploadPermit) -> BrowserIntakeRouteCapability? {

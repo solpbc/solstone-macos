@@ -2030,12 +2030,31 @@ public final class AppState {
         self.browserIntakeAuthority = authority
         self.browserUploadGate = gate
         self.browserUploadPlanner = planner
+        let journalVersion = tunnelLifecycleOwner.journalVersion
+        let routeState = tunnelLifecycleOwner.browserIntakeRouteState
+        journalVersion.onAboutChanged = { [weak owner, weak journalVersion, routeState] factsAccepted in
+            guard let journalVersion else { return }
+            let routeEpoch = routeState.aboutEpoch()
+            let snapshot = AboutPresentation.nativeSnapshot(journal: journalVersion)
+            Task {
+                await owner?.updateAboutSnapshot(snapshot, factsAccepted: factsAccepted, routeEpoch: routeEpoch)
+            }
+        }
         pairingCoordinator.pendingBrowserMaterial = { [weak self] in
             self?.browserPendingMaterial
         }
         refreshBrowserRetiredCustody()
 
         owner.bindCredentials(credentialStore)
+        let routeEpoch = routeState.aboutEpoch()
+        let snapshot = AboutPresentation.nativeSnapshot(journal: journalVersion)
+        Task {
+            await owner.updateAboutSnapshot(
+                snapshot,
+                factsAccepted: false,
+                routeEpoch: routeEpoch
+            )
+        }
         authority.setPaused(pauseManager.isPaused)
         Task { await owner.setIntakeEnabled(config.isBrowserIntakeEnabled) }
 

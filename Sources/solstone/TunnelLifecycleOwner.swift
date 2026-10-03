@@ -359,7 +359,23 @@ final class TunnelLifecycleOwner {
                 await Task { @MainActor in
                     fence.withCurrent {
                         guard ContinuousClock.now < deadline else { return }
-                        jv.applyDirectly(identity: identity, generation: gen, version: version, name: name, markCurrent: true, preserveName: preserveName)
+                        let result = jv.applyDirectly(identity: identity, generation: gen, version: version, name: name, markCurrent: true, preserveName: preserveName)
+                        if case .mismatch? = result {
+                            Logger.journal.error("journal about failed reason=mismatch")
+                        }
+                    }
+                }.value
+            },
+            onJournalAboutUpdated: { target, resource, deadline in
+                await Task { @MainActor in
+                    guard ContinuousClock.now < deadline else { return "stale" }
+                    switch jv.receiveAbout(resource, identity: target.identity, generation: target.metadataGeneration) {
+                    case .accepted, .pending:
+                        return nil
+                    case .mismatch:
+                        return "mismatch"
+                    case .stale:
+                        return "stale"
                     }
                 }.value
             }

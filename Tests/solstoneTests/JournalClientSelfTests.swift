@@ -10,11 +10,26 @@ import Testing
 @Suite("Journal Client Self Tests")
 struct JournalClientSelfTests {
     private func makeTestSession(store: ObserverURLProtocolStore) -> URLSession {
+        store.registerRoute(path: "/api/system/about", method: "GET", statusCode: 404)
         let config = observerURLProtocolConfiguration(store: store)
         config.connectionProxyDictionary = [:]
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 15
         return URLSession(configuration: config, delegate: JournalVersionRedirectDelegate(), delegateQueue: nil)
+    }
+
+    private func selfRequests(_ store: ObserverURLProtocolStore) -> [URLRequest] {
+        store.snapshotRequests().filter { $0.url?.path == "/app/network/api/clients/self" }
+    }
+
+    private func selfRequestBodies(_ store: ObserverURLProtocolStore) -> [String?] {
+        let requests = store.snapshotRequests()
+        let bodies = store.requestBodies
+        return requests.indices.filter {
+            requests[$0].url?.path == "/app/network/api/clients/self"
+        }.map { index in
+            bodies[index]
+        }
     }
 
     @Test("Full metadata resources require the actual journal schema")
@@ -74,7 +89,7 @@ struct JournalClientSelfTests {
         let target = JournalClientSelfSequencer.TargetConnection(localPort: 9999, identity: "fixture-home", pairingGeneration: 1, metadataGeneration: cache.currentGeneration())
         await sequencer.enqueue(target: target)
         try await waitUntil { !(await sequencer.isBusy) }
-        #expect(store.snapshotRequests().count == 2)
+        #expect(selfRequests(store).count == 2)
         #expect(cache.version == "0.9.1")
         #expect(cache.journalName == nil)
         let restored = JournalVersionMetadata(defaults: defaults)
@@ -112,14 +127,14 @@ struct JournalClientSelfTests {
         try await waitUntil { !(await sequencer.isBusy) }
         await sequencer.enqueue(target: target, snapshot: .init(name: "B"), burstID: 41)
         try await waitUntil { !(await sequencer.isBusy) }
-        #expect(store.snapshotRequests().count == 4)
+        #expect(selfRequests(store).count == 4)
         await sequencer.enqueue(target: replacement, snapshot: .init(name: "C"), burstID: 41)
         #expect(await sequencer.isBusy == false)
-        #expect(store.snapshotRequests().count == 4)
+        #expect(selfRequests(store).count == 4)
         await sequencer.enqueue(target: replacement, snapshot: .init(name: "C"), burstID: 42)
         try await waitUntil { !(await sequencer.isBusy) }
-        #expect(store.snapshotRequests().count == 6)
-        let body = try #require(store.requestBodies[5])
+        #expect(selfRequests(store).count == 6)
+        let body = try #require(selfRequestBodies(store)[5])
         let json = try #require(try JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
         #expect((json["reported"] as? [String: Any])?["name"] as? String == "C")
     }
@@ -153,7 +168,7 @@ struct JournalClientSelfTests {
         await sequencer.enqueue(target: target)
         try await waitUntil { probe.entered }
         try await waitUntil { !(await sequencer.isBusy) }
-        #expect(store.snapshotRequests().count == 1)
+        #expect(selfRequests(store).count == 1)
         #expect(probe.applied == false)
         continuation.yield(())
         continuation.finish()
@@ -198,7 +213,7 @@ struct JournalClientSelfTests {
         continuation.finish()
         try await waitUntil { !(await sequencer.isBusy) }
         #expect(probe.names == ["B", "B"])
-        #expect(store.snapshotRequests().count == 3)
+        #expect(selfRequests(store).count == 3)
     }
 
     @Test("Snapshot field sanitization: UTF-8 byte boundary, control chars, whitespace")
@@ -303,12 +318,12 @@ struct JournalClientSelfTests {
         await store.waitForRequestCount(2, timeout: .seconds(2))
         try await waitUntil { !(await sequencer.isBusy) }
 
-        let requests = store.snapshotRequests()
+        let requests = selfRequests(store)
         #expect(requests.count == 2)
         #expect(requests[0].httpMethod == "GET")
         #expect(requests[1].httpMethod == "PUT")
 
-        let putBody = store.requestBodies[1]
+        let putBody = selfRequestBodies(store)[1]
         let putBodyString = try #require(putBody)
 
         // Verify JSON string contains explicit null for name
@@ -368,18 +383,18 @@ struct JournalClientSelfTests {
         await store.waitForRequestCount(4, timeout: .seconds(2))
         try await waitUntil { !(await sequencer.isBusy) }
 
-        let requests = store.snapshotRequests()
+        let requests = selfRequests(store)
         #expect(requests.count == 4)
         #expect(requests[0].httpMethod == "GET")
         #expect(requests[1].httpMethod == "PUT")
         #expect(requests[2].httpMethod == "GET")
         #expect(requests[3].httpMethod == "PUT")
 
-        let put1Body = try #require(store.requestBodies[1])
+        let put1Body = try #require(selfRequestBodies(store)[1])
         let put1Json = try #require(try JSONSerialization.jsonObject(with: Data(put1Body.utf8)) as? [String: Any])
         #expect(put1Json["expected_revision"] as? Int == 1)
 
-        let put2Body = try #require(store.requestBodies[3])
+        let put2Body = try #require(selfRequestBodies(store)[3])
         let put2Json = try #require(try JSONSerialization.jsonObject(with: Data(put2Body.utf8)) as? [String: Any])
         #expect(put2Json["expected_revision"] as? Int == 2)
     }
@@ -422,7 +437,7 @@ struct JournalClientSelfTests {
         try await waitUntil { !(await sequencer.isBusy) }
 
         // No PUT request was made
-        let requests = store.snapshotRequests()
+        let requests = store.snapshotRequests().filter { $0.url?.path != "/api/system/about" }
         #expect(requests.count == 2)
         #expect(requests[0].httpMethod == "GET")
         #expect(requests[0].url?.path == "/app/network/api/clients/self")
@@ -465,7 +480,7 @@ struct JournalClientSelfTests {
         try await waitUntil { !(await sequencer.isBusy) }
 
         #expect(box.updateCount == 0)
-        #expect(store.snapshotRequests().count == 1)
+        #expect(selfRequests(store).count == 1)
     }
 
     @Test("Oversized response >64 KiB rejected")
@@ -648,7 +663,7 @@ struct JournalClientSelfTests {
 
         #expect(await sequencer.isBusy == false)
         // Deadline expired, 4th request was not dispatched
-        #expect(store.snapshotRequests().count <= 3)
+        #expect(selfRequests(store).count <= 3)
 
         // Completing within budget: 4 requests of 20ms = 80ms < 500ms deadline
         let store2 = ObserverURLProtocolStore()
@@ -893,6 +908,189 @@ struct JournalClientSelfTests {
 
         await owner.stop()
     }
+
+    @MainActor
+    @Test("About facts and accepted metadata reconcile in either completion order")
+    func testAboutAndMetadataCompletionOrders() async throws {
+        @MainActor final class Probe {
+            let cache = JournalVersionMetadata()
+            var aboutResults: [JournalVersionMetadata.AboutAcceptResult] = []
+        }
+
+        let cases: [(aboutVersion: String, journalVersion: String, aboutDelay: Duration, journalDelay: Duration, expectedFacts: Bool)] = [
+            ("v1.2.3", "1.2.3", .zero, .milliseconds(150), true),
+            ("1.2.3", "v1.2.3", .milliseconds(150), .zero, true),
+            ("9.9.9", "1.2.3", .zero, .milliseconds(150), false)
+        ]
+
+        for (index, scenario) in cases.enumerated() {
+            let probe = Probe()
+            let identity = "about-order-\(index)"
+            probe.cache.setIdentity(identity)
+            let target = JournalClientSelfSequencer.TargetConnection(
+                localPort: 9999, identity: identity, pairingGeneration: 1,
+                metadataGeneration: probe.cache.currentGeneration()
+            )
+            let store = ObserverURLProtocolStore()
+            let about = aboutResourceJSON(version: scenario.aboutVersion)
+            let selfBody = clientSelfJSON(version: scenario.journalVersion)
+            store.registerRoute(path: "/api/system/about", method: "GET", statusCode: 200, body: about, delay: scenario.aboutDelay)
+            store.registerRoute(path: "/app/network/api/clients/self", method: "GET", statusCode: 200, body: selfBody, delay: scenario.journalDelay)
+            store.registerRoute(path: "/app/network/api/clients/self", method: "PUT", statusCode: 200, body: selfBody)
+
+            let sequencer = JournalClientSelfSequencer(
+                session: makeTestSession(store: store),
+                deadline: .seconds(2),
+                onJournalMetadataUpdated: { identity, generation, version, name, preserveName, _, _ in
+                    await MainActor.run {
+                        _ = probe.cache.applyDirectly(identity: identity, generation: generation, version: version, name: name, preserveName: preserveName)
+                    }
+                },
+                onJournalAboutUpdated: { target, resource, _ in
+                    await MainActor.run {
+                        let result = probe.cache.receiveAbout(resource, identity: target.identity, generation: target.metadataGeneration)
+                        probe.aboutResults.append(result)
+                        switch result {
+                        case .accepted, .pending: return nil
+                        case .mismatch: return "mismatch"
+                        case .stale: return "stale"
+                        }
+                    }
+                }
+            )
+            await sequencer.enqueue(target: target)
+            try await waitUntil { !(await sequencer.isBusy) }
+            try await waitUntil { await MainActor.run { !probe.aboutResults.isEmpty } }
+            #expect(await MainActor.run { (probe.cache.hostOS != nil) == scenario.expectedFacts })
+            #expect(selfRequests(store).count == 2)
+            #expect(await MainActor.run { probe.cache.version.map { String($0.drop(while: { $0 == "v" })) } == "1.2.3" })
+        }
+    }
+
+    @MainActor
+    @Test("About body can remain pending after headers while metadata GET and PUT finish")
+    func testAboutBodyDoesNotBlockMetadataPublication() async throws {
+        @MainActor final class Probe { var metadataVersion: String? }
+        let probe = Probe()
+        let store = ObserverURLProtocolStore()
+        let (headersStream, headersContinuation) = AsyncStream<Void>.makeStream()
+        let (cancelStream, cancelContinuation) = AsyncStream<Void>.makeStream()
+        defer {
+            headersContinuation.finish()
+            cancelContinuation.finish()
+        }
+        store.registerRoute(
+            path: "/api/system/about", method: "GET", statusCode: 200,
+            body: aboutResourceJSON(version: "1.2.3"),
+            holdBodyAfterHeaders: true,
+            afterHeaders: { headersContinuation.yield(()) },
+            onStopLoading: { cancelContinuation.yield(()) }
+        )
+        let selfBody = clientSelfJSON(version: "1.2.3")
+        store.registerRoute(path: "/app/network/api/clients/self", method: "GET", statusCode: 200, body: selfBody)
+        store.registerRoute(path: "/app/network/api/clients/self", method: "PUT", statusCode: 200, body: selfBody)
+        let config = observerURLProtocolConfiguration(store: store)
+        let session = URLSession(configuration: config, delegate: JournalVersionRedirectDelegate(), delegateQueue: nil)
+        let sequencer = JournalClientSelfSequencer(
+            session: session,
+            deadline: .milliseconds(500),
+            onJournalMetadataUpdated: { _, _, version, _, _, _, _ in
+                await MainActor.run { probe.metadataVersion = version }
+            }
+        )
+        let target = JournalClientSelfSequencer.TargetConnection(localPort: 9999, identity: "held-about", pairingGeneration: 1, metadataGeneration: 1)
+        await sequencer.enqueue(target: target)
+
+        var headersIterator = headersStream.makeAsyncIterator()
+        _ = await headersIterator.next()
+        await store.waitForRequestCount(2, timeout: .seconds(1))
+        try await waitUntil { !(await sequencer.isBusy) }
+        #expect(selfRequests(store).map(\.httpMethod) == ["GET", "PUT"])
+        #expect(probe.metadataVersion == "1.2.3")
+        var cancelIterator = cancelStream.makeAsyncIterator()
+        _ = await cancelIterator.next()
+    }
+
+    @MainActor
+    @Test("About HTTP and transport failures leave accepted version metadata intact")
+    func testAboutFailureDoesNotChangeVersionMetadata() async throws {
+        let scenarios: [(status: Int, body: String, error: URLError?)] = [
+            (404, "", nil),
+            (200, "", URLError(.notConnectedToInternet)),
+            (200, "malformed about", nil)
+        ]
+        for (index, scenario) in scenarios.enumerated() {
+            let cache = JournalVersionMetadata()
+            let identity = "about-failure-\(index)"
+            cache.setIdentity(identity)
+            cache.applyDirectly(identity: identity, version: "1.2.3", name: "Journal", markCurrent: true)
+            let observedAt = cache.versionObservedAt
+            let store = ObserverURLProtocolStore()
+            store.registerRoute(path: "/api/system/about", method: "GET", statusCode: scenario.status, body: scenario.body, error: scenario.error)
+            let selfBody = clientSelfJSON(version: "1.2.3")
+            store.registerRoute(path: "/app/network/api/clients/self", method: "GET", statusCode: 200, body: selfBody)
+            store.registerRoute(path: "/app/network/api/clients/self", method: "PUT", statusCode: 200, body: selfBody)
+            let sequencer = JournalClientSelfSequencer(
+                session: makeTestSession(store: store),
+                deadline: .seconds(1),
+                onJournalMetadataUpdated: { _, _, _, _, _, _, _ in }
+            )
+            let target = JournalClientSelfSequencer.TargetConnection(localPort: 9999, identity: identity, pairingGeneration: 1, metadataGeneration: cache.currentGeneration())
+            await sequencer.enqueue(target: target)
+            try await waitUntil { !(await sequencer.isBusy) }
+            #expect(cache.version == "1.2.3")
+            #expect(cache.isCurrent)
+            #expect(cache.versionObservedAt == observedAt)
+            #expect(cache.hostOS == nil)
+        }
+    }
+
+    @MainActor
+    @Test("About completion after a generation change is stale")
+    func testStaleAboutCompletionIsDropped() async throws {
+        @MainActor final class Probe {
+            let cache = JournalVersionMetadata()
+            var result: JournalVersionMetadata.AboutAcceptResult?
+        }
+        let probe = Probe()
+        probe.cache.setIdentity("stale-about")
+        let generation = probe.cache.currentGeneration()
+        let target = JournalClientSelfSequencer.TargetConnection(localPort: 9999, identity: "stale-about", pairingGeneration: 1, metadataGeneration: generation)
+        let store = ObserverURLProtocolStore()
+        store.registerRoute(path: "/api/system/about", method: "GET", statusCode: 200, body: aboutResourceJSON(version: "1.2.3"), delay: .milliseconds(200))
+        let selfBody = clientSelfJSON(version: "1.2.3")
+        store.registerRoute(path: "/app/network/api/clients/self", method: "GET", statusCode: 200, body: selfBody)
+        store.registerRoute(path: "/app/network/api/clients/self", method: "PUT", statusCode: 200, body: selfBody)
+        let sequencer = JournalClientSelfSequencer(
+            session: makeTestSession(store: store), deadline: .seconds(1),
+            onJournalMetadataUpdated: { identity, generation, version, name, preserveName, _, _ in
+                await MainActor.run { _ = probe.cache.applyDirectly(identity: identity, generation: generation, version: version, name: name, preserveName: preserveName) }
+            },
+            onJournalAboutUpdated: { target, resource, _ in
+                await MainActor.run {
+                    let result = probe.cache.receiveAbout(resource, identity: target.identity, generation: target.metadataGeneration)
+                    probe.result = result
+                    return result == .stale ? "stale" : nil
+                }
+            }
+        )
+        await sequencer.enqueue(target: target)
+        try await waitUntil { !(await sequencer.isBusy) }
+        probe.cache.disconnected()
+        try await waitUntil { await MainActor.run { probe.result != nil } }
+        #expect(probe.result == .stale)
+        #expect(probe.cache.hostOS == nil)
+    }
+
+    private func clientSelfJSON(version: String) -> String {
+        #"{"protocol_version":1,"revision":0,"reported":null,"owner_label":null,"display_label":"Test Mac","updated_at":null,"journal":{"name":"Journal","version":"\#(version)"}}"#
+    }
+
+    private func aboutResourceJSON(version: String) -> String {
+        let renderedVersion = String(version.drop(while: { $0 == "v" }))
+        let about = "journal \(renderedVersion) (12) · macos 15.6 · arm64"
+        return #"{"protocol_version":1,"version":"\#(version)","build":"12","os":"macos","os_version":"15.6","arch":"arm64","about":"\#(about)"}"#
+    }
 }
 
 private final class TestRedirectURLProtocol: URLProtocol, @unchecked Sendable {
@@ -961,4 +1159,3 @@ private final class TestHangingURLProtocol: URLProtocol, @unchecked Sendable {
         Self.didCancel?()
     }
 }
-

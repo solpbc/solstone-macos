@@ -255,7 +255,7 @@ struct JournalSnapshotTests {
         let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample, name: "home base")
         model.selectedPane = .runState
         model.healthDisplay = .healthy
-        model.runtimeVersion = "1.2.3"
+        model.journalVersion = "1.2.3"
         try await renderWindow(model, to: "journal-run-state-running.png")
     }
 
@@ -266,7 +266,7 @@ struct JournalSnapshotTests {
         let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
         model.selectedPane = .runState
         model.healthDisplay = .stopped
-        model.runtimeVersion = "unknown"
+        model.journalVersion = "unknown"
         try await renderWindow(model, to: "journal-run-state-stopped.png")
     }
 
@@ -292,7 +292,7 @@ struct JournalSnapshotTests {
         let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample, name: "home base")
         model.selectedPane = .runState
         model.healthDisplay = .unknown
-        model.runtimeVersion = "unknown"
+        model.journalVersion = "unknown"
         try await renderWindow(model, to: "journal-run-state-unknown-health.png")
     }
 
@@ -397,8 +397,8 @@ struct JournalSnapshotTests {
             fetchDiskUsage: { _ in 1_234_567 },
             fetchHealth: { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
             fetchVersion: { _, _ in nil },
-            machineNameProvider: { machineName },
-            appVersion: "9.8.7"
+            appBuild: "67",
+            machineNameProvider: { machineName }
         )
         model.identityMark = mark
         model.journalName = name
@@ -417,8 +417,8 @@ struct JournalSnapshotTests {
             fetchDiskUsage: { _ in 0 },
             fetchHealth: { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
             fetchVersion: { _, _ in nil },
-            machineNameProvider: { "machine-name" },
-            appVersion: "9.8.7"
+            appBuild: "67",
+            machineNameProvider: { "machine-name" }
         )
     }
 

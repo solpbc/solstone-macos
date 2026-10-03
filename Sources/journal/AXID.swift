@@ -74,8 +74,9 @@ enum AXID {
             static let displayState = "journal.runState.display.state"
             static let blockedReasonState = "journal.runState.blockedReason.state"
             static let healthState = "journal.runState.health.state"
-            static let runtimeVersionState = "journal.runState.runtimeVersion.state"
-            static let appVersionState = "journal.runState.appVersion.state"
+            static let aboutState = "journal.runState.about.state"
+            static let aboutCopy = "journal.runState.about.copy"
+            static let aboutCopyFeedbackState = "journal.runState.about.copyFeedback.state"
         }
 
         enum Backup {

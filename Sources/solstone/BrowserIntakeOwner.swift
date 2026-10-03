@@ -167,6 +167,18 @@ public actor BrowserIntakeOwner {
 
     private let clock: any BrowserIntakeClock
     private let routeState: BrowserIntakeRouteState
+    private struct AboutRouteKey: Equatable {
+        let serverURL: String
+        let identityDigest: String
+    }
+
+    private var aboutSnapshot = SolstoneCoreAbout.nativeSnapshot(
+        os: "macos",
+        osVersion: SolstoneCoreAbout.numericOSVersion(ProcessInfo.processInfo.operatingSystemVersion),
+        arch: SolstoneCoreAbout.nativeMacOSArch(),
+        journalVersion: nil, journalCurrent: false, versionObservedAt: nil
+    )
+    private var aboutRouteKey: AboutRouteKey?
     private var timeZone: TimeZone
     private var started = false
     private var deliveryRunning = false
@@ -234,10 +246,11 @@ public actor BrowserIntakeOwner {
             clock: clock,
             routeState: routeState
         )
-        routeState.setOnChange { [weak gate, weak owner, weak routeState] in
+        routeState.setOnChange { [weak gate, weak owner, weak routeState] oldRoute, newRoute in
             guard let gate else { return }
             gate.invalidateCurrentLease()
             gate.resumeReaders()
+            Task { await owner?.routeChanged(from: oldRoute, to: newRoute) }
             guard let permit = gate.currentPermit(), routeState?.snapshot(for: permit) != nil else { return }
             Task { await owner?.scheduleDelivery() }
         }
@@ -303,7 +316,8 @@ public actor BrowserIntakeOwner {
                 ))
             }
             let projected = projectIntakePreference(in: reply)
-            let message = try BrowserPayloadDecoder.validatedHostMessage(projected, projection: authority.projection)
+            let withAbout = reply["type"] as? String == "hello_ack" ? attachingAbout(to: projected) : projected
+            let message = try BrowserPayloadDecoder.validatedHostMessage(withAbout, projection: authority.projection)
             scheduleDelivery()
             return .message(BrowserPayloadDecoder.encodeHostToExtension(message))
         } catch let refusal as BrowserIntakeLocalRefusal {
@@ -332,7 +346,22 @@ public actor BrowserIntakeOwner {
     }
 
     public func projectedStatus() -> [String: Any] {
-        projectIntakePreference(in: authority.status())
+        attachingAbout(to: projectIntakePreference(in: authority.status()))
+    }
+
+    public func aboutRouteEpoch() -> UInt64 {
+        routeState.aboutEpoch()
+    }
+
+    public func updateAboutSnapshot(
+        _ snapshot: SolstoneCoreAbout.NativeSnapshot,
+        factsAccepted _: Bool,
+        routeEpoch: UInt64
+    ) {
+        reconcileAboutRoute()
+        guard routeEpoch == routeState.aboutEpoch() else { return }
+        aboutSnapshot = snapshot
+        notifyStatusChanged()
     }
 
     public func projectedStateData() -> Data? {
@@ -353,6 +382,32 @@ public actor BrowserIntakeOwner {
 
     public func currentFacts() -> BrowserHostOwnerFacts {
         BrowserHostOwnerFacts(status: projectedStatus(), intakeEnabled: intakeEnabled)
+    }
+
+    private func routeChanged(from _: BrowserIntakeRouteCapability?, to _: BrowserIntakeRouteCapability?) {
+        reconcileAboutRoute()
+        notifyStatusChanged()
+    }
+
+    private func reconcileAboutRoute() {
+        guard let route = routeState.currentRoute() else {
+            if aboutRouteKey != nil { aboutSnapshot = aboutSnapshot.markedNotCurrent() }
+            return
+        }
+        let currentKey = AboutRouteKey(serverURL: route.serverURL, identityDigest: route.identityDigest)
+        guard aboutRouteKey != currentKey else { return }
+        aboutRouteKey = currentKey
+        aboutSnapshot = aboutSnapshot.clearingJournal()
+    }
+
+    private func attachingAbout(to status: [String: Any]) -> [String: Any] {
+        guard let type = status["type"] as? String, type == "state" || type == "hello_ack" else { return status }
+        reconcileAboutRoute()
+        var projected = status
+        if let about = try? aboutSnapshot.object() {
+            projected["about"] = about
+        }
+        return projected
     }
 
     static func projectingIntake(_ enabled: Bool, status: [String: Any]) -> [String: Any] {

@@ -305,7 +305,7 @@ struct JournalWindowModelTests {
         #expect(failure.nameError == "couldn't save name")
     }
 
-    @Test func healthAndVersionRowsDegradeToUnknownUntilRuntimeIsAvailable() async throws {
+    @Test func bundledVersionProbeRunsBeforeStartAndHealthUsesTheActiveRuntime() async throws {
         let fixture = try makeConfiguredFixture()
         defer { fixture.clear() }
         let supervisor = JournalSupervisor(
@@ -315,24 +315,33 @@ struct JournalWindowModelTests {
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
         _ = configureInMemoryReceiptContext(supervisor)
+        let executableURL = URL(fileURLWithPath: "/Applications/Journal.app/Contents/MacOS/journal")
+        let expectedCommandURL = JournalCommandLine.commandLineURL(executableURL: executableURL)
         let model = makeModel(
             config: fixture.config,
             supervisor: supervisor,
             fetchHealth: { _, _ in .healthy },
-            fetchVersion: { _, _ in "1.2.3" },
-            appVersion: "9.8.7"
+            fetchVersion: { binary, environment in
+                #expect(binary == expectedCommandURL)
+                #expect(environment == nil)
+                return "1.2.3"
+            },
+            versionExecutableURL: { executableURL },
+            aboutOSVersion: { "15.6" },
+            aboutArch: { nil },
+            appBuild: "67"
         )
 
         await model.refreshRunState()
         #expect(model.healthDisplay == .unknown)
-        #expect(model.runtimeVersion == "unknown")
-        #expect(model.appVersion == "9.8.7")
+        #expect(model.journalVersion == "1.2.3")
+        #expect(model.aboutBlock == "journal 1.2.3 (67) · macos 15.6")
 
         _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
         await model.refreshRunState()
 
         #expect(model.healthDisplay == .healthy)
-        #expect(model.runtimeVersion == "1.2.3")
+        #expect(model.journalVersion == "1.2.3")
     }
 
     @Test func stopJournalRefreshesHealthAndVersionRowsToUnknown() async throws {
@@ -354,17 +363,17 @@ struct JournalWindowModelTests {
         _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
         await model.refreshRunState()
         #expect(model.healthDisplay == .healthy)
-        #expect(model.runtimeVersion == "1.2.3")
+        #expect(model.journalVersion == "1.2.3")
 
         model.stopJournal()
         let deadline = ContinuousClock.now.advanced(by: .seconds(1))
         while ContinuousClock.now < deadline,
-              !(model.healthDisplay == .unknown && model.runtimeVersion == "unknown") {
+              !(model.healthDisplay == .unknown) {
             try await Task.sleep(for: .milliseconds(10))
         }
 
         #expect(model.healthDisplay == .unknown)
-        #expect(model.runtimeVersion == "unknown")
+        #expect(model.journalVersion == "1.2.3")
     }
 
     @Test func unconfiguredLaunchDoesNotStartSupervisorWork() async throws {
@@ -427,7 +436,10 @@ struct JournalWindowModelTests {
         fetchVersion: JournalWindowModel.VersionFetch? = { _, _ in nil },
         onIdentityMark: JournalWindowModel.IdentityMarkObserver? = nil,
         machineNameProvider: @escaping JournalWindowModel.MachineNameProvider = { "machine-name" },
-        appVersion: String = "test-app"
+        versionExecutableURL: @escaping JournalWindowModel.VersionExecutableURLProvider = { JournalCommandLine.currentExecutableURL() },
+        aboutOSVersion: @escaping JournalWindowModel.AboutStringProvider = { "15.6" },
+        aboutArch: @escaping JournalWindowModel.AboutArchProvider = { "arm64" },
+        appBuild: String = "67"
     ) -> JournalWindowModel {
         JournalWindowModel(
             config: config,
@@ -439,9 +451,12 @@ struct JournalWindowModelTests {
             fetchDiskUsage: fetchDiskUsage,
             fetchHealth: fetchHealth,
             fetchVersion: fetchVersion,
+            versionExecutableURL: versionExecutableURL,
+            aboutOSVersion: aboutOSVersion,
+            aboutArch: aboutArch,
+            appBuild: appBuild,
             onIdentityMark: onIdentityMark,
-            machineNameProvider: machineNameProvider,
-            appVersion: appVersion
+            machineNameProvider: machineNameProvider
         )
     }
 }
