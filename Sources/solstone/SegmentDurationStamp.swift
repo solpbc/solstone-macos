@@ -5,7 +5,12 @@ import Foundation
 
 @MainActor
 internal func clampedSegmentDurationSeconds(_ rawSeconds: TimeInterval) -> Int {
-    let ceiling = max(1, Int(SegmentWriter.segmentDuration))
+    clampedSegmentDurationSeconds(rawSeconds, ceiling: SegmentWriter.segmentDuration)
+}
+
+/// Bounds a measured duration to [1, ceiling] whole seconds.
+internal func clampedSegmentDurationSeconds(_ rawSeconds: TimeInterval, ceiling: TimeInterval) -> Int {
+    let ceiling = max(1, Int(ceiling))
     guard rawSeconds.isFinite else {
         return ceiling
     }

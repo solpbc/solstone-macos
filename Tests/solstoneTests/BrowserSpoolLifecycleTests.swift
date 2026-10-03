@@ -798,7 +798,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.owner.stop()
     }
 
-    @Test func civilMidnightBoundaryUsesTheNewDay() async throws {
+    @Test func civilMidnightBoundaryKeysThePeriodByTheDayItStarted() async throws {
         let transport = LifecycleTransport()
         let fixture = try fixture(date: Date(timeIntervalSince1970: 1_700_006_200), transport: transport)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -812,7 +812,13 @@ struct BrowserSpoolLifecycleTests {
         #expect(accepted["result"] as? String == "accepted")
         fixture.clock.advance(seconds: 201)
         #expect(await transport.waitForAttempts(1))
-        #expect(fixture.owner.store.getAllFinalizedPeriods().first?.requestedDay == "20231115")
+        // Opened at 23:56:40 and rotated at midnight: the key is the period's
+        // own start on the old day, and it ends at the window's close.
+        let sealed = fixture.owner.store.getAllFinalizedPeriods().first
+        #expect(sealed?.requestedDay == "20231114")
+        let parts = try #require(sealed?.requestedSegment).split(separator: "_")
+        #expect(parts.first == "235640")
+        #expect((parts.last.flatMap { Int($0) } ?? .max) <= 200)
         #expect(fixture.owner.store.storeIsFailed() == false)
         fixture.owner.stop()
     }
@@ -982,7 +988,9 @@ struct BrowserSpoolLifecycleTests {
         let period = try #require(fixture.owner.store.getPeriod(periodId: periodId))
         #expect(period.state == "finalized")
         #expect(period.finalizeTimeZone == "GMT")
-        #expect(period.requestedDay == "19691231")
+        // Keyed by the period's start in the tracked zone; the rolled-back
+        // wall clock at stop does not relabel it.
+        #expect(period.requestedDay == "20231115")
     }
 
     @Test func failedCommittedLengthReadNeverTruncatesToZero() async throws {

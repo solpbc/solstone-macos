@@ -1892,4 +1892,142 @@ private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked
 
 }
 
+@Suite("BrowserIntakePeriodKey")
+struct BrowserIntakePeriodKeyTests {
+    private let utc = TimeZone(identifier: "UTC")!
+    // 2023-11-14 23:55:00 UTC, the start of the day's last five-minute window.
+    private let lastWindowStart = Date(timeIntervalSince1970: 1_700_006_100)
+
+    private var vendorURL: URL {
+        let currentFile = URL(fileURLWithPath: #filePath)
+        let repoRoot = currentFile.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        return repoRoot.appendingPathComponent("vendor")
+    }
+
+    private struct Harness {
+        let root: URL
+        let store: BrowserIntakeStore
+        let authority: BrowserIntakeAuthority
+        let clock: BrowserTestClock
+        let generation: String
+    }
+
+    private func makeHarness(openingAt start: Date) throws -> Harness {
+        let root = URL(fileURLWithPath: "/private/var/tmp", isDirectory: true)
+            .appendingPathComponent("solstone-intake-key-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        // A still age clock keeps the durable floor on the test's wall clock.
+        let store = try BrowserIntakeStore(rootURL: root, projection: projection, ioInjector: BrowserIntakeIOInjector(),
+            ageClock: { BrowserAgeStamp(bootID: "period-key-boot", elapsedMs: 0) })
+        let clock = BrowserTestClock(start)
+        let authority = BrowserIntakeAuthority(store: store, projection: projection,
+            monotonicClock: ManualMonotonicClock(), wallClock: { clock.now }, timeZone: utc)
+        let generation = try authority.publishEpoch(identityToken: "period-key-token")
+        return Harness(root: root, store: store, authority: authority, clock: clock, generation: generation)
+    }
+
+    private func acceptBatch(_ harness: Harness, ctx: String) throws -> String {
+        let nowMs = UInt64(harness.clock.now.timeIntervalSince1970 * 1000)
+        let batch: [String: Any] = ["type": "batch", "destination_generation": harness.generation,
+            "inst": "period-key-inst", "batch_id": UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(),
+            "queued_at_ms": nowMs,
+            "records": [["t": "segment_start", "ts": nowMs, "ctx": ctx, "blocks": [["id": "b", "text": "period key"]]]]]
+        let reply = try harness.authority.accept(bytes: JSONSerialization.data(withJSONObject: batch), direction: "extension_to_host")
+        return try #require(reply["period_id"] as? String)
+    }
+
+    private func sealedKey(_ store: BrowserIntakeStore, _ periodId: String) throws -> (day: String, start: String, len: Int) {
+        let period = try #require(store.getPeriod(periodId: periodId))
+        #expect(period.state == "finalized")
+        let parts = try #require(period.requestedSegment).split(separator: "_")
+        #expect(parts.count == 2)
+        return (try #require(period.requestedDay), String(parts[0]), try #require(Int(parts[1])))
+    }
+
+    @Test(arguments: [(TimeInterval(0), "235500", 300), (TimeInterval(150), "235730", 150)])
+    func periodSealedHoursLateKeepsItsStartAndEndsAtItsWindowClose(
+        startOffset: TimeInterval, expectedStart: String, expectedLen: Int
+    ) throws {
+        let harness = try makeHarness(openingAt: lastWindowStart.addingTimeInterval(startOffset))
+        defer { try? FileManager.default.removeItem(at: harness.root) }
+        harness.clock.advance(by: 20)
+        let pid = try acceptBatch(harness, ctx: "before-sleep")
+
+        // The machine sleeps through the boundary and wakes the next morning.
+        harness.clock.now = lastWindowStart.addingTimeInterval(8 * 3600 + 5 * 60)
+        harness.authority.poll(now: harness.clock.now)
+
+        let key = try sealedKey(harness.store, pid)
+        #expect(key.day == "20231114")
+        #expect(key.start == expectedStart)
+        #expect(key.len == expectedLen)
+        #expect(key.len <= 300)
+    }
+
+    @Test func batchArrivingAfterSleepOpensANewPeriodInsteadOfJoiningTheStaleOne() throws {
+        let harness = try makeHarness(openingAt: lastWindowStart)
+        defer { try? FileManager.default.removeItem(at: harness.root) }
+        harness.clock.advance(by: 60)
+        let stale = try acceptBatch(harness, ctx: "before-sleep")
+
+        // A batch reaches the host on wake before the boundary timer has run.
+        harness.clock.now = lastWindowStart.addingTimeInterval(8 * 3600 + 5 * 60)
+        let fresh = try acceptBatch(harness, ctx: "after-wake")
+        #expect(fresh != stale)
+        let staleKey = try sealedKey(harness.store, stale)
+        #expect(staleKey.day == "20231114")
+        #expect(staleKey.start == "235500")
+        #expect(staleKey.len == 300)
+
+        harness.clock.advance(by: 45)
+        try harness.store.finalizePeriod(periodId: fresh, reason: "seal", civilDate: harness.clock.now, timeZone: utc)
+        let freshKey = try sealedKey(harness.store, fresh)
+        #expect(freshKey.day == "20231115")
+        #expect(freshKey.start == "080000")
+        #expect(freshKey.len == 45)
+    }
+
+    @Test func promptSealsKeyTheStartWithTheRealLength() throws {
+        let harness = try makeHarness(openingAt: lastWindowStart)
+        defer { try? FileManager.default.removeItem(at: harness.root) }
+        let first = try acceptBatch(harness, ctx: "mid-window")
+        harness.clock.advance(by: 130)
+        try harness.store.finalizePeriod(periodId: first, reason: "seal", civilDate: harness.clock.now, timeZone: utc)
+        let midKey = try sealedKey(harness.store, first)
+        #expect(midKey.day == "20231114")
+        #expect(midKey.start == "235500")
+        #expect(midKey.len == 130)
+
+        // The replacement runs to the boundary and rotates on time.
+        let second = try acceptBatch(harness, ctx: "to-boundary")
+        harness.clock.now = lastWindowStart.addingTimeInterval(300.4)
+        harness.authority.poll(now: harness.clock.now)
+        let boundaryKey = try sealedKey(harness.store, second)
+        #expect(boundaryKey.day == "20231114")
+        #expect(boundaryKey.start == "235710")
+        #expect(boundaryKey.len == 170)
+    }
+
+    @Test func subSecondPeriodHasLengthOne() throws {
+        let harness = try makeHarness(openingAt: lastWindowStart)
+        defer { try? FileManager.default.removeItem(at: harness.root) }
+        let pid = try acceptBatch(harness, ctx: "brief")
+        harness.clock.advance(by: 0.4)
+        try harness.store.finalizePeriod(periodId: pid, reason: "seal", civilDate: harness.clock.now, timeZone: utc)
+        let key = try sealedKey(harness.store, pid)
+        #expect(key.start == "235500")
+        #expect(key.len == 1)
+    }
+
+    @Test func durationClampBoundsToOneThroughCeiling() {
+        #expect(clampedSegmentDurationSeconds(0.4, ceiling: 300) == 1)
+        #expect(clampedSegmentDurationSeconds(-5, ceiling: 300) == 1)
+        #expect(clampedSegmentDurationSeconds(42.9, ceiling: 300) == 42)
+        #expect(clampedSegmentDurationSeconds(29_100, ceiling: 300) == 300)
+        #expect(clampedSegmentDurationSeconds(.infinity, ceiling: 300) == 300)
+        #expect(clampedSegmentDurationSeconds(.nan, ceiling: 300) == 300)
+    }
+}
+
 #endif

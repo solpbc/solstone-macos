@@ -3261,6 +3261,19 @@ private static func fullSync(_ handle: FileHandle) throws {
         return pid
     }
 
+    /// Length of one intake window. Periods rotate on this clock grid.
+    static let periodWindowSeconds: TimeInterval = 300
+
+    /// The close of the clock-aligned window that contains `date`.
+    static func periodWindowEnd(containing date: Date, timeZone: TimeZone) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let windowMinutes = Int(periodWindowSeconds) / 60
+        let minuteStart = calendar.dateInterval(of: .minute, for: date)?.start ?? date
+        let minute = calendar.component(.minute, from: date)
+        return minuteStart.addingTimeInterval(TimeInterval((windowMinutes - minute % windowMinutes) * 60))
+    }
+
     public func finalizePeriod(
         periodId: String,
         reason: String,
@@ -3308,20 +3321,6 @@ private static func fullSync(_ handle: FileHandle) throws {
         guard let fileBytes = try Self.fileByteCount(fileURL), fileBytes >= committedLength else {
             throw BrowserIntakeStoreError.localIO
         }
-        let dayFormatter = DateFormatter()
-        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
-        dayFormatter.calendar = Calendar(identifier: .gregorian)
-        dayFormatter.dateFormat = "yyyyMMdd"
-        dayFormatter.timeZone = timeZone
-        let dayStr = dayFormatter.string(from: civilDate)
-
-        let timeFormatter = DateFormatter()
-        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
-        timeFormatter.calendar = Calendar(identifier: .gregorian)
-        timeFormatter.dateFormat = "HHmmss"
-        timeFormatter.timeZone = timeZone
-        let timePrefix = timeFormatter.string(from: civilDate)
-
         try ioInjector.check(.read)
         let fileData: Data
         do {
@@ -3342,7 +3341,30 @@ private static func fullSync(_ handle: FileHandle) throws {
         }
         if state != "open" { return }
 
-        let len = max(1, (durableNowMs >= createdAtMs ? (durableNowMs - createdAtMs) : 0) / 1000)
+        // The key names the period's own window: its start, and how long it
+        // ran before the window closed. A period sealed late (after sleep, at
+        // stop, at recovery) still ends at its window's close, not at seal.
+        let periodStart = Date(timeIntervalSince1970: Double(createdAtMs) / 1000.0)
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dayFormatter.calendar = Calendar(identifier: .gregorian)
+        dayFormatter.dateFormat = "yyyyMMdd"
+        dayFormatter.timeZone = timeZone
+        let dayStr = dayFormatter.string(from: periodStart)
+
+        let timeFormatter = DateFormatter()
+        timeFormatter.locale = Locale(identifier: "en_US_POSIX")
+        timeFormatter.calendar = Calendar(identifier: .gregorian)
+        timeFormatter.dateFormat = "HHmmss"
+        timeFormatter.timeZone = timeZone
+        let timePrefix = timeFormatter.string(from: periodStart)
+
+        let windowEndMs = BrowserAgeStamp.wallMilliseconds(Self.periodWindowEnd(containing: periodStart, timeZone: timeZone))
+        let endMs = min(durableNowMs, windowEndMs)
+        let len = clampedSegmentDurationSeconds(
+            Double(endMs >= createdAtMs ? endMs - createdAtMs : 0) / 1000.0,
+            ceiling: Self.periodWindowSeconds
+        )
         let requestedSegment = "\(timePrefix)_\(len)"
 
         try execute("BEGIN IMMEDIATE;")

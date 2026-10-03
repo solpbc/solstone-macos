@@ -462,6 +462,9 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
 
         var batchBytes = 0
         for record in batch.records { batchBytes += record.rawSlice.count + 1 }
+        // A batch that arrives after the window closed (on wake, before the
+        // boundary timer runs) belongs to a new period, not the stale one.
+        rotateIfBoundary(now: civilDate)
         let selectedPeriod: String
         do {
             selectedPeriod = try store.selectPeriodForBatch(
