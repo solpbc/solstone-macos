@@ -581,6 +581,60 @@ struct AboutSnapshotTests {
             #expect((accepted["about"] as? [String: Any])?["journal_line"] as? String == "journal 3.0.0")
         }
     }
+
+    @Test func routeChangeSkipsSuspendedPublicationFromPreviousRoute() async throws {
+        let routeState = BrowserIntakeRouteState()
+        let suspension = PhysicalPublicationSuspension()
+        try await withPhysicalListener(
+            publicationWillEnqueue: { await suspension.suspendOnce() },
+            routeState: routeState
+        ) { fixture in
+            await fixture.start()
+            let fd = try await fixture.connect()
+            defer { Darwin.close(fd) }
+
+            let routeA = BrowserIntakeRouteCapability(
+                serverURL: "http://127.0.0.1:5015", identityDigest: "destination-a",
+                pairingGeneration: 1, transportIncarnation: 1, credentialIsCurrent: { true }
+            )
+            _ = routeState.update(routeA)
+            await fixture.listener.refreshSnapshot()
+            _ = try await physicalMessage("state", from: fd)
+
+            let known = SolstoneCoreAbout.nativeSnapshot(
+                os: "macos", osVersion: "15.6", arch: "arm64", journalVersion: "2.0.0",
+                journalCurrent: true, versionObservedAt: Date(timeIntervalSince1970: 1_700_000_000)
+            )
+            let routeAEpoch = await fixture.owner.aboutRouteEpoch()
+            await fixture.owner.updateAboutSnapshot(known, factsAccepted: true, routeEpoch: routeAEpoch)
+            let installed = try await physicalMessage("state", from: fd)
+            #expect((installed["about"] as? [String: Any])?["journal_line"] as? String == "journal 2.0.0")
+
+            await suspension.arm()
+            let owner = fixture.owner
+            let oldPass = Task {
+                await owner.updateAboutSnapshot(known, factsAccepted: true, routeEpoch: routeAEpoch)
+            }
+            await suspension.waitUntilSuspended()
+
+            let routeB = BrowserIntakeRouteCapability(
+                serverURL: "http://127.0.0.1:5016", identityDigest: "destination-b",
+                pairingGeneration: 2, transportIncarnation: 2, credentialIsCurrent: { true }
+            )
+            _ = routeState.update(routeB)
+            let routeBEpoch = await fixture.owner.aboutRouteEpoch()
+            await fixture.owner.updateAboutSnapshot(known.clearingJournal(), factsAccepted: false, routeEpoch: routeBEpoch)
+
+            await suspension.resume()
+            await oldPass.value
+
+            let next = try await physicalMessage("state", from: fd)
+            let about = try #require(next["about"] as? [String: Any])
+            #expect(about["journal_line"] as? String == "journal unknown")
+            #expect(about["journal_current"] as? Bool == false)
+            #expect(about["journal_seen_at_epoch_secs"] is NSNull)
+        }
+    }
 }
 
 private actor PhysicalPublicationSuspension {

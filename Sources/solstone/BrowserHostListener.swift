@@ -1215,6 +1215,7 @@ public actor BrowserHostListener {
         }
         guard let owner else { return }
         let projected = await owner.currentHostProjection()
+        let aboutRouteEpoch = await owner.aboutRouteEpoch()
         guard current() else { return }
         let facts = projected.facts
         let currentPeriodID = facts.periodId
@@ -1259,6 +1260,7 @@ public actor BrowserHostListener {
                 current() && gate.isOpen() && authority.isLive &&
                     authority.epoch == currentDestGen && authority.epoch == store.getActiveGeneration()
             }
+            guard await owner.aboutRouteEpoch() == aboutRouteEpoch else { return }
             await outbound.enqueuePublication(state: state, boundary: boundary,
                 periodID: currentPeriodID, destinationGeneration: currentDestGen, isCurrent: eligible)
             guard current() else { return }
