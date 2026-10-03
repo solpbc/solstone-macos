@@ -12,11 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - updated the bundled journal to [2.0.30](https://solstone.app/releases#v2.0.30) →
 - run state settings now show the journal's version and build, and the system it runs on, in one block with a copy button, so you can paste it when you ask for help.
-- home and the updates sidebar now show when a journal update needs attention. install actions explain that the journal is unavailable while the journal app restarts.
+- home and the updates item in the sidebar now show when a journal update needs attention. install actions explain that the journal is unavailable while the journal app restarts.
 - updates settings explain when automatic checks are off and let you turn them on.
 
 ### Fixed
-- the release notes link now opens the journal app's notes. update controls refresh when the updater finishes a session, and repeated checks refresh the last-check time.
+- the release notes link now opens the journal app's notes. after an update check finished, the check button could stay unavailable. it now comes back right away, and checking again updates the "last checked" time even when the result is the same.
 
 ## [2.0.29 (build 67)] - 2026-10-02
 
