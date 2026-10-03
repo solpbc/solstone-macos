@@ -140,7 +140,7 @@ final class JournalSupervisor {
             return false
         } catch {
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal start --hosted-parent",
+                commandLabel: "solstone journal start --hosted-parent",
                 outputExcerpt: error.localizedDescription
             )
             state = .failed(diagnostic)
@@ -170,7 +170,7 @@ final class JournalSupervisor {
         blockedReason = nil
         guard let runtime = activeRuntime, let journalRoot = activeJournalRoot else {
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal restart",
+                commandLabel: "solstone journal start --hosted-parent",
                 outputExcerpt: "journal is not running"
             )
             state = .failed(diagnostic)
@@ -189,7 +189,7 @@ final class JournalSupervisor {
             return false
         } catch {
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal restart",
+                commandLabel: "solstone journal start --hosted-parent",
                 outputExcerpt: error.localizedDescription
             )
             state = .failed(diagnostic)

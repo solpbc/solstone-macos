@@ -246,12 +246,12 @@ struct JournalSupervisorTests {
         #expect(!restarted)
         #expect(await events.snapshot().isEmpty)
         if case .failed(let diagnostic) = supervisor.state {
-            #expect(diagnostic.commandLabel == "journal restart")
+            #expect(diagnostic.commandLabel == "solstone journal start --hosted-parent")
         } else {
             Issue.record("expected failed restart state")
         }
         if case .unknown(let diagnostic) = supervisor.runtimeStatus {
-            #expect(diagnostic.commandLabel == "journal restart")
+            #expect(diagnostic.commandLabel == "solstone journal start --hosted-parent")
         } else {
             Issue.record("expected unknown restart status")
         }
@@ -344,7 +344,7 @@ struct JournalSupervisorTests {
 
         #expect(!restarted)
         if case .failed(let diagnostic) = supervisor.state {
-            #expect(diagnostic.commandLabel == "journal restart")
+            #expect(diagnostic.commandLabel == "solstone journal start --hosted-parent")
         } else {
             Issue.record("expected failed restart state")
         }

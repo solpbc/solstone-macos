@@ -657,7 +657,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         switch containmentResult {
         case .unresolved:
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal start --hosted-parent",
+                commandLabel: "solstone journal start --hosted-parent",
                 exitCode: status,
                 outputExcerpt: UICopy.JOURNAL_CHILD_CONTAINMENT_UNRESOLVED
             )
@@ -677,7 +677,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
             breakerTripped = true
             Logger.journal.error("journal-lifecycle: runner-breaker-tripped status=\(status, privacy: .public) unexpectedCount=\(self.unexpectedExitTimes.count, privacy: .public)")
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal start --hosted-parent",
+                commandLabel: "solstone journal start --hosted-parent",
                 exitCode: status,
                 outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
             )
@@ -737,7 +737,7 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
         } catch {
             Logger.journal.error("journal-lifecycle: runner-backoff-relaunch-failed")
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal start --hosted-parent",
+                commandLabel: "solstone journal start --hosted-parent",
                 outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
             )
             terminalDiagnostic = diagnostic

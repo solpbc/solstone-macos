@@ -190,7 +190,7 @@ struct JournalReadinessGateTests {
         defer { try? FileManager.default.removeItem(at: runtime.layout.rootURL) }
         let clock = AdvancingReadinessClock()
         let diagnostic = JournalDiagnostic(
-            commandLabel: "journal start --hosted-parent",
+            commandLabel: "solstone journal start --hosted-parent",
             outputExcerpt: UICopy.JOURNAL_CHILD_BREAKER_TRIPPED
         )
         let gate = JournalReadinessGate(clock: clock, pollInterval: .milliseconds(1))

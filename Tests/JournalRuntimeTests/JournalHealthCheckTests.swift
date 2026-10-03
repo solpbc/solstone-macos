@@ -41,7 +41,7 @@ struct JournalHealthCheckTests {
             Issue.record("expected stopped, got \(result)")
             return
         }
-        #expect(diagnostic.commandLabel == "journal health")
+        #expect(diagnostic.commandLabel == "solstone journal health")
         #expect(diagnostic.exitCode == 1)
         #expect(diagnostic.outputExcerpt?.contains("journal failed") == true)
         #expect(runner.invocations.map(\.executable) == [journalBinary])
@@ -154,7 +154,7 @@ struct JournalHealthCheckTests {
             Issue.record("expected unknown, got \(result)")
             return
         }
-        #expect(diagnostic.commandLabel == "journal doctor")
+        #expect(diagnostic.commandLabel == "solstone journal doctor")
         #expect(diagnostic.outputExcerpt?.isEmpty == false)
     }
 
@@ -171,7 +171,7 @@ struct JournalHealthCheckTests {
             Issue.record("expected stopped, got \(result)")
             return
         }
-        #expect(diagnostic.commandLabel == "journal doctor")
+        #expect(diagnostic.commandLabel == "solstone journal doctor")
         #expect(diagnostic.exitCode == 1)
     }
 
@@ -188,7 +188,7 @@ struct JournalHealthCheckTests {
             Issue.record("expected unknown, got \(result)")
             return
         }
-        #expect(diagnostic.commandLabel == "journal doctor")
+        #expect(diagnostic.commandLabel == "solstone journal doctor")
         #expect(diagnostic.outputExcerpt == "no output")
     }
 
@@ -205,7 +205,7 @@ struct JournalHealthCheckTests {
             Issue.record("expected stopped, got \(result)")
             return
         }
-        #expect(diagnostic.commandLabel == "journal doctor")
+        #expect(diagnostic.commandLabel == "solstone journal doctor")
         #expect(diagnostic.exitCode == 1)
     }
 

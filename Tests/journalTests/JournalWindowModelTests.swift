@@ -182,7 +182,7 @@ struct JournalWindowModelTests {
         #expect(model.stoppedReason == nil)
 
         for reason in [UICopy.JOURNAL_CHILD_CONTAINMENT_UNRESOLVED, UICopy.JOURNAL_CHILD_BREAKER_TRIPPED] {
-            supervisor.applyRuntimeStatus(.stopped(JournalDiagnostic(commandLabel: "journal start --hosted-parent", outputExcerpt: reason)))
+            supervisor.applyRuntimeStatus(.stopped(JournalDiagnostic(commandLabel: "solstone journal start --hosted-parent", outputExcerpt: reason)))
             #expect(model.homeOffer == .start)
             #expect(model.stoppedReason == reason)
         }

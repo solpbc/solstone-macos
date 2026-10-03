@@ -79,7 +79,7 @@ struct NativeIntegrationLifecycleTests {
         // `journal health` asks the running supervisor over its socket with a 5 s budget; on a
         // loaded host that read can time out once, which is a scheduling fact, not a verdict.
         // Bound the retry so a starved read is still a failure, never a silent green.
-        var health = JournalHealthCheckResult.unknown(JournalDiagnostic(commandLabel: "journal health"))
+        var health = JournalHealthCheckResult.unknown(JournalDiagnostic(commandLabel: "solstone journal health"))
         let healthDeadline = ContinuousClock.now.advanced(by: .seconds(30))
         repeat {
             health = await JournalHealthCheck.run(

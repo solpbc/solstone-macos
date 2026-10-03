@@ -137,25 +137,25 @@ public enum JournalHealthCheck {
                 )
             }
             if result.exitCode == 0 {
-                Logger.setup.info("journal health: ok")
+                Logger.setup.info("solstone journal health: ok")
                 return .healthy
             }
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal health",
+                commandLabel: "solstone journal health",
                 exitCode: result.exitCode,
                 outputExcerpt: sanitizeJournalDiagnosticOutput(output.string)
             )
-            Logger.setup.info("journal health: stopped exit=\(result.exitCode, privacy: .public)")
+            Logger.setup.info("solstone journal health: stopped exit=\(result.exitCode, privacy: .public)")
             return .stopped(diagnostic)
         } catch is TimeoutError {
             return .unknown(JournalDiagnostic(
-                commandLabel: "journal health",
+                commandLabel: "solstone journal health",
                 timedOut: true,
                 outputExcerpt: sanitizeJournalDiagnosticOutput(output.string)
             ))
         } catch {
             return .unknown(JournalDiagnostic(
-                commandLabel: "journal health",
+                commandLabel: "solstone journal health",
                 outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
             ))
         }
@@ -207,13 +207,13 @@ public enum JournalHealthCheck {
             }
         } catch is TimeoutError {
             return .unknown(JournalDiagnostic(
-                commandLabel: "journal doctor",
+                commandLabel: "solstone journal doctor",
                 timedOut: true,
                 outputExcerpt: sanitizeJournalDiagnosticOutput(output.combinedString)
             ))
         } catch {
             return .unknown(JournalDiagnostic(
-                commandLabel: "journal doctor",
+                commandLabel: "solstone journal doctor",
                 outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
             ))
         }
@@ -226,26 +226,26 @@ public enum JournalHealthCheck {
             } catch {
                 if result.exitCode != 0 {
                     return .stopped(JournalDiagnostic(
-                        commandLabel: "journal doctor",
+                        commandLabel: "solstone journal doctor",
                         exitCode: result.exitCode,
                         outputExcerpt: sanitizeJournalDiagnosticOutput(output.combinedString)
                     ))
                 }
                 return .unknown(JournalDiagnostic(
-                    commandLabel: "journal doctor",
+                    commandLabel: "solstone journal doctor",
                     outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
                 ))
             }
         }
         if result.exitCode != 0 {
             return .stopped(JournalDiagnostic(
-                commandLabel: "journal doctor",
+                commandLabel: "solstone journal doctor",
                 exitCode: result.exitCode,
                 outputExcerpt: sanitizeJournalDiagnosticOutput(output.combinedString)
             ))
         }
         return .unknown(JournalDiagnostic(
-            commandLabel: "journal doctor",
+            commandLabel: "solstone journal doctor",
             outputExcerpt: "no output"
         ))
     }

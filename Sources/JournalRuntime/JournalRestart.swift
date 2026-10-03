@@ -159,7 +159,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
     public func run() async -> JournalRestartOutcome {
         guard let journalPath = await journalPathProvider(journalBinary) else {
             let diagnostic = JournalDiagnostic(
-                commandLabel: "journal config show",
+                commandLabel: "solstone journal config show",
                 outputExcerpt: "no journal path"
             )
             let failure = JournalRestartFailure(
@@ -200,7 +200,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
                 step: .serviceRestart,
                 ownerMessage: "restart failed: journal did not restart",
                 diagnostic: JournalDiagnostic(
-                    commandLabel: "journal service restart",
+                    commandLabel: "solstone journal service restart",
                     outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
                 )
             )
@@ -212,7 +212,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
                 step: .serviceRestart,
                 ownerMessage: "restart failed: journal did not restart",
                 diagnostic: JournalDiagnostic(
-                    commandLabel: "journal service restart",
+                    commandLabel: "solstone journal service restart",
                     exitCode: restartResult.exitCode,
                     outputExcerpt: sanitizeJournalDiagnosticOutput(output.string)
                 )
@@ -244,7 +244,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
                 step: .reProbe,
                 ownerMessage: "restart failed: journal did not come back",
                 diagnostic: JournalDiagnostic(
-                    commandLabel: "journal health",
+                    commandLabel: "solstone journal health",
                     timedOut: error is TimeoutError,
                     outputExcerpt: sanitizeJournalDiagnosticOutput(error.localizedDescription)
                 )
@@ -264,9 +264,9 @@ public struct JournalRestartRunner: @unchecked Sendable {
                 outputExcerpt: diagnostic.outputExcerpt ?? "post-restart check failed"
             )
         case .binaryMissing:
-            return JournalDiagnostic(commandLabel: "journal health", outputExcerpt: "journal binary missing after restart")
+            return JournalDiagnostic(commandLabel: "solstone journal health", outputExcerpt: "journal binary missing after restart")
         case .reachable:
-            return JournalDiagnostic(commandLabel: "journal health")
+            return JournalDiagnostic(commandLabel: "solstone journal health")
         }
     }
 

@@ -110,7 +110,7 @@ struct JournalRestartRunnerTests {
             return
         }
         #expect(failure.step == .resolveJournal)
-        #expect(failure.diagnostic.commandLabel == "journal config show")
+        #expect(failure.diagnostic.commandLabel == "solstone journal config show")
         #expect(subprocess.invocations.count == 1)
         #expect(subprocess.invocations.first?.executable == solstoneBinary)
         #expect(subprocess.invocations.first?.arguments == ["journal", "config", "show"])

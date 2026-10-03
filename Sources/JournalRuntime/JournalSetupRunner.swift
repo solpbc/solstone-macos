@@ -154,7 +154,7 @@ public struct JournalSetupRunner: Sendable {
             let message = failure?.message
                 ?? lastUsefulLine(summary.stderr)
                 ?? summary.lastRenderedLine
-                ?? "journal setup failed"
+                ?? "solstone journal setup failed"
             throw JournalSetupRunnerError.setupFailed(errorCode: failure?.errorCode, message: message)
         }
 
@@ -207,7 +207,7 @@ public struct JournalSetupRunner: Sendable {
             }
         } catch {
             try Task.checkCancellation()
-            Logger.setup.warning("journal setup runner: install-models failed: \(error.localizedDescription, privacy: .public)")
+            Logger.setup.warning("solstone journal setup runner: install-models failed: \(error.localizedDescription, privacy: .public)")
         }
         try Task.checkCancellation()
     }
