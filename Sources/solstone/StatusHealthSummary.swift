@@ -112,6 +112,7 @@ extension StatusHealthSummary {
         isRecording: Bool,
         isPaused: Bool,
         held: Bool,
+        hasPersistedPairing: Bool,
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
@@ -126,6 +127,24 @@ extension StatusHealthSummary {
         isPairedIngestReady: Bool = true,
         journalConnectionAXToken: String? = nil
     ) -> StatusHealthSummary {
+        // A migrated Mac can retain successful delivery and mark-confirmation records
+        // after its device-bound pairing is gone. Absence leads every connection state.
+        if !hasPersistedPairing {
+            let waiting = pendingCount > 0
+                ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting on this mac. "
+                : ""
+            return .init(
+                severity: isRecording || pendingCount > 0 ? .attention : .calm,
+                title: UICopy.SETTINGS_LAST_DELIVERY_NOT_LINKED,
+                subtitle: waiting + "re-link in journal settings to resume syncing.",
+                axValue: "external_not_linked",
+                action: StatusHealthAction(
+                    label: "open journal settings",
+                    settingsTab: "service",
+                    reasksJournalMark: false
+                )
+            )
+        }
         // The owner turning every source off is a choice, not a fault — but it is also the one
         // state in which nothing reaches the journal at all, so it leads the card and says why.
         // It outranks the setup rollup below, which reads green precisely BECAUSE an unselected

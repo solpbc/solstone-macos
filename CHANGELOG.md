@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- when this mac has lost its journal link, including after moving to a new mac, status and journal settings now say it isn't linked and point you to re-link. before, status said it was connecting while nothing reached your journal.
+
 ## [2.0.23] - 2026-10-03
 
 ### Added

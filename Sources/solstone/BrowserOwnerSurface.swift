@@ -529,6 +529,7 @@ extension StatusHealthSummary {
         isRecording: Bool,
         isPaused: Bool,
         held: Bool,
+        hasPersistedPairing: Bool,
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
@@ -549,6 +550,7 @@ extension StatusHealthSummary {
             isRecording: isRecording,
             isPaused: isPaused,
             held: held,
+            hasPersistedPairing: hasPersistedPairing,
             uploadStatus: uploadStatus,
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
@@ -563,7 +565,7 @@ extension StatusHealthSummary {
             isPairedIngestReady: isPairedIngestReady,
             journalConnectionAXToken: journalConnectionAXToken
         )
-        if isRecording || isPaused { return media }
+        if !hasPersistedPairing || isRecording || isPaused { return media }
         let verdict = browserOwnerVerdict(
             mediaSourcesEmpty: selectedSources.isEmpty,
             mediaRecording: isRecording,

@@ -319,6 +319,7 @@ struct OwnerSurfaceStatusTests {
             isRecording: recording,
             isPaused: false,
             held: held,
+            hasPersistedPairing: true,
             uploadStatus: .awaitingTunnel,
             pendingCount: 0,
             lastDeliveryOutcome: .noDeliveryYet,

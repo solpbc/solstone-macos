@@ -1420,6 +1420,10 @@ struct SettingsView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
+            if !appState.tunnelLifecycleOwner.hasPersistedPairing {
+                healthSummaryCard(showsAction: false)
+            }
+
             if appState.config.serviceMode == .bundled {
                 journalMigrationBanner
             }
@@ -3257,6 +3261,7 @@ struct SettingsView: View {
             isRecording: appState.isRecording,
             isPaused: appState.isPaused,
             held: appState.needsJournalMarkConfirmation,
+            hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
             uploadStatus: appState.uploadCoordinator.status,
             pendingCount: appState.uploadCoordinator.pendingCount,
             lastDeliveryOutcome: statusPrimaryDelivery(
@@ -3284,6 +3289,7 @@ struct SettingsView: View {
             isRecording: appState.isRecording,
             isPaused: appState.isPaused,
             held: appState.needsJournalMarkConfirmation,
+            hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
             uploadStatus: appState.uploadCoordinator.status,
             pendingCount: appState.uploadCoordinator.pendingCount,
             lastDeliveryOutcome: appState.uploadCoordinator.lastJournalDeliveryOutcome,
@@ -3305,7 +3311,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var healthSummaryCard: some View {
+    private func healthSummaryCard(showsAction: Bool = true) -> some View {
         let summary = statusHealthSummary
         HStack(alignment: .top, spacing: 8) {
             Circle()
@@ -3320,7 +3326,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if let action = summary.action {
+                if showsAction, let action = summary.action {
                     Button(action.label) {
                         let effect = healthActionEffect(action)
                         selectedTab = effect.tab
@@ -3514,7 +3520,7 @@ struct SettingsView: View {
 
     private var statusTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            healthSummaryCard
+            healthSummaryCard()
 
             setupGroup
 

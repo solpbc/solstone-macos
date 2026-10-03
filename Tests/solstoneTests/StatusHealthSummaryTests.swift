@@ -24,6 +24,7 @@ struct StatusHealthSummaryTests {
             let token = connecting ? PairingConnectionAXState.connecting.axToken : nil
             let summary = StatusHealthSummary.make(
                 serviceMode: .external, isRecording: true, isPaused: false, held: false,
+                hasPersistedPairing: true,
                 uploadStatus: .synced, pendingCount: 0,
                 lastDeliveryOutcome: .delivered(statusSummaryRecentDelivery),
                 serverURL: statusSummaryServerURL, now: statusSummaryNow,
@@ -39,6 +40,46 @@ struct StatusHealthSummaryTests {
         #expect(retry.axValue == "external_retrying")
         let delivered = makeSummary(uploadStatus: .synced)
         #expect(delivered.severity == .good)
+    }
+    @Test func absentPairingOutranksRememberedDeliveryAndConnectionWaits() {
+        for mode in [ServiceMode.external, .bundled] {
+            for status in [UploadCoordinator.Status.synced, .awaitingTunnel, .notSynced] {
+                let summary = makeSummary(
+                    serviceMode: mode,
+                    hasPersistedPairing: false,
+                    uploadStatus: status,
+                    setupVerdict: .needsAttention(count: 1)
+                )
+                #expect(summary.axValue == "external_not_linked")
+                #expect(summary.severity == .attention)
+                let action = try! #require(summary.action)
+                #expect(healthActionEffect(action).tab == .service)
+                #expect(!action.reasksJournalMark)
+            }
+        }
+        let pausedBacklog = makeSummary(isRecording: false, isPaused: true, hasPersistedPairing: false, pendingCount: 2)
+        #expect(pausedBacklog.axValue == "external_not_linked")
+        #expect(pausedBacklog.severity == .attention)
+        let stoppedEmpty = makeSummary(isRecording: false, hasPersistedPairing: false)
+        #expect(stoppedEmpty.severity == .calm)
+        let resumed = makeSummary(hasPersistedPairing: true)
+        #expect(resumed.axValue == "external_synced")
+        #expect(resumed.severity == .good)
+    }
+    @Test func stoppedCaptureCannotHideAnAbsentJournalLink() {
+        for sources in [CaptureSources.all, []] {
+            let summary = makeSummary(
+                isRecording: false,
+                hasPersistedPairing: false,
+                pendingCount: 2,
+                selectedSources: sources,
+                permittedSources: [],
+                errorMessage: "source unavailable"
+            )
+            #expect(summary.axValue == "external_not_linked")
+            #expect(summary.severity == .attention)
+            #expect(summary.action?.settingsTab == "service")
+        }
     }
     @Test func bundledModeAlwaysReportsMigrationNeeded() {
         let summary = makeSummary(serviceMode: .bundled, isRecording: false, isPaused: true, uploadStatus: .synced)
@@ -414,6 +455,7 @@ struct StatusHealthSummaryTests {
         isRecording: Bool = true,
         isPaused: Bool = false,
         held: Bool = false,
+        hasPersistedPairing: Bool = true,
         uploadStatus: UploadCoordinator.Status = .synced,
         pendingCount: Int = 0,
         lastDeliveryOutcome: LastJournalDeliveryOutcome = .delivered(statusSummaryRecentDelivery),
@@ -431,6 +473,7 @@ struct StatusHealthSummaryTests {
             isRecording: isRecording,
             isPaused: isPaused,
             held: held,
+            hasPersistedPairing: hasPersistedPairing,
             uploadStatus: uploadStatus,
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
