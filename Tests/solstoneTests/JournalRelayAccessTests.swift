@@ -197,6 +197,9 @@ struct JournalRelayAccessTests {
     ) -> (TunnelLifecycleOwner, URLSession) {
         store.registerRoute(path: "/app/network/api/clients/self", statusCode: 404)
         store.registerRoute(path: "/api/system/status", statusCode: 404)
+        // About is fetched on this same store beside publication. An unregistered
+        // path pops the one-item relay FIFO; this 404 models an older journal.
+        store.registerRoute(path: "/api/system/about", method: "GET", statusCode: 404)
         _ = try? credStore.load()
         let session = makeTestSession(store: store)
         let transportFactory: @MainActor @Sendable () -> any TunnelTransporting = {
