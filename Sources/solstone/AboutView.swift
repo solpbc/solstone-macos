@@ -10,17 +10,21 @@ struct AboutView: View {
         case failed
     }
 
-    let aboutBlock: () -> String
+    let renderedBlock: String
     let clipboardWrite: (String) -> Bool
     @State private var copyState: CopyState?
 
     init(aboutBlock: @escaping () -> String, clipboardWrite: @escaping (String) -> Bool) {
-        self.aboutBlock = aboutBlock
+        self.renderedBlock = aboutBlock()
         self.clipboardWrite = clipboardWrite
     }
 
+    func copyDisplayedBlock() -> Bool {
+        clipboardWrite(renderedBlock)
+    }
+
     var body: some View {
-        let displayedBlock = aboutBlock()
+        let displayedBlock = renderedBlock
         VStack(spacing: 0) {
             VStack(spacing: 8) {
                 bundleImage("AppIcon")
@@ -46,8 +50,7 @@ struct AboutView: View {
                     .accessibilityValue(displayedBlock)
 
                 Button("copy") {
-                    let snapshot = aboutBlock()
-                    copyState = clipboardWrite(snapshot) ? .copied : .failed
+                    copyState = copyDisplayedBlock() ? .copied : .failed
                 }
                 .accessibilityIdentifier(AXID.About.aboutCopy)
                 if let copyState {

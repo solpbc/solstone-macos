@@ -3355,6 +3355,7 @@ struct SettingsView: View {
 
     private var setupGroup: some View {
         let presentation = setupSnapshotPresentation
+        let displayedAbout = aboutBlock
         return GroupBox(UICopy.SETTINGS_SETUP_GROUP_TITLE) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
@@ -3378,12 +3379,12 @@ struct SettingsView: View {
                 Divider()
 
                 HStack(alignment: .top) {
-                    Text(aboutBlock)
+                    Text(displayedAbout)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .accessibilityIdentifier(AXID.Settings.Status.setupAboutState)
-                        .accessibilityValue(aboutBlock)
+                        .accessibilityValue(displayedAbout)
                     Spacer(minLength: 8)
                     Button(UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION) {
                         selectedTab = .service
@@ -3744,7 +3745,8 @@ struct SettingsView: View {
     }
 
     private var helpTab: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        let displayedAbout = aboutBlock
+        return VStack(alignment: .leading, spacing: 20) {
             GroupBox("get help") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("need a hand? reach a human. we're happy to help.")
@@ -3753,16 +3755,16 @@ struct SettingsView: View {
                     Link("get help", destination: SupportReportURL.help)
                         .accessibilityIdentifier(AXID.Settings.Help.supportSite)
                     Button("report a problem") {
-                        openProblemReport()
+                        openProblemReport(aboutSnapshot: displayedAbout)
                     }
                     Link("support@solstone.app", destination: URL(string: "mailto:support@solstone.app?subject=solstone%20(macOS)")!)
                         .accessibilityIdentifier(AXID.Settings.Help.supportEmail)
-                    Text(aboutBlock)
+                    Text(displayedAbout)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .accessibilityIdentifier(AXID.Settings.Help.aboutState)
-                        .accessibilityValue(aboutBlock)
+                        .accessibilityValue(displayedAbout)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
@@ -3970,8 +3972,7 @@ struct SettingsView: View {
         }
     }
 
-    private func openProblemReport() {
-        let aboutSnapshot = aboutBlock
+    private func openProblemReport(aboutSnapshot: String) {
         Task { @MainActor in
             let evidence = await appState.readDiagnosticEvidence()
             let recent: String? = switch evidence {

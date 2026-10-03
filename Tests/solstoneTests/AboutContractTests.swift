@@ -10,6 +10,20 @@ import Testing
 
 @Suite("AboutContract")
 struct AboutContractTests {
+    @Test @MainActor func nativeCopyUsesRenderedSnapshotAfterFactsChange() {
+        let displayed = "solstone macos app 2.0.0 (67) · macos 15.6 · arm64\njournal 1.2.3 · last seen 1 minute ago"
+        var facts = displayed
+        var copied: String?
+        let view = AboutView(aboutBlock: { facts }, clipboardWrite: {
+            copied = $0
+            return true
+        })
+        facts = displayed.replacingOccurrences(of: "1 minute", with: "9 minutes")
+        #expect(view.renderedBlock == displayed)
+        #expect(view.copyDisplayedBlock())
+        #expect(copied == displayed)
+    }
+
     private var bundleURL: URL {
         let file = URL(fileURLWithPath: #filePath)
         let root = file.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
