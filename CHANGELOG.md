@@ -7,12 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- "about solstone" now shows the versions of the solstone app on your mac and of your journal, and the system each one runs on, in a short block with a copy button, so you can paste it when you ask for help. settings shows the same block, and a problem report includes it.
+
 ### Changed
 - updates settings now show your paired journal's version and help you open its app on this mac or find update instructions. solstone and your journal update separately.
 - update actions name the app that restarts, and settings explain when automatic checks are off.
+
 ### Fixed
 - if the extra private-window check is on and its Accessibility access check fails, it now joins the menu-bar attention badge, even with Settings closed. its Settings action opens the option. its notice clears when reads work again or you turn the option off.
+- a microphone or system audio track is no longer removed when no speech is found in it, so quiet speech the check missed stays in your journal. with "silence music in system audio" on, speech right next to music is no longer silenced along with it.
+- when a microphone disconnects and comes back, or system audio recovers after an interruption, the audio from before the interruption is kept, and the audio after it keeps going into your journal.
 - update controls now refresh when the updater finishes a session. the last-check time refreshes even when another check finds the same result.
+- when your journal is slow but the connection still works, the solstone app on your mac no longer reconnects over and over. it reconnects when the connection is actually lost.
+- a large upload over a slow connection no longer stops after ten minutes.
+- when a segment can't be sent because it's too large for your journal or its files can't be read, the menu now says so and status shows how many segments are kept on this mac. before, it looked like your journal couldn't be reached.
 
 ## [2.0.22] - 2026-10-02
 

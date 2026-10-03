@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- run state settings now show the journal's version and build, and the system it runs on, in one block with a copy button, so you can paste it when you ask for help.
 - home and the updates sidebar now show when a journal update needs attention. install actions explain that the journal is unavailable while the journal app restarts.
 - updates settings explain when automatic checks are off and let you turn them on.
 
