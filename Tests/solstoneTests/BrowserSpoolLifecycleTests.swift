@@ -1270,12 +1270,16 @@ struct BrowserSpoolLifecycleTests {
         #expect(await waitForPeriodState(replacement, periodId: periodId, state: "finalized"))
 
         let replacementProofCalls = Counter()
+        let replacementCompleted = Counter()
         let replacementInjector = replacement.injector
         let replacementOwner = replacement.owner
         replacement.injector.setFailure { point in
             guard point == .proof, replacementProofCalls.increment() == 1 else { return }
+            // Retirement validates its payload through the same proof hook.
+            replacementInjector.setFailure(nil)
             try replacementOwner.credentialWillChange(identityToken: "replacement-pairing", browserWarningWasPresented: true)
             try replacementOwner.credentialDidChange(identityToken: "replacement-pairing")
+            _ = replacementCompleted.increment()
         }
         replacement.pause.set(false)
         await replacement.updateRoute(.held)
@@ -1284,9 +1288,11 @@ struct BrowserSpoolLifecycleTests {
 
         let ackURL = BrowserIngestAckStore.ackURL(periodDirectory: payload.deletingLastPathComponent())
         let replacementDeadline = ContinuousClock.now + .seconds(2)
-        while replacementProofCalls.current == 0 && ContinuousClock.now < replacementDeadline {
+        // Entering the proof callback is not completion of credential replacement.
+        while replacementCompleted.current == 0 && ContinuousClock.now < replacementDeadline {
             try await Task.sleep(for: .milliseconds(10))
         }
+        try #require(replacementCompleted.current == 1)
         #expect(replacementProofCalls.current == 1)
         #expect(replacement.owner.store.getActiveGeneration() != oldGeneration)
         #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
@@ -1325,12 +1331,14 @@ struct BrowserSpoolLifecycleTests {
         #expect(await waitForPeriodState(stopped, periodId: stoppedPeriodId, state: "finalized"))
 
         let stopProofCalls = Counter()
+        let stopCompleted = Counter()
         let stopInjector = stopped.injector
         let stoppedOwner = stopped.owner
         stopped.injector.setFailure { point in
             guard point == .proof, stopProofCalls.increment() == 1 else { return }
             stoppedOwner.stop()
             try stoppedOwner.credentialReloaded(identityToken: "lifecycle-pairing")
+            _ = stopCompleted.increment()
         }
         stopped.pause.set(false)
         await stopped.updateRoute(.held)
@@ -1339,9 +1347,10 @@ struct BrowserSpoolLifecycleTests {
 
         let stoppedAckURL = BrowserIngestAckStore.ackURL(periodDirectory: stoppedPayload.deletingLastPathComponent())
         let stopDeadline = ContinuousClock.now + .seconds(2)
-        while stopProofCalls.current == 0 && ContinuousClock.now < stopDeadline {
+        while stopCompleted.current == 0 && ContinuousClock.now < stopDeadline {
             try await Task.sleep(for: .milliseconds(10))
         }
+        try #require(stopCompleted.current == 1)
         #expect(stopProofCalls.current == 1)
         #expect(FileManager.default.fileExists(atPath: stoppedAckURL.path) == false)
         #expect(FileManager.default.fileExists(atPath: stoppedPayload.path))
