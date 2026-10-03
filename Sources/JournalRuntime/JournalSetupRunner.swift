@@ -111,8 +111,8 @@ public struct JournalSetupRunner: Sendable {
         do {
             result = try await withTaskCancellationHandler {
                 try await subprocessRunner.run(
-                    executable: runtime.layout.journalBinary,
-                    arguments: JournalSetupCommand.setupArguments(journalURL: journalRoot, skipService: skipService),
+                    executable: runtime.layout.solstoneBinary,
+                    arguments: ["journal"] + JournalSetupCommand.setupArguments(journalURL: journalRoot, skipService: skipService),
                     environment: setupEnvironment,
                     timeout: setupTimeout,
                     stdoutHandler: { [output, progressContinuation] data in
@@ -195,8 +195,8 @@ public struct JournalSetupRunner: Sendable {
         do {
             _ = try await withTaskCancellationHandler {
                 try await runner.run(
-                    executable: runtime.layout.journalBinary,
-                    arguments: ["install-models"],
+                    executable: runtime.layout.solstoneBinary,
+                    arguments: ["journal", "install-models"],
                     environment: commandEnvironment,
                     timeout: setupTimeout,
                     stdoutHandler: { _ in },

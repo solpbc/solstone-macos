@@ -34,8 +34,8 @@ struct JournalSetupRunnerTests {
         #expect(!FileManager.default.fileExists(atPath: runtimeRoot.appendingPathComponent("python").path))
         #expect(!FileManager.default.fileExists(atPath: runtimeRoot.appendingPathComponent("cache").path))
         #expect(!FileManager.default.fileExists(atPath: runtimeRoot.appendingPathComponent("tools").path))
-        let setup = try #require(subprocess.invocations.first { $0.arguments.first == "setup" })
-        #expect(setup.executable == layout.journalBinary)
+        let setup = try #require(subprocess.invocations.first { $0.arguments.count >= 2 && $0.arguments[0] == "journal" && $0.arguments[1] == "setup" })
+        #expect(setup.executable == layout.solstoneBinary)
     }
 
     @Test(arguments: ["ambient", "empty", "missing"])
@@ -67,8 +67,12 @@ struct JournalSetupRunnerTests {
                 environment: environment
             )
         )
-        _ = try await runner.run(journalRoot: workspace.appendingPathComponent("journal", isDirectory: true))
-        let invocation = try #require(subprocess.invocations.first { $0.arguments.first == "setup" })
+        let journalRoot = workspace.appendingPathComponent("journal", isDirectory: true)
+        _ = try await runner.run(journalRoot: journalRoot)
+        let layout = SolstoneRuntimeLayout(rootURL: runtimeRoot)
+        let invocation = try #require(subprocess.invocations.first { $0.arguments.count >= 2 && $0.arguments[0] == "journal" && $0.arguments[1] == "setup" })
+        #expect(invocation.executable == layout.solstoneBinary)
+        #expect(invocation.arguments == ["journal"] + JournalSetupCommand.setupArguments(journalURL: journalRoot, skipService: true))
         let setupEnvironment = try #require(invocation.environment)
         #expect(setupEnvironment["HOME"] == workspace.path)
         #expect(setupEnvironment["SETUP_TEST_SENTINEL"] == "preserved")
@@ -110,9 +114,10 @@ struct JournalSetupRunnerTests {
 
         _ = try await runner.run(journalRoot: journalRoot, skipService: true)
 
-        let invocation = try #require(subprocess.invocations.first { $0.arguments.first == "setup" })
-        #expect(invocation.executable == runtime.layout.journalBinary)
+        let invocation = try #require(subprocess.invocations.first { $0.arguments.count >= 2 && $0.arguments[0] == "journal" && $0.arguments[1] == "setup" })
+        #expect(invocation.executable == runtime.layout.solstoneBinary)
         #expect(invocation.arguments == [
+            "journal",
             "setup",
             "--jsonl",
             "--yes",
@@ -222,9 +227,11 @@ struct JournalSetupRunnerTests {
         _ = try await runner.run(journalRoot: journalRoot)
         #expect(FileManager.default.fileExists(atPath: marker.path))
         let install = try #require(subprocess.invocations.last)
-        #expect(install.arguments == ["install-models"])
+        #expect(install.executable == runtime.layout.solstoneBinary)
+        #expect(install.arguments == ["journal", "install-models"])
         #expect(install.timeout == .seconds(3))
         #expect(install.environment?["SOLSTONE_JOURNAL"] == nil)
+        #expect(install.environment?["PATH"]?.hasPrefix(runtime.layout.binDir.path + ":") == true)
     }
 
     @Test func cancellationDuringOptionalInstallationDoesNotReturnSetupSuccess() async throws {
@@ -241,10 +248,10 @@ struct JournalSetupRunnerTests {
         )
         let task = Task { try await runner.run(journalRoot: journalRoot) }
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while !subprocess.invocations.contains(where: { $0.arguments == ["install-models"] }), ContinuousClock.now < deadline {
+        while !subprocess.invocations.contains(where: { $0.arguments == ["journal", "install-models"] }), ContinuousClock.now < deadline {
             await Task.yield()
         }
-        #expect(subprocess.invocations.contains(where: { $0.arguments == ["install-models"] }))
+        #expect(subprocess.invocations.contains(where: { $0.arguments == ["journal", "install-models"] }))
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
     }
@@ -326,7 +333,7 @@ struct JournalSetupRunnerTests {
 
         #expect(elapsed < .seconds(1))
         let sawInstallModels = await waitForInvocation(subprocess) { invocation in
-            invocation.arguments == ["install-models"]
+            invocation.arguments == ["journal", "install-models"]
         }
         #expect(sawInstallModels)
     }

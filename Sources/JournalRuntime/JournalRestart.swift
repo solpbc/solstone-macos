@@ -190,7 +190,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
         do {
             restartResult = try await runner.run(
                 executable: journalBinary,
-                arguments: ["service", "restart"],
+                arguments: ["journal", "service", "restart"],
                 environment: nil,
                 stdoutHandler: { data in output.append(data) },
                 stderrHandler: { data in output.append(data) }
@@ -278,7 +278,7 @@ public struct JournalRestartRunner: @unchecked Sendable {
         do {
             let result = try await runner.run(
                 executable: journalBinary,
-                arguments: ["config", "show"],
+                arguments: ["journal", "config", "show"],
                 environment: nil,
                 stdoutHandler: { data in output.append(data) },
                 stderrHandler: { _ in }

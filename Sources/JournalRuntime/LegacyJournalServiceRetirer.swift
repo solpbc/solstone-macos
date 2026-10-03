@@ -328,11 +328,21 @@ private enum RootMatch {
 
 private extension LegacyJournalServiceRetirer.ServicePlist {
     var hasLegacyJournalShape: Bool {
-        label == LegacyJournalServiceRetirer.label
-            && programArguments.count >= 3
+        guard label == LegacyJournalServiceRetirer.label else { return false }
+        if programArguments.count >= 3
             && URL(fileURLWithPath: programArguments[0]).lastPathComponent == "journal"
             && programArguments[1] == "start"
-            && programArguments[2] == "5015"
+            && programArguments[2] == "5015" {
+            return true
+        }
+        if programArguments.count >= 4
+            && URL(fileURLWithPath: programArguments[0]).lastPathComponent == "solstone"
+            && programArguments[1] == "journal"
+            && programArguments[2] == "start"
+            && programArguments[3] == "5015" {
+            return true
+        }
+        return false
     }
 
     func rootMatch(journalRoot: URL) -> RootMatch {

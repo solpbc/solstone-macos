@@ -461,9 +461,9 @@ public actor SupervisedJournalRunner: SupervisedChildRunning {
 
         let canonicalJournalRoot = URL(fileURLWithPath: canonicalPath(journalRoot), isDirectory: true)
         let spawnRequest = SupervisedJournalSpawnRequest(
-            executableURL: runtime.layout.journalBinary,
+            executableURL: runtime.layout.solstoneBinary,
             currentDirectoryURL: canonicalJournalRoot,
-            arguments: ["start", "--hosted-parent", String(port)],
+            arguments: ["journal", "start", "--hosted-parent", String(port)],
             environment: runtime.environment
         )
         switch await gate.prepareForSpawn(journalRoot: canonicalJournalRoot) {

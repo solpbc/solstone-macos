@@ -77,7 +77,7 @@ final class JournalSupervisor {
     }
 
     var journalBinaryURL: URL? {
-        activeRuntime?.layout.journalBinary
+        activeRuntime?.layout.solstoneBinary
     }
 
     var journalRuntimeEnvironment: [String: String]? {

@@ -8,7 +8,9 @@ import Testing
 
 @Suite("JournalHealthCheck")
 struct JournalHealthCheckTests {
-    private let journalBinary = URL(fileURLWithPath: "/runtime/bin/journal")
+    private let journalBinary = FileManager.default.temporaryDirectory
+        .appendingPathComponent("journal-health-check-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("bin/solstone")
 
     @Test func restartingStatusCarriesOptionalRunnerGenerationWithoutDiagnostic() {
         let manual = JournalRuntimeStatus.restarting(generation: nil)
@@ -26,8 +28,8 @@ struct JournalHealthCheckTests {
         let result = await JournalHealthCheck.run(journalBinary: journalBinary, runner: runner)
 
         #expect(result == .healthy)
-        #expect(runner.invocations.map(\.executable.lastPathComponent) == ["journal"])
-        #expect(runner.invocations.first?.arguments == ["health"])
+        #expect(runner.invocations.map(\.executable) == [journalBinary])
+        #expect(runner.invocations.first?.arguments == ["journal", "health"])
     }
 
     @Test func runNonzeroReturnsStoppedDiagnostic() async {
@@ -42,7 +44,7 @@ struct JournalHealthCheckTests {
         #expect(diagnostic.commandLabel == "journal health")
         #expect(diagnostic.exitCode == 1)
         #expect(diagnostic.outputExcerpt?.contains("journal failed") == true)
-        #expect(runner.invocations.map(\.executable.lastPathComponent) == ["journal"])
+        #expect(runner.invocations.map(\.executable) == [journalBinary])
     }
 
     @Test func versionRunsJournalVersion() async {
@@ -52,7 +54,7 @@ struct JournalHealthCheckTests {
 
         #expect(version == "1.2.3")
         #expect(runner.invocations == [
-            .init(executable: journalBinary, arguments: ["--version"])
+            .init(executable: journalBinary, arguments: ["journal", "--version"])
         ])
     }
 
@@ -96,7 +98,7 @@ struct JournalHealthCheckTests {
         #expect(report.checks[0].severity == "blocker")
         #expect(report.checks[2].fix == "pip install 'solstone[whisper]'")
         #expect(report.summary == DoctorSummary(total: 4, failed: 0, warnings: 2, skipped: 0))
-        #expect(runner.invocations.first?.arguments == ["doctor", "--json"])
+        #expect(runner.invocations.first?.arguments == ["journal", "doctor", "--json"])
         #expect(runner.invocations.first?.executable == journalBinary)
     }
 

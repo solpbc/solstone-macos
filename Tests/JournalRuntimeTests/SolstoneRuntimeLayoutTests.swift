@@ -30,6 +30,7 @@ struct SolstoneRuntimeLayoutTests {
 
         #expect(layout.binDir.path.hasSuffix("/bin"))
         #expect(layout.journalBinary.path.hasSuffix("/bin/journal"))
+        #expect(layout.solstoneBinary.path.hasSuffix("/bin/solstone"))
     }
 
     private func makeLayout() -> SolstoneRuntimeLayout {

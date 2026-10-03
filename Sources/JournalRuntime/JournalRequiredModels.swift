@@ -72,8 +72,8 @@ public struct JournalRequiredModelsReconciler: JournalRequiredModelsReconciling 
         try Task.checkCancellation()
         let result = try await withTaskCancellationHandler {
             try await runner.run(
-                executable: runtime.layout.journalBinary,
-                arguments: ["install-models", "--required-only"],
+                executable: runtime.layout.solstoneBinary,
+                arguments: ["journal", "install-models", "--required-only"],
                 environment: commandEnvironment,
                 timeout: timeout,
                 stdoutHandler: { data in

@@ -308,9 +308,10 @@ struct JournalWindowModelTests {
     @Test func bundledVersionProbeRunsBeforeStartAndHealthUsesTheActiveRuntime() async throws {
         let fixture = try makeConfiguredFixture()
         defer { fixture.clear() }
+        let runtime = try makeRuntime()
         let supervisor = JournalSupervisor(
             gate: MockSingleSupervisorGate(),
-            materializer: MockRuntimeMaterializer(result: .success(try makeRuntime())),
+            materializer: MockRuntimeMaterializer(result: .success(runtime)),
             runner: MockSupervisedChildRunner(),
             readinessGate: MockJournalReadinessGate(result: .ready)
         )
@@ -320,7 +321,11 @@ struct JournalWindowModelTests {
         let model = makeModel(
             config: fixture.config,
             supervisor: supervisor,
-            fetchHealth: { _, _ in .healthy },
+            fetchHealth: { binary, environment in
+                #expect(binary == runtime.layout.solstoneBinary)
+                #expect(environment == runtime.environment)
+                return .healthy
+            },
             fetchVersion: { binary, environment in
                 #expect(binary == expectedCommandURL)
                 #expect(environment == nil)

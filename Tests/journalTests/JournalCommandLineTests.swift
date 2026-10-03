@@ -38,7 +38,7 @@ struct JournalCommandLineTests {
 
     @Test func commandLineIsTheBundledRuntimeJournal() {
         let url = JournalCommandLine.commandLineURL(executableURL: URL(fileURLWithPath: executable))
-        #expect(url.path == "/Applications/journal.app/Contents/Resources/solstone-runtime/bin/journal")
+        #expect(url.path == "/Applications/journal.app/Contents/Resources/solstone-runtime/bin/solstone")
     }
 
     @Test func commandLineResolvesThroughALinkToTheApp() throws {
@@ -55,6 +55,18 @@ struct JournalCommandLineTests {
 
         let url = JournalCommandLine.commandLineURL(executableURL: link)
         let contents = app.resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent()
-        #expect(url.path == contents.appendingPathComponent("Resources/solstone-runtime/bin/journal").path)
+        #expect(url.path == contents.appendingPathComponent("Resources/solstone-runtime/bin/solstone").path)
+    }
+
+    @Test func execArgvBuildsPrefixedArgvWithFlagsAndSpacedPaths() {
+        let executableURL = URL(fileURLWithPath: executable)
+        let arguments = [executable, "--journal", "/tmp/my journal"]
+        let argv = JournalCommandLine.execArgv(executableURL: executableURL, arguments: arguments)
+        #expect(argv == [
+            "/Applications/journal.app/Contents/Resources/solstone-runtime/bin/solstone",
+            "journal",
+            "--journal",
+            "/tmp/my journal",
+        ])
     }
 }

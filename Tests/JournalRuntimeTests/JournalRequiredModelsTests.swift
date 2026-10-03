@@ -19,14 +19,15 @@ struct JournalRequiredModelsTests {
         let script = """
         #!/bin/sh
         set -eu
-        [ "$#" = 2 ] && [ "$1" = install-models ] && [ "$2" = --required-only ] || exit 41
+        [ "$#" = 3 ] && [ "$1" = journal ] && [ "$2" = install-models ] && [ "$3" = --required-only ] || exit 41
         [ -z "${SOLSTONE_JOURNAL+x}" ] || exit 42
-        [ "$(command -v journal)" = "$0" ] || exit 43
-        [ "$(cat engine-sha)" = previous-signed-archive ] || exit 44
+        [ "$0" = "\(runtime.layout.solstoneBinary.path)" ] || exit 43
+        [ "$(command -v journal)" = "\(runtime.layout.journalBinary.path)" ] || exit 44
+        [ "$(cat engine-sha)" = previous-signed-archive ] || exit 45
         printf 'current-signed-archive\\n' > engine-sha
         """
-        try script.write(to: runtime.layout.journalBinary, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: runtime.layout.journalBinary.path)
+        try script.write(to: runtime.layout.solstoneBinary, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: runtime.layout.solstoneBinary.path)
         let scoped = MaterializedRuntime(key: runtime.key, layout: runtime.layout,
             environment: ["PATH": "/usr/bin:/bin", "SOLSTONE_JOURNAL": "/wrong/inherited/journal"])
         try await JournalRequiredModelsReconciler().reconcile(runtime: scoped, journalRoot: journal)
@@ -43,8 +44,11 @@ struct JournalRequiredModelsTests {
             try await reconciler.reconcile(runtime: runtime, journalRoot: runtime.layout.rootURL)
         }
         #expect(subprocess.invocations.count == 1)
-        #expect(subprocess.invocations.first?.arguments == ["install-models", "--required-only"])
+        #expect(subprocess.invocations.first?.executable == runtime.layout.solstoneBinary)
+        #expect(subprocess.invocations.first?.arguments == ["journal", "install-models", "--required-only"])
         #expect(subprocess.invocations.first?.timeout == .seconds(120))
+        #expect(subprocess.invocations.first?.environment?["SOLSTONE_JOURNAL"] == nil)
+        #expect(subprocess.invocations.first?.environment?["PATH"]?.hasPrefix(runtime.layout.binDir.path + ":") == true)
     }
 
     @Test func timeoutCannotBecomeSuccessfulReconciliation() async throws {

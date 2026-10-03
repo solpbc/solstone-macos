@@ -83,7 +83,7 @@ struct NativeIntegrationLifecycleTests {
         let healthDeadline = ContinuousClock.now.advanced(by: .seconds(30))
         repeat {
             health = await JournalHealthCheck.run(
-                journalBinary: fixture.journalBinary,
+                journalBinary: fixture.runtime.layout.solstoneBinary,
                 runner: SubprocessRunner(currentDirectoryURL: fixture.journalRoot),
                 environment: fixture.environment
             )
@@ -118,7 +118,7 @@ struct NativeIntegrationLifecycleTests {
         #expect(await runner.currentIdentity() == nil)
 
         let healthAfterStop = await JournalHealthCheck.run(
-            journalBinary: fixture.journalBinary,
+            journalBinary: fixture.runtime.layout.solstoneBinary,
             runner: SubprocessRunner(currentDirectoryURL: fixture.journalRoot),
             environment: fixture.environment
         )

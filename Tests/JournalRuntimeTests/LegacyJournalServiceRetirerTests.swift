@@ -450,6 +450,111 @@ struct LegacyJournalServiceRetirerTests {
         #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
         #expect(runner.invocations.map(\.arguments.first) == ["print", "bootout"])
     }
+
+    @Test func canonicalLoadedSameRootServiceBootsOutPollsAbsentAndUnlinks() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        let journalRoot = fixture.root.appendingPathComponent("journal", isDirectory: true)
+        let logPath = journalRoot.appendingPathComponent("health/service.log").path
+        let solstonePath = fixture.root.appendingPathComponent("bin/solstone").path
+        let argv = [solstonePath, "journal", "start", "5015"]
+        try fixture.writeCustomPlist(programArguments: argv, standardOutPath: logPath, standardErrorPath: logPath)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stdout: Data(canonicalLoadedLaunchctlOutput(plistPath: fixture.plistURL.path, programArguments: argv).utf8)))
+        runner.enqueue("bootout", .success())
+        runner.enqueue("print", .success(stderr: Data(notFoundLaunchctlError.utf8), exitCode: 113))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: journalRoot)
+
+        #expect(result == .success(.provenMatchLoaded))
+        #expect(!FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(runner.invocations.map(\.arguments.first) == ["print", "bootout", "print"])
+    }
+
+    @Test func canonicalNotLoadedSameRootPlistIsUnlinked() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        let journalRoot = fixture.root.appendingPathComponent("journal", isDirectory: true)
+        let logPath = journalRoot.appendingPathComponent("health/service.log").path
+        let solstonePath = fixture.root.appendingPathComponent("bin/solstone").path
+        let argv = [solstonePath, "journal", "start", "5015"]
+        try fixture.writeCustomPlist(programArguments: argv, standardOutPath: logPath, standardErrorPath: logPath)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stderr: Data(notFoundLaunchctlError.utf8), exitCode: 113))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: journalRoot)
+
+        #expect(result == .success(.provenMatchUnloaded))
+        #expect(!FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(runner.invocations.map(\.arguments.first) == ["print"])
+    }
+
+    @Test func canonicalDifferentRootBlocksWithoutMutation() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        let journalRoot = fixture.root.appendingPathComponent("journal", isDirectory: true)
+        let otherJournalRoot = fixture.root.appendingPathComponent("other-journal", isDirectory: true)
+        let otherLogPath = otherJournalRoot.appendingPathComponent("health/service.log").path
+        let solstonePath = fixture.root.appendingPathComponent("bin/solstone").path
+        let argv = [solstonePath, "journal", "start", "5015"]
+        try fixture.writeCustomPlist(programArguments: argv, standardOutPath: otherLogPath, standardErrorPath: otherLogPath)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stderr: Data(notFoundLaunchctlError.utf8), exitCode: 113))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: journalRoot)
+
+        guard case .blocked(.differentRoot, _) = result else {
+            Issue.record("expected differentRoot, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(runner.invocations.map(\.arguments.first) == ["print"])
+    }
+
+    @Test func basenameOnlySolstoneBlocksWithoutMutation() async throws {
+        let fixture = try ServiceFixture()
+        defer { fixture.clear() }
+        let journalRoot = fixture.root.appendingPathComponent("journal", isDirectory: true)
+        let logPath = journalRoot.appendingPathComponent("health/service.log").path
+        let solstonePath = fixture.root.appendingPathComponent("bin/solstone").path
+        let argv = [solstonePath, "start", "5015"]
+        try fixture.writeCustomPlist(programArguments: argv, standardOutPath: logPath, standardErrorPath: logPath)
+        let runner = FakeSubprocessRunner()
+        runner.enqueue("print", .success(stderr: Data(notFoundLaunchctlError.utf8), exitCode: 113))
+        let retirer = LegacyJournalServiceRetirer(
+            runner: runner,
+            clock: NoopLegacyClock(),
+            plistURL: fixture.plistURL,
+            uid: 501
+        )
+
+        let result = await retirer.retireLegacyService(journalRoot: journalRoot)
+
+        guard case .blocked(.malformed, _) = result else {
+            Issue.record("expected malformed, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.plistURL.path))
+        #expect(runner.invocations.map(\.arguments.first) == ["print"])
+    }
 }
 
 private let notFoundLaunchctlError = """
@@ -468,6 +573,26 @@ gui/501/org.solpbc.solstone = {
         /Users/jer/.local/bin/journal
         start
         5015
+    }
+    pid = \(pid)
+}
+
+"""
+}
+
+private func canonicalLoadedLaunchctlOutput(
+    plistPath: String,
+    programArguments: [String],
+    pid: pid_t = 777
+) -> String {
+    let argsText = programArguments.map { "        \($0)" }.joined(separator: "\n")
+    return """
+gui/501/org.solpbc.solstone = {
+    path = \(plistPath)
+    state = running
+    program = \(programArguments[0])
+    arguments = {
+\(argsText)
     }
     pid = \(pid)
 }
@@ -502,6 +627,22 @@ private struct ServiceFixture {
             text = text.replacingOccurrences(of: needle, with: replacement)
         }
         try Data(text.utf8).write(to: plistURL)
+    }
+
+    func writeCustomPlist(
+        programArguments: [String],
+        standardOutPath: String,
+        standardErrorPath: String,
+        label: String = "org.solpbc.solstone"
+    ) throws {
+        let dict: [String: Any] = [
+            "Label": label,
+            "ProgramArguments": programArguments,
+            "StandardOutPath": standardOutPath,
+            "StandardErrorPath": standardErrorPath,
+        ]
+        let data = try PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0)
+        try data.write(to: plistURL)
     }
 
     func clear() {

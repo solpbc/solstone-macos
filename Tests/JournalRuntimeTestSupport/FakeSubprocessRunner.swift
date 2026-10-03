@@ -130,15 +130,22 @@ public final class FakeSubprocessRunner: SubprocessRunning, @unchecked Sendable 
             return ["lsof"]
         }
         guard let first = arguments.first else { return [""] }
-        if first == "tool" { return ["tool"] }
-        if first == "setup" { return ["setup"] }
-        if first == "service" { return ["service"] }
-        if first == "config" { return ["config"] }
-        if first == "up" { return ["up"] }
-        if first == "install-models" { return ["install-models"] }
-        if first == "health" { return ["health"] }
-        if first == "--version" { return ["--version"] }
-        return [first]
+        let opToken: String
+        if first == "journal" {
+            guard arguments.count > 1 else { return ["journal"] }
+            opToken = arguments[1]
+        } else {
+            opToken = first
+        }
+        if opToken == "tool" { return ["tool"] }
+        if opToken == "setup" { return ["setup"] }
+        if opToken == "service" { return ["service"] }
+        if opToken == "config" { return ["config"] }
+        if opToken == "up" { return ["up"] }
+        if opToken == "install-models" { return ["install-models"] }
+        if opToken == "health" { return ["health"] }
+        if opToken == "--version" { return ["--version"] }
+        return [opToken]
     }
 
     private func lsofPort(from arguments: [String]) -> Int? {

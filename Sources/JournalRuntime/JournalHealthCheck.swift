@@ -130,7 +130,7 @@ public enum JournalHealthCheck {
             let result = try await withTimeout(seconds: 5.0) {
                 try await runner.run(
                     executable: journalBinary,
-                    arguments: ["health"],
+                    arguments: ["journal", "health"],
                     environment: environment,
                     stdoutHandler: { data in output.append(data) },
                     stderrHandler: { data in output.append(data) }
@@ -171,7 +171,7 @@ public enum JournalHealthCheck {
         do {
             let result = try await runner.run(
                 executable: journalBinary,
-                arguments: ["--version"],
+                arguments: ["journal", "--version"],
                 environment: environment,
                 timeout: timeout,
                 stdoutHandler: { data in output.append(data) },
@@ -199,7 +199,7 @@ public enum JournalHealthCheck {
             result = try await withTimeout(seconds: 10.0) {
                 try await runner.run(
                     executable: journalBinary,
-                    arguments: ["doctor", "--json"],
+                    arguments: ["journal", "doctor", "--json"],
                     environment: nil,
                     stdoutHandler: { data in output.append(data, stream: .stdout) },
                     stderrHandler: { data in output.append(data, stream: .stderr) }

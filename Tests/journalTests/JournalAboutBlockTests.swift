@@ -39,7 +39,7 @@ struct JournalAboutBlockTests {
         #expect(model.journalVersion == "9.8.7")
         #expect(model.aboutBlock == "journal 9.8.7 (67) · macos 15.6 · arm64")
         #expect(runner.invocations.last?.executable == commandURL)
-        #expect(runner.invocations.last?.arguments == ["--version"])
+        #expect(runner.invocations.last?.arguments == ["journal", "--version"])
 
         #expect(await supervisor.stop())
         await model.refreshRunState()
@@ -47,7 +47,7 @@ struct JournalAboutBlockTests {
         #expect(model.journalVersion == "9.8.8")
         #expect(model.aboutBlock == "journal 9.8.8 (67) · macos 15.6 · arm64")
         #expect(runner.invocations.count == 2)
-        #expect(runner.invocations.allSatisfy { $0.executable == commandURL && $0.arguments == ["--version"] })
+        #expect(runner.invocations.allSatisfy { $0.executable == commandURL && $0.arguments == ["journal", "--version"] })
         #expect(materializer.materializeCalls == 0)
         #expect(child.startCalls == 0)
     }

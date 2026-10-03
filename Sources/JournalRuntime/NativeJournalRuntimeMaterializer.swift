@@ -52,9 +52,8 @@ public final class NativeJournalRuntimeMaterializer: RuntimeMaterializing, @unch
         guard fileManager.isExecutableFile(atPath: layout.journalBinary.path) else {
             throw NativeJournalRuntimeMaterializerError.missingJournalExecutable(layout.journalBinary.path)
         }
-        let solstoneBinary = layout.binDir.appendingPathComponent("solstone")
-        guard fileManager.isExecutableFile(atPath: solstoneBinary.path) else {
-            throw NativeJournalRuntimeMaterializerError.missingSolstoneExecutable(solstoneBinary.path)
+        guard fileManager.isExecutableFile(atPath: layout.solstoneBinary.path) else {
+            throw NativeJournalRuntimeMaterializerError.missingSolstoneExecutable(layout.solstoneBinary.path)
         }
 
         guard let version = bundleReleaseComponent("CFBundleShortVersionString"),

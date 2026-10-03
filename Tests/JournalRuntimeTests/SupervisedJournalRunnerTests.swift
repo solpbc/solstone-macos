@@ -39,7 +39,7 @@ struct SupervisedJournalRunnerTests {
     @Test func terminationCancelsAndReapsBlockedModelInstallerBeforeReturning() async throws {
         let fixture = try RunnerFixture()
         defer { fixture.clear() }
-        let helper = fixture.runtime.layout.journalBinary
+        let helper = fixture.runtime.layout.solstoneBinary
         try Data("#!/bin/sh\nprintf '%s\\n' \"$$\" > preparation.pid\nexec /bin/sleep 120\n".utf8).write(to: helper)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
         let spawner = RecordingProcessSpawner(pid: 4242)
@@ -161,9 +161,9 @@ struct SupervisedJournalRunnerTests {
 
         let requests = spawner.spawnRequests()
         #expect(requests.count == 1)
-        #expect(requests.first?.executableURL == fixture.runtime.layout.journalBinary)
+        #expect(requests.first?.executableURL == fixture.runtime.layout.solstoneBinary)
         #expect(requests.first?.currentDirectoryURL.path == canonicalPath(fixture.realJournalRoot))
-        #expect(requests.first?.arguments == ["start", "--hosted-parent", "5015"])
+        #expect(requests.first?.arguments == ["journal", "start", "--hosted-parent", "5015"])
         #expect(requests.first?.environment["SOLSTONE_JOURNAL"] == nil)
         #expect(gate.roots() == [canonicalPath(fixture.realJournalRoot)])
         #expect(await runner.currentIdentity()?.pid == 4242)

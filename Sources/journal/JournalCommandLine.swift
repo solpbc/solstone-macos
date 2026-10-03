@@ -4,10 +4,10 @@
 import Darwin
 import Foundation
 
-/// `Contents/MacOS/journal` is the app. The journal's command line is the bundled
-/// `Contents/Resources/solstone-runtime/bin/journal`. Run with command-line arguments,
-/// this executable hands them to that command before any AppKit or SwiftUI startup,
-/// so `journal --version` answers and exits instead of starting the app's run loop.
+/// `Contents/MacOS/journal` is the app. The forwarded command is the bundled
+/// `Contents/Resources/solstone-runtime/bin/solstone` with `journal` prepended to the tail.
+/// Run with command-line arguments, this executable hands them to that command before any
+/// AppKit or SwiftUI startup, so `journal --version` answers and exits instead of starting the app's run loop.
 enum JournalCommandLine {
     enum Route: Equatable {
         case app
@@ -30,7 +30,11 @@ enum JournalCommandLine {
             .resolvingSymlinksInPath()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Resources/solstone-runtime/bin/journal")
+            .appendingPathComponent("Resources/solstone-runtime/bin/solstone")
+    }
+
+    static func execArgv(executableURL: URL, arguments: [String]) -> [String] {
+        [commandLineURL(executableURL: executableURL).path, "journal"] + Array(arguments.dropFirst())
     }
 
     static func currentExecutableURL() -> URL? {
@@ -46,8 +50,8 @@ enum JournalCommandLine {
         guard let executableURL = currentExecutableURL() else {
             fail("journal: could not locate the journal app's own executable.\n")
         }
-        let path = commandLineURL(executableURL: executableURL).path
-        let argv = [path] + arguments.dropFirst()
+        let argv = execArgv(executableURL: executableURL, arguments: arguments)
+        let path = argv[0]
         var cArgv: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) }
         cArgv.append(nil)
         execv(path, cArgv)

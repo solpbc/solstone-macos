@@ -21,6 +21,7 @@ struct JournalRestartRunnerTests {
         subprocess.enqueue("print", .success(stderr: Data(restartNotFoundLaunchctlError.utf8), exitCode: 113))
         subprocess.enqueue("print", .success(stderr: Data(restartNotFoundLaunchctlError.utf8), exitCode: 113))
         subprocess.enqueue("service", .success())
+        let solstoneBinary = root.appendingPathComponent("bin/solstone")
         let runner = JournalRestartRunner(
             runner: subprocess,
             journalPathProvider: { _ in root.path },
@@ -34,7 +35,7 @@ struct JournalRestartRunnerTests {
             logSink: { event in
                 events.append(event)
             },
-            journalBinary: root.appendingPathComponent("journal")
+            journalBinary: solstoneBinary
         )
 
         let outcome = await runner.run()
@@ -49,6 +50,9 @@ struct JournalRestartRunnerTests {
         let sweepIndex = try #require(steps.firstIndex(of: .orphanSweep))
         let moveAsideIndex = try #require(steps.firstIndex(of: .staleStateMoveAside))
         #expect(sweepIndex < moveAsideIndex)
+        let serviceInvocation = try #require(subprocess.invocations.first { $0.arguments == ["journal", "service", "restart"] })
+        #expect(serviceInvocation.executable == solstoneBinary)
+        #expect(serviceInvocation.environment == nil)
     }
 
     @Test func orphanSweepEscalatesWhenClaimedPIDSurvivesTerm() async throws {
@@ -62,6 +66,7 @@ struct JournalRestartRunnerTests {
         subprocess.enqueue("print", .success(stderr: Data(restartNotFoundLaunchctlError.utf8), exitCode: 113))
         subprocess.enqueue("print", .success(stderr: Data(restartNotFoundLaunchctlError.utf8), exitCode: 113))
         subprocess.enqueue("service", .success())
+        let solstoneBinary = root.appendingPathComponent("bin/solstone")
         let runner = JournalRestartRunner(
             runner: subprocess,
             journalPathProvider: { _ in root.path },
@@ -74,13 +79,42 @@ struct JournalRestartRunnerTests {
             },
             evidenceReader: RestartEvidenceReader(evidence: evidence(pid: 101, startTime: 1_000.0)),
             reprobe: { .reachable },
-            journalBinary: root.appendingPathComponent("journal")
+            journalBinary: solstoneBinary
         )
 
         let outcome = await runner.run()
 
         #expect(outcome == .success)
         #expect(terminateRecorder.snapshot().map(\.signal) == [SIGTERM, SIGKILL])
+        let serviceInvocation = try #require(subprocess.invocations.first { $0.arguments == ["journal", "service", "restart"] })
+        #expect(serviceInvocation.executable == solstoneBinary)
+        #expect(serviceInvocation.environment == nil)
+    }
+
+    @Test func defaultPathProviderRunsJournalConfigShowAndFailsWithoutJournalPath() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let solstoneBinary = root.appendingPathComponent("bin/solstone")
+        let subprocess = FakeSubprocessRunner()
+        subprocess.enqueue("config", .success(exitCode: 1))
+        let runner = JournalRestartRunner(
+            runner: subprocess,
+            reprobe: { .reachable },
+            journalBinary: solstoneBinary
+        )
+
+        let outcome = await runner.run()
+
+        guard case .failure(let failure) = outcome else {
+            Issue.record("expected failure, got \(outcome)")
+            return
+        }
+        #expect(failure.step == .resolveJournal)
+        #expect(failure.diagnostic.commandLabel == "journal config show")
+        #expect(subprocess.invocations.count == 1)
+        #expect(subprocess.invocations.first?.executable == solstoneBinary)
+        #expect(subprocess.invocations.first?.arguments == ["journal", "config", "show"])
+        #expect(subprocess.invocations.first?.environment == nil)
     }
 }
 
