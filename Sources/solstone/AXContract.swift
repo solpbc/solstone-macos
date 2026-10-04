@@ -51,11 +51,11 @@ enum AXContract {
         AXID.Settings.Sources.browserStoreChrome,
         AXID.Settings.Sources.browserStoreEdge,
         AXID.Settings.Sources.browserStoreFirefox,
-        AXID.Settings.Sources.browserRetiredState,
-        AXID.Settings.Sources.browserRetiredDiscard,
-        AXID.Settings.Sources.browserRetiredConfirm,
-        AXID.Settings.Sources.browserRetiredCancel,
-        AXID.Settings.Sources.browserRetiredFailure,
+        AXID.Settings.Sources.browserWaitingState,
+        AXID.Settings.Sources.browserWaitingDiscard,
+        AXID.Settings.Sources.browserWaitingConfirm,
+        AXID.Settings.Sources.browserWaitingCancel,
+        AXID.Settings.Sources.browserWaitingFailure,
         AXID.Settings.Permissions.screenRecordingState,
         AXID.Settings.Permissions.screenRecordingEnable,
         AXID.Settings.Permissions.screenRecordingRestartNow,
@@ -421,7 +421,7 @@ enum AXContract {
             result[id] = .enum("BrowserProfileAXState")
         }
         result[AXID.Settings.Sources.browserRepair] = .enum("BrowserRepairAXState")
-        result[AXID.Settings.Sources.browserRetiredState] = .enum("BrowserRetiredAXState")
+        result[AXID.Settings.Sources.browserWaitingState] = .enum("BrowserRetiredAXState")
         for id in [AXID.Settings.Sources.browserStoreChrome, AXID.Settings.Sources.browserStoreEdge, AXID.Settings.Sources.browserStoreFirefox] {
             result[id] = .enum("BrowserStoreLaunchAXState")
         }
@@ -440,7 +440,7 @@ enum AXContract {
         keys.formUnion([
             AXID.Settings.Sources.browserChrome, AXID.Settings.Sources.browserEdge,
             AXID.Settings.Sources.browserFirefox, AXID.Settings.Sources.browserRepair,
-            AXID.Settings.Sources.browserRetiredState,
+            AXID.Settings.Sources.browserWaitingState,
             AXID.Settings.Sources.browserStoreChrome, AXID.Settings.Sources.browserStoreEdge,
             AXID.Settings.Sources.browserStoreFirefox
         ])

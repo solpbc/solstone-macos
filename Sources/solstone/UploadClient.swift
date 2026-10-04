@@ -327,7 +327,7 @@ public struct UploadClient: Sendable {
             // Let Foundation stream the finalized staging file. A custom
             // InputStream subclass does not implement CFNetwork's native stream
             // callbacks. The request/session remain pinned to this lease's route;
-            // revocation cancels its task and can never acknowledge custody.
+            // route changes block new leases, while an explicit owner stop cancels this task.
             let task = leasedSession.uploadTask(with: request, fromFile: prepared.bodyURL)
             lease.onInvalidate { task.cancel() }
             if !lease.isValid() { task.cancel() }

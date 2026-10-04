@@ -322,9 +322,6 @@ struct JournalMarkConfirmationGateTests {
             deviceLabel: { "test mac" },
             clearJournalMarkConfirmation: { events.record("clear") }
         )
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        coordinator.pendingBrowserMaterial = { false }
-#endif
         return coordinator
     }
 }

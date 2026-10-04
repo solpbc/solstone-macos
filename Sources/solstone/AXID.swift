@@ -63,11 +63,11 @@ enum AXID {
             static let browserStoreChrome = "settings.sources.browsers.store.chrome"
             static let browserStoreEdge = "settings.sources.browsers.store.edge"
             static let browserStoreFirefox = "settings.sources.browsers.store.firefox"
-            static let browserRetiredState = "settings.sources.browsers.retired"
-            static let browserRetiredDiscard = "settings.sources.browsers.retired.discard"
-            static let browserRetiredConfirm = "settings.sources.browsers.retired.confirm"
-            static let browserRetiredCancel = "settings.sources.browsers.retired.cancel"
-            static let browserRetiredFailure = "settings.sources.browsers.retired.failure"
+            static let browserWaitingState = "settings.sources.browsers.waiting"
+            static let browserWaitingDiscard = "settings.sources.browsers.waiting.discard"
+            static let browserWaitingConfirm = "settings.sources.browsers.waiting.confirm"
+            static let browserWaitingCancel = "settings.sources.browsers.waiting.cancel"
+            static let browserWaitingFailure = "settings.sources.browsers.waiting.failure"
         }
 
         enum Permissions {

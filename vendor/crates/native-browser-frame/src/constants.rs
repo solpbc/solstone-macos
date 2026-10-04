@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-pub const BUNDLE_VERSION: &str = "1.1.0";
+pub const BUNDLE_VERSION: &str = "1.2.0";
 pub const WIRE_PROTOCOL: u32 = 1;
 
 pub const EXTENSION_TO_HOST_MAX: usize = 33554432;
@@ -14,7 +14,6 @@ pub const JSON_MAX_DEPTH: usize = 127;
 
 pub const FILE_MAX: usize = 50331648;
 pub const OUTBOX_BYTES_MAX: usize = 67108864;
-pub const OUTBOX_AGE_MS_MAX: u64 = 600000;
 pub const SPOOL_BYTES_MAX: usize = 536870912;
 pub const SPOOL_AGE_MS_MAX: u64 = 604800000;
 pub const FUTURE_SKEW_MS_MAX: u64 = 60000;
@@ -55,7 +54,8 @@ pub const BEHIND_ENUM: &[&str] = &["app", "extension"];
 
 pub const RESULT_ENUM: &[&str] = &["accepted", "duplicate", "rejected"];
 pub const RETRYABLE_REASONS: &[&str] = &["snapshot_required", "resource_exhausted", "queue_full", "age_policy"];
-pub const PERMANENT_REASONS: &[&str] = &["malformed", "oversize", "stale_generation", "expired_unaccepted", "unaccepted_lost"];
+pub const PERMANENT_REASONS: &[&str] = &["malformed", "oversize", "unaccepted_lost"];
+pub const LEGACY_PERMANENT_REASONS: &[&str] = &["stale_generation", "expired_unaccepted"];
 pub const REGISTRATION_JSON: &str = r#"{"description":"Solstone browser host","type":"stdio","path_placeholder":"__PATH__","suffixes":{"chrome_linux":".config/google-chrome/NativeMessagingHosts/<host>.json","edge_linux":".config/microsoft-edge/NativeMessagingHosts/<host>.json","firefox_linux":".mozilla/native-messaging-hosts/<host>.json","chrome_macos":"Library/Application Support/Google/Chrome/NativeMessagingHosts/<host>.json","edge_macos":"Library/Application Support/Microsoft Edge/NativeMessagingHosts/<host>.json","firefox_macos":"Library/Application Support/Mozilla/NativeMessagingHosts/<host>.json","chrome_windows":"Software\\Google\\Chrome\\NativeMessagingHosts\\<host>","edge_windows":"Software\\Microsoft\\Edge\\NativeMessagingHosts\\<host>","firefox_windows":"Software\\Mozilla\\NativeMessagingHosts\\<host>"},"argv":{"chrome_macos":{"arguments_after_executable":["origin"],"identity_argument":0,"identity_source":"allowed_origins"},"chrome_linux":{"arguments_after_executable":["origin"],"identity_argument":0,"identity_source":"allowed_origins"},"chrome_windows":{"arguments_after_executable":["origin","parent_window"],"identity_argument":0,"identity_source":"allowed_origins"},"edge_macos":{"arguments_after_executable":["origin"],"identity_argument":0,"identity_source":"allowed_origins"},"edge_linux":{"arguments_after_executable":["origin"],"identity_argument":0,"identity_source":"allowed_origins"},"edge_windows":{"arguments_after_executable":["origin","parent_window"],"identity_argument":0,"identity_source":"allowed_origins"},"firefox_macos":{"arguments_after_executable":["manifest_path","extension_id"],"identity_argument":1,"identity_source":"allowed_extensions"},"firefox_linux":{"arguments_after_executable":["manifest_path","extension_id"],"identity_argument":1,"identity_source":"allowed_extensions"},"firefox_windows":{"arguments_after_executable":["manifest_path","extension_id"],"identity_argument":1,"identity_source":"allowed_extensions"}},"windows":{"hive":"HKEY_CURRENT_USER","value_name":"","value_type":"REG_SZ","value":"absolute_manifest_path","registry_views":["32","64"],"path_contains_view":false}}"#;
 pub const CANONICAL_KEY_ORDER_JSON: &str = r#"{"hello":["type","protocol","version","brand","inst"],"hello_ack":["type","capture","delivery","freshness_ms","destination_generation","period_id","failure","custody","version"],"unsupported":["type","protocol","behind"],"state":["type","capture","delivery","freshness_ms","destination_generation","period_id","failure","custody","version"],"batch":["type","destination_generation","inst","batch_id","queued_at_ms","records"],"boundary":["type","destination_generation","period_id"],"accepted":["type","result","destination_generation","inst","batch_id","period_id","reason","class"],"bye":["type","reason"],"snapshot_record":["t","ts","rel","site","url","title","adapter","ctx","inst","n","blocks","snapshot_reason"],"delta_record":["t","ts","rel","site","ctx","inst","op","block"],"block":["id","text","type","depth","attrs"],"block_attrs":["label","level","linkHost"]}"#;
 

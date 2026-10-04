@@ -14,10 +14,21 @@ struct BrowserIntakeRouteCapability: Sendable {
     let credentialIsCurrent: @Sendable () -> Bool
 
     func namesSameConnection(as other: Self) -> Bool {
-        BrowserOpaqueString.equals(serverURL, other.serverURL)
-            && BrowserOpaqueString.equals(identityDigest, other.identityDigest)
-            && pairingGeneration == other.pairingGeneration
-            && transportIncarnation == other.transportIncarnation
+        namesSameConnection(
+            serverURL: other.serverURL,
+            identityDigest: other.identityDigest,
+            pairingGeneration: other.pairingGeneration,
+            transportIncarnation: other.transportIncarnation
+        )
+    }
+
+    func namesSameConnection(serverURL otherURL: String, identityDigest otherDigest: String,
+                             pairingGeneration otherPairingGeneration: UInt64,
+                             transportIncarnation otherTransportIncarnation: UInt64) -> Bool {
+        BrowserOpaqueString.equals(serverURL, otherURL)
+            && BrowserOpaqueString.equals(identityDigest, otherDigest)
+            && pairingGeneration == otherPairingGeneration
+            && transportIncarnation == otherTransportIncarnation
     }
 }
 
@@ -53,8 +64,8 @@ final class BrowserIntakeRouteState: @unchecked Sendable {
             self.route = route
             return (true, onChange, previous, route)
         }
-        // Invalidate transport tasks outside the route lock. A reader already
-        // sees the revoked capability even before cancellation is delivered.
+        // Notify after releasing the route lock. Leased operations retain their
+        // captured route; readers use the new snapshot for their next lease.
         result.1?(result.2, result.3)
         return result.0
     }
@@ -75,38 +86,34 @@ final class BrowserIntakeRouteState: @unchecked Sendable {
     }
 
     func matches(_ captured: BrowserIntakeRouteCapability) -> Bool {
-        guard lock.withLock({ route?.id == captured.id }), captured.credentialIsCurrent() else { return false }
-        return lock.withLock { route?.id == captured.id }
+        guard captured.credentialIsCurrent(), let current = lock.withLock({ route }) else { return false }
+        return captured.namesSameConnection(as: current)
     }
 }
 
 public struct BrowserUploadPermit: Sendable, Equatable {
-    public let generation: String
     public let identityToken: String
 
-    public init(generation: String, identityToken: String) {
-        self.generation = generation
+    public init(identityToken: String) {
         self.identityToken = identityToken
     }
 }
 
 public final class BrowserUploadLease: @unchecked Sendable {
     private weak var gate: BrowserUploadGate?
-    private let routeCheck: @Sendable () -> Bool
     fileprivate let id: UUID
     fileprivate let permit: BrowserUploadPermit
     let periodId: String
 
-    fileprivate init(gate: BrowserUploadGate, id: UUID, permit: BrowserUploadPermit, periodId: String, routeCheck: @escaping @Sendable () -> Bool) {
+    fileprivate init(gate: BrowserUploadGate, id: UUID, permit: BrowserUploadPermit, periodId: String) {
         self.gate = gate
         self.id = id
         self.permit = permit
         self.periodId = periodId
-        self.routeCheck = routeCheck
     }
 
     public func isValid() -> Bool {
-        (gate?.isLeaseActive(id: id, permit: permit) ?? false) && routeCheck()
+        gate?.isLeaseActive(id: id, permit: permit) ?? false
     }
 
     public func onInvalidate(_ cancel: @escaping @Sendable () -> Void) {
@@ -134,20 +141,19 @@ public final class BrowserUploadGate: @unchecked Sendable {
 
     private func permitMatchesStore(_ permit: BrowserUploadPermit) -> Bool {
         guard let current = store.currentDeliveryPermit() else { return false }
-        return BrowserOpaqueString.equals(current.generation, permit.generation)
-            && BrowserOpaqueString.equals(current.identityToken, permit.identityToken)
+        return BrowserOpaqueString.equals(current.identityToken, permit.identityToken)
     }
 
     public func makeLease(permit: BrowserUploadPermit, periodId: String, routeCheck: @escaping @Sendable () -> Bool = { true }) -> BrowserUploadLease? {
         lock.withLock {
             guard !isCancelled,
-                  permitMatchesStore(permit) else {
+                  permitMatchesStore(permit), routeCheck() else {
                 return nil
             }
             let id = UUID()
             activeLeaseID = id
             cancellationHandler = nil
-            return BrowserUploadLease(gate: self, id: id, permit: permit, periodId: periodId, routeCheck: routeCheck)
+            return BrowserUploadLease(gate: self, id: id, permit: permit, periodId: periodId)
         }
     }
 
@@ -159,13 +165,13 @@ public final class BrowserUploadGate: @unchecked Sendable {
 
     fileprivate func isLeaseActive(id: UUID, permit: BrowserUploadPermit) -> Bool {
         lock.withLock {
-            !isCancelled && activeLeaseID == id && permitMatchesStore(permit)
+            activeLeaseID == id
         }
     }
 
     fileprivate func setCancellationHandler(_ handler: @escaping @Sendable () -> Void, for id: UUID) {
         let shouldCancel = lock.withLock { () -> Bool in
-            guard !isCancelled, activeLeaseID == id else { return true }
+            guard activeLeaseID == id else { return true }
             cancellationHandler = handler
             return false
         }
@@ -173,6 +179,12 @@ public final class BrowserUploadGate: @unchecked Sendable {
     }
 
     public func invalidateCurrentLease() {
+        lock.withLock {
+            isCancelled = true
+        }
+    }
+
+    func cancelCurrentLease() {
         let cancel = lock.withLock { () -> (@Sendable () -> Void)? in
             isCancelled = true
             activeLeaseID = nil

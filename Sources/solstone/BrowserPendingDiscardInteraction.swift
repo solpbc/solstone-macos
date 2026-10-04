@@ -3,21 +3,21 @@
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
 
-enum BrowserRetiredMaterial<Scope: Equatable & Sendable>: Equatable, Sendable {
+enum BrowserPendingMaterial<Scope: Equatable & Sendable>: Equatable, Sendable {
     case unknown
     case empty
     case present(Scope)
 }
 
 /// Holds the scope the owner actually confirmed, independently of intake status.
-struct BrowserRetiredCustodyInteraction<Scope: Equatable & Sendable>: Sendable {
+struct BrowserPendingDiscardInteraction<Scope: Equatable & Sendable>: Sendable {
     struct DiscardRequest: Equatable, Sendable {
         let scope: Scope
         fileprivate let serial: UInt64
         fileprivate let window: UInt64
     }
 
-    private(set) var inventory: BrowserRetiredMaterial<Scope> = .unknown
+    private(set) var inventory: BrowserPendingMaterial<Scope> = .unknown
     private(set) var confirmation: Scope?
     private(set) var showsDiscarded = false
     private(set) var showsFailure = false
@@ -29,7 +29,7 @@ struct BrowserRetiredCustodyInteraction<Scope: Equatable & Sendable>: Sendable {
 
     var isDiscarding: Bool { operation != nil }
     var viewRevision: UInt64 { window }
-    var showsNotice: Bool { lastKnownScope != nil && !showsDiscarded }
+    var showsNotice: Bool { lastKnownScope != nil }
     var canRequestDiscard: Bool {
         guard settingsOpen, !isDiscarding, case .present = inventory else { return false }
         return true
@@ -49,7 +49,7 @@ struct BrowserRetiredCustodyInteraction<Scope: Equatable & Sendable>: Sendable {
         clearResultAndConfirmation()
     }
 
-    mutating func observe(_ measured: BrowserRetiredMaterial<Scope>) {
+    mutating func observe(_ measured: BrowserPendingMaterial<Scope>) {
         inventory = measured
         switch measured {
         case .unknown:
@@ -77,11 +77,6 @@ struct BrowserRetiredCustodyInteraction<Scope: Equatable & Sendable>: Sendable {
 
     mutating func beginDiscard() -> DiscardRequest? {
         guard settingsOpen, !isDiscarding, let confirmed = confirmation else { return nil }
-        guard case .present(let current) = inventory, current == confirmed else {
-            confirmation = nil
-            showsFailure = true
-            return nil
-        }
         serial &+= 1
         let request = DiscardRequest(scope: confirmed, serial: serial, window: window)
         operation = request
@@ -92,14 +87,14 @@ struct BrowserRetiredCustodyInteraction<Scope: Equatable & Sendable>: Sendable {
     mutating func finishDiscard(
         _ request: DiscardRequest,
         durablyCompleted: Bool,
-        inventory measured: BrowserRetiredMaterial<Scope>
+        inventory measured: BrowserPendingMaterial<Scope>
     ) {
         guard operation == request else { return }
         operation = nil
         confirmation = nil
         guard settingsOpen, request.window == window else { return }
         observe(measured)
-        showsDiscarded = durablyCompleted && measured == .empty
+        showsDiscarded = durablyCompleted
         showsFailure = !showsDiscarded
     }
 

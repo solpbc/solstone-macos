@@ -679,9 +679,6 @@ struct PairingCoordinatorTests {
             endSelfRetirement: endSelfRetirement,
             classifiedLog: classifiedLog
         )
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        coordinator.pendingBrowserMaterial = { false }
-#endif
         return coordinator
     }
 }

@@ -197,10 +197,6 @@ struct SettingsView: View {
     @State private var pairingLink = ""
     @State private var inFlightTestID: UUID?
     @State private var disconnectConfirmPending = false
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-    @State private var browserDisconnectWarning = BrowserRetirementWarning()
-    @State private var browserSwitchWarning = BrowserRetirementWarning()
-#endif
     @State private var journalMarkDriver = JournalMarkConfirmationDriver()
     @State private var journalHandoffOrchestrator: JournalHandoffOrchestrator
     @State private var freshFlow: FreshJournalFlow
@@ -407,10 +403,9 @@ struct SettingsView: View {
         .onAppear {
             appState.syncMicrophonePriorityList()
             applyPendingSettingsTab()
-            refreshBrowserRetirementWarnings()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-            appState.browserRetiredCustody.openSettings()
-            appState.refreshBrowserRetiredCustody()
+            appState.browserPendingDiscard.openSettings()
+            appState.refreshBrowserPendingDiscard()
 #endif
             journalMarkRederiveEligible = appState.confirmedMark == nil && appState.tunnelLifecycleOwner.isTunnelManaged
             startJournalMarkRederiveIfNeeded()
@@ -418,20 +413,13 @@ struct SettingsView: View {
         }
         .onChange(of: appState.pairingCoordinator.state) { _, newValue in
             handlePairingStateChange(newValue)
-            refreshBrowserRetirementWarnings()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-            appState.refreshBrowserRetiredCustody()
+            appState.refreshBrowserPendingDiscard()
 #endif
-        }
-        .onChange(of: disconnectConfirmPending) { _, _ in
-            refreshBrowserRetirementWarnings()
-        }
-        .onChange(of: currentBrowserMaterialPending) { _, _ in
-            refreshBrowserRetirementWarnings()
         }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         .onChange(of: appState.browserHostSnapshot.value) { _, _ in
-            appState.refreshBrowserRetiredCustody()
+            appState.refreshBrowserPendingDiscard()
         }
 #endif
         .onChange(of: appState.pairingCoordinator.tunnelState) { _, _ in
@@ -492,7 +480,7 @@ struct SettingsView: View {
         }
         .onDisappear {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-            appState.browserRetiredCustody.closeSettings()
+            appState.browserPendingDiscard.closeSettings()
 #endif
             journalMarkDriver.cancel()
             journalMarkRederiveTask?.cancel()
@@ -944,7 +932,7 @@ struct SettingsView: View {
             if rows.contains(where: { $0.needsAppUpdate }) { Text(UICopy.SOURCES_BROWSER_NEWER_EXTENSION) }
             if verdict.fullSecondary { Text(UICopy.SOURCES_BROWSER_FULL) }
             if verdict.stale { Text(UICopy.SOURCES_BROWSER_STALE) }
-            browserRetiredCustodyLine
+            browserPendingDiscardLine
             if verdict.showsDeliveryLine { Text(UICopy.SOURCES_BROWSER_DELIVERY_FAILED) }
             if snapshot.registration.values.contains(where: { $0.state == .refused }) {
                 Text(UICopy.SOURCES_BROWSER_REGISTRATION_BROKEN)
@@ -954,48 +942,47 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var browserRetiredCustodyLine: some View {
-        let custody = appState.browserRetiredCustody
-        if custody.showsDiscarded {
-            Text(UICopy.SOURCES_BROWSER_DISCARDED)
-                .accessibilityIdentifier(AXID.Settings.Sources.browserRetiredState)
-                .accessibilityValue(BrowserRetiredAXState.discarded.axToken)
-        } else if custody.showsNotice {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.SOURCES_BROWSER_RETIRED)
-                    .accessibilityIdentifier(AXID.Settings.Sources.browserRetiredState)
-                    .accessibilityValue(browserRetiredAXState.axToken)
+    private var browserPendingDiscardLine: some View {
+        let custody = appState.browserPendingDiscard
+        VStack(alignment: .leading, spacing: 6) {
+            if custody.showsDiscarded {
+                Text(UICopy.SOURCES_BROWSER_DISCARDED)
+            }
+            if custody.showsNotice {
                 if custody.confirmation != nil {
                     Text(UICopy.SOURCES_BROWSER_DISCARD_CONFIRM)
                     HStack {
-                        Button(UICopy.SOURCES_BROWSER_DISCARD) {
-                            appState.confirmBrowserRetiredDiscard()
+                        Button(UICopy.SOURCES_BROWSER_DISCARD_COMMIT) {
+                            appState.confirmBrowserPendingDiscard()
                         }
                         .disabled(custody.isDiscarding || !custody.canRequestDiscard)
-                        .accessibilityIdentifier(AXID.Settings.Sources.browserRetiredConfirm)
-                        Button("cancel") { appState.browserRetiredCustody.cancelDiscard() }
+                        .accessibilityIdentifier(AXID.Settings.Sources.browserWaitingConfirm)
+                        Button("cancel") { appState.browserPendingDiscard.cancelDiscard() }
                             .disabled(custody.isDiscarding)
-                            .accessibilityIdentifier(AXID.Settings.Sources.browserRetiredCancel)
+                            .accessibilityIdentifier(AXID.Settings.Sources.browserWaitingCancel)
                     }
                 } else {
                     Button(UICopy.SOURCES_BROWSER_DISCARD) {
-                        appState.refreshBrowserRetiredCustody()
-                        appState.browserRetiredCustody.requestDiscard()
+                        appState.refreshBrowserPendingDiscard()
+                        appState.browserPendingDiscard.requestDiscard()
                     }
                     .disabled(!custody.canRequestDiscard)
-                    .accessibilityIdentifier(AXID.Settings.Sources.browserRetiredDiscard)
+                    .accessibilityIdentifier(AXID.Settings.Sources.browserWaitingDiscard)
                 }
             }
+            if custody.showsFailure {
+                Text(UICopy.SOURCES_BROWSER_DISCARD_FAILED)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier(AXID.Settings.Sources.browserWaitingFailure)
+            }
         }
-        if custody.showsFailure {
-            Text(UICopy.SOURCES_BROWSER_DISCARD_FAILED)
-                .foregroundStyle(.red)
-                .accessibilityIdentifier(AXID.Settings.Sources.browserRetiredFailure)
-        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(AXID.Settings.Sources.browserWaitingState)
+        .accessibilityValue(browserPendingAXState.axToken)
     }
 
-    private var browserRetiredAXState: BrowserRetiredAXState {
-        let custody = appState.browserRetiredCustody
+    private var browserPendingAXState: BrowserRetiredAXState {
+        let custody = appState.browserPendingDiscard
         if custody.isDiscarding { return .discarding }
         if custody.showsDiscarded { return .discarded }
         if custody.showsFailure { return .failed }
@@ -2038,7 +2025,6 @@ struct SettingsView: View {
                 }
 
                 if case .switchConfirmPending = appState.pairingCoordinator.state {
-                    let warningWasPresented = pairingSwitchWarningWasPresented
                     VStack(alignment: .leading, spacing: 8) {
                         Text(pairingSwitchConfirmText)
                             .font(.caption)
@@ -2046,11 +2032,10 @@ struct SettingsView: View {
                         HStack {
                             Button("switch") {
                                 Task {
-                                    await appState.pairingCoordinator.confirmSwitch(warningWasPresented: warningWasPresented)
+                                    await appState.pairingCoordinator.confirmSwitch()
                                 }
                             }
                             .accessibilityIdentifier(AXID.Settings.Service.pairingSwitchConfirm)
-                            .disabled(pairingRetirementFactsUnavailable)
 
                             Button("cancel") {
                                 appState.pairingCoordinator.cancelSwitch()
@@ -2075,23 +2060,18 @@ struct SettingsView: View {
     private var pairingDisconnectControls: some View {
         if pairingCanUnpair {
             if disconnectConfirmPending {
-                let warningWasPresented = pairingDisconnectWarningWasPresented
                 VStack(alignment: .leading, spacing: 8) {
                     Text(pairingDisconnectConfirmText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack {
                         Button("disconnect", role: .destructive) {
-                            disconnectPairing(warningWasPresented: warningWasPresented)
+                            disconnectPairing()
                         }
                         .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectConfirm)
-                        .disabled(pairingRetirementFactsUnavailable)
 
                         Button("cancel") {
                             disconnectConfirmPending = false
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-                            appState.pairingCoordinator.cancelDisconnect()
-#endif
                         }
                         .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectCancel)
                     }
@@ -2101,7 +2081,6 @@ struct SettingsView: View {
                     Spacer()
                     Button("disconnect") {
                         disconnectConfirmPending = true
-                        refreshBrowserRetirementWarnings()
                     }
                     .buttonStyle(.plain)
                     .font(.caption)
@@ -2283,74 +2262,14 @@ struct SettingsView: View {
     }
 
     private var pairingDisconnectConfirmText: String {
-        let text: String
         if let mark = appState.confirmedMark {
-            text = "disconnect this mac from \(JournalMarkSlot.join(mark.words))? your journal keeps everything. you can pair again anytime."
-        } else {
-            text = UICopy.PAIRING_DISCONNECT_CONFIRM
+            return "disconnect this mac from \(JournalMarkSlot.join(mark.words))? your journal keeps everything. you can pair again anytime."
         }
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        return pairingDisconnectWarningWasPresented ? text + " " + UICopy.PAIRING_BROWSER_RETIREMENT_WARNING : text
-#else
-        return text
-#endif
+        return UICopy.PAIRING_DISCONNECT_CONFIRM
     }
 
     private var pairingSwitchConfirmText: String {
-        let text = "this link is for a different journal. switch to it?"
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        return pairingSwitchWarningWasPresented ? text + " " + UICopy.PAIRING_BROWSER_RETIREMENT_WARNING : text
-#else
-        return text
-#endif
-    }
-
-    private var pairingDisconnectWarningWasPresented: Bool {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        browserDisconnectWarning.isShown || appState.pairingCoordinator.disconnectWarningRequired
-#else
-        false
-#endif
-    }
-
-    private var pairingSwitchWarningWasPresented: Bool {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        browserSwitchWarning.isShown || appState.pairingCoordinator.switchWarningRequired
-#else
-        false
-#endif
-    }
-
-    private var currentBrowserMaterialPending: Bool? {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        // Snapshot publication makes newly accepted or delivered material observable here.
-        _ = appState.browserHostSnapshot.value
-        return appState.pairingCoordinator.pendingBrowserMaterial()
-#else
-        return nil
-#endif
-    }
-
-    private var pairingRetirementFactsUnavailable: Bool {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        currentBrowserMaterialPending == nil
-#else
-        false
-#endif
-    }
-
-    private func refreshBrowserRetirementWarnings() {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        let pending = currentBrowserMaterialPending
-        browserDisconnectWarning.observe(isPromptOpen: disconnectConfirmPending, hasPendingMaterial: pending)
-        let switching: Bool
-        if case .switchConfirmPending = appState.pairingCoordinator.state {
-            switching = true
-        } else {
-            switching = false
-        }
-        browserSwitchWarning.observe(isPromptOpen: switching, hasPendingMaterial: pending)
-#endif
+        "this link is for a different journal. switch to it?"
     }
 
     @ViewBuilder
@@ -2458,16 +2377,10 @@ struct SettingsView: View {
         }
     }
 
-    private func disconnectPairing(warningWasPresented: Bool) {
+    private func disconnectPairing() {
         disconnectConfirmPending = false
         Task { @MainActor in
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-            await appState.pairingCoordinator.confirmDisconnect(warningWasPresented: warningWasPresented)
-            disconnectConfirmPending = appState.pairingCoordinator.disconnectWarningRequired
-#else
             await appState.pairingCoordinator.unpair()
-            disconnectConfirmPending = false
-#endif
             if appState.pairingCoordinator.state == .idle {
                 appState.clearConfirmedMark()
                 pairingMismatch = false

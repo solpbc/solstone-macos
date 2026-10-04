@@ -14,7 +14,7 @@ public enum BrowserIdentityChangeMode: Sendable {
 
 struct BrowserIntakeOperationError: Error {
     let underlying: any Error
-    let generation: String?
+    let destinationGeneration: String?
 }
 
 public final class BrowserIntakeAuthority: @unchecked Sendable {
@@ -117,26 +117,10 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             }
         } catch {
             if attachFailureGeneration {
-                throw BrowserIntakeOperationError(underlying: error, generation: store.getActiveGeneration())
+                throw BrowserIntakeOperationError(underlying: error, destinationGeneration: store.getDestinationGeneration())
             }
             throw error
         }
-    }
-
-    public func publishEpoch(identityToken: String) throws -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        let now = wallClock()
-        let nowMs = BrowserAgeStamp.wallMilliseconds(now)
-        return try store.publishEpoch(identityToken: identityToken, nowMs: nowMs)
-    }
-
-    public func retireIfTokenChanged(newToken: String?) throws {
-        lock.lock()
-        defer { lock.unlock() }
-        let now = wallClock()
-        let nowMs = BrowserAgeStamp.wallMilliseconds(now)
-        try store.retireIfTokenChanged(newToken: newToken, nowMs: nowMs, timeZone: timeZone)
     }
 
     public func stopAndFinalize() throws {
@@ -151,24 +135,13 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
 
     public func reconcileIdentity(_ token: String?, mode: BrowserIdentityChangeMode) throws {
         closeAdmission()
-        store.closeDeliveryProofs()
         guard !store.storeIsFailed() else { throw BrowserIntakeStoreError.localIO }
+        let nowMs = BrowserAgeStamp.wallMilliseconds(wallClock())
+        _ = try store.reconcileIdentity(token, mode: mode, nowMs: nowMs)
         switch mode {
         case .replace:
-            // Same-journal replacement keeps its admitted generation. The
-            // credential fence is published only after the save has succeeded.
-            try retireIfTokenChanged(newToken: token)
+            break
         case .reload:
-            guard let token else { return }
-            if store.getActiveGeneration() != nil {
-                guard store.matchesActiveJournal(identityToken: token) else { return }
-            } else if store.hasPersistedIdentityHistory() {
-                // A reload cannot undo retirement or assign the loaded pairing
-                // to old custody. Only a completed credential save publishes a
-                // new generation after retirement.
-                return
-            }
-            _ = try publishEpoch(identityToken: token)
             reopenAdmission()
         }
     }
@@ -235,7 +208,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         do { _ = try advanceFloor(wallNowMs: nowMs) }
         catch { store.failClosed(); return }
         rotateIfBoundary(now: now)
-        store.garbageCollectExpiredTombstones(nowMs: nowMs)
+        store.garbageCollectSettledPeriods()
     }
 
     private func boundaryKey(_ date: Date) -> (Int, Int, Int, Int) {
@@ -326,13 +299,14 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 lock.lock()
                 defer { lock.unlock() }
                 guard sessionIsCurrent() else { return refusalReply(BrowserRefusal(code: "shutdown")) }
+                let operationDestinationGeneration = store.getDestinationGeneration()
                 let now = wallClock()
                 let nowMs = BrowserAgeStamp.wallMilliseconds(now)
                 do {
                     return try processBatch(batch: batch, nowMs: nowMs, civilDate: now, admitNewBatches: admitNewBatches)
                 } catch {
                     if attachFailureGeneration {
-                        throw BrowserIntakeOperationError(underlying: error, generation: store.getActiveGeneration())
+                        throw BrowserIntakeOperationError(underlying: error, destinationGeneration: operationDestinationGeneration)
                     }
                     throw error
                 }
@@ -376,10 +350,6 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             return try rejected(batch: batch, reason: stored.reason ?? "malformed", receiptClass: stored.receiptClass ?? "permanent")
         }
 
-        guard let activeGen = store.getActiveGeneration(), BrowserOpaqueString.equals(activeGen, batch.destinationGeneration) else {
-            return try rejected(batch: batch, reason: "stale_generation", receiptClass: "permanent")
-        }
-
         if !admitNewBatches || admissionClosed || store.storeIsFailed() {
             return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
@@ -393,71 +363,6 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
 
         if batch.queuedAtMs > floorMs && (batch.queuedAtMs - floorMs) > projection.policy.futureSkewMs {
             return try rejected(batch: batch, reason: "age_policy", receiptClass: "retryable")
-        }
-
-        var seenAge: (initialAgeMs: UInt64, elapsedHighWaterMs: UInt64, established: Bool)?
-        do {
-            seenAge = try store.getBatchAge(generation: batch.destinationGeneration, inst: batch.inst, batchId: batch.batchId)
-            if seenAge == nil {
-                let initialAge = floorMs > batch.queuedAtMs ? floorMs - batch.queuedAtMs : 0
-                try store.recordBatchSeen(
-                    generation: batch.destinationGeneration,
-                    inst: batch.inst,
-                    batchId: batch.batchId,
-                    queuedAtMs: batch.queuedAtMs,
-                    initialAgeMs: initialAge
-                )
-                seenAge = (initialAgeMs: initialAge, elapsedHighWaterMs: 0, established: true)
-            }
-        } catch {
-            if error as? BrowserIntakeStoreError != .resourceExhausted {
-                store.failClosed()
-            }
-            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
-        }
-        guard let seenAge else { throw BrowserIntakeStoreError.localIO }
-        if !seenAge.established {
-            do {
-                try store.commitTombstone(
-                    generation: batch.destinationGeneration,
-                    inst: batch.inst,
-                    batchId: batch.batchId,
-                    reason: "expired_unaccepted",
-                    receiptClass: "permanent",
-                    queuedAtMs: batch.queuedAtMs
-                )
-            } catch {
-                return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
-            }
-            return try rejected(batch: batch, reason: "expired_unaccepted", receiptClass: "permanent")
-        }
-        let elapsedHighWater = seenAge.elapsedHighWaterMs
-        do {
-            try store.updateBatchAgeHighWater(
-                generation: batch.destinationGeneration,
-                inst: batch.inst,
-                batchId: batch.batchId,
-                elapsedMs: elapsedHighWater
-            )
-        } catch {
-            store.failClosed()
-            return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
-        }
-        let totalAge = seenAge.initialAgeMs + elapsedHighWater
-        if totalAge >= projection.policy.outboxAgeMs {
-            do {
-                try store.commitTombstone(
-                    generation: batch.destinationGeneration,
-                    inst: batch.inst,
-                    batchId: batch.batchId,
-                    reason: "expired_unaccepted",
-                    receiptClass: "permanent",
-                    queuedAtMs: batch.queuedAtMs
-                )
-            } catch {
-                return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
-            }
-            return try rejected(batch: batch, reason: "expired_unaccepted", receiptClass: "permanent")
         }
 
         var batchBytes = 0
@@ -477,8 +382,6 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
             switch error {
             case .resourceExhausted:
                 return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
-            case .staleGeneration:
-                return try rejected(batch: batch, reason: "stale_generation", receiptClass: "permanent")
             case .duplicateAccepted, .localIO:
                 return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
             }
@@ -500,9 +403,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 generation: batch.destinationGeneration,
                 inst: batch.inst,
                 batchId: batch.batchId,
-                periodId: selectedPeriod,
-                reason: nil,
-                receiptClass: nil
+                periodId: selectedPeriod
             )
         ) {
             return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
@@ -528,9 +429,6 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                     periodId: periodId,
                     projection: projection
                 )
-            }
-            if case .staleGeneration = error {
-                return try rejected(batch: batch, reason: "stale_generation", receiptClass: "permanent")
             }
             return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         } catch {

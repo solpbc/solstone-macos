@@ -1172,7 +1172,7 @@ public actor BrowserHostListener {
         guard let profile = profiles.entries[key] else { return false }
         guard profile.handshake == .compatible, profile.byeReason == nil else { return false }
         guard let authority = sessionAuthorities[sessionID], authority.isLive,
-              authority.epoch == owner?.store.getActiveGeneration() else { return false }
+              authority.epoch == owner?.store.getDestinationGeneration() else { return false }
         return true
     }
 
@@ -1258,7 +1258,7 @@ public actor BrowserHostListener {
             let gate = admissionGate, store = owner.store
             let eligible: @Sendable () -> Bool = {
                 current() && gate.isOpen() && authority.isLive &&
-                    authority.epoch == currentDestGen && authority.epoch == store.getActiveGeneration()
+                    authority.epoch == currentDestGen && authority.epoch == store.getDestinationGeneration()
             }
             guard await owner.aboutRouteEpoch() == aboutRouteEpoch else { return }
             await outbound.enqueuePublication(state: state, boundary: boundary,
@@ -1278,7 +1278,7 @@ public actor BrowserHostListener {
         var firefox: [BrowserHostProfile] = []
         for (key, profile) in profiles.entries {
             let live = profiles.sessionID(brand: key.brand, inst: key.inst).flatMap { sessionAuthorities[$0] }
-            let expiry = admissionGate.isOpen() && live?.isLive == true && live?.epoch == owner?.store.getActiveGeneration()
+            let expiry = admissionGate.isOpen() && live?.isLive == true && live?.epoch == owner?.store.getDestinationGeneration()
                 ? now().addingTimeInterval(live?.remaining ?? 0) : nil
             let profile = BrowserHostProfile(lastSeen: profile.lastSeen, handshake: profile.handshake,
                                              byeReason: profile.byeReason, leaseExpiry: expiry)
@@ -1490,7 +1490,7 @@ public actor BrowserHostListener {
             let remaining = remainingHandshakeMs(connectedAt: connectedAt, handshakeMs: limits.handshakeMs)
             let live: @Sendable () -> Bool
             if let authority {
-                live = { lifecycleCurrent() && authority.isLive && authority.epoch == owner.store.getActiveGeneration() }
+                live = { lifecycleCurrent() && authority.isLive && authority.epoch == owner.store.getDestinationGeneration() }
             } else { live = lifecycleCurrent }
             let frame: NativeHostFrame
             do {

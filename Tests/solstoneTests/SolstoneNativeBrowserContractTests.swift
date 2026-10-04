@@ -21,7 +21,7 @@ struct SolstoneNativeBrowserContractTests {
         let manifestURL = vURL.appendingPathComponent("contracts/native-browser/manifest.json")
         let manifestData = try Data(contentsOf: manifestURL)
         let manifestDigest = SHA256.hash(data: manifestData).map { String(format: "%02x", $0) }.joined()
-        #expect(manifestDigest == "fef157d57a561bd72714d049245ede7317821ca790558ca917aef2efb9df4b73")
+        #expect(manifestDigest == "2c6e0656315bbbdf6146e98794a61be3b58fb40f99cb2fe9de13cc3337cd6b73")
 
         guard let manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
               let artifacts = manifest["artifacts"] as? [String: String] else {
@@ -48,10 +48,10 @@ struct SolstoneNativeBrowserContractTests {
         }
 
         #expect(adoption["bundle_path"] as? String == "contracts/native-browser")
-        #expect(adoption["source_revision"] as? String == "0d9a3f513e5ba8c61e7aa068fa5ad5dafc074eab")
-        #expect(adoption["bundle_version"] as? String == "1.1.0")
+        #expect(adoption["source_revision"] as? String == "731a80ddfed3a5e80bf8ce658cc71f761fa75f83")
+        #expect(adoption["bundle_version"] as? String == "1.2.0")
         #expect(adoption["wire_protocol"] as? Int == 1)
-        #expect(adoption["manifest_sha256"] as? String == "fef157d57a561bd72714d049245ede7317821ca790558ca917aef2efb9df4b73")
+        #expect(adoption["manifest_sha256"] as? String == "2c6e0656315bbbdf6146e98794a61be3b58fb40f99cb2fe9de13cc3337cd6b73")
         #expect(adoption["journal_schema_id"] as? String == "solstone-journal-format:browser-jsonl")
         #expect(adoption["journal_schema_sha256"] as? String == "c14e66318587b8fa451ef1363e113885bdd80a41ce680b0c62fcc9033460a2e1")
         #expect(adoption["journal_schema_revision"] as? String == "3b99f1af61d4e82c5c9c3748d90c1242c28c1e5b")
@@ -61,7 +61,7 @@ struct SolstoneNativeBrowserContractTests {
     @Test func projectionMatchesConstantsRsAndAuthority() throws {
         let projection = try BrowserContractProjection(rootURL: vendorURL)
 
-        #expect(projection.bundleVersion == "1.1.0")
+        #expect(projection.bundleVersion == "1.2.0")
         #expect(projection.wireProtocol == 1)
         #expect(projection.caps.extensionToHost == 33554432)
         #expect(projection.caps.hostToExtension == 65536)
@@ -72,7 +72,6 @@ struct SolstoneNativeBrowserContractTests {
 
         #expect(projection.policy.file == 50331648)
         #expect(projection.policy.outboxBytes == 67108864)
-        #expect(projection.policy.outboxAgeMs == 600000)
         #expect(projection.policy.spoolBytes == 536870912)
         #expect(projection.policy.spoolAgeMs == 604800000)
         #expect(projection.policy.futureSkewMs == 60000)
@@ -91,7 +90,8 @@ struct SolstoneNativeBrowserContractTests {
         #expect(projection.devHosts.firefoxId == "browser.dev@solstone.app")
 
         #expect(projection.receiptClasses["retryable"]?.sorted() == ["age_policy", "queue_full", "resource_exhausted", "snapshot_required"].sorted())
-        #expect(projection.receiptClasses["permanent"]?.sorted() == ["expired_unaccepted", "malformed", "oversize", "stale_generation", "unaccepted_lost"].sorted())
+        #expect(projection.receiptClasses["permanent"]?.sorted() == ["malformed", "oversize", "unaccepted_lost"].sorted())
+        #expect(projection.legacyPermanentReasons.sorted() == ["expired_unaccepted", "stale_generation"].sorted())
     }
 
     @Test func previewResourceLookupUsesBundleResources() throws {

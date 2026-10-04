@@ -53,6 +53,31 @@ struct BrowserIngestAck: Codable, Sendable, Equatable {
     }
 }
 
+struct BrowserDeliveryBinding: Codable, Sendable, Equatable {
+    let ack: BrowserIngestAck
+    let serverURL: String
+    let identityDigest: String
+    let pairingGeneration: UInt64
+    let transportIncarnation: UInt64
+
+    init(ack: BrowserIngestAck, route: BrowserIntakeRouteCapability) {
+        self.ack = ack
+        serverURL = route.serverURL
+        identityDigest = route.identityDigest
+        pairingGeneration = route.pairingGeneration
+        transportIncarnation = route.transportIncarnation
+    }
+
+    func namesSameConnection(as route: BrowserIntakeRouteCapability) -> Bool {
+        route.namesSameConnection(
+            serverURL: serverURL,
+            identityDigest: identityDigest,
+            pairingGeneration: pairingGeneration,
+            transportIncarnation: transportIncarnation
+        )
+    }
+}
+
 enum BrowserIngestAckError: Error {
     case parentSyncFailed
 }

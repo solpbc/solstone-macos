@@ -56,9 +56,9 @@ final class PairingCoordinator {
     @ObservationIgnored
     private let loadPairing: LoadPairing
     @ObservationIgnored
-    private let savePairing: @Sendable (StoredPairing, Bool) throws -> Void
+    private let savePairing: @Sendable (StoredPairing) throws -> Void
     @ObservationIgnored
-    private let deletePairing: @Sendable (Bool) throws -> Void
+    private let deletePairing: @Sendable () throws -> Void
     @ObservationIgnored
     private let reactivate: Reactivate
     @ObservationIgnored
@@ -77,12 +77,6 @@ final class PairingCoordinator {
     private let endSelfRetirement: EndSelfRetirement
     @ObservationIgnored
     private var pendingSwitchLink: PairURL?
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-    @ObservationIgnored
-    var pendingBrowserMaterial: @MainActor @Sendable () -> Bool? = { nil }
-    private(set) var switchWarningRequired = false
-    private(set) var disconnectWarningRequired = false
-#endif
     @ObservationIgnored
     private let classifiedLog: any ClassifiedLogSinking
 
@@ -114,14 +108,14 @@ final class PairingCoordinator {
         }
         self.loadPairing = loadPairing ?? { try store.load() }
         if let savePairing {
-            self.savePairing = { pairing, _ in try savePairing(pairing) }
+            self.savePairing = savePairing
         } else {
-            self.savePairing = { try store.save($0, browserWarningWasPresented: $1) }
+            self.savePairing = { try store.save($0) }
         }
         if let deletePairing {
-            self.deletePairing = { _ in try deletePairing() }
+            self.deletePairing = deletePairing
         } else {
-            self.deletePairing = { try store.delete(browserWarningWasPresented: $0) }
+            self.deletePairing = { try store.delete() }
         }
         self.reactivate = reactivate
         self.ownerState = ownerState
@@ -152,9 +146,6 @@ final class PairingCoordinator {
     func submitPairingLink(_ rawLink: String) async {
         guard state != .pairing else { return }
         pendingSwitchLink = nil
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        switchWarningRequired = false
-#endif
         failedAddress = nil
 
         let pairURL: PairURL
@@ -199,10 +190,7 @@ final class PairingCoordinator {
         }
     }
 
-    func confirmSwitch(warningWasPresented: Bool = false) async {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        guard browserMaterialIsKnownBeforeConfirmation() else { return }
-#endif
+    func confirmSwitch() async {
         guard case .switchConfirmPending = state, let link = pendingSwitchLink else {
             return
         }
@@ -219,7 +207,7 @@ final class PairingCoordinator {
         if let stored {
             await retireOwnCredential(stored)
         }
-        await activate(newPairing, successState: .switched, browserWarningWasPresented: warningWasPresented)
+        await activate(newPairing, successState: .switched)
     }
 
     func cancelSwitch() {
@@ -227,26 +215,8 @@ final class PairingCoordinator {
         state = .idle
     }
 
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-    func confirmDisconnect(warningWasPresented: Bool = false) async {
-        guard browserMaterialIsKnownBeforeConfirmation() else { return }
-        await unpair(browserWarningWasPresented: warningWasPresented)
-    }
-
-    func cancelDisconnect() { disconnectWarningRequired = false }
-
-    private func browserMaterialIsKnownBeforeConfirmation() -> Bool {
-        guard pendingBrowserMaterial() != nil else {
-            state = .failed(.localSetup)
-            return false
-        }
-        return true
-    }
-#endif
-
-    func unpair(browserWarningWasPresented: Bool = true) async {
+    func unpair() async {
         guard state != .pairing else { return }
-        let previousState = state
         state = .pairing
         let stored: StoredPairing?
         do {
@@ -260,16 +230,8 @@ final class PairingCoordinator {
         }
         do {
             let deletePairing = self.deletePairing
-            try await Task.detached { try deletePairing(browserWarningWasPresented) }.value
+            try await Task.detached { try deletePairing() }.value
         } catch {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-            if error as? PairingCredentialStoreError == .retirementConfirmationRequired {
-                endSelfRetirement()
-                disconnectWarningRequired = true
-                state = previousState
-                return
-            }
-#endif
             pairingLog.error("pairing delete failed: \(String(describing: type(of: error)), privacy: .public)")
             endSelfRetirement()
             state = .failed(.localSetup)
@@ -277,10 +239,6 @@ final class PairingCoordinator {
         }
         endSelfRetirement()
         pendingSwitchLink = nil
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        disconnectWarningRequired = false
-        switchWarningRequired = false
-#endif
         clearJournalMarkConfirmation()
         clearLastSuccessfulJournalContact()
         await reactivate()
@@ -311,7 +269,7 @@ final class PairingCoordinator {
         }
     }
 
-    private func activate(_ pairing: StoredPairing, successState: PairingFlowState, browserWarningWasPresented: Bool = false) async {
+    private func activate(_ pairing: StoredPairing, successState: PairingFlowState) async {
         // A new or switched pairing asks the owner to compare marks, and nothing is sent
         // until they answer, so its answer starts empty before the credential exists.
         // Pairing again with the journal this Mac already holds asks nothing: the owner
@@ -321,16 +279,8 @@ final class PairingCoordinator {
         }
         do {
             let savePairing = self.savePairing
-            try await Task.detached { try savePairing(pairing, browserWarningWasPresented) }.value
+            try await Task.detached { try savePairing(pairing) }.value
         } catch {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-            if error as? PairingCredentialStoreError == .retirementConfirmationRequired {
-                endSelfRetirement()
-                switchWarningRequired = true
-                state = .switchConfirmPending
-                return
-            }
-#endif
             pairingLog.error("pairing save failed: \(String(describing: type(of: error)), privacy: .public)")
             endSelfRetirement()
             state = .saveFailed

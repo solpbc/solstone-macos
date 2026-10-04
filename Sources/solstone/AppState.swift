@@ -72,15 +72,14 @@ public final class AppState {
     public private(set) var browserIntakeStore: BrowserIntakeStore?
     public private(set) var browserIntakeAuthority: BrowserIntakeAuthority?
     public let browserHostSnapshot = BrowserHostSnapshot()
-    var browserRetiredCustody = BrowserRetiredCustodyInteraction<BrowserRetiredCustodyScope>()
-    private var browserPendingMaterial: Bool?
-    @ObservationIgnored private var browserRetiredRefreshRevision: UInt64 = 0
-    @ObservationIgnored private var browserRetiredRefreshRunning = false
-    @ObservationIgnored private var browserRetiredDiscardCompletion:
-        (request: BrowserRetiredCustodyInteraction<BrowserRetiredCustodyScope>.DiscardRequest,
+    var browserPendingDiscard = BrowserPendingDiscardInteraction<BrowserPendingDiscardToken>()
+    @ObservationIgnored private var browserPendingDiscardRefreshRevision: UInt64 = 0
+    @ObservationIgnored private var browserPendingDiscardRefreshRunning = false
+    @ObservationIgnored private var browserPendingDiscardCompletion:
+        (request: BrowserPendingDiscardInteraction<BrowserPendingDiscardToken>.DiscardRequest,
          store: BrowserIntakeStore, durablyCompleted: Bool)?
 #if DEBUG || SOLSTONE_TEST_SUPPORT
-    @ObservationIgnored var browserRetiredDiscardResultBarrier: @Sendable () async -> Void = {}
+    @ObservationIgnored var browserPendingDiscardResultBarrier: @Sendable () async -> Void = {}
 #endif
     @ObservationIgnored private let browserRepairValidity = BrowserRepairValidity()
     var browserRepair = BrowserRepairController() {
@@ -599,45 +598,44 @@ public final class AppState {
     @ObservationIgnored internal var configSaver: (AppConfig) throws -> Void = { try $0.save() }
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-    func refreshBrowserRetiredCustody() {
-        browserRetiredRefreshRevision &+= 1
-        beginBrowserRetiredRefreshIfNeeded()
+    func refreshBrowserPendingDiscard() {
+        browserPendingDiscardRefreshRevision &+= 1
+        beginBrowserPendingDiscardRefreshIfNeeded()
     }
 
-    private func beginBrowserRetiredRefreshIfNeeded() {
-        guard !browserRetiredRefreshRunning else { return }
+    private func beginBrowserPendingDiscardRefreshIfNeeded() {
+        guard !browserPendingDiscardRefreshRunning else { return }
         guard let store = browserIntakeStore else {
-            browserRetiredCustody.observe(.unknown)
+            browserPendingDiscard.observe(.unknown)
             return
         }
-        browserRetiredRefreshRunning = true
-        let revision = browserRetiredRefreshRevision
-        let window = browserRetiredCustody.viewRevision
+        browserPendingDiscardRefreshRunning = true
+        let revision = browserPendingDiscardRefreshRevision
+        let window = browserPendingDiscard.viewRevision
         Task.detached(priority: .utility) { [weak self, store] in
-            let pending = store.activePending().map { !$0.identities.isEmpty }
-            let inventory = store.retiredCustodyInventory()
+            let inventory = store.pendingDiscardInventory()
             await MainActor.run {
                 guard let self else { return }
-                self.browserRetiredRefreshRunning = false
+                self.browserPendingDiscardRefreshRunning = false
                 if self.browserIntakeStore === store,
-                   revision == self.browserRetiredRefreshRevision,
-                   window == self.browserRetiredCustody.viewRevision {
-                    self.browserRetiredCustody.observe(Self.browserRetiredMaterial(inventory))
-                    self.browserPendingMaterial = inventory == .unavailable ? nil : pending
-                    if let completion = self.browserRetiredDiscardCompletion, completion.store === store {
-                        self.browserRetiredDiscardCompletion = nil
-                        self.browserRetiredCustody.finishDiscard(completion.request,
-                            durablyCompleted: completion.durablyCompleted, inventory: Self.browserRetiredMaterial(inventory))
+                   revision == self.browserPendingDiscardRefreshRevision,
+                   window == self.browserPendingDiscard.viewRevision {
+                    self.browserPendingDiscard.observe(Self.browserPendingMaterial(inventory))
+                    if let completion = self.browserPendingDiscardCompletion, completion.store === store {
+                        self.browserPendingDiscardCompletion = nil
+                        self.browserPendingDiscard.finishDiscard(completion.request,
+                            durablyCompleted: completion.durablyCompleted,
+                            inventory: Self.browserPendingMaterial(inventory))
                     }
                 }
-                if revision != self.browserRetiredRefreshRevision {
-                    self.beginBrowserRetiredRefreshIfNeeded()
+                if revision != self.browserPendingDiscardRefreshRevision {
+                    self.beginBrowserPendingDiscardRefreshIfNeeded()
                 }
             }
         }
     }
 
-    private static func browserRetiredMaterial(_ inventory: BrowserRetiredCustodyInventory) -> BrowserRetiredMaterial<BrowserRetiredCustodyScope> {
+    private static func browserPendingMaterial(_ inventory: BrowserPendingDiscardInventory) -> BrowserPendingMaterial<BrowserPendingDiscardToken> {
         switch inventory {
         case .unavailable: return .unknown
         case .empty: return .empty
@@ -645,22 +643,21 @@ public final class AppState {
         }
     }
 
-    func confirmBrowserRetiredDiscard() {
-        guard let store = browserIntakeStore, let request = browserRetiredCustody.beginDiscard() else { return }
-        // Earlier measurements cannot overwrite the operation's fresh result.
-        browserRetiredRefreshRevision &+= 1
+    func confirmBrowserPendingDiscard() {
+        guard let store = browserIntakeStore, let request = browserPendingDiscard.beginDiscard() else { return }
+        browserPendingDiscardRefreshRevision &+= 1
 #if DEBUG || SOLSTONE_TEST_SUPPORT
-        let resultBarrier = browserRetiredDiscardResultBarrier
+        let resultBarrier = browserPendingDiscardResultBarrier
 #endif
         Task.detached(priority: .utility) { [weak self, store] in
-            let result = store.discardRetiredCustodyAndMeasure(request.scope)
+            let observation = store.discardPendingPages(request.scope)
 #if DEBUG || SOLSTONE_TEST_SUPPORT
             await resultBarrier()
 #endif
             await MainActor.run {
                 guard let self, self.browserIntakeStore === store else { return }
-                self.browserRetiredDiscardCompletion = (request, store, result.durablyCompleted)
-                self.refreshBrowserRetiredCustody()
+                self.browserPendingDiscardCompletion = (request, store, observation.durablyCompleted)
+                self.refreshBrowserPendingDiscard()
             }
         }
     }
@@ -677,9 +674,9 @@ public final class AppState {
         let validity = browserRepairValidity
         let revision = validity.value
         let store = browserIntakeOwner?.store
-        let destination = store?.getActiveGeneration()
+        let destination = store?.getDestinationGeneration()
         let isCurrent: @Sendable () -> Bool = {
-            validity.matches(revision) && store?.getActiveGeneration() == destination
+            validity.matches(revision) && store?.getDestinationGeneration() == destination
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -2022,9 +2019,8 @@ public final class AppState {
         self.browserIntakeOwner = owner
         self.browserIntakeCredentialStore = credentialStore
         if self.browserIntakeStore !== store {
-            self.browserRetiredCustody = .init()
-            self.browserRetiredDiscardCompletion = nil
-            self.browserPendingMaterial = nil
+            self.browserPendingDiscard = .init()
+            self.browserPendingDiscardCompletion = nil
         }
         self.browserIntakeStore = store
         self.browserIntakeAuthority = authority
@@ -2040,10 +2036,7 @@ public final class AppState {
                 await owner?.updateAboutSnapshot(snapshot, factsAccepted: factsAccepted, routeEpoch: routeEpoch)
             }
         }
-        pairingCoordinator.pendingBrowserMaterial = { [weak self] in
-            self?.browserPendingMaterial
-        }
-        refreshBrowserRetiredCustody()
+        refreshBrowserPendingDiscard()
 
         owner.bindCredentials(credentialStore)
         let routeEpoch = routeState.aboutEpoch()

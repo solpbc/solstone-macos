@@ -46,7 +46,7 @@ struct NativeHostFrameTests {
         #expect(decoder.retainedByteCount == 0)
 
         let projection = try nativeHostProjection()
-        let hello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.1.0\",\"brand\":\"chrome\",\"inst\":\"instance-one\"}".utf8)
+        let hello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.2.0\",\"brand\":\"chrome\",\"inst\":\"instance-one\"}".utf8)
         let framed = try NativeHostFrameCodec.encode(hello, direction: .extensionToHost, limits: BrowserHostLimits(projection: projection))
         var helloDecoder = NativeHostFrameDecoder(direction: .extensionToHost, limits: BrowserHostLimits(projection: projection))
         let payload = try #require(try helloDecoder.append(framed).first)
@@ -507,7 +507,7 @@ struct NativeHostSpoolCompositionTests {
         }
         let owner = try makeOwner()
         await owner.start()
-        let hello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.1.0\",\"brand\":\"chrome\",\"inst\":\"composition-instance\"}".utf8)
+        let hello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.2.0\",\"brand\":\"chrome\",\"inst\":\"composition-instance\"}".utf8)
         guard case .message(let helloReply) = await owner.accept(bytes: hello, direction: "extension_to_host") else {
             Issue.record("hello was not answered")
             return
@@ -519,7 +519,7 @@ struct NativeHostSpoolCompositionTests {
         #expect(facts.capture == "permitted")
         #expect(facts.intakeEnabled)
 
-        let generation = try #require(owner.store.getActiveGeneration())
+        let generation = try #require(owner.store.getDestinationGeneration())
         let queuedAt = UInt64(clock.wallNow().timeIntervalSince1970 * 1000)
         let snapshotBatch = nativeHostBatch(generation: generation, id: "11111111111111111111111111111111", queuedAtMs: queuedAt, record: "snapshot")
         let accepted = try nativeHostAccepted(try await owner.accept(bytes: snapshotBatch, direction: "extension_to_host"))
@@ -576,15 +576,15 @@ struct NativeHostSpoolCompositionTests {
         await owner.start()
         defer { owner.stop() }
 
-        let chromeHello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.1.0\",\"brand\":\"chrome\",\"inst\":\"composition-chrome\"}".utf8)
-        let firefoxHello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.1.0\",\"brand\":\"firefox\",\"inst\":\"composition-firefox\"}".utf8)
+        let chromeHello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.2.0\",\"brand\":\"chrome\",\"inst\":\"composition-chrome\"}".utf8)
+        let firefoxHello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.2.0\",\"brand\":\"firefox\",\"inst\":\"composition-firefox\"}".utf8)
         let opened = try await nativeHostDecodedState(await owner.accept(bytes: chromeHello, direction: "extension_to_host"), projection: projection)
         #expect(opened.capture == "permitted")
         #expect(opened.custodyFull == false)
         #expect(opened.custodyStale == false)
         _ = try await nativeHostDecodedState(await owner.accept(bytes: firefoxHello, direction: "extension_to_host"), projection: projection)
 
-        let generation = try #require(owner.store.getActiveGeneration())
+        let generation = try #require(owner.store.getDestinationGeneration())
         let queuedAt = UInt64(clock.wallNow().timeIntervalSince1970 * 1000)
         let chromeBatch = nativeHostBatch(generation: generation, id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", queuedAtMs: queuedAt, inst: "composition-chrome", record: "snapshot")
         let firefoxBatch = nativeHostBatch(generation: generation, id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", queuedAtMs: queuedAt, inst: "composition-firefox", record: "snapshot")
@@ -834,7 +834,7 @@ private func nativeHostAccepted(_ result: BrowserIntakeAcceptResult) throws -> [
 struct BrowserHostInputRepresentationTests {
     @Test func dataSliceKeepsOffsetAndStrictUTF8Semantics() throws {
         let projection = try nativeHostProjection()
-        let hello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.1.0\",\"brand\":\"chrome\",\"inst\":\"slice-instance\"}".utf8)
+        let hello = Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.2.0\",\"brand\":\"chrome\",\"inst\":\"slice-instance\"}".utf8)
         var prefixed = Data([0, 0, 0, 0]); prefixed.append(hello)
         let slice = prefixed[4...]
         #expect(slice.startIndex == 4)

@@ -49,6 +49,14 @@ private final class BrowserTestInjectedSize: @unchecked Sendable {
     }
 }
 
+private final class BrowserTestResolvedHome: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: ResolvedHomeBase = .held
+
+    var value: ResolvedHomeBase { lock.withLock { current } }
+    func set(_ value: ResolvedHomeBase) { lock.withLock { current = value } }
+}
+
 private final class ManualMonotonicClock: MonotonicClock, @unchecked Sendable {
     private let lock = NSLock()
     private var current: Duration
@@ -69,6 +77,61 @@ private final class ManualMonotonicClock: MonotonicClock, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         current += .milliseconds(milliseconds)
+    }
+}
+
+extension BrowserIntakeAuthority {
+    func testConnectionGeneration(identityToken: String) throws -> String {
+        try reconcileIdentity(identityToken, mode: .replace)
+        reopenAdmission()
+        guard let generation = store.getDestinationGeneration() else { throw BrowserIntakeStoreError.localIO }
+        return generation
+    }
+}
+
+extension BrowserIntakeStore {
+    func testConnectionGeneration(identityToken: String, nowMs: UInt64 = 1_700_000_000_000) throws -> String {
+        guard let generation = try reconcileIdentity(identityToken, mode: .replace, nowMs: nowMs) else {
+            throw BrowserIntakeStoreError.localIO
+        }
+        return generation
+    }
+}
+
+func browserTestDeliveryRoute() -> BrowserIntakeRouteCapability {
+    BrowserIntakeRouteCapability(
+        serverURL: "http://127.0.0.1",
+        identityDigest: BrowserIntakeStore.identityDigest(of: "browser-test-route"),
+        pairingGeneration: 1,
+        transportIncarnation: 1,
+        credentialIsCurrent: { true }
+    )
+}
+
+func browserTestDeliveryBinding(_ ack: BrowserIngestAck) -> BrowserDeliveryBinding {
+    BrowserDeliveryBinding(ack: ack, route: browserTestDeliveryRoute())
+}
+
+extension BrowserIntakeStore {
+    func registerStagingDirectory(_ url: URL, reservedBytes: Int) throws {
+        let periodID = getOpenPeriodId() ?? getAllFinalizedPeriods().first?.periodId ?? "test-staging-period"
+        try registerStagingDirectory(url, reservedBytes: reservedBytes, periodId: periodID)
+    }
+
+    func persistDeliveryBinding(_ ack: BrowserIngestAck) throws {
+        try publishDeliveryAck(browserTestDeliveryBinding(ack))
+    }
+
+    func publishDeliveryAck(_ ack: BrowserIngestAck) throws {
+        try publishDeliveryAck(browserTestDeliveryBinding(ack))
+    }
+
+    func releaseProven(periodId: String, binding ack: BrowserIngestAck, nowMs: UInt64) throws {
+        try releaseProven(periodId: periodId, binding: browserTestDeliveryBinding(ack), nowMs: nowMs)
+    }
+
+    func removeProvenSegment(periodId: String, binding ack: BrowserIngestAck, nowMs: UInt64) throws {
+        try removeProvenSegment(periodId: periodId, binding: browserTestDeliveryBinding(ack), nowMs: nowMs)
     }
 }
 
@@ -100,7 +163,7 @@ struct BrowserIntakeAdmissionTests {
             timeZone: TimeZone(identifier: "UTC")!
         )
 
-        let gen = try authority.publishEpoch(identityToken: "test-token-1")
+        let gen = try authority.testConnectionGeneration(identityToken: "test-token-1")
         let sharedBatchId = "abcdef0123456789abcdef0123456789"
 
         let openPidBefore = store.getOpenPeriodId()!
@@ -177,7 +240,7 @@ struct BrowserIntakeAdmissionTests {
             timeZone: TimeZone(identifier: "UTC")!
         )
 
-        let gen = try authority.publishEpoch(identityToken: "test-token-1")
+        let gen = try authority.testConnectionGeneration(identityToken: "test-token-1")
         let pad = String(repeating: "p", count: 26 * 1024 * 1024)
 
         let batch1: [String: Any] = [
@@ -278,7 +341,7 @@ struct BrowserIntakeAdmissionTests {
                 wallClock: { clock.now },
                 timeZone: TimeZone(identifier: "UTC")!
             )
-            gen = try authority1.publishEpoch(identityToken: "test-token-1")
+            gen = try authority1.testConnectionGeneration(identityToken: "test-token-1")
 
             let snap: [String: Any] = [
                 "type": "batch",
@@ -374,7 +437,7 @@ struct BrowserIntakeAdmissionTests {
             timeZone: TimeZone(identifier: "UTC")!
         )
 
-        let gen = try authority.publishEpoch(identityToken: "test-token-1")
+        let gen = try authority.testConnectionGeneration(identityToken: "test-token-1")
 
         // 1. Initial status: permitted, custody full=false, stale=false
         let stat0 = authority.status()
@@ -496,7 +559,7 @@ struct BrowserIntakeAdmissionTests {
         #expect(store.getPeriod(periodId: anchorPid)?.state == "delivered")
 
         // Wall time is still behind the durable floor. A batch timestamped at
-        // that rolled-back instant is older than the outbox window.
+        // that rolled-back instant remains admissible without an outbox-age cutoff.
         let youngNowMs = store.getFloorMs()
         let youngSnap: [String: Any] = [
             "type": "batch",
@@ -516,115 +579,134 @@ struct BrowserIntakeAdmissionTests {
         #expect(storeReopened.getFloorMs() == floorBeforeReopen)
         #expect(storeReopened.getEarliestHeldMs() == earliestBeforeReopen)
 
-        let oldTombstoneBatchId = "11110000111100001111000011110000"
-        let oldQueuedAt: UInt64 = 1690000000000
+        let oldBatchID = "11110000111100001111000011110000"
+        let oldQueuedAt = storeReopened.getFloorMs() - 600_001
         let oldBatch: [String: Any] = [
-            "type": "batch",
-            "destination_generation": gen,
-            "inst": "inst-1",
-            "batch_id": oldTombstoneBatchId,
-            "queued_at_ms": oldQueuedAt,
-            "records": [["t": "segment_start", "ts": oldQueuedAt, "ctx": "ctx-old", "blocks": [["id": "bo", "text": "old"]]]]
+            "type": "batch", "destination_generation": gen, "inst": "inst-1",
+            "batch_id": oldBatchID, "queued_at_ms": oldQueuedAt,
+            "records": [["t": "segment_start", "ts": storeReopened.getFloorMs(), "ctx": "ctx-old",
+                         "blocks": [["id": "bo", "text": "old"]]]]
         ]
         let authorityReopened = BrowserIntakeAuthority(
-            store: storeReopened,
-            projection: projection,
-            wallClock: { clock.now },
+            store: storeReopened, projection: projection, wallClock: { clock.now },
             timeZone: TimeZone(identifier: "UTC")!
         )
-        let repOld1 = try authorityReopened.accept(bytes: try JSONSerialization.data(withJSONObject: oldBatch), direction: "extension_to_host")
-        #expect(repOld1["result"] as? String == "rejected")
-        #expect(repOld1["reason"] as? String == "expired_unaccepted")
+        let oldBytes = try JSONSerialization.data(withJSONObject: oldBatch)
+        let admitted = try authorityReopened.accept(bytes: oldBytes, direction: "extension_to_host")
+        #expect(admitted["result"] as? String == "accepted")
+        let oldPeriodID = try #require(admitted["period_id"] as? String)
+        let oldPayload = try Data(contentsOf: storeReopened.periodFileURL(for: oldPeriodID))
+        clock.advance(by: TimeInterval(projection.policy.acceptedRetentionMs + 1000) / 1000)
         authorityReopened.poll(now: clock.now)
-        #expect(try storeReopened.lookupReceipt(generation: gen, inst: "inst-1", batchId: oldTombstoneBatchId) != nil)
-        // The durable floor is still ahead of the rolled-back wall clock.
-        // Retention is measured from accepted_at_ms against that floor.
-        let retentionTarget = storeReopened.getFloorMs() + projection.policy.acceptedRetentionMs + 1000
-        let wallMs = UInt64(clock.now.timeIntervalSince1970 * 1000.0)
-        if retentionTarget > wallMs {
-            clock.advance(by: TimeInterval(retentionTarget - wallMs) / 1000.0)
-        }
-        authorityReopened.poll(now: clock.now)
-        #expect(try storeReopened.lookupReceipt(generation: gen, inst: "inst-1", batchId: oldTombstoneBatchId) == nil)
-        clock.advance(by: -100000)
-        let repOld2 = try authorityReopened.accept(bytes: try JSONSerialization.data(withJSONObject: oldBatch), direction: "extension_to_host")
-        #expect(repOld2["result"] as? String == "rejected")
-        #expect(repOld2["reason"] as? String == "expired_unaccepted")
+        #expect(try storeReopened.lookupReceipt(generation: gen, inst: "inst-1", batchId: oldBatchID)?.result == "accepted")
+        let replay = try authorityReopened.accept(bytes: oldBytes, direction: "extension_to_host")
+        #expect(replay["result"] as? String == "duplicate")
+        #expect(try Data(contentsOf: storeReopened.periodFileURL(for: oldPeriodID)) == oldPayload)
     }
 
-    @Test func test5_generationReopenAndRetireIfTokenChangedNil() throws {
+    @Test func test5_reopenPairingReplacementAndUnpairKeepPendingBytes() throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
-
         let projection = try BrowserContractProjection(rootURL: vendorURL)
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
-
-        var gen: String = ""
-        var pid1: String = ""
-        do {
-            let store1 = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
-            let authority1 = BrowserIntakeAuthority(store: store1, projection: projection, wallClock: { clock.now })
-            gen = try authority1.publishEpoch(identityToken: "token-1")
-            let snap: [String: Any] = [
-                "type": "batch",
-                "destination_generation": gen,
-                "inst": "inst-1",
-                "batch_id": "77777777777777777777777777777777",
-                "queued_at_ms": 1700000000000 as UInt64,
-                "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b1", "text": "t"]]]]
-            ]
-            let reply = try authority1.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
-            #expect(reply["result"] as? String == "accepted")
-            pid1 = try #require(reply["period_id"] as? String)
+        let firstStore = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let firstAuthority = BrowserIntakeAuthority(store: firstStore, projection: projection, wallClock: { clock.now })
+        let firstGeneration = try firstAuthority.testConnectionGeneration(identityToken: "token-1")
+        func batchBytes(_ generation: String, _ id: String, _ queuedAt: UInt64) throws -> Data {
+            try JSONSerialization.data(withJSONObject: [
+                "type": "batch", "destination_generation": generation, "inst": "instance-one",
+                "batch_id": id, "queued_at_ms": queuedAt,
+                "records": [["t": "segment_start", "ts": queuedAt, "ctx": "context-one",
+                             "blocks": [["id": "block-one", "text": "held page"]]]]
+            ] as [String: Any])
         }
+        let oldQueuedAt = firstStore.getFloorMs() - 600_001
+        let firstBytes = try batchBytes(firstGeneration, String(format: "%032x", 1), oldQueuedAt)
+        let firstReply = try firstAuthority.accept(bytes: firstBytes, direction: "extension_to_host")
+        #expect(firstReply["result"] as? String == "accepted")
+        let periodID = try #require(firstReply["period_id"] as? String)
+        let payloadURL = firstStore.periodFileURL(for: periodID)
+        let original = try Data(contentsOf: payloadURL)
 
-        let store2 = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
-        let authority2 = BrowserIntakeAuthority(store: store2, projection: projection, wallClock: { clock.now })
-        let sameGen = try authority2.publishEpoch(identityToken: "token-1")
-        #expect(sameGen == gen)
-        try authority2.retireIfTokenChanged(newToken: "token-1")
-        #expect(store2.getActiveGeneration() == gen)
+        let reopened = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let authority = BrowserIntakeAuthority(store: reopened, projection: projection, wallClock: { clock.now })
+        try authority.reconcileIdentity("token-1", mode: .reload)
+        #expect(reopened.getDestinationGeneration() == firstGeneration)
+        #expect(reopened.getOpenPeriodId() == periodID)
+        #expect(try Data(contentsOf: payloadURL) == original)
 
-        let activeFileURL = store2.periodFileURL(for: pid1)
-        let originalBytes = try Data(contentsOf: activeFileURL)
-        try authority2.retireIfTokenChanged(newToken: "token-2")
-        let statDiff = authority2.status()
-        #expect(statDiff["capture"] as? String == "unavailable")
-        #expect(statDiff["destination_generation"] is NSNull)
-        #expect(statDiff["period_id"] is NSNull)
-        #expect(statDiff["delivery"] as? String == "unknown")
+        try authority.reconcileIdentity("token-2", mode: .replace)
+        authority.reopenAdmission()
+        let replacement = try #require(reopened.getDestinationGeneration())
+        #expect(replacement != firstGeneration)
+        #expect(reopened.getOpenPeriodId() == periodID)
+        #expect(try Data(contentsOf: payloadURL) == original)
 
-        let retiredFileURL = tempRoot.appendingPathComponent("retired/periods/\(pid1)/browser_pages.jsonl")
-        #expect(!FileManager.default.fileExists(atPath: activeFileURL.path))
-        #expect(try Data(contentsOf: retiredFileURL) == originalBytes)
-        try authority2.retireIfTokenChanged(newToken: nil)
-        let statNil = authority2.status()
-        #expect(statNil["capture"] as? String == "not_paired")
-        #expect(statNil["destination_generation"] is NSNull)
-        #expect(statNil["period_id"] is NSNull)
-        #expect(try Data(contentsOf: retiredFileURL) == originalBytes)
+        let foreignGenerationBytes = try batchBytes("another-connection", String(format: "%032x", 2), reopened.getFloorMs())
+        let foreignReply = try authority.accept(bytes: foreignGenerationBytes, direction: "extension_to_host")
+        #expect(foreignReply["result"] as? String == "accepted")
+        #expect(foreignReply["period_id"] as? String == periodID)
+        #expect(try reopened.lookupReceipt(generation: "another-connection", inst: "instance-one", batchId: String(format: "%032x", 2))?.result == "accepted")
+        let bytesAfterAdmission = try Data(contentsOf: payloadURL)
+        #expect(bytesAfterAdmission.starts(with: original))
 
-        let store3 = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
-        let authority3 = BrowserIntakeAuthority(store: store3, projection: projection, wallClock: { clock.now })
-        #expect(store3.getActiveGeneration() == nil)
-        let reopened = authority3.status()
-        #expect(reopened["capture"] as? String == "unavailable")
-        #expect(reopened["delivery"] as? String == "unknown")
-        #expect(reopened["destination_generation"] is NSNull)
-        #expect(reopened["period_id"] is NSNull)
-        #expect(try Data(contentsOf: retiredFileURL) == originalBytes)
+        try authority.reconcileIdentity(nil, mode: .replace)
+        #expect(authority.status()["capture"] as? String == "not_paired")
+        #expect(authority.status()["destination_generation"] is NSNull)
+        #expect(reopened.getOpenPeriodId() == periodID)
+        #expect(try Data(contentsOf: payloadURL) == bytesAfterAdmission)
 
-        let staleBatch: [String: Any] = [
-            "type": "batch",
-            "destination_generation": gen,
-            "inst": "inst-1",
-            "batch_id": "88888888888888888888888888888888",
-            "queued_at_ms": 1700000000000 as UInt64,
-            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b1", "text": "t"]]]]
-        ]
-        let replyStale = try authority3.accept(bytes: try JSONSerialization.data(withJSONObject: staleBatch), direction: "extension_to_host")
-        #expect(replyStale["result"] as? String == "rejected")
-        #expect(replyStale["reason"] as? String == "stale_generation")
+        let afterUnpair = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        #expect(afterUnpair.getDestinationGeneration() == nil)
+        #expect(afterUnpair.getPeriod(periodId: periodID)?.periodId == periodID)
+        #expect(try Data(contentsOf: afterUnpair.periodFileURL(for: periodID)) == bytesAfterAdmission)
+    }
+
+
+    @Test func acceptedReceiptSurvivesDiscardRePairRetentionAndRestart() throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now }, timeZone: TimeZone(identifier: "UTC")!)
+        let generationA = try authority.testConnectionGeneration(identityToken: "discard-pairing-a")
+        let batchID = "91919191919191919191919191919191"
+        let batchBytes = try JSONSerialization.data(withJSONObject: [
+            "type": "batch", "destination_generation": generationA, "inst": "discard-instance",
+            "batch_id": batchID, "queued_at_ms": store.getFloorMs(),
+            "records": [["t": "segment_start", "ts": store.getFloorMs(), "ctx": "discard-context",
+                         "blocks": [["id": "block", "text": "discarded bytes"]]]]
+        ] as [String: Any])
+        let accepted = try authority.accept(bytes: batchBytes, direction: "extension_to_host")
+        let periodID = try #require(accepted["period_id"] as? String)
+        let payloadURL = store.periodFileURL(for: periodID)
+        try store.finalizePeriod(periodId: periodID, reason: "test", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!, openReplacement: false)
+        #expect(!(try Data(contentsOf: payloadURL)).isEmpty)
+        let token: BrowserPendingDiscardToken
+        if case .present(let captured) = store.pendingDiscardInventory() { token = captured }
+        else { Issue.record("Finalized pending bytes should produce a discard token"); return }
+        #expect(store.discardPendingPages(token).durablyCompleted)
+        #expect(!FileManager.default.fileExists(atPath: payloadURL.path))
+        #expect(store.getPeriod(periodId: periodID)?.state == "discarded")
+        #expect(try store.lookupReceipt(generation: generationA, inst: "discard-instance", batchId: batchID)?.result == "accepted")
+
+        clock.advance(by: TimeInterval(projection.policy.acceptedRetentionMs + 2_000) / 1000)
+        authority.poll(now: clock.now)
+        let generationB = try #require(try store.reconcileIdentity("discard-pairing-b", mode: .replace, nowMs: store.getFloorMs()))
+        authority.reopenAdmission()
+        #expect(generationB != generationA)
+        let duplicateAfterPairing = try authority.accept(bytes: batchBytes, direction: "extension_to_host")
+        #expect(duplicateAfterPairing["result"] as? String == "duplicate")
+
+        let reopened = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let reopenedAuthority = BrowserIntakeAuthority(store: reopened, projection: projection, wallClock: { clock.now })
+        try reopenedAuthority.reconcileIdentity("discard-pairing-b", mode: .reload)
+        let duplicateAfterRestart = try reopenedAuthority.accept(bytes: batchBytes, direction: "extension_to_host")
+        #expect(duplicateAfterRestart["result"] as? String == "duplicate")
+        #expect(try reopened.lookupReceipt(generation: generationA, inst: "discard-instance", batchId: batchID)?.result == "accepted")
+        #expect(!FileManager.default.fileExists(atPath: reopened.periodFileURL(for: periodID).path))
+        #expect(!reopened.storeIsFailed())
     }
 
     @Test func test6_malformedAndOversizeAdmission() async throws {
@@ -658,63 +740,103 @@ struct BrowserIntakeAdmissionTests {
         owner.stop()
     }
 
-    @Test func test1_generationRaceZeroBytesAndFileRetained() throws {
+    @Test func credentialReplacementKeepsPagesHeldUntilRouteConfirmation() async throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let transport = ScriptedBrowserTransport()
+        transport.succeed = true
+        let resolution = BrowserTestResolvedHome()
+        let routeState = BrowserIntakeRouteState()
+        let routeURLA = "http://127.0.0.1:49321"
+        let identityA = BrowserIntakeStore.identityDigest(of: "mark-held-pairing-a")
+        routeState.update(BrowserIntakeRouteCapability(serverURL: routeURLA, identityDigest: identityA,
+            pairingGeneration: 1, transportIncarnation: 1, credentialIsCurrent: { true }))
+        let owner = try BrowserIntakeOwner.start(
+            spoolRoot: tempRoot,
+            projection: projection,
+            credentialSnapshot: BrowserCredentialSnapshot(identityToken: "mark-held-pairing-a"),
+            transport: transport,
+            routeResolver: HomeBaseURLResolver { resolution.value },
+            routeState: routeState
+        )
+        defer { owner.stop() }
+        await owner.start()
+
+        let generationA = try #require(owner.store.getDestinationGeneration())
+        let queuedAt = owner.store.getFloorMs()
+        let batch = Data("""
+        {"type":"batch","destination_generation":"\(generationA)","inst":"mark-held-instance","batch_id":"93939393939393939393939393939393","queued_at_ms":\(queuedAt),"records":[{"t":"segment_start","ts":\(queuedAt),"ctx":"mark-held-context","blocks":[{"id":"block","text":"wait for mark"}]}]}
+        """.utf8)
+        guard case .message(let replyBytes) = await owner.accept(bytes: batch, direction: "extension_to_host") else {
+            Issue.record("batch should remain admitted while delivery is held")
+            return
+        }
+        let reply = try #require(JSONSerialization.jsonObject(with: replyBytes) as? [String: Any])
+        let periodID = try #require(reply["period_id"] as? String)
+        let payloadURL = owner.store.periodFileURL(for: periodID)
+        let payload = try Data(contentsOf: payloadURL)
+        try owner.store.finalizePeriod(periodId: periodID, reason: "mark_held", civilDate: Date(), timeZone: .current, openReplacement: false)
+        await owner.scheduleDelivery()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(transport.prepareCount == 0)
+
+        try owner.credentialWillChange()
+        try owner.credentialDidChange(identityToken: "mark-held-pairing-b")
+        let generationB = try #require(owner.store.getDestinationGeneration())
+        let routeURLB = "http://127.0.0.1:49322"
+        routeState.update(BrowserIntakeRouteCapability(serverURL: routeURLB,
+            identityDigest: BrowserIntakeStore.identityDigest(of: "mark-held-pairing-b"),
+            pairingGeneration: 2, transportIncarnation: 2, credentialIsCurrent: { true }))
+        #expect(generationB != generationA)
+        #expect(try Data(contentsOf: payloadURL) == payload)
+        await owner.scheduleDelivery()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(transport.prepareCount == 0)
+        #expect(try Data(contentsOf: payloadURL) == payload)
+
+        resolution.set(.url(routeURLB))
+        await owner.scheduleDelivery()
+        for _ in 0..<100 {
+            if owner.store.getPeriod(periodId: periodID)?.ackDurable == true { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(transport.prepareCount == 1)
+        let binding = try #require(try owner.store.storedDeliveryBinding(periodId: periodID))
+        #expect(binding.identityDigest == BrowserIntakeStore.identityDigest(of: "mark-held-pairing-b"))
+        #expect(binding.serverURL == routeURLB)
+        #expect(binding.pairingGeneration == 2)
+        #expect(binding.transportIncarnation == 2)
+    }
+
+    @Test func test1_pairingReplacementInvalidatesPermitAndRetainsPeriodFile() throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let projection = try BrowserContractProjection(rootURL: vendorURL)
         let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
-        let authority = BrowserIntakeAuthority(
-            store: store,
-            projection: projection,
-            wallClock: { clock.now },
-            timeZone: TimeZone(identifier: "UTC")!
-        )
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now })
         let gate = BrowserUploadGate(store: store)
-        let gen1 = try authority.publishEpoch(identityToken: "token-1")
-
-        // Accept a batch
-        let snap: [String: Any] = [
-            "type": "batch",
-            "destination_generation": gen1,
-            "inst": "inst-1",
-            "batch_id": "11111111111111111111111111111111",
-            "queued_at_ms": 1700000000000 as UInt64,
-            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b1", "text": "race test payload"]]]]
-        ]
-        let reply = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
-        let pid1 = reply["period_id"] as! String
-
-        // Finalize period 1
-        try store.finalizePeriod(periodId: pid1, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
-
-        // Acquire current permit under gen1
+        let firstGeneration = try authority.testConnectionGeneration(identityToken: "token-1")
+        let snap = try snapshot(generation: firstGeneration, id: 1, now: store.getFloorMs())
+        let reply = try authority.accept(bytes: snap, direction: "extension_to_host")
+        let periodID = try #require(reply["period_id"] as? String)
+        try store.finalizePeriod(periodId: periodID, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
         let permit = try #require(gate.currentPermit())
-        #expect(gate.isPermitActive(permit))
-
-        let p1FileURL = store.periodFileURL(for: pid1)
-        let originalBytes = try Data(contentsOf: p1FileURL)
+        let payloadURL = store.periodFileURL(for: periodID)
+        let originalBytes = try Data(contentsOf: payloadURL)
         #expect(!originalBytes.isEmpty)
 
-        // Race: pairing replaced / retired via retireIfTokenChanged
         gate.invalidateCurrentLease()
-        try authority.retireIfTokenChanged(newToken: "token-2")
-
+        try authority.reconcileIdentity("token-2", mode: .replace)
+        authority.reopenAdmission()
+        gate.resumeReaders()
         #expect(!gate.isPermitActive(permit))
-
-        // Attempt reading body through gate returns empty Data (zero bytes)
-        let readData = gate.readBodyData(fileURL: p1FileURL, permit: permit)
-        #expect(readData.isEmpty)
-
-        // Retired custody remains byte-exact outside active period lookup.
-        let retiredFileURL = tempRoot.appendingPathComponent("retired/periods/\(pid1)/browser_pages.jsonl")
-        #expect(!FileManager.default.fileExists(atPath: p1FileURL.path))
-        let remainingBytes = try Data(contentsOf: retiredFileURL)
-        #expect(remainingBytes == originalBytes)
-
-        // Status is unavailable
-        let stat = authority.status()
-        #expect(stat["capture"] as? String == "unavailable")
+        #expect(gate.readBodyData(fileURL: payloadURL, permit: permit).isEmpty)
+        #expect(FileManager.default.fileExists(atPath: payloadURL.path))
+        #expect(try Data(contentsOf: payloadURL) == originalBytes)
+        #expect(authority.status()["capture"] as? String == "permitted")
+        #expect(store.getPeriod(periodId: periodID)?.state == "finalized")
     }
 
     @Test func test2_sourceAwareMultipartAndDayReadAndSegmentRemoved() async throws {
@@ -779,7 +901,7 @@ struct BrowserIntakeAdmissionTests {
             wallClock: { clock.now },
             timeZone: TimeZone(identifier: "UTC")!
         )
-        let gen = try authority.publishEpoch(identityToken: "tok")
+        let gen = try authority.testConnectionGeneration(identityToken: "tok")
         let snap: [String: Any] = [
             "type": "batch",
             "destination_generation": gen,
@@ -836,7 +958,7 @@ struct BrowserIntakeAdmissionTests {
             timeZone: TimeZone(identifier: "UTC")!
         )
 
-        let gen = try authority.publishEpoch(identityToken: "tok-3")
+        let gen = try authority.testConnectionGeneration(identityToken: "tok-3")
 
         // Create and finalize period 1
         let snap1: [String: Any] = [
@@ -910,7 +1032,7 @@ struct BrowserIntakeAdmissionTests {
             store?.setPaused(false)
         }
 
-        let gen = try authority.publishEpoch(identityToken: "tok-4")
+        let gen = try authority.testConnectionGeneration(identityToken: "tok-4")
         #expect(authority.status()["capture"] as? String == "permitted")
 
         // 1. Pause intake
@@ -955,7 +1077,7 @@ struct BrowserIntakeAdmissionTests {
             timeZone: TimeZone(identifier: "UTC")!
         )
         let token = "instance-A\u{0}private-key"
-        let gen = try authority.publishEpoch(identityToken: token)
+        let gen = try authority.testConnectionGeneration(identityToken: token)
         let instA = "i\u{0}a"
         let instB = "i\u{0}b"
         let ctxA = "c\u{0}a"
@@ -984,9 +1106,9 @@ struct BrowserIntakeAdmissionTests {
 
         let reopened = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let again = BrowserIntakeAuthority(store: reopened, projection: projection, wallClock: { Date(timeIntervalSince1970: 1700000000) })
-        #expect(try again.publishEpoch(identityToken: token) == gen)
-        try again.retireIfTokenChanged(newToken: "instance-A\u{0}other-key")
-        #expect(reopened.getActiveGeneration() == nil)
+        #expect(try again.testConnectionGeneration(identityToken: token) == gen)
+        try again.reconcileIdentity(nil, mode: .replace)
+        #expect(reopened.getDestinationGeneration() == nil)
     }
 
     @Test func test8_fileSyncContinuationRefinalizeAndMissingPayload() throws {
@@ -996,7 +1118,7 @@ struct BrowserIntakeAdmissionTests {
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
         let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now }, timeZone: TimeZone(identifier: "UTC")!)
-        let gen = try authority.publishEpoch(identityToken: "token-1")
+        let gen = try authority.testConnectionGeneration(identityToken: "token-1")
         func payload(_ id: String, _ marker: String) -> Data {
             let object: [String: Any] = [
                 "type": "batch", "destination_generation": gen, "inst": "inst-1", "batch_id": id,
@@ -1062,7 +1184,7 @@ struct BrowserIntakeAdmissionTests {
             wallClock: { clock.now },
             timeZone: TimeZone(identifier: "UTC")!
         )
-        let gen = try authority.publishEpoch(identityToken: "token-1")
+        let gen = try authority.testConnectionGeneration(identityToken: "token-1")
         let delta: [String: Any] = [
             "type": "batch", "destination_generation": gen, "inst": "inst-1",
             "batch_id": "dddddddddddddddddddddddddddddddd",
@@ -1072,9 +1194,9 @@ struct BrowserIntakeAdmissionTests {
         let deltaBytes = try JSONSerialization.data(withJSONObject: delta)
         let first = try authority.accept(bytes: deltaBytes, direction: "extension_to_host")
         #expect(first["reason"] as? String == "snapshot_required")
-        mono.advance(milliseconds: Int(projection.policy.outboxAgeMs))
-        let expired = try authority.accept(bytes: deltaBytes, direction: "extension_to_host")
-        #expect(expired["reason"] as? String == "expired_unaccepted")
+        mono.advance(milliseconds: 600_001)
+        let oldOutbox = try authority.accept(bytes: deltaBytes, direction: "extension_to_host")
+        #expect(oldOutbox["reason"] as? String == "snapshot_required")
 
         let decoy = """
         {"extra":{"records":[{"unvalidated":true}]},"type":"batch","destination_generation":"\(gen)","inst":"inst-1","batch_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","queued_at_ms":\(store.getFloorMs()),"records":[{"t":"segment_start","ts":1000.0,"ctx":"ctx-real","blocks":[{"id":"b","text":"real-record"}]}]}
@@ -1111,26 +1233,26 @@ struct BrowserIntakeAdmissionTests {
     }
 
     @Test(arguments: [false, true])
-    func emptyPeriodHistoryReclaimsAfterRetention(directoryMissing: Bool) throws {
+    func emptyDiscardedPeriodWithoutReceiptsReclaimsImmediately(directoryMissing: Bool) throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let projection = try BrowserContractProjection(rootURL: vendorURL)
         let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let nowMs: UInt64 = 1700000000000
-        _ = try store.publishEpoch(identityToken: "empty-pairing", nowMs: nowMs)
+        _ = try store.testConnectionGeneration(identityToken: "empty-pairing", nowMs: nowMs)
         let old = try #require(store.getOpenPeriodId())
         let directory = store.periodFileURL(for: old).deletingLastPathComponent()
         try store.finalizePeriod(periodId: old, reason: "idle", civilDate: Date(timeIntervalSince1970: Double(nowMs) / 1000), timeZone: TimeZone(secondsFromGMT: 0)!)
         let current = try #require(store.getOpenPeriodId())
         if directoryMissing { try FileManager.default.removeItem(at: directory) }
-        store.garbageCollectExpiredTombstones(nowMs: nowMs + projection.policy.acceptedRetentionMs + 1)
+        store.garbageCollectSettledPeriods()
         #expect(store.getPeriod(periodId: old) == nil)
         #expect(!FileManager.default.fileExists(atPath: directory.path))
         #expect(store.getPeriod(periodId: current)?.state == "open")
         #expect(!store.storeIsFailed())
         let reopened = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         #expect(!reopened.storeIsFailed())
-        #expect(reopened.getActiveGeneration() == store.getActiveGeneration())
+        #expect(reopened.getDestinationGeneration() == store.getDestinationGeneration())
     }
 
     @Test(arguments: [false, true])
@@ -1171,7 +1293,7 @@ struct BrowserIntakeAdmissionTests {
         let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let now = Date(timeIntervalSince1970: 1700000000)
         let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { now })
-        let generation = try authority.publishEpoch(identityToken: "staging-pairing")
+        let generation = try authority.testConnectionGeneration(identityToken: "staging-pairing")
         let bytes = Data("""
         {"type":"batch","destination_generation":"\(generation)","inst":"staging-inst","batch_id":"97979797979797979797979797979797","queued_at_ms":1700000000000,"records":[{"t":"segment_start","ts":1700000000000,"ctx":"ctx","blocks":[{"id":"b","text":"retained-original"}]}]}
         """.utf8)
@@ -1201,7 +1323,7 @@ struct BrowserIntakeAdmissionTests {
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let projection = try BrowserContractProjection(rootURL: vendorURL)
         let spool = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
-        _ = try spool.publishEpoch(identityToken: "session-pairing", nowMs: 1700000000000)
+        _ = try spool.testConnectionGeneration(identityToken: "session-pairing", nowMs: 1700000000000)
         let gate = BrowserUploadGate(store: spool)
         let permit = try #require(gate.currentPermit())
         let routes = BrowserIntakeRouteState()
@@ -1252,7 +1374,7 @@ struct BrowserIntakeAdmissionTests {
         let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
         let now = Date(timeIntervalSince1970: 1700000000)
         let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { now })
-        let gen = try authority.publishEpoch(identityToken: "token-1")
+        let gen = try authority.testConnectionGeneration(identityToken: "token-1")
         let bytes = Data("""
         {"type":"batch","destination_generation":"\(gen)","inst":"inst-1","batch_id":"98989898989898989898989898989898","queued_at_ms":1700000000000,"records":[{"t":"segment_start","ts":1700000000000,"ctx":"ctx-1","blocks":[{"id":"b","text":"before"}]}]}
         """.utf8)
@@ -1267,7 +1389,7 @@ struct BrowserIntakeAdmissionTests {
         try Data(damaged.utf8).write(to: url)
         let candidate = restart ? try BrowserIntakeStore(rootURL: tempRoot, projection: projection) : store
         if !candidate.storeIsFailed() {
-            _ = try candidate.publishEpoch(identityToken: "token-1", nowMs: 1700000000000)
+            _ = try candidate.testConnectionGeneration(identityToken: "token-1", nowMs: 1700000000000)
         }
         let transport = ScriptedBrowserTransport()
         let route = BrowserIntakeRouteState()
@@ -1301,7 +1423,7 @@ struct BrowserIntakeAdmissionTests {
         let store = try BrowserIntakeStore(rootURL: root.appendingPathComponent("spool"), projection: projection)
         let authority = BrowserIntakeAuthority(store: store, projection: projection,
             wallClock: { instant }, timeZone: zone)
-        let generation = try authority.publishEpoch(identityToken: "contract-address")
+        let generation = try authority.testConnectionGeneration(identityToken: "contract-address")
         let batch: [String: Any] = ["type": "batch", "destination_generation": generation,
             "inst": "address-inst", "batch_id": "abababababababababababababababab",
             "queued_at_ms": 1700000000000 as UInt64,
@@ -1330,7 +1452,7 @@ struct BrowserIntakeAdmissionTests {
         #expect(envelope["meta"] == nil)
     }
 
-    @Test func test10_plannerRaceProofAndSegmentKey() async throws {
+    @Test func test10_inFlightAckKeepsItsCapturedRouteAfterReplacement() async throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let projection = try BrowserContractProjection(rootURL: vendorURL)
@@ -1338,156 +1460,114 @@ struct BrowserIntakeAdmissionTests {
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1700000000))
         let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now }, timeZone: TimeZone(identifier: "UTC")!)
         let gate = BrowserUploadGate(store: store)
-        let gen = try authority.publishEpoch(identityToken: "token-1")
-        let snap: [String: Any] = [
-            "type": "batch", "destination_generation": gen, "inst": "inst-1",
-            "batch_id": "12121212121212121212121212121212",
-            "queued_at_ms": 1700000000000 as UInt64,
+        let generation = try authority.testConnectionGeneration(identityToken: "token-1")
+        let batch: [String: Any] = [
+            "type": "batch", "destination_generation": generation, "inst": "inst-1",
+            "batch_id": "12121212121212121212121212121212", "queued_at_ms": 1700000000000 as UInt64,
             "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b", "text": "planner"]]]]
         ]
-        let reply = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
-        let pid = try #require(reply["period_id"] as? String)
-        try store.finalizePeriod(periodId: pid, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
-        let period = try #require(store.getPeriod(periodId: pid))
-        let segment = try #require(period.requestedSegment)
-        let day = try #require(period.requestedDay)
-        let fileURL = store.periodFileURL(for: pid)
-        let original = try Data(contentsOf: fileURL)
-
-        let transport = ScriptedBrowserTransport()
+        let reply = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: batch), direction: "extension_to_host")
+        let periodID = try #require(reply["period_id"] as? String)
+        try store.finalizePeriod(periodId: periodID, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
+        let payloadURL = store.periodFileURL(for: periodID)
+        let original = try Data(contentsOf: payloadURL)
         let routeState = BrowserIntakeRouteState()
-        _ = routeState.update(BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1",
-            identityDigest: try #require(store.getActiveIdentityToken()), pairingGeneration: 1,
-            transportIncarnation: 1, credentialIsCurrent: { true }))
+        let routeA = BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1", identityDigest: try #require(store.getActiveIdentityToken()), pairingGeneration: 1, transportIncarnation: 1, credentialIsCurrent: { true })
+        routeState.update(routeA)
+        let transport = ScriptedBrowserTransport()
+        transport.succeed = true
         let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, serverURLProvider: { "http://127.0.0.1" }, routeState: routeState)
-        // Reconciliation reads the day listing only after a validated upload
-        // binding exists. Retire during that read, before any cleanup can occur.
-        transport.succeed = true
         await planner.planAndUpload()
         #expect(transport.prepareCount == 1)
-        #expect(try store.storedDeliveryBinding(periodId: pid) != nil)
-        transport.onDayRead = {
-            try? authority.retireIfTokenChanged(newToken: "token-2")
-        }
-        await planner.planAndUpload()
-        #expect(transport.prepareCount == 1)
-        let retiredFileURL = tempRoot.appendingPathComponent("retired/periods/\(pid)/browser_pages.jsonl")
-        #expect(!FileManager.default.fileExists(atPath: fileURL.path))
-        #expect(try Data(contentsOf: retiredFileURL) == original)
-        #expect(authority.status()["capture"] as? String == "unavailable")
+        let captured = try #require(store.storedDeliveryBinding(periodId: periodID))
+        #expect(captured.serverURL == routeA.serverURL)
+        #expect(captured.identityDigest == routeA.identityDigest)
+        #expect(captured.pairingGeneration == routeA.pairingGeneration)
+        #expect(captured.transportIncarnation == routeA.transportIncarnation)
+        #expect(try Data(contentsOf: payloadURL) == original)
 
-        _ = try authority.publishEpoch(identityToken: "token-2")
+        // A same-journal replacement is still a different connection. The old
+        // binding must not use the new route's listing as proof of delivery.
+        let routeB = BrowserIntakeRouteCapability(serverURL: routeA.serverURL, identityDigest: routeA.identityDigest, pairingGeneration: 2, transportIncarnation: 2, credentialIsCurrent: { true })
+        routeState.setOnChange { [weak gate] _, _ in
+            gate?.invalidateCurrentLease()
+            gate?.resumeReaders()
+        }
+        routeState.update(routeB)
         gate.resumeReaders()
-        authority.reopenAdmission()
-        transport.onDayRead = nil
-        transport.succeed = true
-        let fresh = try authority.publishEpoch(identityToken: "token-fresh")
-        routeState.update(BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1",
-            identityDigest: BrowserIntakeStore.identityDigest(of: "token-fresh"), pairingGeneration: 2,
-            transportIncarnation: 2, credentialIsCurrent: { true }))
-        let freshSnap: [String: Any] = [
-            "type": "batch", "destination_generation": fresh, "inst": "inst-1",
-            "batch_id": "34343434343434343434343434343434",
-            "queued_at_ms": UInt64(clock.now.timeIntervalSince1970 * 1000),
-            "records": [["t": "segment_start", "ts": 1700000000000 as UInt64, "ctx": "ctx-2", "blocks": [["id": "b", "text": "fresh"]]]]
-        ]
-        let freshReply = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: freshSnap), direction: "extension_to_host")
-        let freshPid = try #require(freshReply["period_id"] as? String)
-        try store.finalizePeriod(periodId: freshPid, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
-        let freshPeriod = try #require(store.getPeriod(periodId: freshPid))
+        transport.succeed = false
+        transport.onUpload = { routeState.update(nil) }
         await planner.planAndUpload()
-        #expect(store.getPeriod(periodId: freshPid)?.state == "finalized")
-        #expect(store.getPeriod(periodId: freshPid)?.canonicalKey == "120001_1")
-        #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: freshPid).path))
-        let ack = try #require(try BrowserIngestAckStore.read(from: BrowserIngestAckStore.ackURL(periodDirectory: store.periodFileURL(for: freshPid).deletingLastPathComponent())))
-        transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
-            IngestProtocolV3.SegmentsItem(
-                key: "other-key",
-                files: [IngestProtocolV3.ReadFile(name: "browser_pages.jsonl", size: ack.size, sha256: ack.sha256, status: .present)],
-                originalKey: freshPeriod.requestedSegment
-            )
-        ])
-        await planner.planAndUpload()
-        #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: freshPid).path))
-        transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
-            IngestProtocolV3.SegmentsItem(
-                key: try #require(freshPeriod.requestedSegment),
-                files: [IngestProtocolV3.ReadFile(name: "browser_pages.jsonl", size: ack.size, sha256: ack.sha256, status: .processed)]
-            )
-        ])
-        await planner.planAndUpload()
-        #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: freshPid).path))
-        // Only the returned canonical collision key can prove delivery.
-        transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
-            IngestProtocolV3.SegmentsItem(
-                key: try #require(ack.canonicalKey),
-                files: [IngestProtocolV3.ReadFile(name: "browser_pages.jsonl", size: ack.size, sha256: ack.sha256, status: .present)],
-                originalKey: freshPeriod.requestedSegment
-            )
-        ])
-        await planner.planAndUpload()
-        #expect(!FileManager.default.fileExists(atPath: store.periodFileURL(for: freshPid).path))
-        #expect(store.getPeriod(periodId: freshPid)?.state == "delivered")
-        _ = (segment, day)
-    }
-}
-
-private final class BrowserCapacityAgeClock: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stamp = BrowserAgeStamp(bootID: "capacity-boot-1", elapsedMs: 0)
-    func now() -> BrowserAgeStamp? { lock.withLock { stamp } }
-    func changeBoot() { lock.withLock { stamp = BrowserAgeStamp(bootID: "capacity-boot-2", elapsedMs: 100) } }
-}
-
-@Suite("BrowserMetadataCapacity", .serialized)
-struct BrowserMetadataCapacityTests {
-    private var vendorURL: URL {
-        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("vendor")
+        #expect(FileManager.default.fileExists(atPath: payloadURL.path))
+        #expect(try Data(contentsOf: payloadURL) == original)
+        #expect(store.getPeriod(periodId: periodID)?.state == "finalized")
+        #expect(store.currentStatus(nowMs: store.getFloorMs(), monotonicFreshnessMs: 0)["delivery"] as? String != "failed")
+        #expect(!store.storeIsFailed())
     }
 
-    private func root() throws -> URL {
-        let url = URL(fileURLWithPath: "/private/var/tmp/solstone-capacity-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
-        return url
-    }
-
-    private func snapshot(generation: String, id: Int, now: UInt64, context: String? = nil) throws -> Data {
-        try JSONSerialization.data(withJSONObject: [
-            "type": "batch", "destination_generation": generation,
-            "inst": String(repeating: "i", count: 128), "batch_id": String(format: "%032x", id),
-            "queued_at_ms": now,
-            "records": [["t": "segment_start", "ts": now, "ctx": context ?? "ctx-\(id)",
-                         "blocks": [["id": "b", "text": "synthetic-capacity-marker-\(id)"]]]]
-        ])
-    }
-
-    @discardableResult
-    private func fillMetadata(_ store: BrowserIntakeStore, generation: String, now: UInt64) throws -> Int {
-        for index in 1...10_000 {
-            let id = String(format: "%032x", index + 100_000)
-            do {
-                try store.recordBatchSeen(generation: generation, inst: String(repeating: "m", count: 128),
-                                          batchId: id, queuedAtMs: now, initialAgeMs: 0)
-                try store.commitTombstone(generation: generation, inst: String(repeating: "m", count: 128),
-                                          batchId: id, reason: "expired_unaccepted", receiptClass: "terminal", queuedAtMs: now)
-            } catch BrowserIntakeStoreError.resourceExhausted {
-                #expect(store.isQuotaFull())
-                #expect(!store.storeIsFailed())
-                return index
-            }
+    @Test func unclearedAckFromReplacedConnectionUploadsOnCurrentRoute() async throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let injector = BrowserIntakeIOInjector()
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection, ioInjector: injector)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now }, timeZone: TimeZone(identifier: "UTC")!)
+        let generation = try authority.testConnectionGeneration(identityToken: "same-journal")
+        let accepted = try authority.accept(bytes: JSONSerialization.data(withJSONObject: [
+            "type": "batch", "destination_generation": generation, "inst": "route-instance",
+            "batch_id": "92929292929292929292929292929292", "queued_at_ms": store.getFloorMs(),
+            "records": [["t": "segment_start", "ts": store.getFloorMs(), "ctx": "route-context",
+                         "blocks": [["id": "block", "text": "uncleared copy"]]]]
+        ] as [String: Any]), direction: "extension_to_host")
+        let periodID = try #require(accepted["period_id"] as? String)
+        try store.finalizePeriod(periodId: periodID, reason: "test", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
+        let period = try #require(store.getPeriod(periodId: periodID))
+        let payloadURL = store.periodFileURL(for: periodID)
+        let routeA = BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1", identityDigest: try #require(store.getActiveIdentityToken()), pairingGeneration: 7, transportIncarnation: 11, credentialIsCurrent: { true })
+        let ack = BrowserIngestAck(generation: generation, periodId: periodID,
+            sha256: try #require(period.fileSha256), size: UInt64(period.committedLength), metadata: nil,
+            requestedDay: try #require(period.requestedDay), requestedSegment: try #require(period.requestedSegment),
+            canonicalKey: period.requestedSegment, status: .ok)
+        let bindingA = BrowserDeliveryBinding(ack: ack, route: routeA)
+        let syncCalls = BrowserTestInjectedSize()
+        injector.setFailure { point in
+            guard point == .sync else { return }
+            syncCalls.value += 1
+            if syncCalls.value == 2 { throw BrowserIngestAckError.parentSyncFailed }
         }
-        Issue.record("Metadata traffic did not encounter the configured production page budget")
-        return 10_000
-    }
-
-    private func physicalBytes(_ root: URL) throws -> Int {
-        let enumerator = try #require(FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]))
-        var bytes = 0
-        for case let url as URL in enumerator {
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-            if values.isRegularFile == true { bytes += values.fileSize ?? 0 }
+        do {
+            try store.publishDeliveryAck(bindingA)
+            Issue.record("parent-directory sync should have failed after publishing the ack")
+        } catch BrowserIngestAckError.parentSyncFailed {
+            // The ack file is present, but the database correctly leaves it pending.
+        } catch {
+            Issue.record("unexpected ack publication error: \(error)")
         }
-        return bytes
+        injector.setFailure(nil)
+        let ackURL = BrowserIngestAckStore.ackURL(periodDirectory: payloadURL.deletingLastPathComponent())
+        #expect(FileManager.default.fileExists(atPath: ackURL.path))
+        #expect(store.getPeriod(periodId: periodID)?.ackDurable == false)
+        #expect(FileManager.default.fileExists(atPath: payloadURL.path))
+        #expect(!store.storeIsFailed())
+
+        let routeState = BrowserIntakeRouteState()
+        let routeB = BrowserIntakeRouteCapability(serverURL: routeA.serverURL, identityDigest: routeA.identityDigest, pairingGeneration: 8, transportIncarnation: 12, credentialIsCurrent: { true })
+        routeState.update(routeB)
+        let currentTransport = ScriptedBrowserTransport()
+        currentTransport.succeed = true
+        let listingReads = BrowserTestInjectedSize()
+        currentTransport.onDayRead = { listingReads.value += 1 }
+        let planner = BrowserUploadPlanner(store: store, gate: BrowserUploadGate(store: store), client: currentTransport,
+            serverURLProvider: { routeB.serverURL }, routeState: routeState)
+        await planner.planAndUpload()
+        #expect(currentTransport.prepareCount == 1)
+        #expect(currentTransport.uploadedByteCount > 0)
+        #expect(listingReads.value == 0)
+        #expect(store.getPeriod(periodId: periodID)?.ackDurable == true)
+        #expect(try store.storedDeliveryBinding(periodId: periodID)?.transportIncarnation == routeB.transportIncarnation)
+        #expect(FileManager.default.fileExists(atPath: payloadURL.path))
+        #expect(!store.storeIsFailed())
     }
 
     @Test func wholeSnapshotAtProjectedCeilingCommitsAndNextByteRefuses() throws {
@@ -1498,7 +1578,7 @@ struct BrowserMetadataCapacityTests {
         let store = try BrowserIntakeStore(rootURL: url, projection: projection, ioInjector: injector)
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
         let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now })
-        let generation = try authority.publishEpoch(identityToken: "exact-capacity-pairing")
+        let generation = try authority.testConnectionGeneration(identityToken: "exact-capacity-pairing")
         let bytes = try snapshot(generation: generation, id: 1, now: store.getFloorMs())
         guard case .accept(.batch(let decoded)) = BrowserPayloadDecoder.decode(bytes: bytes, direction: "extension_to_host", projection: projection) else {
             Issue.record("Boundary witness must use the production decoder"); return
@@ -1538,7 +1618,7 @@ struct BrowserMetadataCapacityTests {
         var store: BrowserIntakeStore? = try BrowserIntakeStore(rootURL: url, projection: projection)
         var authority: BrowserIntakeAuthority? = BrowserIntakeAuthority(store: store!, projection: projection,
             wallClock: { Date(timeIntervalSince1970: 1_700_000_000) })
-        let generation = try authority!.publishEpoch(identityToken: "wal-migration-pairing")
+        let generation = try authority!.testConnectionGeneration(identityToken: "wal-migration-pairing")
         let reply = try authority!.accept(bytes: snapshot(generation: generation, id: 1, now: store!.getFloorMs()), direction: "extension_to_host")
         let periodID = try #require(reply["period_id"] as? String)
         let payloadURL = store!.periodFileURL(for: periodID)
@@ -1579,7 +1659,30 @@ struct BrowserMetadataCapacityTests {
         #expect(try Data(contentsOf: unknown) == Data("synthetic-unknown-must-remain".utf8))
     }
 
-    @Test func metadataOnlyPressurePersistsClockAndReclaimsWithoutPairing() throws {
+    @Test func nonVersionOneStoreResetsOldRetiredLayout() throws {
+        let url = try root()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let retired = url.appendingPathComponent("retired", isDirectory: true)
+        let retiredPeriod = retired.appendingPathComponent("periods/00000000-0000-0000-0000-000000000001", isDirectory: true)
+        try FileManager.default.createDirectory(at: retiredPeriod, withIntermediateDirectories: true)
+        try Data("old payload".utf8).write(to: retiredPeriod.appendingPathComponent("browser_pages.jsonl"))
+        try Data("catalog".utf8).write(to: retired.appendingPathComponent("catalog.sqlite"))
+        try Data("transition".utf8).write(to: retired.appendingPathComponent("transition.json"))
+        try Data("intent".utf8).write(to: retired.appendingPathComponent("discard-intent.json"))
+        var oldDatabase: OpaquePointer?
+        #expect(sqlite3_open(url.appendingPathComponent("intake.sqlite").path, &oldDatabase) == SQLITE_OK)
+        #expect(sqlite3_exec(oldDatabase, "PRAGMA user_version = 0", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(oldDatabase)
+
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: url, projection: projection)
+        #expect(!FileManager.default.fileExists(atPath: retired.path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: url.appendingPathComponent("periods").path).isEmpty)
+        #expect(store.getAllFinalizedPeriods().isEmpty)
+        #expect(!store.storeIsFailed())
+    }
+
+    @Test func metadataOnlyPressurePersistsWithoutAgeEviction() throws {
         let url = try root()
         defer { try? FileManager.default.removeItem(at: url) }
         let projection = try BrowserContractProjection(rootURL: vendorURL)
@@ -1588,30 +1691,19 @@ struct BrowserMetadataCapacityTests {
             ioInjector: BrowserIntakeIOInjector(), ageClock: age.now, metadataPageLimit: 256)
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
         let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now })
-        let generation = try authority.publishEpoch(identityToken: "capacity-pairing")
+        let generation = try authority.testConnectionGeneration(identityToken: "capacity-pairing")
         let now = store.getFloorMs()
         #expect(try fillMetadata(store, generation: generation, now: now) > 1)
-        #expect(store.getEarliestHeldMs() == 0)
-        let state = authority.status()
-        #expect((state["custody"] as? [String: Bool])?["full"] == true)
-        #expect(state["capture"] as? String == "intake_off")
-        #expect(try physicalBytes(url) < 256 * 4096 * 3 + 64 * 1024)
-        #expect(store.projectedSpoolBytes() < projection.policy.spoolBytes)
-        #expect(store.getActiveGeneration() == generation)
+        #expect(store.isQuotaFull())
         age.changeBoot()
-        #expect(try store.updateFloorMs(wallNowMs: now + 1000) >= now + 1000)
-        let firstID = String(format: "%032x", 100_001)
-        #expect(try store.getBatchAge(generation: generation, inst: String(repeating: "m", count: 128), batchId: firstID)?.established == false)
-        clock.advance(by: TimeInterval(projection.policy.acceptedRetentionMs + 2000) / 1000)
-        authority.poll(now: clock.now)
-        #expect(!store.isQuotaFull())
-        #expect(store.getActiveGeneration() == generation)
-        let accepted = try authority.accept(bytes: snapshot(generation: generation, id: 1, now: store.getFloorMs()), direction: "extension_to_host")
-        #expect(accepted["result"] as? String == "accepted")
+        _ = try store.updateFloorMs(wallNowMs: now + UInt64(projection.policy.acceptedRetentionMs + 2_000))
+        authority.poll(now: clock.now.addingTimeInterval(TimeInterval(projection.policy.acceptedRetentionMs + 2_000) / 1000))
+        #expect(store.isQuotaFull())
+        let refused = try authority.accept(bytes: snapshot(generation: generation, id: 1, now: store.getFloorMs()), direction: "extension_to_host")
+        #expect(refused["reason"] as? String == "resource_exhausted")
         #expect(!store.storeIsFailed())
     }
-
-    @Test func metadataOnlyRetirementReleasesSuccessorAdmission() throws {
+    @Test func metadataPressureSurvivesPairingReplacement() throws {
         let url = try root()
         defer { try? FileManager.default.removeItem(at: url) }
         let projection = try BrowserContractProjection(rootURL: vendorURL)
@@ -1619,25 +1711,18 @@ struct BrowserMetadataCapacityTests {
             ioInjector: BrowserIntakeIOInjector(), metadataPageLimit: 256)
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
         let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now })
-        let generationA = try authority.publishEpoch(identityToken: "metadata-full-a")
+        let generationA = try authority.testConnectionGeneration(identityToken: "metadata-full-a")
         #expect(try fillMetadata(store, generation: generationA, now: store.getFloorMs()) > 1)
         #expect(store.isQuotaFull())
-        #expect(store.getEarliestHeldMs() == 0)
         try authority.reconcileIdentity("metadata-full-b", mode: .replace)
-        let generationB = try authority.publishEpoch(identityToken: "metadata-full-b")
+        let generationB = try #require(store.getDestinationGeneration())
         authority.reopenAdmission()
         #expect(generationB != generationA)
-        #expect(!store.isQuotaFull())
-        #expect(store.retiredCustodyInventory() == .empty)
+        #expect(store.isQuotaFull())
         let result = try authority.accept(bytes: snapshot(generation: generationB, id: 1, now: store.getFloorMs()), direction: "extension_to_host")
-        #expect(result["result"] as? String == "accepted")
-        let period = try #require(result["period_id"] as? String)
-        try store.finalizePeriod(periodId: period, reason: "metadata-successor", civilDate: clock.now,
-            timeZone: TimeZone(secondsFromGMT: 0)!)
-        #expect(store.getPeriod(periodId: period)?.state == "finalized")
+        #expect(result["reason"] as? String == "resource_exhausted")
         #expect(!store.storeIsFailed())
     }
-
     @Test func pressureStillFinalizesAndPublishesBoundedProofThenReclaims() async throws {
         let url = try root()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -1646,7 +1731,7 @@ struct BrowserMetadataCapacityTests {
             ioInjector: BrowserIntakeIOInjector(), metadataPageLimit: 512)
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
         let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now }, timeZone: TimeZone(secondsFromGMT: 0)!)
-        let generation = try authority.publishEpoch(identityToken: "capacity-drain-pairing")
+        let generation = try authority.testConnectionGeneration(identityToken: "capacity-drain-pairing")
         var periods: [String] = []
         for id in 1...3 {
             let reply = try authority.accept(bytes: snapshot(generation: generation, id: id, now: store.getFloorMs()), direction: "extension_to_host")
@@ -1679,7 +1764,7 @@ struct BrowserMetadataCapacityTests {
             sha256: period.fileSha256 ?? "", size: UInt64.max, metadata: nil,
             requestedDay: period.requestedDay ?? "", requestedSegment: period.requestedSegment ?? "",
             canonicalKey: "120001_1", status: .collision)
-        #expect(throws: BrowserIntakeStoreError.staleGeneration) { try store.publishDeliveryAck(unrepresentableSize) }
+        #expect(throws: BrowserIntakeStoreError.localIO) { try store.publishDeliveryAck(unrepresentableSize) }
 
         let proof = BrowserIngestAck(generation: generation, periodId: period.periodId,
             sha256: period.fileSha256 ?? "", size: UInt64(period.committedLength), metadata: nil,
@@ -1690,7 +1775,7 @@ struct BrowserMetadataCapacityTests {
         }
         #expect(throws: BrowserIntakeStoreError.localIO) { try store.publishDeliveryAck(proof) }
         store.ioInjector.setFailure(nil)
-        #expect(try store.storedDeliveryBinding(periodId: period.periodId) == proof)
+        #expect(try store.storedDeliveryBinding(periodId: period.periodId)?.ack == proof)
         #expect(!FileManager.default.fileExists(atPath: ackURL.path))
         #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: period.periodId).path))
         try store.publishDeliveryAck(proof)
@@ -1718,7 +1803,8 @@ struct BrowserMetadataCapacityTests {
             serverURLProvider: { "http://127.0.0.1:49323" }, nowMs: { BrowserAgeStamp.wallMilliseconds(clock.now) }, routeState: routeState)
         await planner.planAndUpload()
         for id in periods {
-            let proof = try #require(try store.storedDeliveryBinding(periodId: id))
+            let binding = try #require(try store.storedDeliveryBinding(periodId: id))
+            let proof = binding.ack
             #expect(store.getPeriod(periodId: id)?.ackDurable == true)
             #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: id).path))
             transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
@@ -1735,49 +1821,152 @@ struct BrowserMetadataCapacityTests {
         clock.advance(by: TimeInterval(projection.policy.acceptedRetentionMs + 2000) / 1000)
         authority.poll(now: clock.now)
         #expect(!store.isQuotaFull())
-        #expect(store.getActiveGeneration() == generation)
+        #expect(store.getDestinationGeneration() == generation)
         let next = try authority.accept(bytes: snapshot(generation: generation, id: 4, now: store.getFloorMs()), direction: "extension_to_host")
         #expect(next["result"] as? String == "accepted")
     }
 
-    @Test func pressureRetirementSurvivesReconstructionAndPreservesOldBytes() throws {
+    @Test func pendingDiscardHonorsExecutionReservationsRotationAndRetry() throws {
         let url = try root()
         defer { try? FileManager.default.removeItem(at: url) }
         let projection = try BrowserContractProjection(rootURL: vendorURL)
-        let age = BrowserCapacityAgeClock()
+        let injector = BrowserIntakeIOInjector()
+        let store = try BrowserIntakeStore(rootURL: url, projection: projection, ioInjector: injector)
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
-        var store: BrowserIntakeStore? = try BrowserIntakeStore(rootURL: url, projection: projection,
-            ioInjector: BrowserIntakeIOInjector(), ageClock: age.now, metadataPageLimit: 256)
-        var authority: BrowserIntakeAuthority? = BrowserIntakeAuthority(store: store!, projection: projection, wallClock: { clock.now })
-        let generation = try authority!.publishEpoch(identityToken: "old-capacity-identity")
-        let bytes = try snapshot(generation: generation, id: 1, now: store!.getFloorMs())
-        let reply = try authority!.accept(bytes: bytes, direction: "extension_to_host")
-        let periodID = try #require(reply["period_id"] as? String)
-        let payloadURL = store!.periodFileURL(for: periodID)
-        let original = try Data(contentsOf: payloadURL)
-        try fillMetadata(store!, generation: generation, now: store!.getFloorMs())
-        age.changeBoot()
-        try authority!.reconcileIdentity(nil, mode: .replace)
-        let floor = store!.getFloorMs()
-        #expect(store!.getActiveGeneration() == nil)
-        authority = nil; store = nil
-        let reopened = try BrowserIntakeStore(rootURL: url, projection: projection,
-            ioInjector: BrowserIntakeIOInjector(), ageClock: age.now, metadataPageLimit: 256)
-        #expect(reopened.getFloorMs() == floor)
-        #expect(reopened.getActiveGeneration() == nil)
-        #expect(reopened.getPeriod(periodId: periodID) == nil)
-        let retiredURL = url.appendingPathComponent("retired/periods/\(periodID)/browser_pages.jsonl")
-        #expect(!reopened.getAllFinalizedPeriods().contains { $0.periodId == periodID })
-        #expect(try Data(contentsOf: retiredURL) == original)
-        #expect(try reopened.lookupReceipt(generation: generation, inst: String(repeating: "i", count: 128), batchId: String(format: "%032x", 1))?.result == "accepted")
-        let newAuthority = BrowserIntakeAuthority(store: reopened, projection: projection, wallClock: { clock.now })
-        try newAuthority.reconcileIdentity("replacement-capacity-identity", mode: .reload)
-        #expect(reopened.getActiveGeneration() == nil)
-        #expect(BrowserUploadGate(store: reopened).currentPermit() == nil)
-        #expect(!reopened.storeIsFailed())
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now })
+        let generation = try authority.testConnectionGeneration(identityToken: "discard-reservations")
+        func addFinalized(_ number: Int) throws -> String {
+            let accepted = try authority.accept(bytes: snapshot(generation: generation, id: number, now: store.getFloorMs()), direction: "extension_to_host")
+            let periodID = try #require(accepted["period_id"] as? String)
+            try store.finalizePeriod(periodId: periodID, reason: "test", civilDate: clock.now, timeZone: TimeZone(secondsFromGMT: 0)!, openReplacement: false)
+            return periodID
+        }
+
+        let reservedAfterCapture = try addFinalized(101)
+        let captured = try #require({
+            if case .present(let token) = store.pendingDiscardInventory() { return token }
+            return nil
+        }())
+        let stagingA = store.stagingRootURL().appendingPathComponent("browser-upload-\(UUID().uuidString)")
+        try store.registerStagingDirectory(stagingA, reservedBytes: 0, periodId: reservedAfterCapture)
+        #expect(store.discardPendingPages(captured).durablyCompleted)
+        #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: reservedAfterCapture).path))
+        try store.releaseStagingDirectory(stagingA)
+        #expect(store.discardPendingPages(captured).durablyCompleted)
+        #expect(!FileManager.default.fileExists(atPath: store.periodFileURL(for: reservedAfterCapture).path))
+
+        let waiting = try addFinalized(102)
+        let reservedAtCapture = try addFinalized(103)
+        let stagingB = store.stagingRootURL().appendingPathComponent("browser-upload-\(UUID().uuidString)")
+        try store.registerStagingDirectory(stagingB, reservedBytes: 0, periodId: reservedAtCapture)
+        let capturedWithoutReserved = try #require({
+            if case .present(let token) = store.pendingDiscardInventory() { return token }
+            return nil
+        }())
+        try store.releaseStagingDirectory(stagingB)
+        #expect(store.discardPendingPages(capturedWithoutReserved).durablyCompleted)
+        #expect(!FileManager.default.fileExists(atPath: store.periodFileURL(for: waiting).path))
+        #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: reservedAtCapture).path))
+
+        let rotates = try #require(try authority.accept(bytes: snapshot(generation: generation, id: 104, now: store.getFloorMs()), direction: "extension_to_host")["period_id"] as? String)
+        let rotateToken = try #require({
+            if case .present(let token) = store.pendingDiscardInventory() { return token }
+            return nil
+        }())
+        clock.advance(by: 130)
+        authority.poll(now: clock.now)
+        let newOpen = try #require(store.getOpenPeriodId())
+        #expect(newOpen != rotates)
+        let newBytes = try authority.accept(bytes: snapshot(generation: generation, id: 105, now: store.getFloorMs()), direction: "extension_to_host")
+        #expect(newBytes["period_id"] as? String == newOpen)
+        #expect(store.discardPendingPages(rotateToken).durablyCompleted)
+        #expect(!FileManager.default.fileExists(atPath: store.periodFileURL(for: rotates).path))
+        #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: newOpen).path))
+
+        if case .present(let remaining) = store.pendingDiscardInventory() {
+            #expect(store.discardPendingPages(remaining).durablyCompleted)
+        }
+
+        let retryID = try addFinalized(106)
+        let retryToken = try #require({
+            if case .present(let token) = store.pendingDiscardInventory() { return token }
+            return nil
+        }())
+        let writes = BrowserTestInjectedSize()
+        injector.setFailure { point in
+            guard point == .write else { return }
+            writes.value += 1
+            if writes.value == 2 { throw BrowserIntakeStoreError.localIO }
+        }
+        let failed = store.discardPendingPages(retryToken)
+        injector.setFailure(nil)
+        #expect(!failed.durablyCompleted)
+        #expect(store.getPeriod(periodId: retryID)?.state == "finalized")
+        #expect(FileManager.default.fileExists(atPath: store.periodFileURL(for: retryID).path))
+        #expect(!store.storeIsFailed())
+        #expect(store.discardPendingPages(retryToken).durablyCompleted)
+        #expect(!FileManager.default.fileExists(atPath: store.periodFileURL(for: retryID).path))
     }
 
-    #if DEBUG || SOLSTONE_TEST_SUPPORT
+    @Test func pendingDiscardInteractionKeepsConfirmCancelAndFailureStates() {
+        let token = BrowserPendingDiscardToken(storeIncarnation: UUID(), openPeriodId: "open", finalizedPeriodIds: ["finalized"])
+        var interaction = BrowserPendingDiscardInteraction<BrowserPendingDiscardToken>()
+        interaction.openSettings()
+        interaction.observe(.present(token))
+        interaction.requestDiscard()
+        #expect(interaction.confirmation == token)
+        interaction.cancelDiscard()
+        #expect(interaction.confirmation == nil)
+        interaction.requestDiscard()
+        interaction.observe(.present(BrowserPendingDiscardToken(
+            storeIncarnation: token.storeIncarnation, openPeriodId: "rotated-open", finalizedPeriodIds: ["later-finalized"]
+        )))
+        let request = interaction.beginDiscard()
+        #expect(request != nil)
+        if let request {
+            #expect(request.scope == token)
+            interaction.finishDiscard(request, durablyCompleted: false, inventory: .present(token))
+        }
+        #expect(interaction.showsFailure)
+        #expect(!interaction.showsDiscarded)
+        #expect(!interaction.isDiscarding)
+    }
+
+    @Test func versionOneReopenKeepsPeriodIDsAndBytes() throws {
+        let url = try root()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: url, projection: projection)
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { Date(timeIntervalSince1970: 1_700_000_000) })
+        let generation = try authority.testConnectionGeneration(identityToken: "reopen-pairing")
+        let accepted = try authority.accept(bytes: snapshot(generation: generation, id: 1, now: store.getFloorMs()), direction: "extension_to_host")
+        let periodID = try #require(accepted["period_id"] as? String)
+        let payloadURL = store.periodFileURL(for: periodID)
+        let bytes = try Data(contentsOf: payloadURL)
+        let strayRetired = url.appendingPathComponent("retired", isDirectory: true)
+        try FileManager.default.createDirectory(at: strayRetired, withIntermediateDirectories: true)
+        let strayMarker = strayRetired.appendingPathComponent("preserve-me")
+        try Data("stray".utf8).write(to: strayMarker)
+        let unrelated = url.appendingPathComponent("unrelated", isDirectory: true)
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
+        let unrelatedMarker = unrelated.appendingPathComponent("preserve-me")
+        try Data("also-stray".utf8).write(to: unrelatedMarker)
+        let reopened = try BrowserIntakeStore(rootURL: url, projection: projection)
+        #expect(reopened.getPeriod(periodId: periodID)?.periodId == periodID)
+        #expect(try Data(contentsOf: reopened.periodFileURL(for: periodID)) == bytes)
+        #expect(try Data(contentsOf: strayMarker) == Data("stray".utf8))
+        #expect(try Data(contentsOf: unrelatedMarker) == Data("also-stray".utf8))
+        var version: Int32 = -1
+        var database: OpaquePointer?
+        #expect(sqlite3_open(url.appendingPathComponent("intake.sqlite").path, &database) == SQLITE_OK)
+        defer { sqlite3_close(database) }
+        var statement: OpaquePointer?
+        #expect(sqlite3_prepare_v2(database, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        #expect(sqlite3_step(statement) == SQLITE_ROW)
+        version = sqlite3_column_int(statement, 0)
+        #expect(version == 1)
+    }
     @Test func actualSQLiteFullAutomaticallyRollsBackAdmissionAndKeepsStoreHealthy() throws {
         let url = try root()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -1785,7 +1974,7 @@ struct BrowserMetadataCapacityTests {
         let store = try BrowserIntakeStore(rootURL: url, projection: projection)
         let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
         let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now })
-        let generation = try authority.publishEpoch(identityToken: "actual-full-pairing")
+        let generation = try authority.testConnectionGeneration(identityToken: "actual-full-pairing")
         let anchor = try snapshot(generation: generation, id: 1, now: store.getFloorMs())
         let reply = try authority.accept(bytes: anchor, direction: "extension_to_host")
         let periodID = try #require(reply["period_id"] as? String)
@@ -1822,6 +2011,7 @@ struct BrowserMetadataCapacityTests {
 private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked Sendable {
     var dayListing = IngestProtocolV3.SegmentsDay(total: 0, items: [])
     var onDayRead: (@Sendable () -> Void)?
+    var onUpload: (@Sendable () -> Void)?
     var prepareCount = 0
     var succeed = false
     var uploadFailure: Error?
@@ -1871,6 +2061,7 @@ private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked
             if chunk.isEmpty { break }
             lock.withLock { uploadedByteCount += chunk.count }
         }
+        onUpload?()
         guard succeed, let part = prepared.stagedParts.first else {
             return .failure(uploadFailure ?? UploadError.invalidRequest)
         }
@@ -1923,7 +2114,7 @@ struct BrowserIntakePeriodKeyTests {
         let clock = BrowserTestClock(start)
         let authority = BrowserIntakeAuthority(store: store, projection: projection,
             monotonicClock: ManualMonotonicClock(), wallClock: { clock.now }, timeZone: utc)
-        let generation = try authority.publishEpoch(identityToken: "period-key-token")
+        let generation = try authority.testConnectionGeneration(identityToken: "period-key-token")
         return Harness(root: root, store: store, authority: authority, clock: clock, generation: generation)
     }
 

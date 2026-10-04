@@ -574,9 +574,9 @@ globalThis.SolstoneNativeBrowserSchemas = {
               "age_policy",
               "malformed",
               "oversize",
+              "unaccepted_lost",
               "stale_generation",
-              "expired_unaccepted",
-              "unaccepted_lost"
+              "expired_unaccepted"
             ]
           },
           "class": {
@@ -654,9 +654,9 @@ globalThis.SolstoneNativeBrowserSchemas = {
                 "enum": [
                   "malformed",
                   "oversize",
+                  "unaccepted_lost",
                   "stale_generation",
-                  "expired_unaccepted",
-                  "unaccepted_lost"
+                  "expired_unaccepted"
                 ]
               },
               "class": {

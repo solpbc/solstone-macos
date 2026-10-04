@@ -1,6 +1,6 @@
 {
   "constants": {
-    "BUNDLE_VERSION": "1.1.0",
+    "BUNDLE_VERSION": "1.2.0",
     "WIRE_PROTOCOL": 1,
     "EXTENSION_TO_HOST_MAX": 33554432,
     "HOST_TO_EXTENSION_MAX": 65536,
@@ -10,7 +10,6 @@
     "JSON_MAX_DEPTH": 127,
     "FILE_MAX": 50331648,
     "OUTBOX_BYTES_MAX": 67108864,
-    "OUTBOX_AGE_MS_MAX": 600000,
     "SPOOL_BYTES_MAX": 536870912,
     "SPOOL_AGE_MS_MAX": 604800000,
     "FUTURE_SKEW_MS_MAX": 60000,
@@ -218,11 +217,13 @@
       "permanent": [
         "malformed",
         "oversize",
-        "stale_generation",
-        "expired_unaccepted",
         "unaccepted_lost"
       ]
     },
+    "LEGACY_PERMANENT_REASONS": [
+      "stale_generation",
+      "expired_unaccepted"
+    ],
     "CANONICAL_KEY_ORDER": {
       "hello": [
         "type",
@@ -1098,32 +1099,6 @@
       "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"oversize\",\"class\":\"retryable\"}"
     },
     {
-      "id": "receipt_rejected_stale_generation",
-      "direction": "host_to_extension",
-      "expect": "accept",
-      "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"stale_generation\",\"class\":\"permanent\"}"
-    },
-    {
-      "id": "receipt_wrong_class_stale_generation",
-      "direction": "host_to_extension",
-      "expect": "refuse",
-      "code": "invalid_receipt",
-      "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"stale_generation\",\"class\":\"retryable\"}"
-    },
-    {
-      "id": "receipt_rejected_expired_unaccepted",
-      "direction": "host_to_extension",
-      "expect": "accept",
-      "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"expired_unaccepted\",\"class\":\"permanent\"}"
-    },
-    {
-      "id": "receipt_wrong_class_expired_unaccepted",
-      "direction": "host_to_extension",
-      "expect": "refuse",
-      "code": "invalid_receipt",
-      "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"expired_unaccepted\",\"class\":\"retryable\"}"
-    },
-    {
       "id": "receipt_rejected_unaccepted_lost",
       "direction": "host_to_extension",
       "expect": "accept",
@@ -1135,6 +1110,32 @@
       "expect": "refuse",
       "code": "invalid_receipt",
       "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"unaccepted_lost\",\"class\":\"retryable\"}"
+    },
+    {
+      "id": "receipt_legacy_permanent_stale_generation",
+      "direction": "host_to_extension",
+      "expect": "accept",
+      "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"stale_generation\",\"class\":\"permanent\"}"
+    },
+    {
+      "id": "receipt_legacy_retryable_stale_generation",
+      "direction": "host_to_extension",
+      "expect": "refuse",
+      "code": "invalid_receipt",
+      "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"stale_generation\",\"class\":\"retryable\"}"
+    },
+    {
+      "id": "receipt_legacy_permanent_expired_unaccepted",
+      "direction": "host_to_extension",
+      "expect": "accept",
+      "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"expired_unaccepted\",\"class\":\"permanent\"}"
+    },
+    {
+      "id": "receipt_legacy_retryable_expired_unaccepted",
+      "direction": "host_to_extension",
+      "expect": "refuse",
+      "code": "invalid_receipt",
+      "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"expired_unaccepted\",\"class\":\"retryable\"}"
     },
     {
       "id": "receipt_success_accepted",

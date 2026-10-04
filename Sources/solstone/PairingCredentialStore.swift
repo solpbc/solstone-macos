@@ -7,7 +7,6 @@ import SPLTunnel
 public enum PairingCredentialStoreError: Error, Equatable, Sendable {
     case staleGeneration
     case noPairingFound
-    case retirementConfirmationRequired
     case underlying(String)
 }
 
@@ -42,13 +41,13 @@ public final class PairingCredentialStore: @unchecked Sendable {
     // Hooks must not call an identity operation on this store recursively.
     private let browserIdentityLock = NSLock()
     private var browserMutationLock: NSLock?
-    private var beforeIdentityMutation: (@Sendable (String?, Bool) throws -> Void)?
+    private var beforeIdentityMutation: (@Sendable (String?) throws -> Void)?
     private var afterIdentityMutation: (@Sendable (String?) -> Void)?
     private var afterCredentialLoad: (@Sendable (String?) -> Void)?
 
     func installBrowserHooks(
         mutationLock: NSLock? = nil,
-        beforeMutation: @escaping @Sendable (String?, Bool) throws -> Void,
+        beforeMutation: @escaping @Sendable (String?) throws -> Void,
         afterMutation: @escaping @Sendable (String?) -> Void,
         afterLoad: @escaping @Sendable (String?) -> Void
     ) {
@@ -123,7 +122,7 @@ public final class PairingCredentialStore: @unchecked Sendable {
         return loaded
     }
 
-    public func save(_ pairing: StoredPairing, expectedGeneration: UInt64? = nil, browserWarningWasPresented: Bool = false) throws {
+    public func save(_ pairing: StoredPairing, expectedGeneration: UInt64? = nil) throws {
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         browserIdentityLock.lock()
         defer { browserIdentityLock.unlock() }
@@ -148,11 +147,9 @@ public final class PairingCredentialStore: @unchecked Sendable {
         if let hook {
             holdsLock = false
             lock.unlock()
-            do { try hook(token, browserWarningWasPresented) }
+            do { try hook(token) }
             catch {
-                if error as? PairingCredentialStoreError == .retirementConfirmationRequired {
-                    lock.withLock { browserCredentialReadable = wasBrowserCredentialReadable }
-                }
+                lock.withLock { browserCredentialReadable = wasBrowserCredentialReadable }
                 throw error
             }
             lock.lock()
@@ -164,7 +161,19 @@ public final class PairingCredentialStore: @unchecked Sendable {
             }
         }
         #endif
-        try store.save(pairing)
+        do {
+            try store.save(pairing)
+        } catch {
+            #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            browserCredentialReadable = wasBrowserCredentialReadable
+            let afterHook = afterIdentityMutation
+            let previousIdentity = lastIdentityToken
+            holdsLock = false
+            lock.unlock()
+            afterHook?(previousIdentity)
+            #endif
+            throw error
+        }
         cachedPairing = pairing
         lastIdentityToken = token
         storedPairingGeneration &+= 1
@@ -180,7 +189,7 @@ public final class PairingCredentialStore: @unchecked Sendable {
         #endif
     }
 
-    public func delete(expectedGeneration: UInt64? = nil, expectedAccessGeneration: UInt64? = nil, browserWarningWasPresented: Bool = false) throws {
+    public func delete(expectedGeneration: UInt64? = nil, expectedAccessGeneration: UInt64? = nil) throws {
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         browserIdentityLock.lock()
         defer { browserIdentityLock.unlock() }
@@ -209,11 +218,9 @@ public final class PairingCredentialStore: @unchecked Sendable {
         if let hook {
             holdsLock = false
             lock.unlock()
-            do { try hook(nil, browserWarningWasPresented) }
+            do { try hook(nil) }
             catch {
-                if error as? PairingCredentialStoreError == .retirementConfirmationRequired {
-                    lock.withLock { browserCredentialReadable = wasBrowserCredentialReadable }
-                }
+                lock.withLock { browserCredentialReadable = wasBrowserCredentialReadable }
                 throw error
             }
             lock.lock()
@@ -230,7 +237,19 @@ public final class PairingCredentialStore: @unchecked Sendable {
             }
         }
         #endif
-        try store.delete()
+        do {
+            try store.delete()
+        } catch {
+            #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            browserCredentialReadable = wasBrowserCredentialReadable
+            let afterHook = afterIdentityMutation
+            let previousIdentity = lastIdentityToken
+            holdsLock = false
+            lock.unlock()
+            afterHook?(previousIdentity)
+            #endif
+            throw error
+        }
         cachedPairing = nil
         lastIdentityToken = nil
         storedPairingGeneration &+= 1
@@ -319,7 +338,7 @@ public final class PairingCredentialStore: @unchecked Sendable {
         return (pairing: updated, newAccessGen: storedAccessGeneration)
     }
 
-    public func noteExternalPairingChange(_ pairing: StoredPairing?, browserWarningWasPresented: Bool = false) throws {
+    public func noteExternalPairingChange(_ pairing: StoredPairing?) throws {
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         browserIdentityLock.lock()
         defer { browserIdentityLock.unlock() }
@@ -334,11 +353,9 @@ public final class PairingCredentialStore: @unchecked Sendable {
         let hook = beforeIdentityMutation
         if let hook {
             lock.unlock()
-            do { try hook(token, browserWarningWasPresented) }
+            do { try hook(token) }
             catch {
-                if error as? PairingCredentialStoreError == .retirementConfirmationRequired {
-                    lock.withLock { browserCredentialReadable = wasBrowserCredentialReadable }
-                }
+                lock.withLock { browserCredentialReadable = wasBrowserCredentialReadable }
                 throw error
             }
             lock.lock()

@@ -101,7 +101,7 @@ private func physicalBatch(generation: String, inst: String, id: String) throws 
 
 private func physicalHello(_ fd: Int32, inst: String, brand: String = "chrome") async throws -> [String: Any] {
     try await physicalWrite(Data("{\"type\":\"local_hello\",\"brand\":\"chromium\",\"mode\":\"production\"}".utf8), to: fd)
-    try await physicalWrite(Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.1.0\",\"brand\":\"\(brand)\",\"inst\":\"\(inst)\"}".utf8), to: fd)
+    try await physicalWrite(Data("{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.2.0\",\"brand\":\"\(brand)\",\"inst\":\"\(inst)\"}".utf8), to: fd)
     return try await physicalMessage("hello_ack", from: fd)
 }
 
@@ -731,7 +731,7 @@ struct BrowserHostListenerRestartTests {
             await fixture.start()
             let original = try await fixture.connect()
             defer { Darwin.close(original) }
-            let epoch = fixture.owner.store.getActiveGeneration()
+            let epoch = fixture.owner.store.getDestinationGeneration()
             let listener = fixture.listener, owner = fixture.owner
             let coordinator = await MainActor.run {
                 AppQuitCoordinator(dependencies: .init(writeMarker: { _ in true },
@@ -752,7 +752,7 @@ struct BrowserHostListenerRestartTests {
             #expect(await fixture.listener.holdsEndpointFence)
             let replacement = try await fixture.connect(inst: "recovered-instance")
             defer { Darwin.close(replacement) }
-            #expect(fixture.owner.store.getActiveGeneration() == epoch)
+            #expect(fixture.owner.store.getDestinationGeneration() == epoch)
             let colliding = BrowserHostEndpointFence(rootURL: fixture.root.appendingPathComponent("endpoint"))
             #expect(throws: BrowserHostListenerError.endpointCollision) { _ = try colliding.bindListener() }
         }
@@ -793,7 +793,7 @@ struct BrowserHostListenerRestartTests {
             await fixture.start()
             let old = try await fixture.connect()
             defer { Darwin.close(old) }
-            let generation = try #require(fixture.owner.store.getActiveGeneration())
+            let generation = try #require(fixture.owner.store.getDestinationGeneration())
             let oldID = "cccccccccccccccccccccccccccccccc"
             let oldBatch = try physicalBatch(generation: generation, inst: "physical-instance", id: oldID)
             await suspension.arm()
@@ -840,7 +840,7 @@ struct BrowserHostListenerRestartTests {
             await fixture.start()
             let fd = try await fixture.connect(inst: bound)
             defer { Darwin.close(fd) }
-            let generation = try #require(fixture.owner.store.getActiveGeneration())
+            let generation = try #require(fixture.owner.store.getDestinationGeneration())
             let id = "cccccccccccccccccccccccccccccccc"
             let batch = try physicalBatch(generation: generation, inst: other, id: id)
             guard case .accept(.batch) = BrowserPayloadDecoder.decode(bytes: batch, direction: "extension_to_host", projection: fixture.projection) else {
@@ -871,7 +871,7 @@ struct BrowserHostListenerRestartTests {
             defer { Darwin.close(first) }
             let second = try await fixture.connect(inst: decomposed)
             defer { Darwin.close(second) }
-            let generation = try #require(fixture.owner.store.getActiveGeneration())
+            let generation = try #require(fixture.owner.store.getDestinationGeneration())
             for (fd, inst, id) in [(first, composed, "cccccccccccccccccccccccccccccccc"),
                                    (second, decomposed, "dddddddddddddddddddddddddddddddd")] {
                 try await physicalWrite(physicalBatch(generation: generation, inst: inst, id: id), to: fd)
@@ -894,36 +894,30 @@ struct BrowserHostListenerRestartTests {
         }
     }
 
-    @Test func newSessionAnswersRetiredAcceptedReplayBeforeStaleGeneration() async throws {
+    @Test func newSessionAnswersAcceptedReplayAndAdmitsOtherConnectionGeneration() async throws {
         try await withPhysicalListener { fixture in
             await fixture.start()
             let old = try await fixture.connect()
             defer { Darwin.close(old) }
-            let generationA = try #require(fixture.owner.store.getActiveGeneration())
+            let generationA = try #require(fixture.owner.store.getDestinationGeneration())
             let acceptedID = "cccccccccccccccccccccccccccccccc"
-            let neverID = "dddddddddddddddddddddddddddddddd"
+            let laterID = "dddddddddddddddddddddddddddddddd"
             let acceptedBytes = try physicalBatch(generation: generationA, inst: "physical-instance", id: acceptedID)
             try await physicalWrite(acceptedBytes, to: old)
             let accepted = try await physicalMessage("accepted", from: old)
             #expect(accepted["result"] as? String == "accepted")
             let periodID = try #require(accepted["period_id"] as? String)
-            let receipt = try fixture.owner.store.lookupReceipt(generation: generationA, inst: "physical-instance", batchId: acceptedID)
-            let activePayload = fixture.owner.store.periodFileURL(for: periodID)
-            let payload = try Data(contentsOf: activePayload)
-            try fixture.owner.credentialWillChange(identityToken: "replacement-physical-identity", browserWarningWasPresented: true)
+            let payloadURL = fixture.owner.store.periodFileURL(for: periodID)
+            let payload = try Data(contentsOf: payloadURL)
+
+            try fixture.owner.credentialWillChange()
             try fixture.owner.credentialDidChange(identityToken: "replacement-physical-identity")
-            let generationB = try #require(fixture.owner.store.getActiveGeneration())
+            let generationB = try #require(fixture.owner.store.getDestinationGeneration())
             #expect(generationA != generationB)
+            #expect(fixture.owner.store.getPeriod(periodId: periodID)?.periodId == periodID)
+            #expect(try Data(contentsOf: payloadURL) == payload)
             await fixture.listener.refreshSnapshot()
-            let retiredPayload = fixture.root.appendingPathComponent("spool/retired/periods/\(periodID)/browser_pages.jsonl")
-            #expect(try Data(contentsOf: retiredPayload) == payload)
-            #expect(!FileManager.default.fileExists(atPath: activePayload.path))
-            #expect(fixture.owner.store.getPeriod(periodId: periodID) == nil)
-            #expect(fixture.owner.store.retiredCustodyInventory() == .present(.init(identities: [
-                .init(generation: generationA, periodId: periodID, committedLength: payload.count)
-            ])))
-            let directory = fixture.root.appendingPathComponent("spool/periods")
-            let inventory = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+
             let new = try fixture.openConnection()
             defer { Darwin.close(new) }
             let hello = try await physicalHello(new, inst: "physical-instance")
@@ -933,24 +927,16 @@ struct BrowserHostListenerRestartTests {
             let replay = try await physicalMessage("accepted", from: new)
             #expect(replay["result"] as? String == "duplicate")
             #expect(replay["period_id"] as? String == periodID)
-            try await physicalWrite(physicalBatch(generation: generationA, inst: "physical-instance", id: neverID), to: new)
-            let never = try await physicalMessage("accepted", from: new)
-            #expect(never["result"] as? String == "rejected")
-            #expect(never["reason"] as? String == "stale_generation")
-            #expect(never["class"] as? String == "permanent")
-            #expect(fixture.owner.store.getActiveGeneration() == generationB)
-            #expect(try fixture.owner.store.lookupReceipt(generation: generationA, inst: "physical-instance", batchId: acceptedID) == receipt)
-            #expect(try fixture.owner.store.lookupReceipt(generation: generationA, inst: "physical-instance", batchId: neverID) == nil)
-            #expect(try Data(contentsOf: retiredPayload) == payload)
-            #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted() == inventory)
-            let successorID = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-            try await physicalWrite(physicalBatch(generation: generationB, inst: "physical-instance", id: successorID), to: new)
-            #expect(try await physicalMessage("accepted", from: new)["result"] as? String == "accepted")
-            #expect(try fixture.owner.store.lookupReceipt(generation: generationB, inst: "physical-instance", batchId: successorID)?.result == "accepted")
-            #expect(try Data(contentsOf: retiredPayload) == payload)
+
+            try await physicalWrite(physicalBatch(generation: generationA, inst: "physical-instance", id: laterID), to: new)
+            let oldGenerationBatch = try await physicalMessage("accepted", from: new)
+            #expect(oldGenerationBatch["result"] as? String == "accepted")
+            #expect(try fixture.owner.store.lookupReceipt(generation: generationA, inst: "physical-instance", batchId: laterID)?.result == "accepted")
+            let afterOldGenerationBatch = try Data(contentsOf: payloadURL)
+            #expect(afterOldGenerationBatch.starts(with: payload))
+            #expect(afterOldGenerationBatch.count > payload.count)
         }
     }
-
     @Test func realScheduledRenewalKeepsIdleSessionLive() async throws {
         try await withPhysicalListener { fixture in
             await fixture.start()
@@ -964,7 +950,7 @@ struct BrowserHostListenerRestartTests {
                 #expect(renewal["capture"] as? String == "permitted")
             }
             #expect(connectedAt.duration(to: .now) > .seconds(15))
-            let generation = try #require(fixture.owner.store.getActiveGeneration())
+            let generation = try #require(fixture.owner.store.getDestinationGeneration())
             let batchID = "dddddddddddddddddddddddddddddddd"
             let batch = Data("{\"type\":\"batch\",\"destination_generation\":\"\(generation)\",\"inst\":\"physical-instance\",\"batch_id\":\"\(batchID)\",\"queued_at_ms\":\(UInt64(Date().timeIntervalSince1970 * 1_000)),\"records\":[{\"t\":\"segment_start\",\"ts\":1,\"ctx\":\"renewal-context\",\"inst\":\"physical-instance\",\"blocks\":[{\"id\":\"block\",\"text\":\"synthetic renewal witness\"}]}]}".utf8)
             try await physicalWrite(batch, to: fd)
@@ -1021,7 +1007,7 @@ struct BrowserHostListenerRestartTests {
             defer { Darwin.close(secondFD) }
             let thirdFD = try await fixture.connect(inst: "large-third")
             defer { Darwin.close(thirdFD) }
-            let generation = try #require(fixture.owner.store.getActiveGeneration())
+            let generation = try #require(fixture.owner.store.getDestinationGeneration())
             func body(inst: String, id: String) -> Data {
                 var data = Data("{\"type\":\"batch\",\"destination_generation\":\"\(generation)\",\"inst\":\"\(inst)\",\"batch_id\":\"\(id)\",\"queued_at_ms\":\(UInt64(Date().timeIntervalSince1970 * 1_000)),\"records\":[{\"t\":\"segment_start\",\"ts\":1,\"ctx\":\"\(inst)-context\",\"inst\":\"\(inst)\",\"blocks\":[{\"id\":\"b\",\"text\":\"synthetic aggregate input\"}],\"padding\":\"".utf8)
                 let suffix = Data("\"}]}".utf8)
@@ -1063,7 +1049,7 @@ struct BrowserHostListenerRestartTests {
             let fd = try await fixture.connect()
             defer { Darwin.close(fd) }
             uptime.advance(16)
-            let generation = try #require(fixture.owner.store.getActiveGeneration())
+            let generation = try #require(fixture.owner.store.getDestinationGeneration())
             let batch = Data("{\"type\":\"batch\",\"destination_generation\":\"\(generation)\",\"inst\":\"physical-instance\",\"batch_id\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"queued_at_ms\":\(UInt64(Date().timeIntervalSince1970 * 1_000)),\"records\":[{\"t\":\"segment_start\",\"ts\":1,\"ctx\":\"physical-context\",\"inst\":\"physical-instance\",\"blocks\":[{\"id\":\"block\",\"text\":\"synthetic expiry witness\"}]}]}".utf8)
             try? await physicalWrite(batch, to: fd)
             #expect(try await physicalRead(fd) == nil)

@@ -20,7 +20,7 @@ struct TunnelLifecycleOwnerTests {
         owner.start()
         try await waitUntil { owner.state == .connected(localPort: 34567, via: .relay) }
         let digest = BrowserIntakeStore.identityDigest(of: PairingCredentialStore.identityToken(for: original))
-        let permit = BrowserUploadPermit(generation: "test-epoch", identityToken: digest)
+        let permit = BrowserUploadPermit(identityToken: digest)
         let routes = owner.browserIntakeRouteState
         let first = try #require(routes.snapshot(for: permit))
         #expect(first.serverURL == "http://127.0.0.1:34567")

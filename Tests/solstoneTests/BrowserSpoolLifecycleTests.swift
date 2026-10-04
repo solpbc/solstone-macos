@@ -355,7 +355,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture(syncPaused: { true })
         defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let a = try #require(fixture.owner.store.getActiveGeneration())
+        let a = try #require(fixture.owner.store.getDestinationGeneration())
         _ = try reply(await fixture.owner.accept(bytes: batch(a, id: "81818181818181818181818181818181",
             queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
         let barrier = LifecycleFailurePublicationGate()
@@ -365,9 +365,9 @@ struct BrowserSpoolLifecycleTests {
         defer { barrier.resume() }
         try #require(await barrier.waitUntilHeld())
         #expect(!fixture.owner.store.storeIsFailed())
-        try fixture.owner.credentialWillChange(identityToken: "accept-error-b", browserWarningWasPresented: true)
+        try fixture.owner.credentialWillChange()
         try fixture.owner.credentialDidChange(identityToken: "accept-error-b")
-        let b = try #require(fixture.owner.store.getActiveGeneration())
+        let b = try #require(fixture.owner.store.getDestinationGeneration())
         let acceptedB = try fixture.owner.authority.accept(bytes: batch(b, id: "83838383838383838383838383838383",
             queuedAtMs: 1_700_000_100_000), direction: "extension_to_host")
         try #require(acceptedB["result"] as? String == "accepted")
@@ -379,7 +379,7 @@ struct BrowserSpoolLifecycleTests {
         #expect(refusal.code == "local_io")
         #expect(!fixture.owner.store.storeIsFailed())
         #expect(fixture.owner.authority.status()["failure"] == nil)
-        #expect(fixture.owner.store.getActiveGeneration() == b)
+        #expect(fixture.owner.store.getDestinationGeneration() == b)
         #expect(try Data(contentsOf: fixture.owner.store.periodFileURL(for: periodB)) == bytesB)
         barrier.rearmFailure()
         _ = await fixture.owner.accept(bytes: batch(b, id: "84848484848484848484848484848484",
@@ -388,71 +388,52 @@ struct BrowserSpoolLifecycleTests {
         #expect(fixture.owner.authority.status()["capture"] as? String == "unavailable")
     }
 
-#if DEBUG || SOLSTONE_TEST_SUPPORT
-    @Test @MainActor func retiredDiscardBindingWaitsForFreshFactsAfterADelayedResult() async throws {
-        let state = AppState.forSnapshot(config: AppConfig(syncPaused: true))
-        let paired = pairing(instanceID: "retired-binding-journal")
-        let credentials = PairingCredentialStore(store: PairingStore(pairing: paired))
-        _ = try credentials.load()
-        let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired), syncPaused: { true })
+    @Test func finalizedPayloadChecksumStillProtectsThePendingSpool() async throws {
+        let fixture = try fixture(syncPaused: { true })
         defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
-        state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
-        state.browserRetiredCustody.openSettings()
         await fixture.owner.start()
-        func waitFor(_ condition: @MainActor () -> Bool) async -> Bool {
-            let deadline = ContinuousClock.now + .seconds(3)
-            while !condition() && ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
-            return condition()
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
+        let accepted = try reply(await fixture.owner.accept(bytes: batch(generation,
+            id: "89898989898989898989898989898989", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
+        let periodID = try #require(accepted["period_id"] as? String)
+        try fixture.owner.store.finalizePeriod(periodId: periodID, reason: "checksum", civilDate: fixture.clock.wallNow(),
+            timeZone: fixture.clock.timeZone(), openReplacement: false)
+        let period = try #require(fixture.owner.store.getPeriod(periodId: periodID))
+        let payloadURL = fixture.owner.store.periodFileURL(for: periodID)
+        try fixture.owner.store.validateFinalizedPayload(period)
+        #expect(period.fileSha256 != nil)
+
+        try Data("tampered pending payload".utf8).write(to: payloadURL)
+        #expect(throws: BrowserIntakeStoreError.localIO) {
+            try fixture.owner.store.validateFinalizedPayload(period)
         }
-        let a = try #require(fixture.owner.store.getActiveGeneration())
-        let acceptedA = try reply(await fixture.owner.accept(bytes: batch(a, id: "85858585858585858585858585858585",
-            queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
-        let periodA = try #require(acceptedA["period_id"] as? String)
-        state.refreshBrowserRetiredCustody()
-        try #require(await waitFor { state.pairingCoordinator.pendingBrowserMaterial() == true })
-        try await Task.detached { try credentials.save(pairing(instanceID: "retired-binding-journal-b"), browserWarningWasPresented: true) }.value
-        state.refreshBrowserRetiredCustody()
-        try #require(await waitFor { state.browserRetiredCustody.canRequestDiscard })
-        let retainedA = fixture.root.appendingPathComponent("retired/periods/\(periodA)/browser_pages.jsonl")
-        state.browserRetiredCustody.requestDiscard()
-        state.browserRetiredCustody.cancelDiscard()
-        #expect(!state.browserRetiredCustody.isDiscarding)
-        #expect(FileManager.default.fileExists(atPath: retainedA.path))
-        let resultBarrier = LifecycleDiscardResultBarrier()
-        state.browserRetiredDiscardResultBarrier = { await resultBarrier.suspend() }
-        state.browserRetiredCustody.requestDiscard()
-        state.confirmBrowserRetiredDiscard()
-        let deadline = ContinuousClock.now + .seconds(3)
-        while !(await resultBarrier.isHeld) && ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
-        try #require(await resultBarrier.isHeld)
-        #expect(state.browserRetiredCustody.isDiscarding)
-        let b = try #require(fixture.owner.store.getActiveGeneration())
-        let acceptedB = try reply(await fixture.owner.accept(bytes: batch(b, id: "86868686868686868686868686868686",
-            queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
-        let periodB = try #require(acceptedB["period_id"] as? String)
-        try await Task.detached { try credentials.save(paired, browserWarningWasPresented: true) }.value
-        state.refreshBrowserRetiredCustody()
-        try #require(await waitFor {
-            if case .present(let scope) = state.browserRetiredCustody.inventory { return scope.identities.map(\.periodId) == [periodB] }
-            return false
-        })
-        await resultBarrier.release()
-        try #require(await waitFor { !state.browserRetiredCustody.isDiscarding })
-        #expect(!state.browserRetiredCustody.showsDiscarded)
-        #expect(state.browserRetiredCustody.showsNotice)
-        #expect(state.pairingCoordinator.pendingBrowserMaterial() == false)
-        if case .present(let scope) = state.browserRetiredCustody.inventory { #expect(scope.identities.map(\.periodId) == [periodB]) }
-        else { Issue.record("The delayed A result must preserve newly retired B") }
-        state.browserRetiredDiscardResultBarrier = {}
-        state.browserRetiredCustody.requestDiscard()
-        state.confirmBrowserRetiredDiscard()
-        try #require(await waitFor { !state.browserRetiredCustody.isDiscarding })
-        #expect(state.browserRetiredCustody.showsDiscarded)
-        #expect(!state.browserRetiredCustody.showsFailure)
-        #expect(state.browserRetiredCustody.inventory == .empty)
-        state.browserRetiredCustody.closeSettings()
-        state.browserRetiredCustody.openSettings()
-        #expect(!state.browserRetiredCustody.showsDiscarded)
+        #expect(fixture.owner.store.storeIsFailed())
+        #expect(FileManager.default.fileExists(atPath: payloadURL.path))
+    }
+
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+    @Test func pendingDiscardTokenSurvivesOpenGrowthAndClearsContext() async throws {
+        let fixture = try fixture(syncPaused: { true })
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+        await fixture.owner.start()
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
+        let first = try reply(await fixture.owner.accept(bytes: batch(generation, id: "85858585858585858585858585858585", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
+        let openID = try #require(first["period_id"] as? String)
+        let token: BrowserPendingDiscardToken
+        if case .present(let captured) = fixture.owner.pendingDiscardInventory() { token = captured }
+        else { Issue.record("Open waiting bytes should produce a discard token"); return }
+        let originalLength = fixture.owner.store.getPeriod(periodId: openID)?.committedLength ?? 0
+        _ = try await fixture.owner.accept(bytes: batch(generation, id: "86868686868686868686868686868686", queuedAtMs: 1_700_000_100_001, text: "appended after confirmation"), direction: "extension_to_host")
+        #expect((fixture.owner.store.getPeriod(periodId: openID)?.committedLength ?? 0) > originalLength)
+        let result = fixture.owner.store.discardPendingPages(token)
+        #expect(result.durablyCompleted)
+        #expect(try Data(contentsOf: fixture.owner.store.periodFileURL(for: openID)).isEmpty)
+        let delta = Data("""
+        {"type":"batch","destination_generation":"\(generation)","inst":"instance-one","batch_id":"87878787878787878787878787878787","queued_at_ms":1700000100002,"records":[{"t":"delta","ts":1700000100002,"ctx":"context-one","op":"add","block":{"id":"b","text":"delta"}}]}
+        """.utf8)
+        #expect(try reply(await fixture.owner.accept(bytes: delta, direction: "extension_to_host"))["reason"] as? String == "snapshot_required")
+        let snapshotReply = try reply(await fixture.owner.accept(bytes: batch(generation, id: "88888888888888888888888888888888", queuedAtMs: 1_700_000_100_003), direction: "extension_to_host"))
+        #expect(snapshotReply["result"] as? String == "accepted")
     }
 #endif
 
@@ -573,7 +554,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.pause.set(true)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let firstId = String(format: "%032x", index * 2 + 1)
         let secondId = String(format: "%032x", index * 2 + 2)
         let first = try reply(await fixture.owner.accept(
@@ -617,7 +598,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.pause.set(true)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: String(format: "%032x", 0x300 + variant), queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -627,7 +608,7 @@ struct BrowserSpoolLifecycleTests {
         #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
         let period = try #require(fixture.owner.store.getPeriod(periodId: periodId))
         var ack = BrowserIngestAck(
-            generation: period.generation,
+            generation: try #require(fixture.owner.store.getDestinationGeneration()),
             source: "browser",
             periodId: period.periodId,
             filename: "browser_pages.jsonl",
@@ -662,7 +643,7 @@ struct BrowserSpoolLifecycleTests {
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         try await Task.sleep(for: .milliseconds(80))
-        #expect(fixture.transport.attempts == 0)
+        #expect(fixture.transport.attempts == 1)
         #expect(FileManager.default.fileExists(atPath: fileURL.path))
         fixture.owner.stop()
     }
@@ -678,7 +659,7 @@ struct BrowserSpoolLifecycleTests {
         try await Task.sleep(for: .milliseconds(20))
         #expect(fixture.clock.sleepCount() == sleepCount)
 
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         fixture.owner.authority.setPaused(true)
         let accepted = try await reply(fixture.owner.accept(
             bytes: batch(generation, id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", queuedAtMs: 1_700_000_100_000),
@@ -703,7 +684,7 @@ struct BrowserSpoolLifecycleTests {
         try await Task.sleep(for: .milliseconds(100))
         #expect(transport.attempts == 1)
         await fixture.updateRoute(.held)
-        let generationAfterDisconnect = fixture.owner.store.getActiveGeneration()
+        let generationAfterDisconnect = fixture.owner.store.getDestinationGeneration()
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         try await Task.sleep(for: .milliseconds(100))
         #expect(transport.attempts == 1)
@@ -726,56 +707,38 @@ struct BrowserSpoolLifecycleTests {
         #expect(fixture.owner.store.storeIsFailed() == false)
     }
 
-    @Test @MainActor func identityEpochAndLeaseRejectLateOldGenerationProof() async throws {
+    @Test @MainActor func leasedUploadFinishesWithCapturedRouteAfterReplacement() async throws {
         let transport = LifecycleTransport()
         transport.setOutcomeSuccess(true)
         transport.suspendAfterFirstChunk()
         let fixture = try fixture(transport: transport)
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
 
-        let oldGeneration = try #require(fixture.owner.store.getActiveGeneration())
-        try fixture.owner.credentialReloaded(identityToken: "lifecycle-pairing")
-        #expect(fixture.owner.store.getActiveGeneration() == oldGeneration)
-        let accepted = try await reply(fixture.owner.accept(
-            bytes: multiBlockBatch(oldGeneration, id: "cccccccccccccccccccccccccccccccc", queuedAtMs: 1_700_000_100_000),
-            direction: "extension_to_host"
-        ))
-        let periodId = try #require(accepted["period_id"] as? String)
-        let activePayload = fixture.owner.store.periodFileURL(for: periodId)
-        let originalPayload = try Data(contentsOf: activePayload)
+        let oldGeneration = try #require(fixture.owner.store.getDestinationGeneration())
+        let accepted = try await reply(fixture.owner.accept(bytes: multiBlockBatch(oldGeneration,
+            id: "cccccccccccccccccccccccccccccccc", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
+        let periodID = try #require(accepted["period_id"] as? String)
+        let payload = fixture.owner.store.periodFileURL(for: periodID)
+        let original = try Data(contentsOf: payload)
         fixture.clock.advance(seconds: 301)
         #expect(await transport.waitUntilSuspended())
-        let sentBeforeReplacement = transport.bytesSent
 
-        let delayedResume = Task.detached {
-            try? await Task.sleep(for: .milliseconds(250))
-            transport.resumeStream()
-        }
-        let replacementStart = ContinuousClock.now
-        try fixture.owner.credentialWillChange(identityToken: "replacement-pairing", browserWarningWasPresented: true)
-        #expect(ContinuousClock.now - replacementStart < .milliseconds(200))
-        #expect(fixture.owner.authority.isAdmissionOpen() == false)
-        transport.resumeStream()
-        await delayedResume.value
-        try await Task.sleep(for: .milliseconds(80))
-        #expect(transport.bytesSent == sentBeforeReplacement)
-        let ackURL = BrowserIngestAckStore.ackURL(
-            periodDirectory: activePayload.deletingLastPathComponent()
-        )
-        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
-        let retiredPayload = fixture.root.appendingPathComponent("retired/periods/\(periodId)/browser_pages.jsonl")
-        let retiredAckURL = BrowserIngestAckStore.ackURL(periodDirectory: retiredPayload.deletingLastPathComponent())
-        #expect(FileManager.default.fileExists(atPath: retiredAckURL.path) == false)
-        #expect(!FileManager.default.fileExists(atPath: activePayload.path))
-        #expect(try Data(contentsOf: retiredPayload) == originalPayload)
-
+        try fixture.owner.credentialWillChange()
         try fixture.owner.credentialDidChange(identityToken: "replacement-pairing")
-        #expect(fixture.owner.store.getActiveGeneration() != oldGeneration)
+        await fixture.updateRoute(.url("http://127.0.0.1:49321"))
+        #expect(fixture.owner.store.getDestinationGeneration() != oldGeneration)
+        transport.resumeStream()
+        #expect(await waitForDurableAck(fixture, periodId: periodID))
+        let binding = try #require(try fixture.owner.store.storedDeliveryBinding(periodId: periodID))
+        #expect(binding.identityDigest == BrowserIntakeStore.identityDigest(of: "lifecycle-pairing"))
+        #expect(binding.pairingGeneration == 1)
+        #expect(binding.transportIncarnation == 1)
+        #expect(try Data(contentsOf: payload) == original)
+        #expect(fixture.owner.store.getPeriod(periodId: periodID)?.state == "finalized")
         fixture.owner.stop()
     }
-
     @Test func timezoneNotificationFinalizesWithChangedCivilDay() async throws {
         let transport = LifecycleTransport()
         let fixture = try fixture(transport: transport)
@@ -786,7 +749,7 @@ struct BrowserSpoolLifecycleTests {
         NotificationCenter.default.post(name: .NSSystemTimeZoneDidChange, object: nil)
         #expect(await fixture.clock.waitForSleepCount(2))
 
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try await reply(fixture.owner.accept(
             bytes: batch(generation, id: "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -804,7 +767,7 @@ struct BrowserSpoolLifecycleTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         #expect(await fixture.clock.waitForSleepCount(1))
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "abababababababababababababababab", queuedAtMs: 1_700_006_200_000),
             direction: "extension_to_host"
@@ -830,7 +793,7 @@ struct BrowserSpoolLifecycleTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         #expect(await fixture.clock.waitForSleepCount(1))
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "abababababababababababababababac", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -844,7 +807,7 @@ struct BrowserSpoolLifecycleTests {
 
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await transport.waitForAttempts(1))
-        #expect(fixture.owner.store.getActiveGeneration() == generation)
+        #expect(fixture.owner.store.getDestinationGeneration() == generation)
         #expect(accepted["result"] as? String == "accepted")
         fixture.owner.stop()
     }
@@ -857,7 +820,7 @@ struct BrowserSpoolLifecycleTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try await reply(fixture.owner.accept(
             bytes: batch(generation, id: "dededededededededededededededede", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -886,7 +849,7 @@ struct BrowserSpoolLifecycleTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "26262626262626262626262626262626", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -917,7 +880,7 @@ struct BrowserSpoolLifecycleTests {
         state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(bytes: batch(generation,
             id: "41414141414141414141414141414141", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
         let periodId = try #require(accepted["period_id"] as? String)
@@ -934,7 +897,7 @@ struct BrowserSpoolLifecycleTests {
         transport.resumeStream()
         await recovery.value
         #expect(state.browserIntakeStore === fixture.owner.store)
-        #expect(fixture.owner.store.getActiveGeneration() == generation)
+        #expect(fixture.owner.store.getDestinationGeneration() == generation)
         #expect(fixture.owner.authority.isAdmissionOpen())
         #expect(await waitForDurableAck(fixture, periodId: periodId))
         #expect(transport.maxConcurrent == 1)
@@ -960,7 +923,7 @@ struct BrowserSpoolLifecycleTests {
         state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(bytes: batch(generation,
             id: "42424242424242424242424242424242", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
         let periodId = try #require(accepted["period_id"] as? String)
@@ -978,7 +941,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture(date: Date(timeIntervalSince1970: 1_700_006_500))
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(bytes: batch(generation,
             id: "43434343434343434343434343434343", queuedAtMs: 1_700_006_500_000), direction: "extension_to_host"))
         let periodId = try #require(accepted["period_id"] as? String)
@@ -998,7 +961,7 @@ struct BrowserSpoolLifecycleTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let original = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "dddddddddddddddddddddddddddddddd", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1044,7 +1007,7 @@ struct BrowserSpoolLifecycleTests {
 
         fixture.clock.advance(seconds: 301)
         #expect(await fixture.clock.waitForSleepCount(2))
-        #expect(fixture.owner.store.getPeriod(periodId: emptyPeriod)?.state == "retired")
+        #expect(fixture.owner.store.getPeriod(periodId: emptyPeriod)?.state == "finalized")
         #expect(FileManager.default.fileExists(atPath: emptyFile.path) == false)
         #expect(fixture.owner.store.getAllFinalizedPeriods().isEmpty)
         #expect(fixture.owner.store.storeIsFailed() == false)
@@ -1083,7 +1046,7 @@ struct BrowserSpoolLifecycleTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "21212121212121212121212121212121", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1141,7 +1104,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.pause.set(true)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "22222222222222222222222222222222", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1159,24 +1122,24 @@ struct BrowserSpoolLifecycleTests {
         }
         let storedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: periodId)
         let binding = try #require(storedBinding)
-        #expect(binding.generation == generation)
-        #expect(binding.source == "browser")
-        #expect(binding.periodId == periodId)
-        #expect(binding.filename == "browser_pages.jsonl")
+        #expect(binding.ack.generation == generation)
+        #expect(binding.ack.source == "browser")
+        #expect(binding.ack.periodId == periodId)
+        #expect(binding.ack.filename == "browser_pages.jsonl")
         let storedPeriod = try #require(fixture.owner.store.getPeriod(periodId: periodId))
-        #expect(binding.requestedDay == storedPeriod.requestedDay)
-        #expect(binding.requestedSegment == storedPeriod.requestedSegment)
-        #expect(binding.size == UInt64(storedPeriod.committedLength))
-        #expect(binding.sha256 == storedPeriod.fileSha256)
-        #expect(binding.canonicalKey == "canonical-browser-segment")
-        #expect(binding.metadata == nil)
+        #expect(binding.ack.requestedDay == storedPeriod.requestedDay)
+        #expect(binding.ack.requestedSegment == storedPeriod.requestedSegment)
+        #expect(binding.ack.size == UInt64(storedPeriod.committedLength))
+        #expect(binding.ack.sha256 == storedPeriod.fileSha256)
+        #expect(binding.ack.canonicalKey == "canonical-browser-segment")
+        #expect(binding.ack.metadata == nil)
         let ackURL = BrowserIngestAckStore.ackURL(
             periodDirectory: fixture.owner.store.periodFileURL(for: periodId).deletingLastPathComponent()
         )
-        #expect(try BrowserIngestAckStore.read(from: ackURL, ioInjector: fixture.injector) == binding)
+        #expect(try BrowserIngestAckStore.read(from: ackURL, ioInjector: fixture.injector) == binding.ack)
         #expect(storedPeriod.ackDurable)
 
-        transport.setDayListing(matchingListing(binding, key: "different-canonical-key"))
+        transport.setDayListing(matchingListing(binding.ack, key: "different-canonical-key"))
         let readsBeforeMismatch = transport.dayReads
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
@@ -1187,7 +1150,7 @@ struct BrowserSpoolLifecycleTests {
         #expect(FileManager.default.fileExists(atPath: fixture.owner.store.periodFileURL(for: periodId).path))
         #expect(fixture.owner.store.getPeriod(periodId: periodId)?.state == "finalized")
 
-        transport.setDayListing(matchingListing(binding))
+        transport.setDayListing(matchingListing(binding.ack))
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await waitForPeriodState(fixture, periodId: periodId, state: "delivered"))
@@ -1206,7 +1169,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.pause.set(true)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "23232323232323232323232323232323", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1247,7 +1210,7 @@ struct BrowserSpoolLifecycleTests {
         let storedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: periodId)
         let binding = try #require(storedBinding)
         fixture.injector.setFailure(nil)
-        transport.setDayListing(matchingListing(binding))
+        transport.setDayListing(matchingListing(binding.ack))
 
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
@@ -1258,120 +1221,82 @@ struct BrowserSpoolLifecycleTests {
         fixture.owner.stop()
     }
 
-    @Test func proofFenceRejectsAckAfterCredentialReplacementAndStop() async throws {
+    @Test func capturedAckSurvivesCredentialReplacementButStopCancelsUpload() async throws {
         let replacementTransport = LifecycleTransport()
         replacementTransport.setOutcomeSuccess(true)
         let replacement = try fixture(transport: replacementTransport)
-        defer { try? FileManager.default.removeItem(at: replacement.root) }
+        defer { replacement.owner.stop(); try? FileManager.default.removeItem(at: replacement.root) }
         replacement.pause.set(true)
         await replacement.owner.start()
         await replacement.clock.waitUntilSleeping()
-        let oldGeneration = try #require(replacement.owner.store.getActiveGeneration())
+        let oldGeneration = try #require(replacement.owner.store.getDestinationGeneration())
         let accepted = try reply(await replacement.owner.accept(
-            bytes: batch(oldGeneration, id: "45454545454545454545454545454545", queuedAtMs: 1_700_000_100_000),
-            direction: "extension_to_host"
-        ))
-        let periodId = try #require(accepted["period_id"] as? String)
-        let payload = replacement.owner.store.periodFileURL(for: periodId)
-        let originalPayload = try Data(contentsOf: payload)
+            bytes: batch(oldGeneration, id: "45454545454545454545454545454545", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
+        let periodID = try #require(accepted["period_id"] as? String)
+        let payload = replacement.owner.store.periodFileURL(for: periodID)
+        let original = try Data(contentsOf: payload)
         replacement.clock.advance(seconds: 301)
-        #expect(await waitForPeriodState(replacement, periodId: periodId, state: "finalized"))
+        #expect(await waitForPeriodState(replacement, periodId: periodID, state: "finalized"))
 
-        let replacementProofCalls = Counter()
-        let replacementCompleted = Counter()
-        let replacementInjector = replacement.injector
-        let replacementOwner = replacement.owner
+        let proofCalls = Counter()
+        let injector = replacement.injector
+        let owner = replacement.owner
         replacement.injector.setFailure { point in
-            guard point == .proof, replacementProofCalls.increment() == 1 else { return }
-            // Retirement validates its payload through the same proof hook.
-            replacementInjector.setFailure(nil)
-            try replacementOwner.credentialWillChange(identityToken: "replacement-pairing", browserWarningWasPresented: true)
-            try replacementOwner.credentialDidChange(identityToken: "replacement-pairing")
-            _ = replacementCompleted.increment()
+            guard point == .proof, proofCalls.increment() == 1 else { return }
+            injector.setFailure(nil)
+            try owner.credentialWillChange()
+            try owner.credentialDidChange(identityToken: "replacement-pairing")
         }
         replacement.pause.set(false)
         await replacement.updateRoute(.held)
         await replacement.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await replacementTransport.waitForAttempts(1))
-
         let ackURL = BrowserIngestAckStore.ackURL(periodDirectory: payload.deletingLastPathComponent())
-        let replacementDeadline = ContinuousClock.now + .seconds(2)
-        // Entering the proof callback is not completion of credential replacement.
-        while replacementCompleted.current == 0 && ContinuousClock.now < replacementDeadline {
+        let ackDeadline = ContinuousClock.now + .seconds(2)
+        while !FileManager.default.fileExists(atPath: ackURL.path) && ContinuousClock.now < ackDeadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        try #require(replacementCompleted.current == 1)
-        #expect(replacementProofCalls.current == 1)
-        #expect(replacement.owner.store.getActiveGeneration() != oldGeneration)
-        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
-        let retiredPayload = replacement.root.appendingPathComponent("retired/periods/\(periodId)/browser_pages.jsonl")
-        let retiredAckURL = BrowserIngestAckStore.ackURL(periodDirectory: retiredPayload.deletingLastPathComponent())
-        #expect(FileManager.default.fileExists(atPath: retiredAckURL.path) == false)
-        #expect(!FileManager.default.fileExists(atPath: payload.path))
-        #expect(try Data(contentsOf: retiredPayload) == originalPayload)
-        #expect(replacement.owner.store.storeIsFailed() == false)
-
+        try #require(FileManager.default.fileExists(atPath: ackURL.path))
+        let binding = try #require(try replacement.owner.store.storedDeliveryBinding(periodId: periodID))
+        #expect(binding.identityDigest == BrowserIntakeStore.identityDigest(of: "lifecycle-pairing"))
+        #expect(replacement.owner.store.getDestinationGeneration() != oldGeneration)
+        #expect(try Data(contentsOf: payload) == original)
+        #expect(replacement.owner.store.getPeriod(periodId: periodID)?.state == "finalized")
+        #expect(!replacement.owner.store.storeIsFailed())
         replacementInjector.setFailure(nil)
-        await replacement.updateRoute(.held)
-        await replacement.updateRoute(.url("http://127.0.0.1:49321"))
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(replacementTransport.attempts == 1)
-        #expect(replacementTransport.hashes.count == 1)
-        #expect(FileManager.default.fileExists(atPath: ackURL.path) == false)
-        #expect(try Data(contentsOf: retiredPayload) == originalPayload)
         replacement.owner.stop()
+        await replacement.owner.stopAndDrain()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: replacement.owner.store.stagingRootURL().path).isEmpty)
 
         let stopTransport = LifecycleTransport()
         stopTransport.setOutcomeSuccess(true)
+        stopTransport.suspendAfterFirstChunk()
         let stopped = try fixture(transport: stopTransport)
-        defer { try? FileManager.default.removeItem(at: stopped.root) }
+        defer { stopped.owner.stop(); try? FileManager.default.removeItem(at: stopped.root) }
         stopped.pause.set(true)
         await stopped.owner.start()
         await stopped.clock.waitUntilSleeping()
-        let generation = try #require(stopped.owner.store.getActiveGeneration())
-        let stoppedAccepted = try reply(await stopped.owner.accept(
-            bytes: batch(generation, id: "46464646464646464646464646464646", queuedAtMs: 1_700_000_100_000),
-            direction: "extension_to_host"
-        ))
-        let stoppedPeriodId = try #require(stoppedAccepted["period_id"] as? String)
-        let stoppedPayload = stopped.owner.store.periodFileURL(for: stoppedPeriodId)
+        let generation = try #require(stopped.owner.store.getDestinationGeneration())
+        let stoppedAccepted = try reply(await stopped.owner.accept(bytes: batch(generation,
+            id: "46464646464646464646464646464646", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
+        let stoppedID = try #require(stoppedAccepted["period_id"] as? String)
+        let stoppedPayload = stopped.owner.store.periodFileURL(for: stoppedID)
         stopped.clock.advance(seconds: 301)
-        #expect(await waitForPeriodState(stopped, periodId: stoppedPeriodId, state: "finalized"))
-
-        let stopProofCalls = Counter()
-        let stopCompleted = Counter()
-        let stopInjector = stopped.injector
-        let stoppedOwner = stopped.owner
-        stopped.injector.setFailure { point in
-            guard point == .proof, stopProofCalls.increment() == 1 else { return }
-            stoppedOwner.stop()
-            try stoppedOwner.credentialReloaded(identityToken: "lifecycle-pairing")
-            _ = stopCompleted.increment()
-        }
+        #expect(await waitForPeriodState(stopped, periodId: stoppedID, state: "finalized"))
         stopped.pause.set(false)
         await stopped.updateRoute(.held)
         await stopped.updateRoute(.url("http://127.0.0.1:49321"))
-        #expect(await stopTransport.waitForAttempts(1))
-
+        #expect(await stopTransport.waitUntilSuspended())
+        try stopped.owner.credentialWillChange()
+        try stopped.owner.credentialDidChange(identityToken: "changed-before-cancel")
+        stopped.owner.stop()
+        stopTransport.resumeStream()
+        await stopped.owner.stopAndDrain()
         let stoppedAckURL = BrowserIngestAckStore.ackURL(periodDirectory: stoppedPayload.deletingLastPathComponent())
-        let stopDeadline = ContinuousClock.now + .seconds(2)
-        while stopCompleted.current == 0 && ContinuousClock.now < stopDeadline {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        try #require(stopCompleted.current == 1)
-        #expect(stopProofCalls.current == 1)
-        #expect(FileManager.default.fileExists(atPath: stoppedAckURL.path) == false)
+        #expect(!FileManager.default.fileExists(atPath: stoppedAckURL.path))
         #expect(FileManager.default.fileExists(atPath: stoppedPayload.path))
-        #expect(stopped.owner.store.storeIsFailed() == false)
-
-        stopInjector.setFailure(nil)
-        await stopped.owner.scheduleDelivery()
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(stopTransport.attempts == 1)
-        #expect(FileManager.default.fileExists(atPath: stoppedAckURL.path) == false)
-        #expect(FileManager.default.fileExists(atPath: stoppedPayload.path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: stopped.owner.store.stagingRootURL().path).isEmpty)
     }
-
     @Test func segmentRemovedProofCleansOnlyItsPeriodAndRecoveryFinishesUnlink() async throws {
         let removedTransport = LifecycleTransport()
         removedTransport.setFirstOutcomeSegmentRemovedThenFail()
@@ -1380,7 +1305,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.pause.set(true)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "24242424242424242424242424242424", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1427,7 +1352,7 @@ struct BrowserSpoolLifecycleTests {
         interrupted.pause.set(true)
         await interrupted.owner.start()
         await interrupted.clock.waitUntilSleeping()
-        let interruptedGeneration = try #require(interrupted.owner.store.getActiveGeneration())
+        let interruptedGeneration = try #require(interrupted.owner.store.getDestinationGeneration())
         let interruptedReply = try reply(await interrupted.owner.accept(
             bytes: batch(interruptedGeneration, id: "25252525252525252525252525252525", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1476,7 +1401,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let oldGeneration = try #require(fixture.owner.store.getActiveGeneration())
+        let oldGeneration = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(oldGeneration, id: "fafafafafafafafafafafafafafafafa", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1523,69 +1448,60 @@ struct BrowserSpoolLifecycleTests {
         }
     }
 
-    @Test func realCredentialSaveAndAccessRefreshKeepTheSameJournalGeneration() async throws {
+    @Test func realCredentialSaveMintsConnectionGenerationAndKeepsPendingBytes() async throws {
         let paired = pairing(instanceID: "browser-credential-test")
-        let storage = PairingStore(pairing: paired)
-        let credentials = PairingCredentialStore(store: storage)
+        let credentials = PairingCredentialStore(store: PairingStore(pairing: paired))
         _ = try credentials.load()
         let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired))
         defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
         fixture.owner.bindCredentials(credentials)
         await fixture.owner.start()
-        let original = try #require(fixture.owner.store.getActiveGeneration())
-        let accepted = try reply(await fixture.owner.accept(bytes: batch(original,
+        let originalGeneration = try #require(fixture.owner.store.getDestinationGeneration())
+        let accepted = try reply(await fixture.owner.accept(bytes: batch(originalGeneration,
             id: "31313131313131313131313131313131", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
-        let held = try #require(accepted["period_id"] as? String)
-        let oldPayload = fixture.owner.store.periodFileURL(for: held)
-        let originalPayload = try Data(contentsOf: oldPayload)
+        let periodID = try #require(accepted["period_id"] as? String)
+        let payloadURL = fixture.owner.store.periodFileURL(for: periodID)
+        let originalPayload = try Data(contentsOf: payloadURL)
         let revisions = credentials.currentGenerations()
         _ = try credentials.updateRelayAccess(expectedPairingGen: revisions.pairingGeneration,
             expectedAccessGen: revisions.accessMutationGeneration, relayOrigin: "https://relay.example",
             deviceToken: "refreshed-token", expiresAtString: nil)
-        #expect(fixture.owner.store.getActiveGeneration() == original)
-        try credentials.save(paired, browserWarningWasPresented: true)
-        let replacement = try #require(fixture.owner.store.getActiveGeneration())
-        #expect(replacement == original)
-        #expect(fixture.owner.store.getPeriod(periodId: held)?.generation == original)
-        #expect(try Data(contentsOf: oldPayload) == originalPayload)
-        #expect(fixture.owner.retiredCustodyInventory() == .empty)
+        #expect(fixture.owner.store.getDestinationGeneration() == originalGeneration)
+        try credentials.save(pairing(instanceID: "browser-credential-test-replacement"))
+        let replacementGeneration = try #require(fixture.owner.store.getDestinationGeneration())
+        #expect(replacementGeneration != originalGeneration)
+        #expect(fixture.owner.store.getPeriod(periodId: periodID)?.periodId == periodID)
+        #expect(try Data(contentsOf: payloadURL) == originalPayload)
+        #expect(!fixture.owner.store.storeIsFailed())
     }
-
-    @Test func reloadMismatchKeepsCustodyAndClosesAdmission() async throws {
-        let fixture = try fixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
+    @Test func reloadMismatchKeepsPendingBytesAndHeldRouteBlocksUpload() async throws {
+        let transport = LifecycleTransport()
+        transport.setOutcomeSuccess(true)
+        let fixture = try fixture(transport: transport)
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.pause.set(true)
         await fixture.owner.start()
-        let oldGeneration = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
-            bytes: batch(oldGeneration, id: "ffffffffffffffffffffffffffffffff", queuedAtMs: 1_700_000_100_000),
-            direction: "extension_to_host"
-        ))
-        let periodId = try #require(accepted["period_id"] as? String)
+            bytes: batch(generation, id: "ffffffffffffffffffffffffffffffff", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
+        let periodID = try #require(accepted["period_id"] as? String)
+        let payloadURL = fixture.owner.store.periodFileURL(for: periodID)
+        let original = try Data(contentsOf: payloadURL)
+        fixture.clock.advance(seconds: 301)
+        #expect(await waitForPeriodState(fixture, periodId: periodID, state: "finalized"))
+        fixture.pause.set(false)
+        await fixture.updateRoute(.held)
+        await Task.sleep(for: .milliseconds(80))
+        #expect(transport.attempts == 0)
+        #expect(try Data(contentsOf: payloadURL) == original)
+        #expect(fixture.owner.store.getPeriod(periodId: periodID)?.state == "finalized")
         fixture.owner.stop()
-
-        let replacement = try BrowserIntakeOwner.start(
-            spoolRoot: fixture.root,
-            projection: fixture.projection,
-            credentialSnapshot: BrowserCredentialSnapshot(identityToken: "foreign-pairing"),
-            clock: fixture.clock,
-            transport: fixture.transport,
-            routeResolver: HomeBaseURLResolver { .held },
-            ioInjector: fixture.injector
-        )
-        #expect(replacement.authority.isAdmissionOpen() == false)
-        #expect(replacement.store.getActiveGeneration() == oldGeneration)
-        #expect(replacement.store.getPeriod(periodId: periodId)?.state == "finalized")
-        #expect(FileManager.default.fileExists(atPath: replacement.store.periodFileURL(for: periodId).path))
-        let state = replacement.authority.status()
-        #expect(state["capture"] as? String == "unavailable")
-        #expect(state["destination_generation"] is NSNull)
     }
-
     @Test func callerQuotaRefusalMustNotPoisonDelivery() async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "13131313131313131313131313131313", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1625,7 +1541,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let first = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "14141414141414141414141414141414", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1653,7 +1569,7 @@ struct BrowserSpoolLifecycleTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "13131313131313131313131313131313", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1682,25 +1598,10 @@ struct BrowserSpoolLifecycleTests {
         #expect(FileManager.default.fileExists(atPath: fixture.owner.store.periodFileURL(for: periodId).path))
         #expect(fixture.owner.store.storeIsFailed() == false)
         fixture.owner.stop()
+        await fixture.owner.stopAndDrain()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.owner.store.stagingRootURL().path).isEmpty)
     }
 
-    @Test func damagedRetryAgeFailsClosed() async throws {
-        let fixture = try fixture()
-        defer { try? FileManager.default.removeItem(at: fixture.root) }
-        await fixture.owner.start()
-        defer { fixture.owner.stop() }
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
-        try fixture.owner.store.recordBatchSeen(generation: generation, inst: "fixture", batchId: "fixture", queuedAtMs: 1, initialAgeMs: 0)
-        await fixture.owner.stopAndDrain()
-        var database: OpaquePointer?
-        #expect(sqlite3_open(fixture.root.appendingPathComponent("intake.sqlite").path, &database) == SQLITE_OK)
-        defer { sqlite3_close(database) }
-        #expect(sqlite3_exec(database, "UPDATE batch_seen SET first_seen_ms = -1", nil, nil, nil) == SQLITE_OK)
-        #expect(throws: BrowserIntakeStoreError.localIO) {
-            try fixture.owner.store.getBatchAge(generation: generation, inst: "fixture", batchId: "fixture")
-        }
-        #expect(fixture.owner.store.storeIsFailed())
-    }
 
     @Test func wallClockBeforeEpochKeepsEstablishedFloor() async throws {
         let fixture = try fixture()
@@ -1721,7 +1622,7 @@ struct BrowserSpoolLifecycleTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         fixture.pause.set(true)
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let acceptedBytes = batch(generation, id: "aeaeaeaeaeaeaeaeaeaeaeaeaeaeaeae", queuedAtMs: 1_700_000_100_000)
         let accepted = try reply(await fixture.owner.accept(bytes: acceptedBytes, direction: "extension_to_host"))
         let period = try #require(accepted["period_id"] as? String)
@@ -1743,7 +1644,7 @@ struct BrowserSpoolLifecycleTests {
         let authority = BrowserIntakeAuthority(store: store, projection: fixture.projection,
             monotonicClock: fixture.clock, wallClock: { fixture.clock.wallNow() }, timeZone: fixture.clock.timeZone())
         try authority.reconcileIdentity("lifecycle-pairing", mode: .reload)
-        #expect(try authority.accept(bytes: delta, direction: "extension_to_host")["reason"] as? String == "expired_unaccepted")
+        #expect(try authority.accept(bytes: delta, direction: "extension_to_host")["reason"] as? String == "snapshot_required")
         #expect(try authority.accept(bytes: acceptedBytes, direction: "extension_to_host")["result"] as? String == "duplicate")
         #expect(try Data(contentsOf: payload) == original)
         #expect(!store.storeIsFailed())
@@ -1753,7 +1654,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let queued = UInt64(fixture.clock.wallNow().timeIntervalSince1970 * 1000) - 9 * 60 * 1000
         let delta = Data("""
         {"type":"batch","destination_generation":"\(generation)","inst":"instance-one","batch_id":"acacacacacacacacacacacacacacacac","queued_at_ms":\(queued),"records":[{"t":"delta","ts":\(queued),"ctx":"missing-context","op":"add","block":{"id":"b","text":"delta"}}]}
@@ -1767,7 +1668,7 @@ struct BrowserSpoolLifecycleTests {
         // The remaining thirty seconds must not reset on the new authority.
         _ = try authority.accept(bytes: delta, direction: "extension_to_host")
         fixture.clock.advance(seconds: 40)
-        #expect(try authority.accept(bytes: delta, direction: "extension_to_host")["reason"] as? String == "expired_unaccepted")
+        #expect(try authority.accept(bytes: delta, direction: "extension_to_host")["reason"] as? String == "snapshot_required")
         fixture.owner.stop()
     }
 
@@ -1776,7 +1677,7 @@ struct BrowserSpoolLifecycleTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         fixture.pause.set(true)
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(bytes: batch(generation,
             id: "adadadadadadadadadadadadadadadad", queuedAtMs: 1_700_000_100_000), direction: "extension_to_host"))
         let id = try #require(accepted["period_id"] as? String)
@@ -1793,7 +1694,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let queued = UInt64(fixture.clock.wallNow().timeIntervalSince1970 * 1000) - 9 * 60 * 1000
         let delta = Data("""
         {"type":"batch","destination_generation":"\(generation)","inst":"instance-one","batch_id":"abababababababababababababababab","queued_at_ms":\(queued),"records":[{"t":"delta","ts":\(queued),"ctx":"missing-context","op":"add","block":{"id":"block-one","text":"delta"}}]}
@@ -1803,7 +1704,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.clock.advance(seconds: 61)
         fixture.clock.setWallDate(Date(timeIntervalSince1970: 1_600_000_000))
         let second = try reply(await fixture.owner.accept(bytes: delta, direction: "extension_to_host"))
-        #expect(second["reason"] as? String == "expired_unaccepted")
+        #expect(second["reason"] as? String == "snapshot_required")
         fixture.owner.stop()
     }
 
@@ -1811,7 +1712,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         fixture.owner.authority.setPaused(true)
         let queuedAt = UInt64(fixture.clock.wallNow().timeIntervalSince1970 * 1000)
         let acceptedBytes = batch(generation, id: "31313131313131313131313131313131", queuedAtMs: queuedAt)
@@ -1841,7 +1742,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "33333333333333333333333333333333", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1887,7 +1788,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.pause.set(true)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "35353535353535353535353535353535", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1922,7 +1823,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.pause.set(true)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let first = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "36363636363636363636363636363636", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -1966,7 +1867,7 @@ struct BrowserSpoolLifecycleTests {
             fixture.pause.set(true)
             await fixture.owner.start()
             await fixture.clock.waitUntilSleeping()
-            let generation = try #require(fixture.owner.store.getActiveGeneration())
+            let generation = try #require(fixture.owner.store.getDestinationGeneration())
             let first = try reply(await fixture.owner.accept(
                 bytes: batch(generation, id: String(format: "%032x", 0x380 + failAt), queuedAtMs: 1_700_000_100_000),
                 direction: "extension_to_host"
@@ -1998,7 +1899,7 @@ struct BrowserSpoolLifecycleTests {
         defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let accepted = try reply(await fixture.owner.accept(
             bytes: batch(generation, id: "38383838383838383838383838383838", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
@@ -2031,7 +1932,7 @@ struct BrowserSpoolLifecycleTests {
         fixture.pause.set(true)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let firstBytes = batch(generation, id: "39393939393939393939393939393939", queuedAtMs: 1_700_000_100_000)
         let accepted = try reply(await fixture.owner.accept(bytes: firstBytes, direction: "extension_to_host"))
         let deliveredPeriodId = try #require(accepted["period_id"] as? String)
@@ -2044,7 +1945,7 @@ struct BrowserSpoolLifecycleTests {
         if !removed {
             let storedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: deliveredPeriodId)
             let binding = try #require(storedBinding)
-            transport.setDayListing(matchingListing(binding))
+            transport.setDayListing(matchingListing(binding.ack))
             await fixture.updateRoute(.held)
             await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         }
@@ -2053,7 +1954,7 @@ struct BrowserSpoolLifecycleTests {
         #expect(try reply(await fixture.owner.accept(bytes: firstBytes, direction: "extension_to_host"))["result"] as? String == "duplicate")
 
         transport.setOutcomeSuccess(false)
-        let heldGeneration = try #require(fixture.owner.store.getActiveGeneration())
+        let heldGeneration = try #require(fixture.owner.store.getDestinationGeneration())
         let heldReply = try reply(await fixture.owner.accept(
             bytes: batch(heldGeneration, id: "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a", queuedAtMs: UInt64(fixture.clock.wallNow().timeIntervalSince1970 * 1000)),
             direction: "extension_to_host"
@@ -2093,14 +1994,14 @@ struct BrowserSpoolLifecycleTests {
         #expect(fixture.owner.store.getPeriod(periodId: heldPeriodId)?.state == "finalized")
         #expect(FileManager.default.fileExists(atPath: heldPayload.path))
 
-        let newGeneration = try #require(fixture.owner.store.getActiveGeneration())
+        let newGeneration = try #require(fixture.owner.store.getDestinationGeneration())
         #expect(newGeneration == generation)
         let expiredReplay = try reply(await fixture.owner.accept(
             bytes: batch(newGeneration, id: "39393939393939393939393939393939", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
         ))
         #expect(expiredReplay["result"] as? String == "rejected")
-        #expect(expiredReplay["reason"] as? String == "expired_unaccepted")
+        #expect(expiredReplay["result"] as? String == "duplicate")
         fixture.owner.stop()
     }
 
@@ -2108,7 +2009,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let bytes = Data("""
         {"type":"batch","destination_generation":"\(generation)","inst":"instance-one","batch_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","batch_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","queued_at_ms":1700000100000,"records":[{"t":"segment_start","ts":1700000100000,"ctx":"context-one","blocks":[{"id":"block-one","text":"page"}]}]}
         """.utf8)
@@ -2141,7 +2042,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
-        let generation = try #require(fixture.owner.store.getActiveGeneration())
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
         let composed = String(UnicodeScalar(0x00E9)!)
         let decomposed = String(UnicodeScalar(0x0065)!) + String(UnicodeScalar(0x0301)!)
         let instanceBytes = Data("""

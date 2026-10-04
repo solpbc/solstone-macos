@@ -5,7 +5,7 @@
   "use strict";
 
   globalThis.SolstoneNativeBrowserConstants = Object.freeze({
-  "BUNDLE_VERSION": "1.1.0",
+  "BUNDLE_VERSION": "1.2.0",
   "WIRE_PROTOCOL": 1,
   "EXTENSION_TO_HOST_MAX": 33554432,
   "HOST_TO_EXTENSION_MAX": 65536,
@@ -15,7 +15,6 @@
   "JSON_MAX_DEPTH": 127,
   "FILE_MAX": 50331648,
   "OUTBOX_BYTES_MAX": 67108864,
-  "OUTBOX_AGE_MS_MAX": 600000,
   "SPOOL_BYTES_MAX": 536870912,
   "SPOOL_AGE_MS_MAX": 604800000,
   "FUTURE_SKEW_MS_MAX": 60000,
@@ -223,11 +222,13 @@
     "permanent": [
       "malformed",
       "oversize",
-      "stale_generation",
-      "expired_unaccepted",
       "unaccepted_lost"
     ]
   },
+  "LEGACY_PERMANENT_REASONS": [
+    "stale_generation",
+    "expired_unaccepted"
+  ],
   "CANONICAL_KEY_ORDER": {
     "hello": [
       "type",

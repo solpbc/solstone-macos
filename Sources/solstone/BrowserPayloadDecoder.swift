@@ -30,16 +30,12 @@ public struct BrowserRefusal: Sendable, Equatable {
             return "oversize"
         case "snapshot_required":
             return "snapshot_required"
-        case "stale_generation":
-            return "stale_generation"
         case "resource_exhausted":
             return "resource_exhausted"
         case "queue_full":
             return "queue_full"
         case "age_policy":
             return "age_policy"
-        case "expired_unaccepted":
-            return "expired_unaccepted"
         case "unaccepted_lost":
             return "unaccepted_lost"
         default:
@@ -1062,7 +1058,9 @@ public enum BrowserPayloadDecoder {
                   let r = reason, let c = receiptClass else {
                 return .refuse(BrowserRefusal(code: "invalid_receipt"))
             }
-            guard let validReasons = projection.receiptClasses[c], validReasons.contains(r) else {
+            let currentReason = projection.receiptClasses[c]?.contains(r) == true
+            let legacyReason = c == "permanent" && projection.legacyPermanentReasons.contains(r)
+            guard currentReason || legacyReason else {
                 return .refuse(BrowserRefusal(code: "invalid_receipt"))
             }
             return .accept(.accepted(BrowserDecodedAccepted(

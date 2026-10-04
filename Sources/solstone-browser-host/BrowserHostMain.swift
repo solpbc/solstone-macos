@@ -190,7 +190,7 @@ private final class NativeHostStopFlag: @unchecked Sendable {
     }
 
     private static func writeUnavailableHelloAck() {
-        let json = Data("{\"type\":\"hello_ack\",\"capture\":\"unavailable\",\"delivery\":\"unknown\",\"freshness_ms\":0,\"destination_generation\":null,\"period_id\":null,\"custody\":{\"full\":false,\"stale\":false},\"version\":\"1.1.0\"}".utf8)
+        let json = Data("{\"type\":\"hello_ack\",\"capture\":\"unavailable\",\"delivery\":\"unknown\",\"freshness_ms\":0,\"destination_generation\":null,\"period_id\":null,\"custody\":{\"full\":false,\"stale\":false},\"version\":\"1.2.0\"}".utf8)
         try? NativeHostFrameIO.writeFrame(json, to: STDOUT_FILENO, direction: .hostToExtension)
     }
 }

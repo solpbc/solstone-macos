@@ -132,7 +132,7 @@ private struct BrowserFileUploadFixture: Sendable {
             .appendingPathComponent("vendor")
         let store = try BrowserIntakeStore(rootURL: root.appendingPathComponent("spool"),
             projection: BrowserContractProjection(rootURL: vendor))
-        _ = try store.publishEpoch(identityToken: "file-upload-pairing", nowMs: 1700000000000)
+        _ = try store.testConnectionGeneration(identityToken: "file-upload-pairing", nowMs: 1700000000000)
         gate = BrowserUploadGate(store: store)
         let permit = try #require(gate.currentPermit())
         routes = BrowserIntakeRouteState()

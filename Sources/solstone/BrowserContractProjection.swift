@@ -18,7 +18,6 @@ public final class BrowserContractProjection: Sendable {
     public struct Policy: Sendable {
         public let file: Int
         public let outboxBytes: Int
-        public let outboxAgeMs: UInt64
         public let spoolBytes: Int
         public let spoolAgeMs: UInt64
         public let futureSkewMs: UInt64
@@ -67,6 +66,7 @@ public final class BrowserContractProjection: Sendable {
     public let devHosts: HostIds
     public let stringBounds: StringBounds
     public let receiptClasses: [String: [String]]
+    public let legacyPermanentReasons: [String]
     public let canonicalKeyOrder: [String: [String]]
     public let constantsRs: [String: String]
     public let authorityJsonData: Data
@@ -109,7 +109,6 @@ public final class BrowserContractProjection: Sendable {
               let polDict = authObj["policy"] as? [String: Any],
               let filePolicy = polDict["file"] as? Int,
               let outboxBytes = polDict["outbox_bytes"] as? Int,
-              let outboxAgeMs = (polDict["outbox_age_ms"] as? NSNumber)?.uint64Value,
               let spoolBytes = polDict["spool_bytes"] as? Int,
               let spoolAgeMs = (polDict["spool_age_ms"] as? NSNumber)?.uint64Value,
               let futureSkewMs = (polDict["future_skew_ms"] as? NSNumber)?.uint64Value,
@@ -136,6 +135,7 @@ public final class BrowserContractProjection: Sendable {
               let periodIdBound = sbDict["period_id"] as? Int,
               let failureCodeBound = sbDict["failure_code"] as? Int,
               let receiptClasses = authObj["receipt_classes"] as? [String: [String]],
+              let legacyPermanentReasons = authObj["legacy_permanent_reasons"] as? [String],
               let canonicalKeyOrder = authObj["canonical_key_order"] as? [String: [String]] else {
             throw NSError(domain: "BrowserContractProjection", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid or incomplete authority.json"])
         }
@@ -153,7 +153,6 @@ public final class BrowserContractProjection: Sendable {
         self.policy = Policy(
             file: filePolicy,
             outboxBytes: outboxBytes,
-            outboxAgeMs: outboxAgeMs,
             spoolBytes: spoolBytes,
             spoolAgeMs: spoolAgeMs,
             futureSkewMs: futureSkewMs,
@@ -177,6 +176,7 @@ public final class BrowserContractProjection: Sendable {
             firefoxId: devFirefoxId
         )
         self.receiptClasses = receiptClasses
+        self.legacyPermanentReasons = legacyPermanentReasons
         self.canonicalKeyOrder = canonicalKeyOrder
 
         // Read constants.rs

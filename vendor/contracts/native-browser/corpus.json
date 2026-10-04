@@ -773,32 +773,6 @@
     "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"oversize\",\"class\":\"retryable\"}"
   },
   {
-    "id": "receipt_rejected_stale_generation",
-    "direction": "host_to_extension",
-    "expect": "accept",
-    "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"stale_generation\",\"class\":\"permanent\"}"
-  },
-  {
-    "id": "receipt_wrong_class_stale_generation",
-    "direction": "host_to_extension",
-    "expect": "refuse",
-    "code": "invalid_receipt",
-    "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"stale_generation\",\"class\":\"retryable\"}"
-  },
-  {
-    "id": "receipt_rejected_expired_unaccepted",
-    "direction": "host_to_extension",
-    "expect": "accept",
-    "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"expired_unaccepted\",\"class\":\"permanent\"}"
-  },
-  {
-    "id": "receipt_wrong_class_expired_unaccepted",
-    "direction": "host_to_extension",
-    "expect": "refuse",
-    "code": "invalid_receipt",
-    "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"expired_unaccepted\",\"class\":\"retryable\"}"
-  },
-  {
     "id": "receipt_rejected_unaccepted_lost",
     "direction": "host_to_extension",
     "expect": "accept",
@@ -810,6 +784,32 @@
     "expect": "refuse",
     "code": "invalid_receipt",
     "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"unaccepted_lost\",\"class\":\"retryable\"}"
+  },
+  {
+    "id": "receipt_legacy_permanent_stale_generation",
+    "direction": "host_to_extension",
+    "expect": "accept",
+    "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"stale_generation\",\"class\":\"permanent\"}"
+  },
+  {
+    "id": "receipt_legacy_retryable_stale_generation",
+    "direction": "host_to_extension",
+    "expect": "refuse",
+    "code": "invalid_receipt",
+    "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"stale_generation\",\"class\":\"retryable\"}"
+  },
+  {
+    "id": "receipt_legacy_permanent_expired_unaccepted",
+    "direction": "host_to_extension",
+    "expect": "accept",
+    "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"expired_unaccepted\",\"class\":\"permanent\"}"
+  },
+  {
+    "id": "receipt_legacy_retryable_expired_unaccepted",
+    "direction": "host_to_extension",
+    "expect": "refuse",
+    "code": "invalid_receipt",
+    "payload": "{\"type\":\"accepted\",\"result\":\"rejected\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"batch_id\":\"0123456789abcdef0123456789abcdef\",\"reason\":\"expired_unaccepted\",\"class\":\"retryable\"}"
   },
   {
     "id": "receipt_success_accepted",
