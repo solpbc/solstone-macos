@@ -3196,6 +3196,52 @@ struct SyncServiceTests {
         #expect(paths.contains(IngestProtocolV3.uploadPath))
     }
 
+    /// A refusal binds only the journal that made it: a segment journal A keeps refusing stays
+    /// pending in place (never set aside as `.failed`), and journal B is offered it on the first pass.
+    @Test
+    func aSegmentOneJournalRefusedIsOfferedToTheNextJournal() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-refused-follows-pairing")
+        let segment = try makeSegment(root: root)
+        let today = IngestDayKey.string(from: Date())
+
+        let clock = SyncTestClock()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24800") }, now: { clock.now() })
+        await configure(service)
+
+        // Journal A refuses three times, which reaches its longest quiet window.
+        for _ in 0..<3 {
+            store.reset()
+            store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 400, body: "{\"reason_code\":\"legacy_observer_field\"}")
+            store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+            await service.sync()
+            clock.advance(by: 3601)
+        }
+
+        // Still journal A: it is not asked again inside that window.
+        store.reset()
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        await configure(service)
+        await service.sync()
+        let pathsA = store.snapshotRequests().compactMap { $0.url?.path }
+        #expect(!pathsA.contains(IngestProtocolV3.uploadPath))
+
+        // The segment is still pending where it was; nothing was set aside.
+        let dayURL = segment.url.deletingLastPathComponent()
+        #expect(FileManager.default.fileExists(atPath: segment.url.path))
+        let siblings = try FileManager.default.contentsOfDirectory(atPath: dayURL.path)
+        #expect(!siblings.contains(where: { $0.hasSuffix(".failed") }))
+
+        // Paired with journal B: the next pass offers it.
+        store.reset()
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        await configureB(service)
+        await service.sync()
+        let pathsB = store.snapshotRequests().compactMap { $0.url?.path }
+        #expect(pathsB.contains(IngestProtocolV3.uploadPath))
+    }
+
     @Test(arguments: [
         (200, "<html>not json</html>"),
         (409, "not-json"),
