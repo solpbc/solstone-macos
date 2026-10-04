@@ -104,8 +104,10 @@ public final class BrowserUploadLease: @unchecked Sendable {
     fileprivate let id: UUID
     fileprivate let permit: BrowserUploadPermit
     let periodId: String
+    private let routeCheck: @Sendable () -> Bool
 
-    fileprivate init(gate: BrowserUploadGate, id: UUID, permit: BrowserUploadPermit, periodId: String) {
+    fileprivate init(gate: BrowserUploadGate, id: UUID, permit: BrowserUploadPermit, periodId: String, routeCheck: @escaping @Sendable () -> Bool) {
+        self.routeCheck = routeCheck
         self.gate = gate
         self.id = id
         self.permit = permit
@@ -114,6 +116,10 @@ public final class BrowserUploadLease: @unchecked Sendable {
 
     public func isValid() -> Bool {
         gate?.isLeaseActive(id: id, permit: permit) ?? false
+    }
+
+    public func mayStart() -> Bool {
+        isValid() && (gate?.isPermitActive(permit) ?? false) && routeCheck()
     }
 
     public func onInvalidate(_ cancel: @escaping @Sendable () -> Void) {
@@ -153,7 +159,7 @@ public final class BrowserUploadGate: @unchecked Sendable {
             let id = UUID()
             activeLeaseID = id
             cancellationHandler = nil
-            return BrowserUploadLease(gate: self, id: id, permit: permit, periodId: periodId)
+            return BrowserUploadLease(gate: self, id: id, permit: permit, periodId: periodId, routeCheck: routeCheck)
         }
     }
 

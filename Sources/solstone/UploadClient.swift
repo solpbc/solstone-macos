@@ -307,7 +307,7 @@ public struct UploadClient: Sendable {
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     func uploadStaged(prepared: PreparedIngestV3Upload, lease: BrowserUploadLease) async -> UploadResult {
-        guard lease.isValid() else { return .failure(URLError(.cancelled)) }
+        guard lease.mayStart() else { return .failure(URLError(.cancelled)) }
         var request = prepared.request
         request.httpBodyStream = nil
         guard let bodySize = try? FileManager.default.attributesOfItem(atPath: prepared.bodyURL.path)[.size] as? NSNumber else {
@@ -330,7 +330,7 @@ public struct UploadClient: Sendable {
             // route changes block new leases, while an explicit owner stop cancels this task.
             let task = leasedSession.uploadTask(with: request, fromFile: prepared.bodyURL)
             lease.onInvalidate { task.cancel() }
-            if !lease.isValid() { task.cancel() }
+            if !lease.mayStart() { task.cancel() }
             #if SOLSTONE_BROWSER_DEVELOPMENT_HOST
             BrowserUploadDispatchTestBarrier.resume(task, lease: lease)
             #else

@@ -700,6 +700,10 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 
+    private static func fullSync(_ handle: FileHandle) throws {
+        guard fcntl(handle.fileDescriptor, F_FULLFSYNC) == 0 else { throw BrowserIntakeStoreError.localIO }
+    }
+
     private func initSchema() throws {
         try execute("PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL; PRAGMA fullfsync = ON; PRAGMA cache_spill = OFF; PRAGMA temp_store = MEMORY;")
         if try integerPragmaLocked("user_version") != 1 {
@@ -744,7 +748,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
                 queued_at_ms INTEGER NOT NULL,
                 accepted_at_ms INTEGER,
                 size_bytes INTEGER NOT NULL,
-                PRIMARY KEY (generation, inst, batch_id)
+                PRIMARY KEY (inst, batch_id)
             );
 
             CREATE TABLE age_clock (
@@ -991,6 +995,11 @@ public final class BrowserIntakeStore: @unchecked Sendable {
                 continue
             }
             if size == nil {
+                if (state == "delivered" || state == "removed") && sqlite3_column_int(stmt, 6) != 0 {
+                    // The durable cleanup marker proves this payload was already
+                    // released; its accepted identities remain replay evidence.
+                    continue
+                }
                 if state == "open" && committed == 0 {
                     try createEmptyPeriodFileLocked(pid)
                 } else {
@@ -1566,10 +1575,9 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
 
-        try prepareChecked("SELECT result, period_id, reason, class, queued_at_ms, accepted_at_ms, size_bytes FROM receipts WHERE generation = ? AND inst = ? AND batch_id = ?", &stmt)
-        try bindTextChecked(stmt, 1, generation)
-        try bindTextChecked(stmt, 2, inst)
-        try bindTextChecked(stmt, 3, batchId)
+        try prepareChecked("SELECT result, period_id, reason, class, queued_at_ms, accepted_at_ms, size_bytes FROM receipts WHERE inst = ? AND batch_id = ?", &stmt)
+        try bindTextChecked(stmt, 1, inst)
+        try bindTextChecked(stmt, 2, batchId)
         let rc = try stepChecked(stmt)
         if rc == SQLITE_ROW {
             return Self.storedReceipt(from: stmt, generation: generation, inst: inst, batchId: batchId)
@@ -1809,10 +1817,9 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     }
 
     private func existingAcceptedPeriodLocked(generation: String, inst: String, batchId: String) throws -> String? {
-        try query("SELECT result, period_id FROM receipts WHERE generation = ? AND inst = ? AND batch_id = ?") { stmt in
-            try bindTextChecked(stmt, 1, generation)
-            try bindTextChecked(stmt, 2, inst)
-            try bindTextChecked(stmt, 3, batchId)
+        try query("SELECT result, period_id FROM receipts WHERE inst = ? AND batch_id = ?") { stmt in
+            try bindTextChecked(stmt, 1, inst)
+            try bindTextChecked(stmt, 2, batchId)
             let rc = try stepChecked(stmt)
             if rc == SQLITE_DONE { return nil }
             guard rc == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
@@ -2208,6 +2215,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
 
     private func persistDeliveryBindingLocked(_ binding: BrowserDeliveryBinding) throws {
         let ack = binding.ack
+        _ = try BrowserIngestAckStore.boundedData(ack)
         guard let period = getPeriodLocked(periodId: ack.periodId),
               period.state == "finalized" || period.state == "delivered" || period.state == "removed",
               BrowserOpaqueString.equals(period.requestedDay, ack.requestedDay),
@@ -2399,9 +2407,6 @@ public final class BrowserIntakeStore: @unchecked Sendable {
             for id in deletable {
                 let escaped = id.replacingOccurrences(of: "'", with: "''")
                 try execute("""
-                    DELETE FROM receipts WHERE period_id = '\(escaped)' AND result = 'accepted'
-                      AND EXISTS (SELECT 1 FROM periods p WHERE p.period_id = receipts.period_id
-                        AND p.state IN ('delivered', 'removed') AND p.cleanup_durable = 1);
                     DELETE FROM period_contexts WHERE period_id = '\(escaped)';
                     DELETE FROM periods WHERE period_id = '\(escaped)'
                       AND state IN ('delivered', 'removed') AND cleanup_durable = 1;

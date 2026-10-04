@@ -459,7 +459,7 @@ public actor BrowserIntakeOwner {
         guard !stopController.isStopped() else { throw BrowserIntakeStoreError.localIO }
         do {
             try authority.reconcileIdentity(identityToken, mode: .replace)
-            if identityToken != nil { authority.reopenAdmission() }
+            authority.reopenAdmission()
             gate.resumeReaders()
         } catch {
             authority.closeAdmission()

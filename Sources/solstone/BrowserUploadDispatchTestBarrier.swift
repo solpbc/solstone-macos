@@ -57,7 +57,7 @@ enum BrowserUploadDispatchTestBarrier {
             var byte: UInt8 = 0
             let released = ready == 1 && descriptor.revents & Int16(POLLIN) != 0
                 && read(control, &byte, 1) == 1 && byte == 0x52
-            if !released || !lease.isValid() { task.cancel() }
+            if !released || !lease.mayStart() { task.cancel() }
             task.resume()
         }
     }

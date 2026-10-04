@@ -104,12 +104,17 @@ enum BrowserIngestAckStore {
         return ack
     }
 
-    static func write(_ ack: BrowserIngestAck, to fileURL: URL, ioInjector: BrowserIntakeIOInjector? = nil) throws {
-        try assertNoSymlinkAncestors(fileURL)
+    static func boundedData(_ ack: BrowserIngestAck) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(ack)
         guard data.count <= maximumBytes else { throw BrowserIntakeStoreError.localIO }
+        return data
+    }
+
+    static func write(_ ack: BrowserIngestAck, to fileURL: URL, ioInjector: BrowserIntakeIOInjector? = nil) throws {
+        try assertNoSymlinkAncestors(fileURL)
+        let data = try boundedData(ack)
 
         let directory = fileURL.deletingLastPathComponent()
         let stagingURL = directory.appendingPathComponent(".\(fileURL.lastPathComponent).\(UUID().uuidString).tmp")
