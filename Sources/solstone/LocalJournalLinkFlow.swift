@@ -59,6 +59,51 @@ func shouldProbeLocalJournal(
     (!isUploadConfigured || !journalPathIsValid) && !hasPersistedPairing && !localDiscoveryCompleted
 }
 
+func shouldReprobeLocalJournalOnReturn(
+    showsConfiguredJournal: Bool,
+    hasPersistedPairing: Bool,
+    runningJournalFound: Bool,
+    localLinkInProgress: Bool,
+    freshJournalWaiting: Bool,
+    discoveryInFlight: Bool,
+    lastProbeFinishedAt: Date?,
+    now: Date
+) -> Bool {
+    guard !showsConfiguredJournal,
+          !hasPersistedPairing,
+          !runningJournalFound,
+          !localLinkInProgress,
+          !freshJournalWaiting,
+          !discoveryInFlight
+    else {
+        return false
+    }
+    if let lastProbeFinishedAt, now.timeIntervalSince(lastProbeFinishedAt) < 2 {
+        return false
+    }
+    return true
+}
+
+func reprobedLocalJournalPanelModel(
+    current: LocalJournalDiscoveryPanelModel,
+    probeResult: LocalJournalDiscoveryPanelModel
+) -> LocalJournalDiscoveryPanelModel {
+    if case .foundRunning = current {
+        return current
+    }
+    switch probeResult {
+    case .foundRunning:
+        return probeResult
+    case .none:
+        return current
+    case .foundOnDisk:
+        if case .foundOnDisk = current {
+            return probeResult
+        }
+        return current
+    }
+}
+
 @MainActor
 func discoverLocalJournal(
     fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalMark?

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - when this mac has lost its journal link, including after moving to a new mac, status and journal settings now say it isn't linked and point you to re-link. before, status said it was connecting while nothing reached your journal.
+- if you open the journal app after the solstone app, journal settings now find your journal when you come back to them. before, they kept offering to create one until you reopened settings.
 
 ## [2.0.23] - 2026-10-03
 

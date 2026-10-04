@@ -216,6 +216,8 @@ struct SettingsView: View {
     @State private var localOnDiskAdoptionAction: OnDiskJournalAdoptionAction = .install
     @State private var localDiscoveryCompleted = false
     @State private var localDiscoveryTask: Task<Void, Never>?
+    @State private var localDiscoveryInFlight = false
+    @State private var lastProbeFinishedAt: Date?
     @State private var localLinkInProgress = false
     @State private var localLinkError: String?
     @State private var showPairingFlow = false
@@ -1359,6 +1361,17 @@ struct SettingsView: View {
             refreshLocalJournalDiscoveryIfNeeded()
             freshFlow.armWaitingProbe()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            reprobeLocalJournalOnReturn()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  window.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
+            else {
+                return
+            }
+            reprobeLocalJournalOnReturn()
+        }
         .onChange(of: freshFlow.state) { _, newState in
             if newState == .waitingForJournal {
                 freshFlow.armWaitingProbe()
@@ -1393,6 +1406,7 @@ struct SettingsView: View {
         .onDisappear {
             journalNameFetchTask?.cancel()
             localDiscoveryTask?.cancel()
+            localDiscoveryInFlight = false
             freshFlow.cancelWaitingProbe()
         }
     }
@@ -2614,6 +2628,7 @@ struct SettingsView: View {
             if appState.tunnelLifecycleOwner.hasPersistedPairing {
                 localDiscoveryTask?.cancel()
                 localDiscoveryTask = nil
+                localDiscoveryInFlight = false
                 localJournalMark = nil
                 localOnDiskDiscoveryPath = nil
                 localOnDiskAdoptionAction = .install
@@ -2627,6 +2642,7 @@ struct SettingsView: View {
         localOnDiskDiscoveryPath = nil
         localOnDiskAdoptionAction = .install
         localLinkError = nil
+        localDiscoveryInFlight = true
         localDiscoveryTask = Task { @MainActor in
             let model = await discoverLocalJournalPanelModel(
                 fetchIdentity: localIdentityFetch,
@@ -2645,6 +2661,57 @@ struct SettingsView: View {
                 break
             }
             localDiscoveryCompleted = true
+            localDiscoveryInFlight = false
+            lastProbeFinishedAt = Date()
+        }
+    }
+
+    private func reprobeLocalJournalOnReturn() {
+        guard shouldReprobeLocalJournalOnReturn(
+            showsConfiguredJournal: appState.showsConfiguredJournal,
+            hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
+            runningJournalFound: localJournalMark != nil,
+            localLinkInProgress: localLinkInProgress,
+            freshJournalWaiting: freshFlow.state == .waitingForJournal,
+            discoveryInFlight: localDiscoveryInFlight,
+            lastProbeFinishedAt: lastProbeFinishedAt,
+            now: Date()
+        ) else {
+            return
+        }
+
+        localDiscoveryTask?.cancel()
+        localDiscoveryInFlight = true
+        localDiscoveryTask = Task { @MainActor in
+            let probeResult = await discoverLocalJournalPanelModel(
+                fetchIdentity: localIdentityFetch,
+                onDiskDiscovery: onDiskJournalDiscovery
+            )
+            guard !Task.isCancelled else { return }
+
+            let nextModel = reprobedLocalJournalPanelModel(
+                current: localJournalDiscoveryPanelModel,
+                probeResult: probeResult
+            )
+            switch nextModel {
+            case .foundRunning(let mark):
+                localJournalMark = mark
+                localOnDiskDiscoveryPath = nil
+                localOnDiskAdoptionAction = .install
+            case .foundOnDisk(let path):
+                let action = await onDiskJournalAdoptionFlow.resolveOfferAction()
+                guard !Task.isCancelled else { return }
+                if localOnDiskDiscoveryPath != path {
+                    localOnDiskDiscoveryPath = path
+                }
+                if localOnDiskAdoptionAction != action {
+                    localOnDiskAdoptionAction = action
+                }
+            case .none:
+                break
+            }
+            localDiscoveryInFlight = false
+            lastProbeFinishedAt = Date()
         }
     }
 

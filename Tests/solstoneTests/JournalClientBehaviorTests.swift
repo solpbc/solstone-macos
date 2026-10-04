@@ -52,6 +52,75 @@ struct JournalClientBehaviorTests {
         ))
     }
 
+    @Test func localJournalReturnProbeGuard() {
+        let now = Date(timeIntervalSince1970: 1_000)
+
+        func shouldReprobe(
+            showsConfiguredJournal: Bool = false,
+            hasPersistedPairing: Bool = false,
+            runningJournalFound: Bool = false,
+            localLinkInProgress: Bool = false,
+            freshJournalWaiting: Bool = false,
+            discoveryInFlight: Bool = false,
+            lastProbeFinishedAt: Date? = nil,
+            now: Date
+        ) -> Bool {
+            shouldReprobeLocalJournalOnReturn(
+                showsConfiguredJournal: showsConfiguredJournal,
+                hasPersistedPairing: hasPersistedPairing,
+                runningJournalFound: runningJournalFound,
+                localLinkInProgress: localLinkInProgress,
+                freshJournalWaiting: freshJournalWaiting,
+                discoveryInFlight: discoveryInFlight,
+                lastProbeFinishedAt: lastProbeFinishedAt,
+                now: now
+            )
+        }
+
+        #expect(!shouldReprobe(showsConfiguredJournal: true, now: now))
+        #expect(!shouldReprobe(hasPersistedPairing: true, now: now))
+        #expect(!shouldReprobe(runningJournalFound: true, now: now))
+        #expect(!shouldReprobe(localLinkInProgress: true, now: now))
+        #expect(!shouldReprobe(freshJournalWaiting: true, now: now))
+        #expect(!shouldReprobe(discoveryInFlight: true, now: now))
+        #expect(shouldReprobe(now: now))
+
+        let finishedAt = Date(timeIntervalSince1970: 2_000)
+        #expect(!shouldReprobe(
+            lastProbeFinishedAt: finishedAt,
+            now: finishedAt.addingTimeInterval(2 - 0.001)
+        ))
+        #expect(shouldReprobe(
+            lastProbeFinishedAt: finishedAt,
+            now: finishedAt.addingTimeInterval(2)
+        ))
+        #expect(!shouldReprobe(
+            lastProbeFinishedAt: finishedAt,
+            now: finishedAt.addingTimeInterval(-0.001)
+        ))
+    }
+
+    @Test func localJournalReturnProbeMergesPanelModels() {
+        let mark = JournalMark.uiTestSample
+        let otherMark = JournalMark(icon1: mark.icon1, icon2: mark.icon2, words: ["other", "mark"])
+        let running = LocalJournalDiscoveryPanelModel.foundRunning(mark)
+        let otherRunning = LocalJournalDiscoveryPanelModel.foundRunning(otherMark)
+        let onDiskA = LocalJournalDiscoveryPanelModel.foundOnDisk(path: "a")
+        let onDiskB = LocalJournalDiscoveryPanelModel.foundOnDisk(path: "b")
+
+        #expect(reprobedLocalJournalPanelModel(current: .none, probeResult: running) == running)
+        #expect(reprobedLocalJournalPanelModel(current: .none, probeResult: .none) == .none)
+        #expect(reprobedLocalJournalPanelModel(current: onDiskA, probeResult: running) == running)
+
+        #expect(reprobedLocalJournalPanelModel(current: running, probeResult: .none) == running)
+        #expect(reprobedLocalJournalPanelModel(current: running, probeResult: onDiskA) == running)
+        #expect(reprobedLocalJournalPanelModel(current: running, probeResult: otherRunning) == running)
+
+        #expect(reprobedLocalJournalPanelModel(current: onDiskA, probeResult: .none) == onDiskA)
+        #expect(reprobedLocalJournalPanelModel(current: onDiskA, probeResult: onDiskB) == onDiskB)
+        #expect(reprobedLocalJournalPanelModel(current: .none, probeResult: onDiskA) == .none)
+    }
+
     @Test func isJournalPathValidMirrorsHandoffPredicate() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("solstone-journal-path-valid-\(UUID().uuidString)", isDirectory: true)
