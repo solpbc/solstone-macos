@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.32 (build 70)] - 2026-10-04
+
 ### Changed
-- your journal is named by its mark. there is no name to edit. the home screen shows the mark, and if the app can't read it, it shows "unavailable".
+- updated the bundled journal to [2.0.32](https://solstone.app/releases#v2.0.32) →
+- your journal is named by its mark. there is no name to edit. home shows the mark, and if the journal app can't read it, it shows "mark · unavailable".
 
 ## [2.0.31 (build 69)] - 2026-10-03
 
