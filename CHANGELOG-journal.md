@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- your journal is named by its mark. there is no name to edit. the home screen shows the mark, and a mark that can't be read shows as unavailable.
+- your journal is named by its mark. there is no name to edit. the home screen shows the mark, and if the app can't read it, it shows "unavailable".
 
 ## [2.0.31 (build 69)] - 2026-10-03
 

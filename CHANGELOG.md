@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- your journal is named by its mark. status, the journal window, and journal settings say the mark's two words once you have confirmed it, and your journal before that.
+- status no longer names your journal by its address. status, the journal window, and journal settings show the mark's two words once you have confirmed it, and "your journal" before that.
 
 ### Fixed
 
