@@ -80,7 +80,7 @@ struct JournalHandoffStoreTests {
 
         #expect(modelFixture.model.route == .home)
         #expect(modelFixture.model.currentMark == nil)
-        #expect(modelFixture.windowModel.markPresentation == .unavailable)
+        #expect(modelFixture.windowModel.markPresentation == .loading)
         #expect(capture.snapshot().isEmpty)
         #expect(!fixture.store.exists())
     }

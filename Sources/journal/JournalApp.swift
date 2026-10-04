@@ -226,7 +226,7 @@ private struct JournalWindowSceneRoot: View {
             if firstRunModel.route == .home {
                 ZStack(alignment: .top) {
                     JournalSettingsWindow(model: model, updateController: updateController)
-                        .task {
+                        .task(id: model.supervisor.state == .running) {
                             await model.loadForWindowOpen()
                         }
 

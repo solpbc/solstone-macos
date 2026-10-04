@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- opening the journal app while your journal starts now waits for its mark. home and device pairing show "your · journal" while it loads, then show your mark when it can be read.
+
 ## [2.0.32 (build 70)] - 2026-10-04
 
 ### Changed

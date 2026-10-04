@@ -337,6 +337,9 @@ struct JournalMarkPresentationView: View {
             JournalMarkView(mark: mark, isConfirmed: true)
         case .generic:
             JournalMarkView(mark: nil, isConfirmed: true)
+        case .loading:
+            JournalMarkView(mark: nil, isConfirmed: true)
+                .accessibilityValue("your journal, mark not read yet")
         case .unavailable:
             JournalMarkUnavailableView()
         }

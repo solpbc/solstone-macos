@@ -11,19 +11,159 @@ import Testing
 @MainActor
 @Suite("JournalWindowModel")
 struct JournalWindowModelTests {
+    @Test func windowOpenWaitsForReadinessAndThenShowsTheMarkInBothPanes() async throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let supervisor = try makeSupervisor()
+        let counter = IdentityCounter(read: .mark(.uiTestSample))
+        let model = makeModel(config: fixture.config, supervisor: supervisor,
+                              fetchIdentity: { _ in await counter.fetch() })
+
+        model.prepareForWindowOpen()
+        await model.loadForWindowOpen()
+        #expect(await counter.count == 0)
+        #expect(model.markPresentation == .loading)
+        #expect(model.devicesModel.markPresentation == .loading)
+
+        _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
+        await model.loadForWindowOpen()
+        #expect(model.markPresentation == .mark(.uiTestSample))
+        #expect(model.devicesModel.markPresentation == .mark(.uiTestSample))
+    }
+
+    @Test func failedStartupReadCanRecoverAtReadinessWithoutReopening() async throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let supervisor = try makeSupervisor()
+        let reads = IdentitySequence(reads: [.unavailable, .unavailable, .unavailable, .mark(.uiTestSample)])
+        let capture = IdentityMarkCapture()
+        let model = makeModel(config: fixture.config, supervisor: supervisor,
+                              fetchIdentity: { _ in await reads.fetch() },
+                              onIdentityMark: { capture.append($0) })
+
+        model.prepareForWindowOpen()
+        await model.fetchIdentityIfNeeded()
+        #expect(model.markPresentation == .unavailable)
+        #expect(await reads.count == 3)
+
+        _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
+        await model.loadForWindowOpen()
+        #expect(model.markPresentation == .mark(.uiTestSample))
+        #expect(model.devicesModel.markPresentation == .mark(.uiTestSample))
+        #expect(capture.snapshot() == [.uiTestSample])
+    }
+
+    @Test func missingFirstRunMarkRetriesAndUpdatesHomeAndDevices() async throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let supervisor = try makeSupervisor()
+        _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
+        let reads = IdentitySequence(reads: [.unavailable, .mark(.uiTestSample)])
+        let capture = IdentityMarkCapture()
+        let model = makeModel(config: fixture.config, supervisor: supervisor,
+                              fetchIdentity: { _ in await reads.fetch() },
+                              onIdentityMark: { capture.append($0) })
+
+        model.applyFirstRunLanding(identityMark: nil)
+        #expect(model.markPresentation == .loading)
+        #expect(model.devicesModel.markPresentation == .loading)
+        await model.loadForWindowOpen()
+        await model.loadForWindowOpen()
+
+        #expect(await reads.count == 2)
+        #expect(model.markPresentation == .mark(.uiTestSample))
+        #expect(model.devicesModel.markPresentation == .mark(.uiTestSample))
+        #expect(capture.snapshot() == [.uiTestSample])
+    }
+
+    @Test func concurrentLoadsShareOneFetchAndDoNotReplaceTheMarkWhileWaiting() async throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let fetch = PausedIdentityFetch()
+        let model = makeModel(config: fixture.config, fetchIdentity: { _ in await fetch.fetch() })
+        let first = Task { await model.fetchIdentityIfNeeded() }
+        await fetch.waitUntilStarted()
+        let second = Task { await model.fetchIdentityIfNeeded() }
+        #expect(model.markPresentation == .loading)
+        #expect(model.devicesModel.markPresentation == .loading)
+        await fetch.resume(with: .mark(.uiTestSample))
+        await first.value
+        await second.value
+
+        #expect(await fetch.count == 1)
+        #expect(model.markPresentation == .mark(.uiTestSample))
+        #expect(model.devicesModel.markPresentation == .mark(.uiTestSample))
+    }
+
+    @Test func lateFetchDoesNotOverwriteAFirstRunLandingMark() async throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let fetch = PausedIdentityFetch()
+        let capture = IdentityMarkCapture()
+        let model = makeModel(config: fixture.config, fetchIdentity: { _ in await fetch.fetch() },
+                              onIdentityMark: { capture.append($0) })
+        let loading = Task { await model.fetchIdentityIfNeeded() }
+        await fetch.waitUntilStarted()
+        model.applyFirstRunLanding(identityMark: .uiTestSample)
+        await fetch.resume(with: .unavailable)
+        await loading.value
+
+        #expect(model.markPresentation == .mark(.uiTestSample))
+        #expect(model.devicesModel.markPresentation == .mark(.uiTestSample))
+        #expect(capture.snapshot() == [.uiTestSample])
+    }
+
+    @Test func missingLandingMarkDuringAFetchStillGetsANewRead() async throws {
+        let fixture = try makeConfiguredFixture()
+        defer { fixture.clear() }
+        let fetch = PausedIdentityFetch()
+        let recovery = IdentityCounter(read: .mark(.uiTestSample))
+        let model = makeModel(config: fixture.config, fetchIdentity: { _ in
+            if await fetch.count == 0 { return await fetch.fetch() }
+            return await recovery.fetch()
+        })
+        let loading = Task { await model.fetchIdentityIfNeeded() }
+        await fetch.waitUntilStarted()
+        model.applyFirstRunLanding(identityMark: nil)
+        var landingLoad: Task<Void, Never>?
+        await withCheckedContinuation { (started: CheckedContinuation<Void, Never>) in
+            landingLoad = Task {
+                started.resume()
+                await model.fetchIdentityIfNeeded()
+            }
+        }
+        var concurrentLoad: Task<Void, Never>?
+        await withCheckedContinuation { (started: CheckedContinuation<Void, Never>) in
+            concurrentLoad = Task {
+                started.resume()
+                await model.fetchIdentityIfNeeded()
+            }
+        }
+        await fetch.resume(with: .unavailable)
+        await loading.value
+        try await #require(landingLoad).value
+        try await #require(concurrentLoad).value
+
+        #expect(await recovery.count == 1)
+        #expect(model.markPresentation == .mark(.uiTestSample))
+        #expect(model.devicesModel.markPresentation == .mark(.uiTestSample))
+    }
+
     @Test func identityFetchRunsOncePerWindowOpenAndDoesNotPoll() async throws {
         let fixture = try makeConfiguredFixture()
         defer { fixture.clear() }
         let counter = IdentityCounter(read: .mark(.uiTestSample))
+        let supervisor = try makeSupervisor()
+        _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
         let model = makeModel(
             config: fixture.config,
+            supervisor: supervisor,
             fetchIdentity: { _ in await counter.fetch() }
         )
 
         model.prepareForWindowOpen()
         await model.loadForWindowOpen()
         await model.loadForWindowOpen()
-        try await Task.sleep(for: .milliseconds(25))
 
         #expect(await counter.count == 1)
         #expect(model.markPresentation == .mark(.uiTestSample))
@@ -104,27 +244,28 @@ struct JournalWindowModelTests {
         defer { fixture.clear() }
 
         let notFetched = makeModel(config: fixture.config)
-        #expect(notFetched.markPresentation == .unavailable)
+        #expect(notFetched.markPresentation == .loading)
+        #expect(notFetched.devicesModel.markPresentation == .loading)
 
         let marked = makeModel(
             config: fixture.config,
             fetchIdentity: { _ in .mark(.uiTestSample) }
         )
-        await marked.loadForWindowOpen()
+        await marked.fetchIdentityIfNeeded()
         #expect(marked.markPresentation == .mark(.uiTestSample))
 
         let uncommitted = makeModel(
             config: fixture.config,
             fetchIdentity: { _ in .uncommitted }
         )
-        await uncommitted.loadForWindowOpen()
+        await uncommitted.fetchIdentityIfNeeded()
         #expect(uncommitted.markPresentation == .generic)
 
         let unavailable = makeModel(
             config: fixture.config,
             fetchIdentity: { _ in .unavailable }
         )
-        await unavailable.loadForWindowOpen()
+        await unavailable.fetchIdentityIfNeeded()
         #expect(unavailable.markPresentation == .unavailable)
     }
 
@@ -392,6 +533,17 @@ struct JournalWindowModelTests {
         return fixture
     }
 
+    private func makeSupervisor() throws -> JournalSupervisor {
+        let supervisor = JournalSupervisor(
+            gate: MockSingleSupervisorGate(),
+            materializer: MockRuntimeMaterializer(result: .success(try makeRuntime())),
+            runner: MockSupervisedChildRunner(),
+            readinessGate: MockJournalReadinessGate(result: .ready)
+        )
+        _ = configureInMemoryReceiptContext(supervisor)
+        return supervisor
+    }
+
     private func makeUnconfiguredFixture() -> AppFixture {
         let suiteName = "app.solstone.journal.window-model.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -405,6 +557,7 @@ struct JournalWindowModelTests {
         supervisor: JournalSupervisor = JournalSupervisor(),
         baseURL: String = "http://127.0.0.1:5015",
         fetchIdentity: JournalWindowModel.IdentityFetch? = { _ in .unavailable },
+        identityRetryPause: @escaping JournalWindowModel.IdentityRetryPause = {},
         fetchDiskUsage: JournalWindowModel.DiskUsageFetch? = { _ in 0 },
         fetchHealth: JournalWindowModel.HealthFetch? = { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
         fetchVersion: JournalWindowModel.VersionFetch? = { _, _ in nil },
@@ -419,6 +572,7 @@ struct JournalWindowModelTests {
             supervisor: supervisor,
             baseURL: baseURL,
             fetchIdentity: fetchIdentity,
+            identityRetryPause: identityRetryPause,
             fetchDiskUsage: fetchDiskUsage,
             fetchHealth: fetchHealth,
             fetchVersion: fetchVersion,
@@ -462,6 +616,43 @@ private actor IdentityCounter {
     func fetch() -> JournalIdentityRead {
         calls += 1
         return read
+    }
+}
+
+private actor IdentitySequence {
+    private var reads: [JournalIdentityRead]
+    private(set) var count = 0
+
+    init(reads: [JournalIdentityRead]) { self.reads = reads }
+
+    func fetch() -> JournalIdentityRead {
+        count += 1
+        return reads.isEmpty ? .unavailable : reads.removeFirst()
+    }
+}
+
+private actor PausedIdentityFetch {
+    private var result: CheckedContinuation<JournalIdentityRead, Never>?
+    private var started: CheckedContinuation<Void, Never>?
+    private(set) var count = 0
+
+    func fetch() async -> JournalIdentityRead {
+        count += 1
+        return await withCheckedContinuation { continuation in
+            result = continuation
+            started?.resume()
+            started = nil
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard result == nil else { return }
+        await withCheckedContinuation { started = $0 }
+    }
+
+    func resume(with read: JournalIdentityRead) {
+        result?.resume(returning: read)
+        result = nil
     }
 }
 

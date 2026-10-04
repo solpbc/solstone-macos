@@ -46,6 +46,7 @@ enum JournalPane: String, CaseIterable, Hashable, Identifiable {
 
 public enum JournalMarkPresentation: Sendable, Equatable {
     case generic
+    case loading
     case unavailable
     case mark(JournalMark)
 }
@@ -134,6 +135,7 @@ enum JournalHealthDisplay: String, CaseIterable, Sendable {
 @Observable
 final class JournalWindowModel {
     typealias IdentityFetch = @Sendable (String) async -> JournalIdentityRead
+    typealias IdentityRetryPause = @Sendable () async throws -> Void
     typealias DiskUsageFetch = @Sendable (URL) async -> Int64
     typealias HealthFetch = @Sendable (URL, [String: String]?) async -> JournalHealthCheckResult
     typealias VersionFetch = @Sendable (URL, [String: String]?) async -> String?
@@ -147,6 +149,7 @@ final class JournalWindowModel {
     let supervisor: JournalSupervisor
     @ObservationIgnored private let baseURL: String
     @ObservationIgnored private let fetchIdentity: IdentityFetch
+    @ObservationIgnored private let identityRetryPause: IdentityRetryPause
     @ObservationIgnored private let fetchDiskUsage: DiskUsageFetch
     @ObservationIgnored private let fetchHealth: HealthFetch
     @ObservationIgnored private let fetchVersion: VersionFetch
@@ -165,7 +168,9 @@ final class JournalWindowModel {
     var healthDisplay: JournalHealthDisplay = .unknown
     var journalVersion = "unknown"
 
-    private var identityFetchStarted = false
+    @ObservationIgnored private var identityFetchTask: Task<Void, Never>?
+    private var identityFetchCompleted = false
+    private var identityLandingGeneration = 0
     private var diskUsageLoadedAt: Date?
 
     init(
@@ -174,6 +179,7 @@ final class JournalWindowModel {
         baseURL: String = "http://127.0.0.1:5015",
         identitySession: URLSession = .shared,
         fetchIdentity: IdentityFetch? = nil,
+        identityRetryPause: @escaping IdentityRetryPause = { try await Task.sleep(for: .milliseconds(500)) },
         fetchDiskUsage: DiskUsageFetch? = nil,
         fetchHealth: HealthFetch? = nil,
         fetchVersion: VersionFetch? = nil,
@@ -196,6 +202,7 @@ final class JournalWindowModel {
         self.fetchIdentity = fetchIdentity ?? { baseURL in
             await defaultIdentityFetcher.fetch(baseURL: baseURL)
         }
+        self.identityRetryPause = identityRetryPause
         self.fetchDiskUsage = fetchDiskUsage ?? { await JournalDiskUsage.calculateBytes(under: $0) }
         self.fetchHealth = fetchHealth ?? { binary, environment in
             await JournalHealthCheck.run(journalBinary: binary, environment: environment)
@@ -243,7 +250,7 @@ final class JournalWindowModel {
 
     var markPresentation: JournalMarkPresentation {
         guard isConfigured else { return .generic }
-        guard let identityRead else { return .unavailable }
+        guard let identityRead else { return .loading }
         switch identityRead {
         case .mark(let mark): return .mark(mark)
         case .uncommitted: return .generic
@@ -302,23 +309,29 @@ final class JournalWindowModel {
 
     func prepareForWindowOpen() {
         selectedPane = .home
-        identityFetchStarted = false
+        identityFetchCompleted = false
+        if identityRead == .unavailable {
+            identityRead = nil
+        }
+        devicesModel.markPresentation = markPresentation
         devicesModel.resetTransientState()
     }
 
     func loadForWindowOpen() async {
-        guard isConfigured else { return }
+        guard isConfigured, supervisor.state == .running else { return }
         await fetchIdentityIfNeeded()
     }
 
     func applyFirstRunLanding(identityMark: JournalMark?) {
-        identityFetchStarted = true
+        identityLandingGeneration += 1
         if let validatedMark = identityMark.flatMap(JournalMark.validate) {
+            identityFetchCompleted = true
             identityRead = .mark(validatedMark)
             devicesModel.markPresentation = .mark(validatedMark)
             onIdentityMark?(validatedMark)
         } else {
-            identityRead = isConfigured ? .unavailable : .uncommitted
+            identityFetchCompleted = false
+            identityRead = isConfigured ? nil : .uncommitted
             devicesModel.markPresentation = markPresentation
         }
     }
@@ -338,17 +351,37 @@ final class JournalWindowModel {
     }
 
     func fetchIdentityIfNeeded() async {
-        guard !identityFetchStarted else { return }
-        identityFetchStarted = true
-        if isConfigured {
-            devicesModel.markPresentation = .unavailable
+        guard !identityFetchCompleted else { return }
+        while let identityFetchTask {
+            await identityFetchTask.value
+            guard !identityFetchCompleted, identityRead == nil else { return }
         }
-        let read = await fetchIdentity(baseURL)
-        identityRead = read
-        devicesModel.markPresentation = markPresentation
-        if case .mark(let mark) = read, let validatedMark = JournalMark.validate(mark) {
-            onIdentityMark?(validatedMark)
+        let generation = identityLandingGeneration
+        let task = Task { @MainActor in
+            defer { identityFetchTask = nil }
+            for attempt in 0..<3 {
+                let read = await fetchIdentity(baseURL)
+                guard generation == identityLandingGeneration else { return }
+                if read == .unavailable, attempt < 2 {
+                    do {
+                        try await identityRetryPause()
+                    } catch {
+                        return
+                    }
+                    guard generation == identityLandingGeneration else { return }
+                    continue
+                }
+                identityRead = read
+                identityFetchCompleted = read != .unavailable
+                devicesModel.markPresentation = markPresentation
+                if case .mark(let mark) = read, let validatedMark = JournalMark.validate(mark) {
+                    onIdentityMark?(validatedMark)
+                }
+                return
+            }
         }
+        identityFetchTask = task
+        await task.value
     }
 
     func setLaunchAtLoginEnabled(_ enabled: Bool) {
