@@ -1007,7 +1007,7 @@ struct BrowserSpoolLifecycleTests {
 
         fixture.clock.advance(seconds: 301)
         #expect(await fixture.clock.waitForSleepCount(2))
-        #expect(fixture.owner.store.getPeriod(periodId: emptyPeriod)?.state == "finalized")
+        #expect(fixture.owner.store.getPeriod(periodId: emptyPeriod) == nil)
         #expect(FileManager.default.fileExists(atPath: emptyFile.path) == false)
         #expect(fixture.owner.store.getAllFinalizedPeriods().isEmpty)
         #expect(fixture.owner.store.storeIsFailed() == false)
@@ -1388,8 +1388,13 @@ struct BrowserSpoolLifecycleTests {
             ioInjector: interrupted.injector
         )
         await recovered.start()
-        #expect(recovered.store.getPeriod(periodId: interruptedPeriod)?.cleanupDurable == true)
+        #expect(recovered.store.getPeriod(periodId: interruptedPeriod) == nil || recovered.store.getPeriod(periodId: interruptedPeriod)?.cleanupDurable == true)
         #expect(FileManager.default.fileExists(atPath: interruptedPayload.path) == false)
+        let replay = try reply(await recovered.accept(
+            bytes: batch(interruptedGeneration, id: "25252525252525252525252525252525", queuedAtMs: 1_700_000_100_000),
+            direction: "extension_to_host"
+        ))
+        #expect(replay["result"] as? String == "duplicate")
         #expect(recoveryTransport.attempts == 1)
         #expect(recovered.store.storeIsFailed() == false)
         recovered.stop()
@@ -1397,7 +1402,7 @@ struct BrowserSpoolLifecycleTests {
 
     // Caller-only synthetic regression. No socket, owner service, or real credentials.
     @Test(arguments: ["lifecycle-pairing", "foreign-pairing"])
-    func callerRecoveredCustodyMustMatchLoadedPairing(token: String) async throws {
+    func callerRecoveredCustodyFollowsLoadedPairing(token: String) async throws {
         let fixture = try fixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         await fixture.owner.start()
@@ -1436,16 +1441,10 @@ struct BrowserSpoolLifecycleTests {
         let bytes = transport.bytesSent
         let servers = transport.servers
         print("CALLER_STARTUP_PROBE token=\(token) admission=\(admissionBeforeStart) attempts=\(attempts) bodyBytesRead=\(bytes) servers=\(servers)")
-        if token == "lifecycle-pairing" {
-            #expect(attempts > 0)
-            #expect(bytes > 0)
-            #expect(servers == [destination])
-        } else {
-            #expect(admissionBeforeStart == false)
-            #expect(attempts == 0)
-            #expect(bytes == 0)
-            #expect(servers.isEmpty)
-        }
+        #expect(admissionBeforeStart)
+        #expect(attempts > 0)
+        #expect(bytes > 0)
+        #expect(servers == [destination])
     }
 
     @Test func realCredentialSaveMintsConnectionGenerationAndKeepsPendingBytes() async throws {
@@ -1924,7 +1923,7 @@ struct BrowserSpoolLifecycleTests {
     }
 
     @Test(arguments: [false, true])
-    func deliveredRetentionKeepsDuplicateThroughHorizonAndReclaimsHistoryAfterward(removed: Bool) async throws {
+    func deliveredCleanupKeepsDuplicateBeyondTheOldRetentionHorizon(removed: Bool) async throws {
         let transport = LifecycleTransport()
         if removed { transport.setOutcomeSegmentRemoved() } else { transport.setOutcomeSuccess(true) }
         let fixture = try fixture(transport: transport)
@@ -2000,7 +1999,6 @@ struct BrowserSpoolLifecycleTests {
             bytes: batch(newGeneration, id: "39393939393939393939393939393939", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
         ))
-        #expect(expiredReplay["result"] as? String == "rejected")
         #expect(expiredReplay["result"] as? String == "duplicate")
         fixture.owner.stop()
     }

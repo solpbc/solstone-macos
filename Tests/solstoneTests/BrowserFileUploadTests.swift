@@ -90,7 +90,7 @@ struct BrowserFileUploadTests {
         #expect(server.statusCode == 503)
     }
 
-    @Test func routeReplacementCancelsAnInFlightFileUpload() async throws {
+    @Test func routeReplacementLetsAnInFlightFileUploadFinish() async throws {
         let peer = try BrowserUploadHTTPPeer()
         defer { peer.stop() }
         let port = try await peer.start()
@@ -99,18 +99,19 @@ struct BrowserFileUploadTests {
         let upload = Task { await fixture.client.uploadStaged(prepared: fixture.prepared, lease: fixture.lease) }
         var requests = peer.requests.makeAsyncIterator()
         _ = try #require(try await requests.next())
-        // The old connection holds its response. Replacing the capability at
-        // the same URL must cancel it, rather than silently adopting the route.
         fixture.routes.update(BrowserIntakeRouteCapability(
             serverURL: fixture.route.serverURL, identityDigest: fixture.route.identityDigest,
             pairingGeneration: 1, transportIncarnation: 2, credentialIsCurrent: { true }
         ))
-        guard case .failure(let error) = await upload.value else {
-            Issue.record("A revoked upload cannot acknowledge custody")
+        #expect(!fixture.lease.mayStart())
+        await peer.respond(status: "503 Service Unavailable", body: Data("{}".utf8))
+        guard case .failure(let error) = await upload.value,
+              case .serverError(let server) = error as? UploadError else {
+            Issue.record("The original in-flight upload must receive its response")
             return
         }
-        #expect((error as? URLError)?.code == .cancelled)
-        #expect(!fixture.lease.isValid())
+        #expect(server.statusCode == 503)
+        #expect(fixture.lease.isValid())
     }
 }
 

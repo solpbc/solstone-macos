@@ -832,6 +832,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
 
         try recoverDiscardArtifacts()
         try recoverPeriodFiles()
+        if !isStoreFailed { try recoverTerminalCleanup() }
         do {
             try reclaimAbandonedStaging()
             stagingReservations.removeAll()
@@ -902,6 +903,26 @@ public final class BrowserIntakeStore: @unchecked Sendable {
                 }
             }
             if changed { try fsyncParentChecked(of: payload) }
+        }
+    }
+
+    private func recoverTerminalCleanup() throws {
+        let pending = try query("SELECT period_id, state, delivery_binding FROM periods WHERE state IN ('delivered', 'removed') AND cleanup_durable = 0") { stmt in
+            var rows: [(String, String, String)] = []
+            while true {
+                let rc = try stepChecked(stmt)
+                if rc == SQLITE_DONE { return rows }
+                guard rc == SQLITE_ROW, let id = Self.readText(stmt, 0),
+                      let state = Self.readText(stmt, 1), let binding = Self.readText(stmt, 2) else {
+                    throw BrowserIntakeStoreError.localIO
+                }
+                rows.append((id, state, binding))
+            }
+        }
+        for (id, state, encoded) in pending {
+            let binding = try JSONDecoder().decode(BrowserDeliveryBinding.self, from: Data(encoded.utf8))
+            try terminalAndUnlinkLocked(periodId: id, binding: binding, state: state,
+                nowMs: storedFloorMs, requireAck: state == "delivered")
         }
     }
 
@@ -995,9 +1016,8 @@ public final class BrowserIntakeStore: @unchecked Sendable {
                 continue
             }
             if size == nil {
-                if (state == "delivered" || state == "removed") && sqlite3_column_int(stmt, 6) != 0 {
-                    // The durable cleanup marker proves this payload was already
-                    // released; its accepted identities remain replay evidence.
+                if state == "delivered" || state == "removed" {
+                    // The terminal proof is validated before cleanup resumes.
                     continue
                 }
                 if state == "open" && committed == 0 {
@@ -1240,6 +1260,12 @@ public final class BrowserIntakeStore: @unchecked Sendable {
 
         do { _ = try updateFloorMsLocked(wallNowMs: nowMs) }
         catch { isStoreFailed = true }
+        if !isStoreFailed, !deliveryStopped, currentOpenPeriodId == nil,
+           activeIdentityToken != nil, destinationGeneration != nil {
+            do { _ = try ensureOpenPeriodLocked(nowMs: storedFloorMs) }
+            catch BrowserIntakeStoreError.resourceExhausted { }
+            catch { isStoreFailed = true }
+        }
         let freshness = projection.policy.freshnessMaxMs
 
         let heldAge = storedFloorMs >= earliestHeldMs ? storedFloorMs - earliestHeldMs : 0

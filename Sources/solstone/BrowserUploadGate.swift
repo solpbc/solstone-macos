@@ -87,7 +87,7 @@ final class BrowserIntakeRouteState: @unchecked Sendable {
 
     func matches(_ captured: BrowserIntakeRouteCapability) -> Bool {
         guard captured.credentialIsCurrent(), let current = lock.withLock({ route }) else { return false }
-        return captured.namesSameConnection(as: current)
+        return captured.id == current.id && captured.namesSameConnection(as: current)
     }
 }
 

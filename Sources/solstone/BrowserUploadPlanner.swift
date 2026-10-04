@@ -198,6 +198,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                     recordDeliveryFailure(nil, period: period, capture: capture, lease: lease)
                     return
                 }
+                if !listing.items.isEmpty { return }
             } catch {
                 if store.getPeriod(periodId: period.periodId)?.state == "discarded" {
                     Logger.upload.error("Browser delivery reconciliation stopped for discarded period \(period.periodId, privacy: .public)")
@@ -205,6 +206,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                 }
                 Logger.upload.error("Browser delivery reconciliation failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 recordDeliveryFailure("relay_unavailable", period: period, capture: capture, lease: lease)
+                return
             }
         }
 

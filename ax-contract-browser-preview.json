@@ -456,10 +456,6 @@
       "kind" : "enum",
       "vocabulary" : "BrowserRepairAXState"
     },
-    "settings.sources.browsers.waiting" : {
-      "kind" : "enum",
-      "vocabulary" : "BrowserRetiredAXState"
-    },
     "settings.sources.browsers.store.chrome" : {
       "kind" : "enum",
       "vocabulary" : "BrowserStoreLaunchAXState"
@@ -471,6 +467,10 @@
     "settings.sources.browsers.store.firefox" : {
       "kind" : "enum",
       "vocabulary" : "BrowserStoreLaunchAXState"
+    },
+    "settings.sources.browsers.waiting" : {
+      "kind" : "enum",
+      "vocabulary" : "BrowserRetiredAXState"
     },
     "settings.status.health.summary.state" : {
       "kind" : "freeform"

@@ -7,7 +7,7 @@ import Foundation
 import Testing
 @testable import solstone
 
-private enum NativeHostTestError: Error { case unexpected }
+private enum NativeHostTestError: Error { case unexpected, stateReply(String) }
 
 private func nativeHostVendorRoot(filePath: String = #filePath) -> URL {
     let file = URL(fileURLWithPath: filePath)
@@ -623,12 +623,11 @@ struct NativeHostSpoolCompositionTests {
         #expect(stale.delivery == "kept_locally")
 
         let stagingDirectory = owner.store.stagingRootURL().appendingPathComponent("composition-full", isDirectory: true)
-        try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+        try owner.store.registerStagingDirectory(stagingDirectory, reservedBytes: 0)
         let stagingFile = stagingDirectory.appendingPathComponent("multipart.body")
         try Data().write(to: stagingFile)
         let injected = NativeHostInjectedSize()
         injector.setSizeOverride { url, actual in url == stagingFile ? injected.value : actual }
-        try owner.store.registerStagingDirectory(stagingDirectory, reservedBytes: 0)
         injected.value = projection.policy.spoolBytes
         owner.store.setDeliveryFailure("relay_unavailable")
         let combined = try await nativeHostDecodedState(await owner.accept(bytes: chromeHello, direction: "extension_to_host"), projection: projection)
@@ -805,12 +804,12 @@ private final class NativeHostPauseTimer: PauseExpiryTimer {
     func invalidate() {}
 }
 
-private func nativeHostDecodedState(_ result: BrowserIntakeAcceptResult, projection: BrowserContractProjection) async throws -> BrowserDecodedState {
+private func nativeHostDecodedState(_ result: BrowserIntakeAcceptResult, projection: BrowserContractProjection, line: Int = #line) async throws -> BrowserDecodedState {
     guard case .message(let bytes) = result,
           let object = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
-          object["custody"] != nil else { throw NativeHostTestError.unexpected }
+          object["custody"] != nil else { throw NativeHostTestError.stateReply("line \(line): \(result)") }
     let decoded = BrowserPayloadDecoder.decode(bytes: bytes, direction: "host_to_extension", projection: projection)
-    guard case .accept(.state(let state)) = decoded else { throw NativeHostTestError.unexpected }
+    guard case .accept(.state(let state)) = decoded else { throw NativeHostTestError.stateReply(String(decoding: bytes, as: UTF8.self)) }
     return state
 }
 
