@@ -69,10 +69,11 @@ final class JournalDevicesModel {
     var isPairingPresented = false
     var pairingState: PairingState = .idle
     var pairingNow: Duration = .zero
-    // This journal's own mark, so the pairing window can show "this is your journal" the whole
-    // time an owner is pairing a new device — mirrors the connecting device's own confirm dialog,
-    // which shows the same mark for comparison. Kept in sync by the owning JournalWindowModel.
-    var identityMark: JournalMark?
+    // This journal's own mark presentation, so the pairing window can show "this is your journal"
+    // the whole time an owner is pairing a new device — mirrors the connecting device's own
+    // confirm dialog, which shows the same mark for comparison. Kept in sync by the owning
+    // JournalWindowModel.
+    var markPresentation: JournalMarkPresentation = .generic
 
     init(
         client: any JournalDevicesClientProtocol = JournalDevicesClient(),

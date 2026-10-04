@@ -27,7 +27,7 @@ struct StatusHealthSummaryTests {
                 hasPersistedPairing: true,
                 uploadStatus: .synced, pendingCount: 0,
                 lastDeliveryOutcome: .delivered(statusSummaryRecentDelivery),
-                serverURL: statusSummaryServerURL, now: statusSummaryNow,
+                journalSlot: "x.example", now: statusSummaryNow,
                 isPairedIngestReady: false, journalConnectionAXToken: token
             )
             #expect(summary.severity == (connecting ? .warn : .attention))
@@ -144,7 +144,7 @@ struct StatusHealthSummaryTests {
         #expect(starting.severity == .calm)
         #expect(starting.axValue == "off")
         #expect(starting.title == "starting…")
-        #expect(starting.subtitle == "nothing is reaching x.example yet")
+        #expect(starting.subtitle == "nothing is reaching your journal yet")
     }
 
     @Test func pausedRowUsesSyncSpecificSubtitle() {
@@ -169,7 +169,7 @@ struct StatusHealthSummaryTests {
         #expect(syncing.severity == .warn)
         #expect(syncing.axValue == "external_syncing")
         #expect(syncing.title == "catching up · 2 of 5 segments")
-        #expect(syncing.subtitle == "syncing to x.example")
+        #expect(syncing.subtitle == "syncing to your journal")
 
         let uploading = makeSummary(uploadStatus: .uploading(segment: "s2"), pendingCount: 4)
         #expect(uploading.severity == .warn)
@@ -179,7 +179,7 @@ struct StatusHealthSummaryTests {
         let connecting = makeSummary(uploadStatus: .notSynced)
         #expect(connecting.severity == .warn)
         #expect(connecting.axValue == "external_connecting")
-        #expect(connecting.subtitle == "reaching x.example")
+        #expect(connecting.subtitle == "reaching your journal")
     }
 
     @Test func externalGreenRequiresBothSyncedUploadStatusAndConfirmedDelivery() {
@@ -260,19 +260,6 @@ struct StatusHealthSummaryTests {
 
         let offlinePaused = makeSummary(isPaused: true, uploadStatus: .offline("offline"))
         #expect(offlinePaused.axValue == "external_offline")
-    }
-
-    @Test func footerEncryptionClauseRequiresHttpsScheme() {
-        #expect(externalStatusFooterText(serverURL: "https://x.example", permissionsGranted: true).contains(", encrypted"))
-        #expect(!externalStatusFooterText(serverURL: "http://x.example", permissionsGranted: true).contains(", encrypted"))
-        #expect(!externalStatusFooterText(serverURL: "host.example:5015", permissionsGranted: true).contains(", encrypted"))
-    }
-
-    @Test func journalHostUsesSchemeTolerantParse() {
-        #expect(journalHost(nil) == "your journal")
-        #expect(journalHost("") == "your journal")
-        #expect(journalHost("https://x.example:5015") == "x.example")
-        #expect(journalHost("x.example:5015") == "x.example")
     }
 
     @Test func coarseRelativeTimeBuckets() {
@@ -459,8 +446,7 @@ struct StatusHealthSummaryTests {
         uploadStatus: UploadCoordinator.Status = .synced,
         pendingCount: Int = 0,
         lastDeliveryOutcome: LastJournalDeliveryOutcome = .delivered(statusSummaryRecentDelivery),
-        serverURL: String? = statusSummaryServerURL,
-        pairedJournalAddress: String? = nil,
+        journalSlot: String = "x.example",
         now: Date = statusSummaryNow,
         selectedSources: CaptureSources = .all,
         permittedSources: CaptureSources = .all,
@@ -477,8 +463,7 @@ struct StatusHealthSummaryTests {
             uploadStatus: uploadStatus,
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
-            serverURL: serverURL,
-            pairedJournalAddress: pairedJournalAddress,
+            journalSlot: journalSlot,
             now: now,
             selectedSources: selectedSources,
             permittedSources: permittedSources,

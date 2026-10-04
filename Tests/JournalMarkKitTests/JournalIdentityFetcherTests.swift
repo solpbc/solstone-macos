@@ -13,9 +13,13 @@ struct JournalIdentityFetcherTests {
         JournalIdentityURLProtocol.store.enqueue(body: Self.identityJSON(committed: true, mark: Self.markObject()))
         let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
 
-        let mark = await fetcher.fetch(baseURL: "http://127.0.0.1:7071/")
+        let read = await fetcher.fetch(baseURL: "http://127.0.0.1:7071/")
 
-        #expect(mark?.words == ["afoot", "unfixed"])
+        guard case .mark(let mark) = read else {
+            Issue.record("expected .mark, got \(read)")
+            return
+        }
+        #expect(mark.words == ["afoot", "unfixed"])
         let request = try #require(JournalIdentityURLProtocol.store.snapshotRequests().first)
         #expect(request.url?.path == "/app/link/api/identity")
         #expect(request.timeoutInterval == 2)
@@ -31,19 +35,23 @@ struct JournalIdentityFetcherTests {
         let other = await fetcher.fetch(baseURL: "http://127.0.0.1:7071", expectedInstanceID: "instance-456")
         let own = await fetcher.fetch(baseURL: "http://127.0.0.1:7071", expectedInstanceID: "INSTANCE-123")
 
-        #expect(other == nil)
-        #expect(own?.words == ["afoot", "unfixed"])
+        #expect(other == .unavailable)
+        guard case .mark(let mark) = own else {
+            Issue.record("expected .mark, got \(own)")
+            return
+        }
+        #expect(mark.words == ["afoot", "unfixed"])
     }
 
-    @Test func fetchReturnsNilWhenUncommitted() async {
+    @Test func fetchReturnsUncommittedWhenNotCommitted() async {
         JournalIdentityURLProtocol.store.reset()
         defer { JournalIdentityURLProtocol.store.reset() }
         JournalIdentityURLProtocol.store.enqueue(body: Self.identityJSON(committed: false, mark: Self.markObject()))
         let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
 
-        let mark = await fetcher.fetch(baseURL: "http://127.0.0.1:7071")
+        let read = await fetcher.fetch(baseURL: "http://127.0.0.1:7071")
 
-        #expect(mark == nil)
+        #expect(read == .uncommitted)
     }
 
     @Test func expectedIdentityRejectsMissingInstanceIDEvenWithTheSameMark() async {
@@ -55,43 +63,43 @@ struct JournalIdentityFetcherTests {
         let missingID = String(data: try! JSONSerialization.data(withJSONObject: object), encoding: .utf8)!
         JournalIdentityURLProtocol.store.enqueue(body: missingID)
         let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
-        #expect(await fetcher.fetch(baseURL: "http://127.0.0.1:7071", expectedInstanceID: "instance-123") == nil)
+        #expect(await fetcher.fetch(baseURL: "http://127.0.0.1:7071", expectedInstanceID: "instance-123") == .unavailable)
     }
 
-    @Test func fetchReturnsNilWhenMarkNull() async {
+    @Test func fetchReturnsUnavailableWhenMarkNull() async {
         JournalIdentityURLProtocol.store.reset()
         defer { JournalIdentityURLProtocol.store.reset() }
         JournalIdentityURLProtocol.store.enqueue(body: Self.identityJSON(committed: true, mark: NSNull()))
         let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
 
-        let mark = await fetcher.fetch(baseURL: "http://127.0.0.1:7071")
+        let read = await fetcher.fetch(baseURL: "http://127.0.0.1:7071")
 
-        #expect(mark == nil)
+        #expect(read == .unavailable)
     }
 
-    @Test func fetchReturnsNilForNon2xx() async {
+    @Test func fetchReturnsUnavailableForNon2xx() async {
         JournalIdentityURLProtocol.store.reset()
         defer { JournalIdentityURLProtocol.store.reset() }
         JournalIdentityURLProtocol.store.enqueue(statusCode: 404, body: #"{"error":"not found"}"#)
         let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
 
-        let mark = await fetcher.fetch(baseURL: "http://127.0.0.1:7071")
+        let read = await fetcher.fetch(baseURL: "http://127.0.0.1:7071")
 
-        #expect(mark == nil)
+        #expect(read == .unavailable)
     }
 
-    @Test func fetchReturnsNilForGarbageJSON() async {
+    @Test func fetchReturnsUnavailableForGarbageJSON() async {
         JournalIdentityURLProtocol.store.reset()
         defer { JournalIdentityURLProtocol.store.reset() }
         JournalIdentityURLProtocol.store.enqueue(body: "not json")
         let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
 
-        let mark = await fetcher.fetch(baseURL: "http://127.0.0.1:7071")
+        let read = await fetcher.fetch(baseURL: "http://127.0.0.1:7071")
 
-        #expect(mark == nil)
+        #expect(read == .unavailable)
     }
 
-    @Test func fetchReturnsNilForInvalidMark() async {
+    @Test func fetchReturnsUnavailableForInvalidMark() async {
         JournalIdentityURLProtocol.store.reset()
         defer { JournalIdentityURLProtocol.store.reset() }
         var mark = Self.markObject()
@@ -101,9 +109,9 @@ struct JournalIdentityFetcherTests {
         JournalIdentityURLProtocol.store.enqueue(body: Self.identityJSON(committed: true, mark: mark))
         let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
 
-        let fetched = await fetcher.fetch(baseURL: "http://127.0.0.1:7071")
+        let read = await fetcher.fetch(baseURL: "http://127.0.0.1:7071")
 
-        #expect(fetched == nil)
+        #expect(read == .unavailable)
     }
 
     private static func identityJSON(committed: Bool, mark: Any) -> String {

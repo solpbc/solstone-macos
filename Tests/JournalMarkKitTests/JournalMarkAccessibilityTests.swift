@@ -9,17 +9,19 @@ import Testing
 struct JournalMarkAccessibilityTests {
     @Test func spokenValueUsesDecodedColorName() {
         let mark = Self.mark(color1: "amber", color2: "lime")
-        #expect(JournalMarkAccessibility.spokenValue(mark: mark) == "amber bug, lime gem, afoot, unfixed")
-        #expect(JournalMarkAccessibility.chipToken(colorName: "amber", glyphName: "bug") == "amber bug")
-        #expect(JournalMarkAccessibility.spokenValue(mark: .uiTestSample) == "amber bug, lime gem, afoot, unfixed")
+        #expect(JournalMarkAccessibility.spokenValue(mark: mark) == "amber, lime, afoot, unfixed")
+        #expect(JournalMarkAccessibility.spokenValue(mark: .uiTestSample) == "amber, lime, afoot, unfixed")
     }
 
-    @Test func spokenValueFallsBackToGlyphNameWhenColorNameAbsent() {
-        let mark = Self.mark(color1: nil, color2: nil)
-        #expect(JournalMarkAccessibility.spokenValue(mark: mark) == "bug, gem, afoot, unfixed")
-        #expect(JournalMarkAccessibility.chipToken(colorName: nil, glyphName: "bug") == "bug")
-        #expect(JournalMarkAccessibility.chipToken(colorName: "  ", glyphName: "bug") == "bug")
-        #expect(JournalMarkAccessibility.chipToken(colorName: "", glyphName: "gem") == "gem")
+    @Test func spokenValueFallsBackToWordsOnlyWhenColorNameAbsent() {
+        let markBothNil = Self.mark(color1: nil, color2: nil)
+        #expect(JournalMarkAccessibility.spokenValue(mark: markBothNil) == "afoot, unfixed")
+        #expect(!JournalMarkAccessibility.spokenValue(mark: markBothNil).contains("bug"))
+        #expect(!JournalMarkAccessibility.spokenValue(mark: markBothNil).contains("gem"))
+        let markOneNil = Self.mark(color1: "amber", color2: nil)
+        #expect(JournalMarkAccessibility.spokenValue(mark: markOneNil) == "afoot, unfixed")
+        let markBlank = Self.mark(color1: "  ", color2: "lime")
+        #expect(JournalMarkAccessibility.spokenValue(mark: markBlank) == "afoot, unfixed")
     }
 
     @Test func spokenValueForNilIsGeneric() {
@@ -28,6 +30,15 @@ struct JournalMarkAccessibilityTests {
         #expect(JournalMarkGeneric.words == ["your", "journal"])
         #expect(!JournalMarkAccessibility.spokenValue(mark: nil).contains("bug"))
         #expect(!JournalMarkAccessibility.spokenValue(mark: nil).contains("gem"))
+    }
+
+    @Test func slotAndUnavailableProperties() {
+        #expect(JournalMarkSlot.join(["afoot", "unfixed"]) == "afoot\u{00B7}unfixed")
+        #expect(JournalMarkSlot.join(["one"]) == "one")
+        #expect(JournalMarkSlot.join([]) == "")
+        #expect(JournalMarkUnavailable.words == ["mark", "unavailable"])
+        #expect(JournalMarkUnavailable.slot == "mark\u{00B7}unavailable")
+        #expect(JournalMarkUnavailable.accessibleName == "your journal's mark, unavailable right now")
     }
 
     @Test func genericPaletteMatchesTheSharedIconCompositorSource() {

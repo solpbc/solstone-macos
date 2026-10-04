@@ -323,7 +323,7 @@ struct OwnerSurfaceStatusTests {
             uploadStatus: .awaitingTunnel,
             pendingCount: 0,
             lastDeliveryOutcome: .noDeliveryYet,
-            serverURL: nil,
+            journalSlot: "your journal",
             now: now,
             selectedSources: sources,
             permittedSources: sources,

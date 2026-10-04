@@ -14,7 +14,7 @@ struct JournalWindowModelTests {
     @Test func identityFetchRunsOncePerWindowOpenAndDoesNotPoll() async throws {
         let fixture = try makeConfiguredFixture()
         defer { fixture.clear() }
-        let counter = IdentityCounter(mark: .uiTestSample)
+        let counter = IdentityCounter(read: .mark(.uiTestSample))
         let model = makeModel(
             config: fixture.config,
             fetchIdentity: { _ in await counter.fetch() }
@@ -26,14 +26,14 @@ struct JournalWindowModelTests {
         try await Task.sleep(for: .milliseconds(25))
 
         #expect(await counter.count == 1)
-        #expect(model.identityMark == .uiTestSample)
+        #expect(model.markPresentation == .mark(.uiTestSample))
 
         model.prepareForWindowOpen()
         await model.loadForWindowOpen()
         #expect(await counter.count == 2)
     }
 
-    @Test func malformedIdentityResponseReturnsNilAndHidesMarkFallback() async throws {
+    @Test func malformedIdentityResponseReturnsUnavailable() async throws {
         let store = ObserverURLProtocolStore()
         store.enqueue(body: ##"{"committed":true,"mark":{"icon1":{"name":"bad","color":{"hex":"#abc"},"rot":12,"svg":""},"icon2":{"name":"bad","color":{"hex":"#abc"},"rot":12,"svg":""},"words":["only"]}}"##)
         let session = URLSession(configuration: observerURLProtocolConfiguration(store: store))
@@ -42,14 +42,12 @@ struct JournalWindowModelTests {
         defer { fixture.clear() }
         let model = makeModel(
             config: fixture.config,
-            fetchIdentity: { baseURL in await fetcher.fetch(baseURL: baseURL) },
-            machineNameProvider: { "machine-name" }
+            fetchIdentity: { baseURL in await fetcher.fetch(baseURL: baseURL) }
         )
 
         await model.fetchIdentityIfNeeded()
 
-        #expect(model.identityMark == nil)
-        #expect(model.displayName == "machine-name")
+        #expect(model.markPresentation == .unavailable)
     }
 
     @Test func onIdentityMarkFiresAfterSuccessfulFetch() async throws {
@@ -58,7 +56,7 @@ struct JournalWindowModelTests {
         let capture = IdentityMarkCapture()
         let model = makeModel(
             config: fixture.config,
-            fetchIdentity: { _ in .uiTestSample },
+            fetchIdentity: { _ in .mark(.uiTestSample) },
             onIdentityMark: { mark in capture.append(mark) }
         )
 
@@ -67,13 +65,13 @@ struct JournalWindowModelTests {
         #expect(capture.snapshot() == [.uiTestSample])
     }
 
-    @Test func onIdentityMarkDoesNotFireForNilFetch() async throws {
+    @Test func onIdentityMarkDoesNotFireForUnavailableFetch() async throws {
         let fixture = try makeConfiguredFixture()
         defer { fixture.clear() }
         let capture = IdentityMarkCapture()
         let model = makeModel(
             config: fixture.config,
-            fetchIdentity: { _ in nil },
+            fetchIdentity: { _ in .unavailable },
             onIdentityMark: { mark in capture.append(mark) }
         )
 
@@ -91,41 +89,43 @@ struct JournalWindowModelTests {
             onIdentityMark: { mark in capture.append(mark) }
         )
 
-        model.applyFirstRunLanding(identityMark: .uiTestSample, draftName: "desk", nameError: nil)
+        model.applyFirstRunLanding(identityMark: .uiTestSample)
 
         #expect(capture.snapshot() == [.uiTestSample])
     }
 
-    @Test func displayNamePrefersConfigThenMarkThenMachineName() async throws {
+    @Test func markPresentationDerivesCorrectlyFromConfigAndRead() async throws {
+        let unconfigured = makeUnconfiguredFixture()
+        defer { unconfigured.clear() }
+        let unconfModel = makeModel(config: unconfigured.config)
+        #expect(unconfModel.markPresentation == .generic)
+
         let fixture = try makeConfiguredFixture()
         defer { fixture.clear() }
 
-        let named = makeModel(
-            config: fixture.config,
-            fetchConfig: { JournalConfig(journal: JournalConfigSection(name: "home base")) },
-            fetchIdentity: { _ in .uiTestSample },
-            machineNameProvider: { "machine-name" }
-        )
-        await named.loadConfigIfNeeded()
-        #expect(named.displayName == "home base")
+        let notFetched = makeModel(config: fixture.config)
+        #expect(notFetched.markPresentation == .unavailable)
 
         let marked = makeModel(
             config: fixture.config,
-            fetchConfig: { JournalConfig(journal: JournalConfigSection(name: "")) },
-            fetchIdentity: { _ in .uiTestSample },
-            machineNameProvider: { "machine-name" }
+            fetchIdentity: { _ in .mark(.uiTestSample) }
         )
         await marked.loadForWindowOpen()
-        #expect(marked.displayName == "afoot · unfixed")
+        #expect(marked.markPresentation == .mark(.uiTestSample))
 
-        let machine = makeModel(
+        let uncommitted = makeModel(
             config: fixture.config,
-            fetchConfig: { JournalConfig(journal: JournalConfigSection(name: "")) },
-            fetchIdentity: { _ in nil },
-            machineNameProvider: { "machine-name" }
+            fetchIdentity: { _ in .uncommitted }
         )
-        await machine.loadForWindowOpen()
-        #expect(machine.displayName == "machine-name")
+        await uncommitted.loadForWindowOpen()
+        #expect(uncommitted.markPresentation == .generic)
+
+        let unavailable = makeModel(
+            config: fixture.config,
+            fetchIdentity: { _ in .unavailable }
+        )
+        await unavailable.loadForWindowOpen()
+        #expect(unavailable.markPresentation == .unavailable)
     }
 
     @Test func runDisplayFailsClosedForLesserStates() {
@@ -275,35 +275,6 @@ struct JournalWindowModelTests {
         #expect(model.homeOffer == .runState)
     }
 
-    @Test func optimisticNameWriteCommitsOnSuccessAndRevertsOnFailure() async throws {
-        let fixture = try makeConfiguredFixture()
-        defer { fixture.clear() }
-        let success = makeModel(
-            config: fixture.config,
-            updateName: { name in JournalConfig(journal: JournalConfigSection(name: name)) }
-        )
-        success.journalName = "old"
-        success.draftJournalName = "new"
-
-        await success.saveDraftJournalName()
-
-        #expect(success.journalName == "new")
-        #expect(success.draftJournalName == "new")
-        #expect(success.nameError == nil)
-
-        let failure = makeModel(
-            config: fixture.config,
-            updateName: { _ in throw TestError.requested }
-        )
-        failure.journalName = "old"
-        failure.draftJournalName = "bad"
-
-        await failure.saveDraftJournalName()
-
-        #expect(failure.journalName == "old")
-        #expect(failure.draftJournalName == "bad")
-        #expect(failure.nameError == "couldn't save name")
-    }
 
     @Test func bundledVersionProbeRunsBeforeStartAndHealthUsesTheActiveRuntime() async throws {
         let fixture = try makeConfiguredFixture()
@@ -433,25 +404,20 @@ struct JournalWindowModelTests {
         config: JournalAppConfig,
         supervisor: JournalSupervisor = JournalSupervisor(),
         baseURL: String = "http://127.0.0.1:5015",
-        fetchConfig: JournalWindowModel.ConfigFetch? = { JournalConfig(journal: JournalConfigSection(name: "")) },
-        updateName: JournalWindowModel.NameUpdate? = { JournalConfig(journal: JournalConfigSection(name: $0)) },
-        fetchIdentity: JournalWindowModel.IdentityFetch? = { _ in nil },
+        fetchIdentity: JournalWindowModel.IdentityFetch? = { _ in .unavailable },
         fetchDiskUsage: JournalWindowModel.DiskUsageFetch? = { _ in 0 },
         fetchHealth: JournalWindowModel.HealthFetch? = { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
         fetchVersion: JournalWindowModel.VersionFetch? = { _, _ in nil },
-        onIdentityMark: JournalWindowModel.IdentityMarkObserver? = nil,
-        machineNameProvider: @escaping JournalWindowModel.MachineNameProvider = { "machine-name" },
         versionExecutableURL: @escaping JournalWindowModel.VersionExecutableURLProvider = { JournalCommandLine.currentExecutableURL() },
         aboutOSVersion: @escaping JournalWindowModel.AboutStringProvider = { "15.6" },
         aboutArch: @escaping JournalWindowModel.AboutArchProvider = { "arm64" },
-        appBuild: String = "67"
+        appBuild: String = "67",
+        onIdentityMark: JournalWindowModel.IdentityMarkObserver? = nil
     ) -> JournalWindowModel {
         JournalWindowModel(
             config: config,
             supervisor: supervisor,
             baseURL: baseURL,
-            fetchConfig: fetchConfig,
-            updateName: updateName,
             fetchIdentity: fetchIdentity,
             fetchDiskUsage: fetchDiskUsage,
             fetchHealth: fetchHealth,
@@ -460,8 +426,7 @@ struct JournalWindowModelTests {
             aboutOSVersion: aboutOSVersion,
             aboutArch: aboutArch,
             appBuild: appBuild,
-            onIdentityMark: onIdentityMark,
-            machineNameProvider: machineNameProvider
+            onIdentityMark: onIdentityMark
         )
     }
 }
@@ -485,18 +450,18 @@ private struct AppFixture {
 }
 
 private actor IdentityCounter {
-    private let mark: JournalMark?
+    private let read: JournalIdentityRead
     private var calls = 0
 
-    init(mark: JournalMark?) {
-        self.mark = mark
+    init(read: JournalIdentityRead) {
+        self.read = read
     }
 
     var count: Int { calls }
 
-    func fetch() -> JournalMark? {
+    func fetch() -> JournalIdentityRead {
         calls += 1
-        return mark
+        return read
     }
 }
 

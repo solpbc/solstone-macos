@@ -103,16 +103,13 @@ struct JournalSettingsWindow: View {
                 .font(.title2.weight(.semibold))
 
             // journal-mark.md section 4.3 — the org-wide "no journal identity yet"
-            // treatment applies when identityMark is nil. Never an empty box.
-            JournalMarkView(mark: model.identityMark, isConfirmed: true)
+            // treatment applies when presentation is generic. An unavailable mark renders the
+            // unavailable card.
+            JournalMarkPresentationView(presentation: model.markPresentation)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier(AXID.Journal.Home.markCard)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text(model.displayName)
-                    .font(.title3.weight(.medium))
-                AXStateCompanion(id: AXID.Journal.Home.nameState, value: model.displayName)
-
                 statusLine(model.runDisplay.label, systemImage: "circle.fill")
                 AXStateCompanion(id: AXID.Journal.Home.runDisplayGlanceState, value: model.runDisplay.axToken)
             }
@@ -188,30 +185,6 @@ struct JournalSettingsWindow: View {
         VStack(alignment: .leading, spacing: 20) {
             Text(JournalPane.journal.title)
                 .font(.title2.weight(.semibold))
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("name")
-                    .font(.headline)
-                HStack(spacing: 8) {
-                    TextField("name", text: $model.draftJournalName)
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityIdentifier(AXID.Journal.Pane.nameField)
-                        .onSubmit {
-                            Task { await model.saveDraftJournalName() }
-                        }
-                    Button {
-                        Task { await model.saveDraftJournalName() }
-                    } label: {
-                        Label("save", systemImage: "checkmark")
-                    }
-                    .disabled(model.isSavingName)
-                    .accessibilityIdentifier(AXID.Journal.Pane.nameSave)
-                }
-                if let error = model.nameError {
-                    Text(error)
-                        .foregroundStyle(.red)
-                }
-            }
 
             infoRow("location", value: model.journalRootPath)
             AXStateCompanion(id: AXID.Journal.Pane.locationPathState, value: model.journalRootPath)
@@ -351,6 +324,21 @@ struct JournalSettingsWindow: View {
         } icon: {
             Image(systemName: systemImage)
                 .font(.system(size: 8))
+        }
+    }
+}
+
+struct JournalMarkPresentationView: View {
+    let presentation: JournalMarkPresentation
+
+    var body: some View {
+        switch presentation {
+        case .mark(let mark):
+            JournalMarkView(mark: mark, isConfirmed: true)
+        case .generic:
+            JournalMarkView(mark: nil, isConfirmed: true)
+        case .unavailable:
+            JournalMarkUnavailableView()
         }
     }
 }

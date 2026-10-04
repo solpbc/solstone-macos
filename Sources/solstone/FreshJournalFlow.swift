@@ -72,7 +72,10 @@ struct FreshJournalFlowDependencies {
             runningJournal: runningJournal,
             trustVerifier: trustVerifier,
             fetchIdentity: { baseURL in
-                await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL)
+                guard case .mark(let mark) = await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL) else {
+                    return nil
+                }
+                return mark
             },
             waitingPollInterval: .seconds(3),
             sleep: { duration in

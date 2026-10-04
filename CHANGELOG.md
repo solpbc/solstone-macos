@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- your journal is named by its mark. status, the journal window, and journal settings say the mark's two words once you have confirmed it, and your journal before that.
+
 ### Fixed
 
 - when this mac has lost its journal link, including after moving to a new mac, status and journal settings now say it isn't linked and point you to re-link. before, status said it was connecting while nothing reached your journal.

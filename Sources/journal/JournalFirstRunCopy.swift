@@ -8,10 +8,9 @@ enum JournalFirstRunCopy {
     static let tryAnotherButton = "try another"
     static let tryAnotherLoading = "trying…"
     static let markRevealExplainer = "lock it in and this mark is your journal's, for good. it can't be changed later. try as many as you like first."
-    static let adoptLandingLine = "nothing moved. your journal was always here. now it has a name."
+    static let adoptLandingLine = "nothing moved. your journal was always here. you know it by its mark."
 
     static let markTitle = "your journal mark"
-    static let nameField = "name"
     static let locationField = "location"
     static let chooseLocation = "choose"
     static let continueButton = "continue"
@@ -20,7 +19,6 @@ enum JournalFirstRunCopy {
     static let finishingTitle = "finishing"
     static let finishingLoading = "finishing…"
     static let finishedWithNotes = "finished with notes"
-    static let nameCanBeSavedLater = "name can be saved later."
     static let adoptTitle = "journal found"
     static let adoptOpening = "opening this journal"
     static let adoptFailed = "couldn't open this journal"
@@ -35,7 +33,6 @@ enum JournalFirstRunCopy {
         markRevealExplainer,
         adoptLandingLine,
         markTitle,
-        nameField,
         locationField,
         chooseLocation,
         continueButton,
@@ -44,7 +41,6 @@ enum JournalFirstRunCopy {
         finishingTitle,
         finishingLoading,
         finishedWithNotes,
-        nameCanBeSavedLater,
         adoptTitle,
         adoptOpening,
         adoptFailed,

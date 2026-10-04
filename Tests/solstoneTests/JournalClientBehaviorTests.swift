@@ -175,38 +175,25 @@ struct JournalClientBehaviorTests {
         driver.cancel()
     }
 
-    @Test func journalNameFallbackChainUsesFetchedNameThenMarkThenHost() async {
-        let (fetcher, namedStore, namedSession) = makeJournalNameFetcher()
-        defer { namedSession.invalidateAndCancel() }
-        namedStore.enqueue(body: #"{"journal":{"name":"  named journal  "}}"#)
-        let fetched = await fetcher.fetch(baseURL: "https://journal.example")
+    @Test func journalNameResolutionUsesConfirmedMark() {
+        #expect(resolvedJournalDisplayName(
+            isConfirmed: true,
+            mark: .uiTestSample
+        ) == "afoot\u{00B7}unfixed")
 
         #expect(resolvedJournalDisplayName(
-            fetchedName: fetched,
-            confirmedMark: .uiTestSample,
-            serverURL: "https://journal.example"
-        ) == "named journal")
+            isConfirmed: true,
+            mark: nil
+        ) == JournalMarkUnavailable.slot)
 
-        let (absentFetcher, absentStore, absentSession) = makeJournalNameFetcher()
-        defer { absentSession.invalidateAndCancel() }
-        absentStore.enqueue(body: #"{}"#)
-        let absent = await absentFetcher.fetch(baseURL: "https://journal.example")
-
-        #expect(absent == nil)
         #expect(resolvedJournalDisplayName(
-            fetchedName: absent,
-            confirmedMark: .uiTestSample,
-            serverURL: "https://journal.example"
-        ) == "afoot unfixed")
-        #expect(resolvedJournalDisplayName(
-            fetchedName: nil,
-            confirmedMark: nil,
-            serverURL: "https://journal.example:5015"
+            isConfirmed: false,
+            mark: .uiTestSample
         ) == UICopy.SETTINGS_SETUP_JOURNAL_LINK_LABEL)
+
         #expect(resolvedJournalDisplayName(
-            fetchedName: "",
-            confirmedMark: nil,
-            serverURL: "https://journal.example"
+            isConfirmed: false,
+            mark: nil
         ) == UICopy.SETTINGS_SETUP_JOURNAL_LINK_LABEL)
     }
 
@@ -303,12 +290,6 @@ private func makeIdentityFetcher() -> (JournalIdentityFetcher, ObserverURLProtoc
     let store = ObserverURLProtocolStore()
     let session = URLSession(configuration: observerURLProtocolConfiguration(store: store))
     return (JournalIdentityFetcher(session: session), store, session)
-}
-
-private func makeJournalNameFetcher() -> (JournalNameFetcher, ObserverURLProtocolStore, URLSession) {
-    let store = ObserverURLProtocolStore()
-    let session = URLSession(configuration: observerURLProtocolConfiguration(store: store))
-    return (JournalNameFetcher(session: session), store, session)
 }
 
 private func identityBody(committed: Bool) -> String {

@@ -81,7 +81,10 @@ extension JournalMarkConfirmationDriver {
     ) -> MarkFetcher {
         { baseURL in
             guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return nil }
-            return await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected)
+            guard case .mark(let mark) = await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected) else {
+                return nil
+            }
+            return mark
         }
     }
 
@@ -132,7 +135,10 @@ extension JournalMarkConfirmationDriver {
             },
             fetchMark: { baseURL in
                 guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return nil }
-                return await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected)
+                guard case .mark(let mark) = await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected) else {
+                    return nil
+                }
+                return mark
             }
         )
     }

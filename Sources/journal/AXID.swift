@@ -18,7 +18,6 @@ enum AXID {
         enum Home {
             static let updates = "journal.home.updates"
             static let markCard = "journal.home.mark.card"
-            static let nameState = "journal.home.name.state"
             static let runDisplayGlanceState = "journal.home.runDisplay.glance.state"
             static let openJournal = "journal.home.open"
             static let unconfiguredMessageState = "journal.home.unconfigured.message.state"
@@ -29,7 +28,6 @@ enum AXID {
         enum Ritual {
             static let root = "journal.ritual.root"
             static let routeState = "journal.ritual.route.state"
-            static let nameField = "journal.ritual.name.field"
             static let locationField = "journal.ritual.location.field"
             static let locationChoose = "journal.ritual.location.choose"
             static let nameLocationContinue = "journal.ritual.nameLocation.continue"
@@ -61,8 +59,6 @@ enum AXID {
         }
 
         enum Pane {
-            static let nameField = "journal.journal.name.field"
-            static let nameSave = "journal.journal.name.save"
             static let locationPathState = "journal.journal.location.path.state"
             static let diskUsageState = "journal.journal.diskUsage.state"
         }

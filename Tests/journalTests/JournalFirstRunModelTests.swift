@@ -28,7 +28,7 @@ struct JournalFirstRunModelTests {
         #expect(starts == 0)
     }
 
-    @Test func createFlowOrdersSetupSupervisorMarkLockFinalizeThenNameWrite() async throws {
+    @Test func createFlowOrdersSetupSupervisorMarkLockFinalize() async throws {
         let trace = FirstRunTrace()
         let fixture = makeModel(
             trace: trace,
@@ -38,7 +38,6 @@ struct JournalFirstRunModelTests {
             lockResponse: .lockedResponse,
             finalizeResponse: .success
         )
-        fixture.model.draftName = "desk journal"
 
         await fixture.model.continueFromNameLocation()
         await fixture.model.lockCurrentMark()
@@ -51,32 +50,9 @@ struct JournalFirstRunModelTests {
             "lockMark",
             "probe",
             "finalize",
-            "nameWrite",
         ])
         #expect(fixture.model.route == .home)
-        #expect(fixture.windowModel.identityMark == .uiTestSample)
-    }
-
-    @Test func nameWrite400IsNonFatalAndLeavesMarkFallback() async throws {
-        let trace = FirstRunTrace()
-        let fixture = makeModel(
-            trace: trace,
-            startResults: [true],
-            probeResults: [.incomplete, .incomplete],
-            getMarkResponses: [.unlockedResponse],
-            lockResponse: .lockedResponse,
-            nameUpdateError: JournalConfigClientError.serverError(400)
-        )
-        fixture.model.draftName = "desk journal"
-
-        await fixture.model.continueFromNameLocation()
-        await fixture.model.lockCurrentMark()
-
-        #expect(fixture.model.route == .home)
-        #expect(fixture.model.nameWriteError == JournalFirstRunCopy.nameCanBeSavedLater)
-        #expect(fixture.windowModel.journalName == "")
-        #expect(fixture.windowModel.draftJournalName == "desk journal")
-        #expect(fixture.windowModel.displayName == "afoot · unfixed")
+        #expect(fixture.windowModel.markPresentation == .mark(.uiTestSample))
     }
 
     @Test func landingHomeKeepsLockedMarkAfterWindowLoad() async throws {
@@ -92,8 +68,7 @@ struct JournalFirstRunModelTests {
         await fixture.windowModel.loadForWindowOpen()
 
         #expect(fixture.model.route == .home)
-        #expect(fixture.windowModel.identityMark == .uiTestSample)
-        #expect(fixture.windowModel.displayName == "afoot · unfixed")
+        #expect(fixture.windowModel.markPresentation == .mark(.uiTestSample))
     }
 
     @Test func finalizeWarningsLandHome() async throws {
@@ -154,7 +129,7 @@ struct JournalFirstRunModelTests {
 
         await fixture.model.resumeConfiguredRoot(try makeTemporaryDirectory())
 
-        #expect(await trace.snapshot() == ["supervisor", "probe", "getMark", "probe", "finalize", "nameWrite"])
+        #expect(await trace.snapshot() == ["supervisor", "probe", "getMark", "probe", "finalize"])
         #expect(fixture.initClient.finalizeCalls == 1)
         #expect(fixture.model.route == .home)
     }
@@ -425,7 +400,7 @@ struct JournalFirstRunModelTests {
             "/init",
         ])
         #expect(fixture.model.route == .home)
-        #expect(fixture.windowModel.identityMark == .uiTestSample)
+        #expect(fixture.windowModel.markPresentation == .mark(.uiTestSample))
     }
 }
 
@@ -447,7 +422,6 @@ func makeModel(
     getMarkResponses: [JournalInitMarkResponse] = [],
     lockResponse: JournalInitMarkResponse = .lockedResponse,
     finalizeResponse: JournalInitFinalizeResponse = .success,
-    nameUpdateError: Error? = nil,
     setupError: Error? = nil,
     handoffStore: any JournalHandoffStoring = EmptyHandoffStore(),
     notificationCenter: NotificationCenter = NotificationCenter(),
@@ -459,14 +433,11 @@ func makeModel(
     let windowModel = JournalWindowModel(
         config: config,
         supervisor: supervisor,
-        fetchConfig: { JournalConfig(journal: JournalConfigSection(name: "")) },
-        updateName: { JournalConfig(journal: JournalConfigSection(name: $0)) },
-        fetchIdentity: { _ in nil },
+        fetchIdentity: { _ in .unavailable },
         fetchDiskUsage: { _ in 0 },
         fetchHealth: { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
         fetchVersion: { _, _ in nil },
-        appBuild: "67",
-        machineNameProvider: { "machine-name" }
+        appBuild: "67"
     )
     let setupRunner = FakeSetupRunner(trace: trace, error: setupError)
     let fakeInitClient = FakeInitClient(
@@ -482,18 +453,10 @@ func makeModel(
         config: config,
         setupRunner: setupRunner,
         initClient: initClient,
-        updateName: { name in
-            await trace.append("nameWrite")
-            if let nameUpdateError {
-                throw nameUpdateError
-            }
-            return JournalConfig(journal: JournalConfigSection(name: name))
-        },
         startSupervisor: { root in
             await starts.start(root: root)
         },
         handoffStore: handoffStore,
-        machineNameProvider: { "machine-name" },
         notificationCenter: notificationCenter,
         journalFileReader: journalFileReader,
         discoveryQualificationTimeout: discoveryQualificationTimeout,

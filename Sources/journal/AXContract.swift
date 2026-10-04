@@ -14,7 +14,6 @@ enum AXContract {
     static let staticIDs: [String] = [
         AXID.Journal.Home.updates,
         AXID.Journal.Home.markCard,
-        AXID.Journal.Home.nameState,
         AXID.Journal.Home.runDisplayGlanceState,
         AXID.Journal.Home.openJournal,
         AXID.Journal.Home.unconfiguredMessageState,
@@ -22,7 +21,6 @@ enum AXContract {
         AXID.Journal.Home.runState,
         AXID.Journal.Ritual.root,
         AXID.Journal.Ritual.routeState,
-        AXID.Journal.Ritual.nameField,
         AXID.Journal.Ritual.locationField,
         AXID.Journal.Ritual.locationChoose,
         AXID.Journal.Ritual.nameLocationContinue,
@@ -48,8 +46,6 @@ enum AXContract {
         AXID.Journal.Adopt.locationPathState,
         AXID.Journal.Adopt.continueButton,
         AXID.Journal.Adopt.errorState,
-        AXID.Journal.Pane.nameField,
-        AXID.Journal.Pane.nameSave,
         AXID.Journal.Pane.locationPathState,
         AXID.Journal.Pane.diskUsageState,
         AXID.Journal.RunState.start,
@@ -182,7 +178,6 @@ enum AXContract {
     static var states: [String: StateBinding] {
         [
             "journal.sidebar.tab.{pane}.state": .enum("JournalSidebarTabState"),
-            AXID.Journal.Home.nameState: .freeform,
             AXID.Journal.Home.runDisplayGlanceState: .enum("JournalRunDisplay"),
             AXID.Journal.Home.unconfiguredMessageState: .freeform,
             AXID.Journal.Ritual.routeState: .enum("JournalFirstRunRouteState"),

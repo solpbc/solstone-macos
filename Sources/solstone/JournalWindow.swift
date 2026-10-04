@@ -90,29 +90,72 @@ struct JournalWindowSceneRoot: View {
         self.websiteDataStore = websiteDataStore
     }
 
+    private var windowTitle: String {
+        resolvedJournalDisplayName(
+            isConfirmed: appState.isJournalMarkConfirmed,
+            mark: appState.confirmedMark
+        )
+    }
+
     var body: some View {
-        if shouldRenderJournalContent(journalWindowOpen: appState.openSceneIds.contains(.journal)) {
-            JournalWindowView(
-                intent: appState.journalOpenIntent,
-                homeBaseChangeToken: appState.journalHomeBaseChangeToken,
-                resolveHomeBase: resolveHomeBase,
-                connectionVerdict: connectionVerdict,
-                pairingBusy: pairingBusy,
-                recover: recover,
-                openSettings: settingsRouter ?? {
-                    appState.pendingSettingsTab = "journal"
-                    routeOpenSettingsWindow(
-                        appState: appState,
-                        openWindow: { openWindow(id: $0) },
-                        activate: { NSApp.activate(ignoringOtherApps: true) }
-                    )
-                },
-                openExternalURL: openExternalURL,
-                websiteDataStore: websiteDataStore
-            )
-        } else {
-            Color.clear
+        Group {
+            if shouldRenderJournalContent(journalWindowOpen: appState.openSceneIds.contains(.journal)) {
+                JournalWindowView(
+                    intent: appState.journalOpenIntent,
+                    homeBaseChangeToken: appState.journalHomeBaseChangeToken,
+                    resolveHomeBase: resolveHomeBase,
+                    connectionVerdict: connectionVerdict,
+                    pairingBusy: pairingBusy,
+                    recover: recover,
+                    openSettings: settingsRouter ?? {
+                        appState.pendingSettingsTab = "journal"
+                        routeOpenSettingsWindow(
+                            appState: appState,
+                            openWindow: { openWindow(id: $0) },
+                            activate: { NSApp.activate(ignoringOtherApps: true) }
+                        )
+                    },
+                    openExternalURL: openExternalURL,
+                    websiteDataStore: websiteDataStore
+                )
+            } else {
+                Color.clear
+            }
         }
+        .background(JournalWindowTitleInstaller(title: windowTitle))
+    }
+}
+
+private final class JournalWindowTitleView: NSView {
+    var titleText: String = UICopy.JOURNAL_WINDOW_TITLE {
+        didSet {
+            updateTitle()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateTitle()
+    }
+
+    private func updateTitle() {
+        if let window, window.title != titleText {
+            window.title = titleText
+        }
+    }
+}
+
+private struct JournalWindowTitleInstaller: NSViewRepresentable {
+    let title: String
+
+    func makeNSView(context: Context) -> JournalWindowTitleView {
+        let view = JournalWindowTitleView()
+        view.titleText = title
+        return view
+    }
+
+    func updateNSView(_ nsView: JournalWindowTitleView, context: Context) {
+        nsView.titleText = title
     }
 }
 

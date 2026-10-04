@@ -18,9 +18,9 @@ struct JournalPairingWindow: View {
 
             // Shown continuously alongside the QR/link, the whole time the owner is pairing a
             // new device — matching the connecting device's own confirm dialog, which shows the
-            // same mark for comparison (journal-mark.md section 7.3). Falls back to the section
-            // 4.3 generic mark while the identity fetch is still in flight.
-            JournalMarkView(mark: model.identityMark, isConfirmed: true)
+            // same mark for comparison (journal-mark.md section 7.3). An unavailable mark renders
+            // the unavailable card, and an unconfigured journal renders the section 4.3 generic mark.
+            JournalMarkPresentationView(presentation: model.markPresentation)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier(AXID.Journal.Devices.Pairing.markCard)
 

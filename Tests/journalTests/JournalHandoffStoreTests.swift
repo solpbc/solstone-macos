@@ -80,7 +80,7 @@ struct JournalHandoffStoreTests {
 
         #expect(modelFixture.model.route == .home)
         #expect(modelFixture.model.currentMark == nil)
-        #expect(modelFixture.windowModel.identityMark == nil)
+        #expect(modelFixture.windowModel.markPresentation == .unavailable)
         #expect(capture.snapshot().isEmpty)
         #expect(!fixture.store.exists())
     }
@@ -111,12 +111,10 @@ struct JournalHandoffStoreTests {
                 lockResponse: .lockedResponse,
                 finalizeResponse: .success
             ),
-            updateName: { JournalConfig(journal: JournalConfigSection(name: $0)) },
             startSupervisor: { [supervisor] root in
                 await supervisor.start(journalRoot: root)
             },
             handoffStore: fixture.store,
-            machineNameProvider: { "machine-name" },
             notificationCenter: NotificationCenter(),
             windowModel: windowModel
         )
@@ -170,14 +168,11 @@ private func makeWindowModel(config: JournalAppConfig, supervisor: JournalSuperv
     JournalWindowModel(
         config: config,
         supervisor: supervisor,
-        fetchConfig: { JournalConfig(journal: JournalConfigSection(name: "")) },
-        updateName: { JournalConfig(journal: JournalConfigSection(name: $0)) },
-        fetchIdentity: { _ in nil },
+        fetchIdentity: { _ in .unavailable },
         fetchDiskUsage: { _ in 0 },
         fetchHealth: { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
         fetchVersion: { _, _ in nil },
-        appBuild: "67",
-        machineNameProvider: { "machine-name" }
+        appBuild: "67"
     )
 }
 

@@ -190,40 +190,6 @@ struct JournalAddressVisibilityTests {
         #expect(managed.failureCause == .unreachable(nil))
     }
 
-    @Test func pairedStatusCardNamesThePairedAddressNotTheRelayAndStaysEncrypted() {
-        let owner = TunnelLifecycleOwner.dormantForSnapshot(loadPairing: { addressPairing() })
-        #expect(owner.dialableRelayHost == "link.solstone.app")
-        let address = statusCardPairedJournalAddress(
-            pairedAddresses: owner.pairedAddresses,
-            isPairedHome: owner.isPairedHome
-        )
-        #expect(address == "192.168.1.20:7657")
-
-        let summary = StatusHealthSummary.make(
-            serviceMode: .external,
-            isRecording: true,
-            isPaused: false,
-            held: false,
-            hasPersistedPairing: owner.hasPersistedPairing,
-            uploadStatus: .synced,
-            pendingCount: 0,
-            lastDeliveryOutcome: .delivered(Date(timeIntervalSince1970: 900)),
-            serverURL: nil,
-            pairedJournalAddress: address,
-            now: Date(timeIntervalSince1970: 1_000)
-        )
-        #expect(summary.title == "all good · on, synced to 192.168.1.20:7657")
-        #expect(!summary.title.contains("link.solstone.app"))
-
-        let footer = externalStatusFooterText(serverURL: nil, pairedJournalAddress: address, permissionsGranted: true)
-        #expect(footer.contains("your journal lives on 192.168.1.20:7657, encrypted"))
-        #expect(!footer.contains("link.solstone.app"))
-
-        let home = TunnelLifecycleOwner.dormantForSnapshot(loadPairing: {
-            pairing(localEndpoints: [LocalEndpoint(host: "127.0.0.1", port: 7657, scope: "local")])
-        })
-        #expect(statusCardPairedJournalAddress(pairedAddresses: home.pairedAddresses, isPairedHome: home.isPairedHome) == nil)
-    }
 
     @Test func agentInstructionsNameThePairedAddressAndNeverTheInstance() {
         let owner = TunnelLifecycleOwner.dormantForSnapshot(loadPairing: { addressPairing() })

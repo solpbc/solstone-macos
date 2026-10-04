@@ -171,7 +171,7 @@ struct JournalDevicesSnapshotTests {
     private func pairingModel() -> JournalDevicesModel {
         let model = JournalDevicesModel(client: SnapshotDevicesClient(devices: []), copyToClipboard: { _ in })
         model.isPairingPresented = true
-        model.identityMark = .uiTestSample
+        model.markPresentation = .mark(.uiTestSample)
         return model
     }
 

@@ -533,8 +533,7 @@ struct SnapshotTests {
                 appState: state,
                 updateController: updateController,
                 selectedTab: .service,
-                initialStorageUsedMB: 42,
-                initialJournalName: "field journal"
+                initialStorageUsedMB: 42
             ),
             size: settingsSize,
             to: "settings-service-your-journal-configured.png"
@@ -561,7 +560,6 @@ struct SnapshotTests {
                 updateController: updateController,
                 selectedTab: .service,
                 initialStorageUsedMB: 42,
-                initialJournalName: "field journal",
                 initialShowPairingFlow: true
             ),
             // This paired relay state repeats the journal mark inside pairing, so it needs a taller canvas.
@@ -650,8 +648,7 @@ struct SnapshotTests {
                 appState: state,
                 updateController: updateController,
                 selectedTab: .service,
-                initialStorageUsedMB: 42,
-                initialJournalName: "field journal"
+                initialStorageUsedMB: 42
             ),
             size: settingsSize,
             to: "settings-service-migration-banner.png"

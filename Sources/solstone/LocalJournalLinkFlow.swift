@@ -266,15 +266,14 @@ func resetForJournalRelink(
 }
 
 func resolvedJournalDisplayName(
-    fetchedName: String?,
-    confirmedMark: JournalMark?,
-    serverURL: String?
+    isConfirmed: Bool,
+    mark: JournalMark?
 ) -> String {
-    if let fetchedName, !fetchedName.isEmpty {
-        return fetchedName
+    guard isConfirmed else {
+        return UICopy.SETTINGS_SETUP_JOURNAL_LINK_LABEL
     }
-    if let confirmedMark {
-        return confirmedMark.words.joined(separator: " ")
+    if let mark {
+        return JournalMarkSlot.join(mark.words)
     }
-    return UICopy.SETTINGS_SETUP_JOURNAL_LINK_LABEL
+    return JournalMarkUnavailable.slot
 }

@@ -63,14 +63,6 @@ struct JournalFirstRunView: View {
                 .font(.title2.weight(.semibold))
 
             VStack(alignment: .leading, spacing: 12) {
-                Text(JournalFirstRunCopy.nameField)
-                    .font(.headline)
-                TextField(JournalFirstRunCopy.nameField, text: $model.draftName)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier(AXID.Journal.Ritual.nameField)
-            }
-
-            VStack(alignment: .leading, spacing: 12) {
                 Text(JournalFirstRunCopy.locationField)
                     .font(.headline)
                 HStack(spacing: 8) {

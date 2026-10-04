@@ -45,14 +45,11 @@ extension JournalInitClient: JournalInitClienting {}
 @MainActor
 @Observable
 final class JournalFirstRunModel {
-    typealias NameUpdate = @Sendable (String) async throws -> JournalConfig
     typealias SupervisorStart = @MainActor @Sendable (URL) async -> Bool
-    typealias MachineNameProvider = @Sendable () -> String
 
     @ObservationIgnored private let config: JournalAppConfig
     @ObservationIgnored private let setupRunner: any JournalSetupRunning
     @ObservationIgnored private let initClient: any JournalInitClienting
-    @ObservationIgnored private let updateName: NameUpdate
     @ObservationIgnored private let startSupervisor: SupervisorStart
     @ObservationIgnored private let handoffStore: any JournalHandoffStoring
     @ObservationIgnored private let journalFileReader: any OnDiskJournalFileReading
@@ -61,7 +58,6 @@ final class JournalFirstRunModel {
     @ObservationIgnored private weak var windowModel: JournalWindowModel?
 
     var route: JournalFirstRunRoute = .deciding
-    var draftName: String
     var journalRoot: URL
     var setupEvents: [JournalSetupProgressEvent] = []
     var setupRenderedLog = ""
@@ -73,7 +69,6 @@ final class JournalFirstRunModel {
     var isLockingMark = false
     var isFinalizing = false
     var finalizeWarnings: [String] = []
-    var nameWriteError: String?
     var adoptMessage: String?
     var errorMessage: String?
 
@@ -87,14 +82,8 @@ final class JournalFirstRunModel {
         config: JournalAppConfig,
         setupRunner: any JournalSetupRunning = JournalSetupRunner(materializer: NativeJournalRuntimeMaterializer()),
         initClient: any JournalInitClienting = JournalInitClient(),
-        updateName: @escaping NameUpdate = { try await JournalConfigClient().updateJournalName($0) },
         startSupervisor: @escaping SupervisorStart,
         handoffStore: any JournalHandoffStoring = JournalHandoffStore(),
-        machineNameProvider: @escaping MachineNameProvider = {
-            let localized = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let localized, !localized.isEmpty { return localized }
-            return ProcessInfo.processInfo.hostName
-        },
         notificationCenter: NotificationCenter = .default,
         journalFileReader: any OnDiskJournalFileReading = LiveOnDiskJournalFileReader(),
         discoveryQualificationTimeout: TimeInterval = 1.0,
@@ -103,7 +92,6 @@ final class JournalFirstRunModel {
         self.config = config
         self.setupRunner = setupRunner
         self.initClient = initClient
-        self.updateName = updateName
         self.startSupervisor = startSupervisor
         self.handoffStore = handoffStore
         self.journalFileReader = journalFileReader
@@ -111,8 +99,6 @@ final class JournalFirstRunModel {
         self.notificationCenter = notificationCenter
         self.windowModel = windowModel
 
-        let machineName = machineNameProvider().trimmingCharacters(in: .whitespacesAndNewlines)
-        self.draftName = machineName.isEmpty ? "your journal" : machineName
         self.journalRoot = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("journal", isDirectory: true)
     }
@@ -315,7 +301,6 @@ final class JournalFirstRunModel {
 
             let response = try await initClient.finalize(body: JournalInitFinalizeRequest())
             finalizeWarnings = response.warnings
-            await writeNameAfterFinalize()
             isFinalizing = false
             landHome(lockedMark: markLocked ? currentMark : nil)
         } catch {
@@ -349,7 +334,6 @@ final class JournalFirstRunModel {
             }
             let root = URL(fileURLWithPath: handoff.journalRootPath, isDirectory: true).standardizedFileURL
             journalRoot = root
-            draftName = handoff.observerName.trimmingCharacters(in: .whitespacesAndNewlines)
             config.journalRoot = root
 
             try await runSetup(at: root)
@@ -418,29 +402,6 @@ final class JournalFirstRunModel {
         }
     }
 
-    private func writeNameAfterFinalize() async {
-        let name = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-
-        do {
-            let updated = try await updateName(name)
-            windowModel?.journalName = updated.journal.name
-            windowModel?.draftJournalName = updated.journal.name
-            windowModel?.nameError = nil
-            nameWriteError = nil
-        } catch {
-            nameWriteError = JournalFirstRunCopy.nameCanBeSavedLater
-            windowModel?.journalName = ""
-            windowModel?.draftJournalName = name
-            windowModel?.nameError = JournalFirstRunCopy.nameCanBeSavedLater
-            if case JournalConfigClientError.serverError(400) = error {
-                Logger.journalApp.notice("journal name section unavailable after first-run finalize")
-            } else {
-                Logger.journalApp.warning("journal name write after first-run finalize failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-    }
-
     private func landHome(lockedMark: JournalMark?) {
         let validatedMark = lockedMark.flatMap(JournalMark.validate)
         if let validatedMark {
@@ -455,11 +416,8 @@ final class JournalFirstRunModel {
             markLocked = false
         }
 
-        let name = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
         windowModel?.applyFirstRunLanding(
-            identityMark: validatedMark,
-            draftName: name,
-            nameError: nameWriteError
+            identityMark: validatedMark
         )
         route = .home
     }

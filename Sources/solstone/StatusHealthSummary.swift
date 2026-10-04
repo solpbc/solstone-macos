@@ -49,36 +49,6 @@ internal struct StatusHealthSummary: Equatable, Sendable {
     }
 }
 
-/// The address a paired journal is named by on the status card: its first
-/// paired address. Never the relay's host, which is not where the journal
-/// lives. A same-Mac pairing keeps its own wording, so it has none.
-internal func statusCardPairedJournalAddress(pairedAddresses: [String], isPairedHome: Bool) -> String? {
-    isPairedHome ? nil : pairedAddresses.first
-}
-
-internal func journalHost(_ serverURL: String?, pairedJournalAddress: String? = nil) -> String {
-    if let pairedJournalAddress, !pairedJournalAddress.isEmpty {
-        return pairedJournalAddress
-    }
-    guard let serverURL, !serverURL.isEmpty else {
-        return "your journal"
-    }
-
-    let parseableURL = serverURL.contains("://") ? serverURL : "http://\(serverURL)"
-    if let host = URL(string: parseableURL)?.host, !host.isEmpty {
-        return host
-    }
-    return serverURL
-}
-
-internal func encryptionClause(_ serverURL: String?, pairedJournalAddress: String? = nil) -> String {
-    // A paired journal is reached over pinned TLS, whatever its address says.
-    if let pairedJournalAddress, !pairedJournalAddress.isEmpty {
-        return ", encrypted"
-    }
-    return serverURL?.hasPrefix("https://") == true ? ", encrypted" : ""
-}
-
 internal func coarseRelativeTime(_ date: Date, now: Date) -> String {
     let interval = now.timeIntervalSince(date)
     if interval < 60 {
@@ -99,13 +69,6 @@ internal func bundledStatusFooterText(permissionsGranted: Bool, microphoneCount:
     return "everything stays on this mac · \(permissions) · \(microphones)"
 }
 
-internal func externalStatusFooterText(serverURL: String?, pairedJournalAddress: String? = nil, permissionsGranted: Bool) -> String {
-    let permissions = permissionsGranted ? "permissions granted" : "permissions need attention"
-    let host = journalHost(serverURL, pairedJournalAddress: pairedJournalAddress)
-    let encryption = encryptionClause(serverURL, pairedJournalAddress: pairedJournalAddress)
-    return "solstone is on · your journal lives on \(host)\(encryption) · \(permissions)"
-}
-
 extension StatusHealthSummary {
     static func make(
         serviceMode: ServiceMode?,
@@ -116,8 +79,7 @@ extension StatusHealthSummary {
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
-        serverURL: String?,
-        pairedJournalAddress: String? = nil,
+        journalSlot: String,
         now: Date,
         selectedSources: CaptureSources = .all,
         permittedSources: CaptureSources = .all,
@@ -203,8 +165,7 @@ extension StatusHealthSummary {
             ),
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
-            serverURL: serverURL,
-            pairedJournalAddress: pairedJournalAddress,
+            journalSlot: journalSlot,
             now: now,
             lastHealthReason: lastHealthReason
         )
@@ -228,12 +189,10 @@ extension StatusHealthSummary {
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
         lastDeliveryOutcome: LastJournalDeliveryOutcome,
-        serverURL: String?,
-        pairedJournalAddress: String?,
+        journalSlot: String,
         now: Date,
         lastHealthReason: ObserverHealthFailureReason? = nil
     ) -> StatusHealthSummary {
-        let host = journalHost(serverURL, pairedJournalAddress: pairedJournalAddress)
         let isBundled = serviceMode == .bundled
 
         if isBundled {
@@ -250,7 +209,7 @@ extension StatusHealthSummary {
                     isRecording: isRecording,
                     isPaused: isPaused,
                     isBundled: false,
-                    host: host,
+                    journalSlot: journalSlot,
                     isSynced: false
                 ) {
                     return summary
@@ -320,7 +279,7 @@ extension StatusHealthSummary {
                 }
                 return .init(
                     severity: .attention,
-                    title: "can't reach \(host)",
+                    title: "can't reach your journal",
                     subtitle: subtitle,
                     axValue: "external_offline"
                 )
@@ -329,7 +288,7 @@ extension StatusHealthSummary {
                     isRecording: isRecording,
                     isPaused: isPaused,
                     isBundled: false,
-                    host: host,
+                    journalSlot: journalSlot,
                     isSynced: false
                 ) {
                     return summary
@@ -348,7 +307,7 @@ extension StatusHealthSummary {
                     isRecording: isRecording,
                     isPaused: isPaused,
                     isBundled: false,
-                    host: host,
+                    journalSlot: journalSlot,
                     isSynced: false
                 ) {
                     return summary
@@ -356,7 +315,7 @@ extension StatusHealthSummary {
                 return .init(
                     severity: .warn,
                     title: "catching up · \(checked) of \(total) segments",
-                    subtitle: "syncing to \(host)",
+                    subtitle: "syncing to your journal",
                     axValue: "external_syncing"
                 )
             case .uploading:
@@ -364,12 +323,12 @@ extension StatusHealthSummary {
                     isRecording: isRecording,
                     isPaused: isPaused,
                     isBundled: false,
-                    host: host,
+                    journalSlot: journalSlot,
                     isSynced: false
                 ) {
                     return summary
                 }
-                let subtitle = pendingCount > 0 ? "\(pendingCount) more waiting" : "syncing to \(host)"
+                let subtitle = pendingCount > 0 ? "\(pendingCount) more waiting" : "syncing to your journal"
                 return .init(
                     severity: .warn,
                     title: "catching up · sending the latest",
@@ -381,7 +340,7 @@ extension StatusHealthSummary {
                     isRecording: isRecording,
                     isPaused: isPaused,
                     isBundled: false,
-                    host: host,
+                    journalSlot: journalSlot,
                     isSynced: false
                 ) {
                     return summary
@@ -389,7 +348,7 @@ extension StatusHealthSummary {
                 return .init(
                     severity: .warn,
                     title: "connecting…",
-                    subtitle: "reaching \(host)",
+                    subtitle: "reaching your journal",
                     axValue: "external_connecting"
                 )
             case .synced:
@@ -397,7 +356,7 @@ extension StatusHealthSummary {
                     isRecording: isRecording,
                     isPaused: isPaused,
                     isBundled: false,
-                    host: host,
+                    journalSlot: journalSlot,
                     isSynced: true
                 ) {
                     return summary
@@ -407,7 +366,7 @@ extension StatusHealthSummary {
                 case .delivered(let date):
                     return .init(
                         severity: .good,
-                        title: "all good · on, synced to \(host)",
+                        title: "all good · on, synced to \(journalSlot)",
                         subtitle: "\(UICopy.SETTINGS_LAST_DELIVERY_LABEL) \(coarseRelativeTime(date, now: now))\(waiting)",
                         axValue: "external_synced"
                     )
@@ -453,7 +412,7 @@ extension StatusHealthSummary {
         isRecording: Bool,
         isPaused: Bool,
         isBundled: Bool,
-        host: String,
+        journalSlot: String,
         isSynced: Bool
     ) -> StatusHealthSummary? {
         if !isRecording {
@@ -462,14 +421,14 @@ extension StatusHealthSummary {
                 title: UICopy.MENUBAR_STARTING,
                 subtitle: isBundled
                     ? "your journal is fine"
-                    : "nothing is reaching \(host) yet",
+                    : "nothing is reaching your journal yet",
                 axValue: "off"
             )
         }
         if isPaused {
             let subtitle = isBundled
                 ? "journal healthy on this mac"
-                : (isSynced ? "synced to \(host)" : "paused · \(host)")
+                : (isSynced ? "synced to \(journalSlot)" : "paused · \(journalSlot)")
             return StatusHealthSummary(
                 severity: .warn,
                 title: "solstone is paused",

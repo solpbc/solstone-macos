@@ -85,7 +85,6 @@
       "journal.devices.yourDevices.count.state",
       "journal.devices.yourDevices.header",
       "journal.home.mark.card",
-      "journal.home.name.state",
       "journal.home.open",
       "journal.home.runDisplay.glance.state",
       "journal.home.runState",
@@ -94,8 +93,6 @@
       "journal.home.updates",
       "journal.journal.diskUsage.state",
       "journal.journal.location.path.state",
-      "journal.journal.name.field",
-      "journal.journal.name.save",
       "journal.ritual.finalize.error.state",
       "journal.ritual.finalize.progress.state",
       "journal.ritual.finalize.retry",
@@ -108,7 +105,6 @@
       "journal.ritual.mark.lock",
       "journal.ritual.mark.locked.state",
       "journal.ritual.mark.tryAnother",
-      "journal.ritual.name.field",
       "journal.ritual.nameLocation.continue",
       "journal.ritual.nameLocation.error.state",
       "journal.ritual.root",
@@ -201,9 +197,6 @@
     },
     "journal.devices.yourDevices.count.state" : {
       "kind" : "numeric"
-    },
-    "journal.home.name.state" : {
-      "kind" : "freeform"
     },
     "journal.home.runDisplay.glance.state" : {
       "kind" : "enum",

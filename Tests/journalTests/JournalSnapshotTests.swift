@@ -91,7 +91,7 @@ struct JournalSnapshotTests {
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["JOURNAL_UPDATE_UX_GUI"] == "1"))
     func updateAttentionMatrix() async throws {
-        let model = try configuredModel(mark: .uiTestSample, name: "home base")
+        let model = try configuredModel(mark: .uiTestSample)
         let suite = "journal-update-snapshots-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -153,7 +153,7 @@ struct JournalSnapshotTests {
                 let fixture = try makeConfiguredFixture()
                 let supervisor = JournalSupervisor()
                 supervisor.applyRuntimeStatus(.stoppedByUser)
-                let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
+                let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample)
                 model.selectedPane = .home
                 try await render(
                     ZStack {
@@ -184,7 +184,7 @@ struct JournalSnapshotTests {
 
     private func renderHomeConfiguredRunning() async throws {
         let supervisor = try await runningSupervisor()
-        let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample, name: "home base")
+        let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample)
         model.selectedPane = .home
         try await renderWindow(model, to: "journal-home-configured-running.png")
     }
@@ -193,7 +193,7 @@ struct JournalSnapshotTests {
         let fixture = try makeConfiguredFixture()
         let supervisor = JournalSupervisor()
         supervisor.applyRuntimeStatus(.stoppedByUser)
-        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
+        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample)
         model.selectedPane = .home
         try await renderWindow(model, to: "journal-home-configured-stopped.png")
     }
@@ -202,7 +202,7 @@ struct JournalSnapshotTests {
         let fixture = try makeConfiguredFixture()
         let supervisor = JournalSupervisor()
         supervisor.applyRuntimeStatus(.restarting(generation: nil))
-        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
+        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample)
         model.selectedPane = .home
         try await renderWindow(model, to: "journal-home-configured-starting.png")
     }
@@ -219,13 +219,13 @@ struct JournalSnapshotTests {
         _ = configureInMemoryReceiptContext(supervisor)
         let fixture = try makeConfiguredFixture()
         _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
-        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
+        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample)
         model.selectedPane = .home
         try await renderWindow(model, to: "journal-home-configured-blocked.png")
     }
 
     private func renderHomeConfiguredUnknown() async throws {
-        let model = try configuredModel(mark: .uiTestSample, name: "home base")
+        let model = try configuredModel(mark: .uiTestSample)
         model.selectedPane = .home
         try await renderWindow(model, to: "journal-home-configured-unknown.png")
     }
@@ -238,13 +238,13 @@ struct JournalSnapshotTests {
 
     private func renderHomeHostnameFallback() async throws {
         let supervisor = try await runningSupervisor()
-        let model = try configuredModel(supervisor: supervisor, mark: nil, name: "", machineName: "machine-name")
+        let model = try configuredModel(supervisor: supervisor, mark: nil)
         model.selectedPane = .home
         try await renderWindow(model, to: "journal-home-hostname-fallback.png")
     }
 
     private func renderJournalNameAndDiskUsage() async throws {
-        let model = try configuredModel(mark: .uiTestSample, name: "home base")
+        let model = try configuredModel(mark: .uiTestSample)
         model.selectedPane = .journal
         model.diskUsageBytes = 1_234_567
         try await renderWindow(model, to: "journal-journal-name-diskusage.png")
@@ -252,7 +252,7 @@ struct JournalSnapshotTests {
 
     private func renderRunStateRunning() async throws {
         let supervisor = try await runningSupervisor()
-        let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample, name: "home base")
+        let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample)
         model.selectedPane = .runState
         model.healthDisplay = .healthy
         model.journalVersion = "1.2.3"
@@ -263,7 +263,7 @@ struct JournalSnapshotTests {
         let fixture = try makeConfiguredFixture()
         let supervisor = JournalSupervisor()
         supervisor.applyRuntimeStatus(.stoppedByUser)
-        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
+        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample)
         model.selectedPane = .runState
         model.healthDisplay = .stopped
         model.journalVersion = "unknown"
@@ -282,14 +282,14 @@ struct JournalSnapshotTests {
         _ = configureInMemoryReceiptContext(supervisor)
         let fixture = try makeConfiguredFixture()
         _ = await supervisor.start(journalRoot: try #require(fixture.config.journalRoot))
-        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample, name: "home base")
+        let model = configuredModel(fixture: fixture, supervisor: supervisor, mark: .uiTestSample)
         model.selectedPane = .runState
         try await renderWindow(model, to: "journal-run-state-blocked.png")
     }
 
     private func renderRunStateUnknownHealth() async throws {
         let supervisor = try await runningSupervisor()
-        let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample, name: "home base")
+        let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample)
         model.selectedPane = .runState
         model.healthDisplay = .unknown
         model.journalVersion = "unknown"
@@ -297,7 +297,7 @@ struct JournalSnapshotTests {
     }
 
     private func renderBackupStatic() async throws {
-        let model = try configuredModel(mark: .uiTestSample, name: "home base")
+        let model = try configuredModel(mark: .uiTestSample)
         model.selectedPane = .backup
         try await renderWindow(model, to: "journal-backup-static.png")
     }
@@ -305,13 +305,13 @@ struct JournalSnapshotTests {
     private func renderStartup(enabled: Bool) async throws {
         let fixture = try makeConfiguredFixture()
         fixture.config.setLaunchAtLoginEnabled(enabled)
-        let model = configuredModel(fixture: fixture, supervisor: JournalSupervisor(), mark: .uiTestSample, name: "home base")
+        let model = configuredModel(fixture: fixture, supervisor: JournalSupervisor(), mark: .uiTestSample)
         model.selectedPane = .startup
         try await renderWindow(model, to: enabled ? "journal-startup-enabled.png" : "journal-startup-disabled.png")
     }
 
     private func renderUpdates() async throws {
-        let model = try configuredModel(mark: .uiTestSample, name: "home base")
+        let model = try configuredModel(mark: .uiTestSample)
         model.selectedPane = .updates
         try await renderWindow(model, to: "journal-updates.png")
     }
@@ -340,7 +340,7 @@ struct JournalSnapshotTests {
 
     private func renderFirstRunLockedHome() async throws {
         let supervisor = try await runningSupervisor()
-        let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample, name: "")
+        let model = try configuredModel(supervisor: supervisor, mark: .uiTestSample)
         model.selectedPane = .home
         try await renderWindow(model, to: "journal-first-run-locked-home.png")
     }
@@ -368,41 +368,35 @@ struct JournalSnapshotTests {
 
     private func configuredModel(
         supervisor: JournalSupervisor = JournalSupervisor(),
-        mark: JournalMark?,
-        name: String,
-        machineName: String = "machine-name"
+        mark: JournalMark?
     ) throws -> JournalWindowModel {
         configuredModel(
             fixture: try makeConfiguredFixture(),
             supervisor: supervisor,
-            mark: mark,
-            name: name,
-            machineName: machineName
+            mark: mark
         )
     }
 
     private func configuredModel(
         fixture: SnapshotFixture,
         supervisor: JournalSupervisor,
-        mark: JournalMark?,
-        name: String,
-        machineName: String = "machine-name"
+        mark: JournalMark?
     ) -> JournalWindowModel {
+        let read: JournalIdentityRead = if let mark {
+            .mark(mark)
+        } else {
+            .unavailable
+        }
         let model = JournalWindowModel(
             config: fixture.config,
             supervisor: supervisor,
-            fetchConfig: { JournalConfig(journal: JournalConfigSection(name: name)) },
-            updateName: { JournalConfig(journal: JournalConfigSection(name: $0)) },
-            fetchIdentity: { _ in mark },
+            fetchIdentity: { _ in read },
             fetchDiskUsage: { _ in 1_234_567 },
             fetchHealth: { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
             fetchVersion: { _, _ in nil },
-            appBuild: "67",
-            machineNameProvider: { machineName }
+            appBuild: "67"
         )
-        model.identityMark = mark
-        model.journalName = name
-        model.draftJournalName = name
+        model.identityRead = read
         return model
     }
 
@@ -411,14 +405,11 @@ struct JournalSnapshotTests {
         return JournalWindowModel(
             config: fixture.config,
             supervisor: JournalSupervisor(),
-            fetchConfig: { JournalConfig(journal: JournalConfigSection(name: "")) },
-            updateName: { JournalConfig(journal: JournalConfigSection(name: $0)) },
-            fetchIdentity: { _ in nil },
+            fetchIdentity: { _ in .uncommitted },
             fetchDiskUsage: { _ in 0 },
             fetchHealth: { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
             fetchVersion: { _, _ in nil },
-            appBuild: "67",
-            machineNameProvider: { "machine-name" }
+            appBuild: "67"
         )
     }
 

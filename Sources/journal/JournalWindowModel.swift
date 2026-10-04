@@ -22,7 +22,7 @@ enum JournalPane: String, CaseIterable, Hashable, Identifiable {
     var title: String {
         switch self {
         case .home: return "home"
-        case .journal: return "name & location"
+        case .journal: return "location"
         case .runState: return "run state"
         case .devices: return "devices"
         case .backup: return "backup"
@@ -42,6 +42,12 @@ enum JournalPane: String, CaseIterable, Hashable, Identifiable {
         case .updates: return "arrow.down.circle"
         }
     }
+}
+
+public enum JournalMarkPresentation: Sendable, Equatable {
+    case generic
+    case unavailable
+    case mark(JournalMark)
 }
 
 enum JournalRunDisplay: String, CaseIterable, Sendable {
@@ -127,24 +133,19 @@ enum JournalHealthDisplay: String, CaseIterable, Sendable {
 @MainActor
 @Observable
 final class JournalWindowModel {
-    typealias ConfigFetch = @Sendable () async throws -> JournalConfig
-    typealias NameUpdate = @Sendable (String) async throws -> JournalConfig
-    typealias IdentityFetch = @Sendable (String) async -> JournalMark?
+    typealias IdentityFetch = @Sendable (String) async -> JournalIdentityRead
     typealias DiskUsageFetch = @Sendable (URL) async -> Int64
     typealias HealthFetch = @Sendable (URL, [String: String]?) async -> JournalHealthCheckResult
     typealias VersionFetch = @Sendable (URL, [String: String]?) async -> String?
     typealias VersionExecutableURLProvider = @Sendable () -> URL?
     typealias AboutStringProvider = @Sendable () -> String
     typealias AboutArchProvider = @Sendable () -> String?
-    typealias MachineNameProvider = @Sendable () -> String
     typealias NowProvider = @Sendable () -> Date
     typealias IdentityMarkObserver = @MainActor @Sendable (JournalMark) -> Void
 
     @ObservationIgnored private let config: JournalAppConfig
     let supervisor: JournalSupervisor
     @ObservationIgnored private let baseURL: String
-    @ObservationIgnored private let fetchConfig: ConfigFetch
-    @ObservationIgnored private let updateName: NameUpdate
     @ObservationIgnored private let fetchIdentity: IdentityFetch
     @ObservationIgnored private let fetchDiskUsage: DiskUsageFetch
     @ObservationIgnored private let fetchHealth: HealthFetch
@@ -153,23 +154,17 @@ final class JournalWindowModel {
     @ObservationIgnored private let aboutOSVersion: AboutStringProvider
     @ObservationIgnored private let aboutArch: AboutArchProvider
     @ObservationIgnored private let appBuild: String?
-    @ObservationIgnored private let machineNameProvider: MachineNameProvider
     @ObservationIgnored private let now: NowProvider
     @ObservationIgnored private let diskCacheDuration: TimeInterval
     @ObservationIgnored var onIdentityMark: IdentityMarkObserver?
     let devicesModel: JournalDevicesModel
 
     var selectedPane: JournalPane = .home
-    var journalName = ""
-    var draftJournalName = ""
-    var nameError: String?
-    var isSavingName = false
-    var identityMark: JournalMark?
+    var identityRead: JournalIdentityRead?
     var diskUsageBytes: Int64?
     var healthDisplay: JournalHealthDisplay = .unknown
     var journalVersion = "unknown"
 
-    private var hasLoadedConfig = false
     private var identityFetchStarted = false
     private var diskUsageLoadedAt: Date?
 
@@ -177,10 +172,7 @@ final class JournalWindowModel {
         config: JournalAppConfig,
         supervisor: JournalSupervisor,
         baseURL: String = "http://127.0.0.1:5015",
-        configClient: JournalConfigClient = JournalConfigClient(),
         identitySession: URLSession = .shared,
-        fetchConfig: ConfigFetch? = nil,
-        updateName: NameUpdate? = nil,
         fetchIdentity: IdentityFetch? = nil,
         fetchDiskUsage: DiskUsageFetch? = nil,
         fetchHealth: HealthFetch? = nil,
@@ -193,11 +185,6 @@ final class JournalWindowModel {
         appBuild: String? = Bundle.main.infoDictionary?["CFBundleVersion"] as? String,
         devicesModel: JournalDevicesModel? = nil,
         onIdentityMark: IdentityMarkObserver? = nil,
-        machineNameProvider: @escaping MachineNameProvider = {
-            let localized = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let localized, !localized.isEmpty { return localized }
-            return ProcessInfo.processInfo.hostName
-        },
         now: @escaping NowProvider = { Date() },
         diskCacheDuration: TimeInterval = 30
     ) {
@@ -206,8 +193,6 @@ final class JournalWindowModel {
         self.config = config
         self.supervisor = supervisor
         self.baseURL = trimmedBaseURL
-        self.fetchConfig = fetchConfig ?? { try await configClient.fetchConfig() }
-        self.updateName = updateName ?? { try await configClient.updateJournalName($0) }
         self.fetchIdentity = fetchIdentity ?? { baseURL in
             await defaultIdentityFetcher.fetch(baseURL: baseURL)
         }
@@ -222,11 +207,11 @@ final class JournalWindowModel {
         self.aboutOSVersion = aboutOSVersion
         self.aboutArch = aboutArch
         self.appBuild = appBuild.flatMap { $0.isEmpty ? nil : $0 }
-        self.machineNameProvider = machineNameProvider
         self.now = now
         self.diskCacheDuration = diskCacheDuration
         self.onIdentityMark = onIdentityMark
         self.devicesModel = devicesModel ?? JournalDevicesModel(client: JournalDevicesClient(baseURL: trimmedBaseURL))
+        self.devicesModel.markPresentation = markPresentation
     }
 
     var aboutBlock: String {
@@ -256,19 +241,14 @@ final class JournalWindowModel {
         JournalRunDisplay.derive(state: supervisor.state, runtimeStatus: supervisor.runtimeStatus)
     }
 
-    var displayName: String {
-        let trimmedName = journalName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedName.isEmpty { return trimmedName }
-        if let identityMark {
-            let words = identityMark.words
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            if !words.isEmpty {
-                return words.joined(separator: " · ")
-            }
+    var markPresentation: JournalMarkPresentation {
+        guard isConfigured else { return .generic }
+        guard let identityRead else { return .unavailable }
+        switch identityRead {
+        case .mark(let mark): return .mark(mark)
+        case .uncommitted: return .generic
+        case .unavailable: return .unavailable
         }
-        let machineName = machineNameProvider().trimmingCharacters(in: .whitespacesAndNewlines)
-        return machineName.isEmpty ? "your journal" : machineName
     }
 
     var unconfiguredMessage: String? {
@@ -322,7 +302,6 @@ final class JournalWindowModel {
 
     func prepareForWindowOpen() {
         selectedPane = .home
-        hasLoadedConfig = false
         identityFetchStarted = false
         devicesModel.resetTransientState()
     }
@@ -330,23 +309,17 @@ final class JournalWindowModel {
     func loadForWindowOpen() async {
         guard isConfigured else { return }
         await fetchIdentityIfNeeded()
-        await loadConfigIfNeeded()
     }
 
-    func applyFirstRunLanding(identityMark: JournalMark?, draftName: String, nameError: String?) {
-        self.identityMark = identityMark
-        devicesModel.identityMark = identityMark
+    func applyFirstRunLanding(identityMark: JournalMark?) {
         identityFetchStarted = true
         if let validatedMark = identityMark.flatMap(JournalMark.validate) {
+            identityRead = .mark(validatedMark)
+            devicesModel.markPresentation = .mark(validatedMark)
             onIdentityMark?(validatedMark)
-        }
-
-        let trimmedDraftName = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedDraftName.isEmpty, draftJournalName.isEmpty {
-            draftJournalName = trimmedDraftName
-        }
-        if let nameError {
-            self.nameError = nameError
+        } else {
+            identityRead = isConfigured ? .unavailable : .uncommitted
+            devicesModel.markPresentation = markPresentation
         }
     }
 
@@ -367,44 +340,15 @@ final class JournalWindowModel {
     func fetchIdentityIfNeeded() async {
         guard !identityFetchStarted else { return }
         identityFetchStarted = true
-        let fetchedMark = await fetchIdentity(baseURL)
-        identityMark = fetchedMark
-        devicesModel.identityMark = fetchedMark
-        if let validatedMark = fetchedMark.flatMap(JournalMark.validate) {
+        if isConfigured {
+            devicesModel.markPresentation = .unavailable
+        }
+        let read = await fetchIdentity(baseURL)
+        identityRead = read
+        devicesModel.markPresentation = markPresentation
+        if case .mark(let mark) = read, let validatedMark = JournalMark.validate(mark) {
             onIdentityMark?(validatedMark)
         }
-    }
-
-    func loadConfigIfNeeded() async {
-        guard !hasLoadedConfig else { return }
-        do {
-            let loaded = try await fetchConfig()
-            applyConfig(loaded)
-            hasLoadedConfig = true
-            nameError = nil
-        } catch {
-            hasLoadedConfig = false
-        }
-    }
-
-    func saveDraftJournalName() async {
-        let newName = draftJournalName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let previousName = journalName
-        let previousDraft = draftJournalName
-        journalName = newName
-        draftJournalName = newName
-        nameError = nil
-        isSavingName = true
-
-        do {
-            let updated = try await updateName(newName)
-            applyConfig(updated)
-        } catch {
-            journalName = previousName
-            draftJournalName = previousDraft
-            nameError = "couldn't save name"
-        }
-        isSavingName = false
     }
 
     func setLaunchAtLoginEnabled(_ enabled: Bool) {
@@ -470,10 +414,5 @@ final class JournalWindowModel {
         } else {
             journalVersion = "unknown"
         }
-    }
-
-    private func applyConfig(_ config: JournalConfig) {
-        journalName = config.journal.name
-        draftJournalName = config.journal.name
     }
 }

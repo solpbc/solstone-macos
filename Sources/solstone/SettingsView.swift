@@ -209,8 +209,6 @@ struct SettingsView: View {
     @State private var journalMarkRederiveEligible = false
     @State private var journalMarkRederiveStarted = false
     @State private var journalMarkRederiveTask: Task<Void, Never>?
-    @State private var journalName: String?
-    @State private var journalNameFetchTask: Task<Void, Never>?
     @State private var localJournalMark: JournalMark?
     @State private var localOnDiskDiscoveryPath: String?
     @State private var localOnDiskAdoptionAction: OnDiskJournalAdoptionAction = .install
@@ -224,7 +222,6 @@ struct SettingsView: View {
     @State var entitlementOpenFailed = false
     @State var supportOpenFailed = false
 
-    private let journalNameFetch: @MainActor @Sendable (String) async -> String?
     private let localIdentityFetch: @MainActor @Sendable (String) async -> JournalMark?
     private let onDiskJournalDiscovery: @MainActor @Sendable () async -> OnDiskJournalDiscovery
     private let sameMachinePairStart: @MainActor @Sendable (
@@ -245,7 +242,6 @@ struct SettingsView: View {
         updateController: UpdateController,
         selectedTab: Tab = .observer,
         initialStorageUsedMB: Int? = nil,
-        initialJournalName: String? = nil,
         initialLocalJournalMark: JournalMark? = nil,
         initialLocalOnDiskDiscoveryPath: String? = nil,
         initialLocalDiscoveryCompleted: Bool = false,
@@ -253,11 +249,11 @@ struct SettingsView: View {
         journalHandoffOrchestrator: JournalHandoffOrchestrator = JournalHandoffOrchestrator(),
         freshFlow: FreshJournalFlow = FreshJournalFlow(),
         onDiskJournalAdoptionFlow: OnDiskJournalAdoptionFlow = OnDiskJournalAdoptionFlow(),
-        journalNameFetch: @escaping @MainActor @Sendable (String) async -> String? = { baseURL in
-            await JournalNameFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL)
-        },
         localIdentityFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
-            await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL)
+            switch await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL) {
+            case .mark(let mark): return mark
+            case .uncommitted, .unavailable: return nil
+            }
         },
         onDiskJournalDiscovery: @escaping @MainActor @Sendable () async -> OnDiskJournalDiscovery = {
             await discoverOnDiskJournal()
@@ -269,7 +265,10 @@ struct SettingsView: View {
             await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
         },
         markFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
-            await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL)
+            switch await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL) {
+            case .mark(let mark): return mark
+            case .uncommitted, .unavailable: return nil
+            }
         },
         runningJournalController: any RunningJournalController = LiveRunningJournalController(),
         initialSetupProbeSnapshot: SetupProbeSnapshot = .checking,
@@ -299,7 +298,6 @@ struct SettingsView: View {
     ) {
         self.appState = appState
         self.updateController = updateController
-        self.journalNameFetch = journalNameFetch
         self.localIdentityFetch = localIdentityFetch
         self.onDiskJournalDiscovery = onDiskJournalDiscovery
         self.sameMachinePairStart = sameMachinePairStart
@@ -319,7 +317,6 @@ struct SettingsView: View {
         self._journalHandoffOrchestrator = State(initialValue: journalHandoffOrchestrator)
         self._freshFlow = State(initialValue: freshFlow)
         self._onDiskJournalAdoptionFlow = State(initialValue: onDiskJournalAdoptionFlow)
-        self._journalName = State(initialValue: initialJournalName)
         self._localJournalMark = State(initialValue: initialLocalJournalMark)
         self._localOnDiskDiscoveryPath = State(initialValue: initialLocalOnDiskDiscoveryPath)
         self._localDiscoveryCompleted = State(initialValue: initialLocalDiscoveryCompleted)
@@ -1357,7 +1354,6 @@ struct SettingsView: View {
         .onAppear {
             if observerURL.isEmpty { observerURL = appState.config.serverURL ?? "" }
             if observerKey.isEmpty { observerKey = appState.config.serverKey ?? "" }
-            refreshJournalName()
             refreshLocalJournalDiscoveryIfNeeded()
             freshFlow.armWaitingProbe()
         }
@@ -1386,16 +1382,11 @@ struct SettingsView: View {
         }
         .onChange(of: appState.config.serverURL) { _, _ in
             observerURL = appState.config.serverURL ?? ""
-            refreshJournalName()
             refreshLocalJournalDiscoveryIfNeeded()
         }
         .onChange(of: appState.config.serverKey) { _, _ in
             observerKey = appState.config.serverKey ?? ""
-            refreshJournalName()
             refreshLocalJournalDiscoveryIfNeeded()
-        }
-        .onChange(of: appState.pairingCoordinator.tunnelState) { _, _ in
-            refreshJournalName()
         }
         .onChange(of: appState.tunnelLifecycleOwner.isTunnelManaged) { _, _ in
             refreshLocalJournalDiscoveryIfNeeded()
@@ -1404,7 +1395,6 @@ struct SettingsView: View {
             refreshLocalJournalDiscoveryIfNeeded()
         }
         .onDisappear {
-            journalNameFetchTask?.cancel()
             localDiscoveryTask?.cancel()
             localDiscoveryInFlight = false
             freshFlow.cancelWaitingProbe()
@@ -1460,12 +1450,20 @@ struct SettingsView: View {
                         .accessibilityValue(resolvedJournalName)
                 }
 
-                if let mark = appState.confirmedMark {
-                    JournalMarkView(mark: mark, isConfirmed: true)
-                    AXStateCompanion(
-                        id: AXID.Settings.Service.journalMarkState,
-                        value: mark.words.joined(separator: " ")
-                    )
+                if appState.isJournalMarkConfirmed {
+                    if let mark = appState.confirmedMark {
+                        JournalMarkView(mark: mark, isConfirmed: true)
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.journalMarkState,
+                            value: mark.words.joined(separator: " ")
+                        )
+                    } else {
+                        JournalMarkUnavailableView()
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.journalMarkState,
+                            value: JournalMarkUnavailable.slot
+                        )
+                    }
                 } else {
                     AXStateCompanion(
                         id: AXID.Settings.Service.journalMarkState,
@@ -1773,7 +1771,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("your journal is getting its own app")
                     .font(.headline)
-                Text("nothing moved. your journal was always here. now it has a name.")
+                Text("nothing moved. your journal was always here. you know it by its mark.")
                     .font(.callout)
                 Text("segments are kept on this mac until your journal is back")
                     .font(.caption)
@@ -1837,9 +1835,8 @@ struct SettingsView: View {
 
     private var resolvedJournalName: String {
         resolvedJournalDisplayName(
-            fetchedName: journalName,
-            confirmedMark: appState.confirmedMark,
-            serverURL: appState.config.serverURL
+            isConfirmed: appState.isJournalMarkConfirmed,
+            mark: appState.confirmedMark
         )
     }
 
@@ -2288,7 +2285,7 @@ struct SettingsView: View {
     private var pairingDisconnectConfirmText: String {
         let text: String
         if let mark = appState.confirmedMark {
-            text = "disconnect this mac from \(mark.words.joined(separator: " · "))? your journal keeps everything. you can pair again anytime."
+            text = "disconnect this mac from \(JournalMarkSlot.join(mark.words))? your journal keeps everything. you can pair again anytime."
         } else {
             text = UICopy.PAIRING_DISCONNECT_CONFIRM
         }
@@ -2603,18 +2600,6 @@ struct SettingsView: View {
         Task {
             await appState.capture.checkPermissionsAndAutoStart()
             Task.detached { await appState.uploadCoordinator?.syncOnStartup() }
-        }
-    }
-
-    private func refreshJournalName() {
-        journalNameFetchTask?.cancel()
-        journalNameFetchTask = Task { @MainActor in
-            switch await appState.resolveHomeBase() {
-            case .held:
-                journalName = nil
-            case .url(let baseURL):
-                journalName = await journalNameFetch(baseURL)
-            }
         }
     }
 
@@ -3335,11 +3320,7 @@ struct SettingsView: View {
                 media: appState.uploadCoordinator.lastJournalDeliveryOutcome,
                 browserDelivery: appState.browserHostSnapshot.value.delivery
             ),
-            serverURL: appState.config.serverURL,
-            pairedJournalAddress: statusCardPairedJournalAddress(
-                pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses,
-                isPairedHome: appState.tunnelLifecycleOwner.isPairedHome
-            ),
+            journalSlot: resolvedJournalName,
             now: Date(),
             selectedSources: appState.config.selectedSources,
             permittedSources: appState.capture.permittedSources,
@@ -3360,11 +3341,7 @@ struct SettingsView: View {
             uploadStatus: appState.uploadCoordinator.status,
             pendingCount: appState.uploadCoordinator.pendingCount,
             lastDeliveryOutcome: appState.uploadCoordinator.lastJournalDeliveryOutcome,
-            serverURL: appState.config.serverURL,
-            pairedJournalAddress: statusCardPairedJournalAddress(
-                pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses,
-                isPairedHome: appState.tunnelLifecycleOwner.isPairedHome
-            ),
+            journalSlot: resolvedJournalName,
             now: Date(),
             selectedSources: appState.config.selectedSources,
             permittedSources: appState.capture.permittedSources,
@@ -3809,7 +3786,7 @@ struct SettingsView: View {
         installed at: \(Bundle.main.bundlePath)
         files: ~/Library/Application Support/Solstone/captures/
         logs: /usr/bin/log show --predicate '\(SolstoneLogSubsystem.persistedHelpPredicate)' --last 1h
-        journal: \(agentInstructionsJournalValue(pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses, serverURL: appState.config.serverURL))
+        your journal's address: \(agentInstructionsJournalValue(pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses, serverURL: appState.config.serverURL))
 
         if intake isn't running, check settings → permissions.
         if it's not syncing, check settings → journal.
