@@ -142,28 +142,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
             failStorage(period: period, error: error, capture: capture, lease: lease)
             return
         }
-        if let binding, binding.namesSameConnection(as: capture.route) {
-            do {
-                let storedAck = try BrowserIngestAckStore.read(from: ackURL, ioInjector: store.ioInjector)
-                if !period.ackDurable || !(store.getPeriod(periodId: period.periodId)?.ackDurable ?? false)
-                    || storedAck == nil {
-                    try store.publishDeliveryAck(binding)
-                }
-                let listing = try await capture.client.getSegmentsDay(serverURL: capture.serverURL, day: day, source: "browser")
-                if listingMatches(listing, period: period, ack: binding.ack),
-                   routeState.matches(capture.route),
-                   store.getPeriod(periodId: period.periodId)?.ackDurable == true {
-                    try store.releaseProven(periodId: period.periodId, binding: binding, nowMs: nowMs())
-                    recordDeliveryFailure(nil, period: period, capture: capture, lease: lease)
-                    return
-                }
-            } catch {
-                Logger.upload.error("Browser delivery reconciliation failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                recordDeliveryFailure("relay_unavailable", period: period, capture: capture, lease: lease)
-            }
-        }
 
-        guard lease.isValid() else { return }
         let sourceSize: Int
         do {
             try store.validateMutationPath(fileURL)
@@ -204,6 +183,32 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
             }
         }
 
+        if let binding, binding.namesSameConnection(as: capture.route) {
+            do {
+                let storedAck = try BrowserIngestAckStore.read(from: ackURL, ioInjector: store.ioInjector)
+                if !period.ackDurable || !(store.getPeriod(periodId: period.periodId)?.ackDurable ?? false)
+                    || storedAck == nil {
+                    try store.publishDeliveryAck(binding)
+                }
+                let listing = try await capture.client.getSegmentsDay(serverURL: capture.serverURL, day: day, source: "browser")
+                if listingMatches(listing, period: period, ack: binding.ack),
+                   routeState.matches(capture.route),
+                   store.getPeriod(periodId: period.periodId)?.ackDurable == true {
+                    try store.releaseProven(periodId: period.periodId, binding: binding, nowMs: nowMs())
+                    recordDeliveryFailure(nil, period: period, capture: capture, lease: lease)
+                    return
+                }
+            } catch {
+                if store.getPeriod(periodId: period.periodId)?.state == "discarded" {
+                    Logger.upload.error("Browser delivery reconciliation stopped for discarded period \(period.periodId, privacy: .public)")
+                    return
+                }
+                Logger.upload.error("Browser delivery reconciliation failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                recordDeliveryFailure("relay_unavailable", period: period, capture: capture, lease: lease)
+            }
+        }
+
+        guard lease.isValid() else { return }
         let multipartURL = stagingDirectory.appendingPathComponent("multipart.body")
         do {
             try store.validateMutationPath(stagingDirectory)
@@ -335,6 +340,11 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
 
     private func failStorage(period: BrowserStoredPeriod, error: Error, capture: DeliveryCapture, lease: BrowserUploadLease? = nil) {
         guard isCurrent(period: period, capture: capture, lease: lease) else { return }
+        guard let current = store.getPeriod(periodId: period.periodId),
+              current.state != "discarded", !current.cleanupDurable else {
+            Logger.storage.error("Browser spool read failure ignored after period \(period.periodId, privacy: .public) was discarded or cleaned up: \(error.localizedDescription, privacy: .public)")
+            return
+        }
         Logger.storage.error("Browser spool read failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
         store.setStoreFailed(true)
     }

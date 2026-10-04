@@ -1505,6 +1505,83 @@ struct BrowserIntakeAdmissionTests {
         #expect(!store.storeIsFailed())
     }
 
+    @Test func test11_sameConnectionRetryReservesPayloadDuringListing() async throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now }, timeZone: TimeZone(identifier: "UTC")!)
+        let gate = BrowserUploadGate(store: store)
+        let generation = try authority.testConnectionGeneration(identityToken: "token-1")
+
+        let firstReply = try authority.accept(bytes: JSONSerialization.data(withJSONObject: [
+            "type": "batch", "destination_generation": generation, "inst": "inst-1",
+            "batch_id": "12121212121212121212121212121212", "queued_at_ms": 1_700_000_000_000 as UInt64,
+            "records": [["t": "segment_start", "ts": 1_700_000_000_000 as UInt64, "ctx": "ctx-1",
+                         "blocks": [["id": "b1", "text": "finalized pages"]]]]
+        ] as [String: Any]), direction: "extension_to_host")
+        let periodID = try #require(firstReply["period_id"] as? String)
+        try store.finalizePeriod(periodId: periodID, reason: "test", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
+        let payloadURL = store.periodFileURL(for: periodID)
+        let original = try Data(contentsOf: payloadURL)
+
+        let secondReply = try authority.accept(bytes: JSONSerialization.data(withJSONObject: [
+            "type": "batch", "destination_generation": generation, "inst": "inst-1",
+            "batch_id": "23232323232323232323232323232323", "queued_at_ms": 1_700_000_000_000 as UInt64,
+            "records": [["t": "segment_start", "ts": 1_700_000_000_000 as UInt64, "ctx": "ctx-2",
+                         "blocks": [["id": "b2", "text": "open pages"]]]]
+        ] as [String: Any]), direction: "extension_to_host")
+        let openPeriodID = try #require(secondReply["period_id"] as? String)
+        #expect(openPeriodID != periodID)
+        #expect(!(try Data(contentsOf: store.periodFileURL(for: openPeriodID))).isEmpty)
+
+        let routeState = BrowserIntakeRouteState()
+        let routeA = BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1", identityDigest: try #require(store.getActiveIdentityToken()), pairingGeneration: 1, transportIncarnation: 1, credentialIsCurrent: { true })
+        routeState.update(routeA)
+        let transport = ScriptedBrowserTransport()
+        transport.dayListing = IngestProtocolV3.SegmentsDay(total: 0, items: [])
+        transport.succeed = true
+        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, serverURLProvider: { "http://127.0.0.1" }, routeState: routeState)
+
+        await planner.planAndUpload()
+        #expect(transport.prepareCount == 1)
+        #expect(try Data(contentsOf: payloadURL) == original)
+
+        let listingGate = BrowserListingGate()
+        transport.beforeDayListingReturns = { await listingGate.suspendUntilResumed() }
+        let secondPlan = Task { await planner.planAndUpload() }
+        defer { Task { await listingGate.resume() } }
+        await listingGate.waitUntilEntered()
+
+        guard case .present(let currentToken) = store.pendingDiscardInventory() else {
+            await listingGate.resume()
+            await secondPlan.value
+            Issue.record("Open pending bytes should produce a discard token")
+            return
+        }
+        #expect(currentToken.openPeriodId == openPeriodID)
+        #expect(!currentToken.finalizedPeriodIds.contains(periodID))
+        let discardToken = BrowserPendingDiscardToken(
+            storeIncarnation: currentToken.storeIncarnation,
+            openPeriodId: currentToken.openPeriodId,
+            finalizedPeriodIds: [periodID]
+        )
+        #expect(store.discardPendingPages(discardToken).durablyCompleted)
+        #expect(FileManager.default.fileExists(atPath: payloadURL.path))
+        #expect(store.getPeriod(periodId: periodID)?.state == "finalized")
+        #expect(!store.storeIsFailed())
+
+        await listingGate.resume()
+        await secondPlan.value
+        #expect(transport.prepareCount == 2)
+        #expect(FileManager.default.fileExists(atPath: payloadURL.path))
+        #expect(store.getPeriod(periodId: periodID)?.state == "finalized")
+        #expect(!store.storeIsFailed())
+        let binding = try #require(store.storedDeliveryBinding(periodId: periodID))
+        #expect(binding.transportIncarnation == routeA.transportIncarnation)
+    }
+
     @Test func unclearedAckFromReplacedConnectionUploadsOnCurrentRoute() async throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
@@ -2011,6 +2088,7 @@ struct BrowserIntakeAdmissionTests {
 private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked Sendable {
     var dayListing = IngestProtocolV3.SegmentsDay(total: 0, items: [])
     var onDayRead: (@Sendable () -> Void)?
+    private var storedBeforeDayListingReturns: (@Sendable () async -> Void)?
     var onUpload: (@Sendable () -> Void)?
     var prepareCount = 0
     var succeed = false
@@ -2018,8 +2096,14 @@ private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked
     private(set) var uploadedByteCount = 0
     private let lock = NSLock()
 
+    var beforeDayListingReturns: (@Sendable () async -> Void)? {
+        get { lock.withLock { storedBeforeDayListingReturns } }
+        set { lock.withLock { storedBeforeDayListingReturns = newValue } }
+    }
+
     func getSegmentsDay(serverURL: String, day: String, source: String?) async throws -> IngestProtocolV3.SegmentsDay {
         onDayRead?()
+        await beforeDayListingReturns?()
         return dayListing
     }
 
@@ -2218,6 +2302,32 @@ struct BrowserIntakePeriodKeyTests {
         #expect(clampedSegmentDurationSeconds(29_100, ceiling: 300) == 300)
         #expect(clampedSegmentDurationSeconds(.infinity, ceiling: 300) == 300)
         #expect(clampedSegmentDurationSeconds(.nan, ceiling: 300) == 300)
+    }
+}
+
+private actor BrowserListingGate {
+    private var entered = false
+    private var resumed = false
+    private var enteredContinuation: CheckedContinuation<Void, Never>?
+    private var resumeContinuation: CheckedContinuation<Void, Never>?
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { enteredContinuation = $0 }
+    }
+
+    func suspendUntilResumed() async {
+        entered = true
+        enteredContinuation?.resume()
+        enteredContinuation = nil
+        guard !resumed else { return }
+        await withCheckedContinuation { resumeContinuation = $0 }
+    }
+
+    func resume() {
+        resumed = true
+        resumeContinuation?.resume()
+        resumeContinuation = nil
     }
 }
 
