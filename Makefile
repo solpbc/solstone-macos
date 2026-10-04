@@ -776,6 +776,10 @@ dmg:
 dmg-journal:
 	@$(MAKE) dmg DMG_NAME=$(JOURNAL_DMG_NAME) DMG_APP=journal.app DMG_VOLNAME=journal DMG_ICON=journal.app
 
+# The combined image's window: both apps in one tray, an arrow to Applications.
+# The background is 1640x840 at 144 dpi, so it fills the 820x420 window at 2x.
+# The icon coordinates are icon centers, and they match the tray and the
+# labels drawn under each icon. Move one only together with the art.
 dmg-both:
 	@test -d solstone.app || { echo "error: solstone.app not found — run make bundle-dist first"; exit 1; }
 	@test -d journal.app || { echo "error: journal.app not found — run make bundle-dist-journal first"; exit 1; }
@@ -785,14 +789,15 @@ dmg-both:
 		cp -R journal.app "$$STAGING/"; \
 		rm -f $(BOTH_DMG_NAME); \
 		create-dmg \
-		  --volname "solstone + journal" \
-		  --background assets/dmg-background@2x.png \
+		  --volname "install solstone" \
+		  --background assets/dmg-both-background@2x.png \
 		  --window-pos 200 200 \
-		  --window-size 840 400 \
-		  --icon-size 128 \
-		  --icon "solstone.app" 150 200 \
-		  --icon "journal.app" 360 200 \
-		  --app-drop-link 650 200 \
+		  --window-size 820 420 \
+		  --icon-size 112 \
+		  --text-size 12 \
+		  --icon "solstone.app" 150 180 \
+		  --icon "journal.app" 385 180 \
+		  --app-drop-link 712 180 \
 		  --hide-extension "solstone.app" \
 		  --hide-extension "journal.app" \
 		  --no-internet-enable \
