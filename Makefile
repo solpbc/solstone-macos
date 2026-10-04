@@ -1,6 +1,6 @@
 .PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc release-browser-preview run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
-        signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal assemble-journal-app journal-app-unsigned bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal release-dmg-both \
-        supply-chain-check release-dmg-smoke release-dmg-smoke-journal release-dmg-smoke-both journal-native-runtime journal-native-fetch-accepted journal-native-runtime-accepted brand-sync \
+        signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal assemble-journal-app journal-app-unsigned bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal seal-both \
+        supply-chain-check release-dmg-smoke release-dmg-smoke-journal both-resolve both-compose both-verify both-publish journal-native-runtime journal-native-fetch-accepted journal-native-runtime-accepted brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
 
 # Default goal when running bare `make` — build the project. brand-sync is
@@ -39,7 +39,10 @@ DMG_NAME               ?= $(shell $(RELEASE_IDENTITY) identity --app sol --versi
 JOURNAL_DIST_VERSION   := $(shell $(RELEASE_IDENTITY) identity --app journal --plist Sources/journal/Info.plist --field short_version 2>/dev/null || echo 0.0.0)
 JOURNAL_DIST_BUILD     := $(shell $(RELEASE_IDENTITY) identity --app journal --plist Sources/journal/Info.plist --field bundle_version 2>/dev/null || echo 0)
 JOURNAL_DMG_NAME       ?= $(shell $(RELEASE_IDENTITY) identity --app journal --version '$(JOURNAL_DIST_VERSION)' --build '$(JOURNAL_DIST_BUILD)' --field dmg_name)
-BOTH_DMG_NAME          ?= solstone-and-journal-$(DIST_VERSION).dmg
+# The combined image is composed from each app's published DMG, so its name
+# comes from the resolved inputs (scripts/both_dmg.py), never from this tree.
+BOTH_DIR               ?= .both
+BOTH_DMG_NAME          ?= $(shell python3 scripts/both_dmg.py name --inputs $(BOTH_DIR)/inputs.json 2>/dev/null)
 DMG_VOLNAME            ?= solstone
 DMG_APP                ?= solstone.app
 DMG_ICON               ?= solstone.app
@@ -314,7 +317,7 @@ check-dev-deps:
 # =======================================================================
 # Distribution pipeline: Developer ID signed + notarized DMG
 #
-# Use `make release-dmg`, `make release-dmg-journal`, or `make release-dmg-both`
+# Use `make release-dmg` or `make release-dmg-journal`
 # to produce signed, notarized, stapled DMGs ready to hand out for ad-hoc install.
 # `make bundle-dist` signs solstone.app without the journal runtime plane; `make
 # bundle-dist-journal` signs journal.app with its bundled Rust runtime tree.
@@ -780,30 +783,33 @@ dmg-journal:
 # The background is 1640x840 at 144 dpi, so it fills the 820x420 window at 2x.
 # The icon coordinates are icon centers, and they match the tray and the
 # labels drawn under each icon. Move one only together with the art.
+#
+# The image carries each app's published, gate-passed bundle and never a build
+# from this tree: `scripts/both_dmg.py compose` copies both bundles out of the
+# DMGs the production appcasts serve into BOTH_STAGING, then calls this target.
+# It is unsigned here; `make seal-both` signs it on the signing host.
+# Runbook: extro vpe/playbooks/macos-both-image.md.
 dmg-both:
-	@test -d solstone.app || { echo "error: solstone.app not found — run make bundle-dist first"; exit 1; }
-	@test -d journal.app || { echo "error: journal.app not found — run make bundle-dist-journal first"; exit 1; }
-	@STAGING="$$(mktemp -d -t sol-journal-dmg)"; \
-		trap 'rm -rf "$$STAGING"' EXIT; \
-		cp -R solstone.app "$$STAGING/"; \
-		cp -R journal.app "$$STAGING/"; \
-		rm -f $(BOTH_DMG_NAME); \
-		create-dmg \
-		  --volname "install solstone" \
-		  --background assets/dmg-both-background@2x.png \
-		  --window-pos 200 200 \
-		  --window-size 820 420 \
-		  --icon-size 112 \
-		  --text-size 12 \
-		  --icon "solstone.app" 150 180 \
-		  --icon "journal.app" 385 180 \
-		  --app-drop-link 712 180 \
-		  --hide-extension "solstone.app" \
-		  --hide-extension "journal.app" \
-		  --no-internet-enable \
-		  $(BOTH_DMG_NAME) "$$STAGING"
-	@codesign --force --timestamp --sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" $(BOTH_DMG_NAME)
-	@echo "✓ Built: $(BOTH_DMG_NAME)"
+	@test -n "$(BOTH_STAGING)" || { echo "error: BOTH_STAGING unset — run make both-compose, not dmg-both"; exit 1; }
+	@test -n "$(BOTH_DMG_NAME)" || { echo "error: BOTH_DMG_NAME unset — run make both-resolve first"; exit 1; }
+	@test -d "$(BOTH_STAGING)/solstone.app" || { echo "error: $(BOTH_STAGING)/solstone.app missing"; exit 1; }
+	@test -d "$(BOTH_STAGING)/journal.app" || { echo "error: $(BOTH_STAGING)/journal.app missing"; exit 1; }
+	@rm -f "$(BOTH_DMG_NAME)"
+	create-dmg \
+	  --volname "install solstone" \
+	  --background assets/dmg-both-background@2x.png \
+	  --window-pos 200 200 \
+	  --window-size 820 420 \
+	  --icon-size 112 \
+	  --text-size 12 \
+	  --icon "solstone.app" 150 180 \
+	  --icon "journal.app" 385 180 \
+	  --app-drop-link 712 180 \
+	  --hide-extension "solstone.app" \
+	  --hide-extension "journal.app" \
+	  --no-internet-enable \
+	  "$(BOTH_DMG_NAME)" "$(BOTH_STAGING)"
+	@echo "✓ Composed (unsigned): $(BOTH_DMG_NAME)"
 
 # Submit for notarization and block until Apple responds.
 notarize:
@@ -870,19 +876,14 @@ verify-notarization-journal:
 	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-sol
 	@echo "✓ $(JOURNAL_DMG_NAME) notarized + stapled"
 
+# The combined image's bundles are checked against the published ones by
+# `make both-verify`; this checks only the image's own signature and ticket, so
+# it needs no disk-image attach on the signing host.
 verify-notarization-both:
 	@test -f "$(BOTH_DMG_NAME)" || { echo "error: $(BOTH_DMG_NAME) not found — run make staple-both first"; exit 1; }
-	@test -d solstone.app || { echo "error: solstone.app not found — run make bundle-dist first"; exit 1; }
-	@test -d journal.app || { echo "error: journal.app not found — run make bundle-dist-journal first"; exit 1; }
-	@spctl --assess --type open --context context:primary-signature -v $(BOTH_DMG_NAME) || \
+	@spctl --assess --type open --context context:primary-signature -v "$(BOTH_DMG_NAME)" || \
 		{ echo "both-DMG spctl verification failed"; exit 1; }
-	@xcrun stapler validate $(BOTH_DMG_NAME)
-	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
-		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
-	@test -x journal.app/Contents/Resources/solstone-runtime/bin/journal || { echo "error: both-DMG journal native runtime missing bin/journal"; exit 1; }
-	@test -x journal.app/Contents/Resources/solstone-runtime/bin/solstone || { echo "error: both-DMG journal native runtime missing bin/solstone"; exit 1; }
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-sol
+	@xcrun stapler validate "$(BOTH_DMG_NAME)"
 	@echo "✓ $(BOTH_DMG_NAME) notarized + stapled"
 
 # One-shot orchestrators. They intentionally call standalone worker targets in
@@ -911,28 +912,31 @@ release-dmg-journal:
 	@echo "   Notary:  $(NOTARY_PROFILE)"
 	@echo "   Size:    $$(du -h $(JOURNAL_DMG_NAME) | cut -f1)"
 
-release-dmg-both:
-	@$(MAKE) bundle-dist
-	@$(MAKE) bundle-dist-journal
-	@$(MAKE) dmg
-	@$(MAKE) dmg-journal
-	@$(MAKE) notarize
-	@$(MAKE) notarize-journal
-	@xcrun stapler staple solstone.app
-	@xcrun stapler staple journal.app
-	@$(MAKE) dmg-both
+# Sign, notarize and staple a composed combined image. Signing host only.
+seal-both:
+	@test -n "$(BOTH_DMG_NAME)" && test -f "$(BOTH_DMG_NAME)" || { echo "error: composed $(BOTH_DMG_NAME) not found"; exit 1; }
+	@codesign --force --timestamp --sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" "$(BOTH_DMG_NAME)"
 	@$(MAKE) notarize-both
 	@$(MAKE) staple-both
-	@$(MAKE) staple
-	@$(MAKE) staple-journal
-	@$(MAKE) verify-notarization
-	@$(MAKE) verify-notarization-journal
 	@$(MAKE) verify-notarization-both
 	@echo ""
-	@echo "✅ Distribution DMGs ready:"
-	@echo "   solstone: $(DMG_NAME)"
-	@echo "   journal: $(JOURNAL_DMG_NAME)"
-	@echo "   both:    $(BOTH_DMG_NAME)"
+	@echo "✅ Combined image sealed: $(BOTH_DMG_NAME)"
+	@echo "   Size:    $$(du -h "$(BOTH_DMG_NAME)" | cut -f1)"
+
+# The combined image, start to finish (runbook: extro vpe/playbooks/macos-both-image.md):
+#   both-resolve (publish host) → both-compose (any Mac) → seal-both (signing host)
+#   → both-verify (any Mac) → both-publish (publish host)
+both-resolve:
+	$(PUBLISH_PY) scripts/both_dmg.py resolve --dir $(BOTH_DIR) --out $(BOTH_DIR)/inputs.json
+
+both-compose:
+	python3 scripts/both_dmg.py compose --inputs $(BOTH_DIR)/inputs.json --dir $(BOTH_DIR) --receipt $(BOTH_DIR)/compose.json
+
+both-verify:
+	python3 scripts/both_dmg.py verify --receipt $(BOTH_DIR)/compose.json --dmg "$(BOTH_DMG_NAME)" --out $(BOTH_DIR)/verify.json
+
+both-publish:
+	$(PUBLISH_PY) scripts/both_dmg.py publish --inputs $(BOTH_DIR)/inputs.json --receipt $(BOTH_DIR)/compose.json --verify $(BOTH_DIR)/verify.json --dmg "$(BOTH_DMG_NAME)"
 
 supply-chain-check:
 	@echo "── supply chain checklist ──"
@@ -971,21 +975,6 @@ release-dmg-smoke-journal:
 	    "$$MOUNT/journal.app/Contents/Resources/solstone-runtime/bin/journal" --version; \
 	    "$$MOUNT/journal.app/Contents/Resources/solstone-runtime/bin/solstone" --version; \
 	    echo "release-dmg-smoke-journal: ok"
-
-release-dmg-smoke-both:
-	@test -f "$(BOTH_DMG_NAME)" || { echo "error: $(BOTH_DMG_NAME) not found — run make release-dmg-both first"; exit 1; }
-	@MOUNT="$$(mktemp -d -t sol-journal-smoke)"; \
-	    trap "hdiutil detach \"$$MOUNT\" -quiet -force >/dev/null 2>&1 || true; rm -rf \"$$MOUNT\"" EXIT; \
-	    hdiutil attach "$(BOTH_DMG_NAME)" -mountpoint "$$MOUNT" -nobrowse -quiet || { echo "error: both hdiutil attach failed"; exit 1; }; \
-	    codesign --verify --strict --deep --verbose=2 "$$MOUNT/solstone.app" || { echo "error: both dmg solstone.app codesign verify failed"; exit 1; }; \
-	    codesign --verify --strict --deep --verbose=2 "$$MOUNT/journal.app" || { echo "error: both dmg journal.app codesign verify failed"; exit 1; }; \
-	    BAD="$$(find "$$MOUNT/solstone.app" -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
-	    [ -z "$$BAD" ] || { echo "error: mounted both-DMG solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }; \
-	    test -x "$$MOUNT/journal.app/Contents/Resources/solstone-runtime/bin/journal" || { echo "error: both-DMG journal native runtime missing bin/journal"; exit 1; }; \
-	    test -x "$$MOUNT/journal.app/Contents/Resources/solstone-runtime/bin/solstone" || { echo "error: both-DMG journal native runtime missing bin/solstone"; exit 1; }; \
-	    "$$MOUNT/journal.app/Contents/Resources/solstone-runtime/bin/journal" --version; \
-	    "$$MOUNT/journal.app/Contents/Resources/solstone-runtime/bin/solstone" --version; \
-	    echo "release-dmg-smoke-both: ok"
 
 # Install development dependencies needed for local build workflows
 install: check-dev-deps

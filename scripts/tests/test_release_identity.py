@@ -126,9 +126,14 @@ class MakefileJournalIdentityContractTest(unittest.TestCase):
     def test_solstone_and_paired_dmg_identity(self):
         text = MAKEFILE.read_text()
 
-        self.assertIn("BOTH_DMG_NAME          ?= solstone-and-journal-$(DIST_VERSION).dmg", text)
+        self.assertIn(
+            "BOTH_DMG_NAME          ?= $(shell python3 scripts/both_dmg.py name --inputs $(BOTH_DIR)/inputs.json 2>/dev/null)",
+            text,
+        )
         self.assertIn("DMG_VOLNAME            ?= solstone", text)
-        self.assertIn('--volname "solstone + journal"', text)
+        self.assertIn('--volname "install solstone"', text)
+        self.assertNotIn("solstone-and-journal-", text)
+        self.assertNotIn('--volname "solstone + journal"', text)
         self.assertNotIn("BOTH_DMG_NAME          ?= sol-journal-$(DIST_VERSION).dmg", text)
         self.assertNotIn("DMG_VOLNAME            ?= sol\n", text)
         self.assertNotIn('--volname "sol + journal"', text)
@@ -170,7 +175,6 @@ class MakefileJournalIdentityContractTest(unittest.TestCase):
             "staple-journal",
             "verify-notarization-journal",
             "release-dmg-journal",
-            "release-dmg-both",
             "release-dmg-smoke-journal",
         ):
             with self.subTest(target=target):
