@@ -68,6 +68,10 @@ public final class ExternalMicCapture: @unchecked Sendable {
     /// Test-only: records teardown call order ("engine.stop", "removeTap").
     /// Mutated only on writerQueue inside teardownEngine(). Excluded from shipping builds.
     internal private(set) var _teardownTraceForTesting: [String] = []
+    private var conversionStatusForTesting: AVAudioConverterOutputStatus?
+    internal var _conversionStatusForTesting: AVAudioConverterOutputStatus? {
+        writerQueue.sync { conversionStatusForTesting }
+    }
     #endif
     private var receivedFirstBuffer = false
     private var recordingStartTime: Date?
@@ -349,7 +353,13 @@ public final class ExternalMicCapture: @unchecked Sendable {
     #if DEBUG || SOLSTONE_TEST_SUPPORT
     internal func _suspendProcessingForTesting() { isRunning = true; writerQueue.suspend() }
     internal func _resumeProcessingForTesting() { writerQueue.resume() }
-    internal func _enqueueForTesting(_ buffer: AVAudioPCMBuffer) { handleAudioBuffer(buffer, monoFormat: buffer.format) }
+    internal func _enqueueForTesting(_ buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat? = nil) {
+        handleAudioBuffer(buffer, monoFormat: targetFormat ?? buffer.format)
+    }
+    internal func _convertForTesting(_ buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
+        writerQueue.sync { convertToMono(buffer, targetFormat: targetFormat) }
+    }
+    internal var _converterForTesting: AVAudioConverter? { writerQueue.sync { cachedConverter } }
     #endif
 
     /// Process buffer and send to callback
@@ -372,12 +382,18 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
         guard callback != nil else { return }
 
+        guard buffer.frameLength > 0 else { return }
+
         // Convert to mono if needed and resample to target rate
         guard let monoBuffer = convertToMono(buffer, targetFormat: monoFormat) else {
             destination.error?(NSError(domain: "SolstoneAudioConversion", code: 1))
             Logger.audio.warning("\(self.device.name, privacy: .public): convertToMono failed")
             return
         }
+
+        // A converter may need more input before it can emit any PCM. This is
+        // neither a capture failure nor an empty sample buffer to send downstream.
+        guard monoBuffer.frameLength > 0 else { return }
 
         // Apply gain to boost audio levels using vDSP (SIMD-accelerated)
         if let monoData = monoBuffer.floatChannelData {
@@ -425,7 +441,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
         let converter: AVAudioConverter
         if let cached = cachedConverter,
            let cachedFormat = cachedSourceFormat,
-           cachedFormat.isEqual(sourceFormat) {
+           cachedFormat.isEqual(sourceFormat),
+           cached.outputFormat.isEqual(targetFormat) {
             // Reuse cached converter
             converter = cached
         } else {
@@ -441,7 +458,10 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
         // Calculate output frame count
         let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
-        let outputFrameCount = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
+        let requiredFrames = ceil(Double(buffer.frameLength) * ratio)
+        guard requiredFrames.isFinite, requiredFrames > 0,
+              requiredFrames <= Double(AVAudioFrameCount.max) else { return nil }
+        let outputFrameCount = AVAudioFrameCount(requiredFrames)
 
         guard
             let outputBuffer = AVAudioPCMBuffer(
@@ -453,12 +473,25 @@ public final class ExternalMicCapture: @unchecked Sendable {
         }
 
         var error: NSError?
+        let supplied = OSAllocatedUnfairLock(initialState: false)
         let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+            let shouldSupply = supplied.withLock { supplied in
+                guard !supplied else { return false }
+                supplied = true
+                return true
+            }
+            guard shouldSupply else {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
             outStatus.pointee = .haveData
             return buffer
         }
 
         let status = converter.convert(to: outputBuffer, error: &error, withInputFrom: inputBlock)
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
+        conversionStatusForTesting = status
+        #endif
 
         guard status != .error, error == nil else {
             return nil
