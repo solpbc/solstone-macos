@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.25] - 2026-10-05
+
+### Changed
+- internal updates. how you use the solstone app on your mac is unchanged.
+
 ## [2.0.24] - 2026-10-04
 
 ### Changed

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.33 (build 71)] - 2026-10-05
+
+### Changed
+- updated the bundled journal to [2.0.33](https://solstone.app/releases#v2.0.33) →
+
 ### Fixed
 - opening the journal app while your journal starts now waits for its mark. home and device pairing show "your · journal" while it loads, then show your mark when it can be read.
 
