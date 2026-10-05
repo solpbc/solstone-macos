@@ -10,9 +10,9 @@ import UpdateKit
 
 @Suite("MenuContent")
 struct MenuContentTests {
-    private let isolatedDefaults = IsolatedUserDefaults()
-
     @Test @MainActor func hasPauseResumeControlTruthTable() {
+        let isolatedDefaults = IsolatedUserDefaults()
+        defer { isolatedDefaults.clear() }
         let updateController = UpdateController(
             log: Logger.setup,
             errorDomain: "app.solstone.observer.updates",
@@ -34,6 +34,10 @@ struct MenuContentTests {
         let starting = AppState.forSnapshot(config: AppConfig(isBrowserIntakeEnabled: false))
         #expect(!MenuContent(appState: starting, updateController: updateController).hasPauseResumeControl)
 
+        let heldIdle = AppState.forSnapshot(config: AppConfig(isBrowserIntakeEnabled: false))
+        heldIdle.pauseManager.pause(for: .indefinite)
+        #expect(MenuContent(appState: heldIdle, updateController: updateController).hasPauseResumeControl)
+
         let error = AppState.forSnapshot(config: AppConfig(isBrowserIntakeEnabled: false))
         error.errorMessage = "offline"
         #expect(!MenuContent(appState: error, updateController: updateController).hasPauseResumeControl)
@@ -51,6 +55,8 @@ struct MenuContentTests {
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     @Test @MainActor func browserOnlyPauseRemainsAvailableWithoutClaimingUnknownIntakeReady() {
+        let isolatedDefaults = IsolatedUserDefaults()
+        defer { isolatedDefaults.clear() }
         let config = AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false,
                                isBrowserIntakeEnabled: true)
         let state = AppState.forSnapshot(config: config)

@@ -9,9 +9,11 @@ import Testing
 @MainActor
 final class FakePauseExpiryScheduler {
     private var onExpire: (@MainActor @Sendable () -> Void)?
+    private(set) var armedIntervals: [TimeInterval] = []
 
     var scheduler: PauseExpiryScheduler {
-        { [weak self] _, onExpire in
+        { [weak self] interval, onExpire in
+            self?.armedIntervals.append(interval)
             self?.onExpire = onExpire
             return FakePauseExpiryTimer { [weak self] in self?.onExpire = nil }
         }
@@ -61,23 +63,6 @@ struct PauseManagerTests {
         manager.resume()
         #expect(!manager.isPaused)
         #expect(manager.pauseState.expirationDate == nil)
-    }
-
-    @Test func silentClearDoesNotFireResumeCallback() {
-        let manager = PauseManager()
-        var resumeCallbackCount = 0
-        manager.onResume = {
-            resumeCallbackCount += 1
-        }
-        manager.pause(for: .minutes(30))
-        #expect(manager.isPaused)
-
-        manager.clearPolicyStateSilently()
-
-        #expect(!manager.isPaused)
-        #expect(manager.pauseState.expirationDate == nil)
-        #expect(manager.refreshTick == 0)
-        #expect(resumeCallbackCount == 0)
     }
 
     @Test func timedPauseAutoResumesAtExpiry() async throws {
@@ -139,9 +124,9 @@ struct PauseManagerTests {
 
     @Test func durationExpirationDates() {
         let before = Date()
-        let fiveMin = PauseManager.PauseDuration.minutes(5).expirationDate
-        let twoHour = PauseManager.PauseDuration.minutes(120).expirationDate
-        let indefinite = PauseManager.PauseDuration.indefinite.expirationDate
+        let fiveMin = PauseManager.PauseDuration.minutes(5).expirationDate(at: before)
+        let twoHour = PauseManager.PauseDuration.minutes(120).expirationDate(at: before)
+        let indefinite = PauseManager.PauseDuration.indefinite.expirationDate(at: before)
 
         #expect(fiveMin != nil)
         #expect(fiveMin!.timeIntervalSince(before) >= 5 * 60 - 1)
@@ -152,5 +137,183 @@ struct PauseManagerTests {
         #expect(twoHour!.timeIntervalSince(before) <= 120 * 60 + 1)
 
         #expect(indefinite == nil)
+    }
+
+    @Test func indefinitePauseRoundTripsAcrossManagers() {
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+
+        PauseManager(defaults: isolated.defaults).pause(for: .indefinite)
+
+        let restored = PauseManager(defaults: isolated.defaults)
+        #expect(restored.isPaused)
+        #expect(restored.pauseState.isIndefinite)
+    }
+
+    @Test func missingOwnerPauseKeyRestoresUnpaused() {
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+
+        let restored = PauseManager(defaults: isolated.defaults)
+
+        #expect(!restored.isPaused)
+        #expect(isolated.defaults.object(forKey: "ownerPause") == nil)
+    }
+
+    @Test func injectedStoreRemovesOnlyTheSixObsoletePauseKeys() {
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+        let obsoleteKeys = [
+            "audioMuteExpiration", "audioMuteIndefinite", "videoMuteExpiration",
+            "videoMuteIndefinite", "pauseExpiration", "pauseIndefinite"
+        ]
+        for key in obsoleteKeys {
+            isolated.defaults.set("obsolete", forKey: key)
+        }
+        isolated.defaults.set("indefinite", forKey: "ownerPause")
+
+        let restored = PauseManager(defaults: isolated.defaults)
+
+        #expect(restored.isPaused)
+        #expect(obsoleteKeys.allSatisfy { isolated.defaults.object(forKey: $0) == nil })
+        #expect(isolated.defaults.string(forKey: "ownerPause") == "indefinite")
+    }
+
+    @Test func timedPauseRestoresWithRemainingDeadlineAndExpires() {
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let originalScheduler = FakePauseExpiryScheduler()
+        let original = PauseManager(defaults: isolated.defaults, expiryScheduler: originalScheduler.scheduler, now: { t0 })
+        original.pause(for: .minutes(15))
+
+        let restoredScheduler = FakePauseExpiryScheduler()
+        let restored = PauseManager(
+            defaults: isolated.defaults,
+            expiryScheduler: restoredScheduler.scheduler,
+            now: { t0.addingTimeInterval(5 * 60) }
+        )
+
+        #expect(restored.isPaused)
+        #expect(restored.pauseState.expirationDate == t0.addingTimeInterval(15 * 60))
+        #expect(restoredScheduler.armedIntervals.count == 1)
+        #expect(abs(restoredScheduler.armedIntervals[0] - 600) <= 1)
+        #expect(restored.formatTimeRemaining() == "10 mins")
+
+        restoredScheduler.fire()
+        #expect(!restored.isPaused)
+        #expect(isolated.defaults.object(forKey: "ownerPause") == nil)
+        #expect(!PauseManager(defaults: isolated.defaults, now: { t0.addingTimeInterval(5 * 60) }).isPaused)
+    }
+
+    @Test func expiredTimedPauseIsRemovedWithoutArmingExpiry() {
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let original = PauseManager(defaults: isolated.defaults, now: { t0 })
+        original.pause(for: .minutes(15))
+
+        let scheduler = FakePauseExpiryScheduler()
+        let restored = PauseManager(
+            defaults: isolated.defaults,
+            expiryScheduler: scheduler.scheduler,
+            now: { t0.addingTimeInterval(20 * 60) }
+        )
+
+        #expect(!restored.isPaused)
+        #expect(isolated.defaults.object(forKey: "ownerPause") == nil)
+        #expect(scheduler.armedIntervals.isEmpty)
+    }
+
+    @Test func resumeRemovesPersistedPause() {
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+        let manager = PauseManager(defaults: isolated.defaults)
+        manager.pause(for: .indefinite)
+
+        manager.resume()
+
+        #expect(isolated.defaults.object(forKey: "ownerPause") == nil)
+        #expect(!PauseManager(defaults: isolated.defaults).isPaused)
+    }
+
+    @Test func malformedValuesRestoreIndefiniteAndRemainUntilResume() {
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+        let values: [(Any, String)] = [
+            (true, "bool"),
+            (["reason": "test"], "dictionary"),
+            (["test"], "array"),
+            ("not-indefinite", "string")
+        ]
+
+        for (value, kind) in values {
+            isolated.defaults.set(value, forKey: "ownerPause")
+            let manager = PauseManager(defaults: isolated.defaults)
+            #expect(manager.isPaused, "\(kind) restores paused")
+            #expect(manager.pauseState.isIndefinite, "\(kind) restores indefinite")
+            switch kind {
+            case "bool":
+                let number = isolated.defaults.object(forKey: "ownerPause") as? NSNumber
+                #expect(number.map { CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue } == true)
+            case "dictionary":
+                #expect(isolated.defaults.dictionary(forKey: "ownerPause")?["reason"] as? String == "test")
+            case "array":
+                #expect(isolated.defaults.stringArray(forKey: "ownerPause") == ["test"])
+            default:
+                #expect(isolated.defaults.string(forKey: "ownerPause") == "not-indefinite")
+            }
+
+            manager.resume()
+            #expect(isolated.defaults.object(forKey: "ownerPause") == nil)
+            #expect(!PauseManager(defaults: isolated.defaults).isPaused)
+        }
+    }
+
+    @Test func nonFiniteNumbersRestoreIndefiniteAndRemainUntilResume() {
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+
+        for value in [Double.nan, Double.infinity, -Double.infinity] {
+            isolated.defaults.set(value, forKey: "ownerPause")
+            let manager = PauseManager(defaults: isolated.defaults)
+            #expect(manager.isPaused)
+            #expect(manager.pauseState.isIndefinite)
+            #expect(isolated.defaults.object(forKey: "ownerPause") != nil)
+            manager.resume()
+            #expect(isolated.defaults.object(forKey: "ownerPause") == nil)
+        }
+    }
+
+    @Test func storelessPauseDoesNotReadOrWriteStandardDefaults() {
+        let legacyKeys = [
+            "ownerPause", "audioMuteExpiration", "audioMuteIndefinite",
+            "videoMuteExpiration", "videoMuteIndefinite", "pauseExpiration", "pauseIndefinite"
+        ]
+        let standardDefaults = UserDefaults.standard
+        let before = standardDefaults.dictionaryRepresentation().filter { legacyKeys.contains($0.key) }
+
+        PauseManager().pause(for: .indefinite)
+        let fresh = PauseManager()
+
+        let after = standardDefaults.dictionaryRepresentation().filter { legacyKeys.contains($0.key) }
+        #expect(NSDictionary(dictionary: before).isEqual(to: after))
+        #expect(!fresh.isPaused)
+    }
+
+    @Test func farFutureDeadlineIsRestoredWithoutClamping() {
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let deadline = now.addingTimeInterval(10 * 365 * 24 * 60 * 60)
+        isolated.defaults.set(deadline.timeIntervalSince1970, forKey: "ownerPause")
+        let scheduler = FakePauseExpiryScheduler()
+
+        let restored = PauseManager(defaults: isolated.defaults, expiryScheduler: scheduler.scheduler, now: { now })
+
+        #expect(restored.isPaused)
+        #expect(restored.pauseState.expirationDate == deadline)
+        #expect(scheduler.armedIntervals.count == 1)
+        #expect(abs(scheduler.armedIntervals[0] - deadline.timeIntervalSince(now)) <= 1)
     }
 }

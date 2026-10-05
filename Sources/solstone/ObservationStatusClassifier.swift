@@ -19,6 +19,7 @@ internal func classifyObservationRowState(
     journalFailureCause: JournalConnectionFailureCause? = nil,
     browserIntakePermitted: Bool = false,
     browserIntakePaused: Bool = false,
+    ownerPauseHeldIdle: Bool = false,
     browserOnlyIntake: Bool = false,
     journalMarkHeld: Bool = false
 ) -> MenubarStatusRowState {
@@ -38,6 +39,7 @@ internal func classifyObservationRowState(
     }
     if !isRecording && !isPaused {
         if browserIntakePaused { return .paused }
+        if ownerPauseHeldIdle { return .paused }
         if browserIntakePermitted { return .observing }
         return .stopped
     }
@@ -287,6 +289,7 @@ extension AppState {
             journalFailureCause: verdict.failureCause,
             browserIntakePermitted: browserRowPermitted,
             browserIntakePaused: browserRowPaused,
+            ownerPauseHeldIdle: ownerPauseHeldIdle,
             browserOnlyIntake: browserOnly,
             journalMarkHeld: needsJournalMarkConfirmation
         )

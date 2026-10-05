@@ -3225,6 +3225,7 @@ struct SettingsView: View {
             serviceMode: appState.config.serviceMode,
             isRecording: appState.isRecording,
             isPaused: appState.isPaused,
+            ownerPauseHeldIdle: appState.ownerPauseHeldIdle,
             held: appState.needsJournalMarkConfirmation,
             hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
             uploadStatus: appState.uploadCoordinator.status,
@@ -3249,6 +3250,7 @@ struct SettingsView: View {
             serviceMode: appState.config.serviceMode,
             isRecording: appState.isRecording,
             isPaused: appState.isPaused,
+            ownerPauseHeldIdle: appState.ownerPauseHeldIdle,
             held: appState.needsJournalMarkConfirmation,
             hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
             uploadStatus: appState.uploadCoordinator.status,
@@ -3906,6 +3908,7 @@ struct SettingsView: View {
                 microphone: currentMicrophonePermissionOutcome,
                 isRecording: appState.isRecording,
                 isPaused: appState.isPaused,
+                ownerPauseHeldIdle: appState.ownerPauseHeldIdle,
                 hasError: appState.errorMessage != nil,
                 lastDelivery: appState.uploadCoordinator.lastJournalDeliveryOutcome,
                 lastJournalContact: appState.uploadCoordinator.lastSuccessfulJournalContactOutcome,
@@ -3946,7 +3949,7 @@ struct SettingsView: View {
             }
             let state = appState.errorMessage != nil
                 ? "error"
-                : (appState.isPaused ? "paused" : (appState.isRecording ? "on" : "off"))
+                : ((appState.isPaused || appState.ownerPauseHeldIdle) ? "paused" : (appState.isRecording ? "on" : "off"))
             NSWorkspace.shared.open(SupportReportURL.make(
                 version: AppVersion.short,
                 build: AppVersion.build,

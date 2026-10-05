@@ -279,7 +279,7 @@ struct MenuContent: View {
             browserCapturePermitted: appState.browserPauseEnabled
         ).resume
 #else
-        appState.capture.isUserPaused
+        appState.capture.isUserPaused || appState.ownerPauseHeldIdle
 #endif
     }
 

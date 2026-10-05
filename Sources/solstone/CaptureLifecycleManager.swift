@@ -63,6 +63,7 @@ private final class LiveRecoveryTimerToken: RecoveryTimerToken {
 @MainActor
 final class CaptureLifecycleManager {
     weak var delegate: (any CaptureLifecycleDelegate)?
+    var ownerPauseIsHeld: @MainActor () -> Bool = { false }
 
     private var recoveryTimer: (any RecoveryTimerToken)?
     private static let retryDelays: [TimeInterval] = [5, 30, 60]
@@ -234,6 +235,7 @@ final class CaptureLifecycleManager {
     }
 
     func startRecoveryIfNeeded(error: Error) {
+        guard !deferRecoveryForOwnerPause() else { return }
         if isPermissionError(error) {
             Logger.capture.info("[Recovery] Skipping auto-recovery: permission error requires user action")
         } else {
@@ -243,6 +245,8 @@ final class CaptureLifecycleManager {
 
     func noteStartFromErrorFailed(isPermissionError: Bool) {
         guard delegate?.lifecycleCurrentState.isError == true else { return }
+
+        guard !deferRecoveryForOwnerPause() else { return }
 
         recoveryTimer?.invalidate()
         recoveryTimer = nil
@@ -365,7 +369,15 @@ final class CaptureLifecycleManager {
         retryCount = 0
     }
 
+    private func deferRecoveryForOwnerPause() -> Bool {
+        guard ownerPauseIsHeld() else { return false }
+        stopRecoveryTimer()
+        Logger.capture.info("[Recovery] Not starting capture because the owner pause is held")
+        return true
+    }
+
     internal func attemptRecovery() async {
+        guard !deferRecoveryForOwnerPause() else { return }
         guard delegate?.lifecycleCurrentState.isError == true else {
             stopRecoveryTimer()
             return

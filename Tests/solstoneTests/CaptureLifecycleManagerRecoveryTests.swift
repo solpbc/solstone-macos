@@ -18,6 +18,22 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(CaptureLifecycleManager.recoveryDelay(forRetryCount: 20) == 300)
     }
 
+    @Test func ownerPausePreventsScheduledAndImmediateRecoveryResume() async {
+        let scheduler = FakeRecoveryScheduler()
+        let delegate = FakeLifecycleDelegate(state: .error("all displays disconnected"))
+        let manager = makeManager(scheduler: scheduler, delegate: delegate)
+        manager.ownerPauseIsHeld = { true }
+
+        manager.startRecoveryIfNeeded(error: CaptureManager.CaptureError.noDisplaysAvailable)
+        #expect(!manager.isRecoveryScheduled)
+        #expect(!scheduler.hasActiveToken)
+
+        await manager.attemptRecovery()
+
+        #expect(delegate.resumeTriggers.isEmpty)
+        #expect(!manager.isRecoveryScheduled)
+    }
+
     @Test func displayChangeAttemptsRecoveryImmediatelyAndResetsBackoff() async {
         let scheduler = FakeRecoveryScheduler()
         let delegate = FakeLifecycleDelegate(state: .error("all displays disconnected"))

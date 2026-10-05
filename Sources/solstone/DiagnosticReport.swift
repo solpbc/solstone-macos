@@ -59,6 +59,7 @@ internal struct DiagnosticReportInput: Equatable, Sendable {
     let microphone: PermissionOutcome
     let isRecording: Bool
     let isPaused: Bool
+    var ownerPauseHeldIdle: Bool = false
     let hasError: Bool
     let lastDelivery: LastJournalDeliveryOutcome
     let lastJournalContact: SetupLastSyncOutcome
@@ -242,6 +243,7 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
         captureState: diagnosticCaptureAXState(
             isRecording: input.isRecording,
             isPaused: input.isPaused,
+            ownerPauseHeldIdle: input.ownerPauseHeldIdle,
             hasError: input.hasError
         ),
         lastDeliveryState: input.lastDelivery.diagnosticAXState,
@@ -349,10 +351,11 @@ extension SetupLastSyncOutcome {
 internal func diagnosticCaptureAXState(
     isRecording: Bool,
     isPaused: Bool,
+    ownerPauseHeldIdle: Bool = false,
     hasError: Bool
 ) -> DiagnosticCaptureAXState {
     if hasError { return .error }
-    if isPaused { return .paused }
+    if isPaused || ownerPauseHeldIdle { return .paused }
     return isRecording ? .on : .off
 }
 

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import CoreFoundation
 
 /// A handle to an armed pause-expiry timer that can be invalidated on resume.
 public protocol PauseExpiryTimer: AnyObject {
@@ -24,12 +25,12 @@ public final class PauseManager {
         case indefinite
 
         /// Calculate the expiration date for this duration
-        public var expirationDate: Date? {
+        public func expirationDate(at now: Date) -> Date? {
             switch self {
             case .minutes(let minutes):
-                return Date().addingTimeInterval(TimeInterval(minutes * 60))
+                return now.addingTimeInterval(TimeInterval(minutes * 60))
             case .seconds(let seconds):
-                return Date().addingTimeInterval(TimeInterval(seconds))
+                return now.addingTimeInterval(TimeInterval(seconds))
             case .indefinite:
                 return nil
             }
@@ -41,9 +42,9 @@ public final class PauseManager {
         public var isPaused: Bool = false
         public var expirationDate: Date? = nil
 
-        public var timeRemaining: TimeInterval? {
+        public func timeRemaining(at now: Date) -> TimeInterval? {
             guard isPaused, let expiration = expirationDate else { return nil }
-            let remaining = expiration.timeIntervalSinceNow
+            let remaining = expiration.timeIntervalSince(now)
             return remaining > 0 ? remaining : nil
         }
 
@@ -67,7 +68,10 @@ public final class PauseManager {
 
     private var pauseTimer: (any PauseExpiryTimer)?
     private var uiRefreshTimer: Timer?
+    private let defaults: UserDefaults?
     private let expiryScheduler: PauseExpiryScheduler
+    private let now: @MainActor () -> Date
+    private static let ownerPauseKey = "ownerPause"
 
     /// Triggers UI refresh for time remaining display (incremented every second when paused)
     public private(set) var refreshTick: Int = 0
@@ -75,21 +79,38 @@ public final class PauseManager {
     // MARK: - Public Methods
 
     public init(
+        defaults: UserDefaults? = nil,
         expiryScheduler: @escaping PauseExpiryScheduler = { interval, onExpire in
             let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { _ in
                 Task { @MainActor in onExpire() }
             }
             return timer
-        }
+        },
+        now: @escaping @MainActor () -> Date = Date.init
     ) {
+        self.defaults = defaults
         self.expiryScheduler = expiryScheduler
+        self.now = now
+
+        if defaults != nil {
+            removeObsoletePauseKeys()
+            restorePauseState()
+        }
     }
 
     /// Pause capture for a specified duration
     public func pause(for duration: PauseDuration) {
-        let expirationDate = duration.expirationDate
+        let expirationDate = duration.expirationDate(at: now())
 
         pauseState = PauseState(isPaused: true, expirationDate: expirationDate)
+        if let defaults {
+            if let expirationDate {
+                defaults.set(expirationDate.timeIntervalSince1970, forKey: Self.ownerPauseKey)
+            } else {
+                defaults.set("indefinite", forKey: Self.ownerPauseKey)
+            }
+        }
+
         scheduleTimer(expiration: expirationDate)
         updateUIRefreshTimer()
 
@@ -107,6 +128,7 @@ public final class PauseManager {
         pauseTimer?.invalidate()
         pauseTimer = nil
         pauseState = PauseState()
+        defaults?.removeObject(forKey: Self.ownerPauseKey)
 
         updateUIRefreshTimer()
 
@@ -130,26 +152,47 @@ public final class PauseManager {
         }
     }
 
-    public func clearPolicyStateSilently() {
-        pauseTimer?.invalidate()
-        pauseTimer = nil
-        pauseState = PauseState()
-        refreshTick = 0
-
-        updateUIRefreshTimer()
-    }
-
-    /// Clear any persisted pause state from previous sessions.
-    /// Pause only applies to the running instance — on restart we always start fresh.
-    public func clearPersistedPauseState() {
-        let defaults = UserDefaults.standard
-
+    /// Remove obsolete capture-pause keys. An owner's pause stays until the owner resumes or its deadline passes.
+    public func removeObsoletePauseKeys() {
+        guard let defaults else { return }
         defaults.removeObject(forKey: "audioMuteExpiration")
         defaults.removeObject(forKey: "audioMuteIndefinite")
         defaults.removeObject(forKey: "videoMuteExpiration")
         defaults.removeObject(forKey: "videoMuteIndefinite")
         defaults.removeObject(forKey: "pauseExpiration")
         defaults.removeObject(forKey: "pauseIndefinite")
+    }
+
+    private func restorePauseState() {
+        guard let defaults, let storedValue = defaults.object(forKey: Self.ownerPauseKey) else { return }
+
+        if storedValue is String {
+            restoreIndefinitePause()
+            return
+        }
+
+        guard let number = storedValue as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              String(cString: number.objCType) == "d",
+              number.doubleValue.isFinite else {
+            restoreIndefinitePause()
+            return
+        }
+
+        let expiration = Date(timeIntervalSince1970: number.doubleValue)
+        guard expiration > now() else {
+            defaults.removeObject(forKey: Self.ownerPauseKey)
+            return
+        }
+
+        pauseState = PauseState(isPaused: true, expirationDate: expiration)
+        scheduleTimer(expiration: expiration)
+        updateUIRefreshTimer()
+    }
+
+    private func restoreIndefinitePause() {
+        pauseState = PauseState(isPaused: true, expirationDate: nil)
+        updateUIRefreshTimer()
     }
 
     /// Format remaining time as a human-readable string with natural units
@@ -160,7 +203,7 @@ public final class PauseManager {
             return nil
         }
 
-        guard let remaining = pauseState.timeRemaining else { return nil }
+        guard let remaining = pauseState.timeRemaining(at: now()) else { return nil }
 
         let totalSeconds = Int(remaining)
         let hours = totalSeconds / 3600
@@ -212,7 +255,7 @@ public final class PauseManager {
     private func scheduleTimer(expiration: Date?) {
         guard let expiration = expiration else { return }
 
-        let interval = expiration.timeIntervalSinceNow
+        let interval = expiration.timeIntervalSince(now())
         guard interval > 0 else {
             resume()
             return

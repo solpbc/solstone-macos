@@ -108,7 +108,7 @@ public final class CaptureManager {
     private var displays: [SCDisplay] = []
     private var filtersByDisplayID: [CGDirectDisplayID: SCContentFilter] = [:]
     private let verbose: Bool
-    private let lifecycleManager: CaptureLifecycleManager
+    internal let lifecycleManager: CaptureLifecycleManager
     private let windowExclusionManager: WindowExclusionManager
     private let segmentFactory: SegmentFactory
     private let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
