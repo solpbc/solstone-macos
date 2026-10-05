@@ -2,6 +2,8 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
+import SolstoneCore
 import CoreAudio
 
 /// Transport type for audio devices
@@ -179,25 +181,66 @@ public enum MicrophoneMonitor {
 
     // MARK: - Private Helpers
 
-    private static func hasInputChannels(deviceID: AudioDeviceID) -> Bool {
-        var propertyAddress = AudioObjectPropertyAddress(
+    /// HAL's stream configuration contains a variable-length AudioBufferList.
+    /// Keep the allocated capacity separate from the bytes HAL actually returned.
+    internal static func hasInputChannels(
+        deviceID: AudioDeviceID,
+        querySize: ((inout UInt32) -> OSStatus)? = nil,
+        readData: ((inout UInt32, UnsafeMutableRawPointer) -> OSStatus)? = nil,
+        allocate: (Int, Int) -> UnsafeMutableRawPointer = {
+            UnsafeMutableRawPointer.allocate(byteCount: $0, alignment: $1)
+        },
+        release: (UnsafeMutableRawPointer) -> Void = { $0.deallocate() },
+        diagnostic: ((String, OSStatus?) -> Void)? = nil
+    ) -> Bool {
+        var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: kAudioDevicePropertyScopeInput,
             mElement: kAudioObjectPropertyElementMain
         )
+        func report(_ stage: String, _ status: OSStatus? = nil) {
+            if let diagnostic {
+                diagnostic(stage, status)
+            } else {
+                Logger.audio.warning("Input configuration device \(deviceID, privacy: .public), stage \(stage, privacy: .public), status \(status ?? noErr, privacy: .public)")
+            }
+        }
+        let headerSize = MemoryLayout<AudioBufferList>.offset(of: \.mBuffers)!
+        for attempt in 0..<3 {
+            var queriedSize: UInt32 = 0
+            let queryStatus = querySize?(&queriedSize)
+                ?? AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &queriedSize)
+            guard queryStatus == noErr else { report("size", queryStatus); return false }
+            guard Int(queriedSize) >= headerSize else { report("layout"); return false }
 
-        var dataSize: UInt32 = 0
-        var status = AudioObjectGetPropertyDataSize(deviceID, &propertyAddress, 0, nil, &dataSize)
-        guard status == noErr, dataSize > 0 else { return false }
-
-        let bufferListPointer = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: 1)
-        defer { bufferListPointer.deallocate() }
-
-        status = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &dataSize, bufferListPointer)
-        guard status == noErr else { return false }
-
-        let bufferList = bufferListPointer.pointee
-        return bufferList.mNumberBuffers > 0
+            let capacity = max(Int(queriedSize), MemoryLayout<AudioBufferList>.size)
+            let storage = allocate(capacity, MemoryLayout<AudioBufferList>.alignment)
+            defer { release(storage) }
+            memset(storage, 0, capacity)
+            var returnedSize = UInt32(capacity)
+            let readStatus = readData?(&returnedSize, storage)
+                ?? AudioObjectGetPropertyData(deviceID, &address, 0, nil, &returnedSize, storage)
+            if readStatus == kAudioHardwareBadPropertySizeError {
+                if attempt == 2 { report("size_changed", readStatus) }
+                continue
+            }
+            guard readStatus == noErr else { report("read", readStatus); return false }
+            guard Int(returnedSize) >= headerSize, Int(returnedSize) <= capacity else {
+                report("layout"); return false
+            }
+            // Reading only the header is safe even for HAL's zero-buffer response.
+            let count = Int(storage.load(as: UInt32.self))
+            let (bufferBytes, overflow) = count.multipliedReportingOverflow(by: MemoryLayout<AudioBuffer>.stride)
+            let (requiredBytes, additionOverflow) = headerSize.addingReportingOverflow(bufferBytes)
+            guard !overflow, !additionOverflow, requiredBytes <= Int(returnedSize) else {
+                report("layout"); return false
+            }
+            return (0..<count).contains {
+                storage.load(fromByteOffset: headerSize + $0 * MemoryLayout<AudioBuffer>.stride,
+                             as: AudioBuffer.self).mNumberChannels > 0
+            }
+        }
+        return false
     }
 
     private static func getDeviceName(deviceID: AudioDeviceID) -> String? {
