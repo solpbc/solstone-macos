@@ -206,6 +206,30 @@ struct LiveMicrophoneSelectionTests {
         manager.stopAll()
     }
 
+    @Test func revokedResamplerTailCannotReturnThroughReenabledUID() async throws {
+        let a = device("a"), manager = MicrophoneCaptureManager()
+        let capture = ExternalMicCapture(device: a, gain: 1)
+        manager._installForTesting(capture); manager.updateSelection([a], hasAvailableDevices: true)
+        let oldFrames = LockedArray<Int>([]), newFrames = LockedArray<Int>([]), errors = LockedCounter()
+        manager.setCallback(for: "a", callback: { buffer, _ in oldFrames.append(Int(buffer.frameLength)) }, onError: { _ in errors.increment() })
+        let source = try #require(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let target = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let pcm = try #require(AVAudioPCMBuffer(pcmFormat: source, frameCapacity: 4410)); pcm.frameLength = 4410
+        for frame in 0..<4410 { pcm.floatChannelData![0][frame] = 0.2 }
+        capture._suspendProcessingForTesting(); capture._enqueueForTesting(pcm, targetFormat: target)
+        capture._resumeProcessingForTesting(); await capture.drain()
+        let prefix = oldFrames.all.reduce(0, +)
+        #expect(prefix > 0 && prefix < 4800)
+        capture._suspendProcessingForTesting(); capture._enqueueForTesting(pcm, targetFormat: target)
+        capture.detachForBoundary()
+        manager.updateSelection([], hasAvailableDevices: true)
+        manager.updateSelection([a], hasAvailableDevices: true)
+        manager.setCallback(for: "a", callback: { buffer, _ in newFrames.append(Int(buffer.frameLength)) })
+        capture._resumeProcessingForTesting(); await capture.drain()
+        #expect(oldFrames.all.reduce(0, +) == prefix && newFrames.all.isEmpty && errors.count == 0)
+        manager.stopAll()
+    }
+
     @Test func deliberateDetachRetainsWriterAndEarlierSamplesWithoutFailure() async throws {
         let root = try makeTempDirectory("selection-retained"); defer { try? FileManager.default.removeItem(at: root) }
         let a = device("a"), shared = MicrophoneCaptureManager()

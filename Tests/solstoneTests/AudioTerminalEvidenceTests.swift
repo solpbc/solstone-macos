@@ -142,7 +142,7 @@ struct AudioTerminalEvidenceTests {
         result.audioDiagnostics?.statistics("system", AudioWriterStatistics(receivedFrames: 99_999, acceptedFrames: 99_999))
         #expect(!FileManager.default.fileExists(atPath: dir.path))
         #expect(try Data(contentsOf: meta) == frozen)
-        #expect(try await terminalDecode(final.appendingPathComponent("120000_1_audio.m4a")).count == 48_000)
+        #expect(try await terminalDecode(final.appendingPathComponent("120000_1_audio.m4a")).count == 48_000 + (source["generated_frames"] as? Int ?? 0))
     }
 
     @Test(arguments: ["invalid", "zero", "negative", "timeout", "throw"])

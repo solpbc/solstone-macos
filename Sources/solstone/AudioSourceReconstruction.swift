@@ -20,6 +20,34 @@ enum AudioSourceReadiness {
     case unreadable                 // sources present but none yielded valid timing
 }
 
+internal enum AudioSourceTimeline {
+    case legacy
+    case declared([String: Double])
+    case unavailable
+}
+
+private func sourceTimeline(directory: URL, timePrefix: String) -> AudioSourceTimeline {
+    guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return .unavailable }
+    let metadata = files.filter { $0.lastPathComponent.hasPrefix(timePrefix + "_") && $0.lastPathComponent.hasSuffix("_meta.json") }
+    var capture: [String: Any] = [:]
+    for file in metadata.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+        guard let data = try? Data(contentsOf: file),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return .unavailable }
+        if let audio = object["audio_capture"] as? [String: Any] { capture = mergeAudioCaptureMetadata(capture, audio) }
+    }
+    guard capture["timeline_version"] != nil else { return .legacy }
+    guard capture["timeline_version"] as? Int == 1,
+          let sources = capture["sources"] as? [[String: Any]], sources.count <= AudioCaptureRecorder.sourceLimit else { return .unavailable }
+    var origins: [String: Double] = [:]
+    for source in sources {
+        guard let id = source["source_id"] as? String,
+              let origin = source["timeline_origin_seconds"] as? Double,
+              origin.isFinite, origin == 0 else { continue }
+        origins[id.replacingOccurrences(of: ":", with: "_").replacingOccurrences(of: "/", with: "_")] = origin
+    }
+    return .declared(origins)
+}
+
 /// Classify the per-source audio files in `files` into one readiness state.
 /// Composes `audioSourceFiles` + `buildAudioInputs` so both reconstruction call sites share one decision.
 func classifyAudioSources(in files: [URL], timePrefix: String, verbose: Bool) async -> AudioSourceReadiness {
@@ -33,6 +61,7 @@ func classifyAudioSources(in files: [URL], timePrefix: String, verbose: Bool) as
 func buildAudioInputs(from audioFiles: [URL], timePrefix: String, verbose: Bool) async -> [AudioRemixerInput] {
     var inputs: [AudioRemixerInput] = []
     let fm = FileManager.default
+    let timeline = audioFiles.first.map { sourceTimeline(directory: $0.deletingLastPathComponent(), timePrefix: timePrefix) } ?? .legacy
 
     // Find the earliest creation time to use as base
     var baseTime = Date.distantFuture
@@ -51,7 +80,7 @@ func buildAudioInputs(from audioFiles: [URL], timePrefix: String, verbose: Bool)
     }
 
     for audioURL in audioFiles {
-        guard let timingInfo = await buildTimingInfo(for: audioURL, baseTime: baseTime, timePrefix: timePrefix) else {
+        guard let timingInfo = await buildTimingInfo(for: audioURL, baseTime: baseTime, timePrefix: timePrefix, timeline: timeline) else {
             if verbose { Logger.storage.debug("Skipping audio file (no timing info): \(audioURL.lastPathComponent, privacy: .public)") }
             continue
         }
@@ -72,13 +101,14 @@ func buildAudioInputs(from audioFiles: [URL], timePrefix: String, verbose: Bool)
     return inputs
 }
 
-func buildTimingInfo(for audioURL: URL, baseTime: Date, timePrefix: String) async -> AudioTrackTimingInfo? {
+func buildTimingInfo(for audioURL: URL, baseTime: Date, timePrefix: String,
+                     timeline: AudioSourceTimeline = .legacy) async -> AudioTrackTimingInfo? {
     let fm = FileManager.default
     let asset = AVURLAsset(url: audioURL)
 
     // Get duration from asset
     guard let assetDuration = try? await asset.load(.duration),
-          CMTimeGetSeconds(assetDuration) > 0
+          assetDuration.isNumeric, CMTimeGetSeconds(assetDuration).isFinite, CMTimeGetSeconds(assetDuration) > 0
     else {
         return nil
     }
@@ -93,12 +123,19 @@ func buildTimingInfo(for audioURL: URL, baseTime: Date, timePrefix: String) asyn
         creationDate = baseTime
     }
 
-    let startOffsetSeconds = max(0, creationDate.timeIntervalSince(baseTime))
+    let trackType = parseTrackType(from: audioURL.lastPathComponent, timePrefix: timePrefix)
+    let startOffsetSeconds: Double
+    switch timeline {
+    case .legacy: startOffsetSeconds = max(0, creationDate.timeIntervalSince(baseTime))
+    case .declared(let origins):
+        guard let origin = origins[trackType.sourceID] else { return nil }
+        startOffsetSeconds = origin
+    case .unavailable: return nil
+    }
     let startOffset = CMTime(seconds: startOffsetSeconds, preferredTimescale: 48000)
     let endOffset = CMTimeAdd(startOffset, assetDuration)
 
     // Parse track type from filename
-    let trackType = parseTrackType(from: audioURL.lastPathComponent, timePrefix: timePrefix)
 
     return AudioTrackTimingInfo(
         startOffset: startOffset,

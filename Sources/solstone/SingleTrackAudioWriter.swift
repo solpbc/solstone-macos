@@ -66,6 +66,9 @@ public struct AudioWriterStatistics: Codable, Sendable {
     public var droppedFrames: Int = 0
     public var writerStatus: String = "recording"
     public var failures: [AudioRecordingFailure] = []
+    /// Accepted zero PCM synthesized to preserve elapsed placement, not capture.
+    public var generatedFrames: Int?
+    public var gapCount: Int?
     /// Absent in older evidence. Incomplete counters are observed lower bounds.
     public var statisticsAvailable: Bool?
     public var statisticsComplete: Bool?
@@ -73,6 +76,7 @@ public struct AudioWriterStatistics: Codable, Sendable {
         case receivedFrames = "received_frames", acceptedFrames = "accepted_frames"
         case droppedFrames = "dropped_frames", writerStatus = "writer_status", failures
         case statisticsAvailable = "statistics_available", statisticsComplete = "statistics_complete"
+        case generatedFrames = "generated_frames", gapCount = "gap_count"
     }
 }
 
@@ -86,11 +90,11 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private let segmentStartTime: CMTime
     private let verbose: Bool
     private let onStatistics: (@Sendable (AudioWriterStatistics) -> Void)?
-    private var statistics = AudioWriterStatistics(statisticsAvailable: true, statisticsComplete: false)
+    private var statistics = AudioWriterStatistics(generatedFrames: 0, gapCount: 0, statisticsAvailable: true, statisticsComplete: false)
     // Native append/finalization may hold `lock` indefinitely. Evidence and
     // ownership queries never acquire it or call AVFoundation.
     private let snapshotLock = NSLock()
-    private var publishedStatistics = AudioWriterStatistics(statisticsAvailable: true, statisticsComplete: false)
+    private var publishedStatistics = AudioWriterStatistics(generatedFrames: 0, gapCount: 0, statisticsAvailable: true, statisticsComplete: false)
     private var nativeQuiescent = false
 
     private var sessionStarted = false
@@ -98,12 +102,26 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private var firstBufferTime: CMTime?
     private var lastBufferTime: CMTime?
     private let lock = NSLock()
+    private var timelineFailed = false
+    private var lastFormat: CMFormatDescription?
+    private var lastSampleRate: Double = 48_000
+    // A segment is normally five minutes; the extra minute admits shutdown
+    // latency without allowing an invalid timestamp to allocate arbitrary PCM.
+    private static let maximumTimelineSeconds = 360.0
 #if DEBUG || SOLSTONE_TEST_SUPPORT
     internal private(set) var _appendAttemptCountForTesting: Int = 0
     internal var _fragmentIntervalsForTesting: (CMTime, CMTime) { (writer.movieFragmentInterval, writer.initialMovieFragmentInterval) }
     internal var _acceptedFramesForTesting: Int { statisticsSnapshot.acceptedFrames }
     internal var _finishAdmissionHookForTesting: (@Sendable () async -> Void)?
     internal var _nativeAppendHookForTesting: (@Sendable () -> Void)?
+    internal var _paddingAdmissionForTesting: (@Sendable (Int) -> Bool)?
+    internal var _boundaryClipAdmissionForTesting: (@Sendable (Int) -> Bool)?
+    internal var _appendAdmissionForTesting: (@Sendable (Int) -> Bool)?
+    internal var _segmentStartTimeForTesting: CMTime { segmentStartTime }
+    internal func _clipBoundaryForTesting(_ buffer: CMSampleBuffer, skipping: Int) -> CMSampleBuffer? {
+        guard let format = CMSampleBufferGetFormatDescription(buffer) else { return nil }
+        return clipBoundary(buffer, skipping: skipping, frames: CMSampleBufferGetNumSamples(buffer) - skipping, format: format)
+    }
 #endif
 
     // Silence batching state
@@ -171,7 +189,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     /// Appends audio from a CMSampleBuffer (from SCStream)
     /// Uses silence batching to reduce encoder invocations during quiet periods
     /// - Parameter sampleBuffer: The audio sample buffer
-    public func appendAudio(_ sampleBuffer: CMSampleBuffer) {
+    public func appendAudio(_ capturedBuffer: CMSampleBuffer) {
         lock.lock()
 
         if isFinished {
@@ -179,10 +197,62 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             return
         }
 
-        let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+        var sampleBuffer = capturedBuffer
+        var numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard numSamples > 0 else { lock.unlock(); return }
+        var currentTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        var duration = sampleDuration(sampleBuffer)
+        var relative = CMTimeSubtract(currentTime, segmentStartTime).seconds
+        guard !timelineFailed, currentTime.isNumeric, duration.isNumeric, duration.seconds > 0,
+              relative.isFinite,
+              relative + duration.seconds <= Self.maximumTimelineSeconds,
+              let format = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+              asbd.mFormatID == kAudioFormatLinearPCM,
+              asbd.mSampleRate.isFinite, asbd.mSampleRate >= 1, asbd.mSampleRate <= 192_000,
+              asbd.mBytesPerFrame > 0, asbd.mBytesPerFrame <= 256,
+              asbd.mChannelsPerFrame > 0, asbd.mChannelsPerFrame <= 64 else {
+            statistics.receivedFrames += numSamples
+            recordFailure(stage: "timeline", error: nil, dropped: numSamples)
+            lock.unlock(); return
+        }
+        if relative < 0 {
+            // A persistent tap can straddle a newly attached segment. Only its
+            // in-window suffix belongs to this writer; keep the capture clock.
+            guard !sessionStarted, relative >= -1 else {
+                statistics.receivedFrames += numSamples
+                recordFailure(stage: "timeline", error: nil, dropped: numSamples)
+                lock.unlock(); return
+            }
+            let skippedTime = CMTimeConvertScale(CMTimeSubtract(segmentStartTime, currentTime),
+                timescale: Int32(asbd.mSampleRate), method: .roundTowardPositiveInfinity)
+            var skipped = min(numSamples, max(0, Int(skippedTime.value)))
+            // Rational host/sample additions can round by a clock tick. Check
+            // the adjacent actual sample PTS rather than excluding one too many.
+            if skipped > 0 {
+                var previous = CMSampleTimingInfo()
+                if CMSampleBufferGetSampleTimingInfo(sampleBuffer, at: skipped - 1, timingInfoOut: &previous) == noErr,
+                   previous.presentationTimeStamp >= segmentStartTime { skipped -= 1 }
+            }
+            if skipped < numSamples {
+                var first = CMSampleTimingInfo()
+                if CMSampleBufferGetSampleTimingInfo(sampleBuffer, at: skipped, timingInfoOut: &first) == noErr,
+                   first.presentationTimeStamp < segmentStartTime { skipped += 1 }
+            }
+            numSamples -= skipped
+            guard numSamples > 0 else { lock.unlock(); return }
+            guard let clipped = clipBoundary(sampleBuffer, skipping: skipped, frames: numSamples, format: format) else {
+                statistics.receivedFrames += numSamples
+                recordFailure(stage: "boundary_clip", error: nil, dropped: numSamples)
+                lock.unlock(); return
+            }
+            sampleBuffer = clipped
+            currentTime = CMSampleBufferGetPresentationTimeStamp(clipped)
+            duration = sampleDuration(clipped)
+            relative = CMTimeSubtract(currentTime, segmentStartTime).seconds
+        }
         statistics.receivedFrames += numSamples
         publishStatistics()
-        let currentTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         if !sessionStarted {
             guard writer.status == .unknown, writer.startWriting() else {
                 recordFailure(stage: "start", error: writer.error, dropped: numSamples)
@@ -197,12 +267,26 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
                 return
             }
             sessionStarted = true
-            firstBufferTime = currentTime
+            // Raw media and durable source origin share the segment clock.
+            firstBufferTime = segmentStartTime
         }
-        let duration = sampleDuration(sampleBuffer)
+        let firstTime = segmentStartTime
+        let priorEnd = lastBufferTime ?? segmentStartTime
+        let gap = CMTimeSubtract(currentTime, priorEnd).seconds
+        guard gap >= -1.0 / asbd.mSampleRate else {
+            recordFailure(stage: "timeline", error: nil, dropped: numSamples)
+            lock.unlock(); return
+        }
+        if gap > 0.5 / asbd.mSampleRate {
+            if silenceAccumulatedSamples > 0 { flushSilence(firstTime: firstTime) }
+            guard appendPadding(from: priorEnd, to: currentTime, format: format, rate: asbd.mSampleRate) else {
+                timelineFailed = true
+                recordFailure(stage: "padding", error: nil, dropped: numSamples)
+                lock.unlock(); return
+            }
+        }
+        lastFormat = format; lastSampleRate = asbd.mSampleRate
         lastBufferTime = CMTimeAdd(currentTime, duration)
-
-        let firstTime = firstBufferTime ?? currentTime
         // Check if this buffer is silent
         let isSilent = isBufferSilent(sampleBuffer)
 
@@ -308,25 +392,75 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         } else { recordFailure(stage: "silence", error: nil, dropped: frames) }
     }
 
-    private func appendChecked(_ buffer: CMSampleBuffer, frames: Int) {
+    @discardableResult
+    private func appendChecked(_ buffer: CMSampleBuffer, frames: Int, generated: Bool = false) -> Bool {
+        var acceptedSuccessfully = false
+        // An unencoded required interval cannot be followed by success-looking
+        // shifted media. Preserve the accepted prefix and park this source.
+        defer { if !acceptedSuccessfully { timelineFailed = true } }
+        guard !timelineFailed else {
+            recordFailure(stage: "timeline", error: nil, dropped: generated ? 0 : frames)
+            return false
+        }
         guard writer.status == .writing else {
-            recordFailure(stage: "writer", error: writer.error, dropped: frames)
-            return
+            recordFailure(stage: generated ? "padding_writer" : "writer", error: writer.error, dropped: generated ? 0 : frames)
+            return false
         }
         guard input.isReadyForMoreMediaData else {
-            recordFailure(stage: "backpressure", error: writer.error, dropped: frames)
-            return
+            recordFailure(stage: generated ? "padding_backpressure" : "backpressure", error: writer.error, dropped: generated ? 0 : frames)
+            return false
         }
         do {
             var accepted = false
 #if DEBUG || SOLSTONE_TEST_SUPPORT
+            if _appendAdmissionForTesting?(frames) == false {
+                recordFailure(stage: generated ? "padding_append" : "append", error: nil, dropped: generated ? 0 : frames)
+                return false
+            }
             _appendAttemptCountForTesting += 1
             _nativeAppendHookForTesting?()
 #endif
             try ObjCExceptionCatcher.`try` { accepted = input.append(buffer) }
-            if accepted { statistics.acceptedFrames += frames; publishStatistics() }
-            else { recordFailure(stage: "append", error: writer.error, dropped: frames) }
-        } catch { recordFailure(stage: "append", error: error, dropped: frames) }
+            if accepted {
+                acceptedSuccessfully = true
+                if generated { statistics.generatedFrames = (statistics.generatedFrames ?? 0) + frames }
+                else { statistics.acceptedFrames += frames }
+                publishStatistics()
+            } else { recordFailure(stage: generated ? "padding_append" : "append", error: writer.error, dropped: generated ? 0 : frames) }
+            return accepted
+        } catch {
+            recordFailure(stage: generated ? "padding_append" : "append", error: error, dropped: generated ? 0 : frames)
+            return false
+        }
+    }
+
+    private func appendPadding(from start: CMTime, to end: CMTime, format: CMFormatDescription, rate: Double) -> Bool {
+        let seconds = CMTimeSubtract(end, start).seconds
+        guard !timelineFailed, seconds.isFinite, seconds >= 0, seconds <= Self.maximumTimelineSeconds else { return false }
+        var remaining = Int((seconds * rate).rounded())
+        guard remaining > 0 else { return true }
+        statistics.gapCount = (statistics.gapCount ?? 0) + 1
+        var cursor = start
+        let readyDeadline = ProcessInfo.processInfo.systemUptime + 2
+        while remaining > 0 {
+            let frames = min(remaining, Int(rate))
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+            if _paddingAdmissionForTesting?(frames) == false { return false }
+#endif
+            // Filling a long elapsed hole is a burst, unlike real-time taps.
+            // Let the encoder consume it, with one deadline for the whole gap.
+            while writer.status == .writing, !input.isReadyForMoreMediaData,
+                  ProcessInfo.processInfo.systemUptime < readyDeadline {
+                Thread.sleep(forTimeInterval: 0.001)
+            }
+            guard let silence = createSilentBuffer(sampleCount: frames,
+                presentationTime: CMTimeSubtract(cursor, segmentStartTime), formatDescription: format, sampleRate: rate),
+                appendChecked(silence, frames: frames, generated: true) else { return false }
+            cursor = CMTimeAdd(cursor, CMTime(seconds: Double(frames) / rate, preferredTimescale: 1_000_000_000))
+            remaining -= frames
+        }
+        lastBufferTime = end
+        return true
     }
 
     /// Called with lock held. Bound distinct failure records; publish the first
@@ -347,7 +481,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
 
     private func sampleDuration(_ sample: CMSampleBuffer) -> CMTime {
         if let format = CMSampleBufferGetFormatDescription(sample),
-           let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee, asbd.mSampleRate > 0 {
+           let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+           asbd.mSampleRate.isFinite, asbd.mSampleRate > 0, asbd.mSampleRate <= 192_000 {
             return CMTime(value: Int64(CMSampleBufferGetNumSamples(sample)), timescale: Int32(asbd.mSampleRate))
         }
         return CMSampleBufferGetDuration(sample)
@@ -359,7 +494,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             return nil
         }
 
-        let bytesPerSample = Int(asbd.mBytesPerFrame)
+        let planes = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0 ? Int(asbd.mChannelsPerFrame) : 1
+        let bytesPerSample = Int(asbd.mBytesPerFrame) * planes
         let dataSize = sampleCount * bytesPerSample
 
         // Allocate zeroed memory
@@ -432,9 +568,9 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
 
     /// Finishes writing and returns timing info
     /// - Returns: Timing information for remix alignment
-    public func finish() async -> AudioTrackTimingInfo {
+    public func finish(captureCutoff: CMTime? = nil) async -> AudioTrackTimingInfo {
         // extractTimingState also flushes any pending silence
-        let (firstTime, lastTime, startTime, wasStarted) = extractTimingState()
+        let (firstTime, lastTime, startTime, wasStarted) = extractTimingState(captureCutoff: captureCutoff)
 #if DEBUG || SOLSTONE_TEST_SUPPORT
         if let hook = _finishAdmissionHookForTesting { await hook() }
 #endif
@@ -536,12 +672,24 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
 
     /// Extract timing state for use in async contexts (lock cannot be held across await)
     /// Also flushes any pending silence before marking as finished
-    private func extractTimingState() -> (firstTime: CMTime?, lastTime: CMTime?, startTime: CMTime, wasStarted: Bool) {
+    private func extractTimingState(captureCutoff: CMTime?) -> (firstTime: CMTime?, lastTime: CMTime?, startTime: CMTime, wasStarted: Bool) {
         lock.lock()
 
         // Flush any pending silence before finishing
         if let firstTime = firstBufferTime, silenceAccumulatedSamples > 0 {
             flushSilence(firstTime: firstTime)
+        }
+        if !timelineFailed, sessionStarted, let cutoff = captureCutoff, cutoff.isNumeric,
+           let lastTime = lastBufferTime, let format = lastFormat,
+           cutoff > lastTime {
+            let offset = CMTimeSubtract(cutoff, segmentStartTime).seconds
+            if offset.isFinite, offset <= Self.maximumTimelineSeconds,
+               appendPadding(from: lastTime, to: cutoff, format: format, rate: lastSampleRate) {
+                lastBufferTime = cutoff
+            } else {
+                timelineFailed = true
+                recordFailure(stage: "padding", error: nil)
+            }
         }
 
         isFinished = true
@@ -581,6 +729,28 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         )
 
         return status == noErr ? newSampleBuffer : nil
+    }
+
+    /// Copy only the eligible PCM frames, preserving packed or planar layout.
+    /// Range-copy also needs sample-size entries which captured PCM may omit.
+    private func clipBoundary(_ buffer: CMSampleBuffer, skipping: Int, frames: Int, format: CMFormatDescription) -> CMSampleBuffer? {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        if _boundaryClipAdmissionForTesting?(frames) == false { return nil }
+#endif
+        var first = CMSampleTimingInfo()
+        guard CMSampleBufferGetSampleTimingInfo(buffer, at: skipping, timingInfoOut: &first) == noErr else { return nil }
+        var result: CMSampleBuffer?
+        let pcmFormat = AVAudioFormat(cmAudioFormatDescription: format)
+        guard let pcm = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: AVAudioFrameCount(frames)) else { return nil }
+        pcm.frameLength = AVAudioFrameCount(frames)
+        guard CMSampleBufferCopyPCMDataIntoAudioBufferList(buffer, at: Int32(skipping), frameCount: Int32(frames), into: pcm.mutableAudioBufferList) == noErr,
+              CMSampleBufferCreate(allocator: kCFAllocatorDefault, dataBuffer: nil, dataReady: true,
+                makeDataReadyCallback: nil, refcon: nil, formatDescription: format, sampleCount: frames,
+                sampleTimingEntryCount: 1, sampleTimingArray: &first, sampleSizeEntryCount: 0,
+                sampleSizeArray: nil, sampleBufferOut: &result) == noErr, let result,
+              CMSampleBufferSetDataBufferFromAudioBufferList(result, blockBufferAllocator: kCFAllocatorDefault,
+                blockBufferMemoryAllocator: kCFAllocatorDefault, flags: 0, bufferList: pcm.audioBufferList) == noErr else { return nil }
+        return result
     }
 
     private func createSampleBuffer(from pcmBuffer: AVAudioPCMBuffer, presentationTime: CMTime) -> CMSampleBuffer? {

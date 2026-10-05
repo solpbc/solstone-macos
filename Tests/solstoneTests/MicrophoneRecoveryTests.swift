@@ -196,7 +196,8 @@ struct MicrophoneRecoveryTests {
         manager.seedRecordingForTesting(currentSegment: writer, sources: .microphone)
         let audio = try #require(writerBox.current), original = try #require(audio._sourceWriterForTesting("u"))
         let first = try #require(shared.getCapture(for: "u")), healthy = try #require(shared.getCapture(for: "healthy"))
-        lab.engines[0].emit(try pcm(0.2)); await first.drain()
+        let firstHost = mach_absolute_time()
+        lab.engines[0].emit(try pcm(0.2), when: AVAudioTime(hostTime: firstHost)); await first.drain()
         // Force a genuinely failed installed capture, then traverse the real default-input event.
         first.stop(); id.set(20); available[0] = device(20)
         manager.handleDefaultMicChange(currentID: 20)
@@ -204,7 +205,7 @@ struct MicrophoneRecoveryTests {
         #expect(rebound !== first && rebound.currentDeviceID == 20 && rebound.isCapturing)
         #expect(shared.getCapture(for: "healthy") === healthy && !shared.hasCapture(for: "excluded"))
         #expect(audio._sourceWriterForTesting("u") === original)
-        lab.engines.last!.emit(try pcm(0.4)); await rebound.drain()
+        lab.engines.last!.emit(try pcm(0.4), when: AVAudioTime(hostTime: firstHost + AVAudioTime.hostTime(forSeconds: 0.25))); await rebound.drain()
         let before = lab.engines.count
         await manager.handleDeviceChange(added: [device(20)], removed: [device(10)])
         #expect(lab.engines.count == before && shared.getCapture(for: "u") === rebound)
@@ -225,8 +226,12 @@ struct MicrophoneRecoveryTests {
             #expect(CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &pointer) == noErr)
             if let pointer { samples += Array(UnsafeBufferPointer(start: UnsafeRawPointer(pointer).assumingMemoryBound(to: Float.self), count: length / 4)) }
         }
-        #expect(reader.status == .completed && samples.count == 9600)
-        #expect(samples.prefix(4000).reduce(0, +) / 4000 > 0.15)
+        let firstOffset = Int((CMClockMakeHostTimeFromSystemUnits(firstHost).seconds - original._segmentStartTimeForTesting.seconds) * 48_000)
+        #expect(reader.status == .completed && abs(samples.count - (firstOffset + 16_800)) <= 2)
+        #expect(original.statisticsSnapshot.acceptedFrames == 9600 && original.statisticsSnapshot.droppedFrames == 0)
+        if firstOffset >= 0, firstOffset + 4000 <= samples.count {
+            #expect(samples[firstOffset..<(firstOffset + 4000)].reduce(0, +) / 4000 > 0.15)
+        }
         #expect(samples.suffix(4000).reduce(0, +) / 4000 > 0.3)
         let meta = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("120000_meta.json"))) as? [String: Any])
         let rows = try #require((meta["audio_capture"] as? [String: Any])?["sources"] as? [[String: Any]])
@@ -271,5 +276,5 @@ private final class MicEngineDouble: MicrophoneCaptureEngine, @unchecked Sendabl
     func stop() { lock.withLock { trace.append("stop") }; if notifyDuringStart { notify() } }
     func removeTap() throws { lock.withLock { trace.append("remove") } }
     func notify() { NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: configurationObject) }
-    func emit(_ buffer: AVAudioPCMBuffer) { lock.withLock { pcm }?(buffer, AVAudioTime(hostTime: mach_absolute_time())) }
+    func emit(_ buffer: AVAudioPCMBuffer, when: AVAudioTime? = nil) { lock.withLock { pcm }?(buffer, when ?? AVAudioTime(hostTime: mach_absolute_time())) }
 }

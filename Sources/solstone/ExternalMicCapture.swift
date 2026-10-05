@@ -69,6 +69,12 @@ public final class ExternalMicCapture: @unchecked Sendable {
     /// Cached audio converter for format conversion (expensive to create)
     private var cachedConverter: AVAudioConverter?
     private var cachedSourceFormat: AVAudioFormat?
+    private var bufferClock = MicrophoneBufferClock()
+    private var conversionOrigin: CMTime?
+    private var emittedFrames: Int64 = 0
+    private var processingEpoch: UInt64?
+    private var processingFormat: AVAudioFormat?
+    private var conversionDestination: Destinations?
 
     private var isRunning: Bool {
         get { isCapturing }
@@ -90,14 +96,11 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private var lastBufferLogTime: Date?
 
     /// Gain multiplier to boost mic audio (1.0 to 8.0)
-    /// Note: Float read/write is atomic on Apple platforms, no lock needed
     public var gainMultiplier: Float {
-        didSet {
-            // Clamp to valid range
-            if gainMultiplier < 1.0 { gainMultiplier = 1.0 }
-            else if gainMultiplier > 8.0 { gainMultiplier = 8.0 }
-        }
+        get { callbackLock.withLock { storedGain } }
+        set { callbackLock.withLock { storedGain = newValue.isFinite ? max(1, min(8, newValue)) : 1 } }
     }
+    private var storedGain: Float = 2
 
     /// Target sample rate for output (48kHz standard)
     private let targetSampleRate: Double = 48_000
@@ -125,7 +128,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         let engine = engineFactory()
         self.engine = engine
         self.activeEngineObject = engine.configurationObject
-        self.gainMultiplier = max(1.0, min(8.0, gain))
+        self.storedGain = gain.isFinite ? max(1.0, min(8.0, gain)) : 1
         self.verbose = verbose
         self.nativeSampleRate = device.sampleRate
         observeEngine()
@@ -147,8 +150,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
             activeEngineObject = engine.configurationObject
             boundDeviceID = nil
         }
-        cachedConverter = nil
-        cachedSourceFormat = nil
+        // Admitted old-engine PCM remains ahead of its boundary on writerQueue.
+        // The processing epoch, rather than engine replacement, owns its tail.
         observeEngine()
     }
 
@@ -188,8 +191,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
         let epoch = callbackLock.withLock { engineEpoch }
         guard let monoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: targetSampleRate,
             channels: 1, interleaved: false) else { throw ExternalMicCaptureError.failedToCreateFormat }
-        try engine.start(deviceID: currentID, deviceName: device.name) { [weak self] buffer, _ in
-            self?.handleAudioBuffer(buffer, monoFormat: monoFormat, engineEpoch: epoch)
+        try engine.start(deviceID: currentID, deviceName: device.name) { [weak self] buffer, when in
+            self?.handleAudioBuffer(buffer, when: MicrophoneBufferTime(when), monoFormat: monoFormat, engineEpoch: epoch)
         }
         let committed = callbackLock.withLock { () -> Bool in
             guard captureRequested && requestedEpoch == request else { return false }
@@ -218,6 +221,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         writerQueue.sync {
             NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: engine.configurationObject)
             teardownEngine()
+            finishConversionStream()
         }
         if verbose { Logger.audio.debug("Stopped external mic capture: \(self.device.name, privacy: .public)") }
     }
@@ -259,13 +263,14 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
     /// Returns how long the mic has been recording (from first buffer to now)
     public var recordingDuration: TimeInterval {
-        guard let start = recordingStartTime else { return 0 }
+        guard let start = callbackLock.withLock({ recordingStartTime }) else { return 0 }
         return Date().timeIntervalSince(start)
     }
 
     // MARK: - Private
 
-    private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat, engineEpoch admittedEpoch: UInt64? = nil) {
+    private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer, when: MicrophoneBufferTime,
+                                   monoFormat: AVAudioFormat, engineEpoch admittedEpoch: UInt64? = nil) {
         // Snapshot and queue admission share the detach lock. The subsequent
         // drain barrier therefore includes every admitted old-segment buffer.
         callbackLock.withLock {
@@ -279,7 +284,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
                 return
             }
             writerQueue.async { [weak self] in
-                self?.processAndSend(buffer: bufferCopy, monoFormat: monoFormat, destination: destination)
+                self?.processAndSend(buffer: bufferCopy, when: when, monoFormat: monoFormat,
+                                     epoch: admittedEpoch ?? 0, destination: destination)
             }
         }
     }
@@ -308,11 +314,28 @@ public final class ExternalMicCapture: @unchecked Sendable {
         }
     }
 
+    /// Admission detachment is the cutoff, independently of queue/encoder waits.
+    /// EOS runs after every already admitted buffer and retains its old callback.
+    @discardableResult
+    internal func detachForBoundary() -> CMTime {
+        callbackLock.withLock {
+            _onAudioBuffer = nil; _onCaptureError = nil
+            let cutoff = CMClockGetTime(CMClockGetHostTimeClock())
+            writerQueue.async { [self] in finishConversionStream() }
+            return cutoff
+        }
+    }
+
     #if DEBUG || SOLSTONE_TEST_SUPPORT
     internal func _suspendProcessingForTesting() { isRunning = true; writerQueue.suspend() }
     internal func _resumeProcessingForTesting() { writerQueue.resume() }
-    internal func _enqueueForTesting(_ buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat? = nil) {
-        handleAudioBuffer(buffer, monoFormat: targetFormat ?? buffer.format)
+    private var testSampleCursor: Int64 = 0
+    private var testHostOrigin = mach_absolute_time()
+    internal func _enqueueForTesting(_ buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat? = nil, when: AVAudioTime? = nil) {
+        let captured = when ?? AVAudioTime(hostTime: testHostOrigin + AVAudioTime.hostTime(forSeconds: Double(testSampleCursor) / buffer.format.sampleRate),
+            sampleTime: testSampleCursor, atRate: buffer.format.sampleRate)
+        testSampleCursor += Int64(buffer.frameLength)
+        handleAudioBuffer(buffer, when: MicrophoneBufferTime(captured), monoFormat: targetFormat ?? buffer.format)
     }
     internal func _convertForTesting(_ buffer: AVAudioPCMBuffer, targetFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
         writerQueue.sync { convertToMono(buffer, targetFormat: targetFormat) }
@@ -320,16 +343,18 @@ public final class ExternalMicCapture: @unchecked Sendable {
     internal var _converterForTesting: AVAudioConverter? { writerQueue.sync { cachedConverter } }
     internal var _captureRequestedForTesting: Bool { callbackLock.withLock { captureRequested } }
     internal var _requestedEpochForTesting: UInt64 { callbackLock.withLock { requestedEpoch } }
+    internal var _engineIdentityForTesting: ObjectIdentifier { callbackLock.withLock { ObjectIdentifier(activeEngineObject) } }
     internal var _startAdmissionHookForTesting: (@Sendable () -> Void)?
     #endif
 
     /// Process buffer and send to callback
-    private func processAndSend(buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat, destination: Destinations) {
+    private func processAndSend(buffer: AVAudioPCMBuffer, when: MicrophoneBufferTime, monoFormat: AVAudioFormat,
+                                epoch: UInt64, destination: Destinations) {
         // Admitted buffers retain their destination after engine retirement.
         // Revocation is fenced separately by MicrophoneCaptureManager.
         if !receivedFirstBuffer {
             receivedFirstBuffer = true
-            recordingStartTime = Date()
+            callbackLock.withLock { recordingStartTime = Date() }
             firstBufferTime = CMClockGetTime(CMClockGetHostTimeClock())
         }
         // Track buffer count for diagnostics
@@ -350,6 +375,18 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
         guard buffer.frameLength > 0 else { return }
 
+        if processingEpoch != epoch || processingFormat?.isEqual(buffer.format) != true {
+            finishConversionStream()
+            processingEpoch = epoch; processingFormat = buffer.format
+        }
+        guard let captured = bufferClock.admit(when, frames: Int(buffer.frameLength), sampleRate: buffer.format.sampleRate) else {
+            destination.error?(NSError(domain: "SolstoneAudioTiming", code: 1))
+            return
+        }
+        if !captured.continuous && conversionOrigin != nil { finishConversionStream(resetClock: false) }
+        if conversionOrigin == nil { conversionOrigin = captured.time; emittedFrames = 0 }
+        conversionDestination = destination
+
         // Convert to mono if needed and resample to target rate
         guard let monoBuffer = convertToMono(buffer, targetFormat: monoFormat) else {
             destination.error?(NSError(domain: "SolstoneAudioConversion", code: 1))
@@ -361,6 +398,11 @@ public final class ExternalMicCapture: @unchecked Sendable {
         // neither a capture failure nor an empty sample buffer to send downstream.
         guard monoBuffer.frameLength > 0 else { return }
 
+        deliverConverted(monoBuffer, destination: destination)
+    }
+
+    private func deliverConverted(_ monoBuffer: AVAudioPCMBuffer, destination: Destinations) {
+        guard monoBuffer.frameLength > 0, let origin = conversionOrigin else { return }
         // Apply gain to boost audio levels using vDSP (SIMD-accelerated)
         if let monoData = monoBuffer.floatChannelData {
             let monoFrameCount = Int(monoBuffer.frameLength)
@@ -373,12 +415,35 @@ public final class ExternalMicCapture: @unchecked Sendable {
             vDSP_vclip(monoData[0], 1, &minVal, &maxVal, monoData[0], 1, vDSP_Length(monoFrameCount))
         }
 
-        // Pass absolute host clock time - SingleTrackAudioWriter needs this to
-        // calculate proper offset from segment start for track alignment
-        let presentationTime = CMClockGetTime(CMClockGetHostTimeClock())
+        let presentationTime = CMTimeAdd(origin, CMTime(value: emittedFrames, timescale: 48_000))
+        emittedFrames += Int64(monoBuffer.frameLength)
+        destination.audio?(monoBuffer, presentationTime)
+    }
 
-        // Send to callback (use captured callback, not property, to avoid race)
-        callback?(monoBuffer, presentationTime)
+    private func finishConversionStream(resetClock: Bool = true) {
+        if let converter = cachedConverter, let destination = conversionDestination {
+            var terminated = false
+            // A real boundary drains the finite converter tail; taps use noDataNow.
+            for _ in 0..<64 {
+                guard let output = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: 4096) else {
+                    destination.error?(NSError(domain: "SolstoneAudioConversion", code: 3)); break
+                }
+                var error: NSError?
+                let status = converter.convert(to: output, error: &error) { _, status in
+                    status.pointee = .endOfStream; return nil
+                }
+                if status == .error || error != nil {
+                    destination.error?(error ?? NSError(domain: "SolstoneAudioConversion", code: 4)); break
+                }
+                deliverConverted(output, destination: destination)
+                if status == .endOfStream { terminated = true; break }
+            }
+            if !terminated { destination.error?(NSError(domain: "SolstoneAudioConversion", code: 5)) }
+            converter.reset()
+        }
+        cachedConverter = nil; cachedSourceFormat = nil
+        conversionOrigin = nil; emittedFrames = 0; conversionDestination = nil
+        if resetClock { bufferClock.reset(); processingEpoch = nil; processingFormat = nil }
     }
 
     /// Convert buffer to mono at target sample rate

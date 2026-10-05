@@ -16,10 +16,12 @@ struct AudioCaptureRecorderTests {
         let initial = try read(root)
         #expect(initial["state"] as? String == "recording")
         #expect((initial["sources"] as? [[String: Any]])?.count == 2)
+        try recorder.admitSource("system", kind: "system")
         recorder.started("system")
         for _ in 0..<3 { recorder.failure("system", stage: "capture", error: NSError(domain: "test", code: 7)) }
         recorder.statistics("system", AudioWriterStatistics(receivedFrames: 1920, acceptedFrames: 960,
-            droppedFrames: 960, writerStatus: "completed", failures: [.init(stage: "append", domain: "test", code: 8, count: 2)], statisticsAvailable: true, statisticsComplete: true))
+            droppedFrames: 960, writerStatus: "completed", failures: [.init(stage: "append", domain: "test", code: 8, count: 2)],
+            generatedFrames: 1200, gapCount: 1, statisticsAvailable: true, statisticsComplete: true))
         recorder.failure("mic", stage: "start", error: NSError(domain: "test", code: 9))
         try recorder.seal()
         let terminal = try read(root)
@@ -173,6 +175,7 @@ struct AudioCaptureRecorderTests {
         let states = ["recording", "finished", "partial", "failed", "interrupted", "unknown"]
         var properties = fields(capture)
         properties["version"] = ["const": 1]
+        properties["timeline_version"] = ["const": 1]
         properties["state"] = ["enum": states]
         let source = (capture["sources"] as? [[String: Any]])!.first!
         var sourceProperties = fields(source)
@@ -184,6 +187,9 @@ struct AudioCaptureRecorderTests {
             "items": ["type": "object", "required": failure.keys.sorted(), "properties": fields(failure)]]
         sourceProperties["statistics_available"] = ["type": "boolean"]
         sourceProperties["statistics_complete"] = ["type": "boolean"]
+        sourceProperties["timeline_origin_seconds"] = ["const": 0]
+        sourceProperties["generated_frames"] = ["type": "integer", "minimum": 0]
+        sourceProperties["gap_count"] = ["type": "integer", "minimum": 0]
         properties["failures"] = sourceProperties["failures"]
         properties["sources"] = ["type": "array", "maxItems": AudioCaptureRecorder.sourceLimit,
             "items": ["type": "object", "required": ["accepted_frames", "dropped_frames", "expected", "failures", "kind", "received_frames", "source_id", "started", "state", "writer_status"], "properties": sourceProperties]]

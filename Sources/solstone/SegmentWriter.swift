@@ -86,6 +86,7 @@ public protocol SegmentAudioManaging: AnyObject, Sendable {
     func finishAll() async -> [AudioRemixerInput]
     func audioStatistics() -> [String: AudioWriterStatistics]
     func audioOwnership() -> AudioNativeOwnership?
+    func prepareToFinishCapture() -> CMTime
 }
 
 public extension SegmentAudioManaging {
@@ -93,6 +94,7 @@ public extension SegmentAudioManaging {
     func bindDiagnostics(_ recorder: AudioCaptureRecorder) {}
     func audioStatistics() -> [String: AudioWriterStatistics] { [:] }
     func audioOwnership() -> AudioNativeOwnership? { nil }
+    func prepareToFinishCapture() -> CMTime { CMClockGetTime(CMClockGetHostTimeClock()) }
 }
 
 extension ScreenshotCapturer: SegmentScreenshotCapturing {}
@@ -141,7 +143,7 @@ public final class SegmentWriter {
     private let silenceMusic: Bool
 
     /// Time when capture actually started (for computing actual duration)
-    private var captureStartTime: Date?
+    private var captureStartHostTime: CMTime?
 
     /// Shared finish task so concurrent lifecycle paths close the segment exactly once.
     private var finishTask: Task<SegmentCaptureResult?, Never>?
@@ -243,6 +245,8 @@ public final class SegmentWriter {
         var successfulSources: CaptureSources = []
         var screenError: Error?
         var micError: Error?
+        let segmentStartTime = CMClockGetTime(CMClockGetHostTimeClock())
+        captureStartHostTime = segmentStartTime
 
         let initialMics = micCaptureManager?.microphonesForStartup(fallback: mics) ?? mics
         var expected: [(id: String, kind: String)] = []
@@ -264,7 +268,6 @@ public final class SegmentWriter {
             manager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
             self.audioManager = manager
             manager?.bindDiagnostics(diagnostics)
-            let segmentStartTime = CMClockGetTime(CMClockGetHostTimeClock())
             manager?.setSegmentStartTime(segmentStartTime)
         } else {
             manager = nil
@@ -329,7 +332,10 @@ public final class SegmentWriter {
                 if sources.contains(.microphone) && !(micCaptureManager?.microphonesForStartup(fallback: mics) ?? mics).isEmpty {
                     let microphoneManager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
                     microphoneManager.bindDiagnostics(diagnostics)
-                    microphoneManager.setSegmentStartTime(CMClockGetTime(CMClockGetHostTimeClock()))
+                    // Screen rollback clears state; the microphone fallback is
+                    // still part of this same segment and keeps its origin.
+                    captureStartHostTime = segmentStartTime
+                    microphoneManager.setSegmentStartTime(segmentStartTime)
                     manager = microphoneManager
                     self.audioManager = microphoneManager
                 }
@@ -385,7 +391,6 @@ public final class SegmentWriter {
             throw SegmentError.failedToCreateAudioOutput
         }
 
-        captureStartTime = Date()
         Logger.capture.info("Started segment (\(successfulSources.logDescription, privacy: .public)): \(self.outputDirectory.lastPathComponent, privacy: .public)")
         return successfulSources
     }
@@ -461,7 +466,6 @@ public final class SegmentWriter {
     }
 
     private func performFinishCapture() async -> SegmentCaptureResult? {
-        let finishInstant = Date()
 
         // Stop all screenshot capturers first
         Logger.capture.info("Stopping \(self.screenshotCapturers.count, privacy: .public) screenshot capturer(s) for background remix...")
@@ -480,6 +484,7 @@ public final class SegmentWriter {
 
         // Clear system audio callback (stream keeps running for next segment)
         systemAudioCaptureManager?.clearCallback()
+        let captureCutoff = audioManager?.prepareToFinishCapture() ?? CMClockGetTime(CMClockGetHostTimeClock())
 
         // Capture mic metadata BEFORE finishAll() clears the state
         let micMetadata = getMicMetadata()
@@ -529,8 +534,8 @@ public final class SegmentWriter {
         }
 
         let capturedDurationSeconds: Int?
-        if let startTime = captureStartTime {
-            capturedDurationSeconds = clampedSegmentDurationSeconds(finishInstant.timeIntervalSince(startTime))
+        if let startTime = captureStartHostTime {
+            capturedDurationSeconds = clampedSegmentDurationSeconds(CMTimeSubtract(captureCutoff, startTime).seconds)
         } else {
             Logger.capture.warning("No capture start time recorded")
             capturedDurationSeconds = nil
@@ -591,7 +596,7 @@ public final class SegmentWriter {
         screenshotCapturers.removeAll()
         audioManager = nil
         systemAudioCaptureManager = nil
-        captureStartTime = nil
+        captureStartHostTime = nil
     }
 
     /// Errors that can occur during segment recording

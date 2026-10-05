@@ -3,7 +3,7 @@
 
 import Foundation
 
-private let audioFrameCounters = ["received_frames", "accepted_frames", "dropped_frames"]
+private let audioFrameCounters = ["received_frames", "accepted_frames", "dropped_frames", "generated_frames", "gap_count"]
 
 /// A complete observation must cover every retained counter. An older complete
 /// zero cannot turn a later, larger lower bound into complete statistics.
@@ -59,7 +59,9 @@ func mergeAudioCaptureMetadata(_ older: [String: Any], _ newer: [String: Any]) -
                     current["failures"] = mergeAudioFailures(previous["failures"] as? [[String: Any]] ?? [], row["failures"] as? [[String: Any]] ?? [])
                     let flags = mergeAudioStatisticsFlags(previous, row)
                     for (flag, value) in flags { current[flag] = value }
-                    for counter in audioFrameCounters { current[counter] = max(previous[counter] as? Int ?? 0, row[counter] as? Int ?? 0) }
+                    for counter in audioFrameCounters where previous[counter] != nil || row[counter] != nil {
+                        current[counter] = max(previous[counter] as? Int ?? 0, row[counter] as? Int ?? 0)
+                    }
                     for flag in ["expected", "started"] { current[flag] = previous[flag] as? Bool == true || row[flag] as? Bool == true }
                     if flags["statistics_complete"] == true, previous["statistics_complete"] as? Bool == true,
                        row["statistics_complete"] as? Bool != true { current["writer_status"] = previous["writer_status"] }

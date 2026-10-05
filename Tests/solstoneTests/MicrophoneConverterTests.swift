@@ -113,6 +113,168 @@ struct MicrophoneConverterTests {
         instance.stop()
     }
 
+    @Test(arguments: [44100.0, 48000.0, 96000.0])
+    func twoActualBoundariesDrainTailToOldWriterWithCaptureClock(rate: Double) async throws {
+        let root = try makeTempDirectory("converter-real-boundaries")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let instance = capture(), source = try format(rate), target = try format(48_000)
+        let identity = instance._engineIdentityForTesting
+        let base = mach_absolute_time()
+        let errors = LockedCounter()
+        for segment in 0..<2 {
+            let gain: Float = segment == 0 ? 1 : 2
+            instance.gainMultiplier = gain
+            let origin = base + AVAudioTime.hostTime(forSeconds: Double(segment))
+            let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("\(segment).m4a"),
+                trackType: .microphone(name: "test", deviceUID: "test"), segmentStartTime: CMClockMakeHostTimeFromSystemUnits(origin))
+            let samples = ConverterSamples()
+            let times = ConverterTimes()
+            instance.setCallbacks(audio: { buffer, time in
+                times.append(time, frames: Int(buffer.frameLength))
+                samples.append(buffer)
+                writer.appendPCMBuffer(buffer, presentationTime: time)
+            }, error: { _ in errors.increment() })
+            let count = Int(rate)
+            let signal = (0..<count).map { frame in Float(0.2 * sin(2 * .pi * (frame < count - 500 ? 220.0 : 660.0) * Double(frame) / rate)) }
+            instance._suspendProcessingForTesting()
+            var cursor = 0
+            for index in 0..<10 {
+                let frames = count / 10
+                let input = try pcm(signal[cursor..<(cursor + frames)], format: source)
+                let time = AVAudioTime(hostTime: origin + AVAudioTime.hostTime(forSeconds: Double(cursor) / rate),
+                    sampleTime: Int64(cursor), atRate: rate)
+                instance._enqueueForTesting(input, targetFormat: target, when: time)
+                cursor += frames
+                if index == 4 {
+                    instance._resumeProcessingForTesting()
+                    await instance.drain() // observation, not EOS
+                    if rate != 48_000 { #expect(instance._converterForTesting != nil) }
+                    instance._suspendProcessingForTesting()
+                }
+            }
+            instance.detachForBoundary()
+            instance._resumeProcessingForTesting()
+            await instance.drain()
+            #expect(instance._engineIdentityForTesting == identity)
+            let expected = try reference(signal, source: source, target: target).map { $0 * gain }
+            let actual = samples.samples
+            #expect(abs(actual.count - expected.count) <= 1)
+            #expect((zip(actual, expected).map { abs($0 - $1) }.max() ?? 0) < 0.0001)
+            let rows = times.rows
+            var emitted = 0
+            for row in rows {
+                #expect(abs(CMTimeSubtract(row.time, CMClockMakeHostTimeFromSystemUnits(origin)).seconds - Double(emitted) / 48_000) < 0.000001)
+                emitted += row.frames
+            }
+            #expect(emitted == actual.count)
+            let info = await writer.finish()
+            #expect(info.hasAudio && writer.statisticsSnapshot.acceptedFrames == actual.count)
+            #expect(writer.statisticsSnapshot.generatedFrames == 0 && writer.statisticsSnapshot.failures.isEmpty)
+            let asset = AVURLAsset(url: writer.url)
+            let track = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+            let reader = try AVAssetReader(asset: asset)
+            let output = AVAssetReaderTrackOutput(track: track, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM])
+            reader.add(output); #expect(reader.startReading())
+            var decoded = 0
+            while let buffer = output.copyNextSampleBuffer() { decoded += CMSampleBufferGetNumSamples(buffer) }
+            #expect(reader.status == .completed && decoded == actual.count)
+        }
+        #expect(errors.count == 0)
+        instance.stop()
+    }
+
+    @Test(arguments: [44100.0, 48000.0, 96000.0])
+    func primedStreamCrossingOriginKeepsEntireEligibleSuffix(rate: Double) async throws {
+        let root = try makeTempDirectory("converter-straddling-origin")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let instance = capture(), source = try format(rate), target = try format(48_000)
+        let base = mach_absolute_time(), before = 0.053375
+        let origin = CMClockMakeHostTimeFromSystemUnits(base)
+        let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("source.m4a"),
+            trackType: .microphone(name: "test", deviceUID: "test"),
+            segmentStartTime: CMTimeAdd(origin, CMTime(seconds: before, preferredTimescale: 48_000)))
+        let samples = ConverterSamples(), times = ConverterTimes(), errors = LockedCounter()
+        instance.setCallbacks(audio: { buffer, time in samples.append(buffer); times.append(time, frames: Int(buffer.frameLength)); writer.appendPCMBuffer(buffer, presentationTime: time) },
+            error: { _ in errors.increment() })
+        let signal = (0..<Int(rate)).map { frame in Float(0.2 * sin(2 * .pi * (frame < Int(rate) - 500 ? 220.0 : 660.0) * Double(frame) / rate)) }
+        instance._suspendProcessingForTesting()
+        var cursor = 0
+        for size in [1] + Array(repeating: Int(rate / 10), count: 9) + [Int(rate / 10) - 1] {
+            let time = AVAudioTime(hostTime: base + AVAudioTime.hostTime(forSeconds: Double(cursor) / rate),
+                sampleTime: Int64(cursor), atRate: rate)
+            instance._enqueueForTesting(try pcm(signal[cursor..<(cursor + size)], format: source), targetFormat: target, when: time)
+            cursor += size
+        }
+        instance.detachForBoundary(); instance._resumeProcessingForTesting(); await instance.drain()
+        let expected = try reference(signal, source: source, target: target)
+        #expect(errors.count == 0 && abs(samples.samples.count - expected.count) <= 1)
+        #expect((zip(samples.samples, expected).map { abs($0 - $1) }.max() ?? 0) < 0.0001)
+        _ = await writer.finish()
+        // Core Media rounds rational host/sample additions at its time scale.
+        // Ask its sample-specific API which samples actually own the boundary.
+        var eligible = 0
+        for row in times.rows {
+            var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 48_000),
+                presentationTimeStamp: row.time, decodeTimeStamp: .invalid)
+            var timingSample: CMSampleBuffer?
+            #expect(CMSampleBufferCreate(allocator: kCFAllocatorDefault, dataBuffer: nil, dataReady: false,
+                makeDataReadyCallback: nil, refcon: nil, formatDescription: target.formatDescription,
+                sampleCount: row.frames, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &timingSample) == noErr)
+            let oracle = try #require(timingSample)
+            for index in 0..<row.frames {
+                var sampleTiming = CMSampleTimingInfo()
+                #expect(CMSampleBufferGetSampleTimingInfo(oracle, at: index, timingInfoOut: &sampleTiming) == noErr)
+                if sampleTiming.presentationTimeStamp >= writer._segmentStartTimeForTesting { eligible += 1 }
+            }
+        }
+        let statistics = writer.statisticsSnapshot
+        #expect(statistics.receivedFrames == eligible && statistics.acceptedFrames == eligible)
+        #expect(statistics.droppedFrames == 0 && statistics.failures.isEmpty && (statistics.generatedFrames ?? 0) <= 1)
+        let asset = AVURLAsset(url: writer.url)
+        let track = try #require(try await asset.loadTracks(withMediaType: .audio).first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM])
+        reader.add(output); #expect(reader.startReading())
+        var decoded = 0
+        while let buffer = output.copyNextSampleBuffer() { decoded += CMSampleBufferGetNumSamples(buffer) }
+        #expect(reader.status == .completed && decoded == eligible + (statistics.generatedFrames ?? 0))
+        instance.stop()
+    }
+
+    @Test func queuedFormatChangeKeepsOldTailAndReanchorsNewStream() async throws {
+        let instance = capture(), target = try format(48_000)
+        let samples = ConverterSamples(), times = ConverterTimes(), errors = LockedCounter()
+        instance.setCallbacks(audio: { buffer, time in samples.append(buffer); times.append(time, frames: Int(buffer.frameLength)) },
+            error: { _ in errors.increment() })
+        let base = mach_absolute_time()
+        var expected: [Float] = []
+        instance._suspendProcessingForTesting()
+        for (index, rate) in [44_100.0, 96_000.0].enumerated() {
+            let source = try format(rate)
+            let signal = (0..<Int(rate)).map { frame in Float(0.2 * sin(2 * .pi * (frame < Int(rate) - 500 ? 220.0 : 660.0) * Double(frame) / rate)) }
+            expected += try reference(signal, source: source, target: target)
+            for tap in 0..<10 {
+                let start = tap * Int(rate / 10), end = (tap + 1) * Int(rate / 10)
+                let time = AVAudioTime(hostTime: base + AVAudioTime.hostTime(forSeconds: Double(index) + Double(start) / rate),
+                    sampleTime: Int64(start), atRate: rate)
+                instance._enqueueForTesting(try pcm(signal[start..<end], format: source), targetFormat: target, when: time)
+            }
+        }
+        instance.detachForBoundary(); instance._resumeProcessingForTesting()
+        await instance.drain()
+        #expect(errors.count == 0 && abs(samples.samples.count - expected.count) <= 2)
+        #expect((zip(samples.samples, expected).map { abs($0 - $1) }.max() ?? 0) < 0.0001)
+        let rows = times.rows
+        var cursor = 0
+        for row in rows {
+            #expect(abs(CMTimeSubtract(row.time, CMClockMakeHostTimeFromSystemUnits(base)).seconds - Double(cursor) / 48_000) < 0.0001)
+            cursor += row.frames
+        }
+        #expect(cursor == samples.samples.count)
+        instance.stop()
+    }
+
     @Test func nonzeroInputRanDryIsDeliveredWithGain() async throws {
         let instance = capture(gain: 2), source = try format(44_100), target = try format(48_000)
         let received = ConverterSamples(), errors = LockedCounter()
@@ -156,9 +318,19 @@ struct MicrophoneConverterTests {
         for channel in 0..<3 { memset(try #require(buffer.int16ChannelData)[channel], 0, 16 * 2) }
         instance._enqueueForTesting(buffer, targetFormat: target)
         await instance.drain()
-        #expect(errors.count == 1 && received.frameCounts.count == 3)
+        #expect(errors.count == 1)
+        let expected = try reference(Array(repeating: Float(0.8), count: 13_231), source: source, target: target).map { min(1, $0 * 2) }
+        #expect(abs(received.samples.count - expected.count) <= 1)
+        #expect((zip(received.samples, expected).map { abs($0 - $1) }.max() ?? 0) < 0.0001)
         instance.stop()
     }
+}
+
+private final class ConverterTimes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [(time: CMTime, frames: Int)] = []
+    var rows: [(time: CMTime, frames: Int)] { lock.withLock { stored } }
+    func append(_ time: CMTime, frames: Int) { lock.withLock { stored.append((time, frames)) } }
 }
 
 private final class ConverterSamples: @unchecked Sendable {

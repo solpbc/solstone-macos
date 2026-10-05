@@ -22,10 +22,14 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
         var writer_status = "recording"
         var statistics_available: Bool?
         var statistics_complete: Bool?
+        var timeline_origin_seconds: Double?
+        var generated_frames: Int?
+        var gap_count: Int?
         var failures: [AudioRecordingFailure] = []
     }
     private struct Capture: Encodable {
         let version = 1
+        let timeline_version = 1
         var state = "recording"
         let app_version: String
         let app_build: String
@@ -41,6 +45,9 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
     private var handedOff = false
     private let onFirstFailure: (@Sendable () -> Void)?
     private var notified = false
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+    internal var _persistenceHookForTesting: (@Sendable () -> Void)?
+#endif
 
     public init(directory: URL, timePrefix: String, expected: [(id: String, kind: String)],
                 appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
@@ -74,6 +81,24 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
         }
     }
 
+    /// Required origin is durable before AVAssetWriter can create a recoverable
+    /// prefix, including microphones added after the segment has started.
+    public func admitSource(_ id: String, kind: String) throws {
+        try lock.withLock {
+            guard !sealed, !handedOff else { throw NSError(domain: "SolstoneAudioOrigin", code: 1) }
+            if index(id) == nil {
+                guard capture.sources.count < Self.sourceLimit else { throw NSError(domain: "SolstoneAudioOrigin", code: 2) }
+                capture.sources.append(Source(source_id: id, kind: kind))
+            }
+            capture.sources[index(id)!].timeline_origin_seconds = 0
+            do { try queue.sync { try persist(capture) } }
+            catch {
+                addFailure(index(id)!, AudioRecordingFailure(stage: "origin", domain: "SolstoneAudioOrigin", code: 3))
+                throw error
+            }
+        }
+    }
+
     public func failure(_ id: String, stage: String, error: Error) {
         let native = error as NSError
         lock.withLock {
@@ -101,13 +126,23 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
             var oldValues: [String: Any] = ["received_frames": old.received_frames, "accepted_frames": old.accepted_frames, "dropped_frames": old.dropped_frames]
             if let value = old.statistics_available { oldValues["statistics_available"] = value }
             if let value = old.statistics_complete { oldValues["statistics_complete"] = value }
+            if let value = old.generated_frames { oldValues["generated_frames"] = value }
+            if let value = old.gap_count { oldValues["gap_count"] = value }
             var newValues: [String: Any] = ["received_frames": statistics.receivedFrames, "accepted_frames": statistics.acceptedFrames, "dropped_frames": statistics.droppedFrames]
             if let value = statistics.statisticsAvailable { newValues["statistics_available"] = value }
             if let value = statistics.statisticsComplete { newValues["statistics_complete"] = value }
+            if let value = statistics.generatedFrames { newValues["generated_frames"] = value }
+            if let value = statistics.gapCount { newValues["gap_count"] = value }
             let flags = mergeAudioStatisticsFlags(oldValues, newValues)
             capture.sources[index].received_frames = max(old.received_frames, statistics.receivedFrames)
             capture.sources[index].accepted_frames = max(old.accepted_frames, statistics.acceptedFrames)
             capture.sources[index].dropped_frames = max(old.dropped_frames, statistics.droppedFrames)
+            if old.generated_frames != nil || statistics.generatedFrames != nil {
+                capture.sources[index].generated_frames = max(old.generated_frames ?? 0, statistics.generatedFrames ?? 0)
+            }
+            if old.gap_count != nil || statistics.gapCount != nil {
+                capture.sources[index].gap_count = max(old.gap_count ?? 0, statistics.gapCount ?? 0)
+            }
             capture.sources[index].statistics_available = flags["statistics_available"]
             capture.sources[index].statistics_complete = flags["statistics_complete"]
             if old.statistics_complete != true || statistics.statisticsComplete == true || flags["statistics_complete"] != true {
@@ -195,6 +230,9 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
     }
 
     private func persist(_ capture: Capture) throws {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        _persistenceHookForTesting?()
+#endif
         let encoded = try JSONEncoder().encode(capture)
         let value = try JSONSerialization.jsonObject(with: encoded)
         var metadata: [String: Any] = [:]

@@ -194,8 +194,13 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     }
 
     public func clearAllCallbacksAndDrain() async {
-        let detached = detachCallbacks()
-        for capture in detached { await capture.drain() }
+        let detached = detachForBoundary()
+        for entry in detached.values { await entry.capture.drain() }
+    }
+
+    internal func detachForBoundary() -> [String: (capture: ExternalMicCapture, cutoff: CMTime)] {
+        let all = lock.withLock { captures }
+        return all.mapValues { capture in (capture, capture.detachForBoundary()) }
     }
 
     private func detachCallbacks() -> [ExternalMicCapture] {

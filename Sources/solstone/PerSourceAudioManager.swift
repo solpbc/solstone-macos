@@ -34,6 +34,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     private var segmentStartTime: CMTime?
     private let verbose: Bool
     private let lock = NSLock()
+    private let boundaryLock = NSLock()
 
     /// Shared capture manager for persistent mic captures
     private let captureManager: MicrophoneCaptureManager?
@@ -43,6 +44,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     private let gain: Float
 
     private var isFinishing = false
+    private var admissionClosed = false
+    private var boundaryCaptures: [String: (capture: ExternalMicCapture, cutoff: CMTime)] = [:]
+    private var systemCutoff: CMTime?
     private var diagnostics: AudioCaptureRecorder?
 
     public func bindDiagnostics(_ recorder: AudioCaptureRecorder) {
@@ -101,9 +105,10 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     public func startSystemAudio() throws -> String {
         lock.lock()
         defer { lock.unlock() }
-        guard !isFinishing else { throw SegmentWriter.SegmentError.segmentFinishing }
+        guard !isFinishing, !admissionClosed else { throw SegmentWriter.SegmentError.segmentFinishing }
 
         let sourceID = AudioTrackType.systemSourceID
+        try diagnostics?.admitSource(sourceID, kind: "system")
 
         guard sourceWriters[sourceID] == nil else {
             return sourceID
@@ -129,7 +134,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Append system audio sample buffer
     public func appendSystemAudio(_ sampleBuffer: CMSampleBuffer) {
         lock.lock()
-        guard let source = sourceWriters[AudioTrackType.systemSourceID], !isFinishing else {
+        guard let source = sourceWriters[AudioTrackType.systemSourceID], !isFinishing, !admissionClosed else {
             lock.unlock()
             return
         }
@@ -145,7 +150,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     public func addMicrophone(_ device: AudioInputDevice) throws -> String {
         lock.lock()
         defer { lock.unlock() }
-        guard !isFinishing else { throw SegmentWriter.SegmentError.segmentFinishing }
+        guard !isFinishing, !admissionClosed else { throw SegmentWriter.SegmentError.segmentFinishing }
 
         let sourceID = device.uid
         if captureManager?.allowsCapture(deviceUID: sourceID) == false {
@@ -162,6 +167,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         let url = makeURL(for: sourceID)
         let startTime = segmentStartTime ?? CMClockGetTime(CMClockGetHostTimeClock())
         let existing = sourceWriters[sourceID]
+        try diagnostics?.admitSource(sourceID, kind: "microphone")
         let writer = try existing?.writer ?? SingleTrackAudioWriter(
             url: url,
             trackType: .microphone(name: device.name, deviceUID: device.uid),
@@ -261,18 +267,21 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Note: Mic captures are NOT stopped here - they persist across segments
     /// - Returns: Array of remix inputs with timing info
     public func finishAll() async -> [AudioRemixerInput] {
+        _ = prepareToFinishCapture()
         guard let writers = takeWritersForFinish() else { return [] }
 
         // Clear all mic callbacks (engines keep running, just no destination)
         // This prevents audio from being written to the old segment's writers
-        await captureManager?.clearAllCallbacksAndDrain()
+        let boundaries = lock.withLock { boundaryCaptures }
+        for boundary in boundaries.values { await boundary.capture.drain() }
 
         // Finish all writers and collect timing info
         var inputs: [AudioRemixerInput] = []
 
-        for (_, source) in writers {
+        for (id, source) in writers {
             source.legacyCapture?.stop()
-            let timingInfo = await source.writer.finish()
+            let cutoff = source.attached ? (id == AudioTrackType.systemSourceID ? systemCutoff : boundaries[id]?.cutoff) : nil
+            let timingInfo = await source.writer.finish(captureCutoff: cutoff)
             let input = AudioRemixerInput(url: source.writer.url, timingInfo: timingInfo)
             inputs.append(input)
         }
@@ -293,6 +302,24 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         return inputs
     }
 
+    @discardableResult
+    public func prepareToFinishCapture() -> CMTime {
+        boundaryLock.withLock {
+        let shouldDetach = lock.withLock { () -> Bool in
+            guard !admissionClosed else { return false }
+            admissionClosed = true
+            return true
+        }
+        guard shouldDetach else { return lock.withLock { systemCutoff ?? CMClockGetTime(CMClockGetHostTimeClock()) } }
+        var boundaries = captureManager?.detachForBoundary() ?? [:]
+        let legacy = lock.withLock { sourceWriters.compactMapValues(\.legacyCapture) }
+        for (id, capture) in legacy { boundaries[id] = (capture, capture.detachForBoundary()) }
+        let cutoff = CMClockGetTime(CMClockGetHostTimeClock())
+        lock.withLock { boundaryCaptures = boundaries; systemCutoff = cutoff }
+        return cutoff
+        }
+    }
+
     private func takeWritersForFinish() -> [String: SourceWriter]? {
         lock.lock()
         defer { lock.unlock() }
@@ -309,6 +336,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         lock.lock()
         sourceWriters.removeAll()
         finishingWriters.removeAll()
+        boundaryCaptures.removeAll()
         finishCompleted = true
         micMetadata.removeAll()
         lock.unlock()
