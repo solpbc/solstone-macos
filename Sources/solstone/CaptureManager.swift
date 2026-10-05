@@ -690,7 +690,9 @@ public final class CaptureManager {
             capturedDurationSeconds: result.capturedDurationSeconds,
             audioInputs: result.audioInputs,
             silenceMusic: result.silenceMusic,
-            micMetadataJSON: result.micMetadataJSON
+            micMetadataJSON: result.micMetadataJSON,
+            audioDiagnostics: result.audioDiagnostics,
+            audioOwnership: result.audioOwnership
         )
         await finalizer.enqueue(job)
     }

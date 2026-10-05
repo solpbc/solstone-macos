@@ -39,6 +39,21 @@ public struct SegmentCaptureResult: Sendable {
     public let audioInputs: [AudioRemixerInput]
     public let silenceMusic: Bool
     public let micMetadataJSON: String?
+    public let audioDiagnostics: AudioCaptureRecorder?
+    public let audioOwnership: AudioNativeOwnership?
+
+    public init(segmentDirectory: URL, timePrefix: String, capturedDurationSeconds: Int?,
+                audioInputs: [AudioRemixerInput], silenceMusic: Bool, micMetadataJSON: String?,
+                audioDiagnostics: AudioCaptureRecorder? = nil, audioOwnership: AudioNativeOwnership? = nil) {
+        self.segmentDirectory = segmentDirectory
+        self.timePrefix = timePrefix
+        self.capturedDurationSeconds = capturedDurationSeconds
+        self.audioInputs = audioInputs
+        self.silenceMusic = silenceMusic
+        self.micMetadataJSON = micMetadataJSON
+        self.audioDiagnostics = audioDiagnostics
+        self.audioOwnership = audioOwnership
+    }
 }
 
 @MainActor
@@ -69,11 +84,15 @@ public protocol SegmentAudioManaging: AnyObject, Sendable {
     func activeMicrophoneUIDs() -> [String]
     func getMicMetadata() -> [[String: Any]]
     func finishAll() async -> [AudioRemixerInput]
+    func audioStatistics() -> [String: AudioWriterStatistics]
+    func audioOwnership() -> AudioNativeOwnership?
 }
 
 public extension SegmentAudioManaging {
     func deselectMicrophone(deviceUID: String) { removeMicrophone(deviceUID: deviceUID) }
     func bindDiagnostics(_ recorder: AudioCaptureRecorder) {}
+    func audioStatistics() -> [String: AudioWriterStatistics] { [:] }
+    func audioOwnership() -> AudioNativeOwnership? { nil }
 }
 
 extension ScreenshotCapturer: SegmentScreenshotCapturing {}
@@ -517,6 +536,7 @@ public final class SegmentWriter {
             capturedDurationSeconds = nil
         }
 
+        for (id, statistics) in audioManager?.audioStatistics() ?? [:] { audioDiagnostics?.statistics(id, statistics) }
         do { try audioDiagnostics?.seal() }
         catch {
             Logger.capture.error("Segment audio metadata could not be saved; preserving failed segment")
@@ -532,7 +552,9 @@ public final class SegmentWriter {
             capturedDurationSeconds: capturedDurationSeconds,
             audioInputs: audioInputs,
             silenceMusic: silenceMusic,
-            micMetadataJSON: micMetadataJSON
+            micMetadataJSON: micMetadataJSON,
+            audioDiagnostics: audioDiagnostics,
+            audioOwnership: audioManager?.audioOwnership()
         )
     }
 

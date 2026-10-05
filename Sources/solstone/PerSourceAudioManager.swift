@@ -6,6 +6,14 @@ import CoreMedia
 import Foundation
 import os
 
+/// Retained by finalization independently of the metadata recorder. A sealed
+/// sidecar does not imply that AVAssetWriter has stopped owning its file.
+public final class AudioNativeOwnership: Sendable {
+    private let query: @Sendable () -> Bool
+    public init(isQuiescent: @escaping @Sendable () -> Bool) { query = isQuiescent }
+    public var isQuiescent: Bool { query() }
+}
+
 /// Manages individual audio writers per source
 /// Handles dynamic microphone additions/removals during segment
 /// Uses MicrophoneCaptureManager for persistent mic captures across segments
@@ -18,6 +26,8 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     }
 
     private var sourceWriters: [String: SourceWriter] = [:]  // keyed by source ID
+    private var finishingWriters: [String: SourceWriter] = [:]
+    private var finishCompleted = false
     private var micMetadata: [String: AudioInputDevice] = [:]  // keyed by device UID
     private let outputDirectory: URL
     private let timePrefix: String
@@ -37,6 +47,15 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
     public func bindDiagnostics(_ recorder: AudioCaptureRecorder) {
         lock.withLock { diagnostics = recorder }
+    }
+
+    public func audioStatistics() -> [String: AudioWriterStatistics] {
+        let writers = lock.withLock { sourceWriters.merging(finishingWriters) { _, finishing in finishing } }
+        return writers.mapValues { $0.writer.statisticsSnapshot }
+    }
+
+    public func audioOwnership() -> AudioNativeOwnership? {
+        AudioNativeOwnership { [self] in lock.withLock { finishCompleted } }
     }
 
     /// Initialize with shared capture manager (preferred - keeps mics running across segments)
@@ -242,8 +261,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Note: Mic captures are NOT stopped here - they persist across segments
     /// - Returns: Array of remix inputs with timing info
     public func finishAll() async -> [AudioRemixerInput] {
-        let writers = takeWritersForFinish()
-        guard !writers.isEmpty else { return [] }
+        guard let writers = takeWritersForFinish() else { return [] }
 
         // Clear all mic callbacks (engines keep running, just no destination)
         // This prevents audio from being written to the old segment's writers
@@ -275,12 +293,13 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         return inputs
     }
 
-    private func takeWritersForFinish() -> [String: SourceWriter] {
+    private func takeWritersForFinish() -> [String: SourceWriter]? {
         lock.lock()
         defer { lock.unlock() }
-        guard !isFinishing else { return [:] }
+        guard !isFinishing else { return nil }
         isFinishing = true
         let writers = sourceWriters
+        finishingWriters = writers
         sourceWriters.removeAll()
         return writers
     }
@@ -289,6 +308,8 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     private func clearState() {
         lock.lock()
         sourceWriters.removeAll()
+        finishingWriters.removeAll()
+        finishCompleted = true
         micMetadata.removeAll()
         lock.unlock()
     }

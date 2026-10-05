@@ -66,9 +66,13 @@ public struct AudioWriterStatistics: Codable, Sendable {
     public var droppedFrames: Int = 0
     public var writerStatus: String = "recording"
     public var failures: [AudioRecordingFailure] = []
+    /// Absent in older evidence. Incomplete counters are observed lower bounds.
+    public var statisticsAvailable: Bool?
+    public var statisticsComplete: Bool?
     enum CodingKeys: String, CodingKey {
         case receivedFrames = "received_frames", acceptedFrames = "accepted_frames"
         case droppedFrames = "dropped_frames", writerStatus = "writer_status", failures
+        case statisticsAvailable = "statistics_available", statisticsComplete = "statistics_complete"
     }
 }
 
@@ -82,7 +86,12 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private let segmentStartTime: CMTime
     private let verbose: Bool
     private let onStatistics: (@Sendable (AudioWriterStatistics) -> Void)?
-    private var statistics = AudioWriterStatistics()
+    private var statistics = AudioWriterStatistics(statisticsAvailable: true, statisticsComplete: false)
+    // Native append/finalization may hold `lock` indefinitely. Evidence and
+    // ownership queries never acquire it or call AVFoundation.
+    private let snapshotLock = NSLock()
+    private var publishedStatistics = AudioWriterStatistics(statisticsAvailable: true, statisticsComplete: false)
+    private var nativeQuiescent = false
 
     private var sessionStarted = false
     private var isFinished = false
@@ -92,8 +101,9 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
 #if DEBUG || SOLSTONE_TEST_SUPPORT
     internal private(set) var _appendAttemptCountForTesting: Int = 0
     internal var _fragmentIntervalsForTesting: (CMTime, CMTime) { (writer.movieFragmentInterval, writer.initialMovieFragmentInterval) }
-    internal var _acceptedFramesForTesting: Int { lock.withLock { statistics.acceptedFrames } }
+    internal var _acceptedFramesForTesting: Int { statisticsSnapshot.acceptedFrames }
     internal var _finishAdmissionHookForTesting: (@Sendable () async -> Void)?
+    internal var _nativeAppendHookForTesting: (@Sendable () -> Void)?
 #endif
 
     // Silence batching state
@@ -171,6 +181,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
 
         let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
         statistics.receivedFrames += numSamples
+        publishStatistics()
         let currentTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         if !sessionStarted {
             guard writer.status == .unknown, writer.startWriting() else {
@@ -310,9 +321,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             var accepted = false
 #if DEBUG || SOLSTONE_TEST_SUPPORT
             _appendAttemptCountForTesting += 1
+            _nativeAppendHookForTesting?()
 #endif
             try ObjCExceptionCatcher.`try` { accepted = input.append(buffer) }
-            if accepted { statistics.acceptedFrames += frames }
+            if accepted { statistics.acceptedFrames += frames; publishStatistics() }
             else { recordFailure(stage: "append", error: writer.error, dropped: frames) }
         } catch { recordFailure(stage: "append", error: error, dropped: frames) }
     }
@@ -327,9 +339,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             statistics.failures[index].count += 1
         } else if statistics.failures.count < 16 {
             statistics.failures.append(failure)
-            onStatistics?(statistics)
             Logger.audio.notice("Audio writer issue: \(stage, privacy: .public), code \(failure.code, privacy: .public)")
         }
+        publishStatistics()
+        onStatistics?(statistics)
     }
 
     private func sampleDuration(_ sample: CMSampleBuffer) -> CMTime {
@@ -407,6 +420,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             lock.withLock {
                 guard !isFinished else { return }
                 statistics.receivedFrames += Int(buffer.frameLength)
+                publishStatistics()
                 recordFailure(stage: "convert", error: nil, dropped: Int(buffer.frameLength))
             }
             Logger.audio.warning("Failed to convert PCM buffer to CMSampleBuffer for \(self.trackType.displayName, privacy: .public)")
@@ -487,6 +501,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             statistics.writerStatus = statistics.receivedFrames == 0 && statistics.failures.isEmpty ? "no_audio"
                 : (writer.status == .completed ? "completed" : "failed")
             if wasStarted && writer.status != .completed { recordFailure(stage: "finish", error: writer.error) }
+            statistics.statisticsComplete = true
+            publishStatistics(quiescent: true)
             return statistics
         }
         onStatistics?(finalStatistics)
@@ -503,6 +519,17 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     /// Returns the output file URL
     public var url: URL {
         return outputURL
+    }
+
+    public var statisticsSnapshot: AudioWriterStatistics { snapshotLock.withLock { publishedStatistics } }
+    public var nativeWriterIsQuiescent: Bool { snapshotLock.withLock { nativeQuiescent } }
+
+    /// Called under the writer lock, before and after potentially blocking calls.
+    private func publishStatistics(quiescent: Bool = false) {
+        snapshotLock.withLock {
+            publishedStatistics = statistics
+            if quiescent { nativeQuiescent = true }
+        }
     }
 
     // MARK: - Private

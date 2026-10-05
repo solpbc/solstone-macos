@@ -469,7 +469,7 @@ struct RemixQueueTimeoutTests {
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_1", isDirectory: true).path))
     }
 
-    @Test func orphanDurationProbeTimeoutStampsCeilingAndFinalizes() async throws {
+    @Test func orphanDurationProbeTimeoutPreservesFailedWithoutInventedDuration() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-duration-timeout")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -488,11 +488,11 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
 
-        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
     }
 
-    @Test func orphanWithoutMP4MarksFailedWithoutCompletionAndReleasesInFlight() async throws {
+    @Test func orphanWithoutMP4MarksFailedWithFailureCompletionAndReleasesInFlight() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-no-mp4")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -509,11 +509,11 @@ struct RemixQueueTimeoutTests {
         await queue.waitForCompletion()
 
         #expect(FileManager.default.fileExists(atPath: failedDir.path))
-        #expect(completionCount.count == 0)
+        #expect(completionCount.count == 1)
         #expect(await queue.inFlightPaths().isEmpty)
     }
 
-    @Test func orphanWithInvalidDurationMP4MarksFailedWithoutCompletion() async throws {
+    @Test func orphanWithInvalidDurationMP4MarksFailedWithFailureCompletion() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-invalid-duration")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -537,7 +537,7 @@ struct RemixQueueTimeoutTests {
         await queue.waitForCompletion()
 
         #expect(FileManager.default.fileExists(atPath: failedDir.path))
-        #expect(completionCount.count == 0)
+        #expect(completionCount.count == 1)
     }
 
     @Test func orphanWithCorruptAudioFinalizesScreenOnlyWithAudioLoss() async throws {
@@ -802,7 +802,7 @@ struct RemixQueueTimeoutTests {
     }
 
     @MainActor
-    @Test func orphanMixedThrowAndTimeoutStampsCeilingWithoutFailure() async throws {
+    @Test func orphanMixedThrowAndTimeoutPreservesFailedWithoutInventedDuration() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-throw-and-timeout")
         let previousDuration = SegmentWriter.segmentDuration
         SegmentWriter.segmentDuration = 300
@@ -835,11 +835,11 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
 
-        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
     }
 
-    @Test func orphanAllScreenProbesThrowMarksFailedWithoutCompletion() async throws {
+    @Test func orphanAllScreenProbesThrowMarksFailedWithFailureCompletion() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-all-throw")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -863,7 +863,7 @@ struct RemixQueueTimeoutTests {
         let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
         #expect(FileManager.default.fileExists(atPath: failedDir.path))
         #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
-        #expect(completionCount.count == 0)
+        #expect(completionCount.count == 1)
     }
 
     @MainActor
@@ -906,7 +906,7 @@ struct RemixQueueTimeoutTests {
     }
 
     @MainActor
-    @Test func orphanAllScreenProbesTimeoutStampsCeilingWithoutFailure() async throws {
+    @Test func orphanAllScreenProbesTimeoutPreservesFailedWithoutInventedDuration() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-all-timeout")
         let previousDuration = SegmentWriter.segmentDuration
         SegmentWriter.segmentDuration = 300
@@ -932,12 +932,12 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
 
-        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
     }
 
     @MainActor
-    @Test func orphanAllGarbageStampsFromLexicallyFirstNotLaterClamp() async throws {
+    @Test func orphanAllGarbagePreservesFailedWithoutInventedDuration() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-all-garbage")
         let previousDuration = SegmentWriter.segmentDuration
         SegmentWriter.segmentDuration = 300
@@ -968,13 +968,13 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
 
-        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_1", isDirectory: true).path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
     }
 
     @MainActor
-    @Test func orphanTimeoutOutranksGarbageAndStampsCeiling() async throws {
+    @Test func orphanTimeoutOutranksGarbageAndPreservesFailedWithoutInventedDuration() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-timeout-outranks-garbage")
         let previousDuration = SegmentWriter.segmentDuration
         SegmentWriter.segmentDuration = 300
@@ -1007,13 +1007,13 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
 
-        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_1", isDirectory: true).path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
     }
 
     @MainActor
-    @Test func orphanGarbageOutranksThrowAndStampsFirstGarbage() async throws {
+    @Test func orphanGarbageOutranksThrowAndPreservesFailedWithoutInventedDuration() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-garbage-outranks-throw")
         let previousDuration = SegmentWriter.segmentDuration
         SegmentWriter.segmentDuration = 300
@@ -1044,8 +1044,8 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
 
-        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_1", isDirectory: true).path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_1", isDirectory: true).path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
     }
 
@@ -1078,7 +1078,7 @@ struct RemixQueueTimeoutTests {
     }
 
     @MainActor
-    @Test func orphanCompletingNonFiniteDurationProbeStampsCeilingWithoutFailure() async throws {
+    @Test func orphanCompletingNonFiniteDurationProbePreservesFailedWithoutInventedDuration() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-invalid-cmtime-ceiling")
         let previousDuration = SegmentWriter.segmentDuration
         SegmentWriter.segmentDuration = 300
@@ -1105,12 +1105,10 @@ struct RemixQueueTimeoutTests {
         await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
         await queue.waitForCompletion()
 
-        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
-        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000_300", isDirectory: true).path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
         let outcome = try #require(completedOutcome.current)
-        if case .failed = outcome {
-            Issue.record("Expected non-failed reconciliation")
-        }
+        if case .failed = outcome {} else { Issue.record("Expected failed reconciliation") }
     }
 
     @Test func liveShapedUnreadableAudioPreservesRecoverableVideoOnFinalize() async throws {
@@ -1681,7 +1679,7 @@ struct RemixQueueTimeoutTests {
         #expect(completionCount.count == 1)
     }
 
-    @Test func orphanSingleM4AProbeThrowMarksFailedWithoutCompletion() async throws {
+    @Test func orphanSingleM4AProbeThrowMarksFailedWithFailureCompletion() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-m4a-throw")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -1704,7 +1702,7 @@ struct RemixQueueTimeoutTests {
         let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
         #expect(FileManager.default.fileExists(atPath: failedDir.path))
         #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
-        #expect(completionCount.count == 0)
+        #expect(completionCount.count == 1)
     }
 }
 

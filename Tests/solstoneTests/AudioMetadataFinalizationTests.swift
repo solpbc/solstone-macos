@@ -33,8 +33,29 @@ struct AudioMetadataFinalizationTests {
         #expect(capture["state"] as? String == "interrupted")
         let remix = try #require((capture["remix"] as? [[String: Any]])?.first)
         #expect(remix["state"] as? String == (complete ? "complete" : "partial"))
+        if complete { #expect(remix["stage"] == nil && remix["error_code"] == nil && remix["error_domain"] == nil) }
         #expect((remix["prior_outcome"] as? [String: Any])?["state"] as? String == "unreadable")
         #expect(FileManager.default.fileExists(atPath: final.appendingPathComponent("120000_1_audio_mic.m4a").path) == !complete)
+    }
+
+    @Test func orphanSuccessfulCopyCannotBlessCaptureLeftRecording() async throws {
+        let root = try makeTempDirectory("audio-orphan-terminal-source")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("120000.incomplete")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let recorder = try AudioCaptureRecorder(directory: dir, timePrefix: "120000", expected: [("system", "system")])
+        recorder.started("system")
+        try recorder.handoff() // The process-death sidecar never reached seal().
+        try Data("already consolidated".utf8).write(to: dir.appendingPathComponent("120000_audio.m4a"))
+        let queue = RemixQueue()
+        await queue.enqueue(job(dir: dir, inputs: []))
+        await queue.waitForCompletion()
+        let meta = try metadata(root.appendingPathComponent("120000_1/120000_1_meta.json"))
+        let capture = try #require(meta["audio_capture"] as? [String: Any])
+        let source = try #require((capture["sources"] as? [[String: Any]])?.first)
+        #expect(capture["state"] as? String == "interrupted" && source["state"] as? String == "interrupted")
+        #expect(source["writer_status"] as? String == "unknown")
+        #expect(source["statistics_available"] as? Bool == false && source["statistics_complete"] as? Bool == false)
     }
 
     @Test func metadataWriteFailureKeepsFullyRemixedRaw() async throws {

@@ -40,6 +40,7 @@ public enum SegmentReconciliation: Sendable {
 public actor RemixQueue {
     public typealias RemixerFactory = @Sendable (_ verbose: Bool) -> any AudioRemixing
     public typealias DurationLoader = @Sendable (_ url: URL) async throws -> CMTime
+    public typealias DirectoryLister = @Sendable (_ url: URL) throws -> [URL]
 
     /// Data needed to process a remix in the background
     public struct RemixJob: Sendable {
@@ -49,6 +50,21 @@ public actor RemixQueue {
         let audioInputs: [AudioRemixerInput]
         let silenceMusic: Bool
         let micMetadataJSON: String?
+        let audioDiagnostics: AudioCaptureRecorder?
+        let audioOwnership: AudioNativeOwnership?
+
+        public init(segmentDirectory: URL, timePrefix: String, capturedDurationSeconds: Int?,
+                    audioInputs: [AudioRemixerInput], silenceMusic: Bool, micMetadataJSON: String?,
+                    audioDiagnostics: AudioCaptureRecorder? = nil, audioOwnership: AudioNativeOwnership? = nil) {
+            self.segmentDirectory = segmentDirectory
+            self.timePrefix = timePrefix
+            self.capturedDurationSeconds = capturedDurationSeconds
+            self.audioInputs = audioInputs
+            self.silenceMusic = silenceMusic
+            self.micMetadataJSON = micMetadataJSON
+            self.audioDiagnostics = audioDiagnostics
+            self.audioOwnership = audioOwnership
+        }
     }
 
     /// Pending jobs waiting to be processed
@@ -70,6 +86,8 @@ public actor RemixQueue {
     private let durationProbeTimeoutSeconds: TimeInterval
     private let durationLoader: DurationLoader
     private let remixerFactory: RemixerFactory
+    private let directoryLister: DirectoryLister
+    private let nativeQuiescenceTimeoutSeconds: TimeInterval
 
     /// Shared instance
     public static let shared = RemixQueue()
@@ -77,9 +95,11 @@ public actor RemixQueue {
     init(
         remixTimeoutSeconds: TimeInterval = 60,
         durationProbeTimeoutSeconds: TimeInterval = 3,
+        directoryLister: @escaping DirectoryLister = { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil) },
         durationLoader: @escaping DurationLoader = { url in
             try await AVURLAsset(url: url).load(.duration)
         },
+        nativeQuiescenceTimeoutSeconds: TimeInterval = 1,
         remixerFactory: @escaping RemixerFactory = { verbose in
             AudioRemixer(verbose: verbose)
         }
@@ -88,6 +108,8 @@ public actor RemixQueue {
         self.durationProbeTimeoutSeconds = durationProbeTimeoutSeconds
         self.durationLoader = durationLoader
         self.remixerFactory = remixerFactory
+        self.directoryLister = directoryLister
+        self.nativeQuiescenceTimeoutSeconds = nativeQuiescenceTimeoutSeconds
     }
 
     init(remixerFactory: @escaping RemixerFactory) {
@@ -158,7 +180,25 @@ public actor RemixQueue {
     /// Process a single remix job
     private func processJob(_ job: RemixJob) async {
         let key = job.segmentDirectory.standardizedFileURL.path
-        defer { inFlightDirectoryPaths.remove(key) }
+        var releaseInFlight = true
+        defer { if releaseInFlight { inFlightDirectoryPaths.remove(key) } }
+
+        let quiescent = await waitForNativeQuiescence(job.audioOwnership)
+        do { try job.audioDiagnostics?.handoff() }
+        catch {
+            let quarantined = await preserveTerminalFailure(job, stage: "metadata_handoff", error: error,
+                message: "segment metadata could not be saved; segment preserved for recovery")
+            releaseInFlight = quiescent || quarantined
+            return
+        }
+        guard quiescent else {
+            // A readable fragment prefix is not a stable snapshot of a file
+            // still owned by AVAssetWriter. Never remix, delete or promote it.
+            releaseInFlight = await preserveTerminalFailure(job, stage: "native_ownership",
+                error: NSError(domain: "SolstoneAudioWriter", code: 2),
+                message: "audio finalization is incomplete; segment preserved for recovery")
+            return
+        }
 
         let fm = FileManager.default
 
@@ -168,29 +208,26 @@ public actor RemixQueue {
             actualDuration = await clampedSegmentDurationSeconds(TimeInterval(capturedDurationSeconds))
         } else {
             do {
-                let files = try fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)
+                let files = try directoryLister(job.segmentDirectory)
                 let screenCandidates = files
                     .filter { $0.pathExtension == "mp4" }
                     .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
-                if !screenCandidates.isEmpty {
-                    guard let resolved = await resolveOrphanDuration(candidates: screenCandidates) else {
-                        await markIncompleteSegmentAsFailed(job.segmentDirectory)
-                        return
-                    }
-                    actualDuration = resolved
-                } else {
-                    let audioCandidates = files
-                        .filter { $0.pathExtension == "m4a" }
-                        .sorted { $0.lastPathComponent < $1.lastPathComponent }
-                    guard let resolved = await resolveOrphanDuration(candidates: audioCandidates) else {
-                        await markIncompleteSegmentAsFailed(job.segmentDirectory)
-                        return
-                    }
-                    actualDuration = resolved
+                let audioCandidates = files.filter { $0.pathExtension == "m4a" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+                let videoDuration = await resolveOrphanDuration(candidates: screenCandidates)
+                let resolved: Int?
+                if let videoDuration { resolved = videoDuration }
+                else { resolved = await resolveOrphanDuration(candidates: audioCandidates) }
+                guard let resolved else {
+                    await preserveTerminalFailure(job, stage: "duration", error: NSError(domain: "SolstoneSegmentDuration", code: 1),
+                        message: "segment duration could not be measured; segment preserved for recovery",
+                        sourceFiles: audioSourceFiles(in: files, timePrefix: job.timePrefix))
+                    return
                 }
+                actualDuration = resolved
             } catch {
-                await markIncompleteSegmentAsFailed(job.segmentDirectory)
+                await preserveTerminalFailure(job, stage: "listing", error: error,
+                    message: "segment files could not be read; segment preserved for recovery")
                 return
             }
         }
@@ -235,7 +272,13 @@ public actor RemixQueue {
                 return
             }
         } else {
-            let files = (try? fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)) ?? []
+            let files: [URL]
+            do { files = try directoryLister(job.segmentDirectory) }
+            catch {
+                await preserveTerminalFailure(job, stage: "listing", error: error,
+                    message: "segment files could not be read; segment preserved for recovery")
+                return
+            }
             let timePrefixAudioURL = job.segmentDirectory.appendingPathComponent("\(job.timePrefix)_audio.m4a")
             let hasConsolidatedAudio = fm.fileExists(atPath: audioOutputURL.path)
                 || fm.fileExists(atPath: timePrefixAudioURL.path)
@@ -308,7 +351,7 @@ public actor RemixQueue {
 
         // Rename segment files to include duration
         do {
-            let files = try fm.contentsOfDirectory(at: job.segmentDirectory, includingPropertiesForKeys: nil)
+            let files = try directoryLister(job.segmentDirectory)
             for fileURL in files {
                 let filename = fileURL.lastPathComponent
 
@@ -352,8 +395,6 @@ public actor RemixQueue {
 
     private func resolveOrphanDuration(candidates: [URL]) async -> Int? {
         var realSeconds: [TimeInterval] = []
-        var sawTimeout = false
-        var garbageSeconds: [TimeInterval] = []
 
         for candidate in candidates {
             do {
@@ -363,11 +404,7 @@ public actor RemixQueue {
                 let seconds = CMTimeGetSeconds(duration)
                 if seconds.isFinite && seconds > 0 {
                     realSeconds.append(seconds)
-                } else {
-                    garbageSeconds.append(seconds)
                 }
-            } catch is TimeoutError {
-                sawTimeout = true
             } catch {
                 // unusable — continue to the next candidate
             }
@@ -375,13 +412,36 @@ public actor RemixQueue {
 
         if let maxReal = realSeconds.max() {
             return await clampedSegmentDurationSeconds(maxReal)
-        } else if sawTimeout {
-            return await clampedSegmentDurationSeconds(.infinity)
-        } else if let firstGarbage = garbageSeconds.first {
-            return await clampedSegmentDurationSeconds(firstGarbage)
         } else {
             return nil
         }
+    }
+
+    private func waitForNativeQuiescence(_ ownership: AudioNativeOwnership?) async -> Bool {
+        guard let ownership else { return true }
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(nativeQuiescenceTimeoutSeconds))
+        while !ownership.isQuiescent && clock.now < deadline && !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return ownership.isQuiescent
+    }
+
+    @discardableResult
+    private func preserveTerminalFailure(_ job: RemixJob, stage: String, error: Error, message: String,
+                                         sourceFiles: [URL] = []) async -> Bool {
+        let native = error as NSError
+        let failure = AudioRecordingFailure(stage: stage, domain: String(native.domain.prefix(128)), code: native.code)
+        let sourceIDs = Array(Set(job.audioInputs.map { $0.timingInfo.trackType.sourceID }
+            + sourceFiles.map { parseTrackType(from: $0.lastPathComponent, timePrefix: job.timePrefix).sourceID })).sorted()
+        do {
+            try writeMetadataIfNeeded(segmentDirectory: job.segmentDirectory, timePrefix: job.timePrefix,
+                segmentKey: job.timePrefix, micMetadataJSON: job.micMetadataJSON, unreadableSourceIDs: nil,
+                remixSources: [], terminalFailure: failure, failedSourceIDs: sourceIDs)
+        } catch { Logger.storage.error("Could not persist terminal segment failure; keeping all source files: \(error, privacy: .public)") }
+        let quarantined = await markIncompleteSegmentAsFailed(job.segmentDirectory)
+        await onSegmentComplete?(job.segmentDirectory, .failed(message))
+        return quarantined
     }
 
     private func preserveFailedRemix(_ job: RemixJob, segmentKey: String, inputs: [AudioRemixerInput],
@@ -398,7 +458,8 @@ public actor RemixQueue {
 
     private func writeMetadataIfNeeded(segmentDirectory: URL, timePrefix: String, segmentKey: String,
                                        micMetadataJSON: String?, unreadableSourceIDs: [String]?,
-                                       remixSources: [AudioSourceRemixResult]) throws {
+                                       remixSources: [AudioSourceRemixResult], terminalFailure: AudioRecordingFailure? = nil,
+                                       failedSourceIDs: [String] = []) throws {
         let metaURL = segmentDirectory.appendingPathComponent("\(timePrefix)_meta.json")
         let finalMetaURL = segmentDirectory.appendingPathComponent("\(segmentKey)_meta.json")
         let fm = FileManager.default
@@ -419,6 +480,30 @@ public actor RemixQueue {
             }
             root.merge(dictionary) { _, current in current }
         }
+        if let terminalFailure {
+            let failure = try JSONSerialization.jsonObject(with: JSONEncoder().encode(terminalFailure)) as! [String: Any]
+            var capture = root["audio_capture"] as? [String: Any] ?? ["version": 1, "state": "unknown", "sources": []]
+            var sources = capture["sources"] as? [[String: Any]] ?? []
+            for id in failedSourceIDs where !sources.contains(where: { $0["source_id"] as? String == id }) && sources.count < AudioCaptureRecorder.sourceLimit {
+                sources.append(["source_id": id, "kind": id == AudioTrackType.systemSourceID ? "system" : "microphone",
+                    "expected": true, "started": false, "state": "unknown", "received_frames": 0, "accepted_frames": 0,
+                    "dropped_frames": 0, "writer_status": "unknown", "statistics_available": false,
+                    "statistics_complete": false, "failures": [failure]])
+            }
+            for index in sources.indices {
+                if !["partial", "failed"].contains(sources[index]["state"] as? String ?? "") { sources[index]["state"] = "unknown" }
+                if sources[index]["statistics_complete"] as? Bool != true {
+                    sources[index]["writer_status"] = "unknown"
+                    sources[index]["statistics_available"] = sources[index]["statistics_available"] as? Bool ?? false
+                    sources[index]["statistics_complete"] = false
+                }
+                sources[index]["failures"] = mergeAudioFailures(sources[index]["failures"] as? [[String: Any]] ?? [], [failure])
+            }
+            capture["sources"] = Array(sources.prefix(AudioCaptureRecorder.sourceLimit))
+            capture["failures"] = mergeAudioFailures(capture["failures"] as? [[String: Any]] ?? [], [failure])
+            capture["state"] = "failed"
+            root["audio_capture"] = capture
+        }
         if !remixSources.isEmpty {
             var capture = root["audio_capture"] as? [String: Any] ?? ["version": 1, "state": "unknown", "sources": []]
             let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(remixSources)) as! [[String: Any]]
@@ -427,6 +512,19 @@ public actor RemixQueue {
             root["audio_capture"] = capture
         } else if var capture = root["audio_capture"] as? [String: Any], (capture["state"] as? String) == "recording" {
             capture["state"] = "interrupted"
+            root["audio_capture"] = capture
+        }
+        // An orphan has no live writer capable of completing its statistics.
+        // A successful copy is separate evidence; it cannot bless capture rows
+        // left in "recording" by process death.
+        if var capture = root["audio_capture"] as? [String: Any], var sources = capture["sources"] as? [[String: Any]] {
+            for index in sources.indices where sources[index]["writer_status"] as? String == "recording" {
+                sources[index]["writer_status"] = "unknown"
+                sources[index]["statistics_available"] = sources[index]["statistics_available"] as? Bool ?? false
+                sources[index]["statistics_complete"] = false
+                if sources[index]["state"] as? String == "recording" { sources[index]["state"] = "interrupted" }
+            }
+            capture["sources"] = sources
             root["audio_capture"] = capture
         }
         if unreadableSourceIDs != nil || root["unreadable_audio_sources"] != nil {

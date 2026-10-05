@@ -20,6 +20,8 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
         var accepted_frames = 0
         var dropped_frames = 0
         var writer_status = "recording"
+        var statistics_available: Bool?
+        var statistics_complete: Bool?
         var failures: [AudioRecordingFailure] = []
     }
     private struct Capture: Encodable {
@@ -36,6 +38,7 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
     private let segmentID: String
     private var capture: Capture
     private var sealed = false
+    private var handedOff = false
     private let onFirstFailure: (@Sendable () -> Void)?
     private var notified = false
 
@@ -81,9 +84,9 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
 
     public func finishFailure(_ error: Error) {
         lock.withLock {
-            guard !sealed else { return }
+            guard !handedOff else { return }
             let native = error as NSError
-            capture.state = "partial"
+            if capture.state != "failed" { capture.state = "partial" }
             for index in capture.sources.indices {
                 addFailure(index, AudioRecordingFailure(stage: "finish", domain: String(native.domain.prefix(128)), code: native.code))
             }
@@ -93,11 +96,23 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
 
     public func statistics(_ id: String, _ statistics: AudioWriterStatistics) {
         lock.withLock {
-            guard !sealed, let index = index(id) else { return }
-            capture.sources[index].received_frames = statistics.receivedFrames
-            capture.sources[index].accepted_frames = statistics.acceptedFrames
-            capture.sources[index].dropped_frames = statistics.droppedFrames
-            capture.sources[index].writer_status = statistics.writerStatus
+            guard !handedOff, let index = index(id) else { return }
+            let old = capture.sources[index]
+            var oldValues: [String: Any] = ["received_frames": old.received_frames, "accepted_frames": old.accepted_frames, "dropped_frames": old.dropped_frames]
+            if let value = old.statistics_available { oldValues["statistics_available"] = value }
+            if let value = old.statistics_complete { oldValues["statistics_complete"] = value }
+            var newValues: [String: Any] = ["received_frames": statistics.receivedFrames, "accepted_frames": statistics.acceptedFrames, "dropped_frames": statistics.droppedFrames]
+            if let value = statistics.statisticsAvailable { newValues["statistics_available"] = value }
+            if let value = statistics.statisticsComplete { newValues["statistics_complete"] = value }
+            let flags = mergeAudioStatisticsFlags(oldValues, newValues)
+            capture.sources[index].received_frames = max(old.received_frames, statistics.receivedFrames)
+            capture.sources[index].accepted_frames = max(old.accepted_frames, statistics.acceptedFrames)
+            capture.sources[index].dropped_frames = max(old.dropped_frames, statistics.droppedFrames)
+            capture.sources[index].statistics_available = flags["statistics_available"]
+            capture.sources[index].statistics_complete = flags["statistics_complete"]
+            if old.statistics_complete != true || statistics.statisticsComplete == true || flags["statistics_complete"] != true {
+                capture.sources[index].writer_status = statistics.writerStatus
+            }
             for failure in statistics.failures {
                 if let old = capture.sources[index].failures.firstIndex(where: {
                     $0.stage == failure.stage && $0.domain == failure.domain && $0.code == failure.code
@@ -107,24 +122,51 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
             }
             if statistics.droppedFrames > 0 || statistics.writerStatus == "failed" {
                 capture.sources[index].state = "partial"
-                capture.state = "partial"
+                if capture.state != "failed" { capture.state = "partial" }
+            }
+            if sealed {
+                terminalSource(index)
+                checkpoint()
             }
         }
     }
 
     /// Terminal persistence is a gate: failure leaves the local segment recoverable.
     public func seal(failed: Bool = false) throws {
-        let snapshot = lock.withLock { () -> Capture in
+        try lock.withLock {
+            guard !handedOff else { return }
             sealed = true
             if failed { capture.state = "failed" }
             else if capture.state == "recording" { capture.state = "finished" }
-            for index in capture.sources.indices where capture.sources[index].state == "recording" {
-                capture.sources[index].state = ["completed", "no_audio"].contains(capture.sources[index].writer_status) ? "finished" : "unknown"
-            }
+            for index in capture.sources.indices { terminalSource(index) }
+            if capture.state == "finished", capture.sources.contains(where: { $0.state == "unknown" }) { capture.state = "unknown" }
+            try queue.sync { try persist(capture) }
+            Logger.audio.notice("Audio segment \(self.segmentID, privacy: .public): \(self.capture.state, privacy: .public), sources \(self.capture.sources.count, privacy: .public)")
+        }
+    }
+
+    /// Close callback admission, then drain/persist before the finalizer reads,
+    /// merges or renames the sidecar. Late callbacks cannot recreate its old path.
+    public func handoff() throws {
+        let snapshot = lock.withLock { () -> Capture? in
+            guard !handedOff else { return nil }
+            handedOff = true
             return capture
         }
+        guard let snapshot else { return }
         try queue.sync { try persist(snapshot) }
-        Logger.audio.notice("Audio segment \(self.segmentID, privacy: .public): \(snapshot.state, privacy: .public), sources \(snapshot.sources.count, privacy: .public)")
+    }
+
+    private func terminalSource(_ index: Int) {
+        if capture.sources[index].statistics_available == nil { capture.sources[index].statistics_available = false }
+        if capture.sources[index].statistics_complete != true {
+            capture.sources[index].statistics_complete = false
+            capture.sources[index].writer_status = "unknown"
+        }
+        if ["recording", "unknown"].contains(capture.sources[index].state) {
+            capture.sources[index].state = capture.sources[index].statistics_complete == true
+                && ["completed", "no_audio"].contains(capture.sources[index].writer_status) ? "finished" : "unknown"
+        }
     }
 
     private func index(_ id: String) -> Int? { capture.sources.firstIndex { $0.source_id == id } }
@@ -139,7 +181,7 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
     }
 
     private func addFailure(_ index: Int, _ failure: AudioRecordingFailure) {
-        capture.state = "partial"
+        if capture.state != "failed" { capture.state = "partial" }
         capture.sources[index].state = "partial"
         if !notified { notified = true; onFirstFailure?() }
         if let existing = capture.sources[index].failures.firstIndex(where: {
