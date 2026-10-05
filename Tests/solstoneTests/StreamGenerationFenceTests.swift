@@ -32,7 +32,9 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
 
         #expect(manager.isRunning == false)
         #expect(factory.createdStreams.count == 2)
-        #expect(restartingStream.stopCount.count == 1)
+        // Stop before start completes cannot establish final native quiescence.
+        // The late successful start must be stopped again before retirement.
+        #expect(restartingStream.stopCount.count == 2)
         #expect(manager._restartDecisionTraceForTesting.contains(suppressedTrace))
         #expect(manager._restartDecisionTraceForTesting.contains(proceedingTrace))
     }
@@ -207,40 +209,22 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
         #expect(followupStream.startCount.count == 1)
     }
 
-    @Test func startBumpHappensBeforeFirstAwait() async throws {
-        let oldStream = FakeCaptureStream()
-        let startGate = OneShotContinuationGate()
-        let newStream = FakeCaptureStream(startGates: [startGate])
-        let staleStream = FakeCaptureStream()
-        let factory = FakeCaptureStreamFactory([oldStream, newStream, staleStream])
+    @Test func repeatedSegmentStartKeepsRecoveryGenerationAndLatestFilter() async throws {
+        let factory = FakeCaptureStreamFactory([FakeCaptureStream(), FakeCaptureStream()])
         let manager = SystemAudioCaptureManager(streamFactory: factory.factory)
         try await manager.start(filter: SCContentFilter())
-
-        let parkGate = OneShotContinuationGate()
-        let parkCount = LockedCounter()
-        manager._restartParkHookForTesting = {
-            parkCount.increment()
-            await parkGate.wait()
-        }
-
-        let restartTask = Task { @MainActor in
-            await manager._restartStreamForTesting()
-        }
-        await parkCount.waitUntilCount(1)
-
-        let startTask = Task { @MainActor in
-            try? await manager.start(filter: SCContentFilter())
-        }
-        await newStream.startCount.waitUntilCount(1)
-
-        parkGate.release()
-        await restartTask.value
-
-        #expect(factory.createdStreams.count == 2)
-        #expect(manager._restartDecisionTraceForTesting.contains(suppressedTrace))
-
-        startGate.release()
-        await startTask.value
+        let generation = manager._streamGenerationForTesting
+        let gate = OneShotContinuationGate(), parked = LockedCounter()
+        manager._restartParkHookForTesting = { parked.increment(); await gate.wait() }
+        let recovery = Task { await manager._restartStreamForTesting() }
+        await parked.waitUntilCount(1)
+        let latest = SCContentFilter()
+        try await manager.start(filter: latest)
+        #expect(manager._streamGenerationForTesting == generation && factory.createdStreams.count == 1)
+        gate.release(); await recovery.value
+        #expect(manager.isRunning && factory.createdStreams.count == 2)
+        #expect(factory.createdFilters.last === latest)
+        await manager.stop()
     }
 
     @Test func systemAudioRestartUsesLiveFilterOnProceed() async throws {

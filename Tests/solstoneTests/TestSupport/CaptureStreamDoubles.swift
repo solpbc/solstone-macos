@@ -14,6 +14,12 @@ final class FakeCaptureStream: CaptureStreamControlling, @unchecked Sendable {
     private let lock = NSLock()
     private let startError: Error?
     private let addOutputError: Error?
+    private var storedStopError: Error?
+    private var storedUpdateError: Error?
+    private var storedUpdatedFilters: [SCContentFilter] = []
+    var stopError: Error? { get { lock.withLock { storedStopError } } set { lock.withLock { storedStopError = newValue } } }
+    var updateError: Error? { get { lock.withLock { storedUpdateError } } set { lock.withLock { storedUpdateError = newValue } } }
+    var updatedFilters: [SCContentFilter] { lock.withLock { storedUpdatedFilters } }
     private var startGates: [OneShotContinuationGate]
     private var stopGates: [OneShotContinuationGate]
     private var updateGates: [OneShotContinuationGate]
@@ -23,10 +29,14 @@ final class FakeCaptureStream: CaptureStreamControlling, @unchecked Sendable {
         stopGates: [OneShotContinuationGate] = [],
         updateGates: [OneShotContinuationGate] = [],
         startError: Error? = nil,
-        addOutputError: Error? = nil
+        addOutputError: Error? = nil,
+        stopError: Error? = nil,
+        updateError: Error? = nil
     ) {
         self.startError = startError
         self.addOutputError = addOutputError
+        self.storedStopError = stopError
+        self.storedUpdateError = updateError
         self.startGates = startGates
         self.stopGates = stopGates
         self.updateGates = updateGates
@@ -54,11 +64,14 @@ final class FakeCaptureStream: CaptureStreamControlling, @unchecked Sendable {
     func stopCapture() async throws {
         stopCount.increment()
         await popStopGate()?.wait()
+        if let stopError { throw stopError }
     }
 
     func updateContentFilter(_ filter: SCContentFilter) async throws {
         updateCount.increment()
+        lock.withLock { storedUpdatedFilters.append(filter) }
         await popUpdateGate()?.wait()
+        if let updateError { throw updateError }
     }
 
     private func popStartGate() -> OneShotContinuationGate? {

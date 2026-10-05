@@ -25,6 +25,9 @@ public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked
     private var _onAudioBuffer: ((CMSampleBuffer) -> Void)?
 
     private let verbose: Bool
+    private let onValidAudio: (@Sendable (SystemAudioStreamOutput) -> Void)?
+    private var audioAcknowledgementPending = false
+    private var audioAcknowledged = false
 
     // Buffer counting for logging and health checks
     private var systemAudioBufferCount: Int = 0
@@ -43,8 +46,11 @@ public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked
 
     /// Creates a system audio stream output
     /// - Parameter verbose: Enable verbose logging
-    public init(verbose: Bool = false) {
+    public convenience init(verbose: Bool = false) { self.init(verbose: verbose, onValidAudio: nil) }
+
+    internal init(verbose: Bool = false, onValidAudio: (@Sendable (SystemAudioStreamOutput) -> Void)?) {
         self.verbose = verbose
+        self.onValidAudio = onValidAudio
         super.init()
     }
 
@@ -61,12 +67,26 @@ public final class SystemAudioStreamOutput: NSObject, SCStreamOutput, @unchecked
     /// Detaching waits for admitted buffers to enqueue on their segment writer.
     /// The destination must enqueue promptly and must not change this callback.
     internal func deliverAudio(_ buffer: CMSampleBuffer) {
+        guard CMSampleBufferIsValid(buffer), CMSampleBufferDataIsReady(buffer), CMSampleBufferGetNumSamples(buffer) > 0,
+              let format = CMSampleBufferGetFormatDescription(buffer),
+              CMFormatDescriptionGetMediaType(format) == kCMMediaType_Audio else { return }
         logLock.lock()
         defer { logLock.unlock() }
         systemAudioBufferCount += 1
         totalBufferCount += 1
         logAudioBuffersIfNeeded()
         _onAudioBuffer?(buffer)
+        if !audioAcknowledged, !audioAcknowledgementPending, let onValidAudio {
+            audioAcknowledgementPending = true
+            onValidAudio(self)
+        }
+    }
+
+    internal func completeAudioAcknowledgement(_ accepted: Bool) {
+        logLock.lock()
+        defer { logLock.unlock() }
+        audioAcknowledgementPending = false
+        audioAcknowledged = accepted
     }
 
     /// Logs audio buffer counts every 60 seconds (must be called with logLock held)

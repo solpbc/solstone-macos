@@ -86,7 +86,7 @@ struct SystemAudioRecoveryTests {
         await manager.stop()
     }
 
-    @Test func failedRestartRemainsRetryableAndReportsFailure() async throws {
+    @Test func failedRestartUsesRemainingBoundedAttemptAndReportsFailure() async throws {
         let factory = FakeCaptureStreamFactory([
             FakeCaptureStream(), FakeCaptureStream(startError: failure), FakeCaptureStream(),
         ])
@@ -97,10 +97,9 @@ struct SystemAudioRecoveryTests {
         let received = LockedCounter()
         manager.setCallback(onError: { _ in errors.increment() }) { _ in received.increment() }
         await manager._handleStreamErrorForTesting(failure)
-        #expect(!manager.isRunning)
-        #expect(errors.count == 2)
-        await manager._performHealthCheckForTesting()
         #expect(manager.isRunning)
+        #expect(errors.count == 2)
+        #expect(factory.createdStreams.count == 3)
         manager._streamOutputForTesting?.onAudioBuffer?(try makeNonSilentAudioSampleBuffer(seconds: 0.02))
         #expect(received.count == 1)
         await manager.stop()

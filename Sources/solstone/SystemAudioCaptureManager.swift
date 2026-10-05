@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import CoreAudio
 import CoreMedia
 import Foundation
 import os
@@ -32,6 +33,18 @@ public final class SystemAudioCaptureManager {
     private var activeStreamID: UUID?
     private var isRecovering = false
     private var recoveryAttempts = 0
+    private var sessionRequested = false
+    private var interruptionRevision: UInt64 = 0
+    private var unresolvedInterruption: Error?
+    private var retiringStreams: [UUID: any CaptureStreamControlling] = [:]
+    private var pendingNativeOperations: [UUID: Int] = [:]
+    private var cleanupTasks: [UUID: Task<Void, Error>] = [:]
+    private var invalidateRestartListener: (() -> Void)?
+    private var listenerRevision: UInt64 = 0
+    private var resetRecoveryScheduled = false
+    private var pendingServiceReset = false
+    internal typealias RestartListenerFactory = @MainActor (@escaping @MainActor () -> Void) throws -> (() -> Void)
+    private let restartListenerFactory: RestartListenerFactory
     private let operationTimeoutSeconds: Double
     private let verbose: Bool
     private let streamFactory: CaptureStreamFactory
@@ -39,6 +52,9 @@ public final class SystemAudioCaptureManager {
     internal private(set) var _restartDecisionTraceForTesting: [String] = []
     internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
     internal var _stopParkHookForTesting: (@MainActor () async -> Void)?
+    internal var _ackParkHookForTesting: (@MainActor () async -> Void)?
+    internal var _resetAdmissionParkHookForTesting: (@MainActor () async -> Void)?
+    internal var _resetRecoveryScheduledForTesting: Bool { resetRecoveryScheduled }
     internal var _streamGenerationForTesting: Int { streamGeneration }
 #endif
 
@@ -52,30 +68,170 @@ public final class SystemAudioCaptureManager {
         self.init(verbose: verbose, streamFactory: defaultCaptureStreamFactory)
     }
 
-    internal init(verbose: Bool = false, streamFactory: @escaping CaptureStreamFactory, operationTimeoutSeconds: Double = 5) {
+    internal init(verbose: Bool = false, streamFactory: @escaping CaptureStreamFactory, operationTimeoutSeconds: Double = 5,
+                  restartListenerFactory: @escaping RestartListenerFactory = SystemAudioCaptureManager.liveRestartListenerFactory) {
         self.verbose = verbose
         self.streamFactory = streamFactory
         self.operationTimeoutSeconds = operationTimeoutSeconds
+        self.restartListenerFactory = restartListenerFactory
+    }
+
+    private static func liveRestartListenerFactory(_ onChange: @escaping @MainActor () -> Void) throws -> (() -> Void) {
+        let listener = HALPropertyListener(objectID: AudioObjectID(kAudioObjectSystemObject),
+            selector: kAudioHardwarePropertyServiceRestarted, onChange: onChange)
+        guard listener.registrationStatus == noErr else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(listener.registrationStatus))
+        }
+        return { listener.invalidate() }
+    }
+
+    private func registerRestartListener() {
+        invalidateRestartListener?(); invalidateRestartListener = nil
+        listenerRevision &+= 1
+        let revision = listenerRevision
+        guard sessionRequested else { return }
+        do {
+            invalidateRestartListener = try restartListenerFactory { [weak self] in
+                guard let self, self.sessionRequested, self.listenerRevision == revision else { return }
+                self.handleServiceRestart()
+            }
+        } catch {
+            onCaptureError?(error)
+            Logger.audio.error("[SystemAudio] HAL restart observation unavailable: \(error, privacy: .public)")
+        }
+    }
+
+    private func handleServiceRestart() {
+        guard sessionRequested else { return }
+        recordInterruption(NSError(domain: "SolstoneAudioTransport", code: 1))
+        registerRestartListener()
+        retireCurrentTransport()
+        if !isRecovering { recoveryAttempts = 0 }
+        pendingServiceReset = true
+        scheduleResetRecovery()
+    }
+
+    private func scheduleResetRecovery() {
+        guard sessionRequested, pendingServiceReset, !isRecovering, !resetRecoveryScheduled else { return }
+        resetRecoveryScheduled = true
+        let generation = streamGeneration
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.resetRecoveryScheduled = false
+                self.scheduleResetRecovery()
+            }
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+            if let hook = self._resetAdmissionParkHookForTesting { await hook() }
+#endif
+            guard self.sessionRequested, self.streamGeneration == generation, self.pendingServiceReset else { return }
+            self.pendingServiceReset = false
+            await self.restartStream()
+        }
+    }
+
+    private func recordInterruption(_ error: Error) {
+        interruptionRevision &+= 1
+        unresolvedInterruption = error
+        onCaptureError?(error)
+    }
+
+    private func acknowledgeAudio(streamID: UUID, revision: UInt64) async -> Bool {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        if let hook = _ackParkHookForTesting { await hook() }
+#endif
+        guard sessionRequested, activeStreamID == streamID, stream != nil,
+              interruptionRevision == revision else { return false }
+        unresolvedInterruption = nil
+        recoveryAttempts = 0
+        consecutiveEmptyChecks = 0
+        return true
+    }
+
+    private func retireCurrentTransport() {
+        streamOutput?.onAudioBuffer = nil
+        if let stream, let activeStreamID { retiringStreams[activeStreamID] = stream }
+        stream = nil; streamOutput = nil; streamDelegate = nil; activeStreamID = nil
+    }
+
+    /// Retain ownership on unknown cleanup failure; never overlap a replacement.
+    private func cleanupRetiredTransport(only: UUID? = nil) async throws {
+        for (id, retired) in retiringStreams where only == nil || only == id {
+            guard retiringStreams[id] === retired else { continue }
+            let cleanup: Task<Void, Error>
+            if let existing = cleanupTasks[id] { cleanup = existing }
+            else {
+                cleanup = Task { @MainActor in
+                    defer { self.cleanupTasks.removeValue(forKey: id) }
+                    do { try await retired.stopCapture() }
+                    catch let error as NSError where error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && error.code == -3808 {}
+                }
+                cleanupTasks[id] = cleanup
+            }
+            try await withTimeout(seconds: operationTimeoutSeconds) { try await cleanup.value }
+            // A stop result cannot prove quiescence while an earlier start or
+            // filter update may still resume inside the native framework.
+            guard pendingNativeOperations[id, default: 0] == 0 else {
+                throw NSError(domain: "SolstoneAudioTransport", code: 2)
+            }
+            if retiringStreams[id] === retired { retiringStreams.removeValue(forKey: id) }
+        }
+    }
+
+    private func startNativeTransport(_ transport: any CaptureStreamControlling, id: UUID) async throws {
+        pendingNativeOperations[id, default: 0] += 1
+        defer { endNativeOperation(id) }
+        try await transport.startCapture()
+        if Task.isCancelled {
+            try? await transport.stopCapture()
+            throw CancellationError()
+        }
+    }
+
+    private func endNativeOperation(_ id: UUID) {
+        let remaining = pendingNativeOperations[id, default: 1] - 1
+        if remaining == 0 { pendingNativeOperations.removeValue(forKey: id) }
+        else { pendingNativeOperations[id] = remaining }
+    }
+
+    private func endSessionAdmission() {
+        sessionRequested = false
+        pendingServiceReset = false
+        listenerRevision &+= 1
+        invalidateRestartListener?(); invalidateRestartListener = nil
+        stopHealthCheck()
     }
 
     /// Start the system audio capture stream
     /// - Parameter filter: The content filter to use
     /// - Throws: If stream fails to start
     public func start(filter: SCContentFilter) async throws {
-        streamGeneration += 1
-        let gen = streamGeneration
         currentFilter = filter
-        recoveryAttempts = 0
-
-        // Already running - just update filter if needed
-        if stream != nil {
-            Logger.audio.info("[SystemAudio] Stream already running, updating filter only")
-            try await updateContentFilter(filter)
+        if sessionRequested {
+            if isRecovering || resetRecoveryScheduled { return }
+            if stream != nil { try await updateContentFilter(filter); return }
+            await restartStream()
             return
         }
-
-        if try await startStream(filter: filter, gen: gen, traceProceed: false) {
-            startHealthCheck()
+        streamGeneration += 1
+        let gen = streamGeneration
+        sessionRequested = true
+        interruptionRevision &+= 1
+        unresolvedInterruption = nil
+        recoveryAttempts = 0
+        let initialRevision = interruptionRevision
+        registerRestartListener()
+        startHealthCheck()
+        do {
+            try await cleanupRetiredTransport()
+            let started = try await startStream(filter: filter, gen: gen, traceProceed: false)
+            if !started, sessionRequested, streamGeneration == gen { await restartStream() }
+        } catch {
+            if sessionRequested, streamGeneration == gen, interruptionRevision == initialRevision {
+                recordInterruption(error)
+                if isPermissionError(error) || isUserStoppedStreamError(error) { endSessionAdmission() }
+            }
+            throw error
         }
     }
 
@@ -84,10 +240,16 @@ public final class SystemAudioCaptureManager {
         Logger.audio.info("[SystemAudio] Starting persistent SCStream...")
 
         // Create stream output
-        let output = SystemAudioStreamOutput(verbose: verbose)
+        let streamID = UUID()
+        let revision = interruptionRevision
+        let output = SystemAudioStreamOutput(verbose: verbose, onValidAudio: { [weak self] output in
+            Task { @MainActor in
+                let accepted = await self?.acknowledgeAudio(streamID: streamID, revision: revision) ?? false
+                output.completeAudioAcknowledgement(accepted)
+            }
+        })
 
         // Create delegate to handle stream errors
-        let streamID = UUID()
         let delegate = StreamDelegate { [weak self] error in
             Task { @MainActor in
                 await self?.handleStreamError(error, streamID: streamID)
@@ -119,94 +281,84 @@ public final class SystemAudioCaptureManager {
         let newStream = streamFactory(filter, config, delegate)
         try newStream.addStreamOutput(output, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
 
-        // Start capture
-        if verbose { Logger.audio.debug("[SystemAudio] Calling startCapture()...") }
         activeStreamID = streamID
+        retiringStreams[streamID] = newStream
         do {
             try await withTimeout(seconds: operationTimeoutSeconds) {
-                try await newStream.startCapture()
-                if Task.isCancelled {
-                    try? await newStream.stopCapture()
-                    throw CancellationError()
-                }
+                try await self.startNativeTransport(newStream, id: streamID)
+            }
+            guard sessionRequested, streamGeneration == gen, activeStreamID == streamID,
+                  interruptionRevision == revision else {
+                appendRestartSuppressedTraceForTesting()
+                retiringStreams[streamID] = newStream
+                try await cleanupRetiredTransport(only: streamID)
+                return false
+            }
+            try await withTimeout(seconds: operationTimeoutSeconds) {
+                try await self.applyLatestFilter(to: newStream, id: streamID, initial: filter, generation: gen, revision: revision)
             }
         } catch {
             if activeStreamID == streamID { activeStreamID = nil }
+            retiringStreams[streamID] = newStream
+            do { try await cleanupRetiredTransport(only: streamID) }
+            catch { Logger.audio.error("[SystemAudio] Uncommitted stream cleanup failed: \(error, privacy: .public)") }
             throw error
         }
-        guard streamGeneration == gen, activeStreamID == streamID else {
-            Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
+        guard sessionRequested, streamGeneration == gen, activeStreamID == streamID,
+              interruptionRevision == revision else {
             appendRestartSuppressedTraceForTesting()
-            try? await withTimeout(seconds: operationTimeoutSeconds) { try await newStream.stopCapture() }
+            retiringStreams[streamID] = newStream
+            try await cleanupRetiredTransport(only: streamID)
             return false
-        }
-        if let desiredFilter = currentFilter, desiredFilter !== filter {
-            try await newStream.updateContentFilter(desiredFilter)
-            guard streamGeneration == gen, activeStreamID == streamID else {
-                try? await withTimeout(seconds: operationTimeoutSeconds) { try await newStream.stopCapture() }
-                return false
-            }
         }
         self.streamOutput = output
         output.onAudioBuffer = desiredAudioCallback
         self.streamDelegate = delegate
         self.stream = newStream
+        pendingServiceReset = false
+        retiringStreams.removeValue(forKey: streamID)
 
         // Reset health check state
         consecutiveEmptyChecks = 0
-        recoveryAttempts = 0
 
         Logger.audio.info("[SystemAudio] Started persistent system audio capture successfully")
         return true
     }
 
-    /// Stop the system audio capture stream
+    private func applyLatestFilter(to transport: any CaptureStreamControlling, id: UUID, initial: SCContentFilter,
+                                   generation: Int, revision: UInt64) async throws {
+        pendingNativeOperations[id, default: 0] += 1
+        defer { endNativeOperation(id) }
+        var applied = initial
+        while let desired = currentFilter, desired !== applied {
+            try Task.checkCancellation()
+            guard sessionRequested, streamGeneration == generation, interruptionRevision == revision else { throw CancellationError() }
+            try await transport.updateContentFilter(desired)
+            applied = desired
+        }
+        try Task.checkCancellation()
+    }
+
     public func stop() async {
         streamGeneration += 1
-        stopHealthCheck()
-        let stoppingStream = stream
-        streamOutput?.onAudioBuffer = nil
-        stream = nil
-        streamOutput = nil
-        streamDelegate = nil
-        activeStreamID = nil
+        endSessionAdmission()
+        retireCurrentTransport()
         currentFilter = nil
         onAudioBuffer = nil
         onCaptureError = nil
-
-        guard let stream = stoppingStream else {
-            if verbose { Logger.audio.debug("[SystemAudio] stop() called but stream not running") }
-            return
-        }
-
-        Logger.audio.info("[SystemAudio] Stopping persistent SCStream...")
-
-#if DEBUG || SOLSTONE_TEST_SUPPORT
-        let stopParkHook = _stopParkHookForTesting
-#endif
+        unresolvedInterruption = nil
         do {
-            try await withTimeout(seconds: 5) {
 #if DEBUG || SOLSTONE_TEST_SUPPORT
-                if let hook = stopParkHook {
-                    await hook()
-                    try Task.checkCancellation()
-                }
-#endif
-                try await stream.stopCapture()
+            let hook = _stopParkHookForTesting
+            try await withTimeout(seconds: operationTimeoutSeconds) {
+                if let hook { await hook(); try Task.checkCancellation() }
+                try await self.cleanupRetiredTransport()
             }
-            if verbose { Logger.audio.debug("[SystemAudio] stopCapture() completed successfully") }
-        } catch let error as NSError
-            where error.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && error.code == -3808
-        {
-            // Stream already stopped - ignore
-            if verbose { Logger.audio.debug("[SystemAudio] Stream was already stopped (code -3808)") }
-        } catch is TimeoutError {
-            Logger.audio.warning("[SystemAudio] Timeout stopping stream; dropping local stream references")
-        } catch {
-            Logger.audio.warning("[SystemAudio] Error stopping stream: \(error, privacy: .public)")
+#else
+            try await cleanupRetiredTransport()
+#endif
         }
-
-        Logger.audio.info("[SystemAudio] Stopped system audio capture")
+        catch { Logger.audio.warning("[SystemAudio] Error stopping stream: \(error, privacy: .public)") }
     }
 
     /// Update the content filter (for window exclusion changes)
@@ -215,12 +367,21 @@ public final class SystemAudioCaptureManager {
         // Remember intent even while recovery has no transport. An old awaited
         // update must never overwrite the filter selected by a later caller.
         currentFilter = filter
-        guard let stream = stream else {
+        guard let stream = stream, let id = activeStreamID else {
             if verbose { Logger.audio.debug("[SystemAudio] updateContentFilter called but stream not running") }
             return
         }
         if verbose { Logger.audio.debug("[SystemAudio] Updating content filter for window exclusions") }
+        try await withTimeout(seconds: operationTimeoutSeconds) {
+            try await self.updateNativeFilter(stream, id: id, filter: filter)
+        }
+    }
+
+    private func updateNativeFilter(_ stream: any CaptureStreamControlling, id: UUID, filter: SCContentFilter) async throws {
+        pendingNativeOperations[id, default: 0] += 1
+        defer { endNativeOperation(id) }
         try await stream.updateContentFilter(filter)
+        try Task.checkCancellation()
     }
 
     /// Clear the audio callback (called during segment rotation)
@@ -235,6 +396,7 @@ public final class SystemAudioCaptureManager {
     public func setCallback(onError: ((Error) -> Void)? = nil, _ callback: @escaping (CMSampleBuffer) -> Void) {
         onAudioBuffer = callback
         onCaptureError = onError
+        if let unresolvedInterruption { onError?(unresolvedInterruption) }
         Logger.audio.info("[SystemAudio] Wired callback to new segment (stream running: \(self.isRunning, privacy: .public))")
     }
 
@@ -247,29 +409,18 @@ public final class SystemAudioCaptureManager {
 
     /// Handle stream errors reported by the delegate
     private func handleStreamError(_ error: Error, streamID: UUID) async {
-        guard activeStreamID == streamID else { return }
-        Logger.audio.error("[SystemAudio] Stream error: \(error, privacy: .public)")
-        onCaptureError?(error)
-
-        // Clean up the failed stream
-        streamOutput?.onAudioBuffer = nil
-        stream = nil
-        streamOutput = nil
-        streamDelegate = nil
-        activeStreamID = nil
-
-        // Don't restart on permission errors — they require user action
+        guard sessionRequested, activeStreamID == streamID else { return }
+        recordInterruption(error)
+        retireCurrentTransport()
         if isPermissionError(error) {
-            Logger.audio.info("[SystemAudio] Permission error, not restarting (requires user action in System Settings)")
-            stopHealthCheck()
+            endSessionAdmission()
             return
-        } else if isUserStoppedStreamError(error) {
-            Logger.audio.info("[SystemAudio] Stream stopped by user (Stop Sharing)")
-            stopHealthCheck()
+        }
+        if isUserStoppedStreamError(error) {
+            endSessionAdmission()
             onTerminalStop?()
             return
         }
-
         await restartStream()
     }
 
@@ -298,7 +449,7 @@ public final class SystemAudioCaptureManager {
 
     /// Check if audio buffers are being received
     private func performHealthCheck() async {
-        guard !isRecovering, currentFilter != nil else { return }
+        guard sessionRequested, !isRecovering, currentFilter != nil else { return }
         guard let output = streamOutput, stream != nil else {
             await restartStream()
             return
@@ -311,8 +462,7 @@ public final class SystemAudioCaptureManager {
             Logger.audio.warning("[SystemAudio] Health check: No buffers received (consecutive: \(self.consecutiveEmptyChecks, privacy: .public)/\(self.maxEmptyChecks, privacy: .public))")
 
             if consecutiveEmptyChecks >= maxEmptyChecks {
-                Logger.audio.error("[SystemAudio] Health check failed - no audio for \(Int(self.healthCheckInterval) * self.maxEmptyChecks, privacy: .public)s, restarting stream")
-                onCaptureError?(NSError(domain: "SolstoneAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "System audio stopped delivering buffers"]))
+                Logger.audio.notice("[SystemAudio] Callback absence; bounded fallback transport rebuild (activity unknown)")
                 await restartStream()
             }
         } else {
@@ -325,63 +475,30 @@ public final class SystemAudioCaptureManager {
 
     /// Restart the stream (used by health check)
     private func restartStream() async {
-        guard currentFilter != nil, !isRecovering, recoveryAttempts < 3 else { return }
+        guard sessionRequested, currentFilter != nil, !isRecovering, recoveryAttempts < 3 else { return }
         isRecovering = true
-        defer { isRecovering = false }
-        recoveryAttempts += 1
+        defer { isRecovering = false; scheduleResetRecovery() }
         let gen = streamGeneration
-
-        Logger.audio.info("[SystemAudio] Restarting stream due to health check failure...")
-
-        // Stop current stream
-        let stoppingStream = stream
-        streamOutput?.onAudioBuffer = nil
-        stream = nil
-        streamOutput = nil
-        streamDelegate = nil
-        activeStreamID = nil
-        if let stream = stoppingStream {
+        retireCurrentTransport()
+        while sessionRequested, streamGeneration == gen, recoveryAttempts < 3 {
+            recoveryAttempts += 1
             do {
-                try await withTimeout(seconds: operationTimeoutSeconds) { try await stream.stopCapture() }
+                try await cleanupRetiredTransport()
+                try await restartBackoff()
+                guard sessionRequested, streamGeneration == gen else {
+                    appendRestartSuppressedTraceForTesting(); return
+                }
+                guard let filter = currentFilter else { return }
+                if try await startStream(filter: filter, gen: gen, traceProceed: true) { return }
             } catch {
-                if streamGeneration == gen { onCaptureError?(error) }
-                Logger.audio.error("[SystemAudio] Error stopping stream for restart: \(error, privacy: .public)")
-            }
-        }
-        guard streamGeneration == gen else {
-            Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
-            appendRestartSuppressedTraceForTesting()
-            return
-        }
-        // Small delay before restart
-        try? await restartBackoff()
-        guard streamGeneration == gen else {
-            Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
-            appendRestartSuppressedTraceForTesting()
-            return
-        }
-
-        // Start fresh stream
-        do {
-            guard let filter = currentFilter else {
-                Logger.audio.error("[SystemAudio] Cannot restart - no filter available")
-                return
-            }
-            guard try await startStream(filter: filter, gen: gen, traceProceed: true) else { return }
-            guard streamGeneration == gen else {
-                Logger.audio.info("[SystemAudio] restart suppressed - stream generation changed")
-                appendRestartSuppressedTraceForTesting()
-                return
-            }
-
-            Logger.audio.notice("[SystemAudio] Stream restarted successfully")
-        } catch {
-            guard streamGeneration == gen else { return }
-            onCaptureError?(error)
-            Logger.audio.error("[SystemAudio] Failed to restart stream: \(error, privacy: .public)")
-            if isPermissionError(error) {
-                Logger.audio.info("[SystemAudio] Permission error, stopping health check")
-                stopHealthCheck()
+                guard sessionRequested, streamGeneration == gen else { appendRestartSuppressedTraceForTesting(); return }
+                recordInterruption(error)
+                Logger.audio.error("[SystemAudio] Recovery failed: \(error, privacy: .public)")
+                if isPermissionError(error) { endSessionAdmission(); return }
+                if isUserStoppedStreamError(error) { endSessionAdmission(); onTerminalStop?(); return }
+                // Unknown cleanup failure keeps ownership and waits for another
+                // bounded retry trigger; do not start over a still-owned stream.
+                if !retiringStreams.isEmpty { return }
             }
         }
     }

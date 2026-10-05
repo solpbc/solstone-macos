@@ -25,6 +25,7 @@ final class HALPropertyListener: @unchecked Sendable {
     private let element: AudioObjectPropertyElement
     private let lock = OSAllocatedUnfairLock(initialState: State())
     private let token: ListenerBlockToken
+    internal let registrationStatus: OSStatus
 
     init(
         objectID: AudioObjectID,
@@ -53,6 +54,7 @@ final class HALPropertyListener: @unchecked Sendable {
             mElement: element
         )
         let status = AudioObjectAddPropertyListenerBlock(objectID, &address, Self.queue, block)
+        self.registrationStatus = status
         if status == noErr {
             lock.withLock { $0.active = true }
         } else {
