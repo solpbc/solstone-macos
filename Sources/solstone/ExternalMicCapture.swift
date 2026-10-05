@@ -51,7 +51,18 @@ public final class ExternalMicCapture: @unchecked Sendable {
     public var isCapturing: Bool { callbackLock.withLock { running } }
     private let callbackLock = NSLock()
 
-    private let engine: AVAudioEngine
+    private var engine: any MicrophoneCaptureEngine
+    private let engineFactory: @Sendable () -> any MicrophoneCaptureEngine
+    private let resolveDeviceID: @Sendable (String) -> AudioDeviceID?
+    private let recoveryDelay: @Sendable (TimeInterval) -> Void
+    private var activeEngineObject: AnyObject
+    private var engineEpoch: UInt64 = 0
+    private var requestedEpoch: UInt64 = 0
+    private var recoveryAdmitted = false
+    private var recoveryExhausted = false
+    private var attemptedStart = false
+    private var boundDeviceID: AudioDeviceID?
+    internal var currentDeviceID: AudioDeviceID? { callbackLock.withLock { boundDeviceID } }
     private let writerQueue = DispatchQueue(label: "app.solstone.extmic.writer", qos: .userInitiated)
     private let verbose: Bool
 
@@ -63,7 +74,6 @@ public final class ExternalMicCapture: @unchecked Sendable {
         get { isCapturing }
         set { callbackLock.withLock { running = newValue } }
     }
-    private var isRecovering = false  // Prevents recursive recovery attempts
     #if DEBUG || SOLSTONE_TEST_SUPPORT
     /// Test-only: records teardown call order ("engine.stop", "removeTap").
     /// Mutated only on writerQueue inside teardownEngine(). Excluded from shipping builds.
@@ -97,178 +107,153 @@ public final class ExternalMicCapture: @unchecked Sendable {
     ///   - device: The audio input device to capture from
     ///   - gain: Gain multiplier for mic audio (1.0 to 8.0). Default: 2.0
     ///   - verbose: Enable verbose logging
-    public init(
-        device: AudioInputDevice,
-        gain: Float = 2.0,
-        verbose: Bool = false
-    ) {
+    public convenience init(device: AudioInputDevice, gain: Float = 2.0, verbose: Bool = false) {
+        self.init(device: device, gain: gain, verbose: verbose,
+            engineFactory: { NativeMicrophoneCaptureEngine() },
+            resolveDeviceID: { MicrophoneMonitor.deviceIDForUID($0) },
+            recoveryDelay: { Thread.sleep(forTimeInterval: $0) })
+    }
+
+    internal init(device: AudioInputDevice, gain: Float = 2.0, verbose: Bool = false,
+                  engineFactory: @escaping @Sendable () -> any MicrophoneCaptureEngine,
+                  resolveDeviceID: @escaping @Sendable (String) -> AudioDeviceID?,
+                  recoveryDelay: @escaping @Sendable (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) {
         self.device = device
-        self.engine = AVAudioEngine()
+        self.engineFactory = engineFactory
+        self.resolveDeviceID = resolveDeviceID
+        self.recoveryDelay = recoveryDelay
+        let engine = engineFactory()
+        self.engine = engine
+        self.activeEngineObject = engine.configurationObject
         self.gainMultiplier = max(1.0, min(8.0, gain))
         self.verbose = verbose
-        self.nativeSampleRate = Self.getDeviceSampleRate(device.id) ?? 48_000
-
-        // Listen for audio configuration changes (e.g., AirPods connecting)
-        // When the system default device changes, AVAudioEngine internally resets
-        // even for pinned devices, so we need to re-initialize
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleConfigChange),
-            name: .AVAudioEngineConfigurationChange,
-            object: engine
-        )
+        self.nativeSampleRate = device.sampleRate
+        observeEngine()
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    private func observeEngine() {
+        NotificationCenter.default.addObserver(self, selector: #selector(handleConfigChange(_:)),
+            name: .AVAudioEngineConfigurationChange, object: engine.configurationObject)
     }
 
-    /// Start capturing from this microphone
+    private func replaceEngine() {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
+        NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: engine.configurationObject)
+        engine = engineFactory()
+        callbackLock.withLock {
+            engineEpoch &+= 1
+            activeEngineObject = engine.configurationObject
+            boundDeviceID = nil
+        }
+        cachedConverter = nil
+        cachedSourceFormat = nil
+        observeEngine()
+    }
+
     public func start() throws {
-        callbackLock.withLock { captureRequested = true }
+        let request = callbackLock.withLock { () -> UInt64 in
+            // A redundant start must not revoke a configuration recovery that
+            // was already admitted for this running capture.
+            if captureRequested && running { return requestedEpoch }
+            captureRequested = true
+            requestedEpoch &+= 1
+            recoveryExhausted = false
+            return requestedEpoch
+        }
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
+        _startAdmissionHookForTesting?()
+        #endif
         try writerQueue.sync {
             guard !isRunning else { return }
-            do {
-                guard callbackLock.withLock({ captureRequested }) else { throw CancellationError() }
-                try startCapture()
-            } catch {
+            if attemptedStart { teardownEngine(); replaceEngine() }
+            attemptedStart = true
+            do { try startCapture(request: request) }
+            catch {
+                callbackLock.withLock {
+                    if requestedEpoch == request { captureRequested = false; recoveryExhausted = true }
+                }
                 teardownEngine()
-                onCaptureError?(error)
+                if !(error is CancellationError) { onCaptureError?(error) }
                 throw error
             }
         }
     }
 
-    /// Internal start implementation (must be called on writerQueue)
-    private func startCapture() throws {
+    private func startCapture(request: UInt64) throws {
         dispatchPrecondition(condition: .onQueue(writerQueue))
-
-        // Access inputNode first to ensure engine is initialized
-        let inputNode = engine.inputNode
-
-        // Always explicitly set the input device to pin this engine to the specific hardware.
-        // Without this, AVAudioEngine follows the system default, which causes issues when
-        // the default changes (e.g., AirPods connect and become the new default).
-        try setInputDevice(device.id)
-
-        // Prepare the engine - this acquires hardware resources and syncs with device
-        engine.prepare()
-
-        // Use inputFormat (what hardware actually provides) instead of outputFormat
-        // outputFormat can return cached/default values, but inputFormat reflects actual hardware
-        let hardwareFormat = inputNode.inputFormat(forBus: 0)
-        Logger.audio.info("\(self.device.name, privacy: .public): hardware format \(hardwareFormat.sampleRate, privacy: .public)Hz, \(hardwareFormat.channelCount, privacy: .public)ch")
-
-        // Validate format - newly connected devices may not be ready yet
-        guard hardwareFormat.sampleRate > 0, hardwareFormat.channelCount > 0 else {
-            throw ExternalMicCaptureError.invalidFormat(device.name)
+        guard callbackLock.withLock({ captureRequested && requestedEpoch == request }) else { throw CancellationError() }
+        guard let currentID = resolveDeviceID(device.uid) else { throw ExternalMicCaptureError.deviceUnavailable(device.uid) }
+        let epoch = callbackLock.withLock { engineEpoch }
+        guard let monoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: targetSampleRate,
+            channels: 1, interleaved: false) else { throw ExternalMicCaptureError.failedToCreateFormat }
+        try engine.start(deviceID: currentID, deviceName: device.name) { [weak self] buffer, _ in
+            self?.handleAudioBuffer(buffer, monoFormat: monoFormat, engineEpoch: epoch)
         }
-
-        // Create a mono format for output
-        guard
-            let monoFormat = AVAudioFormat(
-                commonFormat: .pcmFormatFloat32,
-                sampleRate: targetSampleRate,
-                channels: 1,
-                interleaved: false
-            )
-        else {
-            throw ExternalMicCaptureError.failedToCreateFormat
+        let committed = callbackLock.withLock { () -> Bool in
+            guard captureRequested && requestedEpoch == request else { return false }
+            running = true; boundDeviceID = currentID
+            return true
         }
-
-        // Install tap BEFORE starting the engine, using the HARDWARE format
-        // This prevents "sampleRate == inputHWFormat.sampleRate" crashes
-        let bufferSize: AVAudioFrameCount = 4096
-
-        do {
-            try ObjCExceptionCatcher.`try` {
-                inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: hardwareFormat) {
-                    [weak self] buffer, _ in
-                    self?.handleAudioBuffer(buffer, monoFormat: monoFormat)
-                }
-            }
-        } catch {
-            throw ExternalMicCaptureError.installTapFailed(device.name, error.localizedDescription)
-        }
-
-        // Now start the engine with tap in place
-        try engine.start()
-        isRunning = true
-
-        Logger.audio.info("Started external mic capture: \(self.device.name, privacy: .public)")
+        guard committed else { throw CancellationError() }
+        Logger.audio.info("Started external mic capture: \(self.device.name, privacy: .public), deviceID \(currentID, privacy: .public)")
     }
 
-    /// Tears down the running engine. Order is load-bearing: stop the engine
-    /// FIRST (halts new tap callbacks), THEN remove the tap. removeTap is
-    /// ObjC-wrapped because it can throw on an already-torn-down node. Must run
-    /// on writerQueue so it cannot race handleConfigChange's recovery, which
-    /// mutates the same engine. Safe to call on a never-started engine.
     private func teardownEngine() {
         dispatchPrecondition(condition: .onQueue(writerQueue))
-
         engine.stop()
         #if DEBUG || SOLSTONE_TEST_SUPPORT
         _teardownTraceForTesting.append("engine.stop")
         #endif
-
-        do {
-            try ObjCExceptionCatcher.`try` {
-                self.engine.inputNode.removeTap(onBus: 0)
-            }
-        } catch {
-            // Tap may already be gone, that's fine
-        }
+        try? engine.removeTap()
         #if DEBUG || SOLSTONE_TEST_SUPPORT
         _teardownTraceForTesting.append("removeTap")
         #endif
+        callbackLock.withLock { running = false }
     }
 
-    /// Stop capturing
     public func stop() {
-        callbackLock.withLock { captureRequested = false }
+        callbackLock.withLock { captureRequested = false; requestedEpoch &+= 1 }
         writerQueue.sync {
+            NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: engine.configurationObject)
             teardownEngine()
-            if isRunning {
-                isRunning = false
-            }
         }
-
         if verbose { Logger.audio.debug("Stopped external mic capture: \(self.device.name, privacy: .public)") }
     }
 
-    /// Handle audio configuration changes (e.g., AirPods connecting as default device)
-    /// AVAudioEngine internally resets when the system default changes, breaking pinned devices
-    @objc private func handleConfigChange() {
+    @objc private func handleConfigChange(_ notification: Notification) {
+        guard let origin = notification.object as AnyObject? else { return }
+        let admitted = callbackLock.withLock { () -> (UInt64, Destinations)? in
+            guard captureRequested, origin === activeEngineObject, !recoveryAdmitted, !recoveryExhausted else { return nil }
+            recoveryAdmitted = true
+            return (requestedEpoch, Destinations(audio: _onAudioBuffer, error: _onCaptureError))
+        }
+        guard let (request, destination) = admitted else { return }
         writerQueue.async { [weak self] in
-            guard let self = self else { return }
-            guard self.callbackLock.withLock({ self.captureRequested }), !self.isRecovering else { return }
-
-            self.isRecovering = true
-            Logger.audio.info("\(self.device.name, privacy: .public): Config change detected, re-pinning to hardware...")
-
-            // Teardown current state
+            guard let self else { return }
+            defer { self.callbackLock.withLock { self.recoveryAdmitted = false } }
+            guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request }) else { return }
             self.teardownEngine()
-
-            // Clear cached converter (format may have changed)
-            self.cachedConverter = nil
-            self.cachedSourceFormat = nil
-
-            self.isRunning = false
             for delay in [0.0, 0.2, 0.5] {
-                if delay > 0 { Thread.sleep(forTimeInterval: delay) }
-                guard self.callbackLock.withLock({ self.captureRequested }) else { break }
+                if delay > 0 { self.recoveryDelay(delay) }
+                guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request }) else { return }
+                self.replaceEngine()
                 do {
-                    try self.startCapture()
+                    try self.startCapture(request: request)
                     Logger.audio.notice("Microphone recovered after configuration change")
-                    break
+                    return
                 } catch {
                     self.teardownEngine()
-                    self.onCaptureError?(error)
+                    guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request }) else { return }
+                    let errorDestination = self.callbackLock.withLock { self._onCaptureError ?? destination.error }
+                    errorDestination?(error)
                     Logger.audio.error("Microphone configuration recovery failed: \(error, privacy: .public)")
                 }
             }
-
-            self.isRecovering = false
+            self.callbackLock.withLock {
+                if self.captureRequested && self.requestedEpoch == request { self.recoveryExhausted = true }
+            }
         }
     }
 
@@ -280,40 +265,13 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
     // MARK: - Private
 
-    private func setInputDevice(_ deviceID: AudioDeviceID) throws {
-        guard let audioUnit = engine.inputNode.audioUnit else {
-            throw ExternalMicCaptureError.noAudioUnit
-        }
-
-        var deviceID = deviceID
-        let status = AudioUnitSetProperty(
-            audioUnit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &deviceID,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
-
-        guard status == noErr else {
-            throw ExternalMicCaptureError.failedToSetDevice(deviceID, status)
-        }
-
-        Logger.audio.info("\(self.device.name, privacy: .public): setInputDevice succeeded for deviceID \(deviceID, privacy: .public)")
-    }
-
-    private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat) {
-        // Record start time on first buffer
-        if !receivedFirstBuffer {
-            receivedFirstBuffer = true
-            recordingStartTime = Date()
-            firstBufferTime = CMClockGetTime(CMClockGetHostTimeClock())
-            Logger.audio.info("\(self.device.name, privacy: .public): Receiving audio buffers")
-        }
-
+    private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat, engineEpoch admittedEpoch: UInt64? = nil) {
         // Snapshot and queue admission share the detach lock. The subsequent
         // drain barrier therefore includes every admitted old-segment buffer.
         callbackLock.withLock {
+            if let admittedEpoch {
+                guard captureRequested, admittedEpoch == engineEpoch else { return }
+            }
             let destination = Destinations(audio: _onAudioBuffer, error: _onCaptureError)
             guard destination.audio != nil else { return }
             guard let bufferCopy = Self.copyPCMBuffer(buffer) else {
@@ -360,12 +318,20 @@ public final class ExternalMicCapture: @unchecked Sendable {
         writerQueue.sync { convertToMono(buffer, targetFormat: targetFormat) }
     }
     internal var _converterForTesting: AVAudioConverter? { writerQueue.sync { cachedConverter } }
+    internal var _captureRequestedForTesting: Bool { callbackLock.withLock { captureRequested } }
+    internal var _requestedEpochForTesting: UInt64 { callbackLock.withLock { requestedEpoch } }
+    internal var _startAdmissionHookForTesting: (@Sendable () -> Void)?
     #endif
 
     /// Process buffer and send to callback
     private func processAndSend(buffer: AVAudioPCMBuffer, monoFormat: AVAudioFormat, destination: Destinations) {
-        guard isRunning else { return }
-
+        // Admitted buffers retain their destination after engine retirement.
+        // Revocation is fenced separately by MicrophoneCaptureManager.
+        if !receivedFirstBuffer {
+            receivedFirstBuffer = true
+            recordingStartTime = Date()
+            firstBufferTime = CMClockGetTime(CMClockGetHostTimeClock())
+        }
         // Track buffer count for diagnostics
         bufferCount += 1
 
@@ -550,6 +516,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
     }
 
     public enum ExternalMicCaptureError: Error, LocalizedError {
+        case deviceUnavailable(String)
         case failedToSetDevice(AudioDeviceID, OSStatus)
         case noAudioUnit
         case failedToCreateFormat
@@ -558,6 +525,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
         public var errorDescription: String? {
             switch self {
+            case let .deviceUnavailable(uid):
+                return "Microphone is no longer available: \(uid)"
             case let .failedToSetDevice(deviceID, status):
                 return "Failed to set input device \(deviceID): OSStatus \(status)"
             case .noAudioUnit:

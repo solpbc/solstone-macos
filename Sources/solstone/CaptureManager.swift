@@ -246,7 +246,8 @@ public final class CaptureManager {
         shareableContentProvider: @escaping @MainActor () async throws -> SCShareableContent = { try await SCShareableContent.current },
         streamFactory: @escaping CaptureStreamFactory,
         recoveryScheduler: @escaping RecoveryScheduler,
-        isScreenLocked: @escaping @MainActor () -> Bool = CaptureLifecycleManager.defaultIsScreenLocked
+        isScreenLocked: @escaping @MainActor () -> Bool = CaptureLifecycleManager.defaultIsScreenLocked,
+        microphoneCaptureManager: MicrophoneCaptureManager? = nil
     ) {
         self.storageManager = storageManager
         self.silenceMusic = silenceMusic
@@ -260,7 +261,7 @@ public final class CaptureManager {
         self.allowsEmptyDisplayConfigurationForTesting = allowsEmptyDisplayConfigurationForTesting
         self.microphoneDevices = microphoneDevices
         self.shareableContentProvider = shareableContentProvider
-        self.micCaptureManager = MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
+        self.micCaptureManager = microphoneCaptureManager ?? MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
         self.systemAudioCaptureManager = SystemAudioCaptureManager(streamFactory: streamFactory)
         self.lifecycleManager = CaptureLifecycleManager(
             recoveryScheduler: recoveryScheduler,
@@ -326,12 +327,16 @@ public final class CaptureManager {
         guard state.isRecording, sessionSources.contains(.microphone) else { return }
         // Physical loss remains a failure, unlike a deliberate selection change.
         for device in removed {
+            let capture = micCaptureManager.getCapture(for: device.uid)
+            if capture?.isCapturing == true, let boundID = capture?.currentDeviceID,
+               boundID != device.id,
+               microphoneDevices().contains(where: { $0.uid == device.uid && $0.id == boundID }) { continue }
             currentSegment?.removeMicrophone(deviceUID: device.uid)
             micCaptureManager.stopCapture(deviceUID: device.uid)
         }
         // Event payloads can be stale. Admission always uses current enumeration
         // and owner intent, including the same four-device limit as startup.
-        reconcileMicrophoneSelection()
+        reconcileMicrophoneSelection(restartFailed: true)
     }
 
     public func updateMicrophoneSelection(disabled: Set<String>, enabled: Set<String>) {
@@ -358,7 +363,7 @@ public final class CaptureManager {
         return selected
     }
 
-    private func reconcileMicrophoneSelection(duringStartup: Bool = false) {
+    private func reconcileMicrophoneSelection(duringStartup: Bool = false, restartFailed: Bool = false) {
         let selected = selectedMicrophonesForSegment()
         guard (state.isRecording || duringStartup), sessionSources.contains(.microphone),
               let segment = currentSegment else { return }
@@ -366,7 +371,8 @@ public final class CaptureManager {
         for uid in segment.activeMicrophoneUIDs() where !selectedUIDs.contains(uid) {
             segment.deselectMicrophone(deviceUID: uid)
         }
-        for device in selected where !segment.hasMicrophone(deviceUID: device.uid) {
+        for device in selected where !segment.hasMicrophone(deviceUID: device.uid) ||
+            (restartFailed && micCaptureManager.getCapture(for: device.uid)?.isCapturing == false) {
             do { try segment.addMicrophone(device) }
             catch { Logger.capture.warning("Failed to reconcile mic \(device.name, privacy: .public): \(error, privacy: .public)") }
         }
@@ -756,15 +762,17 @@ public final class CaptureManager {
     }
 
     private func handleDefaultMicChange() async {
-        guard state.isRecording, sessionSources.contains(.microphone) else { return }
+        handleDefaultMicChange(currentID: MicrophoneMonitor.getDefaultInputDeviceID())
+    }
 
-        let newDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
+    internal func handleDefaultMicChange(currentID newDefaultMicID: AudioDeviceID?) {
+        guard state.isRecording, sessionSources.contains(.microphone) else { return }
 
         // Check if default mic actually changed
         if newDefaultMicID != currentDefaultMicID {
             Logger.capture.info("Default microphone changed (no rotation - mics handled dynamically)")
             currentDefaultMicID = newDefaultMicID
-            // No rotation needed - mics are handled dynamically via handleDeviceChange
+            reconcileMicrophoneSelection(restartFailed: true)
         }
     }
 

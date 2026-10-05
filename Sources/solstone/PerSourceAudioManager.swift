@@ -135,7 +135,8 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         diagnostics?.expect(sourceID, kind: "microphone")
 
         // Already exists
-        if sourceWriters[sourceID]?.attached == true {
+        if sourceWriters[sourceID]?.attached == true,
+           captureManager?.getCapture(for: sourceID)?.isCapturing != false {
             return sourceID
         }
 

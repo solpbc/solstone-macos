@@ -18,6 +18,8 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     private var selectedDevices: [AudioInputDevice]?
     private var selectionRevisions: [String: UInt64] = [:]
     private var selectionHasAvailableDevices = false
+    private let captureFactory: @Sendable (AudioInputDevice, Float, Bool) -> ExternalMicCapture
+    private let retryDelay: @Sendable (TimeInterval) -> Void
 
     public enum SelectionError: Error, Equatable { case selectionChanged }
 
@@ -66,9 +68,18 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     }
     #endif
 
-    public init(gain: Float = 2.0, verbose: Bool = false) {
+    public convenience init(gain: Float = 2.0, verbose: Bool = false) {
+        self.init(gain: gain, verbose: verbose,
+            captureFactory: { ExternalMicCapture(device: $0, gain: $1, verbose: $2) })
+    }
+
+    internal init(gain: Float = 2.0, verbose: Bool = false,
+                  captureFactory: @escaping @Sendable (AudioInputDevice, Float, Bool) -> ExternalMicCapture,
+                  retryDelay: @escaping @Sendable (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) {
         self.gain = gain
         self.verbose = verbose
+        self.captureFactory = captureFactory
+        self.retryDelay = retryDelay
     }
 
     /// Start capture for a device (reuses existing if already running)
@@ -99,14 +110,14 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         for (attempt, delay) in retryDelays.enumerated() {
             if delay > 0 {
                 Logger.audio.info("Retrying \(device.name, privacy: .public) after \(Int(delay * 1000), privacy: .public)ms (attempt \(attempt + 1, privacy: .public))")
-                Thread.sleep(forTimeInterval: delay)
+                retryDelay(delay)
             }
 
             guard lock.withLock({ selectionAllows(device.uid) && selectionRevisions[device.uid, default: 0] == selectionRevision }) else {
                 throw SelectionError.selectionChanged
             }
             // Create fresh capture for each attempt
-            let capture = ExternalMicCapture(device: device, gain: captureGain, verbose: verbose)
+            let capture = captureFactory(device, captureGain, verbose)
 
             do {
                 try capture.start()

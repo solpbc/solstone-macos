@@ -15,7 +15,7 @@ public final class AudioDeviceMonitor {
 
     /// Previous device UIDs for change detection
     @ObservationIgnored
-    private var previousDeviceUIDs: Set<String> = []
+    private var previousDevices: [AudioInputDevice] = []
 
     /// Callback when devices are added or removed
     @ObservationIgnored
@@ -24,7 +24,7 @@ public final class AudioDeviceMonitor {
     public init() {
         refreshDevices()
         // Initialize previous UIDs without triggering callback
-        previousDeviceUIDs = Set(availableDevices.map { $0.uid })
+        previousDevices = availableDevices
         startListening()
     }
 
@@ -32,7 +32,7 @@ public final class AudioDeviceMonitor {
     internal init(startListening: Bool) {
         if startListening {
             refreshDevices()
-            previousDeviceUIDs = Set(availableDevices.map { $0.uid })
+            previousDevices = availableDevices
             self.startListening()
         }
     }
@@ -42,18 +42,19 @@ public final class AudioDeviceMonitor {
     }
 
     public func refreshDevices() {
-        let newDevices = MicrophoneMonitor.listInputDevices()
-        let newUIDs = Set(newDevices.map { $0.uid })
+        applyDevices(MicrophoneMonitor.listInputDevices())
+    }
 
-        // Compute added and removed devices
-        let addedUIDs = newUIDs.subtracting(previousDeviceUIDs)
-        let removedUIDs = previousDeviceUIDs.subtracting(newUIDs)
-
-        let added = newDevices.filter { addedUIDs.contains($0.uid) }
-        let removed = availableDevices.filter { removedUIDs.contains($0.uid) }
+    internal func applyDevices(_ newDevices: [AudioInputDevice]) {
+        let added = newDevices.filter { device in
+            !previousDevices.contains { $0.uid == device.uid && $0.id == device.id }
+        }
+        let removed = previousDevices.filter { device in
+            !newDevices.contains { $0.uid == device.uid && $0.id == device.id }
+        }
 
         // Update state
-        previousDeviceUIDs = newUIDs
+        previousDevices = newDevices
         availableDevices = newDevices
 
         // Notify if there were changes
