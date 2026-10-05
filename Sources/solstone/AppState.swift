@@ -549,6 +549,12 @@ public final class AppState {
 #endif
         silenceMusicHolder.value = newConfig.silenceMusic
 
+        if newConfig.disabledMicrophoneUIDs != oldConfig.disabledMicrophoneUIDs ||
+           newConfig.enabledMicrophoneUIDs != oldConfig.enabledMicrophoneUIDs {
+            capture.captureManager.updateMicrophoneSelection(
+                disabled: newConfig.disabledMicrophoneUIDs, enabled: newConfig.enabledMicrophoneUIDs)
+        }
+
         // Update mic gain immediately if it changed
         if newConfig.microphoneGain != oldConfig.microphoneGain {
             capture.captureManager.setMicrophoneGain(newConfig.microphoneGain)

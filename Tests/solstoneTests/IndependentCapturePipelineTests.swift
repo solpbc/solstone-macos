@@ -410,13 +410,16 @@ struct IndependentCapturePipelineTests {
         let writer = SegmentWriter(outputDirectory: root, timePrefix: "120000",
             audioManagerFactory: { _, _, _, _ in audio })
         _ = try await writer.start(sources: .microphone, mics: [testMicrophone])
-        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer())
+        var available: [AudioInputDevice] = []
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { available })
         manager.seedRecordingForTesting(currentSegment: writer, sources: .microphone)
         await manager.handleDeviceChange(added: [], removed: [testMicrophone])
         #expect(manager.activeSources.isEmpty)
         #expect(audio.activeMicrophoneUIDs().isEmpty)
         let replacement = AudioInputDevice(id: 43, name: "Replacement Mic", uid: "replacement-mic",
             manufacturer: nil, sampleRate: 48000, transportType: .usb)
+        available = [replacement]
         await manager.handleDeviceChange(added: [replacement], removed: [])
         #expect(manager.activeSources == .microphone)
         #expect(audio.activeMicrophoneUIDs() == [replacement.uid])

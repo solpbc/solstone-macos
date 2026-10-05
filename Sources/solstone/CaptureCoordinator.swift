@@ -125,6 +125,10 @@ public final class CaptureCoordinator {
                 )
             )
         }
+        self.captureManager.microphoneSelectionProvider = {
+            let current = configProvider()
+            return (disabled: current.disabled, enabled: current.enabled)
+        }
         self.captureManager.onTerminalStreamStop = { [weak self] in
             Task { @MainActor in
                 await self?.stopRecording(reason: .userStopped)

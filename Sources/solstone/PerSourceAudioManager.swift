@@ -129,6 +129,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         guard !isFinishing else { throw SegmentWriter.SegmentError.segmentFinishing }
 
         let sourceID = device.uid
+        if captureManager?.allowsCapture(deviceUID: sourceID) == false {
+            throw MicrophoneCaptureManager.SelectionError.selectionChanged
+        }
         diagnostics?.expect(sourceID, kind: "microphone")
 
         // Already exists
@@ -153,6 +156,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             if let captureManager = captureManager {
                 // Start capture if not already running
                 try startMicrophoneCapture?(device)
+                guard captureManager.allowsCapture(deviceUID: sourceID) else {
+                    throw MicrophoneCaptureManager.SelectionError.selectionChanged
+                }
 
                 // Wire callback to this segment's writer
                 captureManager.setCallback(for: device.uid, callback: { [weak writer] buffer, time in
@@ -185,6 +191,14 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// Keep the writer until segment finish so a rejoin cannot replace prior audio.
     /// Called when a mic is disconnected during recording
     public func removeMicrophone(deviceUID: String) {
+        detachMicrophone(deviceUID: deviceUID, disconnected: true)
+    }
+
+    public func deselectMicrophone(deviceUID: String) {
+        detachMicrophone(deviceUID: deviceUID, disconnected: false)
+    }
+
+    private func detachMicrophone(deviceUID: String, disconnected: Bool) {
         lock.lock()
         guard var source = sourceWriters[deviceUID], source.attached, !isFinishing else {
             lock.unlock()
@@ -193,7 +207,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
         source.attached = false
         sourceWriters[deviceUID] = source
-        diagnostics?.failure(deviceUID, stage: "disconnect", error: NSError(domain: "SolstoneAudioDevice", code: 1))
+        if disconnected {
+            diagnostics?.failure(deviceUID, stage: "disconnect", error: NSError(domain: "SolstoneAudioDevice", code: 1))
+        }
 
         lock.unlock()
 

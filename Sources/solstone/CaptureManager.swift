@@ -25,6 +25,7 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     func updateContentFilter(_ filters: [CGDirectDisplayID: SCContentFilter]) async throws
     func addMicrophone(_ device: AudioInputDevice) throws
     func removeMicrophone(deviceUID: String)
+    func deselectMicrophone(deviceUID: String)
     func hasMicrophone(deviceUID: String) -> Bool
     func activeMicrophoneUIDs() -> [String]
     var onTerminalStop: (@MainActor () -> Void)? { get set }
@@ -32,6 +33,7 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
 }
 
 public extension CaptureSegmentWriting {
+    func deselectMicrophone(deviceUID: String) { removeMicrophone(deviceUID: deviceUID) }
     var onCaptureIssue: (@MainActor (String) -> Void)? {
         get { nil }
         set {}
@@ -138,6 +140,8 @@ public final class CaptureManager {
     /// UIDs of microphones to exclude from recording (disabled mics)
     private var disabledMicUIDs: Set<String> = []
     private var enabledMicUIDs: Set<String> = []
+    private var hasLiveMicrophoneSelection = false
+    internal var microphoneSelectionProvider: (@MainActor () -> (disabled: Set<String>, enabled: Set<String>))?
 
     public private(set) var activeSources: CaptureSources = []
     private var sessionSources: CaptureSources = []
@@ -320,39 +324,54 @@ public final class CaptureManager {
     /// Adds/removes mics from current segment dynamically (no rotation needed)
     public func handleDeviceChange(added: [AudioInputDevice], removed: [AudioInputDevice]) async {
         guard state.isRecording, sessionSources.contains(.microphone) else { return }
-
-        // Add new enabled mics to current segment
-        if let segment = currentSegment {
-            for device in added where MicrophoneSelection.shouldCapture(
-                device,
-                disabledMicUIDs: disabledMicUIDs,
-                enabledMicUIDs: enabledMicUIDs
-            ) {
-                do {
-                    try segment.addMicrophone(device)
-                    Logger.capture.info("Added mic mid-segment: \(device.name, privacy: .public)")
-                } catch {
-                    Logger.capture.warning("Failed to add mic \(device.name, privacy: .public): \(error, privacy: .public)")
-                }
-            }
-
-            // Remove disconnected mics from current segment
-            for device in removed where segment.hasMicrophone(deviceUID: device.uid) {
-                segment.removeMicrophone(deviceUID: device.uid)
-                Logger.capture.info("Removed mic mid-segment: \(device.name, privacy: .public)")
-            }
-            if segment.activeMicrophoneUIDs().isEmpty {
-                activeSources.remove(.microphone)
-            } else {
-                activeSources.insert(.microphone)
-            }
-        }
-
-        // Always stop captures for removed devices, even if segment doesn't have them
-        // This handles the case where a device disconnects during/after segment rotation
+        // Physical loss remains a failure, unlike a deliberate selection change.
         for device in removed {
+            currentSegment?.removeMicrophone(deviceUID: device.uid)
             micCaptureManager.stopCapture(deviceUID: device.uid)
         }
+        // Event payloads can be stale. Admission always uses current enumeration
+        // and owner intent, including the same four-device limit as startup.
+        reconcileMicrophoneSelection()
+    }
+
+    public func updateMicrophoneSelection(disabled: Set<String>, enabled: Set<String>) {
+        disabledMicUIDs = disabled
+        enabledMicUIDs = enabled
+        hasLiveMicrophoneSelection = true
+        reconcileMicrophoneSelection()
+    }
+
+    private func selectedMicrophonesForSegment() -> [AudioInputDevice] {
+        if let current = microphoneSelectionProvider?() {
+            disabledMicUIDs = current.disabled
+            enabledMicUIDs = current.enabled
+        }
+        let available = microphoneDevices()
+        let selected = Array(available.filter {
+            MicrophoneSelection.shouldCapture($0, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
+        }.prefix(4))
+        let revoked = micCaptureManager.updateSelection(selected, hasAvailableDevices: !available.isEmpty)
+        for uid in revoked {
+            currentSegment?.deselectMicrophone(deviceUID: uid)
+            micCaptureManager.stopCapture(deviceUID: uid)
+        }
+        return selected
+    }
+
+    private func reconcileMicrophoneSelection(duringStartup: Bool = false) {
+        let selected = selectedMicrophonesForSegment()
+        guard (state.isRecording || duringStartup), sessionSources.contains(.microphone),
+              let segment = currentSegment else { return }
+        let selectedUIDs = Set(selected.map(\.uid))
+        for uid in segment.activeMicrophoneUIDs() where !selectedUIDs.contains(uid) {
+            segment.deselectMicrophone(deviceUID: uid)
+        }
+        for device in selected where !segment.hasMicrophone(deviceUID: device.uid) {
+            do { try segment.addMicrophone(device) }
+            catch { Logger.capture.warning("Failed to reconcile mic \(device.name, privacy: .public): \(error, privacy: .public)") }
+        }
+        if segment.activeMicrophoneUIDs().isEmpty { activeSources.remove(.microphone) }
+        else { activeSources.insert(.microphone) }
     }
 
     /// Update segment duration based on debug setting
@@ -435,17 +454,7 @@ public final class CaptureManager {
             timeZone: captureZoneForNewSegment()
         )
 
-        // Collect available mics
-        let availableMics: [AudioInputDevice]
-        if sessionSources.contains(.microphone) {
-            availableMics = Array(microphoneDevices()
-                .filter {
-                    MicrophoneSelection.shouldCapture($0, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
-                }
-                .prefix(4))
-        } else {
-            availableMics = []
-        }
+        let availableMics = sessionSources.contains(.microphone) ? selectedMicrophonesForSegment() : []
 
         // Start video/audio capture
         try await startNewSegmentWithDirectory(segmentDir, timePrefix: timePrefix, mics: availableMics)
@@ -517,8 +526,16 @@ public final class CaptureManager {
             )
             try Task.checkCancellation()
             guard generation == segmentStartGeneration else { throw CancellationError() }
-            guard !startedSources.isEmpty else { throw CaptureError.noSourcesAvailable }
+            guard !startedSources.isEmpty || (sessionSources == .microphone && micCaptureManager.hasIntentionallyEmptySelection) else {
+                throw CaptureError.noSourcesAvailable
+            }
             self.activeSources = startedSources
+            if sessionSources.contains(.microphone) {
+                let latest = selectedMicrophonesForSegment()
+                if Set(latest.map(\.uid)) != Set(mics.map(\.uid)) {
+                    reconcileMicrophoneSelection(duringStartup: true)
+                }
+            }
             self.onAudioCaptureIssue?(currentAudioCaptureIssue)
         } catch {
             guard generation == segmentStartGeneration else { throw error }
@@ -833,8 +850,13 @@ extension CaptureManager: CaptureLifecycleDelegate {
         guard !sources.isEmpty else {
             throw transitionFailure(for: CaptureError.notInitialized)
         }
-        self.disabledMicUIDs = disabledMicUIDs
-        self.enabledMicUIDs = enabledMicUIDs
+        if let current = microphoneSelectionProvider?() {
+            self.disabledMicUIDs = current.disabled
+            self.enabledMicUIDs = current.enabled
+        } else if !hasLiveMicrophoneSelection {
+            self.disabledMicUIDs = disabledMicUIDs
+            self.enabledMicUIDs = enabledMicUIDs
+        }
         self.sessionSources = sources
         self.activeSources = []
 
@@ -871,10 +893,11 @@ extension CaptureManager: CaptureLifecycleDelegate {
             return .vetoedScreenLocked
         }
 
-        // Freeze the sources that actually started for this session.
-        sessionSources = activeSources
+        // Microphone intent survives intentional exclusion or temporary loss so
+        // a later selection/hotplug can start it within the observing session.
+        sessionSources = activeSources.union(sources.intersection(.microphone))
         // Start monitoring for default microphone changes.
-        if activeSources.contains(.microphone) {
+        if sessionSources.contains(.microphone) {
             startDefaultMicMonitoring()
         }
 
@@ -985,19 +1008,11 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
         let generationAtSpawn = segmentStartGeneration
         let startTask = Task { @MainActor in
-            let availableMics = (self.sessionSources.contains(.microphone) ? self.microphoneDevices() : [])
-                .filter {
-                    MicrophoneSelection.shouldCapture(
-                        $0,
-                        disabledMicUIDs: self.disabledMicUIDs,
-                        enabledMicUIDs: self.enabledMicUIDs
-                    )
-                }
-                .prefix(4)
+            let availableMics = self.sessionSources.contains(.microphone) ? self.selectedMicrophonesForSegment() : []
             try await self.startNewSegmentWithDirectory(
                 newSegmentDir,
                 timePrefix: newTimePrefix,
-                mics: Array(availableMics)
+                mics: availableMics
             )
         }
 

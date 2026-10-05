@@ -15,6 +15,56 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     private let lock = NSLock()
     private let verbose: Bool
     private var gain: Float
+    private var selectedDevices: [AudioInputDevice]?
+    private var selectionRevisions: [String: UInt64] = [:]
+    private var selectionHasAvailableDevices = false
+
+    public enum SelectionError: Error, Equatable { case selectionChanged }
+
+    /// Publish current owner intent before starting or wiring any device.
+    /// Only devices whose admission changes invalidate their old destinations.
+    @discardableResult
+    public func updateSelection(_ devices: [AudioInputDevice], hasAvailableDevices: Bool) -> [String] {
+        lock.withLock {
+            let before = selectedDevices.map { Set($0.map(\.uid)) }
+            let after = Set(devices.map(\.uid))
+            let known = Set(captures.keys).union(before ?? []).union(after).union(selectionRevisions.keys)
+            for uid in known where (before?.contains(uid) ?? true) != after.contains(uid) {
+                selectionRevisions[uid, default: 0] &+= 1
+            }
+            selectedDevices = devices
+            selectionHasAvailableDevices = hasAvailableDevices
+            let revoked = captures.keys.filter { !after.contains($0) }
+            for uid in revoked { captures[uid]?.setCallbacks(audio: nil, error: nil) }
+            return revoked
+        }
+    }
+
+    public func microphonesForStartup(fallback: [AudioInputDevice]) -> [AudioInputDevice] {
+        lock.withLock { selectedDevices ?? fallback }
+    }
+    public var hasIntentionallyEmptySelection: Bool {
+        lock.withLock { selectionHasAvailableDevices && selectedDevices?.isEmpty == true }
+    }
+    public func allowsCapture(deviceUID: String) -> Bool {
+        lock.withLock { selectionAllows(deviceUID) }
+    }
+    private func selectionAllows(_ uid: String) -> Bool {
+        selectedDevices?.contains { $0.uid == uid } ?? true
+    }
+    private func deliver(deviceUID: String, revision: UInt64, _ callback: () -> Void) {
+        // The production callbacks only enqueue writer/diagnostic work and never
+        // reenter this manager. Delivery and revocation share this linearization.
+        lock.withLock {
+            guard selectionAllows(deviceUID), selectionRevisions[deviceUID, default: 0] == revision else { return }
+            callback()
+        }
+    }
+    #if DEBUG || SOLSTONE_TEST_SUPPORT
+    internal func _installForTesting(_ capture: ExternalMicCapture) {
+        lock.withLock { captures[capture.device.uid] = capture }
+    }
+    #endif
 
     public init(gain: Float = 2.0, verbose: Bool = false) {
         self.gain = gain
@@ -27,6 +77,8 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     /// - Throws: If capture fails to start after all retries
     public func startCapture(for device: AudioInputDevice) throws {
         lock.lock()
+        guard selectionAllows(device.uid) else { lock.unlock(); throw SelectionError.selectionChanged }
+        let selectionRevision = selectionRevisions[device.uid, default: 0]
 
         // Already running - nothing to do
         if captures[device.uid]?.isCapturing == true {
@@ -50,6 +102,9 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
                 Thread.sleep(forTimeInterval: delay)
             }
 
+            guard lock.withLock({ selectionAllows(device.uid) && selectionRevisions[device.uid, default: 0] == selectionRevision }) else {
+                throw SelectionError.selectionChanged
+            }
             // Create fresh capture for each attempt
             let capture = ExternalMicCapture(device: device, gain: captureGain, verbose: verbose)
 
@@ -58,12 +113,18 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
 
                 // Success - store in dict
                 lock.lock()
+                guard selectionAllows(device.uid), selectionRevisions[device.uid, default: 0] == selectionRevision else {
+                    lock.unlock()
+                    capture.stop()
+                    throw SelectionError.selectionChanged
+                }
                 captures[device.uid] = capture
                 lock.unlock()
 
                 Logger.audio.info("Started persistent capture for \(device.name, privacy: .public)")
                 return
             } catch {
+                if error as? SelectionError == .selectionChanged { throw error }
                 lastError = error
                 if verbose { Logger.audio.debug("Attempt \(attempt + 1, privacy: .public) failed for \(device.name, privacy: .public): \(error, privacy: .public)") }
                 // Let capture go out of scope - AVAudioEngine will be deallocated
@@ -97,14 +158,23 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         callback: ((_ buffer: AVAudioPCMBuffer, _ time: CMTime) -> Void)?,
         onError: ((Error) -> Void)? = nil
     ) {
-        lock.lock()
-        let capture = captures[deviceUID]
-        lock.unlock()
-
-        if capture == nil {
-            Logger.audio.warning("setCallback: No capture found for deviceUID \(deviceUID, privacy: .public)")
+        lock.withLock {
+            guard let capture = captures[deviceUID] else {
+                if callback != nil { Logger.audio.warning("setCallback: No capture found for deviceUID \(deviceUID, privacy: .public)") }
+                return
+            }
+            guard selectionAllows(deviceUID) else { capture.setCallbacks(audio: nil, error: nil); return }
+            let revision = selectionRevisions[deviceUID, default: 0]
+            capture.setCallbacks(audio: callback.map { callback in
+                { [weak self] buffer, time in
+                    self?.deliver(deviceUID: deviceUID, revision: revision) { callback(buffer, time) }
+                }
+            }, error: onError.map { onError in
+                { [weak self] error in
+                    self?.deliver(deviceUID: deviceUID, revision: revision) { onError(error) }
+                }
+            })
         }
-        capture?.setCallbacks(audio: callback, error: onError)
     }
 
     /// Clear all callbacks (called during segment rotation before writers change)

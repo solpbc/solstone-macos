@@ -64,6 +64,7 @@ public protocol SegmentAudioManaging: AnyObject, Sendable {
     func appendSystemAudio(_ sampleBuffer: CMSampleBuffer)
     func addMicrophone(_ device: AudioInputDevice) throws -> String
     func removeMicrophone(deviceUID: String)
+    func deselectMicrophone(deviceUID: String)
     func hasMicrophone(deviceUID: String) -> Bool
     func activeMicrophoneUIDs() -> [String]
     func getMicMetadata() -> [[String: Any]]
@@ -71,6 +72,7 @@ public protocol SegmentAudioManaging: AnyObject, Sendable {
 }
 
 public extension SegmentAudioManaging {
+    func deselectMicrophone(deviceUID: String) { removeMicrophone(deviceUID: deviceUID) }
     func bindDiagnostics(_ recorder: AudioCaptureRecorder) {}
 }
 
@@ -223,11 +225,14 @@ public final class SegmentWriter {
         var screenError: Error?
         var micError: Error?
 
+        let initialMics = micCaptureManager?.microphonesForStartup(fallback: mics) ?? mics
         var expected: [(id: String, kind: String)] = []
         if sources.contains(.screen) { expected.append(("system", "system")) }
         if sources.contains(.microphone) {
-            expected += mics.map { ($0.uid, "microphone") }
-            if mics.isEmpty { expected.append(("microphone", "microphone")) }
+            expected += initialMics.map { ($0.uid, "microphone") }
+            if initialMics.isEmpty && micCaptureManager?.hasIntentionallyEmptySelection != true {
+                expected.append(("microphone", "microphone"))
+            }
         }
         let diagnostics = try AudioCaptureRecorder(directory: outputDirectory, timePrefix: timePrefix, expected: expected,
             onFirstFailure: { [weak self] in
@@ -302,7 +307,7 @@ public final class SegmentWriter {
                 }
                 constructedCapturers.removeAll()
                 manager = nil
-                if sources.contains(.microphone) && !mics.isEmpty {
+                if sources.contains(.microphone) && !(micCaptureManager?.microphonesForStartup(fallback: mics) ?? mics).isEmpty {
                     let microphoneManager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
                     microphoneManager.bindDiagnostics(diagnostics)
                     microphoneManager.setSegmentStartTime(CMClockGetTime(CMClockGetHostTimeClock()))
@@ -321,17 +326,20 @@ public final class SegmentWriter {
 
         // Microphone subsystem
         if sources.contains(.microphone) {
-            if mics.isEmpty {
+            let currentMics = micCaptureManager?.microphonesForStartup(fallback: mics) ?? mics
+            if currentMics.isEmpty && micCaptureManager?.hasIntentionallyEmptySelection != true {
+                diagnostics.expect("microphone", kind: "microphone")
                 diagnostics.failure("microphone", stage: "start", error: NSError(domain: "SolstoneAudioDevice", code: 2))
             }
             if let manager {
                 var startedAnyMic = false
-                for device in mics {
+                for device in currentMics {
                     do {
                         _ = try manager.addMicrophone(device)
                         diagnostics.started(device.uid)
                         startedAnyMic = true
                     } catch {
+                        if error as? MicrophoneCaptureManager.SelectionError == .selectionChanged { continue }
                         diagnostics.failure(device.uid, stage: "start", error: error)
                         Logger.capture.warning("Failed to start mic \(device.name, privacy: .public): \(error, privacy: .public)")
                     }
@@ -344,7 +352,7 @@ public final class SegmentWriter {
             }
         }
 
-        if successfulSources.isEmpty {
+        if successfulSources.isEmpty && !(sources == .microphone && micCaptureManager?.hasIntentionallyEmptySelection == true) {
             if let manager {
                 await rollbackStart(manager: manager, capturers: constructedCapturers)
             }
@@ -377,6 +385,7 @@ public final class SegmentWriter {
             _ = try manager.addMicrophone(device)
             audioDiagnostics?.started(device.uid)
         } catch {
+            if error as? MicrophoneCaptureManager.SelectionError == .selectionChanged { return }
             audioDiagnostics?.failure(device.uid, stage: "start", error: error)
             throw error
         }
@@ -386,6 +395,10 @@ public final class SegmentWriter {
     /// - Parameter deviceUID: The device UID to remove
     public func removeMicrophone(deviceUID: String) {
         audioManager?.removeMicrophone(deviceUID: deviceUID)
+    }
+
+    public func deselectMicrophone(deviceUID: String) {
+        audioManager?.deselectMicrophone(deviceUID: deviceUID)
     }
 
     /// Check if a microphone is currently being recorded
