@@ -91,6 +91,9 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private let lock = NSLock()
 #if DEBUG || SOLSTONE_TEST_SUPPORT
     internal private(set) var _appendAttemptCountForTesting: Int = 0
+    internal var _fragmentIntervalsForTesting: (CMTime, CMTime) { (writer.movieFragmentInterval, writer.initialMovieFragmentInterval) }
+    internal var _acceptedFramesForTesting: Int { lock.withLock { statistics.acceptedFrames } }
+    internal var _finishAdmissionHookForTesting: (@Sendable () async -> Void)?
 #endif
 
     // Silence batching state
@@ -133,6 +136,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         }
 
         self.writer = try AVAssetWriter(url: url, fileType: .m4a)
+        self.writer.movieFragmentInterval = CMTime(seconds: 1, preferredTimescale: 600)
+        self.writer.initialMovieFragmentInterval = CMTime(seconds: 1, preferredTimescale: 600)
         self.outputURL = url
         self.trackType = trackType
         self.segmentStartTime = segmentStartTime
@@ -416,6 +421,9 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     public func finish() async -> AudioTrackTimingInfo {
         // extractTimingState also flushes any pending silence
         let (firstTime, lastTime, startTime, wasStarted) = extractTimingState()
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        if let hook = _finishAdmissionHookForTesting { await hook() }
+#endif
 
         // Finalize the input/session only while the writer is still .writing.
         // On sleep/lock, ScreenCaptureKit tears the stream down and AVFoundation
