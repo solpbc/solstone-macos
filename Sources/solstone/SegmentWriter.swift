@@ -428,6 +428,13 @@ public final class SegmentWriter {
         audioManager?.deselectMicrophone(deviceUID: deviceUID)
     }
 
+    /// A running engine that stopped delivering is real loss: record it, then
+    /// release the capture so reconciliation rebuilds it into the retained writer.
+    public func recordMicrophoneStall(deviceUID: String) {
+        audioDiagnostics?.failure(deviceUID, stage: "stall", error: NSError(domain: "SolstoneAudioStall", code: 1))
+        audioManager?.deselectMicrophone(deviceUID: deviceUID)
+    }
+
     /// Check if a microphone is currently being recorded
     public func hasMicrophone(deviceUID: String) -> Bool {
         return audioManager?.hasMicrophone(deviceUID: deviceUID) ?? false

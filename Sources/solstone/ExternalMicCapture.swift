@@ -86,6 +86,11 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private var running = false
     private var captureRequested = false
     public var isCapturing: Bool { callbackLock.withLock { running } }
+    private var lastTapArrival: TimeInterval = 0
+    /// Seconds since the running engine last delivered a tap buffer (or started); nil when not running.
+    internal var secondsSinceLastTap: TimeInterval? {
+        callbackLock.withLock { running ? max(0, monotonicNow() - lastTapArrival) : nil }
+    }
     private let callbackLock = NSLock()
 
     private var engine: any MicrophoneCaptureEngine
@@ -264,7 +269,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         }
         let committed = callbackLock.withLock { () -> Bool in
             guard captureRequested && requestedEpoch == request else { return false }
-            running = true; boundDeviceID = currentID
+            running = true; boundDeviceID = currentID; lastTapArrival = monotonicNow()
             return true
         }
         guard committed else { throw CancellationError() }
@@ -369,7 +374,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         // drain barrier therefore includes every admitted old-segment buffer.
         // Selection publication takes the selection lock before callbackLock.
         // Obtain that gate before touching admission so the order never inverts.
-        let gate = callbackLock.withLock { _admissionGate }
+        let gate = callbackLock.withLock { () -> ((() -> Void) -> Bool)? in lastTapArrival = arrival; return _admissionGate }
         let operation = { [self] in
             var rejected: (Destinations, Error)?
             callbackLock.withLock {

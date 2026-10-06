@@ -651,6 +651,81 @@ struct MicrophoneRecoveryTests {
         #expect(failures.filter { $0["stage"] as? String == "disconnect" }.count == 1)
         shared.stopAll()
     }
+
+    @MainActor private func livenessLab(_ root: URL, clock: LockedValue<TimeInterval>) async throws
+        -> (MicEngineLab, MicrophoneCaptureManager, CaptureManager, SegmentWriter) {
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in }, monotonicNow: { clock.current! })
+        }, retryDelay: { _ in }, allowanceClock: { clock.current! })
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [self.device()] }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, microphoneCaptureManager: shared)
+        manager.updateMicrophoneSelection(disabled: [], enabled: [])
+        let writer = SegmentWriter(outputDirectory: root, timePrefix: "120000")
+        _ = try await writer.start(sources: .microphone, mics: [device()], micCaptureManager: shared)
+        manager.seedRecordingForTesting(currentSegment: writer, sources: .microphone)
+        return (lab, shared, manager, writer)
+    }
+
+    @Test @MainActor func parkedMicrophoneReturnsOnLivenessAfterCooldownWithoutOwnerAction() async throws {
+        let root = try makeTempDirectory("mic-liveness-cooldown"); defer { try? FileManager.default.removeItem(at: root) }
+        let clock = LockedValue<TimeInterval>(); clock.set(1000)
+        let (lab, shared, manager, _) = try await livenessLab(root, clock: clock)
+        let capture = try #require(shared.getCapture(for: "u"))
+        for _ in 0..<7 { lab.engines.last!.notify(); await capture.drain() }
+        #expect(lab.engines.count == 7 && !capture.isCapturing)
+        manager.handleLivenessTick()
+        #expect(lab.engines.count == 7)
+        clock.set(1014); manager.handleLivenessTick()
+        #expect(lab.engines.count == 7)
+        clock.set(1016); manager.handleLivenessTick()
+        #expect(lab.engines.count == 8 && shared.getCapture(for: "u")?.isCapturing == true)
+        _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
+    }
+
+    @Test @MainActor func stalledMicrophoneIsRecordedAndRebuiltIntoItsSegment() async throws {
+        let root = try makeTempDirectory("mic-liveness-stall"); defer { try? FileManager.default.removeItem(at: root) }
+        let clock = LockedValue<TimeInterval>(); clock.set(1000)
+        let (lab, shared, manager, writer) = try await livenessLab(root, clock: clock)
+        let first = try #require(shared.getCapture(for: "u"))
+        lab.engines[0].emit(try pcm()); await first.drain()
+        clock.set(1004); manager.handleLivenessTick()
+        #expect(lab.engines.count == 1 && first.isCapturing)
+        clock.set(1006); manager.handleLivenessTick()
+        #expect(lab.engines.count == 2 && shared.getCapture(for: "u")?.isCapturing == true && writer.hasMicrophone(deviceUID: "u"))
+        let rebuilt = try #require(shared.getCapture(for: "u"))
+        lab.engines[1].emit(try pcm()); await rebuilt.drain()
+        clock.set(1009); manager.handleLivenessTick()
+        #expect(lab.engines.count == 2)
+        _ = await writer.finishCapture()
+        let meta = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("120000_meta.json"))) as? [String: Any])
+        let rows = try #require((meta["audio_capture"] as? [String: Any])?["sources"] as? [[String: Any]])
+        let failures = try #require(rows.first { $0["source_id"] as? String == "u" }?["failures"] as? [[String: Any]])
+        #expect(failures.contains { $0["stage"] as? String == "stall" })
+        #expect(!failures.contains { $0["stage"] as? String == "disconnect" })
+        _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
+    }
+
+    @Test func allowanceCoolsDownWithBackoffAndStablePCMResetsIt() {
+        let clock = LockedValue<TimeInterval>(); clock.set(0)
+        let allowance = MicrophoneRecoveryAllowance(now: { clock.current! })
+        for _ in 0...MicrophoneRecoveryAllowance.replacementLimit { #expect(allowance.admitAttempt()) }
+        #expect(!allowance.admitAttempt() && allowance.isCoolingDown)
+        allowance.park(); clock.set(14.9)
+        #expect(!allowance.canAttempt)
+        clock.set(15)
+        #expect(allowance.admitAttempt() && !allowance.admitAttempt())
+        clock.set(15 + 29.9); #expect(!allowance.canAttempt)
+        clock.set(15 + 30); #expect(allowance.admitAttempt() && !allowance.admitAttempt())
+        clock.set(45 + 60); #expect(allowance.admitAttempt() && !allowance.admitAttempt())
+        clock.set(105 + 60); #expect(allowance.admitAttempt())
+        for second in stride(from: 166.0, through: 177.0, by: 1.0) { allowance.acceptPCM(arrival: second, continuous: true) }
+        for _ in 0..<MicrophoneRecoveryAllowance.replacementLimit { #expect(allowance.admitAttempt()) }
+        #expect(!allowance.admitAttempt())
+        clock.set(clock.current! + 15); #expect(allowance.canAttempt)
+    }
 }
 
 @MainActor

@@ -120,25 +120,26 @@ struct SystemAudioContinuityTests {
         await manager.stop()
     }
 
-    @Test func exhaustedInterruptionRearmsOneBoundedBatchPerSegmentOnly() async throws {
+    @Test func livenessRebuildsAnUnresolvedInterruptionOnBackoffWithoutOwnerAction() async throws {
         let factory = FakeCaptureStreamFactory([FakeCaptureStream()] + (0..<6).map { _ in FakeCaptureStream(startError: failure) })
         let observer = RestartObserverDouble(), manager = manager(factory, observer), errors = LockedCounter()
+        var now: TimeInterval = 1000
+        manager.livenessNow = { now }
         try await manager.start(filter: SCContentFilter())
         manager.setCallback(onError: { _ in errors.increment() }) { _ in }
         observer.callbacks.last?()
         try await settled { factory.createdStreams.count == 4 && !manager.isRunning }
-        // Health ticks never renew an exhausted budget.
-        for _ in 0..<10 { await manager._performHealthCheckForTesting() }
+        // Health ticks and segment starts never renew an exhausted budget.
+        for _ in 0..<10 { await manager._performHealthCheckForTesting(); try await manager.start(filter: SCContentFilter()) }
         #expect(factory.createdStreams.count == 4 && errors.count == 4)
-        // A new segment admits exactly one more bounded batch, and only one.
-        try await manager.start(filter: SCContentFilter())
+        // Liveness admits one more bounded batch, then waits out its backoff.
+        manager.reconcileLiveness()
         try await settled { factory.createdStreams.count == 7 && !manager.isRunning }
-        for _ in 0..<10 { await manager._performHealthCheckForTesting() }
+        now += 59; manager.reconcileLiveness(); try await Task.sleep(for: .milliseconds(20))
         #expect(factory.createdStreams.count == 7 && errors.count == 7)
         let next = LockedCounter(); manager.clearCallback(); manager.setCallback(onError: { _ in next.increment() }) { _ in }
         #expect(next.count == 1)
-        // The following segment's batch finds a working transport.
-        try await manager.start(filter: SCContentFilter())
+        now += 1; manager.reconcileLiveness()
         try await settled { factory.createdStreams.count == 8 && manager.isRunning }
         await manager.stop()
     }
@@ -167,6 +168,9 @@ struct SystemAudioContinuityTests {
         for _ in 0..<5 { try await manager.start(filter: SCContentFilter()) }
         try await Task.sleep(for: .milliseconds(50))
         #expect(factory.createdStreams.count == 4 && manager.isRunning && errors.count == 1)
+        // Only liveness, on its backoff, rebuilds a started stream that never delivered.
+        manager.reconcileLiveness()
+        try await settled { factory.createdStreams.count == 5 }
         await manager.stop()
     }
 

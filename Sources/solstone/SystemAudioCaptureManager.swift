@@ -65,6 +65,11 @@ public final class SystemAudioCaptureManager {
     private let healthCheckInterval: TimeInterval = 30.0  // Check every 30 seconds
     private var consecutiveEmptyChecks: Int = 0
     private let maxEmptyChecks: Int = 2  // Restart after 2 consecutive empty checks (60s of no audio)
+    /// After a spent rebuild budget, an unresolved interruption is rebuilt again on this backoff.
+    static let rearmCooldowns: [TimeInterval] = [60, 120, 300]
+    private var rearmLevel = 0
+    private var nextRearm: TimeInterval = 0
+    internal var livenessNow: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
     public convenience init(verbose: Bool = false) {
         self.init(verbose: verbose, streamFactory: defaultCaptureStreamFactory)
@@ -147,6 +152,7 @@ public final class SystemAudioCaptureManager {
         unresolvedInterruption = nil
         recoveryAttempts = 0
         consecutiveEmptyChecks = 0
+        rearmLevel = 0; nextRearm = 0
         return true
     }
 
@@ -211,14 +217,6 @@ public final class SystemAudioCaptureManager {
         currentFilter = filter
         if sessionRequested {
             if isRecovering || resetRecoveryScheduled { return }
-            // A transport lost to an interruption still unresolved after its
-            // budget ran out gets one more bounded rebuild per new segment,
-            // off the rotation path; health ticks never renew it.
-            if recoveryAttempts >= 3, unresolvedInterruption != nil, stream == nil {
-                recoveryAttempts = 0
-                Task { @MainActor [weak self] in await self?.restartStream() }
-                return
-            }
             if stream != nil { try await updateContentFilter(filter); return }
             await restartStream()
             return
@@ -229,6 +227,7 @@ public final class SystemAudioCaptureManager {
         interruptionRevision &+= 1
         unresolvedInterruption = nil
         recoveryAttempts = 0
+        rearmLevel = 0; nextRearm = 0
         let initialRevision = interruptionRevision
         registerRestartListener()
         startHealthCheck()
@@ -481,6 +480,21 @@ public final class SystemAudioCaptureManager {
             }
             consecutiveEmptyChecks = 0
         }
+    }
+
+    /// Periodic liveness: an interruption still unresolved after its rebuild
+    /// budget ran out is rebuilt again on a backoff, whether or not a started
+    /// stream exists. Quiet periods with no recorded interruption never rebuild.
+    public func reconcileLiveness() {
+        guard sessionRequested, currentFilter != nil, !isRecovering, !resetRecoveryScheduled,
+              recoveryAttempts >= 3, unresolvedInterruption != nil else { return }
+        let now = livenessNow()
+        guard now >= nextRearm else { return }
+        nextRearm = now + Self.rearmCooldowns[min(rearmLevel, Self.rearmCooldowns.count - 1)]
+        rearmLevel += 1
+        recoveryAttempts = 0
+        Logger.audio.notice("[SystemAudio] Interruption still unresolved; rebuilding transport (backoff level \(self.rearmLevel, privacy: .public))")
+        Task { @MainActor [weak self] in await self?.restartStream() }
     }
 
     /// Restart the stream (used by health check)

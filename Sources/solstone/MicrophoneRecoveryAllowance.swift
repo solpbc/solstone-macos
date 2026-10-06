@@ -4,35 +4,66 @@
 import Foundation
 
 /// Shared by a selected UID across automatic engine and capture replacement.
+/// A burst of replacements is allowed; after that the source cools down with
+/// backoff and is offered one attempt each time the cooldown ends. Stable PCM
+/// resets both. A selected microphone is therefore never parked for good.
 internal final class MicrophoneRecoveryAllowance: @unchecked Sendable {
     static let replacementLimit = 6
     static let stableSeconds: TimeInterval = 10
-    static let maximumArrivalGap: TimeInterval = 0.5
+    /// Low-rate devices can deliver half-second buffers; continuity tolerates that.
+    static let maximumArrivalGap: TimeInterval = 1.5
+    static let cooldowns: [TimeInterval] = [15, 30, 60]
     private let lock = NSLock()
+    private let now: @Sendable () -> TimeInterval
     private var initialAttemptUsed = false
     private var replacements = 0
-    private var parked = false
+    private var parkedUntil: TimeInterval?
+    private var cooldownLevel = 0
     private var stableStart: TimeInterval?
     private var lastArrival: TimeInterval?
 
-    var canAttempt: Bool {
-        lock.withLock { !parked && (!initialAttemptUsed || replacements < Self.replacementLimit) }
+    init(now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.now = now
     }
+
+    /// Ends an expired cooldown with exactly one attempt left. Caller holds the lock.
+    private func releaseExpiredCooldownLocked() {
+        guard let until = parkedUntil, now() >= until else { return }
+        parkedUntil = nil
+        initialAttemptUsed = true
+        replacements = Self.replacementLimit - 1
+    }
+    var canAttempt: Bool {
+        lock.withLock {
+            releaseExpiredCooldownLocked()
+            return parkedUntil == nil && (!initialAttemptUsed || replacements < Self.replacementLimit)
+        }
+    }
+    var isCoolingDown: Bool { lock.withLock { releaseExpiredCooldownLocked(); return parkedUntil != nil } }
     func admitAttempt() -> Bool {
         lock.withLock {
-            guard !parked else { return false }
+            releaseExpiredCooldownLocked()
+            guard parkedUntil == nil else { return false }
             stableStart = nil; lastArrival = nil
             if !initialAttemptUsed { initialAttemptUsed = true; return true }
-            guard replacements < Self.replacementLimit else { parked = true; return false }
+            guard replacements < Self.replacementLimit else { parkLocked(); return false }
             replacements += 1
             return true
         }
     }
-    func park() { lock.withLock { parked = true; stableStart = nil; lastArrival = nil } }
+    /// Starts (or keeps) a cooldown. Repeated calls during one cooldown do not extend it.
+    func park() { lock.withLock { parkLocked() } }
+    private func parkLocked() {
+        stableStart = nil; lastArrival = nil
+        releaseExpiredCooldownLocked()
+        guard parkedUntil == nil else { return }
+        parkedUntil = now() + Self.cooldowns[min(cooldownLevel, Self.cooldowns.count - 1)]
+        cooldownLevel += 1
+    }
     func breakContinuity() { lock.withLock { stableStart = nil; lastArrival = nil } }
     func acceptPCM(arrival: TimeInterval, continuous: Bool) {
         lock.withLock {
-            guard !parked, arrival.isFinite else { return }
+            guard parkedUntil == nil, arrival.isFinite else { return }
             if !continuous || lastArrival == nil || arrival < lastArrival! ||
                 arrival - lastArrival! > Self.maximumArrivalGap {
                 stableStart = arrival
@@ -40,6 +71,7 @@ internal final class MicrophoneRecoveryAllowance: @unchecked Sendable {
             lastArrival = arrival
             if let stableStart, arrival - stableStart >= Self.stableSeconds {
                 replacements = 0
+                cooldownLevel = 0
             }
         }
     }

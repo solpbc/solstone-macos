@@ -23,6 +23,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     private var selectionHasAvailableDevices = false
     private let captureFactory: @Sendable (AudioInputDevice, Float, Bool) -> ExternalMicCapture
     private let retryDelay: @Sendable (TimeInterval) -> Void
+    private let allowanceClock: @Sendable () -> TimeInterval
 
     public enum SelectionError: Error, Equatable { case selectionChanged }
 
@@ -39,7 +40,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
             let authorization = RecoveryAuthorization(previous: recoveryAllowances, revision: recoveryAuthorizationRevision)
             let renewed = deviceUIDs ?? Set(recoveryAllowances.keys).union(captures.keys)
             for uid in renewed {
-                let allowance = MicrophoneRecoveryAllowance()
+                let allowance = MicrophoneRecoveryAllowance(now: allowanceClock)
                 recoveryAllowances[uid] = allowance
                 captures[uid]?.authorizeRecoveryRequest(allowance)
             }
@@ -79,6 +80,10 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     }
     public var hasIntentionallyEmptySelection: Bool {
         lock.withLock { selectionHasAvailableDevices && selectedDevices?.isEmpty == true }
+    }
+    /// True while a selected microphone waits out its recovery backoff.
+    internal func isCoolingDown(deviceUID: String) -> Bool {
+        lock.withLock { recoveryAllowances[deviceUID]?.isCoolingDown ?? false }
     }
     public func allowsCapture(deviceUID: String) -> Bool {
         lock.withLock { selectionAllows(deviceUID) }
@@ -120,7 +125,9 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
 
     internal init(gain: Float = 2.0, verbose: Bool = false,
                   captureFactory: @escaping @Sendable (AudioInputDevice, Float, Bool) -> ExternalMicCapture,
-                  retryDelay: @escaping @Sendable (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) {
+                  retryDelay: @escaping @Sendable (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+                  allowanceClock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.allowanceClock = allowanceClock
         self.gain = gain
         self.verbose = verbose
         self.captureFactory = captureFactory
@@ -142,7 +149,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
             if verbose { Logger.audio.debug("Capture already running for \(device.name, privacy: .public)") }
             return
         }
-        let allowance = recoveryAllowances[device.uid] ?? MicrophoneRecoveryAllowance()
+        let allowance = recoveryAllowances[device.uid] ?? MicrophoneRecoveryAllowance(now: allowanceClock)
         recoveryAllowances[device.uid] = allowance
         guard allowance.canAttempt else {
             allowance.park(); lock.unlock()

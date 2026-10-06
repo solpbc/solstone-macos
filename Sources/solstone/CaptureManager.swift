@@ -28,12 +28,14 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     func deselectMicrophone(deviceUID: String)
     func hasMicrophone(deviceUID: String) -> Bool
     func activeMicrophoneUIDs() -> [String]
+    func recordMicrophoneStall(deviceUID: String)
     var onTerminalStop: (@MainActor () -> Void)? { get set }
     var onCaptureIssue: (@MainActor (String) -> Void)? { get set }
 }
 
 public extension CaptureSegmentWriting {
     func deselectMicrophone(deviceUID: String) { removeMicrophone(deviceUID: deviceUID) }
+    func recordMicrophoneStall(deviceUID: String) { deselectMicrophone(deviceUID: deviceUID) }
     var onCaptureIssue: (@MainActor (String) -> Void)? {
         get { nil }
         set {}
@@ -111,6 +113,10 @@ public final class CaptureManager {
     private var segmentTimerRevision: UInt64 = 0
     private var heartbeatTimer: Timer?
     private var heartbeatTimerRevision: UInt64 = 0
+    private var livenessTimer: Timer?
+    static let livenessInterval: TimeInterval = 5
+    /// A running microphone engine with no tap buffer for this long has stalled.
+    static let microphoneStallSeconds: TimeInterval = 5
     private var segmentStartGeneration = 0
     private var displays: [SCDisplay] = []
     private var filtersByDisplayID: [CGDirectDisplayID: SCContentFilter] = [:]
@@ -378,8 +384,9 @@ public final class CaptureManager {
         for uid in segment.activeMicrophoneUIDs() where !selectedUIDs.contains(uid) {
             segment.deselectMicrophone(deviceUID: uid)
         }
-        for device in selected where !segment.hasMicrophone(deviceUID: device.uid) ||
-            (restartFailed && micCaptureManager.getCapture(for: device.uid)?.isCapturing == false) {
+        for device in selected where (!segment.hasMicrophone(deviceUID: device.uid) ||
+            (restartFailed && micCaptureManager.getCapture(for: device.uid)?.isCapturing == false)) &&
+            !micCaptureManager.isCoolingDown(deviceUID: device.uid) {
             do { try segment.addMicrophone(device) }
             catch { Logger.capture.warning("Failed to reconcile mic \(device.name, privacy: .public): \(error, privacy: .public)") }
         }
@@ -621,6 +628,29 @@ public final class CaptureManager {
             }
         }
         heartbeatTimer?.tolerance = 30.0
+        livenessTimer = CaptureTimer.schedule(interval: Self.livenessInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.heartbeatTimerRevision == revision else { return }
+                self.handleLivenessTick()
+            }
+        }
+        livenessTimer?.tolerance = 1.0
+    }
+
+    /// Drives every selected source back toward capture without owner action.
+    /// Per-source backoff (microphone allowance, system rebuild cooldown) bounds churn.
+    internal func handleLivenessTick() {
+        guard state.isRecording else { return }
+        if sessionSources.contains(.microphone), let segment = currentSegment {
+            for uid in segment.activeMicrophoneUIDs() {
+                guard let silent = micCaptureManager.getCapture(for: uid)?.secondsSinceLastTap,
+                      silent > Self.microphoneStallSeconds else { continue }
+                Logger.capture.warning("Microphone \(uid, privacy: .public) delivered nothing for \(Int(silent), privacy: .public)s; rebuilding")
+                segment.recordMicrophoneStall(deviceUID: uid)
+            }
+            reconcileMicrophoneSelection(restartFailed: true)
+        }
+        if sessionSources.contains(.screen) { systemAudioCaptureManager.reconcileLiveness() }
     }
 
     internal func handleHeartbeatTick() {
@@ -634,6 +664,8 @@ public final class CaptureManager {
         heartbeatTimerRevision &+= 1
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
+        livenessTimer?.invalidate()
+        livenessTimer = nil
     }
 
     private func finalizeActiveSegmentForTransition(stopAudio: Bool) async -> URL? {
