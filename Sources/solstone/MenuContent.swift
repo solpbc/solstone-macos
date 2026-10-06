@@ -26,6 +26,10 @@ struct MenuContent: View {
         if appState.isRecording || appState.isPaused, !appState.captureManager.activeSources.isEmpty {
             Text(UICopy.sourceNames(appState.captureManager.activeSources))
         }
+        if appState.isRecording, !appState.isPaused, let note = appState.capture.audioHealthNote {
+            Text(note)
+                .accessibilityIdentifier(AXID.Menubar.audioHealthNote)
+        }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         Button(menubarBrowserRowTitle(snapshot: appState.browserHostSnapshot.value, now: Date())) {
             openSettings(tab: "sources")

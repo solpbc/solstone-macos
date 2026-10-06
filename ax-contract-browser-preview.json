@@ -86,6 +86,7 @@
       "journal.browser.retry",
       "journal.browser.webView",
       "menubar.app.quit",
+      "menubar.audio.health",
       "menubar.navigation.about",
       "menubar.navigation.browsers",
       "menubar.navigation.openJournal",

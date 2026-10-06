@@ -18,6 +18,7 @@ enum AXContract {
         AXID.Menubar.statusRowState,
         AXID.Menubar.permissionsButton,
         AXID.Menubar.errorButton,
+        AXID.Menubar.audioHealthNote,
         AXID.Menubar.journalState,
         AXID.Menubar.journalMigrationNeededButton,
         AXID.Menubar.localOnlyButton,

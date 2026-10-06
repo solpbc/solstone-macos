@@ -43,6 +43,8 @@ public final class CaptureCoordinator {
     public internal(set) var isExplicitlyStopped = false
     public internal(set) var isUserStopped = false
     public internal(set) var captureError: String?
+    /// Which audio source isn't coming through, or dropped out and is back. Shown as a plain line.
+    public internal(set) var audioHealthNote: String?
     private var storedScreenRecordingGranted = false
     public var screenRecordingGranted: Bool { storedScreenRecordingGranted }
     internal var microphoneAuthorizationCause: MicrophoneAuthorizationCause = .unknown
@@ -147,6 +149,7 @@ public final class CaptureCoordinator {
 
     public func activate() {
         captureManager.onAudioCaptureIssue = { [weak self] message in self?.bannerSink(message) }
+        captureManager.onAudioHealthNote = { [weak self] note in self?.audioHealthNote = note }
         captureManager.onStateChanged = { [weak self] state in
             self?.handleCaptureStateChange(state)
         }

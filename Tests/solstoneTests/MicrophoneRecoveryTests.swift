@@ -807,16 +807,16 @@ struct MicrophoneRecoveryTests {
         let clock = LockedValue<TimeInterval>(); clock.set(1000)
         let (lab, shared, manager, _) = try await livenessLab(root, clock: clock)
         manager.refreshAudioHealth()
-        #expect(manager.currentAudioCaptureIssue == nil)
+        #expect(manager.currentAudioHealthNote == nil)
         let capture = try #require(shared.getCapture(for: "u"))
         for _ in 0..<7 { lab.engines.last!.notify(); await capture.drain() }
         manager.handleLivenessTick()
-        #expect(manager.currentAudioCaptureIssue == "mic isn't coming through right now. the solstone app is trying again on its own.")
+        #expect(manager.currentAudioHealthNote == "mic isn't coming through right now. the solstone app is trying again on its own.")
         clock.set(1016); manager.handleLivenessTick()
         #expect(shared.getCapture(for: "u")?.isCapturing == true)
-        #expect(manager.currentAudioCaptureIssue == "mic dropped out earlier and is back. part of this segment may be missing.")
+        #expect(manager.currentAudioHealthNote == "mic dropped out earlier and is back. part of this segment may be missing.")
         _ = await manager.enqueueTransition(.pause(reason: .user, stopAudio: true))
-        #expect(manager.currentAudioCaptureIssue == nil)
+        #expect(manager.currentAudioHealthNote == nil)
         _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
     }
 
@@ -837,7 +837,7 @@ struct MicrophoneRecoveryTests {
         available.set([])
         await manager.handleDeviceChange(added: [], removed: [device()])
         manager.handleLivenessTick()
-        #expect(manager.currentAudioCaptureIssue == nil)
+        #expect(manager.currentAudioHealthNote == nil)
         _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
     }
 }

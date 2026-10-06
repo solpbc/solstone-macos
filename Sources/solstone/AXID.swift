@@ -5,6 +5,7 @@ import Foundation
 
 enum AXID {
     enum Menubar {
+        static let audioHealthNote = "menubar.audio.health"
         static let statusIconState = "menubar.status.icon.state"
         static let statusIconOverlayState = "menubar.status.icon.overlay.state"
         static let statusRowState = "menubar.status.row.state"
