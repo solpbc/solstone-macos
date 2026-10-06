@@ -10,6 +10,29 @@ import Testing
 
 @Suite("PerSourceAudioManager")
 struct PerSourceAudioManagerTests {
+    @Test func heldMicrophoneStartDoesNotBlockSegmentLockUsers() throws {
+        let root = try makeTempDirectory("audio-held-mic-start")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let manager = PerSourceAudioManager(
+            outputDirectory: root, timePrefix: "120000", captureManager: MicrophoneCaptureManager(),
+            startMicrophoneCapture: { _ in entered.signal(); release.wait() }
+        )
+        manager.setSegmentStartTime(.zero)
+        let mic = AudioInputDevice(id: 42, name: "test mic", uid: "test-mic", manufacturer: "test", sampleRate: 48_000, transportType: .usb)
+        let done = DispatchSemaphore(value: 0)
+        Thread.detachNewThread { _ = try? manager.addMicrophone(mic); done.signal() }
+        #expect(entered.wait(timeout: .now() + 5) == .success)
+        // The same lock gates every system-audio buffer.
+        let probed = DispatchSemaphore(value: 0)
+        Thread.detachNewThread { _ = manager.hasMicrophone(deviceUID: "other"); probed.signal() }
+        let prompt = probed.wait(timeout: .now() + 0.5) == .success
+        release.signal()
+        #expect(prompt)
+        #expect(done.wait(timeout: .now() + 5) == .success)
+        #expect(manager.hasMicrophone(deviceUID: mic.uid))
+    }
+
     @Test func reconnectKeepsEarlierFramesEvenWhenOneRejoinFails() async throws {
         let root = try makeTempDirectory("audio-reconnect")
         defer { try? FileManager.default.removeItem(at: root) }

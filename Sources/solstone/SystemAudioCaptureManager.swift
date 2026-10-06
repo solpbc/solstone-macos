@@ -492,9 +492,16 @@ public final class SystemAudioCaptureManager {
         guard now >= nextRearm else { return }
         nextRearm = now + Self.rearmCooldowns[min(rearmLevel, Self.rearmCooldowns.count - 1)]
         rearmLevel += 1
-        recoveryAttempts = 0
+        let revision = interruptionRevision
         Logger.audio.notice("[SystemAudio] Interruption still unresolved; rebuilding transport (backoff level \(self.rearmLevel, privacy: .public))")
-        Task { @MainActor [weak self] in await self?.restartStream() }
+        Task { @MainActor [weak self] in
+            guard let self, self.interruptionRevision == revision, self.unresolvedInterruption != nil,
+                  self.recoveryAttempts >= 3 else { return }
+            self.recoveryAttempts = 0
+            await self.restartStream()
+            // Only this backoff may renew a spent budget; health ticks stay quiet.
+            if self.unresolvedInterruption != nil { self.recoveryAttempts = max(self.recoveryAttempts, 3) }
+        }
     }
 
     /// Restart the stream (used by health check)

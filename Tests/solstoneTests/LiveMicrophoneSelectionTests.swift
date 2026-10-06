@@ -20,7 +20,7 @@ struct LiveMicrophoneSelectionTests {
         return try #require((meta["audio_capture"] as? [String: Any])?["sources"] as? [[String: Any]])
     }
 
-    @Test func liveChangesAndHotplugUseCurrentPolicyAndFourDeviceLimit() async throws {
+    @Test func liveChangesAndHotplugUseCurrentPolicyForEveryDevice() async throws {
         let root = try makeTempDirectory("live-selection"); defer { try? FileManager.default.removeItem(at: root) }
         let a = device("a"), b = device("b", optIn: true)
         var available = [a, b]
@@ -43,7 +43,7 @@ struct LiveMicrophoneSelectionTests {
         available = [a, device("c"), device("d"), device("e"), device("f"), device("g")]
         manager.updateMicrophoneSelection(disabled: ["a"], enabled: [])
         await manager.handleDeviceChange(added: [a, device("g")], removed: [])
-        #expect(Set(segment.activeMicrophoneUIDs()) == ["c", "d", "e", "f"])
+        #expect(Set(segment.activeMicrophoneUIDs()) == ["c", "d", "e", "f", "g"])
         available.removeAll { $0.uid == "c" }
         await manager.handleDeviceChange(added: [], removed: [device("c")])
         #expect(Set(segment.activeMicrophoneUIDs()) == ["d", "e", "f", "g"])

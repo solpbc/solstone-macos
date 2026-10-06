@@ -13,15 +13,28 @@ public enum ServiceMode: String, Codable, Equatable, Sendable, CaseIterable {
 
 /// Microphone entry for priority list
 public struct MicrophoneEntry: Codable, Equatable, Sendable {
+    /// How the owner wants a microphone taken in.
+    public enum Mode: String, Sendable, CaseIterable { case always, whenInUseElsewhere, off }
+
     public let uid: String
     public let name: String
     public var isDisabled: Bool
+    /// When off, still take the microphone in while another app has it open
+    /// (the Bluetooth default: opening an idle headset input degrades its playback).
+    public var followsOtherApps: Bool
 
-    public init(uid: String, name: String, isDisabled: Bool = false) {
+    public init(uid: String, name: String, isDisabled: Bool = false, followsOtherApps: Bool = false) {
         self.uid = uid
         self.name = name
         self.isDisabled = isDisabled
+        self.followsOtherApps = isDisabled && followsOtherApps
     }
+
+    public init(uid: String, name: String, mode: Mode) {
+        self.init(uid: uid, name: name, isDisabled: mode != .always, followsOtherApps: mode == .whenInUseElsewhere)
+    }
+
+    public var mode: Mode { !isDisabled ? .always : (followsOtherApps ? .whenInUseElsewhere : .off) }
 
     // Custom decoder for backward compatibility (existing configs without isDisabled)
     public init(from decoder: Decoder) throws {
@@ -29,10 +42,12 @@ public struct MicrophoneEntry: Codable, Equatable, Sendable {
         uid = try container.decode(String.self, forKey: .uid)
         name = try container.decode(String.self, forKey: .name)
         isDisabled = try container.decodeIfPresent(Bool.self, forKey: .isDisabled) ?? false
+        let follows = try container.decodeIfPresent(Bool.self, forKey: .followsOtherApps) ?? false
+        followsOtherApps = isDisabled && follows
     }
 
     private enum CodingKeys: String, CodingKey {
-        case uid, name, isDisabled
+        case uid, name, isDisabled, followsOtherApps
     }
 }
 
@@ -83,6 +98,7 @@ public struct AppConfig: Sendable {
         static let observerName = "observerName"
         static let didMigrateFromJSON = "didMigrateFromJSON"
         static let didReseedOptInMicrophones = "didReseedOptInMicrophones"
+        static let didReseedBluetoothMicrophones = "didReseedBluetoothMicrophones"
         static let didReseedCaptureSourcesOn = "didReseedCaptureSourcesOn"
     }
 
@@ -428,7 +444,7 @@ public struct AppConfig: Sendable {
 
     /// Returns UIDs of disabled microphones
     public var disabledMicrophoneUIDs: Set<String> {
-        Set(microphonePriority.filter { $0.isDisabled }.map { $0.uid })
+        Set(microphonePriority.filter { $0.mode == .off }.map { $0.uid })
     }
 
     /// Returns UIDs of enabled microphones
@@ -509,6 +525,31 @@ public struct AppConfig: Sendable {
         guard let index = microphonePriority.firstIndex(where: { $0.uid == uid }) else { return }
         let entry = microphonePriority[index]
         microphonePriority[index] = MicrophoneEntry(uid: entry.uid, name: entry.name, isDisabled: !entry.isDisabled)
+    }
+
+    public mutating func setMicrophoneMode(uid: String, mode: MicrophoneEntry.Mode) {
+        guard let index = microphonePriority.firstIndex(where: { $0.uid == uid }) else { return }
+        let entry = microphonePriority[index]
+        microphonePriority[index] = MicrophoneEntry(uid: entry.uid, name: entry.name, mode: mode)
+    }
+
+    /// One-shot migration: Bluetooth microphones that were taken in automatically
+    /// now follow other apps instead, so an idle headset keeps its playback quality.
+    public mutating func reseedBluetoothMicrophonesIfNeeded(connectedBluetoothUIDs: Set<String>) {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Keys.didReseedBluetoothMicrophones) else { return }
+        var reseeded = self
+        reseeded.microphonePriority = reseeded.microphonePriority.map { entry in
+            guard connectedBluetoothUIDs.contains(entry.uid), entry.mode == .always else { return entry }
+            return MicrophoneEntry(uid: entry.uid, name: entry.name, mode: .whenInUseElsewhere)
+        }
+        do {
+            try reseeded.save()
+            self = reseeded
+            defaults.set(true, forKey: Keys.didReseedBluetoothMicrophones)
+        } catch {
+            Logger.general.warning("Failed to re-seed Bluetooth microphone defaults: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Reorders microphones in the priority list

@@ -18,13 +18,18 @@ struct MicrophoneDisplayEntry: Identifiable {
     let name: String
     let isConnected: Bool
     let isDisabled: Bool
+    let mode: MicrophoneEntry.Mode
+    /// Bluetooth microphones can follow other apps instead of being always on or off.
+    let offersFollowing: Bool
 
-    init(from entry: MicrophoneEntry, isConnected: Bool) {
+    init(from entry: MicrophoneEntry, isConnected: Bool, isBluetooth: Bool = false) {
         self.id = entry.uid
         self.uid = entry.uid
         self.name = entry.name
         self.isConnected = isConnected
         self.isDisabled = entry.isDisabled
+        self.mode = entry.mode
+        self.offersFollowing = isBluetooth || entry.followsOtherApps
     }
 }
 
@@ -2655,11 +2660,14 @@ struct SettingsView: View {
     // MARK: - Microphone Tab
 
     private var microphoneDisplayEntries: [MicrophoneDisplayEntry] {
-        let connectedUIDs = Set(appState.audioDeviceMonitor.availableDevices.map { $0.uid })
+        let available = appState.audioDeviceMonitor.availableDevices
+        let connectedUIDs = Set(available.map { $0.uid })
+        let bluetoothUIDs = Set(available.filter { $0.transportType == .bluetooth }.map { $0.uid })
         return appState.config.microphonePriority.map { entry in
             MicrophoneDisplayEntry(
                 from: entry,
-                isConnected: connectedUIDs.contains(entry.uid)
+                isConnected: connectedUIDs.contains(entry.uid),
+                isBluetooth: bluetoothUIDs.contains(entry.uid)
             )
         }
     }
@@ -2668,7 +2676,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             GroupBox("microphone priority") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("drag to reorder. the microphone at the top is used first.")
+                    Text(UICopy.MICROPHONES_LIST_CAPTION)
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -2683,7 +2691,8 @@ struct SettingsView: View {
                                 MicrophoneRow(
                                     entry: entry,
                                     onDelete: { deleteMicrophone(uid: entry.uid) },
-                                    onToggleDisabled: { toggleMicrophoneDisabled(uid: entry.uid) }
+                                    onToggleDisabled: { toggleMicrophoneDisabled(uid: entry.uid) },
+                                    onSelectMode: { setMicrophoneMode(uid: entry.uid, mode: $0) }
                                 )
                             }
                             .onMove { from, to in
@@ -2792,6 +2801,12 @@ struct SettingsView: View {
     private func toggleMicrophoneDisabled(uid: String) {
         var newConfig = appState.config
         newConfig.toggleMicrophoneDisabled(uid: uid)
+        appState.updateConfig(newConfig)
+    }
+
+    private func setMicrophoneMode(uid: String, mode: MicrophoneEntry.Mode) {
+        var newConfig = appState.config
+        newConfig.setMicrophoneMode(uid: uid, mode: mode)
         appState.updateConfig(newConfig)
     }
 
@@ -4222,6 +4237,7 @@ struct MicrophoneRow: View {
     let entry: MicrophoneDisplayEntry
     let onDelete: () -> Void
     let onToggleDisabled: () -> Void
+    var onSelectMode: (MicrophoneEntry.Mode) -> Void = { _ in }
 
     private var indicatorColor: Color {
         if !entry.isConnected {
@@ -4232,7 +4248,7 @@ struct MicrophoneRow: View {
 
     private var axStateValue: String {
         let connection = entry.isConnected ? "connected" : "disconnected"
-        let enabled = entry.isDisabled ? "disabled" : "enabled"
+        let enabled = entry.mode == .whenInUseElsewhere ? "following" : (entry.isDisabled ? "disabled" : "enabled")
         return "\(connection)_\(enabled)"
     }
 
@@ -4250,14 +4266,27 @@ struct MicrophoneRow: View {
 
             Spacer()
 
-            // Disable/Enable toggle
-            Button(action: onToggleDisabled) {
-                Image(systemName: entry.isDisabled ? "mic.slash" : "mic")
-                    .foregroundStyle(entry.isDisabled ? .orange : .green)
+            if entry.offersFollowing {
+                Picker("", selection: Binding(get: { entry.mode }, set: { onSelectMode($0) })) {
+                    Text(UICopy.MICROPHONE_MODE_WHEN_IN_USE).tag(MicrophoneEntry.Mode.whenInUseElsewhere)
+                    Text(UICopy.MICROPHONE_MODE_ALWAYS).tag(MicrophoneEntry.Mode.always)
+                    Text(UICopy.MICROPHONE_MODE_OFF).tag(MicrophoneEntry.Mode.off)
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+                .help(UICopy.MICROPHONE_MODE_HELP)
+                .accessibilityIdentifier(AXID.Settings.Microphones.deviceToggle(entry.uid))
+            } else {
+                // Disable/Enable toggle
+                Button(action: onToggleDisabled) {
+                    Image(systemName: entry.isDisabled ? "mic.slash" : "mic")
+                        .foregroundStyle(entry.isDisabled ? .orange : .green)
+                }
+                .buttonStyle(.plain)
+                .help(entry.isDisabled ? "enable microphone" : "disable microphone")
+                .accessibilityIdentifier(AXID.Settings.Microphones.deviceToggle(entry.uid))
             }
-            .buttonStyle(.plain)
-            .help(entry.isDisabled ? "enable microphone" : "disable microphone")
-            .accessibilityIdentifier(AXID.Settings.Microphones.deviceToggle(entry.uid))
 
             // Delete button (only for connected mics)
             if entry.isConnected {

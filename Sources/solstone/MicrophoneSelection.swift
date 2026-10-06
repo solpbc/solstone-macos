@@ -2,12 +2,18 @@
 // Copyright (c) 2026 sol pbc
 
 enum MicrophoneSelection {
+    /// `enabled` always captures and `disabled` never does. A Bluetooth microphone
+    /// in neither set follows other apps: it is taken in only while another app has
+    /// it open, because opening an idle headset input degrades its playback.
     static func shouldCapture(
         _ device: AudioInputDevice,
         disabledMicUIDs: Set<String>,
-        enabledMicUIDs: Set<String>
+        enabledMicUIDs: Set<String>,
+        inUseElsewhere: Set<String> = []
     ) -> Bool {
-        if device.isOptInOnlyMicrophone { return enabledMicUIDs.contains(device.uid) }
-        return !disabledMicUIDs.contains(device.uid)
+        if enabledMicUIDs.contains(device.uid) { return true }
+        if disabledMicUIDs.contains(device.uid) { return false }
+        if device.transportType == .bluetooth { return inUseElsewhere.contains(device.uid) }
+        return !device.isOptInOnlyMicrophone
     }
 }

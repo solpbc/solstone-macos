@@ -156,35 +156,40 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// - Parameter device: The audio input device
     /// - Returns: The source ID (device UID)
     public func addMicrophone(_ device: AudioInputDevice) throws -> String {
+        // Callers are main-actor serialized. The writer lock also gates every
+        // system-audio buffer, so it is never held across a native engine start.
         lock.lock()
-        defer { lock.unlock() }
-        guard !isFinishing, !admissionClosed else { throw SegmentWriter.SegmentError.segmentFinishing }
+        guard !isFinishing, !admissionClosed else { lock.unlock(); throw SegmentWriter.SegmentError.segmentFinishing }
 
         let sourceID = device.uid
         if captureManager?.allowsCapture(deviceUID: sourceID) == false {
-            throw MicrophoneCaptureManager.SelectionError.selectionChanged
+            lock.unlock(); throw MicrophoneCaptureManager.SelectionError.selectionChanged
         }
         diagnostics?.expect(sourceID, kind: "microphone")
 
         // Already exists
         if sourceWriters[sourceID]?.attached == true,
-           captureManager?.getCapture(for: sourceID)?.isCapturing != false {
-            return sourceID
+           captureManager == nil || captureManager?.getCapture(for: sourceID)?.isCapturing == true {
+            lock.unlock(); return sourceID
         }
 
         let url = makeURL(for: sourceID)
         let startTime = segmentStartTime ?? CMClockGetTime(CMClockGetHostTimeClock())
         let existing = sourceWriters[sourceID]
         let mediaBudget = existing?.writer.mediaBudget ?? captureManager?.mediaBudget(for: sourceID) ?? AudioMediaBudget()
-        try diagnostics?.admitSource(sourceID, kind: "microphone")
-        let writer = try existing?.writer ?? SingleTrackAudioWriter(
-            url: url,
-            trackType: .microphone(name: device.name, deviceUID: device.uid),
-            segmentStartTime: startTime,
-            verbose: verbose,
-            mediaBudget: mediaBudget,
-            onStatistics: { [diagnostics] in diagnostics?.statistics(sourceID, $0) }
-        )
+        let writer: SingleTrackAudioWriter
+        do {
+            try diagnostics?.admitSource(sourceID, kind: "microphone")
+            writer = try existing?.writer ?? SingleTrackAudioWriter(
+                url: url,
+                trackType: .microphone(name: device.name, deviceUID: device.uid),
+                segmentStartTime: startTime,
+                verbose: verbose,
+                mediaBudget: mediaBudget,
+                onStatistics: { [diagnostics] in diagnostics?.statistics(sourceID, $0) }
+            )
+        } catch { lock.unlock(); throw error }
+        lock.unlock()
 
         do {
             var legacyCapture: ExternalMicCapture?
@@ -192,6 +197,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             if let captureManager = captureManager {
                 // Start capture if not already running
                 try startMicrophoneCapture?(device)
+                lock.lock()
+                defer { lock.unlock() }
+                guard !isFinishing, !admissionClosed else { throw SegmentWriter.SegmentError.segmentFinishing }
                 guard captureManager.allowsCapture(deviceUID: sourceID) else {
                     throw MicrophoneCaptureManager.SelectionError.selectionChanged
                 }
@@ -201,6 +209,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
                     writer?.enqueuePCMBuffer(buffer, presentationTime: time)
                 }, onError: { [weak writer] in writer?.reportCaptureFailure($0) })
                 Logger.audio.info("Wired mic callback: \(device.name, privacy: .public)")
+                sourceWriters[sourceID] = SourceWriter(writer: writer, legacyCapture: nil)
+                micMetadata[sourceID] = device
+                diagnostics?.started(sourceID)
             } else {
                 // Legacy path: create capture per segment
                 let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
@@ -212,11 +223,12 @@ public final class PerSourceAudioManager: @unchecked Sendable {
                 try capture.start()
                 legacyCapture = capture
                 Logger.audio.info("Started mic capture (legacy): \(device.name, privacy: .public)")
+                lock.lock()
+                defer { lock.unlock() }
+                sourceWriters[sourceID] = SourceWriter(writer: writer, legacyCapture: legacyCapture)
+                micMetadata[sourceID] = device
+                diagnostics?.started(sourceID)
             }
-
-            sourceWriters[sourceID] = SourceWriter(writer: writer, legacyCapture: legacyCapture)
-            micMetadata[sourceID] = device
-            diagnostics?.started(sourceID)
         } catch {
             if existing == nil { try? FileManager.default.removeItem(at: url) }
             throw error

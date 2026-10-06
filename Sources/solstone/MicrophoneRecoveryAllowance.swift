@@ -10,6 +10,9 @@ import Foundation
 internal final class MicrophoneRecoveryAllowance: @unchecked Sendable {
     static let replacementLimit = 6
     static let stableSeconds: TimeInterval = 10
+    /// Backoff escalation is forgiven only after a long stable run, so a device that
+    /// works briefly after each start still escalates instead of cycling every 15 s.
+    static let forgivenessSeconds: TimeInterval = 120
     /// Low-rate devices can deliver half-second buffers; continuity tolerates that.
     static let maximumArrivalGap: TimeInterval = 1.5
     static let cooldowns: [TimeInterval] = [15, 30, 60]
@@ -69,10 +72,8 @@ internal final class MicrophoneRecoveryAllowance: @unchecked Sendable {
                 stableStart = arrival
             }
             lastArrival = arrival
-            if let stableStart, arrival - stableStart >= Self.stableSeconds {
-                replacements = 0
-                cooldownLevel = 0
-            }
+            if let stableStart, arrival - stableStart >= Self.stableSeconds { replacements = 0 }
+            if let stableStart, arrival - stableStart >= Self.forgivenessSeconds { cooldownLevel = 0 }
         }
     }
 }

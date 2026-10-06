@@ -88,6 +88,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
     public var isCapturing: Bool { callbackLock.withLock { running } }
     private var lastTapArrival: TimeInterval = 0
     /// Seconds since the running engine last delivered a tap buffer (or started); nil when not running.
+    /// A configuration-change recovery owns this capture until it commits or gives up.
+    internal var isRecoveringConfiguration: Bool { callbackLock.withLock { recoveryAdmitted } }
     internal var secondsSinceLastTap: TimeInterval? {
         callbackLock.withLock { running ? max(0, monotonicNow() - lastTapArrival) : nil }
     }

@@ -1419,6 +1419,8 @@ public final class AppState {
             .filter { $0.isOptInOnlyMicrophone }
             .map { $0.uid })
         self.config.reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: connectedOptInOnlyUIDs)
+        self.config.reseedBluetoothMicrophonesIfNeeded(connectedBluetoothUIDs: Set(audioDeviceMonitor.availableDevices
+            .filter { $0.transportType == .bluetooth }.map { $0.uid }))
         self.config.reseedCaptureSourcesOnIfNeeded()
 
         // Sync microphone priority list with available devices

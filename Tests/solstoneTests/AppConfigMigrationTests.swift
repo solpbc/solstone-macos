@@ -177,6 +177,31 @@ struct AppConfigMigrationTests {
         #expect(config.microphonePriority[0].isDisabled == false)
     }
 
+    @Test func bluetoothReseedMovesOnlyConnectedAlwaysEntriesToFollowOnce() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        var config = AppConfig(microphonePriority: [
+            MicrophoneEntry(uid: "airpods", name: "AirPods", mode: .always),
+            MicrophoneEntry(uid: "usb", name: "USB", mode: .always),
+            MicrophoneEntry(uid: "headset-off", name: "Headset", mode: .off)
+        ])
+        config.reseedBluetoothMicrophonesIfNeeded(connectedBluetoothUIDs: ["airpods", "headset-off"])
+        #expect(config.microphonePriority.map(\.mode) == [.whenInUseElsewhere, .always, .off])
+        #expect(config.disabledMicrophoneUIDs == ["headset-off"] && config.enabledMicrophoneUIDs == ["usb"])
+        config.setMicrophoneMode(uid: "airpods", mode: .always)
+        config.reseedBluetoothMicrophonesIfNeeded(connectedBluetoothUIDs: ["airpods"])
+        #expect(config.microphonePriority[0].mode == .always)
+    }
+
+    @Test func microphoneModeRoundTripsAndOlderEntriesDecode() throws {
+        let entries = [MicrophoneEntry(uid: "a", name: "A", mode: .whenInUseElsewhere),
+                       MicrophoneEntry(uid: "b", name: "B", mode: .off), MicrophoneEntry(uid: "c", name: "C", mode: .always)]
+        let decoded = try JSONDecoder().decode([MicrophoneEntry].self, from: JSONEncoder().encode(entries))
+        #expect(decoded == entries && decoded.map(\.mode) == [.whenInUseElsewhere, .off, .always])
+        let older = try JSONDecoder().decode(MicrophoneEntry.self, from: Data(#"{"uid":"x","name":"X","isDisabled":true}"#.utf8))
+        #expect(older.mode == .off)
+    }
+
     // MARK: - Capture sources
 
     // 2.0.6 read an absent key as `false`, so every install that upgraded into it stopped
@@ -257,6 +282,7 @@ struct AppConfigMigrationTests {
             "didReseedNotificationPreference",
             "solInitiatedChatNotificationsEnabled",
             "didReseedOptInMicrophones",
+            "didReseedBluetoothMicrophones",
             "didReseedCaptureSourcesOn",
             "localRetentionMB"
         ] {

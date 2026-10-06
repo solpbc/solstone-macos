@@ -55,6 +55,16 @@ struct MicrophoneSelectionTests {
         #expect(MicrophoneSelection.shouldCapture(device, disabledMicUIDs: [], enabledMicUIDs: ["iphone-usb"]))
     }
 
+    @Test func bluetoothFollowsOtherAppsUnlessTheOwnerChose() {
+        let headset = makeDevice(uid: "bt", transportType: .bluetooth)
+        #expect(!MicrophoneSelection.shouldCapture(headset, disabledMicUIDs: [], enabledMicUIDs: []))
+        #expect(MicrophoneSelection.shouldCapture(headset, disabledMicUIDs: [], enabledMicUIDs: [], inUseElsewhere: ["bt"]))
+        #expect(MicrophoneSelection.shouldCapture(headset, disabledMicUIDs: [], enabledMicUIDs: ["bt"]))
+        #expect(!MicrophoneSelection.shouldCapture(headset, disabledMicUIDs: ["bt"], enabledMicUIDs: [], inUseElsewhere: ["bt"]))
+        let usb = makeDevice(uid: "usb", transportType: .usb)
+        #expect(MicrophoneSelection.shouldCapture(usb, disabledMicUIDs: [], enabledMicUIDs: [], inUseElsewhere: []))
+    }
+
     private func makeDevice(uid: String, name: String = "Test Mic", transportType: AudioTransportType) -> AudioInputDevice {
         AudioInputDevice(
             id: 1,

@@ -99,9 +99,7 @@ final class CaptureLifecycleManager {
         self.executor = CaptureExecutor(
             isScreenLocked: isScreenLocked,
             unlockResumeDelay: unlockResumeDelay,
-            preResumeSettle: preResumeSettle ?? {
-                await CaptureLifecycleManager.waitForAudioDevices(timeout: 5.0)
-            },
+            preResumeSettle: preResumeSettle ?? {},
             transitionTimeoutSeconds: transitionTimeoutSeconds
         )
     }
@@ -332,24 +330,6 @@ final class CaptureLifecycleManager {
 
     private func isScreenLocked() -> Bool {
         isScreenLockedProvider()
-    }
-
-    private static func waitForAudioDevices(timeout: TimeInterval) async {
-        let startTime = Date()
-        let pollInterval: UInt64 = 100_000_000 // 100ms in nanoseconds
-
-        while Date().timeIntervalSince(startTime) < timeout {
-            let devices = MicrophoneMonitor.listInputDevices()
-            if !devices.isEmpty {
-                Logger.capture.info("Audio devices available after \(String(format: "%.1f", Date().timeIntervalSince(startTime)), privacy: .public)s")
-                return
-            }
-            try? await Task.sleep(nanoseconds: pollInterval)
-        }
-
-        // Timeout reached - log warning but don't fail.
-        // Recording can proceed without mic if needed.
-        Logger.capture.warning("Timeout waiting for audio devices after \(timeout, privacy: .public)s")
     }
 
     private func startRecoveryTimer() {

@@ -90,6 +90,43 @@ public struct AudioInputDevice: Sendable {
 /// Namespace for CoreAudio microphone enumeration and lookup helpers.
 public enum MicrophoneMonitor {
     /// Lists all available audio input devices
+    /// UIDs of input devices that a process other than this one is running input on.
+    /// Uses the HAL process objects (macOS 14+). Any read failure yields an empty set,
+    /// which keeps a following microphone off rather than opening it.
+    public static func inputDeviceUIDsInUseByOtherProcesses() -> Set<String> {
+        var listAddress = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &listAddress, 0, nil, &size) == noErr,
+              size > 0 else { return [] }
+        var processes = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &listAddress, 0, nil, &size, &processes) == noErr
+        else { return [] }
+        let ownPID = getpid()
+        var uids = Set<String>()
+        for process in processes {
+            var pidAddress = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyPID,
+                mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            var pid: pid_t = 0
+            var pidSize = UInt32(MemoryLayout<pid_t>.size)
+            guard AudioObjectGetPropertyData(process, &pidAddress, 0, nil, &pidSize, &pid) == noErr, pid != ownPID else { continue }
+            var runningAddress = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyIsRunningInput,
+                mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            var running: UInt32 = 0
+            var runningSize = UInt32(MemoryLayout<UInt32>.size)
+            guard AudioObjectGetPropertyData(process, &runningAddress, 0, nil, &runningSize, &running) == noErr,
+                  running != 0 else { continue }
+            var devicesAddress = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyDevices,
+                mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+            var devicesSize: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(process, &devicesAddress, 0, nil, &devicesSize) == noErr, devicesSize > 0 else { continue }
+            var devices = [AudioObjectID](repeating: 0, count: Int(devicesSize) / MemoryLayout<AudioObjectID>.size)
+            guard AudioObjectGetPropertyData(process, &devicesAddress, 0, nil, &devicesSize, &devices) == noErr else { continue }
+            for device in devices { if let uid = getDeviceUID(deviceID: device) { uids.insert(uid) } }
+        }
+        return uids
+    }
+
     public static func listInputDevices() -> [AudioInputDevice] {
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,

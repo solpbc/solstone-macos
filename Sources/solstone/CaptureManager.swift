@@ -157,6 +157,8 @@ public final class CaptureManager {
     public private(set) var activeSources: CaptureSources = []
     private var sessionSources: CaptureSources = []
     private let microphoneDevices: @MainActor () -> [AudioInputDevice]
+    /// UIDs of input devices another process is currently running input on.
+    internal var inputInUseElsewhere: @MainActor () -> Set<String> = MicrophoneMonitor.inputDeviceUIDsInUseByOtherProcesses
     private let shareableContentProvider: @MainActor () async throws -> SCShareableContent
     private(set) var state: State = .idle
 
@@ -346,7 +348,7 @@ public final class CaptureManager {
             micCaptureManager.stopCapture(deviceUID: device.uid)
         }
         // Event payloads can be stale. Admission always uses current enumeration
-        // and owner intent, including the same four-device limit as startup.
+        // and owner intent.
         reconcileMicrophoneSelection(restartFailed: true)
     }
 
@@ -365,9 +367,14 @@ public final class CaptureManager {
             enabledMicUIDs = current.enabled
         }
         let available = microphoneDevices()
-        let selected = Array(available.filter {
-            MicrophoneSelection.shouldCapture($0, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)
-        }.prefix(4))
+        let following = available.contains {
+            $0.transportType == .bluetooth && !disabledMicUIDs.contains($0.uid) && !enabledMicUIDs.contains($0.uid)
+        }
+        let inUseElsewhere = following ? inputInUseElsewhere() : []
+        let selected = available.filter {
+            MicrophoneSelection.shouldCapture($0, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs,
+                inUseElsewhere: inUseElsewhere)
+        }
         let revoked = micCaptureManager.updateSelection(selected, hasAvailableDevices: !available.isEmpty)
         for uid in revoked {
             currentSegment?.deselectMicrophone(deviceUID: uid)
@@ -385,8 +392,9 @@ public final class CaptureManager {
             segment.deselectMicrophone(deviceUID: uid)
         }
         for device in selected where (!segment.hasMicrophone(deviceUID: device.uid) ||
-            (restartFailed && micCaptureManager.getCapture(for: device.uid)?.isCapturing == false)) &&
-            !micCaptureManager.isCoolingDown(deviceUID: device.uid) {
+            (restartFailed && micCaptureManager.getCapture(for: device.uid)?.isCapturing != true)) &&
+            !micCaptureManager.isCoolingDown(deviceUID: device.uid) &&
+            micCaptureManager.getCapture(for: device.uid)?.isRecoveringConfiguration != true {
             do { try segment.addMicrophone(device) }
             catch { Logger.capture.warning("Failed to reconcile mic \(device.name, privacy: .public): \(error, privacy: .public)") }
         }
@@ -643,8 +651,8 @@ public final class CaptureManager {
         guard state.isRecording else { return }
         if sessionSources.contains(.microphone), let segment = currentSegment {
             for uid in segment.activeMicrophoneUIDs() {
-                guard let silent = micCaptureManager.getCapture(for: uid)?.secondsSinceLastTap,
-                      silent > Self.microphoneStallSeconds else { continue }
+                guard let capture = micCaptureManager.getCapture(for: uid), !capture.isRecoveringConfiguration,
+                      let silent = capture.secondsSinceLastTap, silent > Self.microphoneStallSeconds else { continue }
                 Logger.capture.warning("Microphone \(uid, privacy: .public) delivered nothing for \(Int(silent), privacy: .public)s; rebuilding")
                 segment.recordMicrophoneStall(deviceUID: uid)
             }

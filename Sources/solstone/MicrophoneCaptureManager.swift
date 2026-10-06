@@ -163,7 +163,9 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
 
         // Retry with increasing delays if device isn't ready yet
         // Create a fresh capture for each attempt (AVAudioEngine can't recover from failed state)
-        let retryDelays: [TimeInterval] = [0, 0.2, 0.5, 1.0]
+        // One quick retry; the capture liveness check paces anything longer
+        // so a failing device never holds the caller for seconds.
+        let retryDelays: [TimeInterval] = [0, 0.2]
         var lastError: Error?
 
         for (attempt, delay) in retryDelays.enumerated() {
