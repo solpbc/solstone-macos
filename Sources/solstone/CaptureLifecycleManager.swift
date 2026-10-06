@@ -10,8 +10,6 @@ import SolstoneCore
 protocol CaptureLifecycleDelegate: AnyObject {
     var lifecycleCurrentState: CaptureManager.State { get }
     var lifecycleOwnerPauseIsHeld: Bool { get }
-    func lifecycleAuthorizeResume(_ reason: ResumeReason) -> MicrophoneCaptureManager.RecoveryAuthorization?
-    func lifecycleCancelResumeAuthorization(_ authorization: MicrophoneCaptureManager.RecoveryAuthorization?)
     func lifecycleStartCapture(
         reason: StartReason,
         sources: CaptureSources,

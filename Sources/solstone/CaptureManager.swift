@@ -139,6 +139,9 @@ public final class CaptureManager {
     /// Persistent mic capture manager - keeps AVAudioEngine instances alive across segment rotations
     /// This prevents audio playback interference during rotation
     private let micCaptureManager: MicrophoneCaptureManager
+    /// The one place that decides when a stopped audio source is tried again.
+    private(set) internal var audioRecovery = AudioRecoveryManager()
+    static let systemAudioSourceID = "system"
 
     /// Persistent system audio capture manager - keeps SCStream alive across segment rotations
     private let systemAudioCaptureManager: SystemAudioCaptureManager
@@ -270,7 +273,8 @@ public final class CaptureManager {
         streamFactory: @escaping CaptureStreamFactory,
         recoveryScheduler: @escaping RecoveryScheduler,
         isScreenLocked: @escaping @MainActor () -> Bool = CaptureLifecycleManager.defaultIsScreenLocked,
-        microphoneCaptureManager: MicrophoneCaptureManager? = nil
+        microphoneCaptureManager: MicrophoneCaptureManager? = nil,
+        systemAudioCaptureManager: SystemAudioCaptureManager? = nil
     ) {
         self.storageManager = storageManager
         self.silenceMusic = silenceMusic
@@ -285,7 +289,7 @@ public final class CaptureManager {
         self.microphoneDevices = microphoneDevices
         self.shareableContentProvider = shareableContentProvider
         self.micCaptureManager = microphoneCaptureManager ?? MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
-        self.systemAudioCaptureManager = SystemAudioCaptureManager(streamFactory: streamFactory)
+        self.systemAudioCaptureManager = systemAudioCaptureManager ?? SystemAudioCaptureManager(streamFactory: streamFactory)
         self.lifecycleManager = CaptureLifecycleManager(
             recoveryScheduler: recoveryScheduler,
             isScreenLocked: isScreenLocked
@@ -326,6 +330,15 @@ public final class CaptureManager {
         self.systemAudioCaptureManager.onTerminalStop = { [weak self] in
             self?.handleTerminalStreamStop()
         }
+        audioRecovery.onWake = { [weak self] in self?.reconcileAudioSources() }
+        micCaptureManager.onRecoveryNeeded = { [weak self] uid in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                Logger.capture.notice("Microphone \(uid, privacy: .public) stopped; recovering")
+                self.audioRecovery.noteUnhealthy(uid)
+                self.reconcileAudioSources()
+            }
+        }
     }
 
     deinit {
@@ -357,6 +370,8 @@ public final class CaptureManager {
             currentSegment?.removeMicrophone(deviceUID: device.uid)
             micCaptureManager.stopCapture(deviceUID: device.uid)
         }
+        // A device that just arrived gets an immediate try, whatever its backoff.
+        audioRecovery.reset(Set(added.map(\.uid)))
         // Event payloads can be stale. Admission always uses current enumeration
         // and owner intent.
         reconcileMicrophoneSelection(restartFailed: true)
@@ -364,7 +379,7 @@ public final class CaptureManager {
 
     public func updateMicrophoneSelection(disabled: Set<String>, enabled: Set<String>) {
         let renewed = disabledMicUIDs.subtracting(disabled).union(enabled.subtracting(enabledMicUIDs))
-        micCaptureManager.authorizeMicrophoneRequest(deviceUIDs: renewed)
+        audioRecovery.reset(renewed)
         disabledMicUIDs = disabled
         enabledMicUIDs = enabled
         hasLiveMicrophoneSelection = true
@@ -403,8 +418,10 @@ public final class CaptureManager {
         }
         for device in selected where (!segment.hasMicrophone(deviceUID: device.uid) ||
             (restartFailed && micCaptureManager.getCapture(for: device.uid)?.isCapturing != true)) &&
-            !micCaptureManager.isCoolingDown(deviceUID: device.uid) &&
             micCaptureManager.getCapture(for: device.uid)?.isRecoveringConfiguration != true {
+            // Every start, first or repeated, goes through the backoff.
+            guard audioRecovery.canAttempt(device.uid) else { continue }
+            audioRecovery.noteAttempt(device.uid, kind: .microphone)
             do { try segment.addMicrophone(device) }
             catch { Logger.capture.warning("Failed to reconcile mic \(device.name, privacy: .public): \(error, privacy: .public)") }
         }
@@ -573,7 +590,9 @@ public final class CaptureManager {
             )
             try Task.checkCancellation()
             guard generation == segmentStartGeneration else { throw CancellationError() }
-            guard !startedSources.isEmpty || (sessionSources == .microphone && micCaptureManager.hasEmptySelection) else {
+            // A microphone-only session begins even when no microphone is in yet: none
+            // selected waits for one, and a selected one that failed is retried by recovery.
+            guard !startedSources.isEmpty || sessionSources == .microphone else {
                 throw CaptureError.noSourcesAvailable
             }
             self.activeSources = startedSources
@@ -658,19 +677,35 @@ public final class CaptureManager {
     }
 
     /// Drives every selected source back toward capture without owner action.
-    /// Per-source backoff (microphone allowance, system rebuild cooldown) bounds churn.
+    /// The recovery manager's per-source backoff bounds churn.
     internal func handleLivenessTick() {
         guard state.isRecording else { return }
         if sessionSources.contains(.microphone), let segment = currentSegment {
             for uid in segment.activeMicrophoneUIDs() {
                 guard let capture = micCaptureManager.getCapture(for: uid), !capture.isRecoveringConfiguration,
-                      let silent = capture.secondsSinceLastTap, silent > Self.microphoneStallSeconds else { continue }
+                      let silent = capture.secondsSinceLastTap else { continue }
+                if silent <= Self.microphoneStallSeconds { audioRecovery.noteHealthy(uid); continue }
                 Logger.capture.warning("Microphone \(uid, privacy: .public) delivered nothing for \(Int(silent), privacy: .public)s; rebuilding")
+                audioRecovery.noteUnhealthy(uid)
                 segment.recordMicrophoneStall(deviceUID: uid)
             }
-            reconcileMicrophoneSelection(restartFailed: true)
         }
-        if sessionSources.contains(.screen) { systemAudioCaptureManager.reconcileLiveness() }
+        if sessionSources.contains(.screen) {
+            if systemAudioCaptureManager.hasUnresolvedInterruption { audioRecovery.noteUnhealthy(Self.systemAudioSourceID) }
+            else { audioRecovery.noteHealthy(Self.systemAudioSourceID) }
+        }
+        reconcileAudioSources()
+    }
+
+    /// Starts any selected source that isn't capturing and whose backoff allows it.
+    internal func reconcileAudioSources() {
+        guard state.isRecording else { return }
+        if sessionSources.contains(.microphone) { reconcileMicrophoneSelection(restartFailed: true) }
+        if sessionSources.contains(.screen), systemAudioCaptureManager.needsRearm,
+           audioRecovery.canAttempt(Self.systemAudioSourceID) {
+            audioRecovery.noteAttempt(Self.systemAudioSourceID, kind: .system)
+            systemAudioCaptureManager.rearm()
+        }
         refreshAudioHealth()
     }
 
@@ -679,14 +714,14 @@ public final class CaptureManager {
     internal func refreshAudioHealth() {
         guard state.isRecording, let segment = currentSegment else { return }
         var recovering: [String] = []
-        if sessionSources.contains(.screen), systemAudioCaptureManager.hasUnresolvedInterruption { recovering.append("system") }
+        if sessionSources.contains(.screen), systemAudioCaptureManager.hasUnresolvedInterruption { recovering.append(Self.systemAudioSourceID) }
         if sessionSources.contains(.microphone) {
             recovering += micCaptureManager.selectedDeviceUIDs.filter { micCaptureManager.getCapture(for: $0)?.isCapturing != true }
         }
         let recovered = segment.sourcesWithLoss().filter { !recovering.contains($0) }
         let names = recovering.isEmpty && recovered.isEmpty ? [:]
             : Dictionary(microphoneDevices().map { ($0.uid, $0.name) }, uniquingKeysWith: { first, _ in first })
-        let name: (String) -> String = { $0 == "system" ? UICopy.AUDIO_SOURCE_SYSTEM : (names[$0] ?? UICopy.AUDIO_SOURCE_MICROPHONE) }
+        let name: (String) -> String = { $0 == Self.systemAudioSourceID ? UICopy.AUDIO_SOURCE_SYSTEM : (names[$0] ?? UICopy.AUDIO_SOURCE_MICROPHONE) }
         let message = UICopy.audioIssue(recovering: recovering.map(name), recovered: recovered.map(name))
         if message != currentAudioHealthNote { currentAudioHealthNote = message }
     }
@@ -704,6 +739,7 @@ public final class CaptureManager {
         heartbeatTimer = nil
         livenessTimer?.invalidate()
         livenessTimer = nil
+        audioRecovery.cancelWake()
     }
 
     private func finalizeActiveSegmentForTransition(stopAudio: Bool) async -> URL? {
@@ -888,6 +924,14 @@ public final class CaptureManager {
 
     // MARK: - Test Support
 
+    #if DEBUG || SOLSTONE_TEST_SUPPORT
+    internal func useAudioRecoveryForTesting(_ recovery: AudioRecoveryManager) {
+        audioRecovery.cancelWake()
+        audioRecovery = recovery
+        recovery.onWake = { [weak self] in self?.reconcileAudioSources() }
+    }
+    #endif
+
     internal func seedRecordingForTesting(currentSegment: any CaptureSegmentWriting, sources: CaptureSources = .all) {
         self.currentSegment = currentSegment
         self.activeSources = sources
@@ -959,15 +1003,6 @@ extension CaptureManager: CaptureLifecycleDelegate {
     var lifecycleCurrentState: CaptureManager.State { state }
     var lifecycleOwnerPauseIsHeld: Bool { lifecycleManager.ownerPauseIsHeld() }
 
-    func lifecycleAuthorizeResume(_ reason: ResumeReason) -> MicrophoneCaptureManager.RecoveryAuthorization? {
-        guard reason == .user, sessionSources.contains(.microphone), !lifecycleOwnerPauseIsHeld else { return nil }
-        return micCaptureManager.authorizeMicrophoneRequest()
-    }
-
-    func lifecycleCancelResumeAuthorization(_ authorization: MicrophoneCaptureManager.RecoveryAuthorization?) {
-        micCaptureManager.cancelMicrophoneRequest(authorization)
-    }
-
     func lifecycleStartCapture(
         reason: StartReason,
         sources: CaptureSources,
@@ -979,7 +1014,8 @@ extension CaptureManager: CaptureLifecycleDelegate {
         guard !sources.isEmpty else {
             throw transitionFailure(for: CaptureError.notInitialized)
         }
-        let microphoneAuthorization = reason == .user ? micCaptureManager.authorizeMicrophoneRequest() : nil
+        // Starting is an owner action: every source gets an immediate try.
+        audioRecovery.reset()
         if let current = microphoneSelectionProvider?() {
             self.disabledMicUIDs = current.disabled
             self.enabledMicUIDs = current.enabled
@@ -1013,7 +1049,6 @@ extension CaptureManager: CaptureLifecycleDelegate {
             try await startNewSegment()
         } catch {
             self.activeSources = []
-            if error is CancellationError { micCaptureManager.cancelMicrophoneRequest(microphoneAuthorization) }
             throw transitionFailure(for: error)
         }
 
@@ -1021,7 +1056,6 @@ extension CaptureManager: CaptureLifecycleDelegate {
             _ = await discardCurrentSegmentWithoutEnqueue(matching: nil)
             await stopPersistentAudioForDiscard()
             self.activeSources = []
-            micCaptureManager.cancelMicrophoneRequest(microphoneAuthorization)
             return lifecycleOwnerPauseIsHeld ? .vetoedOwnerPause : .vetoedScreenLocked
         }
 
@@ -1223,6 +1257,8 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
     func lifecyclePrepareResume(trigger: String) async throws {
         try Task.checkCancellation()
+        // Resume, wake and unlock all re-arm every source immediately.
+        audioRecovery.reset()
         recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
 
         if sessionSources.contains(.screen) && !allowsEmptyDisplayConfigurationForTesting {

@@ -20,6 +20,15 @@ struct SystemAudioContinuityTests {
         manager._restartParkHookForTesting = {}
         return manager
     }
+    /// The capture manager's liveness step for system audio, against a test clock.
+    private func rearmIfDue(_ manager: SystemAudioCaptureManager, _ recovery: AudioRecoveryManager) {
+        guard manager.needsRearm, recovery.canAttempt("system") else { return }
+        recovery.noteAttempt("system", kind: .system)
+        manager.rearm()
+    }
+    private func recovery(_ now: @escaping () -> TimeInterval) -> AudioRecoveryManager {
+        AudioRecoveryManager(now: now, scheduleWake: { _, _ in FakePauseExpiryTimer {} })
+    }
     private func settled(_ condition: @escaping @MainActor () -> Bool) async throws {
         try await withTimeout(seconds: 2) {
             while !(await condition()) { try await Task.sleep(for: .milliseconds(1)) }
@@ -124,7 +133,7 @@ struct SystemAudioContinuityTests {
         let factory = FakeCaptureStreamFactory([FakeCaptureStream()] + (0..<6).map { _ in FakeCaptureStream(startError: failure) })
         let observer = RestartObserverDouble(), manager = manager(factory, observer), errors = LockedCounter()
         var now: TimeInterval = 1000
-        manager.livenessNow = { now }
+        let recovery = recovery { now }
         try await manager.start(filter: SCContentFilter())
         manager.setCallback(onError: { _ in errors.increment() }) { _ in }
         observer.callbacks.last?()
@@ -133,15 +142,41 @@ struct SystemAudioContinuityTests {
         for _ in 0..<10 { await manager._performHealthCheckForTesting(); try await manager.start(filter: SCContentFilter()) }
         #expect(factory.createdStreams.count == 4 && errors.count == 4)
         // Liveness admits one more bounded batch, then waits out its backoff.
-        manager.reconcileLiveness()
+        rearmIfDue(manager, recovery)
         try await settled { factory.createdStreams.count == 7 && !manager.isRunning }
-        now += 59; manager.reconcileLiveness(); try await Task.sleep(for: .milliseconds(20))
+        now += 59; rearmIfDue(manager, recovery); try await Task.sleep(for: .milliseconds(20))
         #expect(factory.createdStreams.count == 7 && errors.count == 7)
         let next = LockedCounter(); manager.clearCallback(); manager.setCallback(onError: { _ in next.increment() }) { _ in }
         #expect(next.count == 1)
-        now += 1; manager.reconcileLiveness()
+        now += 1; rearmIfDue(manager, recovery)
         try await settled { factory.createdStreams.count == 8 && manager.isRunning }
         await manager.stop()
+    }
+
+    @Test func captureLivenessRearmsSystemAudioOnTheRecoveryBackoff() async throws {
+        let factory = FakeCaptureStreamFactory([FakeCaptureStream()] + (0..<9).map { _ in FakeCaptureStream(startError: failure) })
+        let observer = RestartObserverDouble(), system = manager(factory, observer)
+        let root = try makeTempDirectory("system-rearm-backoff"); defer { try? FileManager.default.removeItem(at: root) }
+        let capture = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [] }, streamFactory: factory.factory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, systemAudioCaptureManager: system)
+        var now: TimeInterval = 1000
+        capture.useAudioRecoveryForTesting(recovery { now })
+        capture.seedRecordingForTesting(currentSegment: SegmentWriter(outputDirectory: root, timePrefix: "120000"), sources: .screen)
+        try await system.start(filter: SCContentFilter())
+        observer.callbacks.last?()
+        try await settled { factory.createdStreams.count == 4 && system.needsRearm }
+        // The first rebuild is immediate, then each waits out its backoff.
+        capture.handleLivenessTick()
+        try await settled { factory.createdStreams.count == 7 && system.needsRearm }
+        now += 59; capture.handleLivenessTick(); try await Task.sleep(for: .milliseconds(20))
+        #expect(factory.createdStreams.count == 7)
+        #expect(capture.currentAudioHealthNote?.contains(UICopy.AUDIO_SOURCE_SYSTEM) == true)
+        now += 1; capture.handleLivenessTick()
+        try await settled { factory.createdStreams.count == 10 && system.needsRearm }
+        now += 119; capture.handleLivenessTick(); try await Task.sleep(for: .milliseconds(20))
+        #expect(factory.createdStreams.count == 10)
+        await system.stop()
     }
 
     @Test func quietSegmentStartsDoNotRebuildWithoutAnInterruption() async throws {
@@ -169,7 +204,7 @@ struct SystemAudioContinuityTests {
         try await Task.sleep(for: .milliseconds(50))
         #expect(factory.createdStreams.count == 4 && manager.isRunning && errors.count == 1)
         // Only liveness, on its backoff, rebuilds a started stream that never delivered.
-        manager.reconcileLiveness()
+        rearmIfDue(manager, recovery { 0 })
         try await settled { factory.createdStreams.count == 5 }
         await manager.stop()
     }

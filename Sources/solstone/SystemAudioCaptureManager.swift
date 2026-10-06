@@ -67,11 +67,6 @@ public final class SystemAudioCaptureManager {
     private let healthCheckInterval: TimeInterval = 30.0  // Check every 30 seconds
     private var consecutiveEmptyChecks: Int = 0
     private let maxEmptyChecks: Int = 2  // Restart after 2 consecutive empty checks (60s of no audio)
-    /// After a spent rebuild budget, an unresolved interruption is rebuilt again on this backoff.
-    static let rearmCooldowns: [TimeInterval] = [60, 120, 300]
-    private var rearmLevel = 0
-    private var nextRearm: TimeInterval = 0
-    internal var livenessNow: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
     public convenience init(verbose: Bool = false) {
         self.init(verbose: verbose, streamFactory: defaultCaptureStreamFactory)
@@ -154,7 +149,6 @@ public final class SystemAudioCaptureManager {
         unresolvedInterruption = nil
         recoveryAttempts = 0
         consecutiveEmptyChecks = 0
-        rearmLevel = 0; nextRearm = 0
         return true
     }
 
@@ -229,7 +223,6 @@ public final class SystemAudioCaptureManager {
         interruptionRevision &+= 1
         unresolvedInterruption = nil
         recoveryAttempts = 0
-        rearmLevel = 0; nextRearm = 0
         let initialRevision = interruptionRevision
         registerRestartListener()
         startHealthCheck()
@@ -484,26 +477,27 @@ public final class SystemAudioCaptureManager {
         }
     }
 
-    /// Periodic liveness: an interruption still unresolved after its rebuild
-    /// budget ran out is rebuilt again on a backoff, whether or not a started
-    /// stream exists. Quiet periods with no recorded interruption never rebuild.
+    /// A recorded interruption that hasn't been resolved by a delivering stream.
     public var hasUnresolvedInterruption: Bool { sessionRequested && unresolvedInterruption != nil }
 
-    public func reconcileLiveness() {
-        guard sessionRequested, currentFilter != nil, !isRecovering, !resetRecoveryScheduled,
-              recoveryAttempts >= 3, unresolvedInterruption != nil else { return }
-        let now = livenessNow()
-        guard now >= nextRearm else { return }
-        nextRearm = now + Self.rearmCooldowns[min(rearmLevel, Self.rearmCooldowns.count - 1)]
-        rearmLevel += 1
+    /// The interruption outlasted its rebuild budget. The recovery manager decides
+    /// when to rebuild again; quiet periods with no recorded interruption never rebuild.
+    public var needsRearm: Bool {
+        sessionRequested && currentFilter != nil && !isRecovering && !resetRecoveryScheduled &&
+            recoveryAttempts >= 3 && unresolvedInterruption != nil
+    }
+
+    /// Rebuilds the transport once more for an unresolved interruption.
+    public func rearm() {
+        guard needsRearm else { return }
         let revision = interruptionRevision
-        Logger.audio.notice("[SystemAudio] Interruption still unresolved; rebuilding transport (backoff level \(self.rearmLevel, privacy: .public))")
+        Logger.audio.notice("[SystemAudio] Interruption still unresolved; rebuilding transport")
         Task { @MainActor [weak self] in
             guard let self, self.interruptionRevision == revision, self.unresolvedInterruption != nil,
                   self.recoveryAttempts >= 3 else { return }
             self.recoveryAttempts = 0
             await self.restartStream()
-            // Only this backoff may renew a spent budget; health ticks stay quiet.
+            // Only a rearm may renew a spent budget; health ticks stay quiet.
             if self.unresolvedInterruption != nil { self.recoveryAttempts = max(self.recoveryAttempts, 3) }
         }
     }

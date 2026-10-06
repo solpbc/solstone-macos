@@ -247,6 +247,7 @@ public final class SegmentWriter {
         var successfulSources: CaptureSources = []
         var screenError: Error?
         var micError: Error?
+        var micAwaitingRecovery = false
         let segmentStartTime = CMClockGetTime(CMClockGetHostTimeClock())
         captureStartHostTime = segmentStartTime
 
@@ -361,6 +362,7 @@ public final class SegmentWriter {
             }
             if let manager {
                 var startedAnyMic = false
+                var micStartFailed = false
                 for device in currentMics {
                     do {
                         _ = try manager.addMicrophone(device)
@@ -369,18 +371,22 @@ public final class SegmentWriter {
                     } catch {
                         if error as? MicrophoneCaptureManager.SelectionError == .selectionChanged { continue }
                         diagnostics.failure(device.uid, stage: "start", error: error)
+                        micStartFailed = true
                         Logger.capture.warning("Failed to start mic \(device.name, privacy: .public): \(error, privacy: .public)")
                     }
                 }
                 if startedAnyMic {
                     successfulSources.insert(.microphone)
                 }
+                // A selected microphone that failed to start is retried by recovery
+                // into this segment; a microphone-only segment still begins.
+                micAwaitingRecovery = micStartFailed
             } else {
                 micError = SegmentError.failedToCreateAudioOutput
             }
         }
 
-        if successfulSources.isEmpty && !(sources == .microphone && micCaptureManager?.hasEmptySelection == true) {
+        if successfulSources.isEmpty && !(sources == .microphone && (micCaptureManager?.hasEmptySelection == true || micAwaitingRecovery)) {
             if let manager {
                 await rollbackStart(manager: manager, capturers: constructedCapturers)
             }

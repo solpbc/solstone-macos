@@ -1145,8 +1145,6 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
     }
 
     var lifecycleOwnerPauseIsHeld: Bool { false }
-    func lifecycleAuthorizeResume(_ reason: ResumeReason) -> MicrophoneCaptureManager.RecoveryAuthorization? { nil }
-    func lifecycleCancelResumeAuthorization(_ authorization: MicrophoneCaptureManager.RecoveryAuthorization?) {}
 
     func lifecyclePrepareResume(trigger: String) async throws {
         appendEvent(.resumeStarted(trigger))

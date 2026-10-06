@@ -13,46 +13,21 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     /// Active captures keyed by device UID
     private var captures: [String: ExternalMicCapture] = [:]
     private var sourceBudgets: [String: WeakAudioMediaBudget] = [:]
-    private var recoveryAllowances: [String: MicrophoneRecoveryAllowance] = [:]
-    private var recoveryAuthorizationRevision: UInt64 = 0
     private let lock = NSLock()
     private let verbose: Bool
     private var gain: Float
     private var selectedDevices: [AudioInputDevice]?
     private var selectionRevisions: [String: UInt64] = [:]
     private let captureFactory: @Sendable (AudioInputDevice, Float, Bool) -> ExternalMicCapture
-    private let retryDelay: @Sendable (TimeInterval) -> Void
-    private let allowanceClock: @Sendable () -> TimeInterval
+    private var _onRecoveryNeeded: (@Sendable (String) -> Void)?
 
     public enum SelectionError: Error, Equatable { case selectionChanged }
 
-    /// Only an executing owner action authorizes another instability allowance.
-    internal struct RecoveryAuthorization {
-        let previous: [String: MicrophoneRecoveryAllowance]
-        let revision: UInt64
-    }
-    @discardableResult
-    internal func authorizeMicrophoneRequest(deviceUIDs: Set<String>? = nil) -> RecoveryAuthorization? {
-        lock.withLock {
-            if deviceUIDs?.isEmpty == true { return nil }
-            recoveryAuthorizationRevision &+= 1
-            let authorization = RecoveryAuthorization(previous: recoveryAllowances, revision: recoveryAuthorizationRevision)
-            let renewed = deviceUIDs ?? Set(recoveryAllowances.keys).union(captures.keys)
-            for uid in renewed {
-                let allowance = MicrophoneRecoveryAllowance(now: allowanceClock)
-                recoveryAllowances[uid] = allowance
-                captures[uid]?.authorizeRecoveryRequest(allowance)
-            }
-            return authorization
-        }
-    }
-    internal func cancelMicrophoneRequest(_ authorization: RecoveryAuthorization?) {
-        guard let authorization else { return }
-        lock.withLock {
-            guard recoveryAuthorizationRevision == authorization.revision else { return }
-            recoveryAllowances = authorization.previous
-            recoveryAuthorizationRevision &+= 1
-        }
+    /// Told, with the device UID, when a running microphone stopped on its own
+    /// and needs a fresh start. Captures never retry themselves.
+    public var onRecoveryNeeded: (@Sendable (String) -> Void)? {
+        get { lock.withLock { _onRecoveryNeeded } }
+        set { lock.withLock { _onRecoveryNeeded = newValue } }
     }
 
     /// Publish current owner intent before starting or wiring any device.
@@ -80,10 +55,6 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     /// none is connected. Neither is a capture failure; the session waits for one.
     public var hasEmptySelection: Bool {
         lock.withLock { selectedDevices?.isEmpty == true }
-    }
-    /// True while a selected microphone waits out its recovery backoff.
-    internal func isCoolingDown(deviceUID: String) -> Bool {
-        lock.withLock { recoveryAllowances[deviceUID]?.isCoolingDown ?? false }
     }
     public var selectedDeviceUIDs: [String] { lock.withLock { selectedDevices?.map(\.uid) ?? [] } }
     public func allowsCapture(deviceUID: String) -> Bool {
@@ -125,20 +96,17 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     }
 
     internal init(gain: Float = 2.0, verbose: Bool = false,
-                  captureFactory: @escaping @Sendable (AudioInputDevice, Float, Bool) -> ExternalMicCapture,
-                  retryDelay: @escaping @Sendable (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
-                  allowanceClock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
-        self.allowanceClock = allowanceClock
+                  captureFactory: @escaping @Sendable (AudioInputDevice, Float, Bool) -> ExternalMicCapture) {
         self.gain = gain
         self.verbose = verbose
         self.captureFactory = captureFactory
-        self.retryDelay = retryDelay
     }
 
-    /// Start capture for a device (reuses existing if already running)
-    /// Retries up to 3 times with increasing delays if device isn't ready
+    /// Start capture for a device (reuses existing if already running).
+    /// One attempt only: the recovery manager paces any retry, so a failing
+    /// device never holds the caller.
     /// - Parameter device: The audio input device to capture from
-    /// - Throws: If capture fails to start after all retries
+    /// - Throws: If capture fails to start
     public func startCapture(for device: AudioInputDevice) throws {
         lock.lock()
         guard selectionAllows(device.uid) else { lock.unlock(); throw SelectionError.selectionChanged }
@@ -150,68 +118,29 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
             if verbose { Logger.audio.debug("Capture already running for \(device.name, privacy: .public)") }
             return
         }
-        let allowance = recoveryAllowances[device.uid] ?? MicrophoneRecoveryAllowance(now: allowanceClock)
-        recoveryAllowances[device.uid] = allowance
-        guard allowance.canAttempt else {
-            allowance.park(); lock.unlock()
-            throw NSError(domain: "SolstoneAudioInstability", code: 1)
-        }
         let failedCapture = captures.removeValue(forKey: device.uid)
         let captureGain = gain
         let mediaBudget = mediaBudgetLocked(for: device.uid)
         lock.unlock()
         failedCapture?.stop()
 
-        // Retry with increasing delays if device isn't ready yet
-        // Create a fresh capture for each attempt (AVAudioEngine can't recover from failed state)
-        // One quick retry; the capture liveness check paces anything longer
-        // so a failing device never holds the caller for seconds.
-        let retryDelays: [TimeInterval] = [0, 0.2]
-        var lastError: Error?
+        // A fresh capture each time: AVAudioEngine can't recover from a failed state.
+        let capture = captureFactory(device, captureGain, verbose)
+        capture.useMediaBudget(mediaBudget)
+        let uid = device.uid
+        capture.onRecoveryNeeded = { [weak self] in self?.onRecoveryNeeded?(uid) }
+        try capture.start()
 
-        for (attempt, delay) in retryDelays.enumerated() {
-            if delay > 0 {
-                Logger.audio.info("Retrying \(device.name, privacy: .public) after \(Int(delay * 1000), privacy: .public)ms (attempt \(attempt + 1, privacy: .public))")
-                retryDelay(delay)
-            }
-
-            guard lock.withLock({ selectionAllows(device.uid) && selectionRevisions[device.uid, default: 0] == selectionRevision }) else {
-                throw SelectionError.selectionChanged
-            }
-            guard allowance.canAttempt else {
-                allowance.park()
-                throw NSError(domain: "SolstoneAudioInstability", code: 1)
-            }
-            // Create fresh capture for each attempt
-            let capture = captureFactory(device, captureGain, verbose)
-            capture.useMediaBudget(mediaBudget)
-            capture.useRecoveryAllowance(allowance)
-
-            do {
-                try capture.start()
-
-                // Success - store in dict
-                lock.lock()
-                guard selectionAllows(device.uid), selectionRevisions[device.uid, default: 0] == selectionRevision else {
-                    lock.unlock()
-                    capture.stop()
-                    throw SelectionError.selectionChanged
-                }
-                captures[device.uid] = capture
-                lock.unlock()
-
-                Logger.audio.info("Started persistent capture for \(device.name, privacy: .public)")
-                return
-            } catch {
-                if error as? SelectionError == .selectionChanged { throw error }
-                if !allowance.canAttempt { allowance.park(); throw error }
-                lastError = error
-                if verbose { Logger.audio.debug("Attempt \(attempt + 1, privacy: .public) failed for \(device.name, privacy: .public): \(error, privacy: .public)") }
-                // Let capture go out of scope - AVAudioEngine will be deallocated
-            }
+        lock.lock()
+        guard selectionAllows(device.uid), selectionRevisions[device.uid, default: 0] == selectionRevision else {
+            lock.unlock()
+            capture.stop()
+            throw SelectionError.selectionChanged
         }
+        captures[device.uid] = capture
+        lock.unlock()
 
-        throw lastError ?? ExternalMicCapture.ExternalMicCaptureError.failedToCreateFormat
+        Logger.audio.info("Started persistent capture for \(device.name, privacy: .public)")
     }
 
     /// Stop capture for a specific device (called when device disconnects)

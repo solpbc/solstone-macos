@@ -641,12 +641,6 @@ final class CaptureExecutor {
             lastVetoReason = .ownerPause
             return .vetoed
         }
-        let authorization = delegate.lifecycleAuthorizeResume(reason)
-        var committed = false
-        defer {
-            if !committed { delegate.lifecycleCancelResumeAuthorization(authorization) }
-        }
-
         do {
             try await withTimeout(seconds: transitionTimeoutSeconds) { @MainActor [weak self] in
                 guard let self, let delegate = self.delegate else { return }
@@ -720,7 +714,6 @@ final class CaptureExecutor {
         }
 
         delegate.lifecycleCommitResume(trigger: reason.trigger)
-        committed = true
         suspendedForRecovery = false
         Logger.capture.info("[Executor] resume(\(reason.trigger, privacy: .public)) committed")
         return .committed
