@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- turning a microphone off in settings now stops its audio from going into your journal right away, and turning one on no longer needs you to restart the solstone app. before, audio from a microphone you turned off kept going into your journal until you turned off all audio.
+- when your mac's audio system restarts, system audio intake resumes within seconds. before, it could stop for more than a minute while the solstone app still looked fine.
+- when a microphone disconnects and comes back, its audio intake now resumes on its own, instead of staying silent for minutes.
+- if you use an audio device that combines several inputs, the solstone app now opens normally. before, it quit as it opened.
+- if the solstone app quits unexpectedly, audio up to about a second before the quit is kept. before, that segment's audio couldn't be read, or was cut off where its screen frames ended.
+- after a gap in audio, the sound that follows now stays at the time it happened. before, it could be placed earlier.
+- holding the solstone menu open no longer stalls audio and screen intake.
+
 ## [2.0.26] - 2026-10-06
 
 ### Fixed
