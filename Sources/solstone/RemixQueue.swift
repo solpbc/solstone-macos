@@ -213,11 +213,17 @@ public actor RemixQueue {
                     .filter { $0.pathExtension == "mp4" }
                     .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
-                let audioCandidates = files.filter { $0.pathExtension == "m4a" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
-                let videoDuration = await resolveOrphanDuration(candidates: screenCandidates)
+                let audioCandidates = files
+                    .filter { $0.pathExtension == "m4a" && $0.lastPathComponent.hasPrefix("\(job.timePrefix)_") }
+                    .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                // A crash can leave one medium with a shorter readable prefix
+                // than another; the segment spans the longest preserved extent.
+                // An interrupted earlier finalization already chose the identity.
                 let resolved: Int?
-                if let videoDuration { resolved = videoDuration }
-                else { resolved = await resolveOrphanDuration(candidates: audioCandidates) }
+                if let stamped = stampedOrphanDuration(in: files, timePrefix: job.timePrefix) {
+                    resolved = await clampedSegmentDurationSeconds(TimeInterval(stamped))
+                }
+                else { resolved = await resolveOrphanDuration(candidates: screenCandidates + audioCandidates) }
                 guard let resolved else {
                     await preserveTerminalFailure(job, stage: "duration", error: NSError(domain: "SolstoneSegmentDuration", code: 1),
                         message: "segment duration could not be measured; segment preserved for recovery",
@@ -415,6 +421,18 @@ public actor RemixQueue {
             }
         }
         return retained
+    }
+
+    /// The duration in a consolidated `<prefix>_<n>_audio.m4a` left by an interrupted finalization.
+    private func stampedOrphanDuration(in files: [URL], timePrefix: String) -> Int? {
+        let stamped = files.compactMap { file -> Int? in
+            let name = file.lastPathComponent
+            guard name.hasPrefix("\(timePrefix)_"), name.hasSuffix("_audio.m4a") else { return nil }
+            let middle = name.dropFirst(timePrefix.count + 1).dropLast("_audio.m4a".count)
+            guard !middle.isEmpty, middle.allSatisfy(\.isASCII), middle.allSatisfy(\.isNumber) else { return nil }
+            return Int(middle)
+        }
+        return stamped.max()
     }
 
     private func resolveOrphanDuration(candidates: [URL]) async -> Int? {

@@ -905,6 +905,124 @@ struct RemixQueueTimeoutTests {
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
     }
 
+    struct OrphanExtentCase: Sendable, CustomTestStringConvertible {
+        let name: String
+        /// Probe result per file: seconds, or nil for an unreadable file.
+        let media: [(file: String, seconds: Double?)]
+        let expectedSeconds: Int
+        var testDescription: String { name }
+    }
+
+    static let orphanExtentCases: [OrphanExtentCase] = [
+        OrphanExtentCase(name: "shorter video, longer audio", media: [
+            ("120000_display_3_screen.mp4", 35.896667),
+            ("120000_audio_system.m4a", 73.002667),
+            ("120000_audio_fixture-mic.m4a", 73.045333),
+        ], expectedSeconds: 73),
+        OrphanExtentCase(name: "longer video, shorter audio", media: [
+            ("120000_display_3_screen.mp4", 61.5),
+            ("120000_audio_system.m4a", 20.2),
+        ], expectedSeconds: 61),
+        OrphanExtentCase(name: "unequal audio tracks and unreadable video", media: [
+            ("120000_display_3_screen.mp4", nil),
+            ("120000_audio_system.m4a", 12.0),
+            ("120000_audio_fixture-mic.m4a", 48.7),
+            ("120000_audio_fixture-16ch.m4a", 30.0),
+        ], expectedSeconds: 48),
+        OrphanExtentCase(name: "an unreadable audio sibling does not erase a readable extent", media: [
+            ("120000_display_3_screen.mp4", 9.0),
+            ("120000_audio_system.m4a", nil),
+            ("120000_audio_fixture-mic.m4a", 22.4),
+        ], expectedSeconds: 22),
+        OrphanExtentCase(name: "a remixer temp file does not set the extent", media: [
+            ("120000_display_3_screen.mp4", 35.0),
+            ("120000_audio_system.m4a", 73.0),
+            ("3F2504E0-4F89-11D3-9A0C-0305E82C3301.m4a", 200.0),
+        ], expectedSeconds: 73),
+        OrphanExtentCase(name: "an interrupted finalization keeps its stamped identity", media: [
+            ("120000_display_3_screen.mp4", 35.0),
+            ("120000_73_audio.m4a", 75.4),
+        ], expectedSeconds: 73),
+        OrphanExtentCase(name: "audio beyond the segment ceiling", media: [
+            ("120000_display_3_screen.mp4", 40.0),
+            ("120000_audio_system.m4a", 412.0),
+        ], expectedSeconds: 300),
+    ]
+
+    @MainActor
+    @Test(arguments: orphanExtentCases)
+    func orphanStampsLongestReadableExtentAcrossMedia(_ testCase: OrphanExtentCase) async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-extent")
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer {
+            SegmentWriter.segmentDuration = previousDuration
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        var probes: [String: Double?] = [:]
+        for item in testCase.media {
+            let url = dir.appendingPathComponent(item.file)
+            if item.file.hasSuffix(".m4a") { try await makeTinyValidM4A(at: url, seconds: 0.5) }
+            else { try Data("video".utf8).write(to: url) }
+            probes[item.file] = item.seconds
+        }
+        let loaderProbes = probes
+
+        let queue = RemixQueue(
+            durationLoader: { url in
+                guard let entry = loaderProbes[url.lastPathComponent], let seconds = entry else {
+                    throw SyntheticRemixError()
+                }
+                return CMTime(seconds: seconds, preferredTimescale: 48_000)
+            }
+        ) { _ in
+            FakeRemixer(.success)
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        let finalDir = try #require(try finalizedSegmentDirectory(in: root, timePrefix: "120000"))
+        #expect(finalDir.lastPathComponent == "120000_\(testCase.expectedSeconds)")
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed", isDirectory: true).path))
+    }
+
+    @MainActor
+    @Test func orphanWithEveryMediumUnreadablePreservesFailedWithoutInventedDuration() async throws {
+        let root = try makeTempDirectory("remix-queue-orphan-all-media-unreadable")
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer {
+            SegmentWriter.segmentDuration = previousDuration
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let video = dir.appendingPathComponent("120000_display_3_screen.mp4")
+        let audio = dir.appendingPathComponent("120000_audio_system.m4a")
+        try Data("video".utf8).write(to: video)
+        try Data("audio".utf8).write(to: audio)
+
+        let queue = RemixQueue(
+            durationLoader: { url in
+                url.pathExtension == "m4a" ? CMTime.invalid : CMTime.zero
+            }
+        ) { _ in
+            FakeRemixer(.success)
+        }
+
+        await queue.enqueue(makeOrphanJob(dir: dir, timePrefix: "120000"))
+        await queue.waitForCompletion()
+
+        let failedDir = root.appendingPathComponent("120000.failed", isDirectory: true)
+        #expect(FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(try finalizedSegmentDirectory(in: root, timePrefix: "120000") == nil)
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(audio.lastPathComponent).path))
+        #expect(FileManager.default.fileExists(atPath: failedDir.appendingPathComponent(video.lastPathComponent).path))
+    }
+
     @MainActor
     @Test func orphanAllScreenProbesTimeoutPreservesFailedWithoutInventedDuration() async throws {
         let root = try makeTempDirectory("remix-queue-orphan-all-timeout")
