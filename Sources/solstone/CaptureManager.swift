@@ -342,6 +342,8 @@ public final class CaptureManager {
     }
 
     public func updateMicrophoneSelection(disabled: Set<String>, enabled: Set<String>) {
+        let renewed = disabledMicUIDs.subtracting(disabled).union(enabled.subtracting(enabledMicUIDs))
+        micCaptureManager.authorizeMicrophoneRequest(deviceUIDs: renewed)
         disabledMicUIDs = disabled
         enabledMicUIDs = enabled
         hasLiveMicrophoneSelection = true
@@ -884,6 +886,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         guard !sources.isEmpty else {
             throw transitionFailure(for: CaptureError.notInitialized)
         }
+        let microphoneAuthorization = reason == .user ? micCaptureManager.authorizeMicrophoneRequest() : nil
         if let current = microphoneSelectionProvider?() {
             self.disabledMicUIDs = current.disabled
             self.enabledMicUIDs = current.enabled
@@ -917,6 +920,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
             try await startNewSegment()
         } catch {
             self.activeSources = []
+            if error is CancellationError { micCaptureManager.cancelMicrophoneRequest(microphoneAuthorization) }
             throw transitionFailure(for: error)
         }
 
@@ -924,6 +928,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
             _ = await discardCurrentSegmentWithoutEnqueue(matching: nil)
             await stopPersistentAudioForDiscard()
             self.activeSources = []
+            micCaptureManager.cancelMicrophoneRequest(microphoneAuthorization)
             return .vetoedScreenLocked
         }
 

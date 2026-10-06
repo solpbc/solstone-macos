@@ -13,6 +13,8 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     /// Active captures keyed by device UID
     private var captures: [String: ExternalMicCapture] = [:]
     private var sourceBudgets: [String: WeakAudioMediaBudget] = [:]
+    private var recoveryAllowances: [String: MicrophoneRecoveryAllowance] = [:]
+    private var recoveryAuthorizationRevision: UInt64 = 0
     private let lock = NSLock()
     private let verbose: Bool
     private var gain: Float
@@ -23,6 +25,35 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     private let retryDelay: @Sendable (TimeInterval) -> Void
 
     public enum SelectionError: Error, Equatable { case selectionChanged }
+
+    /// Only an executing owner action authorizes another instability allowance.
+    internal struct RecoveryAuthorization {
+        let previous: [String: MicrophoneRecoveryAllowance]
+        let revision: UInt64
+    }
+    @discardableResult
+    internal func authorizeMicrophoneRequest(deviceUIDs: Set<String>? = nil) -> RecoveryAuthorization? {
+        lock.withLock {
+            if deviceUIDs?.isEmpty == true { return nil }
+            recoveryAuthorizationRevision &+= 1
+            let authorization = RecoveryAuthorization(previous: recoveryAllowances, revision: recoveryAuthorizationRevision)
+            let renewed = deviceUIDs ?? Set(recoveryAllowances.keys).union(captures.keys)
+            for uid in renewed {
+                let allowance = MicrophoneRecoveryAllowance()
+                recoveryAllowances[uid] = allowance
+                captures[uid]?.authorizeRecoveryRequest(allowance)
+            }
+            return authorization
+        }
+    }
+    internal func cancelMicrophoneRequest(_ authorization: RecoveryAuthorization?) {
+        guard let authorization else { return }
+        lock.withLock {
+            guard recoveryAuthorizationRevision == authorization.revision else { return }
+            recoveryAllowances = authorization.previous
+            recoveryAuthorizationRevision &+= 1
+        }
+    }
 
     /// Publish current owner intent before starting or wiring any device.
     /// Only devices whose admission changes invalidate their old destinations.
@@ -111,6 +142,12 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
             if verbose { Logger.audio.debug("Capture already running for \(device.name, privacy: .public)") }
             return
         }
+        let allowance = recoveryAllowances[device.uid] ?? MicrophoneRecoveryAllowance()
+        recoveryAllowances[device.uid] = allowance
+        guard allowance.canAttempt else {
+            allowance.park(); lock.unlock()
+            throw NSError(domain: "SolstoneAudioInstability", code: 1)
+        }
         let failedCapture = captures.removeValue(forKey: device.uid)
         let captureGain = gain
         let mediaBudget = mediaBudgetLocked(for: device.uid)
@@ -131,9 +168,14 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
             guard lock.withLock({ selectionAllows(device.uid) && selectionRevisions[device.uid, default: 0] == selectionRevision }) else {
                 throw SelectionError.selectionChanged
             }
+            guard allowance.canAttempt else {
+                allowance.park()
+                throw NSError(domain: "SolstoneAudioInstability", code: 1)
+            }
             // Create fresh capture for each attempt
             let capture = captureFactory(device, captureGain, verbose)
             capture.useMediaBudget(mediaBudget)
+            capture.useRecoveryAllowance(allowance)
 
             do {
                 try capture.start()
@@ -152,6 +194,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
                 return
             } catch {
                 if error as? SelectionError == .selectionChanged { throw error }
+                if !allowance.canAttempt { allowance.park(); throw error }
                 lastError = error
                 if verbose { Logger.audio.debug("Attempt \(attempt + 1, privacy: .public) failed for \(device.name, privacy: .public): \(error, privacy: .public)") }
                 // Let capture go out of scope - AVAudioEngine will be deallocated

@@ -27,6 +27,258 @@ struct MicrophoneRecoveryTests {
             resolveDeviceID: { _ in resolved.current }, recoveryDelay: { _ in })
     }
 
+    @Test(arguments: ["healthy", "stopped", "readback", "unreadable", "format", "resolved", "missing"])
+    func configurationRecoveryUsesAllCurrentNativeDimensions(change: String) async throws {
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let capture = ExternalMicCapture(device: device(), engineFactory: { lab.make() },
+            resolveDeviceID: { _ in change == "missing" && lab.engines.count > 0 && !lab.engines[0].boundIDs.isEmpty ? nil : id.current },
+            recoveryDelay: { _ in })
+        try capture.start()
+        let first = lab.engines[0]
+        first.configure(isRunning: change != "stopped", readback: change == "unreadable" ? nil : (change == "readback" ? 20 : 10),
+            formatUnchanged: change != "format")
+        if change == "resolved" { id.set(20) }
+        first.notify(); await capture.drain()
+        if change == "healthy" {
+            #expect(lab.engines.count == 1 && capture.isCapturing && first.teardown.isEmpty)
+        } else if change == "missing" {
+            #expect(lab.engines.count == 4 && !capture.isCapturing)
+            #expect(lab.engines.dropFirst().allSatisfy { $0.boundIDs.isEmpty })
+        } else {
+            #expect(lab.engines.count == 2 && capture.isCapturing)
+            #expect(lab.engines.last?.boundIDs == [change == "resolved" ? 20 : 10])
+            #expect(first.teardown == ["stop", "remove"])
+        }
+        capture.stop()
+    }
+
+    @Test func repeatedSuccessfulStartsExhaustOneRequestAndExplicitStopStartRenews() async throws {
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let capture = capture(lab, id), errors = LockedArray<String>([])
+        capture.setCallbacks(audio: { _, _ in }, error: { errors.append(($0 as NSError).domain) })
+        try capture.start()
+        for _ in 0..<6 { lab.engines.last!.notify(); await capture.drain() }
+        #expect(lab.engines.count == 7 && capture.isCapturing && errors.all.isEmpty)
+        capture._suspendProcessingForTesting(); lab.engines.last!.notify()
+        capture.setCallbacks(audio: nil, error: nil)
+        capture._resumeProcessingForTesting(); await capture.drain()
+        #expect(lab.engines.count == 7 && !capture.isCapturing && errors.all == ["SolstoneAudioInstability"])
+        for engine in lab.engines { engine.notify() }
+        #expect(throws: NSError.self) { try capture.start() }
+        await capture.drain()
+        #expect(lab.engines.count == 7 && errors.all.count == 1)
+        capture.stop(); try capture.start()
+        #expect(lab.engines.count == 8 && capture.isCapturing)
+        capture.stop()
+    }
+
+    @Test func finalFailedReplacementAlsoEmitsOneTerminalDiagnostic() async throws {
+        let lab = MicEngineLab(failingIndices: [1, 2, 4, 5, 6]), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let capture = capture(lab, id), errors = LockedArray<String>([])
+        capture.setCallbacks(audio: { _, _ in }, error: { errors.append(($0 as NSError).domain) })
+        try capture.start(); lab.engines[0].notify(); await capture.drain()
+        #expect(lab.engines.count == 4 && capture.isCapturing && errors.all.count == 2)
+        lab.engines[3].notify(); await capture.drain()
+        #expect(lab.engines.count == 7 && !capture.isCapturing && errors.all.count == 6)
+        #expect(errors.all.filter { $0 == "SolstoneAudioInstability" }.count == 1)
+        for engine in lab.engines { engine.notify() }; await capture.drain()
+        #expect(lab.engines.count == 7 && errors.all.count == 6)
+        capture.stop()
+    }
+
+    @Test(arguments: ["quiet", "sparse", "media-gap", "invalid-time", "rejected-copy", "rejected-conversion", "rejected-destination"])
+    func onlyContinuingQualifiedPCMCanRenewReplacementAllowance(mode: String) async throws {
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let clock = LockedValue<Double>(); clock.set(0)
+        let capture = ExternalMicCapture(device: device(), gain: 1, engineFactory: { lab.make() },
+            resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in }, monotonicNow: { clock.current! })
+        let received = LockedCounter(), errors = LockedCounter()
+        capture.setCallbacks(audio: { _, _ in received.increment() }, error: { _ in errors.increment() })
+        if mode == "rejected-destination" {
+            capture.setQueuedCallbacks(audio: { _, _ in nil }, error: { _ in errors.increment() }, rawError: nil, admissionGate: nil)
+        }
+        try capture.start()
+        for _ in 0..<6 { lab.engines.last!.notify(); await capture.drain() }
+        let quiet = try pcm(0), base = mach_absolute_time()
+        for index in 0...110 {
+            let arrival = Double(index) * (mode == "sparse" ? 2 : 0.1)
+            clock.set(arrival)
+            let sample = Int64(index * (mode == "media-gap" ? 9600 : 4800))
+            let when = mode == "invalid-time" ? AVAudioTime(sampleTime: sample, atRate: 48_000) :
+                AVAudioTime(hostTime: base + AVAudioTime.hostTime(forSeconds: arrival), sampleTime: sample, atRate: 48_000)
+            if mode == "rejected-copy" { capture._copyAdmissionForTesting = { _ in false } }
+            if mode == "rejected-conversion" { capture._conversionAdmissionForTesting = { false } }
+            lab.engines.last!.emit(quiet, when: when); await capture.drain()
+        }
+        lab.engines.last!.notify(); await capture.drain()
+        #expect(lab.engines.count == (mode == "quiet" ? 8 : 7))
+        #expect(capture.isCapturing == (mode == "quiet"))
+        if mode == "quiet" { #expect(received.count == 111 && errors.count == 0) }
+        capture.stop()
+    }
+
+    @Test func admittedRetiredPCMDrainsWithoutRenewingCurrentGeneration() async throws {
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let clock = LockedValue<Double>(); clock.set(0)
+        let capture = ExternalMicCapture(device: device(), gain: 1, engineFactory: { lab.make() },
+            resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in }, monotonicNow: { clock.current! })
+        let received = LockedCounter(), errors = LockedCounter()
+        capture.setCallbacks(audio: { _, _ in received.increment() }, error: { _ in errors.increment() })
+        try capture.start()
+        for _ in 0..<5 { lab.engines.last!.notify(); await capture.drain() }
+        let retired = lab.engines.last!, quiet = try pcm(0), base = mach_absolute_time()
+        capture._suspendProcessingForTesting(); retired.notify()
+        // 31 jobs / 148800 frames stay within both unchanged raw limits while
+        // the qualified arrival interval spans more than ten seconds.
+        for index in 0...30 {
+            clock.set(Double(index) * 0.4)
+            retired.emit(quiet, when: AVAudioTime(hostTime: base + AVAudioTime.hostTime(forSeconds: Double(index) * 0.4),
+                sampleTime: Int64(index * 4800), atRate: 48_000))
+        }
+        capture._resumeProcessingForTesting(); await capture.drain()
+        #expect(lab.engines.count == 7 && received.count == 31)
+        retired.emit(quiet); retired.notify(); await capture.drain()
+        lab.engines.last!.notify(); await capture.drain()
+        #expect(lab.engines.count == 7 && !capture.isCapturing && errors.count == 1 && received.count == 31)
+        capture.stop()
+    }
+
+    @Test func detachedDestinationDrainsWithoutRenewingItsReplacement() async throws {
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let clock = LockedValue<Double>(); clock.set(0)
+        let capture = ExternalMicCapture(device: device(), gain: 1, engineFactory: { lab.make() },
+            resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in }, monotonicNow: { clock.current! })
+        let old = LockedCounter(), current = LockedCounter(), errors = LockedCounter()
+        capture.setCallbacks(audio: { _, _ in old.increment() }, error: { _ in errors.increment() })
+        try capture.start()
+        for _ in 0..<6 { lab.engines.last!.notify(); await capture.drain() }
+        let quiet = try pcm(0), base = mach_absolute_time()
+        capture._suspendProcessingForTesting()
+        for index in 0...30 {
+            clock.set(Double(index) * 0.4)
+            lab.engines.last!.emit(quiet, when: AVAudioTime(hostTime: base + AVAudioTime.hostTime(forSeconds: Double(index) * 0.4),
+                sampleTime: Int64(index * 4800), atRate: 48_000))
+        }
+        capture.setCallbacks(audio: nil, error: nil)
+        capture.setCallbacks(audio: { _, _ in current.increment() }, error: { _ in errors.increment() })
+        capture._resumeProcessingForTesting(); await capture.drain()
+        #expect(old.count == 31 && current.count == 0)
+        lab.engines.last!.notify(); await capture.drain()
+        #expect(lab.engines.count == 7 && !capture.isCapturing && errors.count == 1)
+        capture.stop()
+    }
+
+    @Test @MainActor func realManagerEventsAndNextSegmentCannotReopenParkedUIDButOwnerSelectionCan() async throws {
+        let root = try makeTempDirectory("mic-parked-selection"); defer { try? FileManager.default.removeItem(at: root) }
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in })
+        }, retryDelay: { _ in })
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [device()] }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, microphoneCaptureManager: shared)
+        manager.updateMicrophoneSelection(disabled: [], enabled: [])
+        let writer = SegmentWriter(outputDirectory: root, timePrefix: "120000")
+        _ = try await writer.start(sources: .microphone, mics: [device()], micCaptureManager: shared)
+        manager.seedRecordingForTesting(currentSegment: writer, sources: .microphone)
+        let capture = try #require(shared.getCapture(for: "u"))
+        for _ in 0..<7 { lab.engines.last!.notify(); await capture.drain() }
+        #expect(lab.engines.count == 7 && !capture.isCapturing)
+        manager.updateMicrophoneSelection(disabled: [], enabled: [])
+        manager.handleDefaultMicChange(currentID: 10)
+        await manager.handleDeviceChange(added: [device()], removed: [])
+        shared.stopAll()
+        for _ in 0..<3 { #expect(throws: NSError.self) { try shared.startCapture(for: device()) } }
+        let nextDirectory = root.appendingPathComponent("next")
+        try FileManager.default.createDirectory(at: nextDirectory, withIntermediateDirectories: true)
+        let next = SegmentWriter(outputDirectory: nextDirectory, timePrefix: "120500")
+        do { _ = try await next.start(sources: .microphone, mics: [device()], micCaptureManager: shared); Issue.record("Parked UID cannot start next segment") } catch {}
+        #expect(lab.engines.count == 7)
+        _ = await next.finishCapture()
+        manager.updateMicrophoneSelection(disabled: ["u"], enabled: [])
+        manager.updateMicrophoneSelection(disabled: [], enabled: [])
+        #expect(lab.engines.count == 8 && shared.getCapture(for: "u")?.isCapturing == true)
+        _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
+    }
+
+    @Test @MainActor func onlyExecutingOwnerStartCanReopenParkedMicrophoneOnlySession() async throws {
+        let root = try makeTempDirectory("mic-parked-start"); defer { try? FileManager.default.removeItem(at: root) }
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in })
+        }, retryDelay: { _ in })
+        try shared.startCapture(for: device()); let capture = try #require(shared.getCapture(for: "u"))
+        for _ in 0..<7 { lab.engines.last!.notify(); await capture.drain() }
+        shared.stopAll()
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [device()] }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, microphoneCaptureManager: shared)
+        let automatic = await manager.enqueueTransition(.start(reason: .autoStart, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        if case .committed = automatic { Issue.record("Automatic start must preserve exhausted request") }
+        #expect(lab.engines.count == 7)
+        let locked = LockedValue<Bool>(); locked.set(true)
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { locked.current! }, unlockResumeDelay: {})
+        _ = await executor.enqueue(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        #expect(throws: NSError.self) { try shared.startCapture(for: device()) }
+        // Existing lifecycle behavior prepares then vetoes the segment; that
+        // cancelled request must not leave its renewed allowance behind.
+        #expect(lab.engines.count == 8)
+        locked.set(false)
+        let owner = await executor.enqueue(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        guard case .committed = owner else { Issue.record("Owner start must renew before native segment starts"); return }
+        #expect(lab.engines.count == 9 && manager.state.isRecording)
+        _ = await executor.enqueue(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        let current = try #require(shared.getCapture(for: "u"))
+        for _ in 0..<7 { lab.engines.last!.notify(); await current.drain() }
+        #expect(lab.engines.count == 15 && !current.isCapturing)
+        #expect(throws: NSError.self) { try shared.startCapture(for: device()) }
+        _ = await executor.enqueue(.stop(reason: .user)); shared.stopAll()
+    }
+
+    @Test @MainActor func ownerStartFromPauseRenewsAnEngineThatStayedRunning() async throws {
+        let root = try makeTempDirectory("mic-paused-renewal"); defer { try? FileManager.default.removeItem(at: root) }
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in })
+        }, retryDelay: { _ in })
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [device()] }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, microphoneCaptureManager: shared)
+        _ = await manager.enqueueTransition(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        let capture = try #require(shared.getCapture(for: "u"))
+        for _ in 0..<4 { lab.engines.last!.notify(); await capture.drain() }
+        _ = await manager.enqueueTransition(.pause(reason: .user, stopAudio: false))
+        #expect(capture.isCapturing && lab.engines.count == 5)
+        let outcome = await manager.enqueueTransition(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        guard case .committed = outcome else { Issue.record("Owner start from pause must commit"); return }
+        #expect(shared.getCapture(for: "u") === capture && lab.engines.count == 5)
+        for _ in 0..<6 { lab.engines.last!.notify(); await capture.drain() }
+        #expect(lab.engines.count == 11 && capture.isCapturing)
+        lab.engines.last!.notify(); await capture.drain()
+        #expect(lab.engines.count == 11 && !capture.isCapturing)
+        _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
+    }
+
+    @Test func ownerRenewalFencesAlreadyQueuedRecoveryBeforeManagerReuse() async throws {
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in })
+        }, retryDelay: { _ in })
+        try shared.startCapture(for: device()); let old = try #require(shared.getCapture(for: "u"))
+        old._suspendProcessingForTesting(); lab.engines[0].notify()
+        shared.authorizeMicrophoneRequest()
+        #expect(!old.isCapturing)
+        let start = Task.detached { try shared.startCapture(for: device()) }
+        old._resumeProcessingForTesting(); try await start.value; await old.drain()
+        #expect(lab.engines.count == 2 && shared.getCapture(for: "u") !== old)
+        #expect(shared.getCapture(for: "u")?.isCapturing == true)
+        shared.stopAll()
+    }
+
     @Test func freshIdentityCoalescesBurstAndRejectsRetiredPCM() async throws {
         let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
         let capture = capture(lab, id), old = LockedCounter(), current = LockedCounter(), errors = LockedCounter()
@@ -261,12 +513,24 @@ private final class MicEngineDouble: MicrophoneCaptureEngine, @unchecked Sendabl
     private let lock = NSLock()
     private var pcm: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
     private var ids: [AudioDeviceID] = [], trace: [String] = []
+    private var configuration: (running: Bool, readback: AudioDeviceID?, unchanged: Bool)?
     let fails: Bool
     var notifyDuringStart: Bool
     var startHook: (@Sendable () throws -> Void)?
     var boundIDs: [AudioDeviceID] { lock.withLock { ids } }
     var teardown: [String] { lock.withLock { trace } }
     init(fails: Bool, notifyDuringStart: Bool) { self.fails = fails; self.notifyDuringStart = notifyDuringStart }
+    func configure(isRunning: Bool, readback: AudioDeviceID?, formatUnchanged: Bool) {
+        lock.withLock { configuration = (isRunning, readback, formatUnchanged) }
+    }
+    func requiresRecovery(resolvedDeviceID: AudioDeviceID?) -> Bool {
+        lock.withLock {
+            guard let configuration else { return true }
+            return microphoneConfigurationRequiresRecovery(isRunning: configuration.running,
+                admitted: ids.last, readback: configuration.readback, resolved: resolvedDeviceID,
+                formatUnchanged: configuration.unchanged)
+        }
+    }
     func start(deviceID: AudioDeviceID, deviceName: String, onPCM: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void) throws {
         lock.withLock { ids.append(deviceID); pcm = onPCM }
         if notifyDuringStart { for _ in 0..<10 { notify() } }
