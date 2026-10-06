@@ -54,6 +54,19 @@ struct LiveMicrophoneSelectionTests {
         #expect(segments.all.count == count)
     }
 
+    @Test func pauseCutsAudioBeforeTheSlowerSegmentFinish() async throws {
+        let root = try makeTempDirectory("pause-cuts-audio"); defer { try? FileManager.default.removeItem(at: root) }
+        let segments = LockedArray<ConsentSegment>([])
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in
+                let segment = ConsentSegment(directory); segments.append(segment); return segment
+            }, finalizer: FakeFinalizer(), microphoneDevices: { [self.device("a")] })
+        _ = await manager.enqueueTransition(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        _ = await manager.enqueueTransition(.pause(reason: .user, stopAudio: true))
+        #expect(try #require(segments.all.last).events == ["cut", "finish"])
+        _ = await manager.enqueueTransition(.stop(reason: .user))
+    }
+
     @Test(arguments: [CaptureSources.microphone, .all])
     func initiallyExcludedMicrophonesKeepIntentAcrossRotationAndPause(sources: CaptureSources) async throws {
         let root = try makeTempDirectory("empty-selection"); defer { try? FileManager.default.removeItem(at: root) }
@@ -258,6 +271,7 @@ private final class ConsentSegment: CaptureSegmentWriting {
     private var devices: [String: AudioInputDevice] = [:]
     private(set) var startedUIDs: [String] = []
     private(set) var disconnected: [String] = []
+    private(set) var events: [String] = []
     var onTerminalStop: (@MainActor () -> Void)?
     var onCaptureIssue: (@MainActor (String) -> Void)?
     init(_ directory: URL, gate: OneShotContinuationGate? = nil, entered: LatchedEvent? = nil) {
@@ -276,7 +290,8 @@ private final class ConsentSegment: CaptureSegmentWriting {
         }
         return active
     }
-    func finishCapture() async -> SegmentCaptureResult? { nil }
+    func cutAudio() { events.append("cut") }
+    func finishCapture() async -> SegmentCaptureResult? { events.append("finish"); return nil }
     func updateContentFilter(_ filters: [CGDirectDisplayID: SCContentFilter]) async throws {}
     func addMicrophone(_ device: AudioInputDevice) throws { devices[device.uid] = device }
     func removeMicrophone(deviceUID: String) { disconnected.append(deviceUID); devices.removeValue(forKey: deviceUID) }

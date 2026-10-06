@@ -468,6 +468,13 @@ public final class SegmentWriter {
     /// Finishes capture and returns data for background remix
     /// Does NOT wait for remix - returns immediately after streams stop
     /// Use this for segment rotation to minimize gap between segments
+    /// Stops audio admission now. Pause and stop call this before the slower finish,
+    /// so nothing said after the owner paused reaches the segment.
+    public func cutAudio() {
+        systemAudioCaptureManager?.clearCallback()
+        _ = audioManager?.prepareToFinishCapture()
+    }
+
     public func finishCapture() async -> SegmentCaptureResult? {
         if let finishTask {
             return await finishTask.value

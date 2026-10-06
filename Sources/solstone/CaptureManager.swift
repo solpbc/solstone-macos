@@ -30,6 +30,7 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     func activeMicrophoneUIDs() -> [String]
     func recordMicrophoneStall(deviceUID: String)
     func sourcesWithLoss() -> [String]
+    func cutAudio()
     var onTerminalStop: (@MainActor () -> Void)? { get set }
     var onCaptureIssue: (@MainActor (String) -> Void)? { get set }
 }
@@ -38,6 +39,7 @@ public extension CaptureSegmentWriting {
     func deselectMicrophone(deviceUID: String) { removeMicrophone(deviceUID: deviceUID) }
     func recordMicrophoneStall(deviceUID: String) { deselectMicrophone(deviceUID: deviceUID) }
     func sourcesWithLoss() -> [String] { [] }
+    func cutAudio() {}
     var onCaptureIssue: (@MainActor (String) -> Void)? {
         get { nil }
         set {}
@@ -704,6 +706,7 @@ public final class CaptureManager {
 
         var result: SegmentCaptureResult?
         if let segment = currentSegment {
+            segment.cutAudio()
             result = await segment.finishCapture()
             currentSegment = nil
             if let result {
