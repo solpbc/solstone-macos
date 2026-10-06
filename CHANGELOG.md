@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.26] - 2026-10-06
+
 ### Fixed
 - a pause now lasts until you resume it, or until the time you picked runs out, even if the solstone app quits or your mac restarts. before, any restart ended the pause.
 
