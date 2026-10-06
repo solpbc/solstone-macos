@@ -814,7 +814,12 @@ struct MicrophoneRecoveryTests {
         #expect(manager.currentAudioHealthNote == "mic isn't coming through right now. the solstone app is trying again on its own.")
         clock.set(1016); manager.handleLivenessTick()
         #expect(shared.getCapture(for: "u")?.isCapturing == true)
-        #expect(manager.currentAudioHealthNote == "mic dropped out earlier and is back. part of this segment may be missing.")
+        // Writer evidence reaches the segment record asynchronously; a later check sees it.
+        let back = "mic dropped out earlier and is back. part of this segment may be missing."
+        try await withTimeout(seconds: 5) { @MainActor in
+            while manager.currentAudioHealthNote != back { manager.refreshAudioHealth(); try await Task.sleep(for: .milliseconds(10)) }
+        }
+        #expect(manager.currentAudioHealthNote == back)
         _ = await manager.enqueueTransition(.pause(reason: .user, stopAudio: true))
         #expect(manager.currentAudioHealthNote == nil)
         _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
