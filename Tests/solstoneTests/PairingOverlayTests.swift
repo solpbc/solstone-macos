@@ -127,9 +127,9 @@ struct PairingOverlayTests {
     private func makeCoordinator(store: PairingStore, owner: TunnelLifecycleOwner) -> PairingCoordinator {
         PairingCoordinator(
             pair: { _, _, _ in pairing() },
+            keychainStore: store,
             loadPairing: { try store.load() },
             savePairing: { try store.save($0) },
-            deletePairing: { try store.delete() },
             reactivate: { [owner] in
                 await owner.reevaluatePairing()
             },
@@ -144,9 +144,7 @@ struct PairingOverlayTests {
         factory: FakeTransportFactory
     ) -> TunnelLifecycleOwner {
         TunnelLifecycleOwner(
-            loadPairing: { try store.load() },
-            savePairing: { try store.save($0) },
-            deletePairing: { try store.delete() },
+            keychainStore: store,
             tokenRefresher: FakeTokenRefresher(ifNeededResults: [.notNeeded(store.currentPairing ?? pairing())]).seam,
             makeTransport: { factory.make() },
             pathMonitoringSource: NoopPathMonitoringSource(),

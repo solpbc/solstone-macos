@@ -5,13 +5,22 @@ import CryptoKit
 import Foundation
 import SolstoneCore
 
-internal struct JournalConnectionFingerprint: Equatable, Sendable {
-    let value: String
+public struct JournalConnectionFingerprint: Equatable, Sendable {
+    public let value: String
+
+    public init(value: String) {
+        self.value = value
+    }
 }
 
-internal struct TunnelPairingIdentity: Equatable, Sendable {
-    let instanceID: String
-    let fingerprint: String
+public struct TunnelPairingIdentity: Equatable, Sendable {
+    public let instanceID: String
+    public let fingerprint: String
+
+    public init(instanceID: String, fingerprint: String) {
+        self.instanceID = instanceID
+        self.fingerprint = fingerprint
+    }
 }
 
 internal enum PairingIdentityRead: Equatable, Sendable {
@@ -35,16 +44,22 @@ internal enum JournalIdentityRead: Equatable, Sendable {
     }
 }
 
-internal struct JournalUploadContext: Sendable, Equatable {
-    let pairing: TunnelPairingIdentity
-    let fingerprint: JournalConnectionFingerprint
+public struct JournalUploadContext: Sendable, Equatable {
+    public let pairing: TunnelPairingIdentity
+    public let fingerprint: JournalConnectionFingerprint
+    public let credentialRevision: String?
 
-    init?(pairing: TunnelPairingIdentity?, suppliedFingerprint: JournalConnectionFingerprint?) {
+    public init?(
+        pairing: TunnelPairingIdentity?,
+        suppliedFingerprint: JournalConnectionFingerprint?,
+        credentialRevision: String? = nil
+    ) {
         guard let pairing else { return nil }
         let derived = tunnelJournalConnectionFingerprint(for: pairing)
         guard let suppliedFingerprint, suppliedFingerprint == derived else { return nil }
         self.pairing = pairing
         self.fingerprint = derived
+        self.credentialRevision = credentialRevision
     }
 }
 

@@ -36,7 +36,31 @@ struct SettingsViewTests {
                 localLinkInProgress = false
                 localDiscoveryCompleted = true
                 showPairingFlow = true
-            """))
+        """))
+    }
+
+    @Test func migrationControlsExposeSemanticActionsWithoutDefaultPairChoice() throws {
+        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
+        let choiceStart = try #require(source.range(of: "Button(UICopy.Migration.sameDevice)"))
+        let choiceEnd = try #require(source[choiceStart.lowerBound...].range(
+            of: ".accessibilityIdentifier(AXID.Settings.Service.migrationChoiceDefer)"
+        ))
+        let choices = source[choiceStart.lowerBound..<choiceEnd.upperBound]
+        #expect(choices.contains("AXID.Settings.Service.migrationChoiceSameDevice"))
+        #expect(choices.contains("AXID.Settings.Service.migrationChoiceNewDevice"))
+        #expect(choices.contains("AXID.Settings.Service.migrationChoiceDefer"))
+        #expect(!choices.contains(".keyboardShortcut(.defaultAction)"))
+
+        let replacementStart = try #require(source.range(of: "private var replacementFlowSheet"))
+        let replacementEnd = try #require(source[replacementStart.lowerBound...].range(
+            of: "private var replacementConfirmationTitle"
+        ))
+        let replacement = source[replacementStart.lowerBound..<replacementEnd.lowerBound]
+        #expect(replacement.contains(".accessibilityValue(target.cid)"))
+        #expect(replacement.contains("AXID.Settings.Service.migrationChooseDevice"))
+        #expect(replacement.contains(".confirmationDialog("))
+        #expect(replacement.contains("role: .cancel"))
+        #expect(replacement.contains("AXID.Settings.Service.migrationReplacementConfirm"))
     }
 
     @Test func tabRawValuesMatchCaseNames() {

@@ -148,7 +148,7 @@ struct AppKitTerminationTests {
         }
 
         state.uploadCoordinator.handleProgressEvent(
-            .uploadSucceeded(segment: "x", journalFingerprint: proof.value)
+            .uploadSucceeded(segment: "x", journalFingerprint: proof.value, context: nil)
         )
         state.terminationDrainer = NeverCompletingAppKitTerminationDrainer()
         state.terminationDrainRunner = { operation in

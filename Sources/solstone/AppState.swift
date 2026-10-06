@@ -1049,18 +1049,30 @@ public final class AppState {
                     return .held
                 }
                 let owner = state.tunnelLifecycleOwner
-                if owner.isTunnelManaged {
-                    guard let localPort = owner.localPort else {
-                        return .held
-                    }
-                    return .url("http://127.0.0.1:\(localPort)")
-                }
-                guard let serverURL = state.config.serverURL else {
-                    return .held
-                }
-                return .url(serverURL)
+                return Self.homeBase(
+                    tunnelManaged: owner.isTunnelManaged,
+                    admissionReady: state.currentDurablePairingAdmissionIsReady,
+                    routeRevoked: owner.ordinaryRouteRevoked,
+                    localPort: owner.localPort,
+                    configuredServerURL: state.config.serverURL
+                )
             }
         }
+    }
+
+    internal static func homeBase(
+        tunnelManaged: Bool,
+        admissionReady: Bool,
+        routeRevoked: Bool,
+        localPort: Int?,
+        configuredServerURL: String?
+    ) -> ResolvedHomeBase {
+        if tunnelManaged {
+            guard admissionReady, !routeRevoked, let localPort else { return .held }
+            return .url("http://127.0.0.1:\(localPort)")
+        }
+        guard let configuredServerURL else { return .held }
+        return .url(configuredServerURL)
     }
 
     /// Ingest never falls back to the configured external server. Journal v3 is
@@ -1074,7 +1086,8 @@ public final class AppState {
                     lifecycleState: owner.state,
                     localPort: owner.localPort,
                     pairingIdentity: owner.cachedPairingIdentity,
-                    journalMarkConfirmed: state.isJournalMarkConfirmed
+                    journalMarkConfirmed: state.isJournalMarkConfirmed,
+                    admissionReady: state.currentDurablePairingAdmissionIsReady
                 )
             }
         }
@@ -1084,11 +1097,13 @@ public final class AppState {
         lifecycleState: TunnelLifecycleState,
         localPort: Int?,
         pairingIdentity: TunnelPairingIdentity?,
-        journalMarkConfirmed: Bool
+        journalMarkConfirmed: Bool,
+        admissionReady: Bool = true
     ) -> ResolvedHomeBase {
         guard case .connected = lifecycleState,
               let localPort,
               pairingIdentity != nil,
+              admissionReady,
               journalMarkConfirmed else {
             return .held
         }
@@ -1099,7 +1114,9 @@ public final class AppState {
         let owner = tunnelLifecycleOwner
         guard case .connected = owner.state,
               owner.localPort != nil,
-              owner.cachedPairingIdentity != nil else {
+              owner.cachedPairingIdentity != nil,
+              !owner.ordinaryRouteRevoked,
+              currentDurablePairingAdmissionIsReady else {
             return false
         }
         return isJournalMarkConfirmed
@@ -1123,7 +1140,8 @@ public final class AppState {
             lifecycleState: tunnelLifecycleOwner.state,
             adoptingAutomatically: isAdoptingSameMachineHomeAutomatically,
             journalIdentity: tunnelLifecycleOwner.cachedJournalMarkIdentity,
-            journalMarkConfirmed: isJournalMarkConfirmed
+            journalMarkConfirmed: isJournalMarkConfirmed,
+            admissionReady: currentDurablePairingAdmissionIsReady && !tunnelLifecycleOwner.ordinaryRouteRevoked
         )
     }
 
@@ -1132,22 +1150,40 @@ public final class AppState {
         lifecycleState: TunnelLifecycleState,
         adoptingAutomatically: Bool,
         journalIdentity: String?,
-        journalMarkConfirmed: Bool
+        journalMarkConfirmed: Bool,
+        admissionReady: Bool = true
     ) -> Bool {
         guard tunnelManaged,
               case .connected = lifecycleState,
-              !adoptingAutomatically else {
+              !adoptingAutomatically,
+              admissionReady else {
             return false
         }
         return journalIdentity != nil && !journalMarkConfirmed
     }
 
     /// Records the owner's answer for the paired journal and lets held work go.
-    internal func recordJournalMarkConfirmed() {
-        guard let journal = tunnelLifecycleOwner.cachedJournalMarkIdentity else { return }
+    @discardableResult
+    internal func recordJournalMarkConfirmed(
+        mark: JournalMark? = nil,
+        expectedRevision: PairingCredentialRevision? = nil
+    ) -> Bool {
+        guard let revision = currentDurablePairingRevision,
+              expectedRevision == nil || (!tunnelLifecycleOwner.ordinaryRouteRevoked
+                && Self.markAnswerRevisionMatches(
+                    expected: expectedRevision,
+                    current: revision,
+                    activeAttempt: pendingMarkCredentialRevision
+                )),
+              let pairing = currentDurablePairing,
+              PairingCredentialRevision(from: pairing) == revision,
+              let journal = tunnelLifecycleOwner.cachedJournalMarkIdentity,
+              journalMarkConfirmationIdentity(for: pairing) == journal else { return false }
         withMutation(keyPath: \.isJournalMarkConfirmed) {
+            if let mark { confirmedMark = mark }
             journalMarkConfirmationStore.confirm(journal)
             uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
+            pairingCoordinator.refreshPendingActions(markConfirmed: true)
             guard isPairedIngestReady else { return }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             if let owner = browserIntakeOwner {
@@ -1157,12 +1193,84 @@ public final class AppState {
             guard automaticObservationPipelineEnabled else { return }
             triggerTunnelConnectedSync(self)
         }
+        pendingMarkCredentialRevision = nil
+        return true
+    }
+
+    /// A fetched answer must still name both the current durable credential and
+    /// the active mark attempt before it can change confirmation state.
+    internal static func markAnswerRevisionMatches(
+        expected: PairingCredentialRevision?,
+        current: PairingCredentialRevision,
+        activeAttempt: PairingCredentialRevision?
+    ) -> Bool {
+        guard let expected else { return true }
+        return expected == current && activeAttempt == expected
+    }
+
+    @ObservationIgnored private var pendingMarkCredentialRevision: PairingCredentialRevision?
+
+    private var currentDurablePairingRevision: PairingCredentialRevision? {
+        guard let pairing = currentDurablePairing else { return nil }
+        if let credentialStore {
+            let revision = PairingCredentialRevision(from: pairing)
+            guard
+                  credentialStore.markAnswerIsCurrent(revision),
+                  let identity = tunnelLifecycleOwner.cachedPairingIdentity,
+                  identity.instanceID == pairing.instanceID,
+                  identity.fingerprint == pairing.fingerprint else { return nil }
+            return revision
+        }
+        guard tunnelLifecycleOwner.carriedPairingAdmission == .ready else { return nil }
+        return PairingCredentialRevision(from: pairing)
+    }
+
+    private var currentDurablePairing: StoredPairing? {
+        if let credentialStore { return try? credentialStore.load() }
+        return tunnelLifecycleOwner.currentStoredPairing()
+    }
+
+    internal func beginJournalMarkConfirmationAttempt() -> PairingCredentialRevision? {
+        guard case .connected = tunnelLifecycleOwner.state,
+              tunnelLifecycleOwner.localPort != nil,
+              !tunnelLifecycleOwner.ordinaryRouteRevoked,
+              let revision = currentDurablePairingRevision else { return nil }
+        pendingMarkCredentialRevision = revision
+        return revision
+    }
+
+    internal var currentJournalMarkAttemptRevision: PairingCredentialRevision? {
+        pendingMarkCredentialRevision
+    }
+
+    internal func isCurrentJournalMarkAttempt(_ revision: PairingCredentialRevision) -> Bool {
+        pendingMarkCredentialRevision == revision && currentDurablePairingRevision == revision &&
+            !tunnelLifecycleOwner.ordinaryRouteRevoked
+    }
+
+    private func carriedPairingDidCommit(
+        oldInstanceID: String,
+        oldFingerprint: String,
+        newPairing: StoredPairing
+    ) {
+        guard oldInstanceID == newPairing.instanceID else { return }
+        let journal = journalMarkConfirmationIdentity(for: newPairing)
+        if journalMarkConfirmationStore.confirmedJournal == journal {
+            recordJournalMarkConfirmed()
+        } else {
+            uploadCoordinator.updatePairedIngestIdentity(nil)
+        }
+        pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
+        let oldIdentity = TunnelPairingIdentity(instanceID: oldInstanceID, fingerprint: oldFingerprint)
+        let newIdentity = TunnelPairingIdentity(instanceID: newPairing.instanceID, fingerprint: newPairing.fingerprint)
+        uploadCoordinator.rebindLastJournalDelivery(from: oldIdentity, to: newIdentity)
     }
 
     internal func clearJournalMarkConfirmation() {
         withMutation(keyPath: \.isJournalMarkConfirmed) {
             journalMarkConfirmationStore.clear()
             uploadCoordinator?.updatePairedIngestIdentity(currentPairedIngestIdentity())
+            pairingCoordinator.refreshPendingActions(markConfirmed: false)
         }
     }
 
@@ -1171,8 +1279,12 @@ public final class AppState {
     /// not reset upload hold-offs or discard an answer already received; while it
     /// is down, the home-base resolver holds sends.
     private func currentPairedIngestIdentity() -> TunnelPairingIdentity? {
-        guard isJournalMarkConfirmed else { return nil }
+        guard isJournalMarkConfirmed, currentDurablePairingAdmissionIsReady else { return nil }
         return tunnelLifecycleOwner.cachedPairingIdentity
+    }
+
+    internal var currentDurablePairingAdmissionIsReady: Bool {
+        currentDurablePairingRevision != nil
     }
 
     internal func resolveHomeBase() async -> ResolvedHomeBase {
@@ -1272,6 +1384,13 @@ public final class AppState {
         let tunnelLifecycleOwner = TunnelLifecycleOwner(
             credentialStore: splCredentialStore,
             clientInfo: splClientInfo,
+            onCarriedPairingCommitted: { [fingerprintTarget] oldInstanceID, oldFingerprint, pairing in
+                fingerprintTarget.state?.carriedPairingDidCommit(
+                    oldInstanceID: oldInstanceID,
+                    oldFingerprint: oldFingerprint,
+                    newPairing: pairing
+                )
+            },
             // Write the refusal down where the owner can read it back. The
             // observer runs on the tunnel's own teardown path, so it hands off
             // to the main actor and returns rather than doing work there.
@@ -1307,15 +1426,22 @@ public final class AppState {
                     journalMarkConfirmationStore.clear()
                 }
             },
-            retireOwnCredential: { [owner = tunnelLifecycleOwner] pairing in
-                if case .connected(let localPort, _) = owner.state {
-                    owner.beginSelfRetirement(pairingGeneration: owner.credentialStore.currentGenerations().pairingGeneration)
-                    _ = await JournalSelfRetirement().retire(pairing: pairing, localPort: localPort)
-                }
+            retireOwnCredential: { [owner = tunnelLifecycleOwner] pairing, operationID in
+                await owner.retireInvalidatedPairing(pairing, operationID: operationID)
             },
             endSelfRetirement: { [owner = tunnelLifecycleOwner] in
                 owner.endSelfRetirement()
-            }
+            },
+            fenceOrdinaryTraffic: { [owner = tunnelLifecycleOwner] pairing in
+                await owner.fenceOrdinaryTraffic(for: pairing) {
+                    if let state = fingerprintTarget.state {
+                        await state.uploadCoordinator?.revokeOrdinaryTraffic()
+                    }
+                }
+            },
+            localPort: { [owner = tunnelLifecycleOwner] in
+                owner.localPort
+            },
         )
         let homeBaseURLResolver = Self.makeHomeBaseURLResolver(target: homeBaseURLTarget)
         self.homeBaseURLResolver = homeBaseURLResolver
@@ -1377,6 +1503,10 @@ public final class AppState {
             journalIdentityProvider: { [fingerprintTarget] in
                 fingerprintTarget.state?.currentJournalIdentity() ?? .absent
             },
+            ordinaryAdmission: { [splCredentialStore] in
+                splCredentialStore.admission(for: splCredentialStore.currentPairing()) == .ready
+            },
+            pairingCredentialStore: splCredentialStore,
             recorder: recorder,
             logAdapter: logAdapter
         )
@@ -1532,10 +1662,10 @@ public final class AppState {
         ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
             await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
         },
+        pairingStoring: (any PairingStoring)? = nil,
         pairingOperation: PairingCoordinator.PairOperation? = nil,
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
-        pairingSave: PairingCoordinator.SavePairing? = nil,
-        pairingDelete: PairingCoordinator.DeletePairing? = nil
+        pairingSave: PairingCoordinator.SavePairing? = nil
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -1551,10 +1681,10 @@ public final class AppState {
             runningBundleURL: runningBundleURL,
             versionReader: versionReader,
             sameMachinePairStart: sameMachinePairStart,
+            pairingStoring: pairingStoring,
             pairingOperation: pairingOperation,
             pairingLoad: pairingLoad,
-            pairingSave: pairingSave,
-            pairingDelete: pairingDelete
+            pairingSave: pairingSave
         )
     }
 
@@ -1577,6 +1707,7 @@ public final class AppState {
         ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
             await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
         },
+        pairingStoring: (any PairingStoring)? = nil,
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
         },
@@ -1587,7 +1718,6 @@ public final class AppState {
         pairingOperation: PairingCoordinator.PairOperation? = nil,
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
         pairingSave: PairingCoordinator.SavePairing? = nil,
-        pairingDelete: PairingCoordinator.DeletePairing? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
         permissionPollScheduler: PermissionPollScheduler = .live(),
@@ -1683,9 +1813,9 @@ public final class AppState {
         self.credentialStore = nil
         self.pairingCoordinator = PairingCoordinator(
             pair: pairingOperation,
+            keychainStore: pairingStoring ?? SPLPairingKeychain.store(),
             loadPairing: pairingLoad ?? { nil },
             savePairing: pairingSave ?? { _ in },
-            deletePairing: pairingDelete ?? {},
             reactivate: { [fingerprintTarget] in
                 await fingerprintTarget.state?.reevaluateTunnelPairing()
             },
@@ -1702,15 +1832,11 @@ public final class AppState {
                     journalMarkConfirmationStore.clear()
                 }
             },
-            retireOwnCredential: { [owner = tunnelLifecycleOwner] pairing in
-                if case .connected(let localPort, _) = owner.state {
-                    owner.beginSelfRetirement(pairingGeneration: owner.credentialStore.currentGenerations().pairingGeneration)
-                    _ = await JournalSelfRetirement().retire(pairing: pairing, localPort: localPort)
-                }
-            },
+            retireOwnCredential: { _, _ in true },
             endSelfRetirement: { [owner = tunnelLifecycleOwner] in
                 owner.endSelfRetirement()
-            }
+            },
+            fenceOrdinaryTraffic: { _ in }
         )
 
         uploadCoordinator = UploadCoordinator(
@@ -1745,7 +1871,9 @@ public final class AppState {
     // MARK: - Recording Control
 
     internal func startTunnelLifecycleOwner() {
+        pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
         tunnelLifecycleOwner.start()
+        Task { await pairingCoordinator.recoverDurableInvalidation() }
         startTunnelLifecycleObservation()
     }
 
@@ -2032,7 +2160,7 @@ public final class AppState {
     public func configureBrowserIntake(
         owner: BrowserIntakeOwner,
         credentialStore: PairingCredentialStore
-    ) {
+    ) async {
         let store = owner.store
         let authority = owner.authority
         let gate = owner.gate
@@ -2060,6 +2188,16 @@ public final class AppState {
         refreshBrowserPendingDiscard()
 
         owner.bindCredentials(credentialStore)
+        await owner.setCarriedPairingAdmissionOpen { [credentialStore] in
+            credentialStore.admission(for: credentialStore.currentPairing()) == .ready
+        }
+        await owner.setCarriedPairingAdmissionCommit { [credentialStore] route, operation in
+            try credentialStore.withOrdinaryBrowserAdmission(
+                generation: route.pairingGeneration,
+                identityDigest: route.identityDigest,
+                operation: operation
+            ) ?? false
+        }
         let routeEpoch = routeState.aboutEpoch()
         let snapshot = AboutPresentation.nativeSnapshot(journal: journalVersion)
         Task {
@@ -2145,10 +2283,8 @@ public final class AppState {
                 await owner.stopAndDrain()
                 return
             }
-            await MainActor.run {
-                state.browserIntakeRouteState = routeState
-                state.configureBrowserIntake(owner: owner, credentialStore: credentialStore)
-            }
+            await MainActor.run { state.browserIntakeRouteState = routeState }
+            await state.configureBrowserIntake(owner: owner, credentialStore: credentialStore)
             let currentEnabled = await MainActor.run { state.config.isBrowserIntakeEnabled }
             await owner.setIntakeEnabled(currentEnabled)
             await owner.start()

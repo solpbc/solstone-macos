@@ -6,41 +6,17 @@ import Testing
 @testable import solstone
 
 struct SPLPairingKeychainTests {
-    @Test func selectorDefaultsToProductionPolicyWhenBundleHasNoMarker() {
-        #expect(SPLPairingKeychain.policy(markerValue: nil) == SPLPairingKeychain.productionPolicy)
-        #expect(SPLPairingKeychain.store().policy == SPLPairingKeychain.productionPolicy)
-    }
-
-    @Test func selectorUsesLoginKeychainPolicyForAdhocMarker() {
-        #expect(
-            SPLPairingKeychain.policy(markerValue: SPLPairingKeychain.loginKeychainMarkerValue) ==
-                SPLPairingKeychain.loginKeychainPolicy
-        )
-    }
-
-    @Test func selectorFallsClosedToProductionPolicyForUnknownMarker() {
-        #expect(SPLPairingKeychain.policy(markerValue: "unexpected") == SPLPairingKeychain.productionPolicy)
+    @Test func selectedStorePinsTheUserLoginKeychainBackend() {
+        #expect(SPLPairingKeychain.store() is SPLLoginKeychainStore)
+        #expect(SPLPairingKeychain.migrationService == "app.solstone.observer.spl.migration")
     }
 
     @Test func policyLiteralsMatchEntitlementsAppPlist() throws {
-        let production = SPLPairingKeychain.productionPolicy
-        #expect(production.service == SPLPairingKeychain.service)
-        #expect(production.account == SPLPairingKeychain.account)
-        #expect(production.accessGroup == SPLPairingKeychain.accessGroup)
-        #expect(production.useDataProtectionKeychain)
-        #expect(production.accessibility == .afterFirstUnlockThisDeviceOnly)
         #expect(SPLPairingKeychain.service == "app.solstone.observer.spl")
         #expect(SPLPairingKeychain.account == "spl-pairing-bundle")
         #expect(SPLPairingKeychain.accessGroup == "7QCG8V4M6H.app.solstone.observer.spl")
 
-        let login = SPLPairingKeychain.loginKeychainPolicy
-        #expect(login.service == SPLPairingKeychain.service)
-        #expect(login.account == SPLPairingKeychain.account)
-        #expect(login.accessGroup == nil)
-        #expect(!login.useDataProtectionKeychain)
-        #expect(login.accessibility == .afterFirstUnlockThisDeviceOnly)
-
-        let accessGroup = try #require(production.accessGroup)
+        let accessGroup = SPLPairingKeychain.accessGroup
         let entitlementGroups = try entitlementsAppKeychainAccessGroups()
         #expect(entitlementGroups.contains(accessGroup))
     }

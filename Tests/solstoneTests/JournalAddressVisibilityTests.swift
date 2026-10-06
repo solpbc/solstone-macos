@@ -300,7 +300,6 @@ struct JournalAddressVisibilityTests {
             pair: { _, _, _ in throw DialError.connectTimeout },
             loadPairing: { nil },
             savePairing: { _ in },
-            deletePairing: {},
             relayEndpoint: { URL(string: "https://relay.test")! },
             deviceLabel: { "test mac" }
         )

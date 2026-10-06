@@ -98,11 +98,14 @@ struct JournalWindowSceneRoot: View {
     }
 
     var body: some View {
+        let routeRevoked = !appState.currentDurablePairingAdmissionIsReady ||
+            appState.tunnelLifecycleOwner.ordinaryRouteRevoked
         Group {
             if shouldRenderJournalContent(journalWindowOpen: appState.openSceneIds.contains(.journal)) {
                 JournalWindowView(
                     intent: appState.journalOpenIntent,
                     homeBaseChangeToken: appState.journalHomeBaseChangeToken,
+                    routeRevoked: routeRevoked,
                     resolveHomeBase: resolveHomeBase,
                     connectionVerdict: connectionVerdict,
                     pairingBusy: pairingBusy,
@@ -114,6 +117,10 @@ struct JournalWindowSceneRoot: View {
                             openWindow: { openWindow(id: $0) },
                             activate: { NSApp.activate(ignoringOtherApps: true) }
                         )
+                    },
+                    routeAuthority: { [appState] in
+                        appState.currentDurablePairingAdmissionIsReady &&
+                            !appState.tunnelLifecycleOwner.ordinaryRouteRevoked
                     },
                     openExternalURL: openExternalURL,
                     websiteDataStore: websiteDataStore
@@ -162,6 +169,7 @@ private struct JournalWindowTitleInstaller: NSViewRepresentable {
 private struct JournalWindowView: View {
     let intent: JournalOpenIntent?
     let homeBaseChangeToken: UInt64
+    let routeRevoked: Bool
     let openExternalURL: JournalWindowExternalURLOpener
     let websiteDataStore: JournalWindowWebsiteDataStoreProvider
     @State private var session: JournalWindowSession
@@ -169,16 +177,19 @@ private struct JournalWindowView: View {
     init(
         intent: JournalOpenIntent?,
         homeBaseChangeToken: UInt64,
+        routeRevoked: Bool,
         resolveHomeBase: @escaping JournalWindowSession.ResolveHomeBase,
         connectionVerdict: @escaping JournalWindowSession.ConnectionVerdictProvider,
         pairingBusy: @escaping JournalWindowSession.PairingBusyProvider,
         recover: @escaping JournalWindowSession.RecoveryDispatch,
         openSettings: @escaping JournalWindowSession.SettingsRouter,
+        routeAuthority: @escaping JournalWindowSession.RouteAuthorityProvider,
         openExternalURL: @escaping JournalWindowExternalURLOpener,
         websiteDataStore: @escaping JournalWindowWebsiteDataStoreProvider
     ) {
         self.intent = intent
         self.homeBaseChangeToken = homeBaseChangeToken
+        self.routeRevoked = routeRevoked
         self.openExternalURL = openExternalURL
         self.websiteDataStore = websiteDataStore
         _session = State(
@@ -187,14 +198,15 @@ private struct JournalWindowView: View {
                 connectionVerdict: connectionVerdict,
                 pairingBusy: pairingBusy,
                 recover: recover,
-                openSettings: openSettings
+                openSettings: openSettings,
+                routeAuthority: routeAuthority
             )
         )
     }
 
     var body: some View {
         ZStack {
-            if session.showsWebView {
+            if session.showsWebView && !routeRevoked {
                 JournalWebView(
                     session: session,
                     loadCommand: session.loadCommand,
@@ -203,28 +215,32 @@ private struct JournalWindowView: View {
                 )
             }
 
-            switch session.state {
-            case .held, .linkDown:
+            if routeRevoked {
                 honestyOverlay
-            case .loading:
-                ProgressView(UICopy.JOURNAL_WINDOW_LOADING)
-                    .controlSize(.large)
-            case .loaded:
-                EmptyView()
-            case .error:
-                VStack(spacing: 12) {
-                    Text(UICopy.JOURNAL_WINDOW_ERROR)
-                        .font(.headline)
-                    Button(UICopy.JOURNAL_WINDOW_RETRY) {
-                        Task {
-                            await session.retry()
+            } else {
+                switch session.state {
+                case .held, .linkDown:
+                    honestyOverlay
+                case .loading:
+                    ProgressView(UICopy.JOURNAL_WINDOW_LOADING)
+                        .controlSize(.large)
+                case .loaded:
+                    EmptyView()
+                case .error:
+                    VStack(spacing: 12) {
+                        Text(UICopy.JOURNAL_WINDOW_ERROR)
+                            .font(.headline)
+                        Button(UICopy.JOURNAL_WINDOW_RETRY) {
+                            Task {
+                                await session.retry()
+                            }
                         }
+                        .accessibilityIdentifier(AXID.Journal.Browser.retry)
                     }
-                    .accessibilityIdentifier(AXID.Journal.Browser.retry)
+                    .padding(24)
+                    .background(.regularMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
-                .padding(24)
-                .background(.regularMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
             AXStateCompanion(
@@ -242,6 +258,9 @@ private struct JournalWindowView: View {
             Task {
                 await session.reloadRetainedDestination()
             }
+        }
+        .onChange(of: routeRevoked) { _, _ in
+            session.routeAuthorityDidChange()
         }
     }
 

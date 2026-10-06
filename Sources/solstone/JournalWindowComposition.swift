@@ -216,6 +216,16 @@ internal struct JournalWindowComposition: Sendable, Equatable {
         return beginLoad(resolvedBase: resolvedBase, verdictClass: verdictClass)
     }
 
+    mutating func revokeRoute() {
+        generation &+= 1
+        state = .held
+        currentBaseURL = nil
+        loadCommand = nil
+        hasDisplayedContent = false
+        committedBaseURL = nil
+        committedDestination = nil
+    }
+
     mutating func beginDirectLoad(url: URL, baseURL: URL) -> JournalWindowLoadCommand {
         if let derived = Self.destination(for: url, relativeTo: baseURL) {
             destination = derived
@@ -441,12 +451,14 @@ internal final class JournalWindowSession {
     typealias PairingBusyProvider = @MainActor () -> Bool
     typealias RecoveryDispatch = @MainActor (JournalConnectionRecoveryAction) async -> Void
     typealias SettingsRouter = @MainActor () -> Void
+    typealias RouteAuthorityProvider = @MainActor () -> Bool
 
     private let resolveHomeBase: ResolveHomeBase
     private let connectionVerdict: ConnectionVerdictProvider
     private let pairingBusy: PairingBusyProvider
     private let recover: RecoveryDispatch
     private let openSettings: SettingsRouter
+    private let routeAuthority: RouteAuthorityProvider
     private var composition = JournalWindowComposition()
 
     var state: JournalWindowAXState { composition.state }
@@ -486,18 +498,28 @@ internal final class JournalWindowSession {
         connectionVerdict: @escaping ConnectionVerdictProvider = { .neutral },
         pairingBusy: @escaping PairingBusyProvider = { false },
         recover: @escaping RecoveryDispatch = { _ in },
-        openSettings: @escaping SettingsRouter = {}
+        openSettings: @escaping SettingsRouter = {},
+        routeAuthority: @escaping RouteAuthorityProvider = { true }
     ) {
         self.resolveHomeBase = resolveHomeBase
         self.connectionVerdict = connectionVerdict
         self.pairingBusy = pairingBusy
         self.recover = recover
         self.openSettings = openSettings
+        self.routeAuthority = routeAuthority
     }
 
     @discardableResult
     func open(destination: JournalWindowDestination) async -> JournalWindowLoadCommand? {
+        guard routeAuthority() else {
+            composition.revokeRoute()
+            return nil
+        }
         let resolved = await resolveHomeBase()
+        guard routeAuthority() else {
+            composition.revokeRoute()
+            return nil
+        }
         logBaseOutcome(resolved)
         let command = composition.open(
             destination: destination,
@@ -510,11 +532,24 @@ internal final class JournalWindowSession {
 
     @discardableResult
     func reloadRetainedDestination() async -> JournalWindowLoadCommand? {
+        guard routeAuthority() else {
+            composition.revokeRoute()
+            return nil
+        }
         let resolved = await resolveHomeBase()
+        guard routeAuthority() else {
+            composition.revokeRoute()
+            return nil
+        }
         logBaseOutcome(resolved)
         let command = composition.reload(resolvedBase: resolved, verdictClass: currentVerdictClass())
         logLoadCommand(command)
         return command
+    }
+
+    func routeAuthorityDidChange() {
+        guard !routeAuthority() else { return }
+        composition.revokeRoute()
     }
 
     @discardableResult

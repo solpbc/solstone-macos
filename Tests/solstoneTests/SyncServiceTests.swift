@@ -3,6 +3,7 @@
 
 import Foundation
 import JournalRuntimeTestSupport
+import SolstoneCore
 import Testing
 @testable import solstone
 
@@ -2316,6 +2317,128 @@ struct SyncServiceTests {
         #expect(holdingStore.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 1)
     }
 
+    @Test func durableInvalidationAfterUploadResponseLeavesBytesUnacknowledgedAndUndelivered() async throws {
+        store.reset()
+        SyncServiceHoldingURLProtocol.reset()
+        defer { SyncServiceHoldingURLProtocol.releaseHold() }
+        let root = try makeTempDirectory("sync-invalidation-during-upload")
+        let segment = try makeSegment(root: root)
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: segment.url.appendingPathComponent(filename))
+        let storedPairing = pairing()
+        let backend = PairingStore(pairing: storedPairing)
+        let credentials = PairingCredentialStore(store: backend)
+        _ = try credentials.load()
+        let pairingIdentity = TunnelPairingIdentity(
+            instanceID: storedPairing.instanceID,
+            fingerprint: storedPairing.fingerprint
+        )
+        let connectionFingerprint = tunnelJournalConnectionFingerprint(for: pairingIdentity)
+        let staleContext = try #require(JournalUploadContext(
+            pairing: pairingIdentity,
+            suppliedFingerprint: connectionFingerprint,
+            credentialRevision: PairingCredentialRevision(from: storedPairing).revision
+        ))
+        let service = makeHoldingService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24705") },
+            pairingCredentialStore: credentials
+        )
+        await service.configure(
+            pairingIdentity: pairingIdentity,
+            journalFingerprint: connectionFingerprint,
+            syncPaused: false
+        )
+
+        let holdingStore = SyncServiceHoldingURLProtocol.store
+        holdingStore.enqueue(statusCode: 200, body: uploadResponseJSON(
+            status: .ok,
+            submitted: "120000_300",
+            stored: "120000_300",
+            filename: filename,
+            sha: sha,
+            size: 5
+        ))
+        let delivery = InMemoryLastJournalDeliveryStore()
+        let coordinator = await MainActor.run {
+            UploadCoordinator(
+                storageManager: StorageManager(baseDirectory: root),
+                config: AppConfig(),
+                resolver: HomeBaseURLResolver { .held },
+                pairedIngestIdentity: pairingIdentity,
+                automaticSyncEnabled: false,
+                lastDeliveryStore: delivery,
+                journalIdentityProvider: { .identified(connectionFingerprint) },
+                ordinaryAdmission: { credentials.admission(for: credentials.currentPairing()) == .ready },
+                pairingCredentialStore: credentials
+            )
+        }
+        let syncTask = Task { await service.sync() }
+        await holdingStore.waitForRequestCount(1)
+        #expect(SyncServiceHoldingURLProtocol.hold.waitUntilWaiting())
+
+        _ = try credentials.beginInvalidation(for: storedPairing, operationID: "in-flight-upload-revoke")
+        SyncServiceHoldingURLProtocol.releaseHold()
+        await syncTask.value
+        await MainActor.run {
+            coordinator.handleProgressEvent(.uploadSucceeded(
+                segment: "120000_300",
+                journalFingerprint: connectionFingerprint.value,
+                context: staleContext
+            ))
+        }
+
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: segment.url.appendingPathComponent(filename).path))
+        #expect(!FileManager.default.fileExists(atPath: ackURL.path))
+        #expect(delivery.read() == .absent)
+    }
+
+    @Test func ordinaryRevocationEpochStopsHeldUploadBeforeAcknowledgment() async throws {
+        store.reset()
+        SyncServiceHoldingURLProtocol.reset()
+        defer { SyncServiceHoldingURLProtocol.releaseHold() }
+        let root = try makeTempDirectory("sync-revocation-epoch")
+        let segment = try makeSegment(root: root)
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: segment.url.appendingPathComponent(filename))
+        let storedPairing = pairing()
+        let pairingIdentity = TunnelPairingIdentity(
+            instanceID: storedPairing.instanceID,
+            fingerprint: storedPairing.fingerprint
+        )
+        let connectionFingerprint = tunnelJournalConnectionFingerprint(for: pairingIdentity)
+        let service = makeHoldingService(
+            root: root,
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24705") }
+        )
+        await service.configure(
+            pairingIdentity: pairingIdentity,
+            journalFingerprint: connectionFingerprint,
+            syncPaused: false
+        )
+        SyncServiceHoldingURLProtocol.store.enqueue(statusCode: 200, body: uploadResponseJSON(
+            status: .ok,
+            submitted: "120000_300",
+            stored: "120000_300",
+            filename: filename,
+            sha: sha,
+            size: 5
+        ))
+
+        let syncTask = Task { await service.sync() }
+        await SyncServiceHoldingURLProtocol.store.waitForRequestCount(1)
+        #expect(SyncServiceHoldingURLProtocol.hold.waitUntilWaiting())
+
+        await service.revokeOrdinaryTraffic()
+        SyncServiceHoldingURLProtocol.releaseHold()
+        await syncTask.value
+
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300")
+        #expect(FileManager.default.fileExists(atPath: segment.url.appendingPathComponent(filename).path))
+        #expect(!FileManager.default.fileExists(atPath: ackURL.path))
+    }
+
     @Test(arguments: [IngestProtocolV3.UploadStatus.ok, .collision, .duplicate])
     func coherentUploadYieldsCapturedFingerprint(_ status: IngestProtocolV3.UploadStatus) async throws {
         store.reset()
@@ -4305,14 +4428,16 @@ struct SyncServiceTests {
     private func makeHoldingService(
         root: URL,
         resolver: HomeBaseURLResolver,
-        now: (@escaping @Sendable () -> Date) = Date.init
+        now: (@escaping @Sendable () -> Date) = Date.init,
+        pairingCredentialStore: PairingCredentialStore? = nil
     ) -> SyncService {
         SyncService(
             storageManager: StorageManager(baseDirectory: root),
             client: UploadClient(sessionConfiguration: holdingURLProtocolConfiguration()),
             resolver: resolver,
             now: now,
-            retryDelays: Array(repeating: 0, count: 10)
+            retryDelays: Array(repeating: 0, count: 10),
+            pairingCredentialStore: pairingCredentialStore
         )
     }
 
@@ -4600,7 +4725,7 @@ private final class ProgressCollector: @unchecked Sendable {
     var containsConfigChangedFailure: Bool {
         lock.withLock {
             events.contains {
-                guard case .uploadFailed(_, _, let reason, _) = $0 else { return false }
+                guard case .uploadFailed(_, _, let reason, _, _) = $0 else { return false }
                 return reason == .configChanged
             }
         }
@@ -4627,7 +4752,7 @@ private final class ProgressCollector: @unchecked Sendable {
     var uploadSucceededFingerprint: String? {
         lock.withLock {
             for event in events {
-                if case .uploadSucceeded(_, let fingerprint) = event {
+                if case .uploadSucceeded(_, let fingerprint, _) = event {
                     return fingerprint
                 }
             }
@@ -4638,7 +4763,7 @@ private final class ProgressCollector: @unchecked Sendable {
     var uploadSucceededFingerprints: [String] {
         lock.withLock {
             events.compactMap {
-                if case .uploadSucceeded(_, let fingerprint) = $0 {
+                if case .uploadSucceeded(_, let fingerprint, _) = $0 {
                     return fingerprint
                 }
                 return nil

@@ -220,6 +220,8 @@ struct SettingsView: View {
     @State private var localLinkInProgress = false
     @State private var localLinkError: String?
     @State private var showPairingFlow = false
+    @State private var migrationChoiceExpanded = true
+    @State private var replacementConfirmationPresented = false
     @State var entitlementOpenFailed = false
     @State var supportOpenFailed = false
 
@@ -640,7 +642,7 @@ struct SettingsView: View {
 
     private func cancelUnverifiedPairing() {
         Task { @MainActor in
-            await journalMarkDriver.cancelPairing(appState: appState)
+            guard await journalMarkDriver.cancelPairing(appState: appState) else { return }
             pairingMismatch = false
             journalMarkRederiveEligible = false
             journalMarkRederiveStarted = false
@@ -669,11 +671,16 @@ struct SettingsView: View {
         }
 
         journalMarkRederiveStarted = true
+        guard let markRevision = appState.beginJournalMarkConfirmationAttempt() else {
+            journalMarkRederiveStarted = false
+            return
+        }
         journalMarkRederiveTask?.cancel()
         journalMarkRederiveTask = Task { @MainActor in
             switch await appState.resolveHomeBase() {
             case .url(let baseURL):
-                if let mark = await markFetch(baseURL) {
+                if let mark = await markFetch(baseURL),
+                   appState.isCurrentJournalMarkAttempt(markRevision) {
                     appState.setConfirmedMark(mark)
                 }
             case .held:
@@ -1344,6 +1351,29 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
+            appState.pairingCoordinator.refreshPendingActions(markConfirmed: appState.isJournalMarkConfirmed)
+        }
+        .onChange(of: appState.isJournalMarkConfirmed) { _, confirmed in
+            appState.pairingCoordinator.refreshPendingActions(markConfirmed: confirmed)
+        }
+        .sheet(isPresented: Binding(
+            get: {
+                appState.pairingCoordinator.replacementOfferVisible
+                    || appState.pairingCoordinator.replacementPickerVisible
+            },
+            set: { presented in
+                if !presented { appState.pairingCoordinator.dismissReplacementPicker() }
+            }
+        )) {
+            replacementFlowSheet
+        }
+        .onDisappear {
+            if appState.pairingCoordinator.replacementOfferVisible
+                || appState.pairingCoordinator.replacementPickerVisible {
+                appState.pairingCoordinator.dismissReplacementPicker()
+            }
+        }
+        .onAppear {
             if observerURL.isEmpty { observerURL = appState.config.serverURL ?? "" }
             if observerKey.isEmpty { observerKey = appState.config.serverKey ?? "" }
             refreshLocalJournalDiscoveryIfNeeded()
@@ -1494,6 +1524,9 @@ struct SettingsView: View {
                         configuredJournalRecoveryRow(for: presentation.failureCause)
                     }
                 }
+
+                carriedPairingMigrationPane
+                carriedPairingLifecycleNotice
 
                 if Self.journalMarkHeldLineVisible(
                     needsJournalMarkConfirmation: appState.needsJournalMarkConfirmation,
@@ -2062,6 +2095,265 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
+    private var carriedPairingMigrationPane: some View {
+        if let decision = appState.pairingCoordinator.pendingMigrationDecision {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    LabeledContent(UICopy.Migration.pendingRow, value: UICopy.Migration.pendingValue)
+                    if decision.choice == nil {
+                        if migrationChoiceExpanded {
+                            Text(UICopy.Migration.choiceTitle)
+                            Text(UICopy.Migration.choiceBody.replacingOccurrences(
+                                of: "{previous_device_label}",
+                                with: SPLPairingDefaults.deviceLabel
+                            ))
+                            HStack {
+                                Button(UICopy.Migration.sameDevice) {
+                                    Task { await appState.pairingCoordinator.chooseCarriedPairing(.sameDevice) }
+                                }
+                                .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceSameDevice)
+                                Button(UICopy.Migration.newDevice) {
+                                    Task { await appState.pairingCoordinator.chooseCarriedPairing(.newDevice) }
+                                }
+                                .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceNewDevice)
+                                Button(UICopy.Migration.deferChoice) {
+                                    migrationChoiceExpanded = false
+                                }
+                                .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceDefer)
+                            }
+                        } else {
+                            Button(UICopy.Migration.pendingRow) {
+                                migrationChoiceExpanded = true
+                            }
+                            .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceRow)
+                        }
+                    }
+                    migrationDecisionNotice(for: decision)
+                }
+            }
+            .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceRow)
+        }
+    }
+
+    @ViewBuilder
+    private func migrationDecisionNotice(for decision: CarriedPairingDecision) -> some View {
+        let status = appState.pairingCoordinator.migrationDecisionState
+            ?? (decision.submitted ? "decision_unknown" : nil)
+        switch status {
+        case "deciding":
+            Text(UICopy.Migration.decidingTitle)
+        case "decision_unknown":
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.decisionUnknownTitle)
+                Text(UICopy.Migration.decisionUnknownBody)
+                Button(UICopy.Migration.checkAgain) {
+                    Task { await appState.pairingCoordinator.checkPendingMigrationDecision() }
+                }
+                .accessibilityIdentifier(AXID.Settings.Service.migrationDecisionCheck)
+            }
+        case "decision_refused":
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.decisionRefusedTitle)
+                Text(UICopy.Migration.decisionRefusedBody)
+                Button(UICopy.Migration.technicalDetails) { openMigrationTechnicalDetails() }
+            }
+        case "storage_unavailable":
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.storageUnavailableTitle)
+                Text(UICopy.Migration.storageUnavailableBody)
+                Button(UICopy.Migration.technicalDetails) { openMigrationTechnicalDetails() }
+            }
+        case "offline":
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.offlineTitle)
+                Text(UICopy.Migration.offlineBody)
+                Button(UICopy.Migration.tryAgain) {
+                    Task { await appState.pairingCoordinator.checkPendingMigrationDecision() }
+                }
+            }
+        case "list_unavailable":
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.listUnavailableTitle)
+                Text(UICopy.Migration.listUnavailableBody)
+                Button(UICopy.Migration.tryAgain) {
+                    Task { await appState.pairingCoordinator.chooseAnotherReplacementDevice() }
+                }
+            }
+        case "target_missing":
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.targetMissingTitle)
+                Text(UICopy.Migration.targetMissingBody)
+                Button(UICopy.Migration.chooseDevice) {
+                    Task { await appState.pairingCoordinator.chooseAnotherReplacementDevice() }
+                }
+            }
+        case "unsupported":
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.unsupportedTitle)
+                Text(UICopy.Migration.unsupportedBody)
+                Button(UICopy.Migration.tryAgain) { Task { await appState.reevaluateTunnelPairing() } }
+            }
+        case "key_refused":
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.keyRefusedTitle)
+                Text(UICopy.Migration.keyRefusedBody)
+                Button(UICopy.Migration.pairAgain) { showPairingFlow = true }
+            }
+        case .none:
+            EmptyView()
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var carriedPairingLifecycleNotice: some View {
+        switch appState.tunnelLifecycleOwner.carriedPairingStatus {
+        case .preparing:
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.preparingTitle)
+                Text(UICopy.Migration.preparingBody)
+            }
+            .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceRow)
+        case .offline:
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.offlineTitle)
+                Text(UICopy.Migration.offlineBody)
+                Button(UICopy.Migration.tryAgain) { Task { await appState.reevaluateTunnelPairing() } }
+            }
+        case .unsupported:
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.unsupportedTitle)
+                Text(UICopy.Migration.unsupportedBody)
+                Button(UICopy.Migration.tryAgain) { Task { await appState.reevaluateTunnelPairing() } }
+            }
+        case .storageUnavailable:
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.storageUnavailableTitle)
+                Text(UICopy.Migration.storageUnavailableBody)
+                Button(UICopy.Migration.technicalDetails) { openMigrationTechnicalDetails() }
+            }
+        case .keyRefused:
+            VStack(alignment: .leading, spacing: 6) {
+                Text(UICopy.Migration.keyRefusedTitle)
+                Text(UICopy.Migration.keyRefusedBody)
+                Button(UICopy.Migration.pairAgain) { showPairingFlow = true }
+            }
+        case .none:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var replacementFlowSheet: some View {
+        if appState.pairingCoordinator.replacementPickerVisible {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(UICopy.Migration.pickerTitle)
+                    .font(.headline)
+                if appState.pairingCoordinator.replacementListUnavailable {
+                    Text(UICopy.Migration.listUnavailableTitle)
+                    Text(UICopy.Migration.listUnavailableBody)
+                    Button(UICopy.Migration.tryAgain) {
+                        Task { await appState.pairingCoordinator.chooseAnotherReplacementDevice() }
+                    }
+                } else if appState.pairingCoordinator.replacementTargetMissing {
+                    Text(UICopy.Migration.targetMissingTitle)
+                    Text(UICopy.Migration.targetMissingBody)
+                    Button(UICopy.Migration.chooseDevice) {
+                        Task { await appState.pairingCoordinator.chooseAnotherReplacementDevice() }
+                    }
+                } else if appState.pairingCoordinator.replacementTargets.isEmpty {
+                    Text(UICopy.Migration.pickerEmpty)
+                } else {
+                    ForEach(appState.pairingCoordinator.replacementTargets, id: \.cid) { target in
+                        Button {
+                            appState.pairingCoordinator.selectReplacementTarget(cid: target.cid)
+                        } label: {
+                            HStack {
+                                Text(target.displayLabel)
+                                Spacer()
+                                if appState.pairingCoordinator.selectedReplacementCID == target.cid {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                        .accessibilityValue(target.cid)
+                    }
+                    Button(UICopy.Migration.chooseDevice) {
+                        replacementConfirmationPresented = true
+                    }
+                    .disabled(appState.pairingCoordinator.selectedReplacementCID == nil)
+                    .accessibilityIdentifier(AXID.Settings.Service.migrationChooseDevice)
+                    .confirmationDialog(
+                        replacementConfirmationTitle,
+                        isPresented: $replacementConfirmationPresented,
+                        titleVisibility: .visible
+                    ) {
+                        Button(UICopy.Migration.replaceDevice, role: .destructive) {
+                            Task { await appState.pairingCoordinator.confirmReplacement() }
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Service.migrationReplacementConfirm)
+                        Button(UICopy.Migration.cancel, role: .cancel) {}
+                    } message: {
+                        Text(UICopy.Migration.replaceConfirmBody)
+                    }
+                }
+                Button(UICopy.Migration.cancel) {
+                    appState.pairingCoordinator.dismissReplacementPicker()
+                }
+                .accessibilityIdentifier(AXID.Settings.Service.pairingSwitchCancel)
+            }
+            .padding(24)
+            .frame(minWidth: 360)
+            .accessibilityIdentifier(AXID.Settings.Service.migrationPicker)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(UICopy.Migration.replaceOfferTitle)
+                    .font(.headline)
+                Text(UICopy.Migration.replaceOfferBody)
+                Button(UICopy.Migration.keepBoth) {
+                    Task { await appState.pairingCoordinator.keepBothDevices() }
+                }
+                .accessibilityIdentifier(AXID.Settings.Service.migrationKeepBoth)
+                Button(UICopy.Migration.chooseDevice) {
+                    Task { await appState.pairingCoordinator.openReplacementPicker() }
+                }
+                .accessibilityIdentifier(AXID.Settings.Service.migrationChooseDevice)
+                if appState.pairingCoordinator.replacementListUnavailable {
+                    Text(UICopy.Migration.listUnavailableTitle)
+                    Text(UICopy.Migration.listUnavailableBody)
+                    Button(UICopy.Migration.tryAgain) {
+                        Task { await appState.pairingCoordinator.openReplacementPicker() }
+                    }
+                }
+                Button(UICopy.Migration.deferChoice) {
+                    appState.pairingCoordinator.deferReplacementOffer()
+                }
+                .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceDefer)
+            }
+            .padding(24)
+            .frame(minWidth: 360)
+            .accessibilityIdentifier(AXID.Settings.Service.migrationReplacementOffer)
+        }
+    }
+
+    private var replacementConfirmationTitle: String {
+        let label = appState.pairingCoordinator.replacementTargets.first {
+            $0.cid == appState.pairingCoordinator.selectedReplacementCID
+        }?.displayLabel
+        guard let label else { return "" }
+        return UICopy.Migration.replaceConfirmTitle.replacingOccurrences(
+            of: "{selected_device_label}",
+            with: label
+        )
+    }
+
+    private func openMigrationTechnicalDetails() {
+        selectedTab = .help
+        diagnosticsExpanded = true
+    }
+
+    @ViewBuilder
     private var pairingDisconnectControls: some View {
         if pairingCanUnpair {
             if disconnectConfirmPending {
@@ -2385,8 +2677,8 @@ struct SettingsView: View {
     private func disconnectPairing() {
         disconnectConfirmPending = false
         Task { @MainActor in
-            await appState.pairingCoordinator.unpair()
-            if appState.pairingCoordinator.state == .idle {
+            let removed = await appState.pairingCoordinator.unpair()
+            if removed {
                 appState.clearConfirmedMark()
                 pairingMismatch = false
                 journalMarkRederiveEligible = false

@@ -37,17 +37,25 @@ final class PairingCoordinator {
     typealias PairOperation = @Sendable (PairURL, String, URL) async throws -> StoredPairing
     typealias LoadPairing = @Sendable () throws -> StoredPairing?
     typealias SavePairing = @Sendable (StoredPairing) throws -> Void
-    typealias DeletePairing = @Sendable () throws -> Void
     typealias Reactivate = @MainActor @Sendable () async -> Void
     typealias OwnerState = @MainActor @Sendable () -> TunnelLifecycleState
     typealias RelayEndpointSource = @Sendable () -> URL
     typealias DeviceLabelSource = @Sendable () -> String
     typealias ClearLastSuccessfulJournalContact = @MainActor @Sendable () -> Void
     typealias ClearJournalMarkConfirmation = @MainActor @Sendable () -> Void
-    typealias RetireOwnCredential = @MainActor @Sendable (StoredPairing) async -> Void
+    typealias RetireOwnCredential = @MainActor @Sendable (StoredPairing, String) async -> Bool
+    typealias FenceOrdinaryTraffic = @MainActor @Sendable (StoredPairing) async -> Void
     typealias EndSelfRetirement = @MainActor @Sendable () -> Void
 
     private(set) var state: PairingFlowState = .idle
+    private(set) var pendingMigrationDecision: CarriedPairingDecision?
+    private(set) var replacementTargets: [CarriedPairingClientRow] = []
+    private(set) var replacementOfferVisible = false
+    private(set) var replacementPickerVisible = false
+    private(set) var selectedReplacementCID: String?
+    private(set) var migrationDecisionState: String?
+    private(set) var replacementListUnavailable = false
+    private(set) var replacementTargetMissing = false
     /// The one address a failed ceremony dialed, when the link named exactly one.
     private(set) var failedAddress: String?
 
@@ -58,7 +66,6 @@ final class PairingCoordinator {
     @ObservationIgnored
     private let savePairing: @Sendable (StoredPairing) throws -> Void
     @ObservationIgnored
-    private let deletePairing: @Sendable () throws -> Void
     @ObservationIgnored
     private let reactivate: Reactivate
     @ObservationIgnored
@@ -76,6 +83,14 @@ final class PairingCoordinator {
     @ObservationIgnored
     private let endSelfRetirement: EndSelfRetirement
     @ObservationIgnored
+    private let credentialStore: PairingCredentialStore?
+    @ObservationIgnored
+    private let fenceOrdinaryTraffic: FenceOrdinaryTraffic
+    @ObservationIgnored
+    private let carriedPairingControl: any CarriedPairingControlRequesting
+    @ObservationIgnored
+    private let localPort: @MainActor @Sendable () -> Int?
+    @ObservationIgnored
     private var pendingSwitchLink: PairURL?
     @ObservationIgnored
     private let classifiedLog: any ClassifiedLogSinking
@@ -87,22 +102,25 @@ final class PairingCoordinator {
     init(
         pair: PairOperation? = nil,
         clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
-        keychainStore: SPLKeychainStore = SPLPairingKeychain.store(),
+        keychainStore: any PairingStoring = SPLPairingKeychain.store(),
         credentialStore: PairingCredentialStore? = nil,
         loadPairing: LoadPairing? = nil,
         savePairing: SavePairing? = nil,
-        deletePairing: DeletePairing? = nil,
         reactivate: @escaping Reactivate = {},
         ownerState: @escaping OwnerState = { .disconnected },
         relayEndpoint: @escaping RelayEndpointSource = { SPLPairingDefaults.relayEndpointURL },
         deviceLabel: @escaping DeviceLabelSource = { SPLPairingDefaults.deviceLabel },
         clearLastSuccessfulJournalContact: @escaping ClearLastSuccessfulJournalContact = {},
         clearJournalMarkConfirmation: @escaping ClearJournalMarkConfirmation = {},
-        retireOwnCredential: @escaping RetireOwnCredential = { _ in },
+        retireOwnCredential: @escaping RetireOwnCredential = { _, _ in true },
         endSelfRetirement: @escaping EndSelfRetirement = {},
+        fenceOrdinaryTraffic: @escaping FenceOrdinaryTraffic = { _ in },
+        carriedPairingControl: any CarriedPairingControlRequesting = URLSessionCarriedPairingControlClient(),
+        localPort: @escaping @MainActor @Sendable () -> Int? = { nil },
         classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink(logger: pairingLog)
     ) {
         let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
+        self.credentialStore = store
         self.pair = pair ?? { pairURL, deviceLabel, relayEndpoint in
             try await PairClient(clientInfo: clientInfo).pair(pairURL: pairURL, deviceLabel: deviceLabel, relayEndpoint: relayEndpoint)
         }
@@ -112,11 +130,6 @@ final class PairingCoordinator {
         } else {
             self.savePairing = { try store.save($0) }
         }
-        if let deletePairing {
-            self.deletePairing = deletePairing
-        } else {
-            self.deletePairing = { try store.delete() }
-        }
         self.reactivate = reactivate
         self.ownerState = ownerState
         self.relayEndpoint = relayEndpoint
@@ -125,6 +138,9 @@ final class PairingCoordinator {
         self.clearJournalMarkConfirmation = clearJournalMarkConfirmation
         self.retireOwnCredential = retireOwnCredential
         self.endSelfRetirement = endSelfRetirement
+        self.fenceOrdinaryTraffic = fenceOrdinaryTraffic
+        self.carriedPairingControl = carriedPairingControl
+        self.localPort = localPort
         self.classifiedLog = classifiedLog
     }
 
@@ -182,8 +198,9 @@ final class PairingCoordinator {
                 state = .failed(.instanceMismatch)
                 return
             }
-            await retireOwnCredential(stored)
-            await activate(newPairing, successState: .alreadyConnected)
+            guard let invalidation = await beginInvalidation(for: stored),
+                  await retireInvalidatedCredential(stored, invalidation: invalidation) else { return }
+            await activate(newPairing, successState: .alreadyConnected, invalidation: invalidation)
         } else {
             pendingSwitchLink = pairURL
             state = .switchConfirmPending
@@ -197,17 +214,21 @@ final class PairingCoordinator {
         guard let newPairing = await runCeremony(link) else {
             return
         }
-        let stored: StoredPairing?
+        let stored: StoredPairing
         do {
-            stored = try loadPairing()
+            guard let loaded = try loadPairing() else {
+                state = .failed(.localSetup)
+                return
+            }
+            stored = loaded
         } catch {
             pairingLog.error("pairing load failed during switch confirmation: \(String(describing: type(of: error)), privacy: .public)")
-            stored = nil
+            state = .failed(.localSetup)
+            return
         }
-        if let stored {
-            await retireOwnCredential(stored)
-        }
-        await activate(newPairing, successState: .switched)
+        guard let invalidation = await beginInvalidation(for: stored),
+              await retireInvalidatedCredential(stored, invalidation: invalidation) else { return }
+        await activate(newPairing, successState: .switched, invalidation: invalidation)
     }
 
     func cancelSwitch() {
@@ -215,27 +236,64 @@ final class PairingCoordinator {
         state = .idle
     }
 
-    func unpair() async {
-        guard state != .pairing else { return }
+    func unpair() async -> Bool {
+        guard state != .pairing else { return false }
         state = .pairing
         let stored: StoredPairing?
         do {
             stored = try loadPairing()
         } catch {
             pairingLog.error("pairing load failed before unpair: \(String(describing: type(of: error)), privacy: .public)")
-            stored = nil
+            state = .failed(.localSetup)
+            return false
         }
         if let stored {
-            await retireOwnCredential(stored)
-        }
-        do {
-            let deletePairing = self.deletePairing
-            try await Task.detached { try deletePairing() }.value
-        } catch {
-            pairingLog.error("pairing delete failed: \(String(describing: type(of: error)), privacy: .public)")
-            endSelfRetirement()
-            state = .failed(.localSetup)
-            return
+            guard let credentialStore else {
+                state = .failed(.localSetup)
+                return false
+            }
+            guard let invalidation = await beginInvalidation(for: stored),
+                  await retireInvalidatedCredential(stored, invalidation: invalidation) else { return false }
+            do {
+                try await Task.detached { try credentialStore.delete(after: invalidation) }.value
+                var completed = invalidation
+                completed.credentialCleanupPending = false
+                try credentialStore.updateInvalidation(completed)
+                try credentialStore.clearInvalidation(
+                    operationID: completed.operationID,
+                    fingerprint: completed.fingerprint,
+                    revision: completed.revision,
+                    expectedCurrentPairing: nil
+                )
+            } catch {
+                pairingLog.error("pairing delete or invalidation cleanup failed: \(String(describing: type(of: error)), privacy: .public)")
+                endSelfRetirement()
+                state = .failed(.localSetup)
+                return false
+            }
+        } else if let credentialStore {
+            do {
+                let record = try credentialStore.carriedPairingRecord()
+                if let invalidation = record.invalidation {
+                    guard invalidation.remoteRetirementConfirmed,
+                          !record.legacyCleanupPending else {
+                        state = .failed(.localSetup)
+                        return false
+                    }
+                    var completed = invalidation
+                    completed.credentialCleanupPending = false
+                    try credentialStore.updateInvalidation(completed)
+                    try credentialStore.clearInvalidation(
+                        operationID: completed.operationID,
+                        fingerprint: completed.fingerprint,
+                        revision: completed.revision,
+                        expectedCurrentPairing: nil
+                    )
+                }
+            } catch {
+                state = .failed(.localSetup)
+                return false
+            }
         }
         endSelfRetirement()
         pendingSwitchLink = nil
@@ -243,6 +301,634 @@ final class PairingCoordinator {
         clearLastSuccessfulJournalContact()
         await reactivate()
         state = .idle
+        return true
+    }
+
+    func recoverDurableInvalidation() async {
+        guard let credentialStore,
+              let record = try? credentialStore.carriedPairingRecord(),
+              let invalidation = record.invalidation else { return }
+        let pairing: StoredPairing?
+        do { pairing = try loadPairing() }
+        catch {
+            state = .failed(.localSetup)
+            return
+        }
+        guard let pairing else {
+            let latestRecord: CarriedPairingRecord
+            do { latestRecord = try credentialStore.carriedPairingRecord() }
+            catch {
+                state = .failed(.localSetup)
+                return
+            }
+            guard latestRecord.invalidation == invalidation,
+                  invalidation.remoteRetirementConfirmed,
+                  !latestRecord.legacyCleanupPending else {
+                state = .failed(.localSetup)
+                return
+            }
+            do {
+                var completed = invalidation
+                completed.credentialCleanupPending = false
+                try credentialStore.updateInvalidation(completed)
+                try credentialStore.clearInvalidation(operationID: completed.operationID, fingerprint: completed.fingerprint, revision: completed.revision, expectedCurrentPairing: nil)
+                clearJournalMarkConfirmation()
+                clearLastSuccessfulJournalContact()
+                await reactivate()
+                state = .idle
+            } catch {
+                state = .failed(.localSetup)
+            }
+            return
+        }
+        let identity = PairingCredentialRevision(from: pairing)
+        guard identity.fingerprint == invalidation.fingerprint,
+              identity.revision == invalidation.revision else {
+            if invalidation.remoteRetirementAttempted {
+                try? credentialStore.clearInvalidation(operationID: invalidation.operationID, fingerprint: invalidation.fingerprint, revision: invalidation.revision, expectedCurrentPairing: identity)
+                return
+            }
+            state = .failed(.localSetup)
+            return
+        }
+        await fenceOrdinaryTraffic(pairing)
+        let retired: Bool
+        if invalidation.remoteRetirementConfirmed {
+            retired = true
+        } else {
+            retired = await retireOwnCredential(pairing, invalidation.operationID)
+        }
+        guard retired, credentialStore.owns(identity, operationID: invalidation.operationID) else {
+            state = .failed(.network)
+            endSelfRetirement()
+            return
+        }
+        do {
+            var completed = invalidation
+            completed.remoteRetirementAttempted = true
+            completed.remoteRetirementConfirmed = true
+            try credentialStore.updateInvalidation(completed, whilePairing: pairing)
+            guard let current = try loadPairing(), PairingCredentialRevision(from: current) == identity else {
+                throw PairingCredentialStoreError.staleGeneration
+            }
+            try await Task.detached { try credentialStore.delete(after: invalidation) }.value
+            completed.credentialCleanupPending = false
+            try credentialStore.updateInvalidation(completed)
+            try credentialStore.clearInvalidation(operationID: completed.operationID, fingerprint: completed.fingerprint, revision: completed.revision, expectedCurrentPairing: nil)
+            endSelfRetirement()
+            clearJournalMarkConfirmation()
+            clearLastSuccessfulJournalContact()
+            pendingSwitchLink = nil
+            await reactivate()
+            state = .idle
+        } catch {
+            state = .failed(.localSetup)
+            endSelfRetirement()
+        }
+    }
+
+    private func beginInvalidation(for pairing: StoredPairing) async -> CarriedPairingInvalidation? {
+        let invalidation: CarriedPairingInvalidation
+        do {
+            if let credentialStore {
+                invalidation = try credentialStore.beginInvalidation(for: pairing)
+            } else {
+                let fingerprint = PairingCredentialRevision(from: pairing)
+                invalidation = CarriedPairingInvalidation(
+                    operationID: UUID().uuidString.lowercased(),
+                    fingerprint: fingerprint.fingerprint,
+                    journalIdentity: journalMarkConfirmationIdentity(for: pairing),
+                    revision: fingerprint.revision,
+                    remoteRetirementAttempted: false,
+                    remoteRetirementConfirmed: false,
+                    credentialCleanupPending: true
+                )
+            }
+        } catch {
+            pairingLog.error("durable pairing invalidation failed: \(String(describing: type(of: error)), privacy: .public)")
+            if let credentialStore {
+                let admission: CarriedPairingAdmission
+                do {
+                    admission = credentialStore.admission(for: try credentialStore.load())
+                } catch {
+                    admission = .blocked
+                }
+                if admission != .ready { await fenceOrdinaryTraffic(pairing) }
+            }
+            state = .failed(.localSetup)
+            return nil
+        }
+        await fenceOrdinaryTraffic(pairing)
+        return invalidation
+    }
+
+    private func retireInvalidatedCredential(
+        _ pairing: StoredPairing,
+        invalidation: CarriedPairingInvalidation
+    ) async -> Bool {
+        let identity = PairingCredentialRevision(from: pairing)
+        guard let credentialStore,
+              credentialStore.owns(identity, operationID: invalidation.operationID) else {
+            state = .failed(.localSetup)
+            return false
+        }
+        let retired = await retireOwnCredential(pairing, invalidation.operationID)
+        var attempted = invalidation
+        attempted.remoteRetirementAttempted = true
+        attempted.remoteRetirementConfirmed = retired
+        do { try credentialStore.updateInvalidation(attempted, whilePairing: pairing) }
+        catch {
+            endSelfRetirement()
+            state = .failed(.localSetup)
+            return false
+        }
+        guard retired else {
+            endSelfRetirement()
+            state = .failed(.network)
+            return false
+        }
+        return true
+    }
+
+    func refreshPendingActions(markConfirmed: Bool) {
+        guard let credentialStore,
+              var record = try? credentialStore.carriedPairingRecord() else {
+            pendingMigrationDecision = nil
+            replacementOfferVisible = false
+            return
+        }
+        pendingMigrationDecision = record.decision
+        guard markConfirmed, record.replacementOfferID != nil, !record.replacementOfferShown else {
+            replacementOfferVisible = false
+            return
+        }
+        guard let pairing = try? credentialStore.load() else {
+            replacementOfferVisible = false
+            return
+        }
+        let expectedRecord = record
+        record.replacementOfferShown = true
+        do {
+            try credentialStore.saveCarriedPairingRecord(
+                record,
+                expected: expectedRecord,
+                whilePairing: PairingCredentialRevision(from: pairing)
+            )
+            replacementOfferVisible = true
+        } catch {
+            migrationDecisionState = "storage_unavailable"
+            replacementOfferVisible = false
+        }
+    }
+
+    func deferReplacementOffer() {
+        guard let credentialStore,
+              var record = try? credentialStore.carriedPairingRecord(),
+              record.replacementOfferID != nil,
+              let pairing = try? credentialStore.load() else { return }
+        let expectedRecord = record
+        record.replacementOfferShown = true
+        do {
+            try credentialStore.saveCarriedPairingRecord(
+                record,
+                expected: expectedRecord,
+                whilePairing: PairingCredentialRevision(from: pairing)
+            )
+            replacementOfferVisible = false
+        } catch {
+            migrationDecisionState = "storage_unavailable"
+        }
+    }
+
+    func openReplacementPicker() async {
+        guard replacementOfferVisible,
+              let credentialStore,
+              let pairing = try? credentialStore.load(),
+              let record = try? credentialStore.carriedPairingRecord(),
+              let offerID = record.replacementOfferID,
+              record.replacementOfferShown,
+              record.decision == nil else { return }
+        let expectedPairing = PairingCredentialRevision(from: pairing)
+        replacementListUnavailable = false
+        replacementTargetMissing = false
+        selectedReplacementCID = nil
+        guard await refreshReplacementTargets(offerID: offerID, pairing: expectedPairing) else {
+            guard replacementOfferIsCurrent(offerID: offerID, pairing: expectedPairing) else { return }
+            replacementListUnavailable = true
+            return
+        }
+        guard replacementOfferIsCurrent(offerID: offerID, pairing: expectedPairing) else { return }
+        replacementOfferVisible = false
+        replacementPickerVisible = true
+    }
+
+    func selectReplacementTarget(cid: String?) {
+        guard let cid, replacementTargets.contains(where: { $0.cid == cid }) else {
+            selectedReplacementCID = nil
+            return
+        }
+        selectedReplacementCID = cid
+    }
+
+    func dismissReplacementPicker() {
+        replacementPickerVisible = false
+        selectedReplacementCID = nil
+        deferReplacementOffer()
+    }
+
+    func keepBothDevices() async {
+        guard let credentialStore,
+              replacementOfferVisible,
+              let pairing = try? credentialStore.load(),
+              let record = try? credentialStore.carriedPairingRecord(),
+              let offerID = record.replacementOfferID,
+              record.replacementOfferShown,
+              record.decision == nil else { return }
+        await persistAndSubmitFreshChoice(
+            decisionID: offerID,
+            choice: .newDevice,
+            replacesCID: nil,
+            pairing: PairingCredentialRevision(from: pairing)
+        )
+    }
+
+    func confirmReplacement() async {
+        guard replacementPickerVisible,
+              let selectedReplacementCID,
+              let credentialStore,
+              let pairing = try? credentialStore.load(),
+              let record = try? credentialStore.carriedPairingRecord(),
+              let offerID = record.replacementOfferID,
+              record.replacementOfferShown,
+              record.decision == nil else { return }
+        let expectedPairing = PairingCredentialRevision(from: pairing)
+        guard await refreshReplacementTargets(offerID: offerID, pairing: expectedPairing) else {
+            guard replacementOfferIsCurrent(offerID: offerID, pairing: expectedPairing) else { return }
+            replacementListUnavailable = true
+            return
+        }
+        guard replacementOfferIsCurrent(offerID: offerID, pairing: expectedPairing),
+              replacementPickerVisible,
+              self.selectedReplacementCID == selectedReplacementCID else { return }
+        guard replacementTargets.contains(where: { $0.cid == selectedReplacementCID }) else {
+            replacementTargetMissing = true
+            return
+        }
+        replacementPickerVisible = false
+        await persistAndSubmitFreshChoice(
+            decisionID: offerID,
+            choice: .replaceDevice,
+            replacesCID: selectedReplacementCID,
+            pairing: expectedPairing
+        )
+    }
+
+    func chooseAnotherReplacementDevice() async {
+        guard replacementOfferVisible || replacementPickerVisible else { return }
+        guard let credentialStore,
+              let pairing = try? credentialStore.load(),
+              let record = try? credentialStore.carriedPairingRecord(),
+              let offerID = record.replacementOfferID,
+              record.replacementOfferShown,
+              record.decision == nil else { return }
+        let expectedPairing = PairingCredentialRevision(from: pairing)
+        replacementTargetMissing = false
+        replacementListUnavailable = false
+        selectedReplacementCID = nil
+        guard await refreshReplacementTargets(offerID: offerID, pairing: expectedPairing) else {
+            guard replacementOfferIsCurrent(offerID: offerID, pairing: expectedPairing) else { return }
+            replacementListUnavailable = true
+            return
+        }
+        guard replacementOfferIsCurrent(offerID: offerID, pairing: expectedPairing) else { return }
+        replacementOfferVisible = false
+        replacementPickerVisible = true
+    }
+
+    func chooseCarriedPairing(_ choice: CarriedPairingChoice) async {
+        guard choice != .replaceDevice,
+              let credentialStore,
+              let pairing = try? credentialStore.load(),
+              var record = try? credentialStore.carriedPairingRecord(),
+              let current = record.decision,
+              record.invalidation == nil,
+              current.choice == nil,
+              current.credentialFingerprint == pairing.fingerprint,
+              current.credentialRevision == PairingCredentialRevision(from: pairing).revision else { return }
+        guard migrationDecisionIsCurrent(current, store: credentialStore) else { return }
+        let expectedRecord = record
+        let submitted = CarriedPairingDecision(
+            decisionID: current.decisionID,
+            operationID: current.operationID,
+            previousCID: current.previousCID,
+            choice: choice,
+            replacesCID: nil,
+            credentialFingerprint: current.credentialFingerprint,
+            credentialRevision: current.credentialRevision,
+            submitted: true
+        )
+        record.decision = submitted
+        do {
+            try credentialStore.saveCarriedPairingRecord(
+                record,
+                expected: expectedRecord,
+                whilePairing: PairingCredentialRevision(from: pairing)
+            )
+            pendingMigrationDecision = submitted
+            migrationDecisionState = "deciding"
+        } catch {
+            guard migrationDecisionIsCurrent(current, store: credentialStore) else { return }
+            migrationDecisionState = "storage_unavailable"
+            return
+        }
+        await transmitDecision(submitted, reconcileFirst: false)
+    }
+
+    func checkPendingMigrationDecision() async {
+        guard let decision = pendingMigrationDecision, decision.submitted else { return }
+        await transmitDecision(decision, reconcileFirst: true)
+    }
+
+    private func refreshReplacementTargets(offerID: String, pairing expectedPairing: PairingCredentialRevision) async -> Bool {
+        guard let port = localPort(),
+              let credentialStore,
+              let pairing = try? credentialStore.load(),
+              PairingCredentialRevision(from: pairing) == expectedPairing,
+              replacementOfferIsCurrent(offerID: offerID, pairing: expectedPairing) else { return false }
+        do {
+            let clients = try await carriedPairingControl.clients(localPort: port)
+            guard replacementOfferIsCurrent(offerID: offerID, pairing: expectedPairing) else { return false }
+            replacementTargets = clients.filter { $0.cid != pairing.fingerprint }
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func replacementOfferIsCurrent(offerID: String, pairing expectedPairing: PairingCredentialRevision) -> Bool {
+        guard let credentialStore,
+              let pairing = try? credentialStore.load(),
+              PairingCredentialRevision(from: pairing) == expectedPairing,
+              let record = try? credentialStore.carriedPairingRecord() else { return false }
+        return record.replacementOfferID == offerID
+            && record.replacementOfferShown
+            && record.decision == nil
+            && record.invalidation == nil
+    }
+
+    private func persistAndSubmitFreshChoice(
+        decisionID: String,
+        choice: CarriedPairingChoice,
+        replacesCID: String?,
+        pairing expectedPairing: PairingCredentialRevision
+    ) async {
+        guard let credentialStore,
+              let pairing = try? credentialStore.load(),
+              PairingCredentialRevision(from: pairing) == expectedPairing,
+              replacementOfferIsCurrent(offerID: decisionID, pairing: expectedPairing) else {
+            migrationDecisionState = "storage_unavailable"
+            return
+        }
+        let decision = CarriedPairingDecision(
+            decisionID: decisionID,
+            operationID: nil,
+            previousCID: nil,
+            choice: choice,
+            replacesCID: replacesCID,
+            credentialFingerprint: pairing.fingerprint,
+            credentialRevision: PairingCredentialRevision(from: pairing).revision,
+            submitted: true
+        )
+        do {
+            var record = try credentialStore.carriedPairingRecord()
+            guard record.replacementOfferID == decisionID, record.decision == nil else { return }
+            let expectedRecord = record
+            record.decision = decision
+            try credentialStore.saveCarriedPairingRecord(
+                record,
+                expected: expectedRecord,
+                whilePairing: expectedPairing
+            )
+            pendingMigrationDecision = decision
+            migrationDecisionState = "deciding"
+        } catch {
+            guard replacementOfferIsCurrent(offerID: decisionID, pairing: expectedPairing) else { return }
+            migrationDecisionState = "storage_unavailable"
+            return
+        }
+        await transmitDecision(decision, reconcileFirst: false)
+    }
+
+    private func transmitDecision(_ decision: CarriedPairingDecision, reconcileFirst: Bool) async {
+        guard let credentialStore else { return }
+        guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+        guard let pairing = try? credentialStore.load(),
+              pairing.fingerprint == decision.credentialFingerprint,
+              PairingCredentialRevision(from: pairing).revision == decision.credentialRevision,
+              let port = localPort(), let choice = decision.choice else {
+            migrationDecisionState = "offline"
+            return
+        }
+        if reconcileFirst {
+            do {
+                let remote = try await carriedPairingControl.migrationState(localPort: port)
+                guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+                guard remote.protocolVersion == 1 else {
+                    migrationDecisionState = "decision_unknown"
+                    return
+                }
+                if let operationID = decision.operationID {
+                    guard remote.rekeyOperationID == operationID,
+                          remote.previousCID == decision.previousCID else {
+                        migrationDecisionState = "decision_unknown"
+                        return
+                    }
+                    let matchingTerminal = Self.isTerminal(remote.state)
+                        && Self.terminalState(for: choice) == remote.state
+                        && Self.expectedReplacedCID(for: decision) == remote.replacedCID
+                    guard remote.state == "pending" || matchingTerminal else {
+                        migrationDecisionState = "decision_unknown"
+                        return
+                    }
+                } else {
+                    guard remote.rekeyOperationID == nil,
+                          remote.previousCID == nil,
+                          remote.state == "none"
+                            || (remote.state == Self.terminalState(for: choice)
+                                && remote.replacedCID == Self.expectedReplacedCID(for: decision)) else {
+                        migrationDecisionState = "decision_unknown"
+                        return
+                    }
+                }
+            } catch {
+                guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+                migrationDecisionState = "decision_unknown"
+                return
+            }
+        }
+        guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+        do {
+            let reply = try await carriedPairingControl.decide(localPort: port, decision: decision)
+            guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+            guard reply.protocolVersion == 1,
+                  reply.operationID == decision.decisionID,
+                  reply.state == Self.terminalState(for: choice),
+                  reply.cid == pairing.fingerprint,
+                  reply.previousCID == decision.previousCID,
+                  reply.replacedCID == Self.expectedReplacedCID(for: decision) else {
+                migrationDecisionState = "decision_unknown"
+                return
+            }
+            finishDecision(decision)
+        } catch CarriedPairingControlError.refused {
+            guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+            migrationDecisionState = "decision_refused"
+        } catch CarriedPairingControlError.conflict {
+            if decision.operationID == nil {
+                await replayConflictedFreshDecision(decision, pairing: pairing, port: port)
+            } else {
+                await reconcileConflictedDecision(decision, pairing: pairing, port: port)
+            }
+        } catch {
+            guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+            migrationDecisionState = "decision_unknown"
+        }
+    }
+
+    private func reconcileConflictedDecision(
+        _ decision: CarriedPairingDecision,
+        pairing: StoredPairing,
+        port: Int
+    ) async {
+        guard let credentialStore,
+              migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+        guard let operationID = decision.operationID else {
+            migrationDecisionState = "decision_unknown"
+            return
+        }
+        do {
+            let remote = try await carriedPairingControl.migrationState(localPort: port)
+            guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+            guard remote.protocolVersion == 1,
+                  remote.rekeyOperationID == operationID,
+                  remote.previousCID == decision.previousCID else {
+                migrationDecisionState = "decision_unknown"
+                return
+            }
+            let expectedState = Self.terminalState(for: decision.choice ?? .newDevice)
+            let expectedReplacement = Self.expectedReplacedCID(for: decision)
+            guard Self.isTerminal(remote.state),
+                  remote.state == expectedState,
+                  remote.replacedCID == expectedReplacement,
+                  pairing.fingerprint == decision.credentialFingerprint else {
+                migrationDecisionState = "decision_unknown"
+                return
+            }
+            finishDecision(decision)
+        } catch {
+            guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+            migrationDecisionState = "decision_unknown"
+        }
+    }
+
+    /// A fresh replacement decision has no rekey operation for the status API
+    /// to identify. Replay its already-persisted UUID and exact body so an
+    /// accepted first request can return its terminal result without inventing
+    /// a second operation.
+    private func replayConflictedFreshDecision(
+        _ decision: CarriedPairingDecision,
+        pairing: StoredPairing,
+        port: Int
+    ) async {
+        guard let credentialStore,
+              decision.operationID == nil,
+              migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+        do {
+            let reply = try await carriedPairingControl.decide(localPort: port, decision: decision)
+            guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+            guard let choice = decision.choice,
+                  reply.protocolVersion == 1,
+                  reply.operationID == decision.decisionID,
+                  reply.state == Self.terminalState(for: choice),
+                  reply.cid == pairing.fingerprint,
+                  reply.previousCID == nil,
+                  reply.replacedCID == Self.expectedReplacedCID(for: decision) else {
+                migrationDecisionState = "decision_unknown"
+                return
+            }
+            finishDecision(decision)
+        } catch {
+            guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+            migrationDecisionState = "decision_unknown"
+        }
+    }
+
+    private func migrationDecisionIsCurrent(_ decision: CarriedPairingDecision, store: PairingCredentialStore) -> Bool {
+        guard let pairing = try? store.load(),
+              pairing.fingerprint == decision.credentialFingerprint,
+              PairingCredentialRevision(from: pairing).revision == decision.credentialRevision,
+              let record = try? store.carriedPairingRecord() else { return false }
+        guard record.invalidation == nil, record.decision == decision else { return false }
+        if let operationID = decision.operationID {
+            if let candidate = record.candidate {
+                return candidate.operationID == operationID &&
+                    candidate.rekeyFingerprint == decision.credentialFingerprint
+            }
+            return record.completedPortableBaseline?.fingerprint == decision.credentialFingerprint &&
+                record.completedPortableBaseline?.credentialRevision == decision.credentialRevision
+        }
+        return record.replacementOfferID == decision.decisionID && record.replacementOfferShown
+    }
+
+    private func finishDecision(_ decision: CarriedPairingDecision) {
+        guard let credentialStore,
+              migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
+        guard let pairing = try? credentialStore.load(),
+              pairing.fingerprint == decision.credentialFingerprint,
+              PairingCredentialRevision(from: pairing).revision == decision.credentialRevision else {
+            return
+        }
+        do {
+            var record = try credentialStore.carriedPairingRecord()
+            guard record.invalidation == nil, record.decision == decision else { return }
+            let expectedRecord = record
+            record.decision = nil
+            if decision.operationID == nil {
+                record.replacementOfferID = nil
+                record.replacementOfferShown = true
+            }
+            try credentialStore.saveCarriedPairingRecord(
+                record,
+                expected: expectedRecord,
+                whilePairing: PairingCredentialRevision(from: pairing)
+            )
+            pendingMigrationDecision = nil
+            migrationDecisionState = nil
+            replacementOfferVisible = false
+            replacementPickerVisible = false
+        } catch {
+            migrationDecisionState = "storage_unavailable"
+        }
+    }
+
+    private static func isTerminal(_ state: String) -> Bool {
+        ["new_device", "same_device", "replaced_device"].contains(state)
+    }
+
+    private static func terminalState(for choice: CarriedPairingChoice) -> String {
+        switch choice {
+        case .newDevice: "new_device"
+        case .sameDevice: "same_device"
+        case .replaceDevice: "replaced_device"
+        }
+    }
+
+    private static func expectedReplacedCID(for decision: CarriedPairingDecision) -> String? {
+        switch decision.choice {
+        case .sameDevice: decision.previousCID
+        case .replaceDevice: decision.replacesCID
+        case .newDevice, .none: nil
+        }
     }
 
     private func parsePairURL(_ rawLink: String) throws -> PairURL {
@@ -269,19 +955,51 @@ final class PairingCoordinator {
         }
     }
 
-    private func activate(_ pairing: StoredPairing, successState: PairingFlowState) async {
-        // A new or switched pairing asks the owner to compare marks, and nothing is sent
-        // until they answer, so its answer starts empty before the credential exists.
-        // Pairing again with the journal this Mac already holds asks nothing: the owner
-        // already answered for that journal, and the answer is kept by journal, not by link.
+    private func activate(
+        _ pairing: StoredPairing,
+        successState: PairingFlowState,
+        invalidation: CarriedPairingInvalidation? = nil
+    ) async {
+        do {
+            if let invalidation, let credentialStore {
+                try await Task.detached {
+                    try credentialStore.save(pairing, after: invalidation)
+                }.value
+            } else {
+                let savePairing = self.savePairing
+                try await Task.detached { try savePairing(pairing) }.value
+            }
+        } catch {
+            pairingLog.error("pairing save failed: \(String(describing: type(of: error)), privacy: .public)")
+            endSelfRetirement()
+            state = .saveFailed
+            return
+        }
+
+        // A new journal asks the owner to compare marks after its credential is
+        // durable. Same-journal certificate rotation keeps that confirmation.
         if successState != .alreadyConnected {
             clearJournalMarkConfirmation()
         }
+
         do {
-            let savePairing = self.savePairing
-            try await Task.detached { try savePairing(pairing) }.value
+            if let invalidation, let credentialStore {
+                try credentialStore.clearInvalidation(
+                    operationID: invalidation.operationID,
+                    fingerprint: invalidation.fingerprint,
+                    revision: invalidation.revision,
+                    expectedCurrentPairing: PairingCredentialRevision(from: pairing)
+                )
+            }
+            if successState == .paired || successState == .switched, let credentialStore {
+                var record = try credentialStore.carriedPairingRecord()
+                record.replacementOfferID = UUID().uuidString.lowercased()
+                record.replacementOfferShown = false
+                record.decision = nil
+                try credentialStore.saveCarriedPairingRecord(record)
+            }
         } catch {
-            pairingLog.error("pairing save failed: \(String(describing: type(of: error)), privacy: .public)")
+            pairingLog.error("pairing follow-up state save failed: \(String(describing: type(of: error)), privacy: .public)")
             endSelfRetirement()
             state = .saveFailed
             return
@@ -292,6 +1010,7 @@ final class PairingCoordinator {
         clearLastSuccessfulJournalContact()
         await reactivate()
         state = successState
+        refreshPendingActions(markConfirmed: false)
     }
 
     static func failure(for error: any Error) -> PairingFailure {

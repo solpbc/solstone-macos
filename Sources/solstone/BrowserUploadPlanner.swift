@@ -23,6 +23,11 @@ protocol BrowserUploadTransport: Sendable {
     func uploadStaged(prepared: PreparedIngestV3Upload, lease: BrowserUploadLease) async -> UploadResult
 }
 
+typealias BrowserAdmissionCommit = @Sendable (
+    BrowserIntakeRouteCapability,
+    @Sendable () throws -> Bool
+) throws -> Bool
+
 extension UploadClient: BrowserUploadTransport {
     func prepareUpload(
         serverURL: String,
@@ -78,6 +83,10 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
     private let syncPausedProvider: @Sendable () async -> Bool
     private let nowMs: @Sendable () -> UInt64
     private let routeState: BrowserIntakeRouteState
+    private let admissionLock = NSLock()
+    private var carriedPairingAdmissionOpen: @Sendable () -> Bool = { true }
+    private var carriedPairingAdmissionCommit: BrowserAdmissionCommit = { _, operation in try operation() }
+    private var beforeCustodyCommit: @Sendable () async -> Void = {}
 
     init(
         store: BrowserIntakeStore,
@@ -97,8 +106,25 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
         self.routeState = routeState
     }
 
+    func setCarriedPairingAdmissionOpen(_ predicate: @escaping @Sendable () -> Bool) {
+        admissionLock.withLock { carriedPairingAdmissionOpen = predicate }
+    }
+
+    func setCarriedPairingAdmissionCommit(_ commit: @escaping BrowserAdmissionCommit) {
+        admissionLock.withLock { carriedPairingAdmissionCommit = commit }
+    }
+
+    func setBeforeCustodyCommit(_ action: @escaping @Sendable () async -> Void) {
+        admissionLock.withLock { beforeCustodyCommit = action }
+    }
+
+    private func isCarriedPairingAdmissionOpen() -> Bool {
+        let predicate = admissionLock.withLock { carriedPairingAdmissionOpen }
+        return predicate()
+    }
+
     public func planAndUpload() async {
-        guard !Task.isCancelled, await !syncPausedProvider() else { return }
+        guard !Task.isCancelled, isCarriedPairingAdmissionOpen(), await !syncPausedProvider() else { return }
         guard let serverURL = await serverURLProvider(), let permit = gate.currentPermit(),
               let route = routeState.snapshot(for: permit),
               BrowserOpaqueString.equals(route.serverURL, serverURL) else { return }
@@ -110,7 +136,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
             destinationGeneration: store.getDestinationGeneration()
         )
         for period in store.getAllFinalizedPeriods() {
-            guard !Task.isCancelled, await !syncPausedProvider() else { continue }
+            guard !Task.isCancelled, isCarriedPairingAdmissionOpen(), await !syncPausedProvider() else { continue }
             guard isCurrent(period: period, capture: capture, lease: nil) else { return }
             guard let day = period.requestedDay, !day.isEmpty,
                   let segment = period.requestedSegment, !segment.isEmpty else {
@@ -183,22 +209,35 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
             }
         }
 
+        guard isCarriedPairingAdmissionOpen() else { return }
         if let binding, binding.namesSameConnection(as: capture.route) {
             do {
                 let storedAck = try BrowserIngestAckStore.read(from: ackURL, ioInjector: store.ioInjector)
                 if !period.ackDurable || !(store.getPeriod(periodId: period.periodId)?.ackDurable ?? false)
-                    || storedAck == nil {
+                    || storedAck != binding.ack {
                     try store.publishDeliveryAck(binding)
                 }
                 let listing = try await capture.client.getSegmentsDay(serverURL: capture.serverURL, day: day, source: "browser")
-                if listingMatches(listing, period: period, ack: binding.ack),
+                guard isCarriedPairingAdmissionOpen(), lease.isValid() else { return }
+                if let matched = listingMatch(listing, period: period, ack: binding.ack,
+                    destinationGeneration: capture.destinationGeneration),
                    routeState.matches(capture.route),
                    store.getPeriod(periodId: period.periodId)?.ackDurable == true {
-                    try store.releaseProven(periodId: period.periodId, binding: binding, nowMs: nowMs())
+                    let updated = BrowserDeliveryBinding(ack: binding.ack.updatingListingCoordinates(from: matched), route: capture.route)
+                    let beforeCommit = admissionLock.withLock { beforeCustodyCommit }
+                    await beforeCommit()
+                    let commit = admissionLock.withLock { carriedPairingAdmissionCommit }
+                    let released = try commit(capture.route) { [store, routeState, nowMs] in
+                        guard routeState.matches(capture.route) else { return false }
+                        if updated != binding { try store.publishDeliveryAck(updated) }
+                        guard routeState.matches(capture.route) else { return false }
+                        try store.releaseProven(periodId: period.periodId, binding: updated, nowMs: nowMs())
+                        return true
+                    }
+                    guard released else { return }
                     recordDeliveryFailure(nil, period: period, capture: capture, lease: lease)
                     return
                 }
-                if !listing.items.isEmpty { return }
             } catch {
                 if store.getPeriod(periodId: period.periodId)?.state == "discarded" {
                     Logger.upload.error("Browser delivery reconciliation stopped for discarded period \(period.periodId, privacy: .public)")
@@ -210,7 +249,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
             }
         }
 
-        guard lease.isValid() else { return }
+        guard isCarriedPairingAdmissionOpen(), lease.isValid() else { return }
         let multipartURL = stagingDirectory.appendingPathComponent("multipart.body")
         do {
             try store.validateMutationPath(stagingDirectory)
@@ -233,8 +272,9 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                 failStorage(period: period, error: BrowserIntakeStoreError.localIO, capture: capture, lease: lease)
                 return
             }
-            guard lease.isValid() else { return }
+            guard isCarriedPairingAdmissionOpen(), lease.isValid() else { return }
             let result = await capture.client.uploadStaged(prepared: prepared, lease: lease)
+            guard isCarriedPairingAdmissionOpen(), lease.isValid() else { return }
 
             switch result {
             case .success(let info):
@@ -261,27 +301,22 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                     canonicalKey: response.storedSegmentKey,
                     status: response.status
                 )
-                try store.publishDeliveryAck(BrowserDeliveryBinding(ack: ack, route: capture.route))
+                let binding = BrowserDeliveryBinding(ack: ack, route: capture.route)
+                let commit = admissionLock.withLock { carriedPairingAdmissionCommit }
+                let committed = try commit(capture.route) { [store, routeState, nowMs] in
+                    guard routeState.matches(capture.route) else { return false }
+                    try store.publishDeliveryAck(binding)
+                    guard routeState.matches(capture.route) else { return false }
+                    // A collision response gives an opaque key but no stream.
+                    // Hold the payload until a listing supplies physical coordinates.
+                    if response.status != .collision {
+                        try store.releaseProven(periodId: period.periodId, binding: binding, nowMs: nowMs())
+                    }
+                    return true
+                }
+                guard committed else { return }
                 recordDeliveryFailure(nil, period: period, capture: capture, lease: lease)
             case .failure(let error):
-                if case .segmentScoped(.segmentRemoved) = classifyUpload(error), lease.isValid(),
-                   let part = prepared.stagedParts.first {
-                    let proof = BrowserIngestAck(
-                        generation: capture.destinationGeneration ?? "",
-                        source: "browser",
-                        periodId: period.periodId,
-                        filename: "browser_pages.jsonl",
-                        sha256: part.sha256,
-                        size: part.size,
-                        metadata: prepared.metadata,
-                        requestedDay: day,
-                        requestedSegment: segment,
-                        canonicalKey: period.canonicalKey ?? segment,
-                        status: .duplicate
-                    )
-                    try store.removeProvenSegment(periodId: period.periodId, binding: BrowserDeliveryBinding(ack: proof, route: capture.route), nowMs: nowMs())
-                    return
-                }
                 let failure = classifyUpload(error)
                 Logger.upload.error("Browser upload failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 recordDeliveryFailure(failureCode(for: failure), period: period, capture: capture, lease: lease)
@@ -292,8 +327,15 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
         }
     }
 
-    private func listingMatches(_ listing: IngestProtocolV3.SegmentsDay, period: BrowserStoredPeriod, ack: BrowserIngestAck) -> Bool {
+    private func listingMatch(
+        _ listing: IngestProtocolV3.SegmentsDay,
+        period: BrowserStoredPeriod,
+        ack: BrowserIngestAck,
+        destinationGeneration: String?
+    ) -> IngestProtocolV3.SegmentsItem? {
         guard BrowserOpaqueString.equals(ack.source, "browser"),
+              let destinationGeneration,
+              BrowserOpaqueString.equals(ack.generation, destinationGeneration),
               BrowserOpaqueString.equals(ack.periodId, period.periodId),
               BrowserOpaqueString.equals(ack.filename, "browser_pages.jsonl"),
               BrowserOpaqueString.equals(ack.requestedDay, period.requestedDay),
@@ -301,17 +343,53 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
               ack.size == UInt64(period.committedLength),
               BrowserOpaqueString.equals(ack.sha256, period.fileSha256),
               BrowserOpaqueString.equals(ack.canonicalKey, period.canonicalKey),
-              ack.metadata == nil else { return false }
-        return listing.items.contains { item in
-            guard BrowserOpaqueString.equals(item.key, ack.canonicalKey) else { return false }
-            if let original = item.originalKey, !BrowserOpaqueString.equals(original, ack.requestedSegment) { return false }
+              ack.metadata == nil,
+              (ack.physicalSegment == nil) == (ack.physicalStream == nil),
+              ack.physicalSegment.map({ !$0.isEmpty }) ?? true,
+              ack.physicalStream.map({ !$0.isEmpty }) ?? true else { return nil }
+        let candidates = listing.items.filter { item in
+            let hasSegment = item.segment != nil
+            let hasStream = item.stream != nil
+            guard hasSegment == hasStream else { return false }
+
+            if let segment = item.segment, let stream = item.stream {
+                guard BrowserOpaqueString.equals(segment, ack.requestedSegment) else { return false }
+                if let expectedSegment = ack.physicalSegment,
+                   let expectedStream = ack.physicalStream {
+                    guard BrowserOpaqueString.equals(segment, expectedSegment),
+                          BrowserOpaqueString.equals(stream, expectedStream) else { return false }
+                }
+            } else {
+                // Coordinate-free entries are valid only for an ordinary key,
+                // never for an opaque collision alias or an original-key alias.
+                guard ack.status != .collision,
+                      item.originalKey == nil,
+                      let canonicalKey = ack.canonicalKey,
+                      BrowserOpaqueString.equals(item.key, canonicalKey) else { return false }
+            }
+            if let original = item.originalKey,
+               !BrowserOpaqueString.equals(original, ack.requestedSegment) { return false }
+            guard hasUniqueLocalCandidate(period: period, ack: ack) else { return false }
             return item.files.contains { file in
-                BrowserOpaqueString.equals(file.name, ack.filename)
+                BrowserOpaqueString.equals(file.effectiveName, ack.filename)
                     && file.size == ack.size
                     && BrowserOpaqueString.equals(file.sha256, ack.sha256)
-                    && file.status == .present
+                    && file.status.provesHold
             }
         }
+        guard candidates.count == 1 else { return nil }
+        return candidates[0]
+    }
+
+    private func hasUniqueLocalCandidate(period: BrowserStoredPeriod, ack: BrowserIngestAck) -> Bool {
+        guard let expectedLength = Int(exactly: ack.size) else { return false }
+        let candidates = store.getAllFinalizedPeriods().filter { candidate in
+            BrowserOpaqueString.equals(candidate.requestedDay, ack.requestedDay)
+                && BrowserOpaqueString.equals(candidate.requestedSegment, ack.requestedSegment)
+                && candidate.committedLength == expectedLength
+                && BrowserOpaqueString.equals(candidate.fileSha256, ack.sha256)
+        }
+        return candidates.count == 1 && candidates[0].periodId == period.periodId
     }
 
     private func failureCode(for classification: UploadAttemptClass) -> String {

@@ -71,10 +71,10 @@ struct SameMachineHomeMigrationTests {
             sameMachinePairStart: { baseURL, deviceLabel in
                 await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
             },
+            pairingStoring: store,
             pairingOperation: { _, _, _ in adoptedPairing },
             pairingLoad: { try store.load() },
-            pairingSave: { try store.save($0) },
-            pairingDelete: { try store.delete() }
+            pairingSave: { try store.save($0) }
         )
 
         state.triggerSameMachineMigrationIfEligible()
@@ -238,10 +238,10 @@ struct SameMachineHomeMigrationTests {
             sameMachinePairStart: { baseURL, deviceLabel in
                 await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
             },
+            pairingStoring: store,
             pairingOperation: { _, _, _ in adoptedPairing },
             pairingLoad: { try store.load() },
-            pairingSave: { try store.save($0) },
-            pairingDelete: { try store.delete() }
+            pairingSave: { try store.save($0) }
         )
 
         state.triggerSameMachineMigrationIfEligible()
@@ -324,18 +324,17 @@ struct SameMachineHomeMigrationTests {
         let replacementTransport = FakeTunnelTransport()
         let transportFactory = FakeTransportFactory([initialTransport, replacementTransport])
         let owner = TunnelLifecycleOwner(
+            keychainStore: store,
             loadPairing: { try store.load() },
-            savePairing: { try store.save($0) },
-            deletePairing: { try store.delete() },
             tokenRefresher: FakeTokenRefresher(ifNeededResults: [.notNeeded(remotePairing)]).seam,
             makeTransport: { transportFactory.make() },
             pathMonitoringSource: NoopPathMonitoringSource()
         )
         let coordinator = PairingCoordinator(
             pair: { _, _, _ in homePairing },
+            keychainStore: store,
             loadPairing: { try store.load() },
             savePairing: { try store.save($0) },
-            deletePairing: { try store.delete() },
             reactivate: { await owner.reevaluatePairing() },
             ownerState: { owner.state },
             relayEndpoint: { URL(string: "https://relay.test")! },

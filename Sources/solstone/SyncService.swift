@@ -15,10 +15,16 @@ public actor SyncService {
         case syncProgress(checked: Int, total: Int)
         case uploadStarted(segment: String)
         case uploadRetrying(segment: String, attempt: Int)
-        case uploadSucceeded(segment: String, journalFingerprint: String)
-        case uploadFailed(segment: String, error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)
-        case journalContactSucceeded
-        case syncComplete
+        case uploadSucceeded(segment: String, journalFingerprint: String, context: JournalUploadContext?)
+        case uploadFailed(
+            segment: String,
+            error: String,
+            healthReason: ObserverHealthFailureReason,
+            requestedPath: String,
+            context: JournalUploadContext? = nil
+        )
+        case journalContactSucceeded(context: JournalUploadContext?)
+        case syncComplete(context: JournalUploadContext?)
         case syncBlocked(pendingCount: Int, reason: UploadError)
         case offline(error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)
         case awaitingTunnel
@@ -26,6 +32,12 @@ public actor SyncService {
         /// changed metadata after media offload, or unreadable metadata. Independent
         /// segments can still sync.
         case segmentUnprovable(segment: String)
+    }
+
+    struct ProgressEnvelope: Sendable {
+        let event: ProgressEvent
+        let context: JournalUploadContext?
+        let epoch: UInt64
     }
 
     internal enum DiscoveredEntryKind: Sendable, Equatable {
@@ -140,6 +152,7 @@ public actor SyncService {
     private let renameItem: @Sendable (URL, URL) throws -> Void
     private let listDirectory: @Sendable (URL) throws -> [URL]
     private let classifyEntry: @Sendable (URL) throws -> DiscoveredEntryKind
+    private let pairingCredentialStore: PairingCredentialStore?
 
     // MARK: - Configuration
 
@@ -157,11 +170,17 @@ public actor SyncService {
     private var isSyncing = false
     private var followUpSyncRequested = false
     private var syncTask: Task<Void, Never>?
+    private var ordinaryTrafficEpoch: UInt64 = 0
+    private var activeSyncEpoch: UInt64?
+    private var activeProgressContext: JournalUploadContext?
+    private var activeProgressEpoch: UInt64?
 
     // MARK: - Event Stream
 
     private let progressContinuation: AsyncStream<ProgressEvent>.Continuation
     public let progressStream: AsyncStream<ProgressEvent>
+    private let progressEnvelopeContinuation: AsyncStream<ProgressEnvelope>.Continuation
+    let progressEnvelopeStream: AsyncStream<ProgressEnvelope>
 
     // MARK: - Retry Configuration
 
@@ -210,7 +229,8 @@ public actor SyncService {
             } else {
                 return .unsupported
             }
-        }
+        },
+        pairingCredentialStore: PairingCredentialStore? = nil
     ) {
         self.storageManager = storageManager
         self.client = client
@@ -224,10 +244,14 @@ public actor SyncService {
         self.renameItem = renameItem
         self.listDirectory = listDirectory
         self.classifyEntry = classifyEntry
+        self.pairingCredentialStore = pairingCredentialStore
 
         var continuation: AsyncStream<ProgressEvent>.Continuation!
         self.progressStream = AsyncStream { continuation = $0 }
         self.progressContinuation = continuation
+        var envelopeContinuation: AsyncStream<ProgressEnvelope>.Continuation!
+        self.progressEnvelopeStream = AsyncStream { envelopeContinuation = $0 }
+        self.progressEnvelopeContinuation = envelopeContinuation
     }
 
     // MARK: - Configuration
@@ -242,7 +266,8 @@ public actor SyncService {
     ) {
         let newContext = JournalUploadContext(
             pairing: pairingIdentity,
-            suppliedFingerprint: journalFingerprint
+            suppliedFingerprint: journalFingerprint,
+            credentialRevision: pairingCredentialStore?.ordinarySyncRevision(for: pairingIdentity)
         )
         if newContext != self.journalContext {
             self.deviceQuietUntil = nil
@@ -251,6 +276,46 @@ public actor SyncService {
         self.journalContext = newContext
         self.syncPaused = syncPaused
         self.preserveSyncedSegments = preserveSyncedSegments
+    }
+
+    @discardableResult
+    func revokeOrdinaryTraffic() -> UInt64 {
+        ordinaryTrafficEpoch &+= 1
+        followUpSyncRequested = false
+        syncTask?.cancel()
+        syncTask = nil
+        return ordinaryTrafficEpoch
+    }
+
+    private func emitProgress(_ event: ProgressEvent) {
+        progressContinuation.yield(event)
+        progressEnvelopeContinuation.yield(ProgressEnvelope(
+            event: event,
+            context: activeProgressContext ?? journalContext,
+            epoch: activeProgressEpoch ?? ordinaryTrafficEpoch
+        ))
+    }
+
+    private func ordinarySyncIsCurrent(_ context: JournalUploadContext) -> Bool {
+        journalContext == context && !syncPaused &&
+            (pairingCredentialStore?.ordinarySyncIsCurrent(context) ?? true)
+    }
+
+    private func syncContextIsCurrent(_ context: JournalUploadContext, epoch: UInt64) -> Bool {
+        ordinaryTrafficEpoch == epoch && activeSyncEpoch == epoch && ordinarySyncIsCurrent(context)
+    }
+
+    private func activeSyncContextIsCurrent(_ context: JournalUploadContext) -> Bool {
+        guard let epoch = activeSyncEpoch else { return false }
+        return syncContextIsCurrent(context, epoch: epoch)
+    }
+
+    private func withOrdinarySyncAdmission<T>(
+        _ context: JournalUploadContext,
+        operation: () throws -> T
+    ) throws -> T? {
+        guard let pairingCredentialStore else { return try operation() }
+        return try pairingCredentialStore.withOrdinarySyncAdmission(context, operation: operation)
     }
 
     /// Check if sync has a coherent journal upload context
@@ -262,7 +327,9 @@ public actor SyncService {
 
     /// Trigger a sync (debounced - coalesces rapid calls)
     public func triggerSync() {
+        guard let context = journalContext, ordinarySyncIsCurrent(context) else { return }
         guard !isSyncing else {
+            guard activeSyncEpoch == ordinaryTrafficEpoch else { return }
             followUpSyncRequested = true
             Logger.upload.info("Sync already in progress; a follow-up pass will run when it finishes")
             return
@@ -289,20 +356,30 @@ public actor SyncService {
             Logger.upload.info("Sync not configured, skipping")
             return
         }
-
         guard !isSyncing else {
             Logger.upload.info("Sync already in progress")
             return
         }
 
+        let epoch = ordinaryTrafficEpoch
+        activeSyncEpoch = epoch
+        activeProgressContext = context
+        activeProgressEpoch = epoch
+        defer {
+            activeSyncEpoch = nil
+            activeProgressContext = nil
+            activeProgressEpoch = nil
+        }
+        guard syncContextIsCurrent(context, epoch: epoch) else { return }
+
         isSyncing = true
-        progressContinuation.yield(.syncStarted)
+        emitProgress(.syncStarted)
 
         defer {
             isSyncing = false
             if followUpSyncRequested {
                 followUpSyncRequested = false
-                triggerSync()
+                if syncContextIsCurrent(context, epoch: epoch) { triggerSync() }
             }
         }
 
@@ -315,7 +392,7 @@ public actor SyncService {
         for (day, candidates) in candidatesByDay {
             var remainingCandidates: [DiscoveredCandidate] = []
             for candidate in candidates {
-                guard !syncPaused, journalContext == context else { return }
+                guard activeSyncContextIsCurrent(context) else { return }
                 let segmentURL = candidate.segmentURL
                 let (_, segment) = convertSegmentPath(segmentURL)
                 let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
@@ -419,9 +496,12 @@ public actor SyncService {
                             }
                         } else {
                             await beforeRemovalStep()
-                            guard !syncPaused, journalContext == context else { return }
+                            guard activeSyncContextIsCurrent(context) else { return }
                             do {
-                                try removeItem(ackURL)
+                                guard try withOrdinarySyncAdmission(context, operation: {
+                                    try removeItem(ackURL)
+                                    return true
+                                }) == true else { return }
                             } catch {
                                 Logger.upload.error("Failed to remove mismatched ack for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
                             }
@@ -443,7 +523,7 @@ public actor SyncService {
 
         if let failure = snapshot.failure, totalSegments == 0 {
             Logger.upload.info("Discovery incomplete: \(failure.localizedDescription, privacy: .public)")
-            progressContinuation.yield(.offline(
+            emitProgress(.offline(
                 error: failure.localizedDescription,
                 healthReason: .uploadFailed,
                 requestedPath: ""
@@ -456,7 +536,13 @@ public actor SyncService {
         case .url(let resolved):
             serverURL = resolved
         case .held:
-            progressContinuation.yield(.awaitingTunnel)
+            emitProgress(.awaitingTunnel)
+            return
+        }
+        guard syncContextIsCurrent(context, epoch: epoch) else {
+            if let candidate = candidatesByDay.values.flatMap({ $0 }).first {
+                _ = failClosedForConfigChange(segment: convertSegmentPath(candidate.segmentURL).segment, context: context)
+            }
             return
         }
 
@@ -471,10 +557,11 @@ public actor SyncService {
         if let quietUntil = self.deviceQuietUntil, currentTime < quietUntil {
             Logger.upload.info("Device quiet until \(quietUntil, privacy: .public), probing today only")
             let probeResult = await self.readDayCached(day: today, serverURL: serverURL, client: client, cache: &passDayReads)
+            guard syncContextIsCurrent(context, epoch: epoch) else { return }
             switch probeResult {
             case .success:
-                progressContinuation.yield(.journalContactSucceeded)
-                progressContinuation.yield(.syncComplete)
+                emitProgress(.journalContactSucceeded(context: context))
+                emitProgress(.syncComplete(context: context))
             case .failure(let classification):
                 handleProbeFailure(classification: classification, day: today)
             }
@@ -487,7 +574,7 @@ public actor SyncService {
 
         // Walk candidates newest day to oldest day, newest segment to oldest segment
         for (day, localCandidates) in candidatesByDay.sorted(by: { $0.key > $1.key }) {
-            progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+            emitProgress(.syncProgress(checked: checked, total: totalSegments))
 
             for candidate in localCandidates {
                 let segmentURL = candidate.segmentURL
@@ -498,17 +585,17 @@ public actor SyncService {
 
                 if filesToUpload.isEmpty {
                     Logger.upload.info("Segment \(segment, privacy: .public): no files available to establish a hold")
-                    progressContinuation.yield(.segmentUnprovable(segment: segment))
+                    emitProgress(.segmentUnprovable(segment: segment))
                     checked += 1
-                    progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+                    emitProgress(.syncProgress(checked: checked, total: totalSegments))
                     continue
                 }
 
                 if metaState == .unreadable {
                     Logger.upload.info("Segment \(segment, privacy: .public): unreadable metadata, marking unprovable")
-                    progressContinuation.yield(.segmentUnprovable(segment: segment))
+                    emitProgress(.segmentUnprovable(segment: segment))
                     checked += 1
-                    progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+                    emitProgress(.syncProgress(checked: checked, total: totalSegments))
                     continue
                 }
 
@@ -525,7 +612,7 @@ public actor SyncService {
                     if let bound = self.segmentBounds[address], bound.quietUntil > self.now() {
                         Logger.upload.info("Segment \(segment, privacy: .public): skipped (bound active)")
                         checked += 1
-                        progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+                        emitProgress(.syncProgress(checked: checked, total: totalSegments))
                         continue
                     }
 
@@ -539,6 +626,7 @@ public actor SyncService {
                         metadataState: metaState,
                         context: context
                     )
+                    guard syncContextIsCurrent(context, epoch: epoch) else { return }
 
                     switch outcome {
                     case .blocked(let error):
@@ -549,7 +637,7 @@ public actor SyncService {
                             uploadBlockReason = .preparationFailed
                         }
                     case .succeeded:
-                        progressContinuation.yield(.journalContactSucceeded)
+                        emitProgress(.journalContactSucceeded(context: context))
                         hasYieldedContact = true
                         let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
                         if let ack = IngestAcknowledgmentStore.read(from: ackURL) {
@@ -566,7 +654,7 @@ public actor SyncService {
                         }
 
                     case .held:
-                        progressContinuation.yield(.awaitingTunnel)
+                        emitProgress(.awaitingTunnel)
                         return
 
                     case .stopped:
@@ -591,7 +679,7 @@ public actor SyncService {
                         } else {
                             self.deviceQuietUntil = self.now().addingTimeInterval(3600)
                         }
-                        progressContinuation.yield(.offline(
+                        emitProgress(.offline(
                             error: error.localizedDescription,
                             healthReason: healthReason,
                             requestedPath: IngestProtocolV3.uploadPath
@@ -599,7 +687,7 @@ public actor SyncService {
                         return
 
                     case .segmentScoped(let scope, let error):
-                        progressContinuation.yield(.journalContactSucceeded)
+                        emitProgress(.journalContactSucceeded(context: context))
                         hasYieldedContact = true
                         let nowTime = self.now()
                         switch scope {
@@ -661,10 +749,11 @@ public actor SyncService {
 
                     case .transport(let error):
                         let liveness = await self.readDayCached(day: today, serverURL: serverURL, client: client, cache: &passDayReads)
+                        guard syncContextIsCurrent(context, epoch: epoch) else { return }
                         switch liveness {
                         case .success:
                             if !hasYieldedContact {
-                                progressContinuation.yield(.journalContactSucceeded)
+                                emitProgress(.journalContactSucceeded(context: context))
                                 hasYieldedContact = true
                             }
                         case .failure(let classification):
@@ -675,16 +764,17 @@ public actor SyncService {
                 }
 
                 checked += 1
-                progressContinuation.yield(.syncProgress(checked: checked, total: totalSegments))
+                emitProgress(.syncProgress(checked: checked, total: totalSegments))
             }
         }
 
         // Idle probe: if no POST was made and today was not read and discovery succeeded
         if !didPOST && passDayReads[DayReadAddress(day: today, source: "")] == nil && snapshot.failure == nil {
             let probeResult = await self.readDayCached(day: today, serverURL: serverURL, client: client, cache: &passDayReads)
+            guard syncContextIsCurrent(context, epoch: epoch) else { return }
             switch probeResult {
             case .success:
-                progressContinuation.yield(.journalContactSucceeded)
+                emitProgress(.journalContactSucceeded(context: context))
             case .failure(let classification):
                 handleProbeFailure(classification: classification, day: today)
                 return
@@ -694,7 +784,7 @@ public actor SyncService {
         // Discovery failure after walk
         if let failure = snapshot.failure {
             Logger.upload.info("Sync finished with discovery failure: \(failure.localizedDescription, privacy: .public)")
-            progressContinuation.yield(.offline(
+            emitProgress(.offline(
                 error: failure.localizedDescription,
                 healthReason: .uploadFailed,
                 requestedPath: ""
@@ -703,10 +793,11 @@ public actor SyncService {
         }
 
         if blockedUploads > 0 {
-            progressContinuation.yield(.syncBlocked(pendingCount: blockedUploads, reason: uploadBlockReason ?? .preparationFailed))
+            emitProgress(.syncBlocked(pendingCount: blockedUploads, reason: uploadBlockReason ?? .preparationFailed))
             return
         }
-        progressContinuation.yield(.syncComplete)
+        guard syncContextIsCurrent(context, epoch: epoch) else { return }
+        emitProgress(.syncComplete(context: context))
         Logger.upload.info("Sync complete")
     }
 
@@ -717,14 +808,14 @@ public actor SyncService {
     ) {
         switch classification {
         case .journalRejectedDay(let d, let reason):
-            progressContinuation.yield(.offline(
+            emitProgress(.offline(
                 error: "journal rejected day \(d)",
                 healthReason: .journalRejectedDay(day: d, reasonCode: reason),
                 requestedPath: IngestProtocolV3.segmentsDayPath(d)
             ))
         case .notServing:
             self.deviceQuietUntil = self.now().addingTimeInterval(3600)
-            progressContinuation.yield(.offline(
+            emitProgress(.offline(
                 error: "not serving",
                 healthReason: .journalNotServing,
                 requestedPath: IngestProtocolV3.segmentsDayPath(day)
@@ -733,33 +824,33 @@ public actor SyncService {
             if reason == "pairing_identity_unavailable" || reason == "foreign_stream_binding" {
                 self.deviceQuietUntil = self.now().addingTimeInterval(3600)
             }
-            progressContinuation.yield(.offline(
+            emitProgress(.offline(
                 error: "journal refused",
                 healthReason: .journalRefused(reasonCode: reason),
                 requestedPath: IngestProtocolV3.segmentsDayPath(day)
             ))
         case .revoked:
             self.deviceQuietUntil = self.now().addingTimeInterval(3600)
-            progressContinuation.yield(.offline(
+            emitProgress(.offline(
                 error: "revoked",
                 healthReason: .pairingRevoked,
                 requestedPath: IngestProtocolV3.segmentsDayPath(day)
             ))
         case .undecoded:
-            progressContinuation.yield(.offline(
+            emitProgress(.offline(
                 error: "undecoded response",
                 healthReason: .uploadInvalidResponse,
                 requestedPath: IngestProtocolV3.segmentsDayPath(day)
             ))
         case .listingFailed:
-            progressContinuation.yield(.offline(
+            emitProgress(.offline(
                 error: fallbackError?.localizedDescription ?? "listing failed",
                 healthReason: .httpStatus(500),
                 requestedPath: IngestProtocolV3.segmentsDayPath(day)
             ))
         case .transport:
             let healthReason = fallbackError.map { observerHealthFailureReason(from: $0) } ?? .uploadFailed
-            progressContinuation.yield(.offline(
+            emitProgress(.offline(
                 error: fallbackError?.localizedDescription ?? "transport failure",
                 healthReason: healthReason,
                 requestedPath: IngestProtocolV3.segmentsDayPath(day)
@@ -868,11 +959,12 @@ public actor SyncService {
             )
         } catch {
             let healthReason = observerHealthFailureReason(from: error)
-            progressContinuation.yield(.uploadFailed(
+            emitProgress(.uploadFailed(
                 segment: segment,
                 error: error.localizedDescription,
                 healthReason: healthReason,
-                requestedPath: IngestProtocolV3.uploadPath
+                requestedPath: IngestProtocolV3.uploadPath,
+                context: context
             ))
             return .blocked(error)
         }
@@ -880,8 +972,8 @@ public actor SyncService {
         var attempts = 0
 
         while attempts < maxAttemptsPerPass {
-            guard !syncPaused, let attemptContext = journalContext, attemptContext == context else {
-                return failClosedForConfigChange(segment: segment)
+            guard activeSyncContextIsCurrent(context), let attemptContext = journalContext, attemptContext == context else {
+                return failClosedForConfigChange(segment: segment, context: context)
             }
 
             let serverURL: String
@@ -892,8 +984,8 @@ public actor SyncService {
                 return .held
             }
 
-            guard !syncPaused, journalContext == attemptContext else {
-                return failClosedForConfigChange(segment: segment)
+            guard activeSyncContextIsCurrent(attemptContext) else {
+                return failClosedForConfigChange(segment: segment, context: attemptContext)
             }
 
             guard let uploadURL = URL(string: "\(serverURL)\(IngestProtocolV3.uploadPath)") else {
@@ -904,15 +996,15 @@ public actor SyncService {
             attempts += 1
 
             if attempts == 1 {
-                progressContinuation.yield(.uploadStarted(segment: segment))
+                emitProgress(.uploadStarted(segment: segment))
             } else {
-                progressContinuation.yield(.uploadRetrying(segment: segment, attempt: attempts))
+                emitProgress(.uploadRetrying(segment: segment, attempt: attempts))
             }
 
             let result = await client.uploadStaged(prepared: prepared)
 
-            guard !syncPaused, journalContext == attemptContext else {
-                return failClosedForConfigChange(segment: segment)
+            guard activeSyncContextIsCurrent(attemptContext) else {
+                return failClosedForConfigChange(segment: segment, context: attemptContext)
             }
 
             switch result {
@@ -944,21 +1036,26 @@ public actor SyncService {
                 )
 
                 do {
-                    try persistAcknowledgment(newAck, ackURL)
+                    guard try withOrdinarySyncAdmission(attemptContext, operation: {
+                        try persistAcknowledgment(newAck, ackURL)
+                        return true
+                    }) == true else { return .stopped }
                 } catch {
                     Logger.upload.error("Failed to persist ingest acknowledgment for \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                    progressContinuation.yield(.uploadFailed(
+                    emitProgress(.uploadFailed(
                         segment: segment,
                         error: "Ingest acknowledgment persistence failed: \(error.localizedDescription)",
                         healthReason: .uploadFailed,
-                        requestedPath: IngestProtocolV3.uploadPath
+                        requestedPath: IngestProtocolV3.uploadPath,
+                        context: attemptContext
                     ))
                     return .transport(error)
                 }
 
-                progressContinuation.yield(.uploadSucceeded(
+                emitProgress(.uploadSucceeded(
                     segment: segment,
-                    journalFingerprint: attemptContext.fingerprint.value
+                    journalFingerprint: attemptContext.fingerprint.value,
+                    context: attemptContext
                 ))
                 return .succeeded
 
@@ -978,11 +1075,12 @@ public actor SyncService {
                     Logger.upload.info("Attempt \(attempts, privacy: .public) failed: \(sanitizedObserverHealthErrorReason(healthReason), privacy: .public)")
 
                     if attempts >= maxAttemptsPerPass {
-                        progressContinuation.yield(.uploadFailed(
+                        emitProgress(.uploadFailed(
                             segment: segment,
                             error: error.localizedDescription,
                             healthReason: healthReason,
-                            requestedPath: IngestProtocolV3.uploadPath
+                            requestedPath: IngestProtocolV3.uploadPath,
+                            context: attemptContext
                         ))
                         return .transport(error)
                     }
@@ -1003,13 +1101,14 @@ public actor SyncService {
         return .transport(UploadError.invalidResponse)
     }
 
-    private func failClosedForConfigChange(segment: String) -> UploadRetryOutcome {
+    private func failClosedForConfigChange(segment: String, context: JournalUploadContext) -> UploadRetryOutcome {
         Logger.upload.info("Config changed during retry, aborting: \(sanitizedObserverHealthErrorReason(.configChanged), privacy: .public)")
-        progressContinuation.yield(.uploadFailed(
+        emitProgress(.uploadFailed(
             segment: segment,
             error: "Config changed",
             healthReason: .configChanged,
-            requestedPath: IngestProtocolV3.uploadPath
+            requestedPath: IngestProtocolV3.uploadPath,
+            context: context
         ))
         return .stopped
     }
@@ -1408,7 +1507,7 @@ public actor SyncService {
             }
 
             await beforeRemovalStep()
-            guard !syncPaused, journalContext == context else { return .stopped }
+            guard activeSyncContextIsCurrent(context) else { return .stopped }
             self.segmentBounds.removeValue(forKey: address)
 
             if preserveSyncedSegments {
@@ -1420,12 +1519,16 @@ public actor SyncService {
                     (ack.payload.files.first(where: { $0.submitted == entry.lastPathComponent })?
                         .matchesLocalFileForRemoval(entry, sha256Calculator: client.sha256) ?? false)
                 }) else { return .failed }
-                return preserveSegmentDirectory(segmentURL, segment: segment) ? .finished : .failed
+                let preserved = try? withOrdinarySyncAdmission(context) {
+                    preserveSegmentDirectory(segmentURL, segment: segment)
+                }
+                guard let preserved else { return .stopped }
+                return preserved ? .finished : .failed
             }
 
             for url in nonAckConfirmedURLs {
                 await beforeRemovalStep()
-                guard !syncPaused, journalContext == context else { return .stopped }
+                guard activeSyncContextIsCurrent(context) else { return .stopped }
                 // The receipt covers the uploaded bytes, not a replacement made while suspended.
                 if IngestAcknowledgment.isUploadMediaName(url.lastPathComponent, segment: segment) {
                     guard ack.payload.files.first(where: { $0.submitted == url.lastPathComponent })?
@@ -1435,7 +1538,10 @@ public actor SyncService {
                     }
                 }
                 do {
-                    try removeItem(url)
+                    guard try withOrdinarySyncAdmission(context, operation: {
+                        try removeItem(url)
+                        return true
+                    }) == true else { return .stopped }
                 } catch {
                     Logger.upload.error("Failed to remove \(url.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     return .failed
@@ -1447,17 +1553,24 @@ public actor SyncService {
                 let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
                 if FileManager.default.fileExists(atPath: ackURL.path) {
                     await beforeRemovalStep()
-                    guard !syncPaused, journalContext == context else { return .stopped }
+                    guard activeSyncContextIsCurrent(context) else { return .stopped }
                     do {
-                        try removeItem(ackURL)
+                        guard try withOrdinarySyncAdmission(context, operation: {
+                            try removeItem(ackURL)
+                            return true
+                        }) == true else { return .stopped }
                     } catch {
                         Logger.upload.error("Failed to remove ack for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
                         return .failed
                     }
                 }
                 await beforeRemovalStep()
-                guard !syncPaused, journalContext == context else { return .stopped }
-                guard Darwin.rmdir(segmentURL.path) == 0 else {
+                guard activeSyncContextIsCurrent(context) else { return .stopped }
+                let removedDirectory = try? withOrdinarySyncAdmission(context) {
+                    Darwin.rmdir(segmentURL.path) == 0
+                }
+                guard let removedDirectory else { return .stopped }
+                guard removedDirectory else {
                     Logger.upload.error("Failed to rmdir segment directory \(segment, privacy: .public): \(errno)")
                     return .failed
                 }
@@ -1465,8 +1578,12 @@ public actor SyncService {
             } else {
                 // Files the journal never received remain: quarantine the folder, ack included.
                 await beforeRemovalStep()
-                guard !syncPaused, journalContext == context else { return .stopped }
-                guard quarantineSegmentDirectory(segmentURL, segment: segment) else {
+                guard activeSyncContextIsCurrent(context) else { return .stopped }
+                let quarantined = try? withOrdinarySyncAdmission(context) {
+                    quarantineSegmentDirectory(segmentURL, segment: segment)
+                }
+                guard let quarantined else { return .stopped }
+                guard quarantined else {
                     return .failed
                 }
                 return .finished
@@ -1513,18 +1630,25 @@ public actor SyncService {
             }
 
             await beforeRemovalStep()
-            guard !syncPaused, journalContext == context else { return .stopped }
+            guard activeSyncContextIsCurrent(context) else { return .stopped }
             self.segmentBounds.removeValue(forKey: address)
 
             if preserveSyncedSegments {
-                return preserveSegmentDirectory(segmentURL, segment: segment) ? .finished : .failed
+                let preserved = try? withOrdinarySyncAdmission(context) {
+                    preserveSegmentDirectory(segmentURL, segment: segment)
+                }
+                guard let preserved else { return .stopped }
+                return preserved ? .finished : .failed
             }
 
             for url in nonAckConfirmedURLs {
                 await beforeRemovalStep()
-                guard !syncPaused, journalContext == context else { return .stopped }
+                guard activeSyncContextIsCurrent(context) else { return .stopped }
                 do {
-                    try removeItem(url)
+                    guard try withOrdinarySyncAdmission(context, operation: {
+                        try removeItem(url)
+                        return true
+                    }) == true else { return .stopped }
                 } catch {
                     Logger.upload.error("Failed to remove \(url.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     return .failed
@@ -1536,17 +1660,24 @@ public actor SyncService {
                 let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
                 if FileManager.default.fileExists(atPath: ackURL.path) {
                     await beforeRemovalStep()
-                    guard !syncPaused, journalContext == context else { return .stopped }
+                    guard activeSyncContextIsCurrent(context) else { return .stopped }
                     do {
-                        try removeItem(ackURL)
+                        guard try withOrdinarySyncAdmission(context, operation: {
+                            try removeItem(ackURL)
+                            return true
+                        }) == true else { return .stopped }
                     } catch {
                         Logger.upload.error("Failed to remove ack for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
                         return .failed
                     }
                 }
                 await beforeRemovalStep()
-                guard !syncPaused, journalContext == context else { return .stopped }
-                guard Darwin.rmdir(segmentURL.path) == 0 else {
+                guard activeSyncContextIsCurrent(context) else { return .stopped }
+                let removedDirectory = try? withOrdinarySyncAdmission(context) {
+                    Darwin.rmdir(segmentURL.path) == 0
+                }
+                guard let removedDirectory else { return .stopped }
+                guard removedDirectory else {
                     Logger.upload.error("Failed to rmdir segment directory \(segment, privacy: .public): \(errno)")
                     return .failed
                 }
@@ -1554,8 +1685,12 @@ public actor SyncService {
             } else {
                 // Files the journal never received remain: quarantine the folder, ack included.
                 await beforeRemovalStep()
-                guard !syncPaused, journalContext == context else { return .stopped }
-                guard quarantineSegmentDirectory(segmentURL, segment: segment) else {
+                guard activeSyncContextIsCurrent(context) else { return .stopped }
+                let quarantined = try? withOrdinarySyncAdmission(context) {
+                    quarantineSegmentDirectory(segmentURL, segment: segment)
+                }
+                guard let quarantined else { return .stopped }
+                guard quarantined else {
                     return .failed
                 }
                 return .finished
@@ -1606,20 +1741,27 @@ public actor SyncService {
             }
 
             await beforeRemovalStep()
-            guard !syncPaused, journalContext == context else { return .stopped }
+            guard activeSyncContextIsCurrent(context) else { return .stopped }
             self.segmentBounds.removeValue(forKey: address)
 
             if preserveSyncedSegments {
-                return preserveSegmentDirectory(segmentURL, segment: segment) ? .finished : .failed
+                let preserved = try? withOrdinarySyncAdmission(context) {
+                    preserveSegmentDirectory(segmentURL, segment: segment)
+                }
+                guard let preserved else { return .stopped }
+                return preserved ? .finished : .failed
             }
 
             // Every confirmed file goes before any rename, so a failed removal leaves the folder under
             // its own name for a later pass instead of stranding confirmed media in a quarantine folder.
             for url in nonUploadConfirmedURLs {
                 await beforeRemovalStep()
-                guard !syncPaused, journalContext == context else { return .stopped }
+                guard activeSyncContextIsCurrent(context) else { return .stopped }
                 do {
-                    try removeItem(url)
+                    guard try withOrdinarySyncAdmission(context, operation: {
+                        try removeItem(url)
+                        return true
+                    }) == true else { return .stopped }
                 } catch {
                     Logger.upload.error("Failed to remove \(url.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     return .failed
@@ -1628,9 +1770,12 @@ public actor SyncService {
 
             for url in uploadMediaURLs {
                 await beforeRemovalStep()
-                guard !syncPaused, journalContext == context else { return .stopped }
+                guard activeSyncContextIsCurrent(context) else { return .stopped }
                 do {
-                    try removeItem(url)
+                    guard try withOrdinarySyncAdmission(context, operation: {
+                        try removeItem(url)
+                        return true
+                    }) == true else { return .stopped }
                 } catch {
                     Logger.upload.error("Failed to remove upload media \(url.lastPathComponent, privacy: .public) for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
                     return .failed
@@ -1640,17 +1785,24 @@ public actor SyncService {
             if keepers.isEmpty {
                 if let ackURL {
                     await beforeRemovalStep()
-                    guard !syncPaused, journalContext == context else { return .stopped }
+                    guard activeSyncContextIsCurrent(context) else { return .stopped }
                     do {
-                        try removeItem(ackURL)
+                        guard try withOrdinarySyncAdmission(context, operation: {
+                            try removeItem(ackURL)
+                            return true
+                        }) == true else { return .stopped }
                     } catch {
                         Logger.upload.error("Failed to remove ack for segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
                         return .failed
                     }
                 }
                 await beforeRemovalStep()
-                guard !syncPaused, journalContext == context else { return .stopped }
-                guard Darwin.rmdir(segmentURL.path) == 0 else {
+                guard activeSyncContextIsCurrent(context) else { return .stopped }
+                let removedDirectory = try? withOrdinarySyncAdmission(context) {
+                    Darwin.rmdir(segmentURL.path) == 0
+                }
+                guard let removedDirectory else { return .stopped }
+                guard removedDirectory else {
                     Logger.upload.error("Failed to rmdir segment directory \(segment, privacy: .public): \(errno)")
                     return .failed
                 }
@@ -1658,8 +1810,12 @@ public actor SyncService {
             } else {
                 // Files the journal never received remain: quarantine the folder, ack included.
                 await beforeRemovalStep()
-                guard !syncPaused, journalContext == context else { return .stopped }
-                guard quarantineSegmentDirectory(segmentURL, segment: segment) else {
+                guard activeSyncContextIsCurrent(context) else { return .stopped }
+                let quarantined = try? withOrdinarySyncAdmission(context) {
+                    quarantineSegmentDirectory(segmentURL, segment: segment)
+                }
+                guard let quarantined else { return .stopped }
+                guard quarantined else {
                     return .failed
                 }
                 return .finished
@@ -1670,9 +1826,19 @@ public actor SyncService {
 #if DEBUG || SOLSTONE_TEST_SUPPORT
     /// Explicit-fixture entry point for debug and validation builds.
     func runLiveProbe(segmentURL: URL, day: String, segment: String) async throws -> ServerFileInfo {
-        guard let context = journalContext, !syncPaused else {
+        guard let context = journalContext else {
             throw UploadError.invalidResponse
         }
+        let epoch = ordinaryTrafficEpoch
+        activeSyncEpoch = epoch
+        activeProgressContext = context
+        activeProgressEpoch = epoch
+        defer {
+            activeSyncEpoch = nil
+            activeProgressContext = nil
+            activeProgressEpoch = nil
+        }
+        guard syncContextIsCurrent(context, epoch: epoch) else { throw UploadError.invalidResponse }
         let filesToUpload = selectFilesForUploadLive(segmentDirectory: segmentURL)
         guard !filesToUpload.isEmpty else {
             throw UploadError.noFiles
@@ -1692,9 +1858,11 @@ public actor SyncService {
         }
 
         let serverURL = try await resolvedServerURL()
+        guard syncContextIsCurrent(context, epoch: epoch) else { throw UploadError.invalidResponse }
         let segmentsDay = try await client.getSegmentsDay(serverURL: serverURL, day: day)
+        guard syncContextIsCurrent(context, epoch: epoch) else { throw UploadError.invalidResponse }
         let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
-        guard !syncPaused, journalContext == context,
+        guard syncContextIsCurrent(context, epoch: epoch),
               let ack = IngestAcknowledgmentStore.read(from: ackURL),
               ack.journalFingerprint == context.fingerprint.value,
               ack.day == day, ack.submittedSegment == segment,

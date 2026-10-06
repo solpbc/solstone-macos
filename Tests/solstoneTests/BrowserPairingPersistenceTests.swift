@@ -11,11 +11,27 @@ import Testing
 private final class BrowserPairingMemoryStore: PairingStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var pairing: StoredPairing?
+    private var carriedPairingRecord = CarriedPairingRecord.empty
 
     init(_ pairing: StoredPairing? = nil) { self.pairing = pairing }
-    func save(_ pairing: StoredPairing) throws { lock.withLock { self.pairing = pairing } }
+    func save(_ pairing: StoredPairing) throws {
+        lock.withLock {
+            self.pairing = pairing
+            let marker = carriedPairingRecord.localMarker ?? UUID().uuidString
+            let revision = PairingCredentialRevision(from: pairing)
+            carriedPairingRecord.localMarker = marker
+            carriedPairingRecord.completedPortableBaseline = CarriedPairingBaseline(
+                journalIdentity: journalMarkConfirmationIdentity(for: pairing),
+                fingerprint: revision.fingerprint,
+                credentialRevision: revision.revision,
+                marker: marker
+            )
+        }
+    }
     func load() throws -> StoredPairing? { lock.withLock { pairing } }
     func delete() throws { lock.withLock { pairing = nil } }
+    func loadCarriedPairingRecord() throws -> CarriedPairingRecord { lock.withLock { carriedPairingRecord } }
+    func saveCarriedPairingRecord(_ record: CarriedPairingRecord) throws { lock.withLock { carriedPairingRecord = record } }
 }
 
 @Suite("BrowserPairingPersistence", .serialized)

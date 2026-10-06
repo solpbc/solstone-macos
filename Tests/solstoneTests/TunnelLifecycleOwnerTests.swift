@@ -71,6 +71,56 @@ struct TunnelLifecycleOwnerTests {
         }
     }
 
+    @Test func durableInvalidationFenceDisconnectsTheInstalledOrdinaryRoute() async throws {
+        let stored = pairing()
+        let store = PairingStore(pairing: stored)
+        let transport = FakeTunnelTransport(connection: .init(localPort: 18281, via: .relay))
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 18281, via: .relay) }
+
+        owner.beginOrdinaryTrafficFence(for: stored)
+
+        #expect(owner.ordinaryRouteRevoked)
+        #expect(owner.localPort == nil)
+        #expect(owner.state == .disconnected)
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        #expect(owner.browserIntakeRouteState.currentRoute() == nil)
+        #endif
+        await owner.completeOrdinaryTrafficFence()
+        await owner.stop()
+    }
+
+    @Test func ordinaryRouteIsRevokedBeforeInvalidationWaitsForUploadCancellation() async throws {
+        let stored = pairing()
+        let owner = makeOwner(
+            store: PairingStore(pairing: stored),
+            factory: FakeTransportFactory([FakeTunnelTransport(connection: .init(localPort: 18282, via: .relay))])
+        )
+        owner.start()
+        try await waitUntil { owner.localPort == 18282 }
+        let enteredCancellation = LockedCounter()
+        let cancellationGate = OneShotContinuationGate()
+        let fence = Task {
+            await owner.fenceOrdinaryTraffic(for: stored) {
+                enteredCancellation.increment()
+                await cancellationGate.wait()
+            }
+        }
+        await enteredCancellation.waitUntilCount(1)
+
+        #expect(owner.ordinaryRouteRevoked)
+        #expect(owner.localPort == nil)
+        #expect(owner.state == .disconnected)
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        #expect(owner.browserIntakeRouteState.currentRoute() == nil)
+        #endif
+
+        cancellationGate.release()
+        await fence.value
+        await owner.stop()
+    }
+
     @Test func thrownLoadFailureSurfacesKeychainUnavailable() async throws {
         let store = PairingStore(pairing: pairing(), loadError: SPLKeychainError.loadFailed(status: -1))
         let transport = FakeTunnelTransport()
@@ -82,6 +132,191 @@ struct TunnelLifecycleOwnerTests {
         #expect(transport.connectAttempts == 0)
         #expect(owner.state == .error(.keychainUnavailable))
         #expect(owner.health == .unknown)
+        await owner.stop()
+    }
+
+    @Test func preparedMigrationReusesCandidateAcrossRelaunchWithoutPublishingOldTransport() async throws {
+        let oldPairing = pairing()
+        let store = PairingStore(pairing: oldPairing)
+        var record = try store.loadCarriedPairingRecord()
+        record.localMarker = "marker-from-another-device"
+        try store.saveCarriedPairingRecord(record)
+
+        let controlRecorder = CarriedPairingControlRecorder()
+        let control = FailingCarriedPairingControl(recorder: controlRecorder)
+        let firstTransport = FakeTunnelTransport()
+        let firstOwner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([firstTransport]),
+            carriedPairingControl: control
+        )
+        firstOwner.start()
+        try await waitUntil { firstOwner.state == .error(.keychainUnavailable) }
+
+        let persistedCandidate = try #require(try store.loadCarriedPairingRecord().candidate)
+        #expect(controlRecorder.candidateSnapshots.map(\.operationID) == [persistedCandidate.operationID])
+        #expect(controlRecorder.migrationStateCount == 1)
+        #expect(firstTransport.connectedPairings == [oldPairing])
+        #expect(firstOwner.localPort == nil)
+        #expect(firstOwner.carriedPairingAdmission == .blocked)
+        await firstOwner.stop()
+
+        let secondTransport = FakeTunnelTransport()
+        let secondOwner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([secondTransport]),
+            carriedPairingControl: control
+        )
+        secondOwner.start()
+        try await waitUntil { secondOwner.state == .error(.keychainUnavailable) }
+
+        let retriedCandidate = try #require(try store.loadCarriedPairingRecord().candidate)
+        #expect(retriedCandidate.operationID == persistedCandidate.operationID)
+        #expect(retriedCandidate.csrPEM == persistedCandidate.csrPEM)
+        #expect(retriedCandidate.privateKeyPEM == persistedCandidate.privateKeyPEM)
+        #expect(controlRecorder.candidateSnapshots.map(\.operationID) == [persistedCandidate.operationID, persistedCandidate.operationID])
+        #expect(secondTransport.connectedPairings == [oldPairing])
+        #expect(secondOwner.localPort == nil)
+        await secondOwner.stop()
+    }
+
+    @Test(arguments: [false, true])
+    func interruptedCompletedBaselineWithAbsentOrMismatchedMarkerCreatesFreshCandidate(markerPresent: Bool) async throws {
+        let oldPairing = pairing()
+        let store = PairingStore(pairing: oldPairing)
+        var record = try store.loadCarriedPairingRecord()
+        let baselineMarker = try #require(record.completedPortableBaseline?.marker)
+        let revision = PairingCredentialRevision(from: oldPairing)
+        record.initialMovePrepared = true
+        record.preparedCredentialFingerprint = revision.fingerprint
+        record.preparedCredentialRevision = revision.revision
+        record.preparedJournalIdentity = journalMarkConfirmationIdentity(for: oldPairing)
+        record.localMarker = markerPresent ? "marker-from-restored-device" : nil
+        if markerPresent { #expect(record.localMarker != baselineMarker) }
+        try store.saveCarriedPairingRecord(record)
+
+        let controlRecorder = CarriedPairingControlRecorder()
+        let control = FailingCarriedPairingControl(recorder: controlRecorder)
+        let transport = FakeTunnelTransport()
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([transport]),
+            carriedPairingControl: control
+        )
+        owner.start()
+        try await waitUntil { owner.state == .error(.keychainUnavailable) }
+
+        let recovered = try store.loadCarriedPairingRecord()
+        #expect(recovered.completedPortableBaseline?.marker == baselineMarker)
+        #expect(recovered.localMarker == (markerPresent ? "marker-from-restored-device" : nil))
+        #expect(recovered.candidate != nil)
+        #expect(controlRecorder.migrationStateCount == 1)
+        #expect(transport.connectedPairings == [oldPairing])
+        #expect(owner.localPort == nil)
+        #expect(owner.carriedPairingAdmission == .blocked)
+        await owner.stop()
+    }
+
+    @Test func candidatePersistenceFailureStopsBeforeMigrationNetworkMutation() async throws {
+        let oldPairing = pairing()
+        let store = PairingStore(pairing: oldPairing)
+        var record = try store.loadCarriedPairingRecord()
+        record.localMarker = "marker-from-another-device"
+        try store.saveCarriedPairingRecord(record)
+        store.setCarriedRecordSaveError(PairingCredentialStoreError.staleGeneration)
+
+        let controlRecorder = CarriedPairingControlRecorder()
+        let control = FailingCarriedPairingControl(recorder: controlRecorder)
+        let migrationTransport = FakeTunnelTransport()
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([migrationTransport]),
+            carriedPairingControl: control
+        )
+
+        owner.start()
+        try await waitUntil { owner.state == .error(.keychainUnavailable) }
+
+        #expect(try store.loadCarriedPairingRecord().candidate == nil)
+        #expect(migrationTransport.connectAttempts == 0)
+        #expect(controlRecorder.candidateSnapshots.isEmpty)
+        #expect(controlRecorder.migrationStateCount == 0)
+        #expect(owner.localPort == nil)
+        #expect(owner.carriedPairingAdmission == .blocked)
+        #expect(owner.carriedPairingStatus == .storageUnavailable)
+        await owner.stop()
+    }
+
+    @Test func candidatePersistenceErrorNeverDispatchesWhenTheWriteMayHaveCommitted() async throws {
+        let oldPairing = pairing()
+        let store = PairingStore(pairing: oldPairing)
+        var record = try store.loadCarriedPairingRecord()
+        record.localMarker = "marker-from-another-device"
+        try store.saveCarriedPairingRecord(record)
+        store.setCarriedRecordSaveAfterWriteError(PairingCredentialStoreError.staleGeneration)
+
+        let controlRecorder = CarriedPairingControlRecorder()
+        let control = FailingCarriedPairingControl(recorder: controlRecorder)
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([FakeTunnelTransport()]),
+            carriedPairingControl: control
+        )
+        owner.start()
+        try await waitUntil { owner.state == .error(.keychainUnavailable) }
+
+        #expect(try store.loadCarriedPairingRecord().candidate != nil)
+        #expect(controlRecorder.migrationStateCount == 0)
+        #expect(controlRecorder.candidateSnapshots.isEmpty)
+        await owner.stop()
+    }
+
+    @Test func lateRekeyResponseCannotCommitOverReplacementCredential() async throws {
+        let oldPairing = pairing()
+        let replacement = pairing(clientCertPEM: "replacement-cert")
+        let store = PairingStore(pairing: oldPairing)
+        var record = try store.loadCarriedPairingRecord()
+        record.localMarker = "marker-from-another-device"
+        try store.saveCarriedPairingRecord(record)
+
+        let responseGate = CarriedPairingRekeyResponseGate()
+        let control = DelayedCarriedPairingControl(gate: responseGate)
+        let controlTransport = FakeTunnelTransport()
+        var commitCount = 0
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([controlTransport, FakeTunnelTransport()]),
+            carriedPairingControl: control,
+            onCarriedPairingCommitted: { _, _, _ in commitCount += 1 }
+        )
+
+        owner.start()
+        try await waitUntil { await responseGate.isWaiting }
+        try owner.credentialStore.save(replacement)
+
+        await responseGate.release(CarriedPairingRekeyResponse(
+            protocolVersion: 1,
+            operationID: "late-operation",
+            state: "pending",
+            previousCID: oldPairing.fingerprint,
+            cid: "late-cid",
+            pairing: CarriedPairingPairingReply(
+                clientCert: "late-cert",
+                caChain: [],
+                instanceID: oldPairing.instanceID,
+                homeLabel: "test-home",
+                fingerprint: "late-cid",
+                localEndpoints: nil,
+                relayAccess: nil
+            )
+        ))
+        try await waitUntil { owner.state == .error(.keychainUnavailable) }
+
+        #expect(try store.load() == replacement)
+        #expect(try store.loadCarriedPairingRecord().candidate?.rekeyReply == nil)
+        #expect(controlTransport.disconnectCount > 0)
+        #expect(owner.localPort == nil)
+        #expect(commitCount == 0)
         await owner.stop()
     }
 
@@ -1777,6 +2012,8 @@ struct TunnelLifecycleOwnerTests {
         store: PairingStore = PairingStore(pairing: pairing()),
         refresher: TunnelDeviceTokenRefreshing? = nil,
         factory: FakeTransportFactory,
+        carriedPairingControl: any CarriedPairingControlRequesting = URLSessionCarriedPairingControlClient(),
+        onCarriedPairingCommitted: @escaping @MainActor @Sendable (String, String, StoredPairing) -> Void = { _, _, _ in },
         recorder: DiagnosticEvidenceRecorder = .dormant,
         pathSource: (any PathMonitoringSource)? = NoopPathMonitoringSource(),
         probe: @escaping @Sendable (Int, Duration) async -> Bool = { _, _ in true },
@@ -1788,6 +2025,8 @@ struct TunnelLifecycleOwnerTests {
             credentialStore: credStore,
             tokenRefresher: refresher ?? FakeTokenRefresher(ifNeededResults: [.notNeeded(store.currentPairing ?? pairing())]).seam,
             makeTransport: { factory.make() },
+            carriedPairingControl: carriedPairingControl,
+            onCarriedPairingCommitted: onCarriedPairingCommitted,
             recorder: recorder,
             pathMonitoringSource: pathSource,
             probe: probe,

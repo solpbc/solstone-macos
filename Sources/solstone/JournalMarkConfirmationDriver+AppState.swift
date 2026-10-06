@@ -4,18 +4,21 @@ import os
 
 extension JournalMarkConfirmationDriver {
     func confirm(appState: AppState) {
-        guard case .valid = phase else { return }
-        confirm { mark in
-            appState.setConfirmedMark(mark)
-        }
-        appState.recordJournalMarkConfirmed()
+        guard case .valid(let mark) = phase,
+              appState.recordJournalMarkConfirmed(
+                mark: mark,
+                expectedRevision: appState.currentJournalMarkAttemptRevision
+              ) else { return }
+        complete()
     }
 
     /// Continuing after a check that could not finish is the owner's answer too.
     func continueAnyway(appState: AppState) {
-        guard case .unverified = phase else { return }
+        guard case .unverified = phase,
+              appState.recordJournalMarkConfirmed(
+                expectedRevision: appState.currentJournalMarkAttemptRevision
+              ) else { return }
         continueAnyway()
-        appState.recordJournalMarkConfirmed()
     }
 
     /// Asks again for a pairing whose question is still open, such as one left unanswered
@@ -26,7 +29,8 @@ extension JournalMarkConfirmationDriver {
     ) {
         guard !isPresented,
               appState.needsJournalMarkConfirmation,
-              let journal = appState.tunnelLifecycleOwner.cachedJournalMarkIdentity else {
+              let journal = appState.tunnelLifecycleOwner.cachedJournalMarkIdentity,
+              appState.beginJournalMarkConfirmationAttempt() != nil else {
             return
         }
         startIfNeeded(
@@ -57,6 +61,7 @@ extension JournalMarkConfirmationDriver {
         guard let journal = appState.needsJournalMarkConfirmation
             ? appState.tunnelLifecycleOwner.cachedJournalMarkIdentity
             : nil else { return }
+        guard appState.beginJournalMarkConfirmationAttempt() != nil else { return }
         reaskUnconfirmed(
             journal: journal,
             resolveHomeBase: unconfirmedHomeBaseResolver(appState),
@@ -80,15 +85,18 @@ extension JournalMarkConfirmationDriver {
         _ fetcher: JournalIdentityFetcher
     ) -> MarkFetcher {
         { baseURL in
+            guard let revision = appState.currentJournalMarkAttemptRevision,
+                  appState.isCurrentJournalMarkAttempt(revision) else { return nil }
             guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return nil }
             guard case .mark(let mark) = await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected) else {
                 return nil
             }
+            guard appState.isCurrentJournalMarkAttempt(revision) else { return nil }
             return mark
         }
     }
 
-    func cancelPairing(appState: AppState) async {
+    func cancelPairing(appState: AppState) async -> Bool {
         await cancelPairing(
             clearConfirmedMark: {
                 appState.clearConfirmedMark()
@@ -99,7 +107,7 @@ extension JournalMarkConfirmationDriver {
         )
     }
 
-    func reject(appState: AppState, onMismatch: @MainActor () -> Void) async {
+    func reject(appState: AppState, onMismatch: @MainActor () -> Void) async -> Bool {
         await reject(
             clearConfirmedMark: {
                 appState.clearConfirmedMark()
@@ -128,16 +136,20 @@ extension JournalMarkConfirmationDriver {
             Logger.journalMark.info("journal-mark skipped: automatic same-machine adoption of an already-linked journal")
             return
         }
+        guard appState.beginJournalMarkConfirmationAttempt() != nil else { return }
         startIfNeeded(
             for: state,
             resolveHomeBase: {
                 await appState.resolveHomeBase()
             },
             fetchMark: { baseURL in
+                guard let revision = appState.currentJournalMarkAttemptRevision,
+                      appState.isCurrentJournalMarkAttempt(revision) else { return nil }
                 guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return nil }
                 guard case .mark(let mark) = await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected) else {
                     return nil
                 }
+                guard appState.isCurrentJournalMarkAttempt(revision) else { return nil }
                 return mark
             }
         )

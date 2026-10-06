@@ -15,7 +15,7 @@ struct UploadCoordinatorTests {
     @Test func completedPassRetainsLocalBlockerAfterSuccessfulContact() throws {
         let coordinator = try makeCoordinator(now: Date(timeIntervalSince1970: 1_700_000_000))
         coordinator.handleProgressEvent(.uploadFailed(segment: "s", error: "limits", healthReason: .uploadFailed, requestedPath: IngestProtocolV3.uploadPath))
-        coordinator.handleProgressEvent(.journalContactSucceeded)
+        coordinator.handleProgressEvent(.journalContactSucceeded(context: nil))
         coordinator.handleProgressEvent(.syncBlocked(pendingCount: 1, reason: .invalidRequest))
         #expect(coordinator.status == .blocked("upload exceeds journal limits"))
         #expect(coordinator.pendingCount == 1)
@@ -27,7 +27,7 @@ struct UploadCoordinatorTests {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
         let coordinator = try makeCoordinator(now: fixed)
 
-        coordinator.handleProgressEvent(.syncComplete)
+        coordinator.handleProgressEvent(.syncComplete(context: nil))
 
         #expect(coordinator.lastSyncedAt == nil)
     }
@@ -96,7 +96,7 @@ struct UploadCoordinatorTests {
             healthReason: .uploadFailed,
             requestedPath: IngestProtocolV3.uploadPath
         ))
-        coordinator.handleProgressEvent(.journalContactSucceeded)
+        coordinator.handleProgressEvent(.journalContactSucceeded(context: nil))
 
         #expect(coordinator.lastSyncedAt == fixed)
         #expect(coordinator.recentErrorCount == 0)
@@ -119,7 +119,7 @@ struct UploadCoordinatorTests {
         )
         coordinator.nowProvider = { fixed }
 
-        coordinator.handleProgressEvent(.journalContactSucceeded)
+        coordinator.handleProgressEvent(.journalContactSucceeded(context: nil))
 
         #expect(store.read() == .found(LastSuccessfulJournalContactPayload(
             date: fixed,
@@ -158,7 +158,7 @@ struct UploadCoordinatorTests {
 
         #expect(coordinator.recentErrorCount == 99)
 
-        coordinator.handleProgressEvent(.journalContactSucceeded)
+        coordinator.handleProgressEvent(.journalContactSucceeded(context: nil))
         #expect(coordinator.recentErrorCount == 0)
         #expect(coordinator.lastErrorReason == nil)
     }
@@ -226,7 +226,7 @@ struct UploadCoordinatorTests {
             return
         }
 
-        coordinator.handleProgressEvent(.journalContactSucceeded)
+        coordinator.handleProgressEvent(.journalContactSucceeded(context: nil))
         coordinator.handleProgressEvent(.offline(
             error: shortBody,
             healthReason: .httpStatus(404),
@@ -386,6 +386,38 @@ struct UploadCoordinatorTests {
         #expect(uploadReq.url?.path == IngestProtocolV3.uploadPath)
     }
 
+    @Test func carriedPairingAdmissionBlocksUploadStartupAndConnectionProbe() async throws {
+        resetSyncedDaysCache()
+        store.reset()
+        let root = try makeTempDirectory("upload-coordinator-carried-admission")
+        let segment = try makeSegment(root: root)
+        let sha = try #require(UploadClient().sha256(
+            of: segment.url.appendingPathComponent("\(segment.url.lastPathComponent)_audio.m4a")
+        ))
+        let filename = "\(segment.url.lastPathComponent)_audio.m4a"
+        store.enqueue(statusCode: 200, body: completeUploadResponseJSON(
+            status: "ok",
+            segment: segment.url.lastPathComponent,
+            descriptors: [(filename, filename, 5, sha, "written")]
+        ))
+        let pairing = TunnelPairingIdentity(instanceID: "instance", fingerprint: "fingerprint")
+        let coordinator = UploadCoordinator(
+            storageManager: StorageManager(baseDirectory: root),
+            config: AppConfig(serverURL: "https://configured.example", serverKey: "secret"),
+            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24692") },
+            pairedIngestIdentity: pairing,
+            journalIdentityProvider: { .identified(tunnelJournalConnectionFingerprint(for: pairing)) },
+            ordinaryAdmission: { false }
+        )
+
+        await coordinator.syncOnStartup()
+
+        #expect(!coordinator.isPairedIngestReady)
+        #expect(await coordinator.testPairedIngestConnection() == "Not configured")
+        #expect(store.snapshotRequests().isEmpty)
+    }
+
     @Test func nonDeliveryEventsNeverCreateDeliveryFact() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let fingerprint = canonicalDeliveryFingerprint()
@@ -424,7 +456,7 @@ struct UploadCoordinatorTests {
             delivery: delivery,
             identity: .identified(fingerprint)
         )
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
         let established = LastJournalDeliveryPayload(date: now, fingerprint: fingerprint.value)
         #expect(delivery.read() == .found(established))
         #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
@@ -446,23 +478,23 @@ struct UploadCoordinatorTests {
             identity: .identified(fingerprint)
         )
 
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
         #expect(coordinator.lastJournalDeliveryWriteFailed == true)
         #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
         #expect(delivery.read() == .absent)
 
-        coordinator.handleProgressEvent(.journalContactSucceeded)
+        coordinator.handleProgressEvent(.journalContactSucceeded(context: nil))
         #expect(coordinator.lastJournalDeliveryWriteFailed == true)
         #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
         #expect(delivery.read() == .absent)
 
-        coordinator.handleProgressEvent(.syncComplete)
+        coordinator.handleProgressEvent(.syncComplete(context: nil))
         #expect(coordinator.lastJournalDeliveryWriteFailed == true)
         #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
         #expect(delivery.read() == .absent)
 
         delivery.writeResult = .confirmed
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
         #expect(coordinator.lastJournalDeliveryWriteFailed == false)
         #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
     }
@@ -481,8 +513,8 @@ struct UploadCoordinatorTests {
             logAdapter: DiagnosticEvidenceLoggingAdapter { events.events.append($0) }
         )
 
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
 
         var entries = await harness.entries()
         #expect(evidenceCodes(entries) == [.deliveryWriteFailed])
@@ -490,9 +522,9 @@ struct UploadCoordinatorTests {
         #expect(events.events == [.deliveryWriteFailed])
 
         delivery.writeResult = .confirmed
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
         delivery.writeResult = .failed
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
 
         entries = await harness.entries()
         #expect(evidenceCodes(entries) == [.deliveryWriteFailed])
@@ -517,18 +549,18 @@ struct UploadCoordinatorTests {
             recorder: harness.recorder,
             logAdapter: DiagnosticEvidenceLoggingAdapter { events.events.append($0) }
         )
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "segment", journalFingerprint: matching.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "segment", journalFingerprint: matching.value, context: nil))
         #expect(!coordinator.lastJournalDeliveryWriteFailed)
         #expect(evidenceCodes(await harness.entries()).isEmpty)
         #expect(events.events.isEmpty)
 
         identity.value = .identified(matching)
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "segment", journalFingerprint: mismatched.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "segment", journalFingerprint: mismatched.value, context: nil))
         #expect(!coordinator.lastJournalDeliveryWriteFailed)
         #expect(evidenceCodes(await harness.entries()).isEmpty)
         #expect(events.events.isEmpty)
 
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "segment", journalFingerprint: matching.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "segment", journalFingerprint: matching.value, context: nil))
         #expect(coordinator.lastJournalDeliveryWriteFailed)
         #expect(evidenceCodes(await harness.entries()) == [.deliveryWriteFailed])
         #expect(events.events == [.deliveryWriteFailed])
@@ -546,8 +578,8 @@ struct UploadCoordinatorTests {
             logAdapter: DiagnosticEvidenceLoggingAdapter { events.events.append($0) }
         )
 
-        coordinator.handleProgressEvent(.journalContactSucceeded)
-        coordinator.handleProgressEvent(.syncComplete)
+        coordinator.handleProgressEvent(.journalContactSucceeded(context: nil))
+        coordinator.handleProgressEvent(.syncComplete(context: nil))
         coordinator.handleProgressEvent(.uploadRetrying(segment: "x", attempt: 1))
         coordinator.handleProgressEvent(.offline(
             error: "offline",
@@ -560,7 +592,7 @@ struct UploadCoordinatorTests {
             healthReason: .uploadFailed,
             requestedPath: IngestProtocolV3.uploadPath
         ))
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
 
         #expect(events.events.isEmpty)
     }
@@ -600,7 +632,7 @@ struct UploadCoordinatorTests {
             identity: .identified(fingerprint)
         )
 
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
 
         #expect(delivery.read() == .found(LastJournalDeliveryPayload(
             date: now,
@@ -622,7 +654,7 @@ struct UploadCoordinatorTests {
             identity: .identified(current)
         )
 
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: stored.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: stored.value, context: nil))
         #expect(delivery.read() == .found(prior))
         #expect(coordinator.lastJournalDeliveryOutcome == .noDeliveryYet)
 
@@ -632,11 +664,11 @@ struct UploadCoordinatorTests {
             delivery: failedDelivery,
             identity: .failed
         )
-        failedCoordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: stored.value))
+        failedCoordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: stored.value, context: nil))
         #expect(failedDelivery.read() == .found(prior))
         #expect(failedCoordinator.lastJournalDeliveryOutcome == .unavailable)
 
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: current.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: current.value, context: nil))
         #expect(delivery.read() == .found(LastJournalDeliveryPayload(date: now, fingerprint: current.value)))
     }
 
@@ -650,14 +682,14 @@ struct UploadCoordinatorTests {
             identity: .identified(fingerprint)
         )
 
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
 
         #expect(delivery.read() == .absent)
         #expect(coordinator.lastJournalDeliveryWriteFailed == true)
         #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
 
         delivery.writeResult = .confirmed
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
 
         #expect(coordinator.lastJournalDeliveryWriteFailed == false)
         #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
@@ -681,7 +713,7 @@ struct UploadCoordinatorTests {
 
         #expect(coordinator.lastJournalDeliveryOutcome == .noDeliveryYet)
 
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
         #expect(coordinator.lastJournalDeliveryOutcome == .delivered(now))
         #expect(store.read() == .found(LastJournalDeliveryPayload(date: now, fingerprint: fingerprint.value)))
 
@@ -694,6 +726,69 @@ struct UploadCoordinatorTests {
         restarted.nowProvider = { now }
         restarted.refreshLastJournalDelivery()
         #expect(restarted.lastJournalDeliveryOutcome == .delivered(now))
+    }
+
+    @Test func revokedOrdinaryTrafficRejectsLateDeliveryEvent() async throws {
+        let fingerprint = canonicalDeliveryFingerprint()
+        let delivery = InMemoryLastJournalDeliveryStore()
+        let coordinator = UploadCoordinator(
+            forSnapshot: StorageManager(baseDirectory: try makeTempDirectory("upload-revoked-event")),
+            config: AppConfig(),
+            lastDeliveryStore: delivery,
+            journalIdentityProvider: { .identified(fingerprint) },
+            ordinaryAdmission: { true }
+        )
+        coordinator.nowProvider = { Date(timeIntervalSince1970: 1_700_000_000) }
+
+        await coordinator.revokeOrdinaryTraffic()
+        coordinator.handleProgressEvent(.uploadSucceeded(
+            segment: "120000_300",
+            journalFingerprint: fingerprint.value,
+            context: nil
+        ))
+        coordinator.handleProgressEvent(.uploadFailed(
+            segment: "120000_300",
+            error: "Config changed",
+            healthReason: .configChanged,
+            requestedPath: IngestProtocolV3.uploadPath,
+            context: nil
+        ))
+
+        #expect(delivery.read() == .absent)
+        #expect(coordinator.lastError == nil)
+    }
+
+    @Test func queuedUntaggedProgressFromRevokedRunIsDiscardedAfterSamePairingResumes() async throws {
+        let identity = TunnelPairingIdentity(instanceID: "same-journal", fingerprint: "sha256:paired")
+        let fingerprint = tunnelJournalConnectionFingerprint(for: identity)
+        let context = try #require(JournalUploadContext(
+            pairing: identity,
+            suppliedFingerprint: fingerprint
+        ))
+        let coordinator = UploadCoordinator(
+            forSnapshot: StorageManager(baseDirectory: try makeTempDirectory("upload-stale-progress")),
+            config: AppConfig(),
+            journalIdentityProvider: { .identified(fingerprint) },
+            ordinaryAdmission: { true }
+        )
+        coordinator.updatePairedIngestIdentity(identity)
+        await coordinator.revokeOrdinaryTraffic()
+        coordinator.updatePairedIngestIdentity(identity)
+        let statusBeforeStaleEvent = coordinator.status
+
+        coordinator.handleProgressEnvelope(SyncService.ProgressEnvelope(
+            event: .offline(
+                error: "stale offline result",
+                healthReason: .urlErrorCode(-1009),
+                requestedPath: IngestProtocolV3.segmentsDayPath("20261006")
+            ),
+            context: context,
+            epoch: 0
+        ))
+
+        #expect(coordinator.status == statusBeforeStaleEvent)
+        #expect(coordinator.lastError == nil)
+        #expect(coordinator.lastHealthReason == nil)
     }
 
     @Test func invalidStorageStaysUnavailableUntilProvenDelivery() throws {
@@ -714,7 +809,7 @@ struct UploadCoordinatorTests {
         #expect(delivery.read() == .found(stale))
 
         coordinator.nowProvider = { later }
-        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value))
+        coordinator.handleProgressEvent(.uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil))
         #expect(delivery.read() == .found(LastJournalDeliveryPayload(date: later, fingerprint: fingerprint.value)))
         #expect(coordinator.lastJournalDeliveryOutcome == .delivered(later))
     }
@@ -730,8 +825,8 @@ struct UploadCoordinatorTests {
             healthReason: .uploadFailed,
             requestedPath: IngestProtocolV3.uploadPath
         ),
-        .journalContactSucceeded,
-        .syncComplete,
+        .journalContactSucceeded(context: nil),
+        .syncComplete(context: nil),
         .offline(
             error: "offline",
             healthReason: .urlErrorCode(-1009),

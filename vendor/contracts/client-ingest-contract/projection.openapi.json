@@ -1,0 +1,929 @@
+{
+  "components": {
+    "schemas": {
+      "Error": {
+        "additionalProperties": true,
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "reason_code": {
+            "enum": [
+              "activities_busy",
+              "activity_already_exists",
+              "activity_invalid",
+              "activity_not_found",
+              "activity_protected",
+              "agent_unavailable",
+              "auth_key_invalid",
+              "auth_required",
+              "awareness_busy",
+              "awareness_section_not_found",
+              "backup_busy",
+              "backup_not_confirmed",
+              "backup_operation_failed",
+              "backup_unavailable",
+              "browser_record_invalid",
+              "config_busy",
+              "content_conflict",
+              "convey_busy",
+              "convey_operation_failed",
+              "corrupt_config",
+              "cross_origin_blocked",
+              "day_invalid",
+              "edge_index_unavailable",
+              "entity_alias_conflict",
+              "entity_already_exists",
+              "entity_blocked",
+              "entity_busy",
+              "entity_not_found",
+              "entity_operation_failed",
+              "envelope_invalid",
+              "facet_already_exists",
+              "facet_not_found",
+              "feature_unavailable",
+              "field_missing",
+              "file_not_found",
+              "file_read_failed",
+              "health_report_failed",
+              "host_not_allowed",
+              "http_error",
+              "idempotency_conflict",
+              "identity_busy",
+              "identity_not_locked",
+              "import_client_id_conflict",
+              "import_conflict",
+              "import_metadata_failed",
+              "import_not_found",
+              "import_queue_unreachable",
+              "ingest_contract_invalid",
+              "ingest_no_files",
+              "ingest_sidecar_conflict",
+              "ingest_storage_failed",
+              "internal_error",
+              "invalid_config_value",
+              "invalid_day",
+              "invalid_entity_type",
+              "invalid_json_request",
+              "invalid_month",
+              "invalid_operation_for_state",
+              "invalid_path",
+              "invalid_request_value",
+              "invalid_segment_or_stream",
+              "invalid_state",
+              "journal_source_problem",
+              "linked_device_required",
+              "local_request_only",
+              "missing_request_body",
+              "missing_required_field",
+              "multipart_malformed",
+              "multipart_part_too_large",
+              "capture_restart_failed",
+              "operation_erased",
+              "operation_in_progress",
+              "operation_no_longer_available",
+              "operation_retired",
+              "paired_device_not_found",
+              "pairing_key_invalid",
+              "relay_pairing_registration_refused",
+              "relay_pairing_registration_timed_out",
+              "relay_pairing_unavailable",
+              "pairing_request_invalid",
+              "pl_revoked",
+              "plaud_validation_unavailable",
+              "principal_entity_protected",
+              "protocol_version_future",
+              "protocol_version_legacy",
+              "protocol_version_malformed",
+              "protocol_version_required",
+              "provider_key_missing",
+              "push_request_invalid",
+              "raw_media_not_available",
+              "recovery_key_mismatch",
+              "reprocess_already_complete",
+              "reprocess_held_by_backoff",
+              "reprocess_past_only",
+              "reprocess_unreachable",
+              "search_failed",
+              "segment_invalid",
+              "service_busy",
+              "service_operation_failed",
+              "settings_operation_failed",
+              "speaker_attribution_state_invalid",
+              "speaker_command_failed",
+              "speaker_discovery_failed",
+              "speaker_identify_conflict",
+              "speaker_identify_operation_not_found",
+              "speaker_identify_recoverable",
+              "speaker_identify_repair_required",
+              "speaker_labels_busy",
+              "speaker_not_found",
+              "speaker_owner_centroid_required",
+              "speaker_owner_identity_required",
+              "speaker_owner_voice_too_close",
+              "speaker_review_unavailable",
+              "speaker_sentence_missing",
+              "speaker_voiceprint_busy",
+              "talent_not_found",
+              "talent_operation_failed",
+              "talent_run_malformed",
+              "talent_run_pending",
+              "tos_changed",
+              "unknown_service",
+              "voice_unavailable"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "reason_code",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "FileDescriptor": {
+        "additionalProperties": true,
+        "properties": {
+          "disposition": {
+            "enum": [
+              "written",
+              "already_held",
+              "received_not_written"
+            ],
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "size": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "submitted": {
+            "type": "string"
+          },
+          "written": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "submitted",
+          "written",
+          "size",
+          "sha256",
+          "disposition"
+        ],
+        "type": "object"
+      },
+      "SegmentFile": {
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "present",
+              "missing",
+              "processed"
+            ],
+            "type": "string",
+            "x-vocabulary": {
+              "classification": "closed",
+              "id": "SegmentFile.status",
+              "unknown_value_behavior": "reject"
+            }
+          },
+          "submitted_name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "size",
+          "sha256",
+          "status"
+        ],
+        "type": "object"
+      },
+      "SegmentItem": {
+        "additionalProperties": true,
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/SegmentFile"
+            },
+            "type": "array"
+          },
+          "key": {
+            "type": "string"
+          },
+          "observed": {
+            "type": "boolean"
+          },
+          "original_key": {
+            "type": "string"
+          },
+          "segment": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "observed",
+          "files"
+        ],
+        "type": "object"
+      },
+      "SegmentsEnvelope": {
+        "additionalProperties": true,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SegmentItem"
+            },
+            "type": "array"
+          },
+          "protocol_version": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "protocol_version"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Generated from client_ingest_authority.json. Covers only the four Rust-served linked-device devices/ingest operations.",
+    "title": "Linked-device v3 ingest client contract",
+    "version": "14.0.0",
+    "x-generated": true,
+    "x-generated-by": "solstone-core-repository-contracts"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/app/devices/ingest": {
+      "post": {
+        "description": "Upload one capture segment from a linked device as multipart form data. Identity is the linked-device mTLS certificate. The body has one JSON `envelope` part plus repeated `files` parts. Envelope grammar is `core/crates/solstone-core/src/contract/schemas/protocol.schema.json` (required `day`, `segment`, `files`; optional `source`, `meta`; `stream` and `observer` are forbidden). Each multipart part is at most 64 MiB; the total request is at most 128 MiB.",
+        "operationId": "client.ingestUpload",
+        "parameters": [
+          {
+            "description": "Linked-device ingest protocol version. Must be 3. Values less than 3 are rejected with HTTP 426 Upgrade Required; values greater than 3 are rejected as unsupported. Identity is the linked-device mTLS certificate, not a request header.",
+            "in": "header",
+            "name": "X-Solstone-Protocol-Version",
+            "required": true,
+            "schema": {
+              "const": 3,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "envelope": {
+                    "description": "JSON object. Grammar: core/crates/solstone-core/src/contract/schemas/protocol.schema.json",
+                    "format": "json",
+                    "type": "string"
+                  },
+                  "files": {
+                    "items": {
+                      "format": "binary",
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "envelope",
+                  "files"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "duplicate": {
+                    "summary": "Duplicate segment",
+                    "value": {
+                      "existing_segment": "143000_1",
+                      "file_descriptors": [
+                        {
+                          "disposition": "already_held",
+                          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                          "size": 524288,
+                          "submitted": "audio.m4a",
+                          "written": "audio.m4a"
+                        }
+                      ],
+                      "message": "All files already received",
+                      "meta": {},
+                      "status": "duplicate"
+                    }
+                  },
+                  "normal": {
+                    "summary": "New segment accepted",
+                    "value": {
+                      "bytes": 524288,
+                      "file_descriptors": [
+                        {
+                          "disposition": "written",
+                          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                          "size": 524288,
+                          "submitted": "audio.m4a",
+                          "written": "audio.m4a"
+                        }
+                      ],
+                      "files": [
+                        "audio.m4a"
+                      ],
+                      "meta": {},
+                      "segment": "143000_1",
+                      "status": "ok"
+                    }
+                  }
+                },
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "bytes": {
+                      "type": "integer"
+                    },
+                    "existing_segment": {
+                      "type": "string"
+                    },
+                    "file_descriptors": {
+                      "description": "One custody receipt per submitted file, returned only after the journal durably recorded the upload. A device proves custody of a file when its `sha256` and `size` equal the local file's and its `disposition` is `written` or `already_held`; `received_not_written` is never custody.",
+                      "items": {
+                        "$ref": "#/components/schemas/FileDescriptor"
+                      },
+                      "type": "array"
+                    },
+                    "files": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "meta": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    },
+                    "segment": {
+                      "type": "string"
+                    },
+                    "segment_original": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "ok",
+                        "duplicate",
+                        "collision",
+                        "failed"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Upload accepted, collision-adjusted, or duplicate."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Upload request failed validation.",
+            "x-reason-codes": [
+              "protocol_version_required",
+              "protocol_version_malformed",
+              "field_missing",
+              "envelope_invalid",
+              "day_invalid",
+              "segment_invalid",
+              "multipart_malformed",
+              "multipart_part_too_large",
+              "browser_record_invalid"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A linked-device identity is required.",
+            "x-reason-codes": [
+              "linked_device_required"
+            ]
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Held sidecar bytes conflict, or the device's stream binding is refused.",
+            "x-reason-codes": [
+              "content_conflict",
+              "pairing_identity_unavailable",
+              "foreign_stream_binding",
+              "malformed_evidence_row"
+            ]
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Request exceeds the 128 MiB total-body limit."
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Protocol version is not 3.",
+            "x-reason-codes": [
+              "protocol_version_legacy",
+              "protocol_version_future"
+            ]
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Journal write or notification failed, or the owner removed the requested segment (`reason_code: segment_removed`, body `status: failed`). A device that knows `segment_removed` stops re-sending that segment.",
+            "x-reason-codes": [
+              "segment_removed"
+            ]
+          }
+        },
+        "summary": "Upload one capture segment from a linked device",
+        "tags": [
+          "client"
+        ]
+      }
+    },
+    "/app/devices/ingest/manifest": {
+      "get": {
+        "deprecated": true,
+        "description": "Deprecated. Return days with uploaded linked-device segment history. A device proves custody from the upload response's `file_descriptors` and reads `segments/{day}` only when its own record of an upload is missing; this operation keeps answering until devices in the field no longer call it.",
+        "operationId": "client.ingestManifest",
+        "parameters": [
+          {
+            "description": "Linked-device ingest protocol version. Must be 3. Values less than 3 are rejected with HTTP 426 Upgrade Required; values greater than 3 are rejected as unsupported. Identity is the linked-device mTLS certificate, not a request header.",
+            "in": "header",
+            "name": "X-Solstone-Protocol-Version",
+            "required": true,
+            "schema": {
+              "const": 3,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Optional device-chosen sub-stream discriminator.",
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "days": {
+                    "20260815": {
+                      "segments": 3
+                    }
+                  }
+                },
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "days": {
+                      "additionalProperties": {
+                        "additionalProperties": true,
+                        "properties": {
+                          "segments": {
+                            "type": "integer"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "days"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Available manifest days keyed by YYYYMMDD."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Protocol version missing or malformed.",
+            "x-reason-codes": [
+              "protocol_version_required",
+              "protocol_version_malformed"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A linked-device identity is required.",
+            "x-reason-codes": [
+              "linked_device_required"
+            ]
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Protocol version is not 3.",
+            "x-reason-codes": [
+              "protocol_version_legacy",
+              "protocol_version_future"
+            ]
+          }
+        },
+        "summary": "List linked-device ingest manifest days",
+        "tags": [
+          "client"
+        ]
+      }
+    },
+    "/app/devices/ingest/manifest/{day}": {
+      "get": {
+        "deprecated": true,
+        "description": "Deprecated. Return file names, sizes, sha256 hashes, and custody status for every physical segment on one day. Segment-map keys equal the corresponding `segments/{day}` collection item keys; each map value contains only `files`. A basename that appears once remains its key. Repeated basenames use collection aliases `{basename}~{stream}`, then `~2`, `~3`, and so on, skipping occupied names. An alias is a listing identifier, not a directory basename. The collection item carries `segment` and `stream` to correlate a collided physical segment. A within-segment effective-name clash remains `ambiguous_segment_file_name`. This operation keeps answering until devices in the field no longer call it.",
+        "operationId": "client.ingestManifestDay",
+        "parameters": [
+          {
+            "description": "Linked-device ingest protocol version. Must be 3. Values less than 3 are rejected with HTTP 426 Upgrade Required; values greater than 3 are rejected as unsupported. Identity is the linked-device mTLS certificate, not a request header.",
+            "in": "header",
+            "name": "X-Solstone-Protocol-Version",
+            "required": true,
+            "schema": {
+              "const": 3,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "YYYYMMDD day.",
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional device-chosen sub-stream discriminator.",
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "day": "20260815",
+                  "segments": {
+                    "143000": {
+                      "files": [
+                        {
+                          "name": "audio.m4a",
+                          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                          "size": 4096,
+                          "status": "present"
+                        }
+                      ]
+                    }
+                  },
+                  "version": 1
+                },
+                "schema": {
+                  "additionalProperties": true,
+                  "properties": {
+                    "day": {
+                      "type": "string"
+                    },
+                    "segments": {
+                      "additionalProperties": {
+                        "additionalProperties": true,
+                        "properties": {
+                          "files": {
+                            "items": {
+                              "$ref": "#/components/schemas/SegmentFile"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "files"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "object"
+                    },
+                    "version": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "day",
+                    "segments"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Day transfer manifest. Segment-map keys equal the corresponding `segments/{day}` collection keys and values contain only `files`. Aliases are listing identifiers; the collection carries the exact physical `segment` and `stream` for collided basenames. A within-segment effective-name clash remains `ambiguous_segment_file_name`."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Day path parameter or protocol version was invalid.",
+            "x-reason-codes": [
+              "day_invalid",
+              "protocol_version_required",
+              "protocol_version_malformed"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A linked-device identity is required.",
+            "x-reason-codes": [
+              "linked_device_required"
+            ]
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Protocol version is not 3.",
+            "x-reason-codes": [
+              "protocol_version_legacy",
+              "protocol_version_future"
+            ]
+          }
+        },
+        "summary": "Read linked-device transfer manifest for a day",
+        "tags": [
+          "client"
+        ]
+      }
+    },
+    "/app/devices/ingest/segments/{day}": {
+      "get": {
+        "description": "Return segment upload history for one day as a protocol-version-3 collection envelope. The physical locator is the day, stream directory, and exact segment-directory basename. `key` is that basename unless this response repeats the basename; repeated basenames use `{basename}~{stream}`, then `~2`, `~3`, and so on, and those items also carry `segment` (the directory basename) and `stream`. `original_key` records only an upload remap of the requested key and does not identify a stream. A within-segment effective-name clash remains `ambiguous_segment_file_name`. Per-file `status` is `present`, `processed`, or `missing`. `submitted_name` appears only when the stored filename differs from the submitted one.",
+        "operationId": "client.ingestSegments",
+        "parameters": [
+          {
+            "description": "Linked-device ingest protocol version. Must be 3. Values less than 3 are rejected with HTTP 426 Upgrade Required; values greater than 3 are rejected as unsupported. Identity is the linked-device mTLS certificate, not a request header.",
+            "in": "header",
+            "name": "X-Solstone-Protocol-Version",
+            "required": true,
+            "schema": {
+              "const": 3,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "YYYYMMDD day.",
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Optional device-chosen sub-stream discriminator.",
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "files": [
+                        {
+                          "name": "audio.m4a",
+                          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                          "size": 4096,
+                          "status": "present"
+                        }
+                      ],
+                      "key": "143000",
+                      "observed": true
+                    }
+                  ],
+                  "protocol_version": 3,
+                  "total": 1
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/SegmentsEnvelope"
+                }
+              }
+            },
+            "description": "Segment verification response."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Day path parameter or protocol version was invalid.",
+            "x-reason-codes": [
+              "day_invalid",
+              "protocol_version_required",
+              "protocol_version_malformed"
+            ]
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "A linked-device identity is required.",
+            "x-reason-codes": [
+              "linked_device_required"
+            ]
+          },
+          "426": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Protocol version is not 3.",
+            "x-reason-codes": [
+              "protocol_version_legacy",
+              "protocol_version_future"
+            ]
+          }
+        },
+        "summary": "List uploaded linked-device segments",
+        "tags": [
+          "client"
+        ]
+      }
+    }
+  },
+  "x-vocabularies": {
+    "FileDescriptor.disposition": {
+      "classification": "closed",
+      "id": "FileDescriptor.disposition",
+      "source_pointer": "/components/schemas/FileDescriptor/properties/disposition",
+      "unknown_value_behavior": "reject",
+      "values": [
+        "written",
+        "already_held",
+        "received_not_written"
+      ]
+    },
+    "SegmentFile.status": {
+      "classification": "closed",
+      "id": "SegmentFile.status",
+      "source_pointer": "/components/schemas/SegmentFile/properties/status",
+      "unknown_value_behavior": "reject",
+      "values": [
+        "present",
+        "missing",
+        "processed"
+      ]
+    },
+    "client.ingestUpload.status": {
+      "classification": "closed",
+      "id": "client.ingestUpload.status",
+      "source_pointers": [
+        "/paths/~1app~1devices~1ingest/post/responses/200/content/application~1json/schema/properties/status",
+        "/paths/~1app~1devices~1ingest/post/responses/409"
+      ],
+      "unknown_value_behavior": "reject",
+      "values": [
+        "ok",
+        "duplicate",
+        "collision",
+        "conflict",
+        "failed"
+      ]
+    }
+  }
+}

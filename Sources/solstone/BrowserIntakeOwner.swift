@@ -277,9 +277,19 @@ public actor BrowserIntakeOwner {
     }
 
     private var admissionOpen: @Sendable () -> Bool = { true }
+    private var carriedPairingAdmissionOpen: @Sendable () -> Bool = { true }
 
     public func setAdmissionOpen(_ predicate: @escaping @Sendable () -> Bool) {
         admissionOpen = predicate
+    }
+
+    public func setCarriedPairingAdmissionOpen(_ predicate: @escaping @Sendable () -> Bool) {
+        carriedPairingAdmissionOpen = predicate
+        planner.setCarriedPairingAdmissionOpen(predicate)
+    }
+
+    func setCarriedPairingAdmissionCommit(_ commit: @escaping BrowserAdmissionCommit) {
+        planner.setCarriedPairingAdmissionCommit(commit)
     }
 
     public nonisolated func pendingDiscardInventory() -> BrowserPendingDiscardInventory {
@@ -291,7 +301,9 @@ public actor BrowserIntakeOwner {
     }
 
     public func accept(decoded: BrowserDecodeResult, sessionIsCurrent: @Sendable () -> Bool = { true }) -> BrowserIntakeAcceptResult {
-        guard admissionOpen() else { return .refusal(BrowserIntakeLocalRefusal(code: "shutdown")) }
+        guard admissionOpen() else {
+            return .refusal(BrowserIntakeLocalRefusal(code: "shutdown"))
+        }
         guard sessionIsCurrent() else { return .refusal(BrowserIntakeLocalRefusal(code: "shutdown")) }
         guard started, !stopController.isStopped() else { return .refusal(BrowserIntakeLocalRefusal(code: "intake_off")) }
         do {
@@ -412,7 +424,7 @@ public actor BrowserIntakeOwner {
     }
 
     public func scheduleDelivery() {
-        guard started, !stopController.isStopped() else { return }
+        guard started, !stopController.isStopped(), carriedPairingAdmissionOpen() else { return }
         if deliveryRunning {
             deliveryPending = true
             return

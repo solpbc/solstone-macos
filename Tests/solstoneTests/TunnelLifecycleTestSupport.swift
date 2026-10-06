@@ -9,10 +9,14 @@ import Testing
 final class PairingStore: @unchecked Sendable {
     private let lock = NSLock()
     private var pairing: StoredPairing?
+    private var carriedPairingRecord = CarriedPairingRecord.empty
     private var loadOutcomes: [Result<StoredPairing?, any Error>]
     private let loadError: (any Error)?
     private let saveError: (any Error)?
     private let deleteError: (any Error)?
+    private var carriedRecordSaveError: (any Error)?
+    private var carriedRecordSaveAfterWriteError: (any Error)?
+    private var carriedRecordLoadError: (any Error)?
     private(set) var savedPairings: [StoredPairing] = []
     private(set) var deleted = false
     private(set) var loadCount = 0
@@ -28,13 +32,18 @@ final class PairingStore: @unchecked Sendable {
         loadOutcomes: [Result<StoredPairing?, any Error>] = [],
         loadError: (any Error)? = nil,
         saveError: (any Error)? = nil,
-        deleteError: (any Error)? = nil
+        deleteError: (any Error)? = nil,
+        carriedRecordSaveError: (any Error)? = nil
     ) {
         self.pairing = pairing
         self.loadOutcomes = loadOutcomes
         self.loadError = loadError
         self.saveError = saveError
         self.deleteError = deleteError
+        self.carriedRecordSaveError = carriedRecordSaveError
+        if let pairing {
+            seedCarriedPairingRecord(for: pairing)
+        }
     }
 
     func load() throws -> StoredPairing? {
@@ -45,6 +54,7 @@ final class PairingStore: @unchecked Sendable {
             switch loadOutcomes.removeFirst() {
             case .success(let value):
                 pairing = value
+                if let value { seedCarriedPairingRecord(for: value) }
                 return value
             case .failure(let error):
                 throw error
@@ -66,6 +76,17 @@ final class PairingStore: @unchecked Sendable {
         lock.withLock {
             self.pairing = pairing
             savedPairings.append(pairing)
+            if carriedPairingRecord.localMarker == nil {
+                carriedPairingRecord.localMarker = UUID().uuidString
+            }
+            let marker = carriedPairingRecord.localMarker!
+            let revision = PairingCredentialRevision(from: pairing)
+            carriedPairingRecord.completedPortableBaseline = CarriedPairingBaseline(
+                journalIdentity: journalMarkConfirmationIdentity(for: pairing),
+                fingerprint: revision.fingerprint,
+                credentialRevision: revision.revision,
+                marker: marker
+            )
         }
     }
 
@@ -81,9 +102,139 @@ final class PairingStore: @unchecked Sendable {
             deleted = true
         }
     }
+
+    func loadCarriedPairingRecord() throws -> CarriedPairingRecord {
+        try lock.withLock {
+            if let carriedRecordLoadError { throw carriedRecordLoadError }
+            return carriedPairingRecord
+        }
+    }
+
+    func saveCarriedPairingRecord(_ record: CarriedPairingRecord) throws {
+        if let carriedRecordSaveError { throw carriedRecordSaveError }
+        lock.withLock { carriedPairingRecord = record }
+        if let carriedRecordSaveAfterWriteError { throw carriedRecordSaveAfterWriteError }
+    }
+
+    func setCarriedRecordSaveError(_ error: (any Error)?) {
+        lock.withLock { carriedRecordSaveError = error }
+    }
+
+    func setCarriedRecordSaveAfterWriteError(_ error: (any Error)?) {
+        lock.withLock { carriedRecordSaveAfterWriteError = error }
+    }
+
+    func setCarriedRecordLoadError(_ error: (any Error)?) {
+        lock.withLock { carriedRecordLoadError = error }
+    }
+
+    private func seedCarriedPairingRecord(for pairing: StoredPairing) {
+        let marker = carriedPairingRecord.localMarker ?? UUID().uuidString
+        let revision = PairingCredentialRevision(from: pairing)
+        carriedPairingRecord.localMarker = marker
+        carriedPairingRecord.completedPortableBaseline = CarriedPairingBaseline(
+            journalIdentity: journalMarkConfirmationIdentity(for: pairing),
+            fingerprint: revision.fingerprint,
+            credentialRevision: revision.revision,
+            marker: marker
+        )
+    }
 }
 
 extension PairingStore: PairingStoring {}
+
+final class CarriedPairingControlRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _candidateSnapshots: [CarriedPairingCandidate] = []
+    private var _migrationStateCount = 0
+
+    var candidateSnapshots: [CarriedPairingCandidate] { lock.withLock { _candidateSnapshots } }
+    var migrationStateCount: Int { lock.withLock { _migrationStateCount } }
+
+    func record(_ candidate: CarriedPairingCandidate) {
+        lock.withLock { _candidateSnapshots.append(candidate) }
+    }
+
+    func recordMigrationState() {
+        lock.withLock { _migrationStateCount += 1 }
+    }
+}
+
+struct FailingCarriedPairingControl: CarriedPairingControlRequesting {
+    let recorder: CarriedPairingControlRecorder
+
+    func rekey(
+        localPort: Int,
+        oldPairing: StoredPairing,
+        candidate: CarriedPairingCandidate,
+        deviceLabel: String
+    ) async throws -> CarriedPairingRekeyResponse {
+        recorder.record(candidate)
+        throw CarriedPairingControlError.unavailable
+    }
+
+    func migrationState(localPort: Int) async throws -> CarriedPairingMigrationReply {
+        recorder.recordMigrationState()
+        return try JSONDecoder().decode(
+            CarriedPairingMigrationReply.self,
+            from: Data(#"{"protocol_version":1,"rekey_operation_id":null,"previous_cid":null,"state":"none","replaced_cid":null}"#.utf8)
+        )
+    }
+
+    func decide(localPort: Int, decision: CarriedPairingDecision) async throws -> CarriedPairingDecisionReply {
+        throw CarriedPairingControlError.unavailable
+    }
+
+    func clients(localPort: Int) async throws -> [CarriedPairingClientRow] {
+        throw CarriedPairingControlError.unavailable
+    }
+}
+
+actor CarriedPairingRekeyResponseGate {
+    private var continuation: CheckedContinuation<CarriedPairingRekeyResponse, Never>?
+    private(set) var isWaiting = false
+
+    func waitForResponse() async -> CarriedPairingRekeyResponse {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            isWaiting = true
+        }
+    }
+
+    func release(_ response: CarriedPairingRekeyResponse) {
+        continuation?.resume(returning: response)
+        continuation = nil
+        isWaiting = false
+    }
+}
+
+struct DelayedCarriedPairingControl: CarriedPairingControlRequesting {
+    let gate: CarriedPairingRekeyResponseGate
+
+    func rekey(
+        localPort: Int,
+        oldPairing: StoredPairing,
+        candidate: CarriedPairingCandidate,
+        deviceLabel: String
+    ) async throws -> CarriedPairingRekeyResponse {
+        await gate.waitForResponse()
+    }
+
+    func migrationState(localPort: Int) async throws -> CarriedPairingMigrationReply {
+        try JSONDecoder().decode(
+            CarriedPairingMigrationReply.self,
+            from: Data(#"{"protocol_version":1,"rekey_operation_id":null,"previous_cid":null,"state":"none","replaced_cid":null}"#.utf8)
+        )
+    }
+
+    func decide(localPort: Int, decision: CarriedPairingDecision) async throws -> CarriedPairingDecisionReply {
+        throw CarriedPairingControlError.unavailable
+    }
+
+    func clients(localPort: Int) async throws -> [CarriedPairingClientRow] {
+        throw CarriedPairingControlError.unavailable
+    }
+}
 
 actor FakeTokenRefresher {
     private var ifNeededResults: [DeviceTokenRefreshResult]
@@ -792,13 +943,14 @@ func pairing(
     relayEnrollment: RelayEnrollment? = nil,
     localEndpoints: [LocalEndpoint] = [LocalEndpoint(host: "127.0.0.1", port: 1234, scope: "local")],
     caChainPEM: String = testCACertPEM,
-    clientCertPEM: String = "cert"
+    clientCertPEM: String = "cert",
+    fingerprint: String = "fingerprint"
 ) -> StoredPairing {
     StoredPairing(
         instanceID: instanceID,
         homeLabel: "test-home",
         relayEndpoint: relayEndpoint,
-        fingerprint: "fingerprint",
+        fingerprint: fingerprint,
         clientCertPEM: clientCertPEM,
         clientKeyPEM: "key",
         caChainPEM: caChainPEM,

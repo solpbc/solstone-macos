@@ -1026,8 +1026,8 @@ struct BrowserIntakeAdmissionTests {
         #expect(FileManager.default.fileExists(atPath: pFileURL.path))
 
         await planner.planAndUpload()
-        #expect(store.getPeriod(periodId: pid)?.state == "removed")
-        #expect(!FileManager.default.fileExists(atPath: pFileURL.path))
+        #expect(store.getPeriod(periodId: pid)?.state == "finalized")
+        #expect(FileManager.default.fileExists(atPath: pFileURL.path))
     }
 
     @Test func test3_collisionAndLostResponseProof() throws {
@@ -1978,7 +1978,9 @@ struct BrowserIntakeAdmissionTests {
             transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
                 IngestProtocolV3.SegmentsItem(key: try #require(proof.canonicalKey),
                     files: [IngestProtocolV3.ReadFile(name: "browser_pages.jsonl", size: proof.size, sha256: proof.sha256, status: .present)],
-                    originalKey: proof.requestedSegment)
+                    originalKey: proof.requestedSegment,
+                    segment: proof.requestedSegment,
+                    stream: "browser-stream")
             ])
             await planner.planAndUpload()
             #expect(store.getPeriod(periodId: id)?.state == "delivered")

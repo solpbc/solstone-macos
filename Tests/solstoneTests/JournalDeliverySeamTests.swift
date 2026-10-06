@@ -120,7 +120,7 @@ struct JournalDeliverySeamTests {
         let now = Date(timeIntervalSince1970: 200)
         state.uploadCoordinator.nowProvider = { now }
         state.uploadCoordinator.handleProgressEvent(
-            .uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value)
+            .uploadSucceeded(segment: "x", journalFingerprint: fingerprint.value, context: nil)
         )
         #expect(delivery.read() == .found(LastJournalDeliveryPayload(
             date: now,

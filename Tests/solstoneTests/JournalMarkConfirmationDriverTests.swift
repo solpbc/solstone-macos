@@ -382,6 +382,35 @@ struct JournalMarkConfirmationDriverTests {
         #expect(driver.phase == .connecting)
     }
 
+    @Test func cancelPairingKeepsConfirmationWhenDurableInvalidationFails() async throws {
+        let driver = makeDriver(deadlineSeconds: 0.05)
+        let store = PairingStore(
+            pairing: pairing(),
+            carriedRecordSaveError: PairingCredentialStoreError.staleGeneration
+        )
+        let coordinator = makeCoordinator(store: store)
+        driver.startIfNeeded(for: .paired, resolveHomeBase: heldResolver(), fetchMark: neverFetch())
+        try await waitUntil(timeout: .seconds(1)) {
+            await MainActor.run {
+                if case .unverified = driver.phase { return true }
+                return false
+            }
+        }
+        var cleared = false
+
+        let completed = await driver.cancelPairing(
+            clearConfirmedMark: { cleared = true },
+            unpair: { await coordinator.unpair() }
+        )
+
+        #expect(!completed)
+        #expect(!cleared)
+        #expect(driver.isPresented)
+        #expect(store.currentPairing != nil)
+        #expect(!store.deleted)
+        driver.cancel()
+    }
+
     @Test func lateMarkAfterUnverifiedDoesNotAutoAdvance() async throws {
         let driver = makeDriver(deadlineSeconds: 0.05)
         let baseURL = "http://127.0.0.1:7071"
@@ -489,6 +518,31 @@ struct JournalMarkConfirmationDriverTests {
         #expect(!driver.isPresented)
     }
 
+    @Test func rejectKeepsConfirmationAndSkipsMismatchWhenDurableInvalidationFails() async throws {
+        let driver = try await validDriver()
+        let store = PairingStore(
+            pairing: pairing(),
+            carriedRecordSaveError: PairingCredentialStoreError.staleGeneration
+        )
+        let coordinator = makeCoordinator(store: store)
+        var cleared = false
+        var mismatch = false
+
+        let completed = await driver.reject(
+            clearConfirmedMark: { cleared = true },
+            unpair: { await coordinator.unpair() },
+            onMismatch: { mismatch = true }
+        )
+
+        #expect(!completed)
+        #expect(!cleared)
+        #expect(!mismatch)
+        #expect(driver.isPresented)
+        #expect(store.currentPairing != nil)
+        #expect(!store.deleted)
+        driver.cancel()
+    }
+
     private func validDriver() async throws -> JournalMarkConfirmationDriver {
         let driver = makeDriver(deadlineSeconds: 1)
 
@@ -531,9 +585,9 @@ struct JournalMarkConfirmationDriverTests {
         let actualOwner = owner ?? makeOwner(store: store)
         return PairingCoordinator(
             pair: { _, _, _ in pairing() },
+            keychainStore: store,
             loadPairing: { try store.load() },
             savePairing: { try store.save($0) },
-            deletePairing: { try store.delete() },
             reactivate: { [actualOwner] in
                 await actualOwner.reevaluatePairing()
             },
@@ -548,9 +602,7 @@ struct JournalMarkConfirmationDriverTests {
         factory: FakeTransportFactory = FakeTransportFactory([FakeTunnelTransport()])
     ) -> TunnelLifecycleOwner {
         TunnelLifecycleOwner(
-            loadPairing: { try store.load() },
-            savePairing: { try store.save($0) },
-            deletePairing: { try store.delete() },
+            keychainStore: store,
             tokenRefresher: FakeTokenRefresher(ifNeededResults: [.notNeeded(store.currentPairing ?? pairing())]).seam,
             makeTransport: { factory.make() },
             pathMonitoringSource: NoopPathMonitoringSource(),

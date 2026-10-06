@@ -106,7 +106,9 @@ public enum IngestProtocolV3 {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             let protocolVersion = try values.decode(Int.self, forKey: .protocolVersion)
             let total = try values.decode(Int.self, forKey: .total)
-            let items = try values.decode([SegmentsItem].self, forKey: .items)
+            let items: [SegmentsItem]
+            do { items = try values.decode([SegmentsItem].self, forKey: .items) }
+            catch { throw UploadError.invalidResponse }
 
             guard protocolVersion == 3, total >= 0, total == items.count else {
                 throw UploadError.invalidResponse
@@ -118,12 +120,24 @@ public enum IngestProtocolV3 {
                 }
             }
 
-            var allKeys = canonicalKeys
+            var originalKeys: [Data: [SegmentsItem]] = [:]
             for item in items {
-                if let originalKey = item.originalKey,
-                   (originalKey.isEmpty || !allKeys.insert(Data(originalKey.utf8)).inserted) {
+                guard let originalKey = item.originalKey else { continue }
+                let originalData = Data(originalKey.utf8)
+                guard !originalKey.isEmpty, !canonicalKeys.contains(originalData) else {
                     throw UploadError.invalidResponse
                 }
+                let prior = originalKeys[originalData, default: []]
+                for previous in prior {
+                    guard previous.segment != nil,
+                          let previousStream = previous.stream,
+                          item.segment != nil,
+                          let stream = item.stream,
+                          previousStream != stream else {
+                        throw UploadError.invalidResponse
+                    }
+                }
+                originalKeys[originalData, default: []].append(item)
             }
 
             self.protocolVersion = protocolVersion
@@ -136,29 +150,121 @@ public enum IngestProtocolV3 {
         let key: String
         let files: [ReadFile]
         let originalKey: String?
+        let segment: String?
+        let stream: String?
 
         enum CodingKeys: String, CodingKey {
             case key
             case files
             case originalKey = "original_key"
+            case segment
+            case stream
         }
 
-        init(key: String, files: [ReadFile], originalKey: String? = nil) {
+        init(
+            key: String,
+            files: [ReadFile],
+            originalKey: String? = nil,
+            segment: String? = nil,
+            stream: String? = nil
+        ) {
             self.key = key
             self.files = files
             self.originalKey = originalKey
+            self.segment = segment
+            self.stream = stream
         }
 
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
             let key = try values.decode(String.self, forKey: .key)
             let files = try values.decode([ReadFile].self, forKey: .files)
-            let originalKey = try values.decodeIfPresent(String.self, forKey: .originalKey)
+            let originalKey: String?
+            if values.contains(.originalKey) {
+                let decoded = try values.decode(String.self, forKey: .originalKey)
+                guard !decoded.isEmpty else { throw UploadError.invalidResponse }
+                originalKey = decoded
+            } else {
+                originalKey = nil
+            }
+            let hasSegment = values.contains(.segment)
+            let hasStream = values.contains(.stream)
+            guard hasSegment == hasStream else {
+                throw UploadError.invalidResponse
+            }
+            let segment = hasSegment ? try values.decode(String.self, forKey: .segment) : nil
+            let stream = hasStream ? try values.decode(String.self, forKey: .stream) : nil
+            guard segment.map({ !$0.isEmpty }) ?? true,
+                  stream.map({ !$0.isEmpty }) ?? true else { throw UploadError.invalidResponse }
             try validateFiles(files)
 
             self.key = key
             self.files = files
             self.originalKey = originalKey
+            self.segment = segment
+            self.stream = stream
+        }
+    }
+
+    struct DayManifest: Decodable, Sendable, Equatable {
+        struct Segment: Decodable, Sendable, Equatable {
+            let files: [ReadFile]
+
+            private enum CodingKeys: String, CodingKey, CaseIterable {
+                case files
+            }
+
+            init(from decoder: Decoder) throws {
+                let values = try decoder.container(keyedBy: AnyCodingKey.self)
+                guard Set(values.allKeys.map(\.stringValue)) == ["files"] else {
+                    throw UploadError.invalidResponse
+                }
+                files = try values.decode([ReadFile].self, forKey: AnyCodingKey("files"))
+                try validateFiles(files)
+            }
+        }
+
+        let version: Int
+        let day: String
+        let segments: [String: Segment]
+
+        private enum CodingKeys: String, CodingKey {
+            case version
+            case day
+            case segments
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            let version = try values.decode(Int.self, forKey: .version)
+            let day = try values.decode(String.self, forKey: .day)
+            let segments = try values.decode([String: Segment].self, forKey: .segments)
+            guard version == 1, IngestDayKey.startOfDay(dayKey: day) != nil,
+                  segments.keys.allSatisfy({ !$0.isEmpty }) else {
+                throw UploadError.invalidResponse
+            }
+            self.version = version
+            self.day = day
+            self.segments = segments
+        }
+    }
+
+    private struct AnyCodingKey: CodingKey {
+        let stringValue: String
+        let intValue: Int?
+
+        init(_ string: String) {
+            stringValue = string
+            intValue = nil
+        }
+
+        init?(stringValue: String) {
+            self.init(stringValue)
+        }
+
+        init?(intValue: Int) {
+            stringValue = String(intValue)
+            self.intValue = intValue
         }
     }
 

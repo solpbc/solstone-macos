@@ -515,14 +515,24 @@ struct BrowserSpoolLifecycleTests {
         return fixture.owner.store.getPeriod(periodId: periodId)?.ackDurable == true
     }
 
-    private func matchingListing(_ binding: BrowserIngestAck, key: String? = nil) -> IngestProtocolV3.SegmentsDay {
+    private func matchingListing(
+        _ binding: BrowserIngestAck,
+        key: String? = nil,
+        segment: String? = nil
+    ) -> IngestProtocolV3.SegmentsDay {
         let file = IngestProtocolV3.ReadFile(
             name: binding.filename,
             size: binding.size,
             sha256: binding.sha256,
             status: .present
         )
-        let item = IngestProtocolV3.SegmentsItem(key: key ?? binding.canonicalKey ?? "", files: [file])
+        let item = IngestProtocolV3.SegmentsItem(
+            key: key ?? binding.canonicalKey ?? "",
+            files: [file],
+            originalKey: binding.requestedSegment,
+            segment: segment ?? binding.requestedSegment,
+            stream: "browser-stream"
+        )
         return IngestProtocolV3.SegmentsDay(total: 1, items: [item])
     }
 
@@ -877,7 +887,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired), transport: transport)
         defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
         let state = AppState.forSnapshot()
-        state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
+        await state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
         let generation = try #require(fixture.owner.store.getDestinationGeneration())
@@ -920,7 +930,7 @@ struct BrowserSpoolLifecycleTests {
         let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired), transport: transport,
             syncPaused: { await MainActor.run { state.config.syncPaused } })
         defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
-        state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
+        await state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
         await fixture.owner.start()
         await fixture.clock.waitUntilSleeping()
         let generation = try #require(fixture.owner.store.getDestinationGeneration())
@@ -1095,6 +1105,84 @@ struct BrowserSpoolLifecycleTests {
         recovered.stop()
     }
 
+    @Test func uniqueFreshPostCustodyReleasesPayloadAndRetryConverges() async throws {
+        let transport = LifecycleTransport()
+        transport.setOutcomeSuccess(true)
+        let fixture = try fixture(transport: transport)
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.pause.set(true)
+        await fixture.owner.start()
+        await fixture.clock.waitUntilSleeping()
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
+        let accepted = try reply(await fixture.owner.accept(
+            bytes: batch(generation, id: "20202020202020202020202020202020", queuedAtMs: 1_700_000_100_000),
+            direction: "extension_to_host"
+        ))
+        let periodID = try #require(accepted["period_id"] as? String)
+        let payloadURL = fixture.owner.store.periodFileURL(for: periodID)
+        fixture.clock.advance(seconds: 301)
+        #expect(await waitForPeriodState(fixture, periodId: periodID, state: "finalized"))
+
+        fixture.pause.set(false)
+        await fixture.owner.planner.planAndUpload()
+
+        #expect(await waitForPeriodState(fixture, periodId: periodID, state: "delivered"))
+        #expect(fixture.owner.store.getPeriod(periodId: periodID)?.ackDurable == true)
+        #expect(!FileManager.default.fileExists(atPath: payloadURL.path))
+        #expect(transport.attempts == 1)
+        await fixture.owner.planner.planAndUpload()
+        #expect(transport.attempts == 1)
+    }
+
+    @Test func uniqueCoordinateFreeListingReconcilesCustodyAfterLocalReleaseFailure() async throws {
+        let transport = LifecycleTransport()
+        transport.setOutcomeSuccess(true)
+        let fixture = try fixture(transport: transport)
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.pause.set(true)
+        await fixture.owner.start()
+        await fixture.clock.waitUntilSleeping()
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
+        let accepted = try reply(await fixture.owner.accept(
+            bytes: batch(generation, id: "21212121212121212121212121212121", queuedAtMs: 1_700_000_100_000),
+            direction: "extension_to_host"
+        ))
+        let periodID = try #require(accepted["period_id"] as? String)
+        let payloadURL = fixture.owner.store.periodFileURL(for: periodID)
+        fixture.clock.advance(seconds: 301)
+        #expect(await waitForPeriodState(fixture, periodId: periodID, state: "finalized"))
+
+        let proofCalls = Counter()
+        fixture.injector.setFailure { point in
+            if point == .proof && proofCalls.increment() == 2 { throw LifecycleInjectedFailure.injected }
+        }
+        fixture.pause.set(false)
+        await fixture.owner.planner.planAndUpload()
+        #expect(await waitForDurableAck(fixture, periodId: periodID))
+        #expect(fixture.owner.store.getPeriod(periodId: periodID)?.state == "finalized")
+        #expect(FileManager.default.fileExists(atPath: payloadURL.path))
+        let ack = try #require(fixture.owner.store.storedDeliveryBinding(periodId: periodID)?.ack)
+        let ordinaryEntry = IngestProtocolV3.SegmentsItem(
+            key: try #require(ack.canonicalKey),
+            files: [IngestProtocolV3.ReadFile(
+                name: ack.filename,
+                size: ack.size,
+                sha256: ack.sha256,
+                status: .present
+            )]
+        )
+        transport.setDayListing(IngestProtocolV3.SegmentsDay(total: 1, items: [ordinaryEntry]))
+        fixture.injector.setFailure(nil)
+
+        await fixture.owner.planner.planAndUpload()
+
+        #expect(fixture.owner.store.getPeriod(periodId: periodID)?.state == "delivered")
+        #expect(!FileManager.default.fileExists(atPath: payloadURL.path))
+        #expect(transport.attempts == 1)
+        await fixture.owner.planner.planAndUpload()
+        #expect(transport.attempts == 1)
+    }
+
     @Test func ackReconciliationRequiresCanonicalKeyAndEveryBindingField() async throws {
         let transport = LifecycleTransport()
         transport.setOutcomeSuccess(true)
@@ -1139,7 +1227,11 @@ struct BrowserSpoolLifecycleTests {
         #expect(try BrowserIngestAckStore.read(from: ackURL, ioInjector: fixture.injector) == binding.ack)
         #expect(storedPeriod.ackDurable)
 
-        transport.setDayListing(matchingListing(binding.ack, key: "different-canonical-key"))
+        transport.setDayListing(matchingListing(
+            binding.ack,
+            key: "different-canonical-key",
+            segment: "different-physical-segment"
+        ))
         let readsBeforeMismatch = transport.dayReads
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
@@ -1154,7 +1246,7 @@ struct BrowserSpoolLifecycleTests {
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await waitForPeriodState(fixture, periodId: periodId, state: "delivered"))
-        #expect(transport.attempts == 1)
+        #expect(transport.attempts == 2)
         #expect(FileManager.default.fileExists(atPath: fixture.owner.store.periodFileURL(for: periodId).path) == false)
         fixture.owner.stop()
 
@@ -1224,6 +1316,7 @@ struct BrowserSpoolLifecycleTests {
     @Test func capturedAckSurvivesCredentialReplacementButStopCancelsUpload() async throws {
         let replacementTransport = LifecycleTransport()
         replacementTransport.setOutcomeSuccess(true)
+        replacementTransport.setStoredSegmentKey("captured-browser-collision-alias")
         let replacement = try fixture(transport: replacementTransport)
         defer { replacement.owner.stop(); try? FileManager.default.removeItem(at: replacement.root) }
         replacement.pause.set(true)
@@ -1297,7 +1390,7 @@ struct BrowserSpoolLifecycleTests {
         #expect(FileManager.default.fileExists(atPath: stoppedPayload.path))
         #expect(try FileManager.default.contentsOfDirectory(atPath: stopped.owner.store.stagingRootURL().path).isEmpty)
     }
-    @Test func segmentRemovedProofCleansOnlyItsPeriodAndRecoveryFinishesUnlink() async throws {
+    @Test func segmentRemovedResponseNeverReleasesBrowserCustodyWithoutReceipt() async throws {
         let removedTransport = LifecycleTransport()
         removedTransport.setFirstOutcomeSegmentRemovedThenFail()
         let fixture = try fixture(transport: removedTransport)
@@ -1331,8 +1424,8 @@ struct BrowserSpoolLifecycleTests {
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await removedTransport.waitForAttempts(2))
-        #expect(await waitForPeriodState(fixture, periodId: periodId, state: "removed"))
-        #expect(FileManager.default.fileExists(atPath: payload.path) == false)
+        #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
+        #expect(FileManager.default.fileExists(atPath: payload.path))
         #expect(fixture.owner.store.getPeriod(periodId: secondPeriodId)?.state == "finalized")
         #expect(FileManager.default.fileExists(atPath: secondPayload.path))
         await fixture.updateRoute(.held)
@@ -1340,8 +1433,8 @@ struct BrowserSpoolLifecycleTests {
         #expect(await removedTransport.waitForAttempts(3))
         try await Task.sleep(for: .milliseconds(80))
         #expect(removedTransport.attempts >= 3)
-        #expect(fixture.owner.store.getPeriod(periodId: periodId)?.state == "removed")
-        #expect(removedTransport.hashes.filter { $0 == firstHash }.count == 1)
+        #expect(fixture.owner.store.getPeriod(periodId: periodId)?.state == "finalized")
+        #expect(removedTransport.hashes.filter { $0 == firstHash }.count >= 2)
         #expect(FileManager.default.fileExists(atPath: secondPayload.path))
         fixture.owner.stop()
 
@@ -1372,7 +1465,7 @@ struct BrowserSpoolLifecycleTests {
         await interrupted.updateRoute(.held)
         await interrupted.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await recoveryTransport.waitForAttempts(1))
-        #expect(interrupted.owner.store.getPeriod(periodId: interruptedPeriod)?.state == "removed")
+        #expect(interrupted.owner.store.getPeriod(periodId: interruptedPeriod)?.state == "finalized")
         #expect(interrupted.owner.store.getPeriod(periodId: interruptedPeriod)?.cleanupDurable == false)
         #expect(FileManager.default.fileExists(atPath: interruptedPayload.path))
         interrupted.owner.stop()
@@ -1388,14 +1481,14 @@ struct BrowserSpoolLifecycleTests {
             ioInjector: interrupted.injector
         )
         await recovered.start()
-        #expect(recovered.store.getPeriod(periodId: interruptedPeriod) == nil || recovered.store.getPeriod(periodId: interruptedPeriod)?.cleanupDurable == true)
-        #expect(FileManager.default.fileExists(atPath: interruptedPayload.path) == false)
+        #expect(recovered.store.getPeriod(periodId: interruptedPeriod)?.state == "finalized")
+        #expect(FileManager.default.fileExists(atPath: interruptedPayload.path))
         let replay = try reply(await recovered.accept(
             bytes: batch(interruptedGeneration, id: "25252525252525252525252525252525", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
         ))
         #expect(replay["result"] as? String == "duplicate")
-        #expect(recoveryTransport.attempts == 1)
+        #expect(recoveryTransport.attempts >= 1)
         #expect(recovered.store.storeIsFailed() == false)
         recovered.stop()
     }
@@ -1613,6 +1706,267 @@ struct BrowserSpoolLifecycleTests {
         #expect(fixture.owner.store.getFloorMs() >= floor)
         #expect(!fixture.owner.store.storeIsFailed())
         #expect(BrowserAgeStamp.wallMilliseconds(Date(timeIntervalSince1970: .infinity)) == UInt64(Int64.max))
+    }
+
+    @Test func carriedPairingAdmissionBlocksQueuedBrowserPostAndRetainsBytes() async throws {
+        let transport = LifecycleTransport()
+        transport.setOutcomeSuccess(true)
+        let fixture = try fixture(transport: transport)
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.pause.set(true)
+        await fixture.owner.start()
+        await fixture.clock.waitUntilSleeping()
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
+        let accepted = try reply(await fixture.owner.accept(
+            bytes: batch(generation, id: "4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a", queuedAtMs: 1_700_000_100_000),
+            direction: "extension_to_host"
+        ))
+        let periodId = try #require(accepted["period_id"] as? String)
+        let payload = fixture.owner.store.periodFileURL(for: periodId)
+        await fixture.owner.setCarriedPairingAdmissionOpen { false }
+        let held = try reply(await fixture.owner.accept(
+            bytes: batch(generation, id: "5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b", queuedAtMs: 1_700_000_100_001),
+            direction: "extension_to_host"
+        ))
+        let heldPeriodID = try #require(held["period_id"] as? String)
+        let heldPayload = fixture.owner.store.periodFileURL(for: heldPeriodID)
+        fixture.clock.advance(seconds: 301)
+        #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
+        #expect(await waitForPeriodState(fixture, periodId: heldPeriodID, state: "finalized"))
+        fixture.pause.set(false)
+        await fixture.owner.planner.planAndUpload()
+
+        #expect(transport.attempts == 0)
+        #expect(fixture.owner.store.getPeriod(periodId: periodId)?.state == "finalized")
+        #expect(FileManager.default.fileExists(atPath: payload.path))
+        #expect(fixture.owner.store.getPeriod(periodId: heldPeriodID)?.state == "finalized")
+        #expect(FileManager.default.fileExists(atPath: heldPayload.path))
+    }
+
+    @Test func durableInvalidationBetweenBrowserListingAndCustodyCommitRetainsPendingBytes() async throws {
+        let paired = pairing(instanceID: "browser-custody-invalidation")
+        let credentials = PairingCredentialStore(store: PairingStore(pairing: paired))
+        _ = try credentials.load()
+        let transport = LifecycleTransport()
+        transport.setOutcomeSuccess(true)
+        transport.setStoredSegmentKey("browser-collision-alias")
+        let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired), transport: transport)
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.owner.bindCredentials(credentials)
+        let pairingGeneration = credentials.pairingGeneration
+        let identityDigest = BrowserIntakeStore.identityDigest(of: PairingCredentialStore.identityToken(for: paired))
+        fixture.route.update(BrowserIntakeRouteCapability(
+            serverURL: "http://127.0.0.1:49321",
+            identityDigest: identityDigest,
+            pairingGeneration: pairingGeneration,
+            transportIncarnation: 1,
+            credentialIsCurrent: { credentials.matchesBrowserPairing(generation: pairingGeneration, identityDigest: identityDigest) }
+        ))
+        await fixture.owner.setCarriedPairingAdmissionOpen {
+            credentials.admission(for: credentials.currentPairing()) == .ready
+        }
+        await fixture.owner.setCarriedPairingAdmissionCommit { route, operation in
+            try credentials.withOrdinaryBrowserAdmission(
+                generation: route.pairingGeneration,
+                identityDigest: route.identityDigest,
+                operation: operation
+            ) ?? false
+        }
+        fixture.pause.set(true)
+        await fixture.owner.start()
+
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
+        let accepted = try reply(await fixture.owner.accept(
+            bytes: batch(generation, id: "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c", queuedAtMs: 1_700_000_100_000),
+            direction: "extension_to_host"
+        ))
+        let periodID = try #require(accepted["period_id"] as? String)
+        fixture.clock.advance(seconds: 301)
+        #expect(await waitForPeriodState(fixture, periodId: periodID, state: "finalized"))
+
+        fixture.pause.set(false)
+        await fixture.owner.planner.planAndUpload()
+        #expect(await waitForDurableAck(fixture, periodId: periodID))
+        let binding = try #require(try fixture.owner.store.storedDeliveryBinding(periodId: periodID))
+        let payloadURL = fixture.owner.store.periodFileURL(for: periodID)
+        let payload = try Data(contentsOf: payloadURL)
+        transport.setDayListing(matchingListing(binding.ack))
+
+        let barrier = LifecycleDiscardResultBarrier()
+        fixture.owner.planner.setBeforeCustodyCommit { await barrier.suspend() }
+        let delivery = Task { await fixture.owner.planner.planAndUpload() }
+        try #require(await waitUntil { await barrier.isHeld })
+
+        _ = try credentials.beginInvalidation(for: paired, operationID: "browser-custody-invalidated")
+        await barrier.release()
+        await delivery.value
+
+        let period = try #require(fixture.owner.store.getPeriod(periodId: periodID))
+        #expect(period.state == "finalized")
+        #expect(period.ackDurable)
+        #expect(try Data(contentsOf: payloadURL) == payload)
+        guard case .present = fixture.owner.store.pendingDiscardInventory() else {
+            Issue.record("Unreleased browser custody should remain in the pending inventory")
+            return
+        }
+    }
+
+    @Test func equalByteCollisionTwinsRemainAmbiguousAndUnmatchedListingPosts() async throws {
+        let transport = LifecycleTransport()
+        transport.setOutcomeSuccess(true)
+        transport.setStoredSegmentKey("opaque-collision-alias")
+        let fixture = try fixture(transport: transport)
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.pause.set(true)
+        await fixture.owner.start()
+        await fixture.clock.waitUntilSleeping()
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
+        let accepted = try reply(await fixture.owner.accept(
+            bytes: batch(generation, id: "4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b", queuedAtMs: 1_700_000_100_000),
+            direction: "extension_to_host"
+        ))
+        let periodId = try #require(accepted["period_id"] as? String)
+        let payload = fixture.owner.store.periodFileURL(for: periodId)
+        fixture.clock.advance(seconds: 301)
+        #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
+        fixture.pause.set(false)
+        await fixture.updateRoute(.held)
+        await fixture.updateRoute(.url("http://127.0.0.1:49321"))
+        #expect(await transport.waitForAttempts(1))
+        #expect(await waitForDurableAck(fixture, periodId: periodId))
+        let ack = try #require(fixture.owner.store.storedDeliveryBinding(periodId: periodId)?.ack)
+
+        let aliasOnly = IngestProtocolV3.SegmentsDay(total: 1, items: [IngestProtocolV3.SegmentsItem(
+            key: ack.canonicalKey ?? "alias-only",
+            files: [IngestProtocolV3.ReadFile(
+                name: ack.filename,
+                size: ack.size,
+                sha256: ack.sha256,
+                status: .processed
+            )],
+            originalKey: ack.requestedSegment
+        )])
+        transport.setDayListing(aliasOnly)
+        transport.setOutcomeSuccess(false)
+        await fixture.owner.planner.planAndUpload()
+        #expect(await transport.waitForAttempts(2))
+
+        let streams: [String] = ["stream-a", "stream-b"]
+        let twins = streams.map { stream in
+            IngestProtocolV3.SegmentsItem(
+                key: "opaque-alias-\(stream)",
+                files: [IngestProtocolV3.ReadFile(
+                    name: ack.filename,
+                    size: ack.size,
+                    sha256: ack.sha256,
+                    status: .present
+                )],
+                originalKey: ack.requestedSegment,
+                segment: ack.requestedSegment,
+                stream: stream
+            )
+        }
+        transport.setDayListing(IngestProtocolV3.SegmentsDay(protocolVersion: 3, total: 2, items: twins))
+        let readsBefore = transport.dayReads
+        await fixture.owner.planner.planAndUpload()
+        #expect(transport.dayReads > readsBefore)
+
+        #expect(await transport.waitForAttempts(3))
+        #expect(fixture.owner.store.getPeriod(periodId: periodId)?.state == "finalized")
+        #expect(FileManager.default.fileExists(atPath: payload.path))
+    }
+
+    @Test func physicalAliasReassignmentPersistsAcrossRestart() async throws {
+        let transport = LifecycleTransport()
+        transport.setOutcomeSuccess(true)
+        transport.setStoredSegmentKey("initial-browser-alias")
+        let fixture = try fixture(transport: transport)
+        defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
+        fixture.pause.set(true)
+        await fixture.owner.start()
+        await fixture.clock.waitUntilSleeping()
+        let generation = try #require(fixture.owner.store.getDestinationGeneration())
+        let accepted = try reply(await fixture.owner.accept(
+            bytes: batch(generation, id: "4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c", queuedAtMs: 1_700_000_100_000),
+            direction: "extension_to_host"
+        ))
+        let periodId = try #require(accepted["period_id"] as? String)
+        let payload = fixture.owner.store.periodFileURL(for: periodId)
+        fixture.clock.advance(seconds: 301)
+        #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
+        fixture.pause.set(false)
+        await fixture.updateRoute(.held)
+        await fixture.updateRoute(.url("http://127.0.0.1:49321"))
+        #expect(await transport.waitForAttempts(1))
+        #expect(await waitForDurableAck(fixture, periodId: periodId))
+        let originalAck = try #require(fixture.owner.store.storedDeliveryBinding(periodId: periodId)?.ack)
+
+        func listing(_ ack: BrowserIngestAck, key: String) -> IngestProtocolV3.SegmentsDay {
+            IngestProtocolV3.SegmentsDay(
+                protocolVersion: 3,
+                total: 1,
+                items: [IngestProtocolV3.SegmentsItem(
+                    key: key,
+                    files: [IngestProtocolV3.ReadFile(
+                        name: ack.filename,
+                        size: ack.size,
+                        sha256: ack.sha256,
+                        status: .processed
+                    )],
+                    originalKey: ack.requestedSegment,
+                    segment: ack.requestedSegment,
+                    stream: "browser-stream"
+                )]
+            )
+        }
+
+        transport.setDayListing(listing(originalAck, key: "reassigned-alias-before-restart"))
+        let proofCalls = Counter()
+        fixture.injector.setFailure { point in
+            if point == .proof, proofCalls.increment() >= 2 { throw LifecycleInjectedFailure.injected }
+        }
+        await fixture.owner.planner.planAndUpload()
+        let persisted = try #require(fixture.owner.store.storedDeliveryBinding(periodId: periodId)?.ack)
+        #expect(persisted.canonicalKey == "reassigned-alias-before-restart")
+        #expect(persisted.physicalSegment == originalAck.requestedSegment)
+        #expect(persisted.physicalStream == "browser-stream")
+        #expect(FileManager.default.fileExists(atPath: payload.path))
+
+        fixture.owner.stop()
+        await fixture.owner.stopAndDrain()
+        fixture.injector.setFailure(nil)
+        transport.setDayListing(listing(persisted, key: "reassigned-alias-after-restart"))
+        let recoveredRoute = BrowserIntakeRouteState()
+        _ = recoveredRoute.update(BrowserIntakeRouteCapability(
+            serverURL: "http://127.0.0.1:49321",
+            identityDigest: BrowserIntakeStore.identityDigest(of: "lifecycle-pairing"),
+            pairingGeneration: 1,
+            transportIncarnation: 1,
+            credentialIsCurrent: { true }
+        ))
+        let recoveredOwner = try BrowserIntakeOwner.start(
+            spoolRoot: fixture.root,
+            projection: fixture.projection,
+            credentialSnapshot: BrowserCredentialSnapshot(identityToken: "lifecycle-pairing"),
+            clock: fixture.clock,
+            transport: transport,
+            routeResolver: HomeBaseURLResolver { .url("http://127.0.0.1:49321") },
+            syncPaused: { false },
+            ioInjector: fixture.injector,
+            routeState: recoveredRoute
+        )
+        let reopenedAck = try #require(recoveredOwner.store.storedDeliveryBinding(periodId: periodId)?.ack)
+        #expect(reopenedAck.canonicalKey == "reassigned-alias-before-restart")
+        #expect(reopenedAck.physicalSegment == originalAck.requestedSegment)
+        #expect(reopenedAck.physicalStream == "browser-stream")
+        await recoveredOwner.start()
+        let releaseDeadline = ContinuousClock.now + .seconds(3)
+        while FileManager.default.fileExists(atPath: payload.path), ContinuousClock.now < releaseDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!FileManager.default.fileExists(atPath: payload.path))
+        recoveredOwner.stop()
+        await recoveredOwner.stopAndDrain()
     }
 
     @Test(arguments: [false, true])
@@ -1941,14 +2295,21 @@ struct BrowserSpoolLifecycleTests {
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await transport.waitForAttempts(1))
-        if !removed {
-            let storedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: deliveredPeriodId)
-            let binding = try #require(storedBinding)
-            transport.setDayListing(matchingListing(binding.ack))
-            await fixture.updateRoute(.held)
-            await fixture.updateRoute(.url("http://127.0.0.1:49321"))
+        if removed {
+            #expect(await waitForDeliveryState(fixture, state: "failed"))
+            let retained = try #require(fixture.owner.store.getPeriod(periodId: deliveredPeriodId))
+            #expect(retained.state == "finalized")
+            #expect(retained.deliveredAtMs == nil)
+            #expect(FileManager.default.fileExists(atPath: fixture.owner.store.periodFileURL(for: deliveredPeriodId).path))
+            fixture.owner.stop()
+            return
         }
-        #expect(await waitForPeriodState(fixture, periodId: deliveredPeriodId, state: removed ? "removed" : "delivered"))
+        let storedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: deliveredPeriodId)
+        let binding = try #require(storedBinding)
+        transport.setDayListing(matchingListing(binding.ack))
+        await fixture.updateRoute(.held)
+        await fixture.updateRoute(.url("http://127.0.0.1:49321"))
+        #expect(await waitForPeriodState(fixture, periodId: deliveredPeriodId, state: "delivered"))
         let deliveredAt = try #require(fixture.owner.store.getPeriod(periodId: deliveredPeriodId)?.deliveredAtMs)
         #expect(try reply(await fixture.owner.accept(bytes: firstBytes, direction: "extension_to_host"))["result"] as? String == "duplicate")
 

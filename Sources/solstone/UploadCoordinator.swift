@@ -128,6 +128,10 @@ public final class UploadCoordinator {
     private let lastContactStore: any LastSuccessfulJournalContactStoring
     private let lastDeliveryStore: any LastJournalDeliveryStoring
     private let journalIdentityProvider: @MainActor @Sendable () -> JournalIdentityRead
+    private let ordinaryAdmission: @MainActor @Sendable () -> Bool
+    private let pairingCredentialStore: PairingCredentialStore?
+    private var ordinaryTrafficRevoked = false
+    private var minimumProgressEpoch: UInt64 = 0
     private let recorder: DiagnosticEvidenceRecorder
     private let logAdapter: DiagnosticEvidenceLoggingAdapter
     private let classifiedLog: any ClassifiedLogSinking
@@ -150,6 +154,8 @@ public final class UploadCoordinator {
         lastContactStore: any LastSuccessfulJournalContactStoring = UserDefaultsLastSuccessfulJournalContactStore(),
         lastDeliveryStore: any LastJournalDeliveryStoring = UserDefaultsLastJournalDeliveryStore(),
         journalIdentityProvider: @escaping @MainActor @Sendable () -> JournalIdentityRead = { .absent },
+        ordinaryAdmission: @escaping @MainActor @Sendable () -> Bool = { true },
+        pairingCredentialStore: PairingCredentialStore? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
         classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.upload
@@ -162,13 +168,16 @@ public final class UploadCoordinator {
         self.lastContactStore = lastContactStore
         self.lastDeliveryStore = lastDeliveryStore
         self.journalIdentityProvider = journalIdentityProvider
+        self.ordinaryAdmission = ordinaryAdmission
+        self.pairingCredentialStore = pairingCredentialStore
         self.recorder = recorder
         self.logAdapter = logAdapter
         self.classifiedLog = classifiedLog
         self.syncService = SyncService(
             storageManager: storageManager,
             client: client,
-            resolver: resolver
+            resolver: resolver,
+            pairingCredentialStore: pairingCredentialStore
         )
 
         let initialFingerprint = journalIdentityProvider().fingerprint
@@ -199,6 +208,7 @@ public final class UploadCoordinator {
         lastContactStore: any LastSuccessfulJournalContactStoring = InMemoryLastSuccessfulJournalContactStore(),
         lastDeliveryStore: any LastJournalDeliveryStoring = InMemoryLastJournalDeliveryStore(),
         journalIdentityProvider: @escaping @MainActor @Sendable () -> JournalIdentityRead = { .absent },
+        ordinaryAdmission: @escaping @MainActor @Sendable () -> Bool = { true },
         recorder: DiagnosticEvidenceRecorder = .dormant,
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
         classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.upload
@@ -208,6 +218,8 @@ public final class UploadCoordinator {
         self.lastContactStore = lastContactStore
         self.lastDeliveryStore = lastDeliveryStore
         self.journalIdentityProvider = journalIdentityProvider
+        self.ordinaryAdmission = ordinaryAdmission
+        self.pairingCredentialStore = nil
         self.recorder = recorder
         self.logAdapter = logAdapter
         self.classifiedLog = classifiedLog
@@ -258,6 +270,9 @@ public final class UploadCoordinator {
     func updatePairedIngestIdentity(_ identity: TunnelPairingIdentity?) {
         refreshLastJournalDelivery()
         let fingerprint = journalIdentityProvider().fingerprint
+        if identity != nil, ordinaryAdmission() {
+            ordinaryTrafficRevoked = false
+        }
         guard pairedIngestIdentity != identity || pushedJournalFingerprint != fingerprint else {
             return
         }
@@ -273,8 +288,22 @@ public final class UploadCoordinator {
         }
     }
 
+    func revokeOrdinaryTraffic() async {
+        ordinaryTrafficRevoked = true
+        minimumProgressEpoch = await syncService.revokeOrdinaryTraffic()
+    }
+
+    func rebindLastJournalDelivery(from old: TunnelPairingIdentity, to new: TunnelPairingIdentity) {
+        guard old.instanceID == new.instanceID else { return }
+        _ = lastDeliveryStore.rebind(
+            from: tunnelJournalConnectionFingerprint(for: old).value,
+            to: tunnelJournalConnectionFingerprint(for: new).value
+        )
+        refreshLastJournalDelivery()
+    }
+
     var isPairedIngestReady: Bool {
-        pairedIngestIdentity != nil
+        pairedIngestIdentity != nil && ordinaryAdmission()
     }
 
     internal func refreshLastSuccessfulJournalContact() {
@@ -342,7 +371,7 @@ public final class UploadCoordinator {
     /// Validates the currently connected paired loopback journal, not the
     /// editable legacy external-service fields.
     public func testPairedIngestConnection() async -> String? {
-        guard pairedIngestIdentity != nil else { return "Not configured" }
+        guard pairedIngestIdentity != nil, ordinaryAdmission() else { return "Not configured" }
         switch await resolver.resolve() {
         case .url(let serverURL):
             let today = IngestDayKey.string(from: nowProvider())
@@ -378,13 +407,19 @@ public final class UploadCoordinator {
         eventTask = Task { [weak self] in
             guard let self = self else { return }
 
-            let stream = self.syncService.progressStream
-            for await event in stream {
+            let stream = self.syncService.progressEnvelopeStream
+            for await envelope in stream {
                 await MainActor.run {
-                    self.handleProgressEvent(event)
+                    self.handleProgressEnvelope(envelope)
                 }
             }
         }
+    }
+
+    internal func handleProgressEnvelope(_ envelope: SyncService.ProgressEnvelope) {
+        guard envelope.epoch == minimumProgressEpoch,
+              ordinaryProgressIsCurrent(envelope.context) else { return }
+        handleProgressEvent(envelope.event)
     }
 
     internal func handleProgressEvent(_ event: SyncService.ProgressEvent) {
@@ -404,14 +439,17 @@ public final class UploadCoordinator {
         case .uploadRetrying(let segment, let attempt):
             status = .retrying(segment: segment, attempts: attempt)
 
-        case .uploadSucceeded(_, let proof):
+        case .uploadSucceeded(_, let proof, let context):
+            guard ordinaryProgressIsCurrent(context) else { return }
             handleProvenDelivery(proof: JournalConnectionFingerprint(value: proof))
 
-        case .uploadFailed(_, _, let healthReason, let requestedPath):
+        case .uploadFailed(_, _, let healthReason, let requestedPath, let context):
+            guard ordinaryProgressIsCurrent(context) else { return }
             recordIngestFailure(healthReason: healthReason, requestedPath: requestedPath)
             // Continue with next segment
 
-        case .journalContactSucceeded:
+        case .journalContactSucceeded(let context):
+            guard ordinaryProgressIsCurrent(context) else { return }
             let now = nowProvider()
             lastSyncedAt = now
             if let fingerprint = journalIdentityProvider().fingerprint {
@@ -426,7 +464,8 @@ public final class UploadCoordinator {
             recentErrorCount = 0
             clearIngestFailure()
 
-        case .syncComplete:
+        case .syncComplete(let context):
+            guard ordinaryProgressIsCurrent(context) else { return }
             status = .synced
             pendingCount = 0
             recentErrorCount = 0
@@ -453,6 +492,14 @@ public final class UploadCoordinator {
         case .segmentUnprovable:
             recorder.enqueue(.syncSegmentUnprovable)
         }
+    }
+
+    private func ordinaryProgressIsCurrent(_ context: JournalUploadContext?) -> Bool {
+        guard !ordinaryTrafficRevoked, ordinaryAdmission() else { return false }
+        guard let context else { return pairingCredentialStore == nil }
+        guard pairedIngestIdentity == context.pairing,
+              journalIdentityProvider().fingerprint == context.fingerprint else { return false }
+        return pairingCredentialStore?.ordinarySyncIsCurrent(context) ?? true
     }
 
     private func handleProvenDelivery(proof: JournalConnectionFingerprint) {

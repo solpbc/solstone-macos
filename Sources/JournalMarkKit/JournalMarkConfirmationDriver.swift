@@ -85,15 +85,20 @@ public final class JournalMarkConfirmationDriver {
         complete()
     }
 
+    @discardableResult
     public func cancelPairing(
         clearConfirmedMark: @MainActor () -> Void,
-        unpair: @MainActor () async -> Void
-    ) async {
-        guard case .unverified = phase else { return }
+        unpair: @MainActor () async -> Bool
+    ) async -> Bool {
+        guard case .unverified = phase else { return false }
         Logger.journalMark.info("journal-mark unverified: owner chose to cancel pairing")
+        task?.cancel()
+        task = nil
+        activeAttemptID = nil
+        guard await unpair() else { return false }
         clearConfirmedMark()
-        await unpair()
         complete()
+        return true
     }
 
     public func confirm(setConfirmedMark: @MainActor (JournalMark) -> Void) {
@@ -102,16 +107,21 @@ public final class JournalMarkConfirmationDriver {
         complete()
     }
 
+    @discardableResult
     public func reject(
         clearConfirmedMark: @MainActor () -> Void,
-        unpair: @MainActor () async -> Void,
+        unpair: @MainActor () async -> Bool,
         onMismatch: @MainActor () -> Void
-    ) async {
-        guard case .valid = phase else { return }
+    ) async -> Bool {
+        guard case .valid = phase else { return false }
+        task?.cancel()
+        task = nil
+        activeAttemptID = nil
+        guard await unpair() else { return false }
         clearConfirmedMark()
-        await unpair()
         onMismatch()
         complete()
+        return true
     }
 
     public func startIfNeeded(

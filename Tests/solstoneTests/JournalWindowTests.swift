@@ -170,6 +170,31 @@ struct JournalWindowCompositionTests {
         #expect(command?.baseURL.absoluteString == "https://journal.example/")
     }
 
+    @Test func revokedOrdinaryRouteRemovesAnAlreadyLoadedWebView() async {
+        let routeAuthority = JournalWindowLiveRouteAuthority(true)
+        let session = JournalWindowSession(
+            resolveHomeBase: { .url("http://127.0.0.1:5015") },
+            routeAuthority: { routeAuthority.authorized }
+        )
+        let command = await session.open(
+            destination: JournalWindowDestination(path: "/app/chat", fragment: "entry")!
+        )!
+        session.noteMainFrameCommit(committedURL: command.url)
+        session.handle(.committed(generation: command.generation))
+        session.handle(.finished(generation: command.generation))
+        #expect(session.state == .loaded)
+        let oldGeneration = session.generation
+
+        routeAuthority.authorized = false
+        session.routeAuthorityDidChange()
+
+        #expect(session.state == .held)
+        #expect(!session.showsWebView)
+        #expect(session.currentBaseURL == nil)
+        #expect(session.loadCommand == nil)
+        #expect(session.generation > oldGeneration)
+    }
+
     @Test func chatDestinationComposesPathQueryAndFragmentAgainstResolvedBase() {
         let destination = JournalWindowDestination(
             path: "/app/chat/2026-05-09",
@@ -1819,6 +1844,15 @@ struct JournalWindowHonestyTests {
         #expect(linkDown.state == .linkDown)
 
         _ = command
+    }
+}
+
+@MainActor
+private final class JournalWindowLiveRouteAuthority {
+    var authorized: Bool
+
+    init(_ authorized: Bool) {
+        self.authorized = authorized
     }
 }
 

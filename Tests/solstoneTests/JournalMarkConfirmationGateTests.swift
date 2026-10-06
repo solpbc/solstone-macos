@@ -171,6 +171,79 @@ struct JournalMarkConfirmationGateTests {
         #expect(!store.settled)
     }
 
+    @Test func invalidatedPairingHasNoMarkRouteOrValidAnswer() throws {
+        let stored = pairing()
+        let backend = PairingStore(pairing: stored)
+        let credentials = PairingCredentialStore(store: backend)
+        _ = try credentials.load()
+        let revision = PairingCredentialRevision(from: stored)
+        _ = try credentials.beginInvalidation(for: stored, operationID: "mark-fetch-revoked")
+        #expect(AppState.homeBase(
+            tunnelManaged: true,
+            admissionReady: credentials.markAnswerIsCurrent(revision),
+            routeRevoked: true,
+            localPort: 24680,
+            configuredServerURL: "http://127.0.0.1:8080"
+        ) == .held)
+        #expect(!credentials.markAnswerIsCurrent(revision))
+    }
+
+    @Test func lateMarkAnswerAfterSameJournalCredentialReplacementCannotConfirmOrShowOffer() async throws {
+        let oldPairing = pairing(instanceID: "same-journal-mark-race")
+        let backend = PairingStore(pairing: oldPairing)
+        let credentials = PairingCredentialStore(store: backend)
+        _ = try credentials.load()
+        let oldRevision = PairingCredentialRevision(from: oldPairing)
+        var record = try credentials.carriedPairingRecord()
+        record.replacementOfferID = "existing-fresh-pair-offer"
+        record.replacementOfferShown = false
+        try credentials.saveCarriedPairingRecord(record)
+        let confirmations = InMemoryJournalMarkConfirmationStore()
+        let enteredFetch = LockedCounter()
+        let responseGate = OneShotContinuationGate()
+
+        let answer = Task {
+            enteredFetch.increment()
+            await responseGate.wait()
+            guard let current = try? credentials.load() else { return false }
+            let currentRevision = PairingCredentialRevision(from: current)
+            guard credentials.markAnswerIsCurrent(currentRevision),
+                  AppState.markAnswerRevisionMatches(
+                    expected: oldRevision,
+                    current: currentRevision,
+                    activeAttempt: oldRevision
+                  ) else { return false }
+            confirmations.confirm(journalMarkConfirmationIdentity(for: current))
+            var updated = try credentials.carriedPairingRecord()
+            updated.replacementOfferShown = true
+            try credentials.saveCarriedPairingRecord(updated)
+            return true
+        }
+        await enteredFetch.waitUntilCount(1)
+
+        let replacement = StoredPairing(
+            instanceID: oldPairing.instanceID,
+            homeLabel: oldPairing.homeLabel,
+            relayEndpoint: oldPairing.relayEndpoint,
+            fingerprint: "same-journal-replacement-certificate",
+            clientCertPEM: "replacement-cert",
+            clientKeyPEM: "replacement-key",
+            caChainPEM: oldPairing.caChainPEM,
+            relayEnrollment: oldPairing.relayEnrollment,
+            localEndpoints: oldPairing.localEndpoints,
+            pairedAt: oldPairing.pairedAt
+        )
+        try credentials.save(replacement)
+        let recordAfterReplacement = try credentials.carriedPairingRecord()
+        responseGate.release()
+        let didCommitAnswer = try await answer.value
+        #expect(!didCommitAnswer)
+
+        #expect(confirmations.confirmedJournal == nil)
+        #expect(try credentials.carriedPairingRecord() == recordAfterReplacement)
+        #expect(!recordAfterReplacement.replacementOfferShown)
+    }
+
     @Test func theAnswerBelongsToOneJournal() {
         let answered = pairing(instanceID: "journal-a")
         let other = pairing(instanceID: "journal-b")
@@ -262,10 +335,10 @@ struct JournalMarkConfirmationGateTests {
         await coordinator.submitPairingLink(gateRelayPairLink)
 
         #expect(coordinator.state == .paired)
-        #expect(events.entries == ["clear", "save"])
+        #expect(events.entries == ["save", "clear"])
     }
 
-    @Test func aSwitchClearsTheAnswerBeforeItsCredentialIsSaved() async {
+    @Test func aSwitchClearsTheAnswerAfterItsCredentialIsDurable() async {
         let events = GateEventLog()
         let store = PairingStore(pairing: pairing(instanceID: "11111111-1111-1111-1111-111111111111"))
         let coordinator = makeCoordinator(
@@ -279,7 +352,9 @@ struct JournalMarkConfirmationGateTests {
         await coordinator.confirmSwitch()
 
         #expect(coordinator.state == .switched)
-        #expect(events.entries == ["clear", "save"])
+        #expect(store.currentPairing?.instanceID == "22222222-2222-2222-2222-222222222222")
+        #expect(store.saveCount == 1)
+        #expect(events.entries == ["clear"])
     }
 
     @Test func pairingAgainWithTheSameJournalKeepsTheAnswer() async throws {
@@ -292,14 +367,15 @@ struct JournalMarkConfirmationGateTests {
         await coordinator.submitPairingLink(try relayPairLink(caPEM: testCACertPEM))
 
         #expect(coordinator.state == .alreadyConnected)
-        #expect(events.entries == ["save"])
+        #expect(store.saveCount == 1)
+        #expect(events.entries.isEmpty)
     }
 
     @Test func unpairingClearsTheAnswer() async {
         let events = GateEventLog()
         let coordinator = makeCoordinator(store: PairingStore(pairing: pairing()), outcomes: [], events: events)
 
-        await coordinator.unpair()
+        #expect(await coordinator.unpair())
 
         #expect(events.entries == ["clear"])
     }
@@ -312,12 +388,12 @@ struct JournalMarkConfirmationGateTests {
         let remaining = GateOutcomes(outcomes)
         let coordinator = PairingCoordinator(
             pair: { _, _, _ in try await remaining.next() },
+            keychainStore: store,
             loadPairing: { try store.load() },
             savePairing: { pairing in
                 events.record("save")
                 try store.save(pairing)
             },
-            deletePairing: { try store.delete() },
             relayEndpoint: { URL(string: "https://relay.test")! },
             deviceLabel: { "test mac" },
             clearJournalMarkConfirmation: { events.record("clear") }

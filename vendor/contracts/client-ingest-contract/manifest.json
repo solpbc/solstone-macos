@@ -1,0 +1,107 @@
+{
+  "audited_consumer_revisions": [
+    {
+      "consumer_identifier": "solstone-linux",
+      "revision": "f33878fb6c608bf43654777c4a3b7772d7375e7c"
+    },
+    {
+      "consumer_identifier": "solstone-macos",
+      "revision": "6565338fa4a573065c25080d3da2bf75b973f254"
+    },
+    {
+      "consumer_identifier": "solstone-tmux",
+      "revision": "c229b4ae034a5b10f5aeda73b71bf1ab961c0833"
+    },
+    {
+      "consumer_identifier": "solstone-windows",
+      "revision": "83a85437427e96cbdc7d68cc43d6c4c98cf986c7"
+    }
+  ],
+  "bundle_schema_identity": "solstone.client-ingest-contract-bundle.schema.v1",
+  "bundle_semver": "14.0.0",
+  "client_protocol_version": 3,
+  "component_closure": [
+    "Error",
+    "FileDescriptor",
+    "SegmentFile",
+    "SegmentItem",
+    "SegmentsEnvelope"
+  ],
+  "consumer_identifiers": [
+    "solstone-linux",
+    "solstone-macos",
+    "solstone-tmux",
+    "solstone-windows"
+  ],
+  "files": [
+    {
+      "path": "consumer-audit.json",
+      "sha256": "31589211391a7feaafda6fa8514ffcf900f3acf3931a285e8712c646c6e9ab07"
+    },
+    {
+      "path": "fixtures/wire-behavior.json",
+      "sha256": "035e59297af21da998984910b4aa6a850d7e2e1225c79019045381bf3e17e708"
+    },
+    {
+      "path": "projection.openapi.json",
+      "sha256": "db75a94ab97e83c56603e44d9313db86a94a2d9c4a920deaf090fe0f3358b8b0"
+    },
+    {
+      "path": "vectors.json",
+      "sha256": "7c61c1238184e1440110801478daf714aba05b2472338bd98c12cd508b303d0f"
+    }
+  ],
+  "generator_identity": "solstone.repository_contracts.client_ingest_contract_bundle.v1",
+  "generator_inputs": [
+    {
+      "id": "openapi.client_ingest_authority",
+      "path": "core/crates/solstone-core-repository-contracts/src/contracts/client_ingest_authority.json",
+      "role": "openapi_source",
+      "sha256": "afe354e26827d431d4766289a91c9d421edd99e67006937f7ad8d955a23a8f53"
+    }
+  ],
+  "openapi_document_version": "1.0.0",
+  "openapi_spec_version": "3.1.0",
+  "operation_ids": [
+    "client.ingestUpload",
+    "client.ingestManifest",
+    "client.ingestManifestDay",
+    "client.ingestSegments"
+  ],
+  "projection_path": "projection.openapi.json",
+  "schema_dialect_uri": "https://json-schema.org/draft/2020-12/schema",
+  "scope_rationale": "This ingest-triad bundle projects only the four Rust-served linked-device devices/ingest operations. Pairing and root SSE are live but out of scope; retired legacy operations are not projected.",
+  "supported_response_variants": [
+    3
+  ],
+  "vocabularies": [
+    {
+      "classification": "closed",
+      "id": "SegmentFile.status",
+      "source_pointer": "/components/schemas/SegmentFile/properties/status",
+      "unknown_value_behavior": "reject",
+      "values": [
+        "present",
+        "missing",
+        "processed"
+      ]
+    },
+    {
+      "classification": "closed",
+      "id": "client.ingestUpload.status",
+      "source_pointers": [
+        "/paths/~1app~1devices~1ingest/post/responses/200/content/application~1json/schema/properties/status",
+        "/paths/~1app~1devices~1ingest/post/responses/409"
+      ],
+      "unknown_value_behavior": "reject",
+      "values": [
+        "ok",
+        "duplicate",
+        "collision",
+        "conflict",
+        "failed"
+      ]
+    }
+  ],
+  "windows_linux_rollout_targets": []
+}

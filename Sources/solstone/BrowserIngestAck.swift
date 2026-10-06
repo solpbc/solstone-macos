@@ -17,6 +17,8 @@ struct BrowserIngestAck: Codable, Sendable, Equatable {
     let requestedDay: String
     let requestedSegment: String
     let canonicalKey: String?
+    let physicalSegment: String?
+    let physicalStream: String?
     let status: IngestProtocolV3.UploadStatus
 
     static func == (lhs: BrowserIngestAck, rhs: BrowserIngestAck) -> Bool {
@@ -37,7 +39,9 @@ struct BrowserIngestAck: Codable, Sendable, Equatable {
         requestedDay: String,
         requestedSegment: String,
         canonicalKey: String?,
-        status: IngestProtocolV3.UploadStatus
+        status: IngestProtocolV3.UploadStatus,
+        physicalSegment: String? = nil,
+        physicalStream: String? = nil
     ) {
         self.generation = generation
         self.source = source
@@ -49,7 +53,27 @@ struct BrowserIngestAck: Codable, Sendable, Equatable {
         self.requestedDay = requestedDay
         self.requestedSegment = requestedSegment
         self.canonicalKey = canonicalKey
+        self.physicalSegment = physicalSegment
+        self.physicalStream = physicalStream
         self.status = status
+    }
+
+    func updatingListingCoordinates(from item: IngestProtocolV3.SegmentsItem) -> BrowserIngestAck {
+        BrowserIngestAck(
+            generation: generation,
+            source: source,
+            periodId: periodId,
+            filename: filename,
+            sha256: sha256,
+            size: size,
+            metadata: metadata,
+            requestedDay: requestedDay,
+            requestedSegment: requestedSegment,
+            canonicalKey: item.key,
+            status: status,
+            physicalSegment: item.segment,
+            physicalStream: item.stream
+        )
     }
 }
 

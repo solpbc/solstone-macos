@@ -169,7 +169,7 @@ ifeq ($(BROWSER_PREVIEW),1)
 endif
 
 # Local ad-hoc test builds only; never shipped; never set by any production target.
-# The binary matches production; bundle-adhoc selects the login-keychain SPL plane.
+# The bundle uses the same pinned credential backend as production; no Info.plist plane override.
 release-universal-adhoc:
 	swift build -c release --arch arm64 --arch x86_64 --product solstone $(SWIFT_BUILD_FLAGS)
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog $(SWIFT_BUILD_FLAGS)
@@ -541,7 +541,7 @@ bundle-dist-debug:
 	@$(MAKE) bundle-dist BUNDLE_BUILD_TARGET=debug-universal BUNDLE_CONFIGURATION=Debug
 
 # Local ad-hoc test bundle only; never shipped, never update-served, never production.
-# Keep in lockstep with bundle-dist; only signing/provisioning/keychain plane differ.
+# Keep in lockstep with bundle-dist; only signing, provisioning, and entitlements differ.
 bundle-adhoc: release-universal-adhoc
 	@echo "Creating local ad-hoc app bundle..."
 	@rm -rf solstone.app
@@ -549,8 +549,6 @@ bundle-adhoc: release-universal-adhoc
 	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
 	@cp .build/apple/Products/Release/solstone-watchdog solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
-	@# Local ad-hoc test bundles only; never shipped; never set by any production target.
-	@/usr/bin/plutil -insert SolstoneSPLKeychainPlane -string login-keychain solstone.app/Contents/Info.plist
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
@@ -603,7 +601,7 @@ endif
 		--entitlements "$(ADHOC_ENTITLEMENTS)" \
 		solstone.app
 	@codesign --verify --strict --deep --verbose=2 solstone.app
-	@echo "✓ Signed: solstone.app (local ad-hoc SPL login-keychain plane)"
+	@echo "✓ Signed: solstone.app (local ad-hoc signing)"
 
 # Local ad-hoc debug bundle only; never shipped, never update-served, never production.
 # Same recipe as bundle-adhoc with get-task-allow entitlements for debugger attach.
