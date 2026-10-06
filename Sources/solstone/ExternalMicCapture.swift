@@ -31,6 +31,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             callbackLock.lock()
             defer { callbackLock.unlock() }
             _onAudioBuffer = newValue
+            _queuedAudio = nil; _admissionGate = nil; _rawAdmissionError = nil
         }
     }
     private var _onAudioBuffer: ((_ buffer: AVAudioPCMBuffer, _ time: CMTime) -> Void)?
@@ -39,12 +40,42 @@ public final class ExternalMicCapture: @unchecked Sendable {
         set { callbackLock.withLock { _onCaptureError = newValue } }
     }
     private var _onCaptureError: ((Error) -> Void)?
+    private var _queuedAudio: ((AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?)?
+    private var _admissionGate: ((() -> Void) -> Bool)?
+    private var _rawAdmissionError: ((Error) -> Void)?
+    private var budget = AudioMediaBudget()
+    public var mediaBudget: AudioMediaBudget { callbackLock.withLock { budget } }
+    internal func useMediaBudget(_ value: AudioMediaBudget) {
+        callbackLock.withLock {
+            precondition(budget.snapshot.stages[AudioMediaBudget.Stage.raw.rawValue].jobs == 0)
+            budget = value
+        }
+    }
+    private let deliveryLedger = AudioDeliveryLedger()
+    private var drainGeneration: UInt64 = 0
+    private var mediaSinceBoundary = false
+    private var conversionFence: (generation: UInt64, fence: AudioCaptureDrainFence)?
+    private var observationFence: (generation: UInt64, fence: AudioCaptureDrainFence)?
     private struct Destinations: @unchecked Sendable {
         let audio: ((AVAudioPCMBuffer, CMTime) -> Void)?
         let error: ((Error) -> Void)?
+        var queuedAudio: ((AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?)? = nil
+        var admissionGate: ((() -> Void) -> Bool)? = nil
+        var rawError: ((Error) -> Void)? = nil
     }
     public func setCallbacks(audio: ((AVAudioPCMBuffer, CMTime) -> Void)?, error: ((Error) -> Void)?) {
-        callbackLock.withLock { _onAudioBuffer = audio; _onCaptureError = error }
+        callbackLock.withLock {
+            _onAudioBuffer = audio; _onCaptureError = error
+            _queuedAudio = nil; _admissionGate = nil; _rawAdmissionError = nil
+        }
+    }
+    internal func setQueuedCallbacks(audio: ((AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?)?,
+                                     error: ((Error) -> Void)?, rawError: ((Error) -> Void)?,
+                                     admissionGate: ((() -> Void) -> Bool)?) {
+        callbackLock.withLock {
+            _onAudioBuffer = nil; _queuedAudio = audio; _onCaptureError = error
+            _rawAdmissionError = rawError; _admissionGate = admissionGate
+        }
     }
     private var running = false
     private var captureRequested = false
@@ -228,35 +259,38 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
     @objc private func handleConfigChange(_ notification: Notification) {
         guard let origin = notification.object as AnyObject? else { return }
-        let admitted = callbackLock.withLock { () -> (UInt64, Destinations)? in
-            guard captureRequested, origin === activeEngineObject, !recoveryAdmitted, !recoveryExhausted else { return nil }
+        callbackLock.withLock {
+            guard captureRequested, origin === activeEngineObject, !recoveryAdmitted, !recoveryExhausted else { return }
             recoveryAdmitted = true
-            return (requestedEpoch, Destinations(audio: _onAudioBuffer, error: _onCaptureError))
-        }
-        guard let (request, destination) = admitted else { return }
-        writerQueue.async { [weak self] in
-            guard let self else { return }
-            defer { self.callbackLock.withLock { self.recoveryAdmitted = false } }
-            guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request }) else { return }
-            self.teardownEngine()
-            for delay in [0.0, 0.2, 0.5] {
-                if delay > 0 { self.recoveryDelay(delay) }
+            let request = requestedEpoch
+            let destination = Destinations(audio: _onAudioBuffer, error: _onCaptureError)
+            drainGeneration &+= 1
+            // Recovery admission and its observation barrier share this lock.
+            // A cached no-media drain must not overtake a newly queued recovery.
+            writerQueue.async { [weak self] in
+                guard let self else { return }
+                defer { self.callbackLock.withLock { self.recoveryAdmitted = false } }
                 guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request }) else { return }
-                self.replaceEngine()
-                do {
-                    try self.startCapture(request: request)
-                    Logger.audio.notice("Microphone recovered after configuration change")
-                    return
-                } catch {
-                    self.teardownEngine()
+                self.teardownEngine()
+                for delay in [0.0, 0.2, 0.5] {
+                    if delay > 0 { self.recoveryDelay(delay) }
                     guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request }) else { return }
-                    let errorDestination = self.callbackLock.withLock { self._onCaptureError ?? destination.error }
-                    errorDestination?(error)
-                    Logger.audio.error("Microphone configuration recovery failed: \(error, privacy: .public)")
+                    self.replaceEngine()
+                    do {
+                        try self.startCapture(request: request)
+                        Logger.audio.notice("Microphone recovered after configuration change")
+                        return
+                    } catch {
+                        self.teardownEngine()
+                        guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request }) else { return }
+                        let errorDestination = self.callbackLock.withLock { self._onCaptureError ?? destination.error }
+                        errorDestination?(error)
+                        Logger.audio.error("Microphone configuration recovery failed: \(error, privacy: .public)")
+                    }
                 }
-            }
-            self.callbackLock.withLock {
-                if self.captureRequested && self.requestedEpoch == request { self.recoveryExhausted = true }
+                self.callbackLock.withLock {
+                    if self.captureRequested && self.requestedEpoch == request { self.recoveryExhausted = true }
+                }
             }
         }
     }
@@ -273,21 +307,54 @@ public final class ExternalMicCapture: @unchecked Sendable {
                                    monoFormat: AVAudioFormat, engineEpoch admittedEpoch: UInt64? = nil) {
         // Snapshot and queue admission share the detach lock. The subsequent
         // drain barrier therefore includes every admitted old-segment buffer.
-        callbackLock.withLock {
-            if let admittedEpoch {
-                guard captureRequested, admittedEpoch == engineEpoch else { return }
+        // Selection publication takes the selection lock before callbackLock.
+        // Obtain that gate before touching admission so the order never inverts.
+        let gate = callbackLock.withLock { _admissionGate }
+        let operation = { [self] in
+            var rejected: (Destinations, Error)?
+            callbackLock.withLock {
+                if let admittedEpoch {
+                    guard captureRequested, admittedEpoch == engineEpoch else { return }
+                }
+                let destination = Destinations(audio: _onAudioBuffer, error: _onCaptureError,
+                    queuedAudio: _queuedAudio, admissionGate: _admissionGate, rawError: _rawAdmissionError)
+                guard destination.audio != nil || destination.queuedAudio != nil else { return }
+                guard buffer.frameLength > 0 else { return }
+                guard let extent = AudioPCMExtent(buffer),
+                      let lease = budget.reserve(.raw, bytes: extent.bytes, equivalentFrames: extent.equivalentFrames) else {
+                    rejected = (destination, NSError(domain: "SolstoneAudioAdmission", code: 1))
+                    return
+                }
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+                if _copyAdmissionForTesting?(extent.bytes) == false {
+                    lease.release(); rejected = (destination, NSError(domain: "SolstoneAudioAdmission", code: 2)); return
+                }
+#endif
+                guard let bufferCopy = Self.copyPCMBuffer(buffer) else {
+                    lease.release(); rejected = (destination, NSError(domain: "SolstoneAudioAdmission", code: 2))
+                    return
+                }
+                let work = AudioRawPCMWork(buffer: bufferCopy, lease: lease)
+                mediaSinceBoundary = true
+                drainGeneration &+= 1
+                writerQueue.async { [weak self] in
+                    var temporary: AudioMediaLease?
+                    autoreleasepool {
+                        if let buffer = work.buffer {
+                            self?.processAndSend(buffer: buffer, when: when, monoFormat: monoFormat,
+                                epoch: admittedEpoch ?? 0, destination: destination, budget: work.lease.budget,
+                                temporaryLease: &temporary)
+                        }
+                    }
+                    temporary?.release()
+                    work.release()
+                }
             }
-            let destination = Destinations(audio: _onAudioBuffer, error: _onCaptureError)
-            guard destination.audio != nil else { return }
-            guard let bufferCopy = Self.copyPCMBuffer(buffer) else {
-                writerQueue.async { destination.error?(NSError(domain: "SolstoneAudioConversion", code: 2)) }
-                return
-            }
-            writerQueue.async { [weak self] in
-                self?.processAndSend(buffer: bufferCopy, when: when, monoFormat: monoFormat,
-                                     epoch: admittedEpoch ?? 0, destination: destination)
-            }
+            // rawError commits only bounded writer evidence; it is already
+            // revision-qualified and runs after callbackLock was released.
+            if let (destination, error) = rejected { (destination.rawError ?? destination.error)?(error) }
         }
+        if let gate { _ = gate(operation) } else { operation() }
     }
 
     /// Copy the actual layout, including integer and interleaved hardware PCM.
@@ -309,8 +376,28 @@ public final class ExternalMicCapture: @unchecked Sendable {
     }
 
     public func drain() async {
-        await withCheckedContinuation { continuation in
-            writerQueue.async { continuation.resume() }
+        await makeDrainFence(observeWriters: true).wait()
+    }
+
+    internal func drainConversion() async {
+        await makeDrainFence(observeWriters: false).wait()
+    }
+
+    private func makeDrainFence(observeWriters: Bool) -> AudioCaptureDrainFence {
+        callbackLock.withLock {
+            let existing = observeWriters ? observationFence : conversionFence
+            if let existing, existing.generation == drainGeneration { return existing.fence }
+            let fence = AudioCaptureDrainFence()
+            if observeWriters { observationFence = (drainGeneration, fence) }
+            else { conversionFence = (drainGeneration, fence) }
+            writerQueue.async { [self] in
+                if observeWriters { fence.observation = deliveryLedger.observation() }
+                #if DEBUG || SOLSTONE_TEST_SUPPORT
+                if observeWriters { _observationQueuedForTesting?() }
+                #endif
+                fence.signal.complete()
+            }
+            return fence
         }
     }
 
@@ -320,8 +407,13 @@ public final class ExternalMicCapture: @unchecked Sendable {
     internal func detachForBoundary() -> CMTime {
         callbackLock.withLock {
             _onAudioBuffer = nil; _onCaptureError = nil
+            _queuedAudio = nil; _admissionGate = nil; _rawAdmissionError = nil
             let cutoff = CMClockGetTime(CMClockGetHostTimeClock())
-            writerQueue.async { [self] in finishConversionStream() }
+            if mediaSinceBoundary {
+                mediaSinceBoundary = false
+                drainGeneration &+= 1
+                writerQueue.async { [self] in finishConversionStream() }
+            }
             return cutoff
         }
     }
@@ -345,11 +437,14 @@ public final class ExternalMicCapture: @unchecked Sendable {
     internal var _requestedEpochForTesting: UInt64 { callbackLock.withLock { requestedEpoch } }
     internal var _engineIdentityForTesting: ObjectIdentifier { callbackLock.withLock { ObjectIdentifier(activeEngineObject) } }
     internal var _startAdmissionHookForTesting: (@Sendable () -> Void)?
+    internal var _copyAdmissionForTesting: (@Sendable (Int) -> Bool)?
+    internal var _observationQueuedForTesting: (@Sendable () -> Void)?
     #endif
 
     /// Process buffer and send to callback
     private func processAndSend(buffer: AVAudioPCMBuffer, when: MicrophoneBufferTime, monoFormat: AVAudioFormat,
-                                epoch: UInt64, destination: Destinations) {
+                                epoch: UInt64, destination: Destinations, budget: AudioMediaBudget,
+                                temporaryLease: inout AudioMediaLease?) {
         // Admitted buffers retain their destination after engine retirement.
         // Revocation is fenced separately by MicrophoneCaptureManager.
         if !receivedFirstBuffer {
@@ -361,7 +456,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         bufferCount += 1
 
         // Get callback with lock - if nil, discard the buffer
-        let callback = destination.audio
+        let hasCallback = destination.audio != nil || destination.queuedAudio != nil
 
         // Log periodic status (every 60 seconds)
         let now = Date()
@@ -371,7 +466,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             lastBufferLogTime = now
         }
 
-        guard callback != nil else { return }
+        guard hasCallback else { return }
 
         guard buffer.frameLength > 0 else { return }
 
@@ -387,6 +482,17 @@ public final class ExternalMicCapture: @unchecked Sendable {
         if conversionOrigin == nil { conversionOrigin = captured.time; emittedFrames = 0 }
         conversionDestination = destination
 
+        // Reserve summed/resampled output before conversion allocation.
+        let outputFrames = ceil(Double(buffer.frameLength) * monoFormat.sampleRate / buffer.format.sampleRate)
+        let outputBytes = outputFrames * Double(monoFormat.channelCount) * 4
+        let sumBytes = buffer.format.channelCount > 2 ? Double(buffer.frameLength) * 4 : 0
+        guard outputBytes.isFinite, outputBytes > 0,
+              outputBytes + sumBytes <= Double(AudioMediaBudget.bytesPerStage),
+              let temporary = budget.reserve(.temporary, bytes: Int(outputBytes + sumBytes)) else {
+            destination.error?(NSError(domain: "SolstoneAudioAdmission", code: 3))
+            return
+        }
+        temporaryLease = temporary
         // Convert to mono if needed and resample to target rate
         guard let monoBuffer = convertToMono(buffer, targetFormat: monoFormat) else {
             destination.error?(NSError(domain: "SolstoneAudioConversion", code: 1))
@@ -417,7 +523,9 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
         let presentationTime = CMTimeAdd(origin, CMTime(value: emittedFrames, timescale: 48_000))
         emittedFrames += Int64(monoBuffer.frameLength)
-        destination.audio?(monoBuffer, presentationTime)
+        if let queued = destination.queuedAudio {
+            if let receipt = queued(monoBuffer, presentationTime) { deliveryLedger.register(receipt) }
+        } else { destination.audio?(monoBuffer, presentationTime) }
     }
 
     private func finishConversionStream(resetClock: Bool = true) {
@@ -425,18 +533,27 @@ public final class ExternalMicCapture: @unchecked Sendable {
             var terminated = false
             // A real boundary drains the finite converter tail; taps use noDataNow.
             for _ in 0..<64 {
-                guard let output = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: 4096) else {
-                    destination.error?(NSError(domain: "SolstoneAudioConversion", code: 3)); break
+                guard let temporary = mediaBudget.reserve(.temporary,
+                    bytes: 4096 * Int(converter.outputFormat.channelCount) * 4) else {
+                    destination.error?(NSError(domain: "SolstoneAudioAdmission", code: 3)); break
                 }
-                var error: NSError?
-                let status = converter.convert(to: output, error: &error) { _, status in
-                    status.pointee = .endOfStream; return nil
+                let result = autoreleasepool { () -> (terminated: Bool, failed: Bool) in
+                    guard let output = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: 4096) else {
+                        destination.error?(NSError(domain: "SolstoneAudioConversion", code: 3)); return (false, true)
+                    }
+                    var error: NSError?
+                    let status = converter.convert(to: output, error: &error) { _, status in
+                        status.pointee = .endOfStream; return nil
+                    }
+                    if status == .error || error != nil {
+                        destination.error?(error ?? NSError(domain: "SolstoneAudioConversion", code: 4)); return (false, true)
+                    }
+                    deliverConverted(output, destination: destination)
+                    return (status == .endOfStream, false)
                 }
-                if status == .error || error != nil {
-                    destination.error?(error ?? NSError(domain: "SolstoneAudioConversion", code: 4)); break
-                }
-                deliverConverted(output, destination: destination)
-                if status == .endOfStream { terminated = true; break }
+                temporary.release()
+                if result.failed { break }
+                if result.terminated { terminated = true; break }
             }
             if !terminated { destination.error?(NSError(domain: "SolstoneAudioConversion", code: 5)) }
             converter.reset()

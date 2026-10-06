@@ -12,6 +12,7 @@ import os
 public final class MicrophoneCaptureManager: @unchecked Sendable {
     /// Active captures keyed by device UID
     private var captures: [String: ExternalMicCapture] = [:]
+    private var sourceBudgets: [String: WeakAudioMediaBudget] = [:]
     private let lock = NSLock()
     private let verbose: Bool
     private var gain: Float
@@ -54,6 +55,16 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     private func selectionAllows(_ uid: String) -> Bool {
         selectedDevices?.contains { $0.uid == uid } ?? true
     }
+    internal func mediaBudget(for uid: String) -> AudioMediaBudget {
+        lock.withLock { mediaBudgetLocked(for: uid) }
+    }
+    private func mediaBudgetLocked(for uid: String) -> AudioMediaBudget {
+        sourceBudgets = sourceBudgets.filter { $0.value.value != nil }
+        if let value = sourceBudgets[uid]?.value { return value }
+        let value = captures[uid]?.mediaBudget ?? AudioMediaBudget()
+        sourceBudgets[uid] = WeakAudioMediaBudget(value)
+        return value
+    }
     private func deliver(deviceUID: String, revision: UInt64, _ callback: () -> Void) {
         // The production callbacks only enqueue writer/diagnostic work and never
         // reenter this manager. Delivery and revocation share this linearization.
@@ -64,7 +75,10 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     }
     #if DEBUG || SOLSTONE_TEST_SUPPORT
     internal func _installForTesting(_ capture: ExternalMicCapture) {
-        lock.withLock { captures[capture.device.uid] = capture }
+        lock.withLock {
+            capture.useMediaBudget(mediaBudgetLocked(for: capture.device.uid))
+            captures[capture.device.uid] = capture
+        }
     }
     #endif
 
@@ -99,6 +113,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         }
         let failedCapture = captures.removeValue(forKey: device.uid)
         let captureGain = gain
+        let mediaBudget = mediaBudgetLocked(for: device.uid)
         lock.unlock()
         failedCapture?.stop()
 
@@ -118,6 +133,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
             }
             // Create fresh capture for each attempt
             let capture = captureFactory(device, captureGain, verbose)
+            capture.useMediaBudget(mediaBudget)
 
             do {
                 try capture.start()
@@ -183,6 +199,35 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
             }, error: onError.map { onError in
                 { [weak self] error in
                     self?.deliver(deviceUID: deviceUID, revision: revision) { onError(error) }
+                }
+            })
+        }
+    }
+
+    /// Clear all callbacks (called during segment rotation before writers change)
+    internal func setQueuedCallback(for deviceUID: String,
+        callback: ((AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?)?,
+        onError: ((Error) -> Void)? = nil) {
+        lock.withLock {
+            guard let capture = captures[deviceUID] else { return }
+            guard selectionAllows(deviceUID) else { capture.setCallbacks(audio: nil, error: nil); return }
+            let revision = selectionRevisions[deviceUID, default: 0]
+            capture.setQueuedCallbacks(audio: callback.map { callback in
+                { [weak self] buffer, time in
+                    guard let self else { return nil }
+                    return self.lock.withLock {
+                        guard self.selectionAllows(deviceUID), self.selectionRevisions[deviceUID, default: 0] == revision else { return nil }
+                        return callback(buffer, time)
+                    }
+                }
+            }, error: onError.map { onError in
+                { [weak self] error in self?.deliver(deviceUID: deviceUID, revision: revision) { onError(error) } }
+            }, rawError: onError, admissionGate: { [weak self] operation in
+                guard let self else { return false }
+                return self.lock.withLock {
+                    guard self.selectionAllows(deviceUID), self.selectionRevisions[deviceUID, default: 0] == revision else { return false }
+                    operation()
+                    return true
                 }
             })
         }

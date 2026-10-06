@@ -19,7 +19,7 @@ public final class AudioNativeOwnership: Sendable {
 /// Uses MicrophoneCaptureManager for persistent mic captures across segments
 public final class PerSourceAudioManager: @unchecked Sendable {
     /// Active source writer (capture is managed by MicrophoneCaptureManager for mics)
-    private struct SourceWriter {
+    private struct SourceWriter: Sendable {
         let writer: SingleTrackAudioWriter
         var attached: Bool = true
         var legacyCapture: ExternalMicCapture?
@@ -47,10 +47,17 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     private var admissionClosed = false
     private var boundaryCaptures: [String: (capture: ExternalMicCapture, cutoff: CMTime)] = [:]
     private var systemCutoff: CMTime?
+    private var systemBudget = AudioMediaBudget()
     private var diagnostics: AudioCaptureRecorder?
 
     public func bindDiagnostics(_ recorder: AudioCaptureRecorder) {
         lock.withLock { diagnostics = recorder }
+    }
+    public func bindSystemAudioBudget(_ budget: AudioMediaBudget) {
+        lock.withLock {
+            guard sourceWriters[AudioTrackType.systemSourceID] == nil else { return }
+            systemBudget = budget
+        }
     }
 
     public func audioStatistics() -> [String: AudioWriterStatistics] {
@@ -122,6 +129,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             trackType: .systemAudio,
             segmentStartTime: startTime,
             verbose: verbose,
+            mediaBudget: systemBudget,
             onStatistics: { [diagnostics] in diagnostics?.statistics(sourceID, $0) }
         )
 
@@ -141,7 +149,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         let writer = source.writer
         lock.unlock()
 
-        writer.appendAudio(sampleBuffer)
+        writer.enqueueAudio(sampleBuffer)
     }
 
     /// Add a microphone mid-segment (can be called anytime)
@@ -167,12 +175,14 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         let url = makeURL(for: sourceID)
         let startTime = segmentStartTime ?? CMClockGetTime(CMClockGetHostTimeClock())
         let existing = sourceWriters[sourceID]
+        let mediaBudget = existing?.writer.mediaBudget ?? captureManager?.mediaBudget(for: sourceID) ?? AudioMediaBudget()
         try diagnostics?.admitSource(sourceID, kind: "microphone")
         let writer = try existing?.writer ?? SingleTrackAudioWriter(
             url: url,
             trackType: .microphone(name: device.name, deviceUID: device.uid),
             segmentStartTime: startTime,
             verbose: verbose,
+            mediaBudget: mediaBudget,
             onStatistics: { [diagnostics] in diagnostics?.statistics(sourceID, $0) }
         )
 
@@ -187,16 +197,18 @@ public final class PerSourceAudioManager: @unchecked Sendable {
                 }
 
                 // Wire callback to this segment's writer
-                captureManager.setCallback(for: device.uid, callback: { [weak writer] buffer, time in
-                    writer?.appendPCMBuffer(buffer, presentationTime: time)
-                }, onError: { [diagnostics] in diagnostics?.failure(sourceID, stage: "capture", error: $0) })
+                captureManager.setQueuedCallback(for: device.uid, callback: { [weak writer] buffer, time in
+                    writer?.enqueuePCMBuffer(buffer, presentationTime: time)
+                }, onError: { [weak writer] in writer?.reportCaptureFailure($0) })
                 Logger.audio.info("Wired mic callback: \(device.name, privacy: .public)")
             } else {
                 // Legacy path: create capture per segment
                 let capture = ExternalMicCapture(device: device, gain: gain, verbose: verbose)
-                capture.setCallbacks(audio: { [weak writer] buffer, time in
-                    writer?.appendPCMBuffer(buffer, presentationTime: time)
-                }, error: { [diagnostics] in diagnostics?.failure(sourceID, stage: "capture", error: $0) })
+                capture.useMediaBudget(mediaBudget)
+                capture.setQueuedCallbacks(audio: { [weak writer] buffer, time in
+                    writer?.enqueuePCMBuffer(buffer, presentationTime: time)
+                }, error: { [weak writer] in writer?.reportCaptureFailure($0) },
+                    rawError: { [weak writer] in writer?.reportCaptureFailure($0) }, admissionGate: nil)
                 try capture.start()
                 legacyCapture = capture
                 Logger.audio.info("Started mic capture (legacy): \(device.name, privacy: .public)")
@@ -273,17 +285,23 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         // Clear all mic callbacks (engines keep running, just no destination)
         // This prevents audio from being written to the old segment's writers
         let boundaries = lock.withLock { boundaryCaptures }
-        for boundary in boundaries.values { await boundary.capture.drain() }
-
-        // Finish all writers and collect timing info
-        var inputs: [AudioRemixerInput] = []
-
-        for (id, source) in writers {
-            source.legacyCapture?.stop()
-            let cutoff = source.attached ? (id == AudioTrackType.systemSourceID ? systemCutoff : boundaries[id]?.cutoff) : nil
-            let timingInfo = await source.writer.finish(captureCutoff: cutoff)
-            let input = AudioRemixerInput(url: source.writer.url, timingInfo: timingInfo)
-            inputs.append(input)
+        let systemBoundary = lock.withLock { systemCutoff }
+        // Completion is segment/source-specific. Shared-budget old owners do
+        // not gate this writer, and one held writer cannot delay healthy peers.
+        var inputs = await withTaskGroup(of: AudioRemixerInput.self) { group in
+            for (id, source) in writers {
+                let boundary = boundaries[id]
+                group.addTask {
+                    await boundary?.capture.drainConversion()
+                    source.legacyCapture?.stop()
+                    let cutoff = source.attached ? (id == AudioTrackType.systemSourceID ? systemBoundary : boundary?.cutoff) : nil
+                    let timingInfo = await source.writer.finish(captureCutoff: cutoff)
+                    return AudioRemixerInput(url: source.writer.url, timingInfo: timingInfo)
+                }
+            }
+            var results: [AudioRemixerInput] = []
+            for await result in group { results.append(result) }
+            return results
         }
 
         // Sort by source ID to ensure consistent track order

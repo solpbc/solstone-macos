@@ -96,6 +96,25 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private let snapshotLock = NSLock()
     private var publishedStatistics = AudioWriterStatistics(generatedFrames: 0, gapCount: 0, statisticsAvailable: true, statisticsComplete: false)
     private var nativeQuiescent = false
+    public let mediaBudget: AudioMediaBudget
+    private let nativeQueue = DispatchQueue(label: "app.solstone.audio.native", qos: .userInitiated)
+    private let admissionLock = NSLock()
+    private var admissionClosed = false
+    private var admissionTerminal = false
+    private var windowAdmitted = false
+    private var admissionOrdinal: UInt64 = 0
+    private var observationFence: (ordinal: UInt64, signal: AudioCompletionSignal)?
+    private var admittedReceived = 0
+    private var admittedDropped = 0
+    private var admittedFailures: [AudioRecordingFailure] = []
+    private var captureCountersIncomplete = false
+    private var backendStatistics = AudioWriterStatistics(generatedFrames: 0, gapCount: 0, statisticsAvailable: true, statisticsComplete: false)
+    private let reportQueue = DispatchQueue(label: "app.solstone.audio.evidence", qos: .utility)
+    private var reportPending = false
+    // Native-queue work remains charged until its captured-silence batch has
+    // actually been accepted or failed, including a short observation batch.
+    private var pendingSilentWork: [AudioQueuedWriterWork] = []
+    private var retiredSilentWork: [AudioQueuedWriterWork] = []
 
     private var sessionStarted = false
     private var isFinished = false
@@ -114,6 +133,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     internal var _acceptedFramesForTesting: Int { statisticsSnapshot.acceptedFrames }
     internal var _finishAdmissionHookForTesting: (@Sendable () async -> Void)?
     internal var _nativeAppendHookForTesting: (@Sendable () -> Void)?
+    internal var _nativeStartWritingHookForTesting: (@Sendable () -> Void)?
+    internal var _nativeStartSessionHookForTesting: (@Sendable () -> Void)?
+    internal var _copyAdmissionForTesting: (@Sendable (Int) -> Bool)?
+    internal var _reportAdmissionHookForTesting: (@Sendable () -> Void)?
     internal var _paddingAdmissionForTesting: (@Sendable (Int) -> Bool)?
     internal var _boundaryClipAdmissionForTesting: (@Sendable (Int) -> Bool)?
     internal var _appendAdmissionForTesting: (@Sendable (Int) -> Bool)?
@@ -157,6 +180,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     ///   - segmentStartTime: The segment's start time (for offset calculation)
     ///   - verbose: Enable verbose logging
     public init(url: URL, trackType: AudioTrackType, segmentStartTime: CMTime, verbose: Bool = false,
+                mediaBudget: AudioMediaBudget = AudioMediaBudget(),
                 onStatistics: (@Sendable (AudioWriterStatistics) -> Void)? = nil) throws {
         // Remove existing file if present
         if FileManager.default.fileExists(atPath: url.path) {
@@ -171,6 +195,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         self.segmentStartTime = segmentStartTime
         self.verbose = verbose
         self.onStatistics = onStatistics
+        self.mediaBudget = mediaBudget
 
         // Create the single audio input
         let input = AVAssetWriterInput(mediaType: .audio, outputSettings: Self.audioSettings)
@@ -190,6 +215,159 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     /// Uses silence batching to reduce encoder invocations during quiet periods
     /// - Parameter sampleBuffer: The audio sample buffer
     public func appendAudio(_ capturedBuffer: CMSampleBuffer) {
+        appendAudio(capturedBuffer, queuedWork: nil)
+        completeRetiredSilence()
+    }
+
+    /// Capture destinations copy/admit bounded media here; native start and
+    /// append run exclusively after this method has released routing locks.
+    @discardableResult
+    internal func enqueueAudio(_ buffer: CMSampleBuffer) -> AudioWriteReceipt? {
+        enqueueAudio(buffer, ownsPCM: false)
+    }
+
+    @discardableResult
+    internal func enqueuePCMBuffer(_ buffer: AVAudioPCMBuffer, presentationTime: CMTime) -> AudioWriteReceipt? {
+        guard buffer.frameLength > 0 else { return nil }
+        guard let extent = AudioPCMExtent(buffer), buffer.format.channelCount == 1,
+              buffer.format.commonFormat == .pcmFormatFloat32,
+              let temporary = mediaBudget.reserve(.temporary, bytes: extent.bytes) else {
+            rejectUnpreparedPCM(buffer, presentationTime: presentationTime, stage: "admission_size")
+            return nil
+        }
+        var sample: CMSampleBuffer?
+        var receipt: AudioWriteReceipt?
+        autoreleasepool {
+            sample = createSampleBuffer(from: buffer, presentationTime: presentationTime)
+            if let sample { receipt = enqueueAudio(sample, ownsPCM: true) }
+            else { rejectUnpreparedPCM(buffer, presentationTime: presentationTime, stage: "admission_copy") }
+        }
+        sample = nil
+        temporary.release()
+        return receipt
+    }
+
+    private func rejectUnpreparedPCM(_ buffer: AVAudioPCMBuffer, presentationTime: CMTime, stage: String) {
+        // Construct timing only, so an allocation failure still counts exactly
+        // the in-window suffix. This never copies or retains producer PCM.
+        admissionLock.withLock {
+            guard !admissionClosed else { return }
+            let total = Int(buffer.frameLength)
+            let rate = buffer.format.sampleRate
+            var eligible = total
+            if presentationTime.isNumeric, rate.isFinite, rate >= 1, rate <= 192_000,
+               !windowAdmitted, CMTimeSubtract(presentationTime, segmentStartTime).seconds >= -1,
+               presentationTime < segmentStartTime {
+                let first = CMTimeConvertScale(CMTimeSubtract(segmentStartTime, presentationTime),
+                    timescale: Int32(rate), method: .roundTowardPositiveInfinity)
+                var skipped = min(total, max(0, Int(first.value)))
+                func sampleTime(_ index: Int) -> CMTime {
+                    CMTimeAdd(presentationTime, CMTime(value: Int64(index), timescale: Int32(rate)))
+                }
+                if skipped > 0, sampleTime(skipped - 1) >= segmentStartTime { skipped -= 1 }
+                if skipped < total, sampleTime(skipped) < segmentStartTime { skipped += 1 }
+                eligible -= skipped
+            }
+            guard eligible > 0 else { return }
+            admissionTerminal = true
+            noteAdmission(frames: eligible, dropped: eligible, stage: stage)
+        }
+    }
+
+    private func enqueueAudio(_ captured: CMSampleBuffer, ownsPCM: Bool) -> AudioWriteReceipt? {
+        admissionLock.withLock {
+            guard !admissionClosed else { return nil }
+            let count = CMSampleBufferGetNumSamples(captured)
+            guard count > 0 else { return nil }
+            let time = CMSampleBufferGetPresentationTimeStamp(captured)
+            let relative = CMTimeSubtract(time, segmentStartTime).seconds
+            guard let extent = AudioPCMExtent(captured), time.isNumeric, relative.isFinite,
+                  relative + sampleDuration(captured).seconds <= Self.maximumTimelineSeconds,
+                  let format = CMSampleBufferGetFormatDescription(captured),
+                  let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee else {
+                admissionTerminal = true
+                noteAdmission(frames: count, dropped: count, stage: "admission_size")
+                return nil
+            }
+            var skipped = 0
+            if relative < 0 {
+                guard !windowAdmitted, relative >= -1 else {
+                    admissionTerminal = true
+                    noteAdmission(frames: count, dropped: count, stage: "timeline")
+                    return nil
+                }
+                let offset = CMTimeConvertScale(CMTimeSubtract(segmentStartTime, time),
+                    timescale: Int32(asbd.mSampleRate), method: .roundTowardPositiveInfinity)
+                skipped = min(count, max(0, Int(offset.value)))
+                if skipped > 0 {
+                    var previous = CMSampleTimingInfo()
+                    if CMSampleBufferGetSampleTimingInfo(captured, at: skipped - 1, timingInfoOut: &previous) == noErr,
+                       previous.presentationTimeStamp >= segmentStartTime { skipped -= 1 }
+                }
+                if skipped < count {
+                    var first = CMSampleTimingInfo()
+                    if CMSampleBufferGetSampleTimingInfo(captured, at: skipped, timingInfoOut: &first) == noErr,
+                       first.presentationTimeStamp < segmentStartTime { skipped += 1 }
+                }
+            }
+            let eligible = count - skipped
+            guard eligible > 0 else { return nil }
+            noteAdmission(frames: eligible)
+            guard !admissionTerminal else {
+                noteAdmission(frames: 0, dropped: eligible, stage: "admission_terminal")
+                return nil
+            }
+            // Charge the entire retained owned block, even if a later logical
+            // view could contain fewer frames. System input always gets a copy.
+            let retainedBytes = ownsPCM && skipped == 0
+                ? max(extent.bytes, CMSampleBufferGetDataBuffer(captured).map { CMBlockBufferGetDataLength($0) } ?? 0)
+                : eligible * (extent.bytes / extent.frames)
+            let equivalent = Int(ceil(Double(eligible) * 48_000 / asbd.mSampleRate))
+            guard admissionOrdinal < UInt64.max,
+                  let lease = mediaBudget.reserve(.writer, bytes: retainedBytes, equivalentFrames: equivalent) else {
+                admissionTerminal = true
+                noteAdmission(frames: 0, dropped: eligible, stage: "admission_queue")
+                return nil
+            }
+            var admitted: CMSampleBuffer?
+            if ownsPCM && skipped == 0 { admitted = captured }
+            else {
+                guard let temporary = mediaBudget.reserve(.temporary, bytes: retainedBytes * 2) else {
+                    lease.release(); admissionTerminal = true
+                    noteAdmission(frames: 0, dropped: eligible, stage: "admission_copy_budget")
+                    return nil
+                }
+                autoreleasepool {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+                    if _copyAdmissionForTesting?(retainedBytes) == false { return }
+#endif
+                    admitted = clipBoundary(captured, skipping: skipped, frames: eligible, format: format)
+                }
+                // The admitted backing block is now charged to the writer;
+                // temporary PCM staging has been destroyed by this point.
+                temporary.release()
+            }
+            guard let admitted else {
+                lease.release(); admissionTerminal = true
+                noteAdmission(frames: 0, dropped: eligible, stage: skipped > 0 ? "boundary_clip" : "admission_copy")
+                return nil
+            }
+            windowAdmitted = true
+            admissionOrdinal += 1
+            let receipt = AudioWriteReceipt(writer: self)
+            let work = AudioQueuedWriterWork(buffer: admitted, lease: lease, receipt: receipt)
+            nativeQueue.async { [self] in
+                autoreleasepool {
+                    if let buffer = work.buffer { appendAudio(buffer, queuedWork: work) }
+                }
+                if !work.deferredForSilence { work.complete() }
+                completeRetiredSilence()
+            }
+            return receipt
+        }
+    }
+
+    private func appendAudio(_ capturedBuffer: CMSampleBuffer, queuedWork: AudioQueuedWriterWork?) {
         lock.lock()
 
         if isFinished {
@@ -212,7 +390,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
               asbd.mSampleRate.isFinite, asbd.mSampleRate >= 1, asbd.mSampleRate <= 192_000,
               asbd.mBytesPerFrame > 0, asbd.mBytesPerFrame <= 256,
               asbd.mChannelsPerFrame > 0, asbd.mChannelsPerFrame <= 64 else {
-            statistics.receivedFrames += numSamples
+            if queuedWork == nil { statistics.receivedFrames += numSamples }
             recordFailure(stage: "timeline", error: nil, dropped: numSamples)
             lock.unlock(); return
         }
@@ -220,7 +398,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             // A persistent tap can straddle a newly attached segment. Only its
             // in-window suffix belongs to this writer; keep the capture clock.
             guard !sessionStarted, relative >= -1 else {
-                statistics.receivedFrames += numSamples
+                if queuedWork == nil { statistics.receivedFrames += numSamples }
                 recordFailure(stage: "timeline", error: nil, dropped: numSamples)
                 lock.unlock(); return
             }
@@ -242,7 +420,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             numSamples -= skipped
             guard numSamples > 0 else { lock.unlock(); return }
             guard let clipped = clipBoundary(sampleBuffer, skipping: skipped, frames: numSamples, format: format) else {
-                statistics.receivedFrames += numSamples
+                if queuedWork == nil { statistics.receivedFrames += numSamples }
                 recordFailure(stage: "boundary_clip", error: nil, dropped: numSamples)
                 lock.unlock(); return
             }
@@ -251,15 +429,21 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             duration = sampleDuration(clipped)
             relative = CMTimeSubtract(currentTime, segmentStartTime).seconds
         }
-        statistics.receivedFrames += numSamples
+        if queuedWork == nil { statistics.receivedFrames += numSamples }
         publishStatistics()
         if !sessionStarted {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+            _nativeStartWritingHookForTesting?()
+#endif
             guard writer.status == .unknown, writer.startWriting() else {
                 recordFailure(stage: "start", error: writer.error, dropped: numSamples)
                 lock.unlock()
                 return
             }
             do {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+                _nativeStartSessionHookForTesting?()
+#endif
                 try ObjCExceptionCatcher.`try` { writer.startSession(atSourceTime: .zero) }
             } catch {
                 recordFailure(stage: "start", error: error, dropped: numSamples)
@@ -291,6 +475,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         let isSilent = isBufferSilent(sampleBuffer)
 
         if isSilent {
+            if let queuedWork {
+                queuedWork.deferredForSilence = true
+                pendingSilentWork.append(queuedWork)
+            }
             // Start or continue silence accumulation
             if silenceStartTime == nil {
                 silenceStartTime = currentTime
@@ -306,7 +494,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             }
 
             // Check if we should flush (max silence duration reached)
-            if silenceAccumulatedSamples >= Self.maxSilenceSamples {
+            let planes = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0 ? 1 : Int(asbd.mChannelsPerFrame)
+            let byteLimit = (AudioMediaBudget.bytesPerStage / 2) / (Int(asbd.mBytesPerFrame) * planes)
+            let batchFrames = min(Self.maxSilenceSamples, Int(ceil(asbd.mSampleRate)), max(1, byteLimit))
+            if silenceAccumulatedSamples >= batchFrames {
                 flushSilence(firstTime: firstTime)
             }
 
@@ -380,15 +571,22 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     /// Must be called with lock held
     private func flushSilence(firstTime: CMTime) {
         let frames = silenceAccumulatedSamples
-        defer { silenceStartTime = nil; silenceAccumulatedSamples = 0 }
+        defer {
+            silenceStartTime = nil; silenceAccumulatedSamples = 0
+            retiredSilentWork += pendingSilentWork
+            pendingSilentWork.removeAll(keepingCapacity: true)
+        }
         guard frames > 0, let startTime = silenceStartTime, let formatDesc = lastSilentBufferFormat else {
             if frames > 0 { recordFailure(stage: "silence", error: nil, dropped: frames) }
             return
         }
         let adjustedTime = CMTimeSubtract(startTime, firstTime)
-        if let silentBuffer = createSilentBuffer(sampleCount: frames, presentationTime: adjustedTime,
+        if let silent = createSilentBuffer(sampleCount: frames, presentationTime: adjustedTime,
                                                 formatDescription: formatDesc, sampleRate: lastSilentBufferSampleRate) {
-            appendChecked(silentBuffer, frames: frames)
+            autoreleasepool {
+                if let buffer = silent.buffer { appendChecked(buffer, frames: frames) }
+            }
+            silent.release()
         } else { recordFailure(stage: "silence", error: nil, dropped: frames) }
     }
 
@@ -405,6 +603,13 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         guard writer.status == .writing else {
             recordFailure(stage: generated ? "padding_writer" : "writer", error: writer.error, dropped: generated ? 0 : frames)
             return false
+        }
+        if !generated {
+            let deadline = ProcessInfo.processInfo.systemUptime + 2
+            while writer.status == .writing, !input.isReadyForMoreMediaData,
+                  ProcessInfo.processInfo.systemUptime < deadline {
+                Thread.sleep(forTimeInterval: 0.001)
+            }
         }
         guard input.isReadyForMoreMediaData else {
             recordFailure(stage: generated ? "padding_backpressure" : "backpressure", error: writer.error, dropped: generated ? 0 : frames)
@@ -443,7 +648,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         var cursor = start
         let readyDeadline = ProcessInfo.processInfo.systemUptime + 2
         while remaining > 0 {
-            let frames = min(remaining, Int(rate))
+            guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee else { return false }
+            let planes = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0 ? 1 : Int(asbd.mChannelsPerFrame)
+            let byteFrames = max(1, (AudioMediaBudget.bytesPerStage / 2) / (Int(asbd.mBytesPerFrame) * planes))
+            let frames = min(remaining, min(Int(rate), byteFrames))
 #if DEBUG || SOLSTONE_TEST_SUPPORT
             if _paddingAdmissionForTesting?(frames) == false { return false }
 #endif
@@ -454,8 +662,12 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
                 Thread.sleep(forTimeInterval: 0.001)
             }
             guard let silence = createSilentBuffer(sampleCount: frames,
-                presentationTime: CMTimeSubtract(cursor, segmentStartTime), formatDescription: format, sampleRate: rate),
-                appendChecked(silence, frames: frames, generated: true) else { return false }
+                presentationTime: CMTimeSubtract(cursor, segmentStartTime), formatDescription: format, sampleRate: rate) else { return false }
+            let accepted = autoreleasepool {
+                silence.buffer.map { appendChecked($0, frames: frames, generated: true) } ?? false
+            }
+            silence.release()
+            guard accepted else { return false }
             cursor = CMTimeAdd(cursor, CMTime(seconds: Double(frames) / rate, preferredTimescale: 1_000_000_000))
             remaining -= frames
         }
@@ -476,7 +688,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             Logger.audio.notice("Audio writer issue: \(stage, privacy: .public), code \(failure.code, privacy: .public)")
         }
         publishStatistics()
-        onStatistics?(statistics)
+        scheduleReport()
     }
 
     private func sampleDuration(_ sample: CMSampleBuffer) -> CMTime {
@@ -489,8 +701,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     }
 
     /// Create a silent CMSampleBuffer with the given parameters
-    private func createSilentBuffer(sampleCount: Int, presentationTime: CMTime, formatDescription: CMFormatDescription, sampleRate: Double) -> CMSampleBuffer? {
-        guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)?.pointee else {
+    private func createSilentBuffer(sampleCount: Int, presentationTime: CMTime, formatDescription: CMFormatDescription, sampleRate: Double) -> AudioTemporarySampleWork? {
+        guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)?.pointee,
+              let extent = AudioPCMExtent(frames: sampleCount, asbd: asbd),
+              let lease = mediaBudget.reserve(.temporary, bytes: extent.bytes) else {
             return nil
         }
 
@@ -543,7 +757,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             sampleBufferOut: &silentBuffer
         )
 
-        return status == noErr ? silentBuffer : nil
+        guard status == noErr, let silentBuffer else { return nil }
+        return AudioTemporarySampleWork(buffer: silentBuffer, lease: lease)
     }
 
     /// Appends audio from an AVAudioPCMBuffer (from AVAudioEngine/external mics)
@@ -569,6 +784,14 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     /// Finishes writing and returns timing info
     /// - Returns: Timing information for remix alignment
     public func finish(captureCutoff: CMTime? = nil) async -> AudioTrackTimingInfo {
+        let fence = admissionLock.withLock { () -> AudioCompletionSignal in
+            admissionClosed = true
+            return makeObservationFenceLocked()
+        }
+        await fence.wait()
+        lock.withLock {
+            if admissionLock.withLock({ admissionTerminal }) { timelineFailed = true }
+        }
         // extractTimingState also flushes any pending silence
         let (firstTime, lastTime, startTime, wasStarted) = extractTimingState(captureCutoff: captureCutoff)
 #if DEBUG || SOLSTONE_TEST_SUPPORT
@@ -634,12 +857,13 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         }
 
         let finalStatistics = lock.withLock { () -> AudioWriterStatistics in
-            statistics.writerStatus = statistics.receivedFrames == 0 && statistics.failures.isEmpty ? "no_audio"
+            let observed = statisticsSnapshot
+            statistics.writerStatus = observed.receivedFrames == 0 && observed.failures.isEmpty ? "no_audio"
                 : (writer.status == .completed ? "completed" : "failed")
             if wasStarted && writer.status != .completed { recordFailure(stage: "finish", error: writer.error) }
             statistics.statisticsComplete = true
             publishStatistics(quiescent: true)
-            return statistics
+            return statisticsSnapshot
         }
         onStatistics?(finalStatistics)
         onComplete?()
@@ -663,9 +887,107 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     /// Called under the writer lock, before and after potentially blocking calls.
     private func publishStatistics(quiescent: Bool = false) {
         snapshotLock.withLock {
-            publishedStatistics = statistics
+            backendStatistics = statistics
+            publishedStatistics = mergedStatisticsLocked()
             if quiescent { nativeQuiescent = true }
         }
+    }
+
+    private func mergedStatisticsLocked() -> AudioWriterStatistics {
+        var result = backendStatistics
+        result.receivedFrames = Self.counterSum(result.receivedFrames, admittedReceived)
+        result.droppedFrames = Self.counterSum(result.droppedFrames, admittedDropped)
+        if captureCountersIncomplete { result.statisticsComplete = false }
+        for failure in admittedFailures {
+            if let index = result.failures.firstIndex(where: { $0.stage == failure.stage && $0.domain == failure.domain && $0.code == failure.code }) {
+                result.failures[index].count = Self.counterSum(result.failures[index].count, failure.count)
+            } else if result.failures.count < 16 { result.failures.append(failure) }
+        }
+        return result
+    }
+
+    private static func counterSum(_ a: Int, _ b: Int) -> Int {
+        let (sum, overflow) = a.addingReportingOverflow(b)
+        return overflow ? Int.max : sum
+    }
+
+    private func noteAdmission(frames: Int, dropped: Int = 0, stage: String? = nil, error: Error? = nil,
+                               incomplete: Bool = false) {
+        snapshotLock.withLock {
+            admittedReceived = Self.counterSum(admittedReceived, frames)
+            admittedDropped = Self.counterSum(admittedDropped, dropped)
+            captureCountersIncomplete = captureCountersIncomplete || incomplete
+            if let stage {
+                let native = error as NSError?
+                let failure = AudioRecordingFailure(stage: stage, domain: native?.domain ?? "SolstoneAudioAdmission", code: native?.code ?? 1)
+                if let index = admittedFailures.firstIndex(where: { $0.stage == stage && $0.domain == failure.domain && $0.code == failure.code }) {
+                    admittedFailures[index].count = Self.counterSum(admittedFailures[index].count, 1)
+                } else if admittedFailures.count < 16 { admittedFailures.append(failure) }
+            }
+            publishedStatistics = mergedStatisticsLocked()
+        }
+        scheduleReport()
+    }
+
+    private func scheduleReport() {
+        guard onStatistics != nil else { return }
+        let schedule = snapshotLock.withLock { () -> Bool in
+            guard !reportPending else { return false }
+            reportPending = true
+            return true
+        }
+        guard schedule else { return }
+        reportQueue.async { [self] in
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+            _reportAdmissionHookForTesting?()
+#endif
+            // Read the current snapshot after any delayed report admission.
+            // Clear before delivery; at most one additional report can queue.
+            let current = snapshotLock.withLock { () -> AudioWriterStatistics in
+                reportPending = false
+                return publishedStatistics
+            }
+            onStatistics?(current)
+        }
+    }
+
+    /// Commit capture failures independently of a held conversion/native queue.
+    /// Raw-rate rejected frames cannot be invented as48k writer admissions.
+    internal func reportCaptureFailure(_ error: Error) {
+        admissionLock.withLock {
+            let admissionFailure = (error as NSError).domain == "SolstoneAudioAdmission"
+            if admissionFailure { admissionTerminal = true }
+            noteAdmission(frames: 0, stage: admissionFailure ? "admission_capture" : "capture", error: error, incomplete: true)
+        }
+    }
+
+    internal func makeObservationFence() -> AudioCompletionSignal {
+        admissionLock.withLock { makeObservationFenceLocked() }
+    }
+
+    private func makeObservationFenceLocked() -> AudioCompletionSignal {
+        if let existing = observationFence, existing.ordinal == admissionOrdinal { return existing.signal }
+        let signal = AudioCompletionSignal()
+        observationFence = (admissionOrdinal, signal)
+        nativeQueue.async { [self] in
+            autoreleasepool {
+                lock.withLock {
+                    if let firstTime = firstBufferTime, silenceAccumulatedSamples > 0 { flushSilence(firstTime: firstTime) }
+                }
+            }
+            completeRetiredSilence()
+            signal.complete()
+        }
+        return signal
+    }
+
+    private func completeRetiredSilence() {
+        let retired = lock.withLock { () -> [AudioQueuedWriterWork] in
+            let work = retiredSilentWork
+            retiredSilentWork.removeAll(keepingCapacity: true)
+            return work
+        }
+        for work in retired { work.complete() }
     }
 
     // MARK: - Private
@@ -735,7 +1057,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     /// Range-copy also needs sample-size entries which captured PCM may omit.
     private func clipBoundary(_ buffer: CMSampleBuffer, skipping: Int, frames: Int, format: CMFormatDescription) -> CMSampleBuffer? {
 #if DEBUG || SOLSTONE_TEST_SUPPORT
-        if _boundaryClipAdmissionForTesting?(frames) == false { return nil }
+        if skipping > 0, _boundaryClipAdmissionForTesting?(frames) == false { return nil }
 #endif
         var first = CMSampleTimingInfo()
         guard CMSampleBufferGetSampleTimingInfo(buffer, at: skipping, timingInfoOut: &first) == noErr else { return nil }

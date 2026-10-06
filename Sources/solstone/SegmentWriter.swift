@@ -74,6 +74,7 @@ public extension SegmentScreenshotCapturing {
 
 public protocol SegmentAudioManaging: AnyObject, Sendable {
     func bindDiagnostics(_ recorder: AudioCaptureRecorder)
+    func bindSystemAudioBudget(_ budget: AudioMediaBudget)
     func setSegmentStartTime(_ time: CMTime)
     func startSystemAudio() throws -> String
     func appendSystemAudio(_ sampleBuffer: CMSampleBuffer)
@@ -92,6 +93,7 @@ public protocol SegmentAudioManaging: AnyObject, Sendable {
 public extension SegmentAudioManaging {
     func deselectMicrophone(deviceUID: String) { removeMicrophone(deviceUID: deviceUID) }
     func bindDiagnostics(_ recorder: AudioCaptureRecorder) {}
+    func bindSystemAudioBudget(_ budget: AudioMediaBudget) {}
     func audioStatistics() -> [String: AudioWriterStatistics] { [:] }
     func audioOwnership() -> AudioNativeOwnership? { nil }
     func prepareToFinishCapture() -> CMTime { CMClockGetTime(CMClockGetHostTimeClock()) }
@@ -268,6 +270,7 @@ public final class SegmentWriter {
             manager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
             self.audioManager = manager
             manager?.bindDiagnostics(diagnostics)
+            if let systemAudioCaptureManager { manager?.bindSystemAudioBudget(systemAudioCaptureManager.mediaBudget) }
             manager?.setSegmentStartTime(segmentStartTime)
         } else {
             manager = nil

@@ -406,7 +406,10 @@ public actor RemixQueue {
         var retained = Set<String>()
         for row in capture["sources"] as? [[String: Any]] ?? [] {
             let failures = row["failures"] as? [[String: Any]] ?? []
-            if failures.contains(where: { ($0["stage"] as? String)?.hasPrefix("padding") == true || ["timeline", "boundary_clip"].contains($0["stage"] as? String ?? "") }),
+            if failures.contains(where: {
+                let stage = $0["stage"] as? String ?? ""
+                return stage.hasPrefix("padding") || stage.hasPrefix("admission") || ["timeline", "boundary_clip"].contains(stage)
+            }),
                let id = row["source_id"] as? String {
                 retained.insert(id.replacingOccurrences(of: ":", with: "_").replacingOccurrences(of: "/", with: "_"))
             }

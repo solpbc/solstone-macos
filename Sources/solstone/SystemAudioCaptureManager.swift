@@ -13,6 +13,8 @@ import SolstoneCore
 /// This prevents ScreenCaptureKit conflicts during segment rotation
 @MainActor
 public final class SystemAudioCaptureManager {
+    /// Remains alive across stream replacement and segment rotation.
+    public let mediaBudget = AudioMediaBudget()
     /// Current audio callback - can be changed while stream is running
     public var onAudioBuffer: ((CMSampleBuffer) -> Void)? {
         get { desiredAudioCallback }
