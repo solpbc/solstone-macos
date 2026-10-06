@@ -282,7 +282,9 @@ final class CaptureLifecycleManager {
 
         guard state?.isRecording == true || state?.isPaused == true else { return }
         executor.markSuspendedForRecovery()
-        _ = await executor.enqueue(.pause(reason: .sleep, stopAudio: false))
+        // Sleep stops audio like lock does: nothing is taken in while asleep, and the
+        // transport's sleep teardown is not reported as an interruption on wake.
+        _ = await executor.enqueue(.pause(reason: .sleep, stopAudio: true))
         Logger.capture.info("Capture paused for sleep")
     }
 

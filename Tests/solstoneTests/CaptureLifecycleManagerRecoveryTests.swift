@@ -159,7 +159,7 @@ struct CaptureLifecycleManagerRecoveryTests {
         }
         await delegate.waitForEvent(.pauseStarted("sleep"))
         #expect(delegate.lifecycleCurrentState.isRecording)
-        #expect(manager.inFlightIntentForTesting == IntentSnapshot(kind: .pause(.sleep), stopAudio: false))
+        #expect(manager.inFlightIntentForTesting == IntentSnapshot(kind: .pause(.sleep), stopAudio: true))
 
         let wakeTask = Task { @MainActor in
             await manager.handleDidWake()
@@ -354,7 +354,7 @@ struct CaptureLifecycleManagerRecoveryTests {
             await manager.handleWillSleep()
         }
         try await waitUntilMain(timeout: .seconds(5)) {
-            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.sleep), stopAudio: false))
+            manager.queuedIntentSnapshotForTesting.contains(IntentSnapshot(kind: .pause(.sleep), stopAudio: true))
         }
         delegate.releaseResume()
         await delegate.waitForEvent(.resumeAborted("unlock"))

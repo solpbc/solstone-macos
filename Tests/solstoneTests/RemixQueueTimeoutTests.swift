@@ -46,6 +46,28 @@ struct RemixQueueTimeoutTests {
         #expect(await queue.inFlightPaths().isEmpty)
     }
 
+    @Test func backToBackEnqueuesRunOneProcessorAndCompletionWaitsForBoth() async throws {
+        let root = try makeTempDirectory("remix-queue-single-flight")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var jobs: [RemixQueue.RemixJob] = []
+        for prefix in ["120000", "120500"] {
+            let dir = try makeDir(root: root, name: "\(prefix).incomplete")
+            let audio = dir.appendingPathComponent("\(prefix)_audio_system.m4a")
+            try Data("audio".utf8).write(to: audio)
+            jobs.append(makeJob(dir: dir, timePrefix: prefix, inputURL: audio))
+        }
+        let gate = RemixGate()
+        let probe = ConcurrencyProbeRemixer(gate: gate)
+        let queue = RemixQueue { _ in probe }
+        await queue.enqueueInOneTurnForTesting(jobs)
+        try await Task.sleep(for: .milliseconds(50))
+        gate.release()
+        await queue.waitForCompletion()
+        #expect(probe.calls.count == 2 && probe.maxActive.current == 1)
+        let finalized = try segmentDirectories(in: root).filter { !$0.hasSuffix(".incomplete") && !$0.hasSuffix(".failed") }
+        #expect(finalized.count == 2)
+    }
+
     @Test func duplicateEnqueueWhileProcessingIsIgnored() async throws {
         let root = try makeTempDirectory("remix-queue-dedup")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1852,5 +1874,23 @@ final class RecordingRemixer: AudioRemixing, @unchecked Sendable {
             lock.withLock { _thrown = error }
             throw error
         }
+    }
+}
+
+private final class ConcurrencyProbeRemixer: AudioRemixing, @unchecked Sendable {
+    let gate: RemixGate
+    let calls = LockedCounter()
+    let maxActive = LockedValue<Int>()
+    private let lock = NSLock()
+    private var active = 0
+    init(gate: RemixGate) { self.gate = gate; maxActive.set(0) }
+    func remix(inputs: [AudioRemixerInput], to outputURL: URL, silenceMusic: Bool) async throws -> AudioRemixerResult {
+        calls.increment()
+        let now = lock.withLock { active += 1; return active }
+        if now > (maxActive.current ?? 0) { maxActive.set(now) }
+        defer { lock.withLock { active -= 1 } }
+        while !gate.isReleased { try await Task.sleep(for: .milliseconds(5)) }
+        try Data("mix".utf8).write(to: outputURL)
+        return AudioRemixerResult(tracksWritten: inputs.count, tracksSkipped: 0, sourceFiles: [])
     }
 }

@@ -157,6 +157,8 @@ public actor RemixQueue {
     }
 
     internal var isProcessingForTesting: Bool { isProcessing }
+    /// Admits several jobs in one actor turn, as concurrent callers can.
+    internal func enqueueInOneTurnForTesting(_ jobs: [RemixJob]) { for job in jobs { enqueue(job) } }
 
     internal var remixTimeoutSecondsForTesting: TimeInterval { remixTimeoutSeconds }
 
@@ -165,9 +167,10 @@ public actor RemixQueue {
     /// Start processing if not already running
     private func startProcessingIfNeeded() {
         guard !isProcessing else { return }
+        // Claim before spawning so a second enqueue cannot start a second processor.
+        isProcessing = true
 
         processingTask = Task {
-            isProcessing = true
             defer { isProcessing = false }
 
             while let job = pendingJobs.first {
