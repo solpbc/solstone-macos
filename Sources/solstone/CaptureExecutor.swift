@@ -245,6 +245,7 @@ struct IntentSnapshot: Sendable, Equatable {
 final class CaptureExecutor {
     private struct QueuedIntent {
         var intent: CaptureIntent
+        let admission: (@MainActor @Sendable () -> Bool)?
         var waiters: [CheckedContinuation<TransitionOutcome, Never>]
     }
 
@@ -301,9 +302,12 @@ final class CaptureExecutor {
     }
 
     @discardableResult
-    func enqueue(_ intent: CaptureIntent) async -> TransitionOutcome {
+    func enqueue(
+        _ intent: CaptureIntent,
+        admission: (@MainActor @Sendable () -> Bool)? = nil
+    ) async -> TransitionOutcome {
         await withCheckedContinuation { continuation in
-            enqueue(intent, continuation: continuation)
+            enqueue(intent, admission: admission, continuation: continuation)
         }
     }
 
@@ -351,6 +355,7 @@ final class CaptureExecutor {
 
     private func enqueue(
         _ intent: CaptureIntent,
+        admission: (@MainActor @Sendable () -> Bool)?,
         continuation: CheckedContinuation<TransitionOutcome, Never>
     ) {
         if intent.isPause {
@@ -359,12 +364,14 @@ final class CaptureExecutor {
             dropQueuedResumes()
         }
 
-        if let lastIndex = queue.indices.last,
+        // A guarded deadline owns its revision; keep it separate from other requests.
+        if admission == nil, let lastIndex = queue.indices.last,
+           queue[lastIndex].admission == nil,
            queue[lastIndex].intent.hasSameKindAndReason(as: intent) {
             queue[lastIndex].intent.mergeSameKindAndReason(with: intent)
             queue[lastIndex].waiters.append(continuation)
         } else {
-            queue.append(QueuedIntent(intent: intent, waiters: [continuation]))
+            queue.append(QueuedIntent(intent: intent, admission: admission, waiters: [continuation]))
         }
 
         if !isPumping {
@@ -391,16 +398,20 @@ final class CaptureExecutor {
             guard let self else { return }
             while !self.queue.isEmpty {
                 let entry = self.queue.removeFirst()
-                let outcome = await self.runTransition(entry.intent)
+                let outcome = await self.runTransition(entry.intent, admission: entry.admission)
                 self.resume(entry.waiters, with: outcome)
             }
             self.isPumping = false
         }
     }
 
-    private func runTransition(_ intent: CaptureIntent) async -> TransitionOutcome {
+    private func runTransition(
+        _ intent: CaptureIntent,
+        admission: (@MainActor @Sendable () -> Bool)?
+    ) async -> TransitionOutcome {
         let task = Task<TransitionOutcome, Never> { @MainActor [weak self] in
-            guard let self else { return .dropped }
+            // Ownership can change while this intent waits behind another transition.
+            guard let self, admission?() != false else { return .dropped }
             switch intent {
             case .start(let reason, let sources, let disabledMicUIDs, let enabledMicUIDs):
                 return await self.runStart(reason, sources: sources, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs)

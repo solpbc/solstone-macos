@@ -432,7 +432,7 @@ public final class SystemAudioCaptureManager {
     private func startHealthCheck() {
         stopHealthCheck()
 
-        let timer = Timer.scheduledTimer(withTimeInterval: healthCheckInterval, repeats: true) { [weak self] _ in
+        let timer = CaptureTimer.schedule(interval: healthCheckInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.performHealthCheck()
             }

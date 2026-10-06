@@ -105,7 +105,9 @@ public final class CaptureManager {
     private let storageManager: StorageManager
     private var currentSegment: (any CaptureSegmentWriting)?
     private var segmentTimer: Timer?
+    private var segmentTimerRevision: UInt64 = 0
     private var heartbeatTimer: Timer?
+    private var heartbeatTimerRevision: UInt64 = 0
     private var segmentStartGeneration = 0
     private var displays: [SCDisplay] = []
     private var filtersByDisplayID: [CGDirectDisplayID: SCContentFilter] = [:]
@@ -566,21 +568,44 @@ public final class CaptureManager {
     }
 
     private func scheduleSegmentRotation() {
-        segmentTimer?.invalidate()
+        stopSegmentRotation()
+        let revision = segmentTimerRevision
         let interval = Self.timeUntilNextSegmentBoundary()
-        segmentTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+        segmentTimer = CaptureTimer.schedule(interval: interval, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                await self?.enqueueTransition(.rotate(reason: .boundary))
+                await self?.deliverSegmentBoundary(revision: revision)
             }
         }
         Logger.capture.info("Next segment rotation in \(Int(interval), privacy: .public) seconds")
     }
 
+    private func stopSegmentRotation() {
+        segmentTimerRevision &+= 1
+        segmentTimer?.invalidate()
+        segmentTimer = nil
+    }
+
+    private func deliverSegmentBoundary(revision: UInt64) async {
+        guard segmentTimerRevision == revision, state.isRecording else { return }
+        await lifecycleManager.enqueue(.rotate(reason: .boundary), admission: { [weak self] in
+            guard let self else { return false }
+            return self.segmentTimerRevision == revision && self.state.isRecording
+        })
+    }
+
+    internal func scheduledBoundaryDeliveryForTesting() -> @MainActor @Sendable () async -> Void {
+        scheduleSegmentRotation()
+        let revision = segmentTimerRevision
+        return { [weak self] in await self?.deliverSegmentBoundary(revision: revision) }
+    }
+
     private func startHeartbeat() {
-        heartbeatTimer?.invalidate()
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+        stopHeartbeat()
+        let revision = heartbeatTimerRevision
+        heartbeatTimer = CaptureTimer.schedule(interval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.handleHeartbeatTick()
+                guard let self, self.heartbeatTimerRevision == revision else { return }
+                self.handleHeartbeatTick()
             }
         }
         heartbeatTimer?.tolerance = 30.0
@@ -594,13 +619,13 @@ public final class CaptureManager {
     }
 
     private func stopHeartbeat() {
+        heartbeatTimerRevision &+= 1
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
     }
 
     private func finalizeActiveSegmentForTransition(stopAudio: Bool) async -> URL? {
-        segmentTimer?.invalidate()
-        segmentTimer = nil
+        stopSegmentRotation()
         stopHeartbeat()
 
         var result: SegmentCaptureResult?
@@ -631,8 +656,7 @@ public final class CaptureManager {
         if currentSegment?.outputDirectory == segmentDirectory {
             currentSegment = nil
         }
-        segmentTimer?.invalidate()
-        segmentTimer = nil
+        stopSegmentRotation()
         return segmentDirectory
     }
 
@@ -926,8 +950,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         windowExclusionManager.stop()
         stopDefaultMicMonitoring()
 
-        segmentTimer?.invalidate()
-        segmentTimer = nil
+        stopSegmentRotation()
         stopHeartbeat()
         lifecycleManager.resetLifecyclePendingState(stopRecovery: true)
 
@@ -954,8 +977,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         stopDefaultMicMonitoring()
 
         // Cancel timers.
-        segmentTimer?.invalidate()
-        segmentTimer = nil
+        stopSegmentRotation()
         stopHeartbeat()
         lifecycleManager.resetLifecyclePendingState(stopRecovery: true)
 

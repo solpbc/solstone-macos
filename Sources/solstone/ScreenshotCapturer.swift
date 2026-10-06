@@ -289,7 +289,7 @@ public final class ScreenshotCapturer {
     private func startHealthCheck() {
         stopHealthCheck()
         consecutiveEmptyChecks = 0
-        healthCheckTimer = Timer.scheduledTimer(withTimeInterval: healthCheckInterval, repeats: true) { [weak self] _ in
+        healthCheckTimer = CaptureTimer.schedule(interval: healthCheckInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.performHealthCheck()
             }

@@ -106,7 +106,7 @@ final class CaptureLifecycleManager {
         delay: TimeInterval,
         fire: @escaping @MainActor @Sendable () async -> Void
     ) -> any RecoveryTimerToken {
-        let timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { _ in
+        let timer = CaptureTimer.schedule(interval: delay, repeats: false) { _ in
             Task { @MainActor in
                 await fire()
             }
@@ -229,8 +229,11 @@ final class CaptureLifecycleManager {
     }
 
     @discardableResult
-    func enqueue(_ intent: CaptureIntent) async -> TransitionOutcome {
-        await executor.enqueue(intent)
+    func enqueue(
+        _ intent: CaptureIntent,
+        admission: (@MainActor @Sendable () -> Bool)? = nil
+    ) async -> TransitionOutcome {
+        await executor.enqueue(intent, admission: admission)
     }
 
     func startRecoveryIfNeeded(error: Error) {
