@@ -341,8 +341,10 @@ struct IndependentCapturePipelineTests {
         #expect(starts.count == 0)
     }
 
+    /// With no microphone at all a microphone-only segment can't begin. A selected one
+    /// that fails to start doesn't stop it: recovery brings the mic into the segment.
     @Test(arguments: [false, true])
-    func microphoneRequiresADeviceThatActuallyStarts(failingDevice: Bool) async throws {
+    func microphoneOnlySegmentNeedsAMicrophoneButNotAWorkingOne(failingDevice: Bool) async throws {
         let root = try makeTempDirectory("source-mic-start-failure")
         defer { try? FileManager.default.removeItem(at: root) }
         let audio = FakeAudioManager(behavior: .throwOnMicrophoneStart)
@@ -353,10 +355,13 @@ struct IndependentCapturePipelineTests {
             },
             audioManagerFactory: { _, _, _, _ in audio })
         do {
-            _ = try await writer.start(sources: .microphone,
+            let started = try await writer.start(sources: .microphone,
                 mics: failingDevice ? [testMicrophone] : [], micCaptureManager: MicrophoneCaptureManager())
-            Issue.record("zero successful microphones must not commit")
-        } catch {}
+            #expect(failingDevice && started.isEmpty, "only a failed selected microphone may begin without audio")
+            _ = await writer.finishCapture()
+        } catch {
+            #expect(!failingDevice, "a failed selected microphone is retried, not fatal")
+        }
         #expect(audio.startSystemAudioCount.count == 0)
         #expect(audio.addMicrophoneCount.count == (failingDevice ? 1 : 0))
     }
