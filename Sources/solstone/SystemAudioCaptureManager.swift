@@ -211,6 +211,14 @@ public final class SystemAudioCaptureManager {
         currentFilter = filter
         if sessionRequested {
             if isRecovering || resetRecoveryScheduled { return }
+            // A transport lost to an interruption still unresolved after its
+            // budget ran out gets one more bounded rebuild per new segment,
+            // off the rotation path; health ticks never renew it.
+            if recoveryAttempts >= 3, unresolvedInterruption != nil, stream == nil {
+                recoveryAttempts = 0
+                Task { @MainActor [weak self] in await self?.restartStream() }
+                return
+            }
             if stream != nil { try await updateContentFilter(filter); return }
             await restartStream()
             return

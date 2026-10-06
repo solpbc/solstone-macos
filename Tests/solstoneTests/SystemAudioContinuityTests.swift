@@ -120,17 +120,53 @@ struct SystemAudioContinuityTests {
         await manager.stop()
     }
 
-    @Test func failingStartsAreBoundedAcrossRotationAndHealthTicks() async throws {
-        let factory = FakeCaptureStreamFactory([FakeCaptureStream()] + (0..<10).map { _ in FakeCaptureStream(startError: failure) })
+    @Test func exhaustedInterruptionRearmsOneBoundedBatchPerSegmentOnly() async throws {
+        let factory = FakeCaptureStreamFactory([FakeCaptureStream()] + (0..<6).map { _ in FakeCaptureStream(startError: failure) })
         let observer = RestartObserverDouble(), manager = manager(factory, observer), errors = LockedCounter()
         try await manager.start(filter: SCContentFilter())
         manager.setCallback(onError: { _ in errors.increment() }) { _ in }
         observer.callbacks.last?()
         try await settled { factory.createdStreams.count == 4 && !manager.isRunning }
-        for _ in 0..<10 { try await manager.start(filter: SCContentFilter()); await manager._performHealthCheckForTesting() }
+        // Health ticks never renew an exhausted budget.
+        for _ in 0..<10 { await manager._performHealthCheckForTesting() }
         #expect(factory.createdStreams.count == 4 && errors.count == 4)
+        // A new segment admits exactly one more bounded batch, and only one.
+        try await manager.start(filter: SCContentFilter())
+        try await settled { factory.createdStreams.count == 7 && !manager.isRunning }
+        for _ in 0..<10 { await manager._performHealthCheckForTesting() }
+        #expect(factory.createdStreams.count == 7 && errors.count == 7)
         let next = LockedCounter(); manager.clearCallback(); manager.setCallback(onError: { _ in next.increment() }) { _ in }
         #expect(next.count == 1)
+        // The following segment's batch finds a working transport.
+        try await manager.start(filter: SCContentFilter())
+        try await settled { factory.createdStreams.count == 8 && manager.isRunning }
+        await manager.stop()
+    }
+
+    @Test func quietSegmentStartsDoNotRebuildWithoutAnInterruption() async throws {
+        let factory = FakeCaptureStreamFactory(), observer = RestartObserverDouble()
+        let manager = manager(factory, observer), errors = LockedCounter()
+        try await manager.start(filter: SCContentFilter())
+        manager.setCallback(onError: { _ in errors.increment() }) { _ in }
+        for _ in 0..<20 { await manager._performHealthCheckForTesting() }
+        #expect(factory.createdStreams.count == 4 && manager.isRunning)
+        for _ in 0..<5 { try await manager.start(filter: SCContentFilter()) }
+        #expect(factory.createdStreams.count == 4 && errors.count == 0)
+        await manager.stop()
+    }
+
+    @Test func committedStreamAfterAnInterruptionIsNotRebuiltBySegmentStarts() async throws {
+        let factory = FakeCaptureStreamFactory(), observer = RestartObserverDouble()
+        let manager = manager(factory, observer), errors = LockedCounter()
+        try await manager.start(filter: SCContentFilter())
+        manager.setCallback(onError: { _ in errors.increment() }) { _ in }
+        observer.callbacks.last?()
+        try await settled { factory.createdStreams.count == 2 && manager.isRunning }
+        for _ in 0..<20 { await manager._performHealthCheckForTesting() }
+        #expect(factory.createdStreams.count == 4 && manager.isRunning)
+        for _ in 0..<5 { try await manager.start(filter: SCContentFilter()) }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(factory.createdStreams.count == 4 && manager.isRunning && errors.count == 1)
         await manager.stop()
     }
 
