@@ -20,7 +20,6 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     private var gain: Float
     private var selectedDevices: [AudioInputDevice]?
     private var selectionRevisions: [String: UInt64] = [:]
-    private var selectionHasAvailableDevices = false
     private let captureFactory: @Sendable (AudioInputDevice, Float, Bool) -> ExternalMicCapture
     private let retryDelay: @Sendable (TimeInterval) -> Void
     private let allowanceClock: @Sendable () -> TimeInterval
@@ -59,7 +58,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     /// Publish current owner intent before starting or wiring any device.
     /// Only devices whose admission changes invalidate their old destinations.
     @discardableResult
-    public func updateSelection(_ devices: [AudioInputDevice], hasAvailableDevices: Bool) -> [String] {
+    public func updateSelection(_ devices: [AudioInputDevice]) -> [String] {
         lock.withLock {
             let before = selectedDevices.map { Set($0.map(\.uid)) }
             let after = Set(devices.map(\.uid))
@@ -68,7 +67,6 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
                 selectionRevisions[uid, default: 0] &+= 1
             }
             selectedDevices = devices
-            selectionHasAvailableDevices = hasAvailableDevices
             let revoked = captures.keys.filter { !after.contains($0) }
             for uid in revoked { captures[uid]?.setCallbacks(audio: nil, error: nil) }
             return revoked
@@ -78,13 +76,16 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     public func microphonesForStartup(fallback: [AudioInputDevice]) -> [AudioInputDevice] {
         lock.withLock { selectedDevices ?? fallback }
     }
-    public var hasIntentionallyEmptySelection: Bool {
-        lock.withLock { selectionHasAvailableDevices && selectedDevices?.isEmpty == true }
+    /// No microphone is selected right now, whether by the owner's choice or because
+    /// none is connected. Neither is a capture failure; the session waits for one.
+    public var hasEmptySelection: Bool {
+        lock.withLock { selectedDevices?.isEmpty == true }
     }
     /// True while a selected microphone waits out its recovery backoff.
     internal func isCoolingDown(deviceUID: String) -> Bool {
         lock.withLock { recoveryAllowances[deviceUID]?.isCoolingDown ?? false }
     }
+    public var selectedDeviceUIDs: [String] { lock.withLock { selectedDevices?.map(\.uid) ?? [] } }
     public func allowsCapture(deviceUID: String) -> Bool {
         lock.withLock { selectionAllows(deviceUID) }
     }

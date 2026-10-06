@@ -68,6 +68,20 @@ struct RemixQueueTimeoutTests {
         #expect(finalized.count == 2)
     }
 
+    @Test func partialRemixIsReportedAsAudioLoss() async throws {
+        let root = try makeTempDirectory("remix-queue-partial-loss")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = try makeDir(root: root, name: "120000.incomplete")
+        let audio = dir.appendingPathComponent("120000_audio_system.m4a")
+        try Data("audio".utf8).write(to: audio)
+        let outcome = LockedValue<SegmentReconciliation>()
+        let queue = RemixQueue { _ in PartialRemixer() }
+        await queue.setOnSegmentComplete { _, reconciliation in outcome.set(reconciliation) }
+        await queue.enqueue(makeJob(dir: dir, timePrefix: "120000", inputURL: audio))
+        await queue.waitForCompletion()
+        guard case .audioLoss(1) = try #require(outcome.current) else { Issue.record("partial remix must be audio loss"); return }
+    }
+
     @Test func duplicateEnqueueWhileProcessingIsIgnored() async throws {
         let root = try makeTempDirectory("remix-queue-dedup")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1892,5 +1906,13 @@ private final class ConcurrencyProbeRemixer: AudioRemixing, @unchecked Sendable 
         while !gate.isReleased { try await Task.sleep(for: .milliseconds(5)) }
         try Data("mix".utf8).write(to: outputURL)
         return AudioRemixerResult(tracksWritten: inputs.count, tracksSkipped: 0, sourceFiles: [])
+    }
+}
+
+private struct PartialRemixer: AudioRemixing {
+    func remix(inputs: [AudioRemixerInput], to outputURL: URL, silenceMusic: Bool) async throws -> AudioRemixerResult {
+        try Data("mix".utf8).write(to: outputURL)
+        return AudioRemixerResult(tracksWritten: 1, tracksSkipped: 0, sourceFiles: [],
+            sources: [.failure(sourceID: "system", stage: "reader", error: nil, state: "partial")])
     }
 }

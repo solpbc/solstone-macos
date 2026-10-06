@@ -29,6 +29,7 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     func hasMicrophone(deviceUID: String) -> Bool
     func activeMicrophoneUIDs() -> [String]
     func recordMicrophoneStall(deviceUID: String)
+    func sourcesWithLoss() -> [String]
     var onTerminalStop: (@MainActor () -> Void)? { get set }
     var onCaptureIssue: (@MainActor (String) -> Void)? { get set }
 }
@@ -36,6 +37,7 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
 public extension CaptureSegmentWriting {
     func deselectMicrophone(deviceUID: String) { removeMicrophone(deviceUID: deviceUID) }
     func recordMicrophoneStall(deviceUID: String) { deselectMicrophone(deviceUID: deviceUID) }
+    func sourcesWithLoss() -> [String] { [] }
     var onCaptureIssue: (@MainActor (String) -> Void)? {
         get { nil }
         set {}
@@ -375,7 +377,7 @@ public final class CaptureManager {
             MicrophoneSelection.shouldCapture($0, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs,
                 inUseElsewhere: inUseElsewhere)
         }
-        let revoked = micCaptureManager.updateSelection(selected, hasAvailableDevices: !available.isEmpty)
+        let revoked = micCaptureManager.updateSelection(selected)
         for uid in revoked {
             currentSegment?.deselectMicrophone(deviceUID: uid)
             micCaptureManager.stopCapture(deviceUID: uid)
@@ -536,6 +538,7 @@ public final class CaptureManager {
         }
         segment.onCaptureIssue = { [weak self, weak segment] message in
             guard let self, let segment, self.currentSegment?.outputDirectory == segment.outputDirectory else { return }
+            if message == SegmentWriter.audioHealthChanged { self.refreshAudioHealth(); return }
             self.currentAudioCaptureIssue = message
             self.onAudioCaptureIssue?(message)
         }
@@ -561,7 +564,7 @@ public final class CaptureManager {
             )
             try Task.checkCancellation()
             guard generation == segmentStartGeneration else { throw CancellationError() }
-            guard !startedSources.isEmpty || (sessionSources == .microphone && micCaptureManager.hasIntentionallyEmptySelection) else {
+            guard !startedSources.isEmpty || (sessionSources == .microphone && micCaptureManager.hasEmptySelection) else {
                 throw CaptureError.noSourcesAvailable
             }
             self.activeSources = startedSources
@@ -659,6 +662,25 @@ public final class CaptureManager {
             reconcileMicrophoneSelection(restartFailed: true)
         }
         if sessionSources.contains(.screen) { systemAudioCaptureManager.reconcileLiveness() }
+        refreshAudioHealth()
+    }
+
+    /// Names each selected source that is not coming through now, or that dropped out
+    /// earlier in this segment and is back. Owner choices and unplugged devices never alarm.
+    internal func refreshAudioHealth() {
+        guard state.isRecording, let segment = currentSegment else { return }
+        var recovering: [String] = []
+        if sessionSources.contains(.screen), systemAudioCaptureManager.hasUnresolvedInterruption { recovering.append("system") }
+        if sessionSources.contains(.microphone) {
+            recovering += micCaptureManager.selectedDeviceUIDs.filter { micCaptureManager.getCapture(for: $0)?.isCapturing != true }
+        }
+        let recovered = segment.sourcesWithLoss().filter { !recovering.contains($0) }
+        let names = Dictionary(microphoneDevices().map { ($0.uid, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let name: (String) -> String = { $0 == "system" ? UICopy.AUDIO_SOURCE_SYSTEM : (names[$0] ?? UICopy.AUDIO_SOURCE_MICROPHONE) }
+        let message = UICopy.audioIssue(recovering: recovering.map(name), recovered: recovered.map(name))
+        guard message != currentAudioCaptureIssue else { return }
+        currentAudioCaptureIssue = message
+        onAudioCaptureIssue?(message)
     }
 
     internal func handleHeartbeatTick() {

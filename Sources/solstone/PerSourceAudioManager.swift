@@ -329,7 +329,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
         clearState()
 
-        return inputs
+        // A source that produced no audio has nothing to remix; its capture row
+        // already says why. Passing it on would mislabel it unreadable.
+        return inputs.filter { $0.timingInfo.hasAudio }
     }
 
     @discardableResult

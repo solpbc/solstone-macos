@@ -215,6 +215,14 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
         }
     }
 
+    /// Sources whose audio in this segment has a real gap. A disconnect is the owner
+    /// unplugging a device and is recorded, but it is not a loss to alarm about.
+    public func sourcesWithLoss() -> [String] {
+        lock.withLock {
+            capture.sources.filter { $0.failures.contains { $0.stage != "disconnect" } }.map(\.source_id)
+        }
+    }
+
     private func addFailure(_ index: Int, _ failure: AudioRecordingFailure) {
         if capture.state != "failed" { capture.state = "partial" }
         capture.sources[index].state = "partial"

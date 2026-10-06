@@ -100,7 +100,7 @@ struct AudioAdmissionTests {
         let root = try makeTempDirectory("normal-admission"); defer { try? FileManager.default.removeItem(at: root) }
         let device = admissionDevice("normal", rate: rate), shared = MicrophoneCaptureManager()
         let capture = ExternalMicCapture(device: device, gain: 1); shared._installForTesting(capture)
-        shared.updateSelection([device], hasAvailableDevices: true)
+        shared.updateSelection([device])
         let manager = PerSourceAudioManager(outputDirectory: root, timePrefix: "normal", captureManager: shared,
             startMicrophoneCapture: { _ in })
         let host = mach_absolute_time(); manager.setSegmentStartTime(admissionHostTime(host))
@@ -144,7 +144,7 @@ struct AudioAdmissionTests {
     @Test func ordinaryObservationHasFixedWatermarkWhileLaterMediaContinues() async throws {
         let root = try makeTempDirectory("observation-watermark"); defer { try? FileManager.default.removeItem(at: root) }
         let device = admissionDevice("watermark"), shared = MicrophoneCaptureManager(), capture = ExternalMicCapture(device: admissionDevice("watermark"), gain: 1)
-        shared._installForTesting(capture); shared.updateSelection([device], hasAvailableDevices: true)
+        shared._installForTesting(capture); shared.updateSelection([device])
         let host = mach_absolute_time(), writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("source.m4a"),
             trackType: .microphone(name: device.name, deviceUID: device.uid), segmentStartTime: admissionHostTime(host),
             mediaBudget: shared.mediaBudget(for: device.uid))
@@ -247,7 +247,7 @@ struct AudioAdmissionTests {
         let root = try makeTempDirectory("quiet-admission"); defer { try? FileManager.default.removeItem(at: root) }
         let device = admissionDevice("quiet"), capture = ExternalMicCapture(device: admissionDevice("quiet"), gain: 1)
         let shared = MicrophoneCaptureManager(); shared._installForTesting(capture)
-        shared.updateSelection([device], hasAvailableDevices: true)
+        shared.updateSelection([device])
         let origin = mach_absolute_time(), writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("quiet.m4a"),
             trackType: .microphone(name: "quiet", deviceUID: device.uid), segmentStartTime: admissionHostTime(origin),
             mediaBudget: shared.mediaBudget(for: device.uid))
@@ -322,7 +322,7 @@ struct AudioAdmissionTests {
         let ca = ExternalMicCapture(device: a, gain: 1, engineFactory: { ea }, resolveDeviceID: { _ in 1 })
         let cb = ExternalMicCapture(device: b, gain: 1, engineFactory: { eb }, resolveDeviceID: { _ in 2 })
         let shared = MicrophoneCaptureManager(gain: 1, captureFactory: { device, _, _ in device.uid == "a" ? ca : cb })
-        shared.updateSelection([a, b], hasAvailableDevices: true)
+        shared.updateSelection([a, b])
         let host = mach_absolute_time(), manager = PerSourceAudioManager(outputDirectory: root, timePrefix: "old", captureManager: shared)
         manager.setSegmentStartTime(admissionHostTime(host)); _ = try manager.addMicrophone(a); _ = try manager.addMicrophone(b)
         let writer = try #require(manager._sourceWriterForTesting("a")), sibling = try #require(manager._sourceWriterForTesting("b")), hold = AdmissionNativeHold()
@@ -335,13 +335,13 @@ struct AudioAdmissionTests {
         #expect(writer.statisticsSnapshot.receivedFrames == 9_600 && writer.statisticsSnapshot.acceptedFrames == 0)
         #expect(sibling.statisticsSnapshot.acceptedFrames == 9_600)
         let clock = ContinuousClock(), start = clock.now
-        shared.updateSelection([b], hasAvailableDevices: true)
+        shared.updateSelection([b])
         manager.deselectMicrophone(deviceUID: "a")
         #expect(start.duration(to: clock.now) < .milliseconds(100))
         #expect(ea.teardown == ["stop", "remove"])
         // Retired engine PCM, even after re-enable, cannot regain its old epoch.
         ea.emit(try admissionPCM(frames: 4_800, frequency: 880), when: admissionWhen(host, frame: 9_600, rate: 48_000))
-        shared.updateSelection([a, b], hasAvailableDevices: true)
+        shared.updateSelection([a, b])
         ea.emit(try admissionPCM(frames: 4_800, frequency: 880), when: admissionWhen(host, frame: 14_400, rate: 48_000))
         await ca.drainConversion()
         #expect(writer.statisticsSnapshot.receivedFrames == 9_600 && writer.statisticsSnapshot.failures.isEmpty)
@@ -362,7 +362,7 @@ struct AudioAdmissionTests {
     @Test func rawJobSaturationIsPromptStickyAcrossRevocationAndCaptureReplacement() async throws {
         let root = try makeTempDirectory("raw-admission"); defer { try? FileManager.default.removeItem(at: root) }
         let device = admissionDevice("raw"), shared = MicrophoneCaptureManager(), capture = ExternalMicCapture(device: admissionDevice("raw"), gain: 1)
-        shared._installForTesting(capture); shared.updateSelection([device], hasAvailableDevices: true)
+        shared._installForTesting(capture); shared.updateSelection([device])
         let host = mach_absolute_time(), reports = LockedArray<AudioWriterStatistics>([])
         let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("old.m4a"), trackType: .microphone(name: "raw", deviceUID: device.uid),
             segmentStartTime: admissionHostTime(host), mediaBudget: shared.mediaBudget(for: device.uid), onStatistics: { reports.append($0) })
@@ -385,9 +385,9 @@ struct AudioAdmissionTests {
         #expect(reportHold.entered.count == 1)
         admissionBudgetIsBounded(writer.mediaBudget)
         let clock = ContinuousClock(), start = clock.now
-        shared.updateSelection([], hasAvailableDevices: true)
+        shared.updateSelection([])
         _ = capture.detachForBoundary()
-        shared.updateSelection([device], hasAvailableDevices: true)
+        shared.updateSelection([device])
         #expect(start.duration(to: clock.now) < .milliseconds(100))
         let replacement = ExternalMicCapture(device: device, gain: 1); shared._installForTesting(replacement)
         #expect(replacement.mediaBudget === writer.mediaBudget)
@@ -425,7 +425,7 @@ struct AudioAdmissionTests {
     func rawRejectionReservesBeforeCopyAndKeepsCountsHonest(cause: String) async throws {
         let root = try makeTempDirectory("raw-copy-admission"); defer { try? FileManager.default.removeItem(at: root) }
         let device = admissionDevice(cause), capture = ExternalMicCapture(device: admissionDevice(cause), gain: 1), shared = MicrophoneCaptureManager()
-        shared._installForTesting(capture); shared.updateSelection([device], hasAvailableDevices: true)
+        shared._installForTesting(capture); shared.updateSelection([device])
         let host = mach_absolute_time(), writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("source.m4a"),
             trackType: .microphone(name: cause, deviceUID: cause), segmentStartTime: admissionHostTime(host), mediaBudget: shared.mediaBudget(for: cause))
         shared.setQueuedCallback(for: cause, callback: { writer.enqueuePCMBuffer($0, presentationTime: $1) }, onError: { writer.reportCaptureFailure($0) })
@@ -446,7 +446,7 @@ struct AudioAdmissionTests {
     @Test func rawAndInFlightWriterPCMRemainChargedTogether() async throws {
         let root = try makeTempDirectory("aggregate-admission"); defer { try? FileManager.default.removeItem(at: root) }
         let device = admissionDevice("aggregate"), shared = MicrophoneCaptureManager(), capture = ExternalMicCapture(device: admissionDevice("aggregate"), gain: 1)
-        shared._installForTesting(capture); shared.updateSelection([device], hasAvailableDevices: true)
+        shared._installForTesting(capture); shared.updateSelection([device])
         let manager = PerSourceAudioManager(outputDirectory: root, timePrefix: "aggregate", captureManager: shared, startMicrophoneCapture: { _ in })
         let host = mach_absolute_time(); manager.setSegmentStartTime(admissionHostTime(host)); _ = try manager.addMicrophone(device)
         let writer = try #require(manager._sourceWriterForTesting(device.uid)), hold = AdmissionNativeHold()
@@ -511,7 +511,7 @@ struct AudioAdmissionTests {
     func rawCapacityRejectsByDurationAndBytesWithPromptEvidence(byteLimit: Bool) async throws {
         let root = try makeTempDirectory("raw-capacity"); defer { try? FileManager.default.removeItem(at: root) }
         let device = admissionDevice("capacity"), shared = MicrophoneCaptureManager(), capture = ExternalMicCapture(device: admissionDevice("capacity"), gain: 1)
-        shared._installForTesting(capture); shared.updateSelection([device], hasAvailableDevices: true)
+        shared._installForTesting(capture); shared.updateSelection([device])
         let host = mach_absolute_time(), writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("source.m4a"), trackType: .microphone(name: device.name, deviceUID: device.uid),
             segmentStartTime: admissionHostTime(host), mediaBudget: shared.mediaBudget(for: device.uid))
         shared.setQueuedCallback(for: device.uid, callback: { writer.enqueuePCMBuffer($0, presentationTime: $1) }, onError: { writer.reportCaptureFailure($0) })
@@ -539,7 +539,7 @@ struct AudioAdmissionTests {
     @Test func twoRotationsKeepConvertedTailInOldWriterAndNewSegmentsIndependent() async throws {
         let root = try makeTempDirectory("admission-rotations"); defer { try? FileManager.default.removeItem(at: root) }
         let device = admissionDevice("rotating", rate: 44_100), shared = MicrophoneCaptureManager(), capture = ExternalMicCapture(device: admissionDevice("rotating", rate: 44_100), gain: 1)
-        shared._installForTesting(capture); shared.updateSelection([device], hasAvailableDevices: true)
+        shared._installForTesting(capture); shared.updateSelection([device])
         let base = mach_absolute_time(), target = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)), hold = AdmissionNativeHold()
         defer { hold.release() }
         let oldCompletion = LockedCounter()

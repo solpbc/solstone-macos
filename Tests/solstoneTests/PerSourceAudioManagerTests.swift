@@ -10,6 +10,24 @@ import Testing
 
 @Suite("PerSourceAudioManager")
 struct PerSourceAudioManagerTests {
+    @Test func sourceThatProducedNoAudioIsNotPassedToTheRemix() async throws {
+        let root = try makeTempDirectory("audio-no-audio-source")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manager = PerSourceAudioManager(outputDirectory: root, timePrefix: "120000",
+            captureManager: MicrophoneCaptureManager(), startMicrophoneCapture: { _ in })
+        manager.setSegmentStartTime(.zero)
+        let quiet = AudioInputDevice(id: 42, name: "quiet", uid: "quiet", manufacturer: nil, sampleRate: 48_000, transportType: .usb)
+        let spoken = AudioInputDevice(id: 43, name: "spoken", uid: "spoken", manufacturer: nil, sampleRate: 48_000, transportType: .usb)
+        _ = try manager.addMicrophone(quiet); _ = try manager.addMicrophone(spoken)
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 960))
+        buffer.frameLength = 960
+        for i in 0..<960 { buffer.floatChannelData![0][i] = Float(sin(Double(i) * 0.1)) * 0.5 }
+        try #require(manager._sourceWriterForTesting("spoken")).appendPCMBuffer(buffer, presentationTime: .zero)
+        let inputs = await manager.finishAll()
+        #expect(inputs.map { $0.timingInfo.trackType.sourceID } == ["spoken"])
+    }
+
     @Test func heldMicrophoneStartDoesNotBlockSegmentLockUsers() throws {
         let root = try makeTempDirectory("audio-held-mic-start")
         defer { try? FileManager.default.removeItem(at: root) }

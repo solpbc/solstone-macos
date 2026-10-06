@@ -338,9 +338,10 @@ public actor RemixQueue {
 
         let results = discoveryFailures + (remixResult?.sources ?? [])
         let unreadable = Set((unreadableSourceIDs ?? []) + results.filter { $0.state == "unreadable" }.map(\.sourceID))
-        if !unreadable.isEmpty {
-            unreadableSourceIDs = unreadable.sorted()
-            reconciliation = .audioLoss(unreadable.count)
+        let partial = Set(results.filter { $0.state == "partial" }.map(\.sourceID)).subtracting(unreadable)
+        if !unreadable.isEmpty || !partial.isEmpty {
+            if !unreadable.isEmpty { unreadableSourceIDs = unreadable.sorted() }
+            reconciliation = .audioLoss(unreadable.count + partial.count)
         }
         do {
             try writeMetadataIfNeeded(segmentDirectory: job.segmentDirectory, timePrefix: job.timePrefix,

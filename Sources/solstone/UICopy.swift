@@ -2,6 +2,26 @@ import SolstoneCore
 
 public enum UICopy {
     public static let SOURCES_TITLE = "sources"
+    // Audio health
+    public static let AUDIO_SOURCE_SYSTEM = "system audio"
+    public static let AUDIO_SOURCE_MICROPHONE = "a microphone"
+    /// Owner-facing audio health, naming each source. Nil when nothing needs saying.
+    public static func audioIssue(recovering: [String], recovered: [String]) -> String? {
+        func list(_ names: [String]) -> String {
+            let unique = names.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            return unique.count <= 1 ? (unique.first ?? "") : unique.dropLast().joined(separator: ", ") + " and " + unique.last!
+        }
+        if !recovering.isEmpty {
+            let verb = Set(recovering).count > 1 ? "aren't" : "isn't"
+            return "\(list(recovering)) \(verb) coming through right now. the solstone app is trying again on its own."
+        }
+        if !recovered.isEmpty {
+            let verb = Set(recovered).count > 1 ? "are" : "is"
+            return "\(list(recovered)) dropped out for a moment and \(verb) back. part of this segment may be missing."
+        }
+        return nil
+    }
+
     // Microphones
     public static let MICROPHONES_LIST_CAPTION = "every microphone that's on goes into your journal. drag to reorder."
     public static let MICROPHONE_MODE_WHEN_IN_USE = "when another app uses it"

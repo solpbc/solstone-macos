@@ -130,7 +130,7 @@ struct LiveMicrophoneSelectionTests {
     func realSegmentStartupDistinguishesRevocationFromFailure(revoked: Bool) async throws {
         let root = try makeTempDirectory("selection-real-start"); defer { try? FileManager.default.removeItem(at: root) }
         let a = device("a"), capture = MicrophoneCaptureManager(), opened = OneShotContinuationGate(), entered = LatchedEvent()
-        capture.updateSelection([a], hasAvailableDevices: true)
+        capture.updateSelection([a])
         let audio = FakeAudioManager(behavior: .throwOnMicrophoneStart)
         let screen = ConsentScreenshot(opened: opened, entered: entered)
         let system = SystemAudioCaptureManager(streamFactory: { _, _, _ in FakeCaptureStream() })
@@ -144,7 +144,7 @@ struct LiveMicrophoneSelectionTests {
                 audioFilter: SCContentFilter(), mics: [a], micCaptureManager: capture, systemAudioCaptureManager: system)
         }
         try await withTimeout(seconds: 1) { await entered.wait() }
-        if revoked { capture.updateSelection([], hasAvailableDevices: true) }
+        if revoked { capture.updateSelection([]) }
         opened.release()
         #expect(try await operation.value == .screen)
         if !revoked { try await withTimeout(seconds: 1) { await warnings.waitUntilCount(1) } }
@@ -157,27 +157,22 @@ struct LiveMicrophoneSelectionTests {
         #expect((warnings.count == 0) == revoked)
     }
 
-    @Test func realMicOnlyEmptyIntentIsQuietButMissingDeviceStillFails() async throws {
-        for intentional in [true, false] {
-            let root = try makeTempDirectory("selection-real-empty"); defer { try? FileManager.default.removeItem(at: root) }
-            let shared = MicrophoneCaptureManager(); shared.updateSelection([], hasAvailableDevices: intentional)
-            let audio = FakeAudioManager(), writer = SegmentWriter(outputDirectory: root, timePrefix: "120000",
-                audioManagerFactory: { _, _, _, _ in audio })
-            var failed = false
-            do { #expect(try await writer.start(sources: .microphone, micCaptureManager: shared).isEmpty) }
-            catch { failed = true }
-            #expect(failed != intentional && audio.addMicrophoneCount.count == 0)
-            _ = await writer.finishCapture()
-            let failures = try sourceRows(root).flatMap { $0["failures"] as? [[String: Any]] ?? [] }
-            #expect(failures.isEmpty == intentional)
-        }
+    @Test func realMicOnlyEmptySelectionIsQuietWhetherChosenOrNothingIsConnected() async throws {
+        let root = try makeTempDirectory("selection-real-empty"); defer { try? FileManager.default.removeItem(at: root) }
+        let shared = MicrophoneCaptureManager(); shared.updateSelection([])
+        let audio = FakeAudioManager(), writer = SegmentWriter(outputDirectory: root, timePrefix: "120000",
+            audioManagerFactory: { _, _, _, _ in audio })
+        #expect(try await writer.start(sources: .microphone, micCaptureManager: shared).isEmpty)
+        #expect(audio.addMicrophoneCount.count == 0)
+        _ = await writer.finishCapture()
+        #expect(try sourceRows(root).flatMap { $0["failures"] as? [[String: Any]] ?? [] }.isEmpty)
     }
 
     @Test func revocationRejectsOldDestinationsAndPreservesAnotherMicAndRotation() async throws {
         let a = device("a"), b = device("b"), manager = MicrophoneCaptureManager()
         let ca = ExternalMicCapture(device: a), cb = ExternalMicCapture(device: b)
         manager._installForTesting(ca); manager._installForTesting(cb)
-        manager.updateSelection([a, b], hasAvailableDevices: true)
+        manager.updateSelection([a, b])
         let oldA = LockedCounter(), newA = LockedCounter(), oldB = LockedCounter(), newB = LockedCounter(), errors = LockedCounter()
         manager.setCallback(for: "a", callback: { _, _ in oldA.increment() }, onError: { _ in errors.increment() })
         manager.setCallback(for: "b", callback: { _, _ in oldB.increment() })
@@ -187,9 +182,9 @@ struct LiveMicrophoneSelectionTests {
         memset(try #require(buffer.floatChannelData)[0], 0, 16 * 4)
         ca._suspendProcessingForTesting(); cb._suspendProcessingForTesting()
         ca._enqueueForTesting(buffer); cb._enqueueForTesting(buffer)
-        manager.updateSelection([b], hasAvailableDevices: true)
+        manager.updateSelection([b])
         do { try manager.startCapture(for: a); Issue.record("Revoked device must reject before hardware start") } catch {}
-        manager.updateSelection([a, b], hasAvailableDevices: true)
+        manager.updateSelection([a, b])
         manager.setCallback(for: "a", callback: { _, _ in newA.increment() })
         lateError?(FakeCaptureError.startFailed)
         ca._resumeProcessingForTesting(); cb._resumeProcessingForTesting()
@@ -209,7 +204,7 @@ struct LiveMicrophoneSelectionTests {
     @Test func revokedResamplerTailCannotReturnThroughReenabledUID() async throws {
         let a = device("a"), manager = MicrophoneCaptureManager()
         let capture = ExternalMicCapture(device: a, gain: 1)
-        manager._installForTesting(capture); manager.updateSelection([a], hasAvailableDevices: true)
+        manager._installForTesting(capture); manager.updateSelection([a])
         let oldFrames = LockedArray<Int>([]), newFrames = LockedArray<Int>([]), errors = LockedCounter()
         manager.setCallback(for: "a", callback: { buffer, _ in oldFrames.append(Int(buffer.frameLength)) }, onError: { _ in errors.increment() })
         let source = try #require(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
@@ -222,8 +217,8 @@ struct LiveMicrophoneSelectionTests {
         #expect(prefix > 0 && prefix < 4800)
         capture._suspendProcessingForTesting(); capture._enqueueForTesting(pcm, targetFormat: target)
         capture.detachForBoundary()
-        manager.updateSelection([], hasAvailableDevices: true)
-        manager.updateSelection([a], hasAvailableDevices: true)
+        manager.updateSelection([])
+        manager.updateSelection([a])
         manager.setCallback(for: "a", callback: { buffer, _ in newFrames.append(Int(buffer.frameLength)) })
         capture._resumeProcessingForTesting(); await capture.drain()
         #expect(oldFrames.all.reduce(0, +) == prefix && newFrames.all.isEmpty && errors.count == 0)
@@ -233,7 +228,7 @@ struct LiveMicrophoneSelectionTests {
     @Test func deliberateDetachRetainsWriterAndEarlierSamplesWithoutFailure() async throws {
         let root = try makeTempDirectory("selection-retained"); defer { try? FileManager.default.removeItem(at: root) }
         let a = device("a"), shared = MicrophoneCaptureManager()
-        shared.updateSelection([a], hasAvailableDevices: true)
+        shared.updateSelection([a])
         let recorder = try AudioCaptureRecorder(directory: root, timePrefix: "120000", expected: [("a", "microphone")])
         let audio = PerSourceAudioManager(outputDirectory: root, timePrefix: "120000", captureManager: shared, startMicrophoneCapture: { _ in })
         audio.bindDiagnostics(recorder)
@@ -244,8 +239,8 @@ struct LiveMicrophoneSelectionTests {
         for index in 0..<960 { buffer.floatChannelData![0][index] = 0.3 }
         let start = CMClockGetTime(CMClockGetHostTimeClock())
         original.appendPCMBuffer(buffer, presentationTime: start)
-        shared.updateSelection([], hasAvailableDevices: true); audio.deselectMicrophone(deviceUID: "a")
-        shared.updateSelection([a], hasAvailableDevices: true); _ = try audio.addMicrophone(a)
+        shared.updateSelection([]); audio.deselectMicrophone(deviceUID: "a")
+        shared.updateSelection([a]); _ = try audio.addMicrophone(a)
         #expect(audio._sourceWriterForTesting("a") === original)
         original.appendPCMBuffer(buffer, presentationTime: CMTimeAdd(start, CMTime(value: 960, timescale: 48_000)))
         let inputs = await audio.finishAll(); try recorder.seal()

@@ -255,13 +255,13 @@ public final class SegmentWriter {
         if sources.contains(.screen) { expected.append(("system", "system")) }
         if sources.contains(.microphone) {
             expected += initialMics.map { ($0.uid, "microphone") }
-            if initialMics.isEmpty && micCaptureManager?.hasIntentionallyEmptySelection != true {
+            if initialMics.isEmpty && micCaptureManager?.hasEmptySelection != true {
                 expected.append(("microphone", "microphone"))
             }
         }
         let diagnostics = try AudioCaptureRecorder(directory: outputDirectory, timePrefix: timePrefix, expected: expected,
             onFirstFailure: { [weak self] in
-                Task { @MainActor in self?.onCaptureIssue?("audio may be incomplete for this segment.") }
+                Task { @MainActor in self?.onCaptureIssue?(Self.audioHealthChanged) }
             })
         audioDiagnostics = diagnostics
 
@@ -355,7 +355,7 @@ public final class SegmentWriter {
         // Microphone subsystem
         if sources.contains(.microphone) {
             let currentMics = micCaptureManager?.microphonesForStartup(fallback: mics) ?? mics
-            if currentMics.isEmpty && micCaptureManager?.hasIntentionallyEmptySelection != true {
+            if currentMics.isEmpty && micCaptureManager?.hasEmptySelection != true {
                 diagnostics.expect("microphone", kind: "microphone")
                 diagnostics.failure("microphone", stage: "start", error: NSError(domain: "SolstoneAudioDevice", code: 2))
             }
@@ -380,7 +380,7 @@ public final class SegmentWriter {
             }
         }
 
-        if successfulSources.isEmpty && !(sources == .microphone && micCaptureManager?.hasIntentionallyEmptySelection == true) {
+        if successfulSources.isEmpty && !(sources == .microphone && micCaptureManager?.hasEmptySelection == true) {
             if let manager {
                 await rollbackStart(manager: manager, capturers: constructedCapturers)
             }
@@ -430,6 +430,11 @@ public final class SegmentWriter {
 
     /// A running engine that stopped delivering is real loss: record it, then
     /// release the capture so reconciliation rebuilds it into the retained writer.
+    /// Sent through `onCaptureIssue` when audio health changed; the owner-facing text
+    /// is derived from current source health, not from this signal.
+    public static let audioHealthChanged = "audio-health-changed"
+    public func sourcesWithLoss() -> [String] { audioDiagnostics?.sourcesWithLoss() ?? [] }
+
     public func recordMicrophoneStall(deviceUID: String) {
         audioDiagnostics?.failure(deviceUID, stage: "stall", error: NSError(domain: "SolstoneAudioStall", code: 1))
         audioManager?.deselectMicrophone(deviceUID: deviceUID)

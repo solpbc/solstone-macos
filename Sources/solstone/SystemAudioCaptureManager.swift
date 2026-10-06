@@ -485,6 +485,8 @@ public final class SystemAudioCaptureManager {
     /// Periodic liveness: an interruption still unresolved after its rebuild
     /// budget ran out is rebuilt again on a backoff, whether or not a started
     /// stream exists. Quiet periods with no recorded interruption never rebuild.
+    public var hasUnresolvedInterruption: Bool { sessionRequested && unresolvedInterruption != nil }
+
     public func reconcileLiveness() {
         guard sessionRequested, currentFilter != nil, !isRecovering, !resetRecoveryScheduled,
               recoveryAttempts >= 3, unresolvedInterruption != nil else { return }

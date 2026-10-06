@@ -791,6 +791,53 @@ struct MicrophoneRecoveryTests {
         #expect(shared.getCapture(for: "bt") == nil && shared.getCapture(for: "u")?.isCapturing == true)
         _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
     }
+
+    @Test func audioIssueNamesSourcesAndSaysWhetherTheyAreBack() {
+        #expect(UICopy.audioIssue(recovering: [], recovered: []) == nil)
+        #expect(UICopy.audioIssue(recovering: ["system audio"], recovered: ["mic"])
+            == "system audio isn't coming through right now. the solstone app is trying again on its own.")
+        #expect(UICopy.audioIssue(recovering: ["a", "b", "c"], recovered: [])
+            == "a, b and c aren't coming through right now. the solstone app is trying again on its own.")
+        #expect(UICopy.audioIssue(recovering: [], recovered: ["mic", "mic"])
+            == "mic dropped out for a moment and is back. part of this segment may be missing.")
+    }
+
+    @Test @MainActor func warningNamesARecoveringMicrophoneThenSaysItIsBack() async throws {
+        let root = try makeTempDirectory("mic-health-warning"); defer { try? FileManager.default.removeItem(at: root) }
+        let clock = LockedValue<TimeInterval>(); clock.set(1000)
+        let (lab, shared, manager, _) = try await livenessLab(root, clock: clock)
+        manager.refreshAudioHealth()
+        #expect(manager.currentAudioCaptureIssue == nil)
+        let capture = try #require(shared.getCapture(for: "u"))
+        for _ in 0..<7 { lab.engines.last!.notify(); await capture.drain() }
+        manager.handleLivenessTick()
+        #expect(manager.currentAudioCaptureIssue == "mic isn't coming through right now. the solstone app is trying again on its own.")
+        clock.set(1016); manager.handleLivenessTick()
+        #expect(shared.getCapture(for: "u")?.isCapturing == true)
+        #expect(manager.currentAudioCaptureIssue == "mic dropped out for a moment and is back. part of this segment may be missing.")
+        _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
+    }
+
+    @Test @MainActor func unpluggingAMicrophoneRaisesNoWarning() async throws {
+        let root = try makeTempDirectory("mic-health-unplug"); defer { try? FileManager.default.removeItem(at: root) }
+        let lab = MicEngineLab(), available = LockedValue<[AudioInputDevice]>(); available.set([device()])
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in 10 }, recoveryDelay: { _ in })
+        }, retryDelay: { _ in })
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { available.current! }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, microphoneCaptureManager: shared)
+        let writer = SegmentWriter(outputDirectory: root, timePrefix: "120000")
+        manager.updateMicrophoneSelection(disabled: [], enabled: [])
+        _ = try await writer.start(sources: .microphone, mics: [device()], micCaptureManager: shared)
+        manager.seedRecordingForTesting(currentSegment: writer, sources: .microphone)
+        available.set([])
+        await manager.handleDeviceChange(added: [], removed: [device()])
+        manager.handleLivenessTick()
+        #expect(manager.currentAudioCaptureIssue == nil)
+        _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
+    }
 }
 
 @MainActor

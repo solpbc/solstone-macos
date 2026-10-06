@@ -127,7 +127,22 @@ public enum MicrophoneMonitor {
         return uids
     }
 
+    private static let lastKnownLock = NSLock()
+    nonisolated(unsafe) private static var lastKnownInputDevices: [AudioInputDevice] = []
+
+    /// Current input devices. A failed HAL query returns the last list that was read
+    /// successfully, so a transient query error never looks like every device unplugged.
     public static func listInputDevices() -> [AudioInputDevice] {
+        if let devices = queryInputDevices() {
+            lastKnownLock.withLock { lastKnownInputDevices = devices }
+            return devices
+        }
+        Logger.audio.warning("Input device query failed; keeping the last known devices")
+        return lastKnownLock.withLock { lastKnownInputDevices }
+    }
+
+    /// Nil when the HAL device list itself cannot be read.
+    public static func queryInputDevices() -> [AudioInputDevice]? {
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -142,7 +157,7 @@ public enum MicrophoneMonitor {
             &dataSize
         )
 
-        guard status == noErr else { return [] }
+        guard status == noErr else { return nil }
 
         let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
         var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
@@ -155,7 +170,7 @@ public enum MicrophoneMonitor {
             &deviceIDs
         )
 
-        guard status == noErr else { return [] }
+        guard status == noErr else { return nil }
 
         return deviceIDs.compactMap { deviceID -> AudioInputDevice? in
             // Check if device has input channels
