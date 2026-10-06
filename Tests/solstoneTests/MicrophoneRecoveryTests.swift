@@ -799,7 +799,7 @@ struct MicrophoneRecoveryTests {
         #expect(UICopy.audioIssue(recovering: ["a", "b", "c"], recovered: [])
             == "a, b and c aren't coming through right now. the solstone app is trying again on its own.")
         #expect(UICopy.audioIssue(recovering: [], recovered: ["mic", "mic"])
-            == "mic dropped out for a moment and is back. part of this segment may be missing.")
+            == "mic dropped out earlier and is back. part of this segment may be missing.")
     }
 
     @Test @MainActor func warningNamesARecoveringMicrophoneThenSaysItIsBack() async throws {
@@ -814,7 +814,9 @@ struct MicrophoneRecoveryTests {
         #expect(manager.currentAudioCaptureIssue == "mic isn't coming through right now. the solstone app is trying again on its own.")
         clock.set(1016); manager.handleLivenessTick()
         #expect(shared.getCapture(for: "u")?.isCapturing == true)
-        #expect(manager.currentAudioCaptureIssue == "mic dropped out for a moment and is back. part of this segment may be missing.")
+        #expect(manager.currentAudioCaptureIssue == "mic dropped out earlier and is back. part of this segment may be missing.")
+        _ = await manager.enqueueTransition(.pause(reason: .user, stopAudio: true))
+        #expect(manager.currentAudioCaptureIssue == nil)
         _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
     }
 

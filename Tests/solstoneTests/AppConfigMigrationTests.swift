@@ -177,7 +177,7 @@ struct AppConfigMigrationTests {
         #expect(config.microphonePriority[0].isDisabled == false)
     }
 
-    @Test func bluetoothReseedMovesOnlyConnectedAlwaysEntriesToFollowOnce() throws {
+    @Test func bluetoothReseedMovesEachHeadsetOnceWhenFirstSeenConnected() throws {
         clearConfigDefaults()
         defer { clearConfigDefaults() }
         var config = AppConfig(microphonePriority: [
@@ -185,11 +185,15 @@ struct AppConfigMigrationTests {
             MicrophoneEntry(uid: "usb", name: "USB", mode: .always),
             MicrophoneEntry(uid: "headset-off", name: "Headset", mode: .off)
         ])
-        config.reseedBluetoothMicrophonesIfNeeded(connectedBluetoothUIDs: ["airpods", "headset-off"])
+        config.reseedBluetoothMicrophones(connectedBluetoothUIDs: ["headset-off"])
+        #expect(config.microphonePriority.map(\.mode) == [.always, .always, .off])
+        // A headset that was away at upgrade still moves the first time it connects.
+        config.reseedBluetoothMicrophones(connectedBluetoothUIDs: ["airpods", "headset-off"])
         #expect(config.microphonePriority.map(\.mode) == [.whenInUseElsewhere, .always, .off])
         #expect(config.disabledMicrophoneUIDs == ["headset-off"] && config.enabledMicrophoneUIDs == ["usb"])
+        // A later owner choice is never revisited.
         config.setMicrophoneMode(uid: "airpods", mode: .always)
-        config.reseedBluetoothMicrophonesIfNeeded(connectedBluetoothUIDs: ["airpods"])
+        config.reseedBluetoothMicrophones(connectedBluetoothUIDs: ["airpods"])
         #expect(config.microphonePriority[0].mode == .always)
     }
 
@@ -282,7 +286,7 @@ struct AppConfigMigrationTests {
             "didReseedNotificationPreference",
             "solInitiatedChatNotificationsEnabled",
             "didReseedOptInMicrophones",
-            "didReseedBluetoothMicrophones",
+            "reseededBluetoothMicrophoneUIDs",
             "didReseedCaptureSourcesOn",
             "localRetentionMB"
         ] {

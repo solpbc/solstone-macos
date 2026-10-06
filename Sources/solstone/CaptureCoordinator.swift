@@ -76,6 +76,8 @@ public final class CaptureCoordinator {
     private let audioDeviceMonitor: AudioDeviceMonitor
     private let isTerminating: IsTerminatingProvider
     private let configProvider: CaptureConfigProvider
+    /// Lets the app add newly connected microphones to its list before capture reconciles.
+    var onMicrophonesChanged: (@MainActor () -> Void)?
     private let bannerSink: BannerSink
     private let startOperation: StartOperation
     private let recorder: DiagnosticEvidenceRecorder
@@ -157,6 +159,7 @@ public final class CaptureCoordinator {
 
         audioDeviceMonitor.onDeviceChange = { [weak self] added, removed in
             Task { @MainActor in
+                self?.onMicrophonesChanged?()
                 await self?.captureManager.handleDeviceChange(added: added, removed: removed)
             }
         }

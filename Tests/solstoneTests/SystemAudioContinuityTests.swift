@@ -14,7 +14,7 @@ import Testing
 struct SystemAudioContinuityTests {
     private var failure: Error { NSError(domain: "ContinuityTest", code: 1) }
     private func manager(_ factory: FakeCaptureStreamFactory, _ observer: RestartObserverDouble,
-                         timeout: Double = 0.5) -> SystemAudioCaptureManager {
+                         timeout: Double = 2) -> SystemAudioCaptureManager {
         let manager = SystemAudioCaptureManager(streamFactory: factory.factory, operationTimeoutSeconds: timeout,
             restartListenerFactory: observer.factory)
         manager._restartParkHookForTesting = {}

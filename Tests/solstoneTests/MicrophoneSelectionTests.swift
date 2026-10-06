@@ -63,6 +63,9 @@ struct MicrophoneSelectionTests {
         #expect(!MicrophoneSelection.shouldCapture(headset, disabledMicUIDs: ["bt"], enabledMicUIDs: [], inUseElsewhere: ["bt"]))
         let usb = makeDevice(uid: "usb", transportType: .usb)
         #expect(MicrophoneSelection.shouldCapture(usb, disabledMicUIDs: [], enabledMicUIDs: [], inUseElsewhere: []))
+        // An iPhone that reports a Bluetooth transport stays opt-in only.
+        let phone = makeDevice(uid: "phone", name: "Jer's iPhone Microphone", transportType: .bluetooth)
+        #expect(!MicrophoneSelection.shouldCapture(phone, disabledMicUIDs: [], enabledMicUIDs: [], inUseElsewhere: ["phone"]))
     }
 
     private func makeDevice(uid: String, name: String = "Test Mic", transportType: AudioTransportType) -> AudioInputDevice {

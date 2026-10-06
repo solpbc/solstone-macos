@@ -473,7 +473,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
                     recordFailure(stage: "timeline", error: nil, dropped: numSamples)
                     lock.unlock(); return
                 }
-                statistics.droppedFrames += overlap
+                // Trimmed frames repeat time already written; they are not new audio.
+                statistics.receivedFrames -= overlap
                 sampleBuffer = trimmed; numSamples -= overlap; duration = sampleDuration(trimmed)
             }
             currentTime = priorEnd; gap = 0
@@ -621,7 +622,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
                 return
             }
             let accepted = autoreleasepool {
-                silent.buffer.map { appendChecked($0, frames: count) } ?? false
+                silent.buffer.map { appendChecked($0, frames: count, recoverable: true) } ?? false
             }
             silent.release()
             if !accepted {
@@ -629,6 +630,14 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
                 // never reached it and must be accounted for exactly once.
                 let suffix = frames - consumed - count
                 if suffix > 0 { recordFailure(stage: "silence", error: nil, dropped: suffix) }
+                // The span is silence either way. While the writer is still writing,
+                // fill it with generated zeros so the timeline stays continuous.
+                if writer.status == .writing {
+                    let rate = lastSilentBufferSampleRate
+                    let from = CMTimeAdd(startTime, CMTime(seconds: Double(consumed) / rate, preferredTimescale: 1_000_000_000))
+                    let to = CMTimeAdd(startTime, CMTime(seconds: Double(frames) / rate, preferredTimescale: 1_000_000_000))
+                    if !appendPadding(from: from, to: to, format: formatDesc, rate: rate) { timelineFailed = true }
+                } else { timelineFailed = true }
                 return
             }
             consumed += count

@@ -13,7 +13,8 @@ enum MicrophoneSelection {
     ) -> Bool {
         if enabledMicUIDs.contains(device.uid) { return true }
         if disabledMicUIDs.contains(device.uid) { return false }
+        if device.isOptInOnlyMicrophone { return false }
         if device.transportType == .bluetooth { return inUseElsewhere.contains(device.uid) }
-        return !device.isOptInOnlyMicrophone
+        return true
     }
 }

@@ -98,7 +98,7 @@ public struct AppConfig: Sendable {
         static let observerName = "observerName"
         static let didMigrateFromJSON = "didMigrateFromJSON"
         static let didReseedOptInMicrophones = "didReseedOptInMicrophones"
-        static let didReseedBluetoothMicrophones = "didReseedBluetoothMicrophones"
+        static let reseededBluetoothMicrophoneUIDs = "reseededBluetoothMicrophoneUIDs"
         static let didReseedCaptureSourcesOn = "didReseedCaptureSourcesOn"
     }
 
@@ -533,23 +533,30 @@ public struct AppConfig: Sendable {
         microphonePriority[index] = MicrophoneEntry(uid: entry.uid, name: entry.name, mode: mode)
     }
 
-    /// One-shot migration: Bluetooth microphones that were taken in automatically
-    /// now follow other apps instead, so an idle headset keeps its playback quality.
-    public mutating func reseedBluetoothMicrophonesIfNeeded(connectedBluetoothUIDs: Set<String>) {
+    /// Once per headset, the first time it is seen connected: a Bluetooth microphone
+    /// still on the old automatic "always" now follows other apps instead, so an idle
+    /// headset keeps its playback quality. A choice made after that is never revisited.
+    @discardableResult
+    public mutating func reseedBluetoothMicrophones(connectedBluetoothUIDs: Set<String>) -> Bool {
         let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: Keys.didReseedBluetoothMicrophones) else { return }
-        var reseeded = self
+        var seen = Set(defaults.stringArray(forKey: Keys.reseededBluetoothMicrophoneUIDs) ?? [])
+        let fresh = connectedBluetoothUIDs.subtracting(seen)
+        guard !fresh.isEmpty else { return false }
+        var reseeded = self, changed = false
         reseeded.microphonePriority = reseeded.microphonePriority.map { entry in
-            guard connectedBluetoothUIDs.contains(entry.uid), entry.mode == .always else { return entry }
+            guard fresh.contains(entry.uid), entry.mode == .always else { return entry }
+            changed = true
             return MicrophoneEntry(uid: entry.uid, name: entry.name, mode: .whenInUseElsewhere)
         }
         do {
-            try reseeded.save()
+            if changed { try reseeded.save() }
             self = reseeded
-            defaults.set(true, forKey: Keys.didReseedBluetoothMicrophones)
+            seen.formUnion(fresh)
+            defaults.set(seen.sorted(), forKey: Keys.reseededBluetoothMicrophoneUIDs)
         } catch {
             Logger.general.warning("Failed to re-seed Bluetooth microphone defaults: \(error.localizedDescription, privacy: .public)")
         }
+        return changed
     }
 
     /// Reorders microphones in the priority list

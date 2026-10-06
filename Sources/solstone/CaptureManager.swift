@@ -677,7 +677,8 @@ public final class CaptureManager {
             recovering += micCaptureManager.selectedDeviceUIDs.filter { micCaptureManager.getCapture(for: $0)?.isCapturing != true }
         }
         let recovered = segment.sourcesWithLoss().filter { !recovering.contains($0) }
-        let names = Dictionary(microphoneDevices().map { ($0.uid, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let names = recovering.isEmpty && recovered.isEmpty ? [:]
+            : Dictionary(microphoneDevices().map { ($0.uid, $0.name) }, uniquingKeysWith: { first, _ in first })
         let name: (String) -> String = { $0 == "system" ? UICopy.AUDIO_SOURCE_SYSTEM : (names[$0] ?? UICopy.AUDIO_SOURCE_MICROPHONE) }
         let message = UICopy.audioIssue(recovering: recovering.map(name), recovered: recovered.map(name))
         guard message != currentAudioCaptureIssue else { return }
@@ -703,6 +704,7 @@ public final class CaptureManager {
     private func finalizeActiveSegmentForTransition(stopAudio: Bool) async -> URL? {
         stopSegmentRotation()
         stopHeartbeat()
+        if currentAudioCaptureIssue != nil { currentAudioCaptureIssue = nil; onAudioCaptureIssue?(nil) }
 
         var result: SegmentCaptureResult?
         if let segment = currentSegment {

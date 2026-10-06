@@ -20,8 +20,8 @@ public extension AppConfig {
         microphonePriority.append(MicrophoneEntry(
             uid: device.uid,
             name: device.name,
-            mode: device.transportType == .bluetooth ? .whenInUseElsewhere
-                : (device.isOptInOnlyMicrophone ? .off : .always)
+            mode: device.isOptInOnlyMicrophone ? .off
+                : (device.transportType == .bluetooth ? .whenInUseElsewhere : .always)
         ))
         return true
     }

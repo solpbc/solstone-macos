@@ -4243,7 +4243,7 @@ struct MicrophoneRow: View {
         if !entry.isConnected {
             return .gray
         }
-        return entry.isDisabled ? .orange : .green
+        return entry.mode == .off ? .orange : .green
     }
 
     private var axStateValue: String {
@@ -4261,8 +4261,8 @@ struct MicrophoneRow: View {
 
             // Microphone name
             Text(entry.name)
-                .strikethrough(entry.isDisabled)
-                .foregroundStyle(entry.isConnected ? (entry.isDisabled ? .secondary : .primary) : .secondary)
+                .strikethrough(entry.mode == .off)
+                .foregroundStyle(entry.isConnected ? (entry.mode == .off ? .secondary : .primary) : .secondary)
 
             Spacer()
 

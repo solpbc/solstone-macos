@@ -17,17 +17,17 @@ public enum UICopy {
         }
         if !recovered.isEmpty {
             let verb = Set(recovered).count > 1 ? "are" : "is"
-            return "\(list(recovered)) dropped out for a moment and \(verb) back. part of this segment may be missing."
+            return "\(list(recovered)) dropped out earlier and \(verb) back. part of this segment may be missing."
         }
         return nil
     }
 
     // Microphones
-    public static let MICROPHONES_LIST_CAPTION = "every microphone that's on goes into your journal. drag to reorder."
+    public static let MICROPHONES_LIST_CAPTION = "every microphone that's on goes into your journal."
     public static let MICROPHONE_MODE_WHEN_IN_USE = "when another app uses it"
     public static let MICROPHONE_MODE_ALWAYS = "always"
     public static let MICROPHONE_MODE_OFF = "off"
-    public static let MICROPHONE_MODE_HELP = "a bluetooth headset sounds worse while its microphone is open, so by default it only goes into your journal while another app, like a call, is already using it."
+    public static let MICROPHONE_MODE_HELP = "a bluetooth headset sounds worse while its microphone is open, so by default it only goes into your journal while another app, such as a call app, is already using it."
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     public static let SOURCES_HELP = "what you turn on here goes into your journal. each one is on unless you turn it off."
     public static let SOURCES_NONE = "every source is off"

@@ -329,9 +329,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
         clearState()
 
-        // A source that produced no audio has nothing to remix; its capture row
-        // already says why. Passing it on would mislabel it unreadable.
-        return inputs.filter { $0.timingInfo.hasAudio }
+        // A healthy source that produced no audio left no file and has nothing to
+        // remix. A file that exists without accepted audio still goes on, honestly.
+        return inputs.filter { $0.timingInfo.hasAudio || FileManager.default.fileExists(atPath: $0.url.path) }
     }
 
     @discardableResult

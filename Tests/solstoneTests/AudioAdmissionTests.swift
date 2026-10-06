@@ -84,14 +84,21 @@ struct AudioAdmissionTests {
         }
         await writer.makeObservationFence().wait(); _ = await writer.finish()
         let stats = writer.statisticsSnapshot
-        #expect(stats.receivedFrames == 14 * 4_096 && stats.acceptedFrames == 48_000)
-        #expect(stats.droppedFrames == 14 * 4_096 - 48_000 && stats.generatedFrames == 0)
         #expect(stats.receivedFrames == stats.acceptedFrames + stats.droppedFrames && stats.statisticsComplete == true)
         #expect(stats.failures.contains { $0.stage == (allocation ? "silence" : "append") })
         #expect(receipts.allSatisfy { $0.signal.isComplete })
         let decoded = try #require(try await admissionDecode(writer.url).first)
-        #expect(decoded.count == 48_000 && admissionRMS(decoded, start: 0.025, end: 0.975) < 0.002)
-        #expect(admissionTone(decoded, frequency: 660, start: 0.025, end: 0.975) < 0.002)
+        #expect(admissionRMS(decoded, start: 0.025, end: 0.975) < 0.002)
+        if allocation {
+            // Failing to allocate silence is memory pressure: the source stops, prefix kept.
+            #expect(stats.receivedFrames == 14 * 4_096 && stats.acceptedFrames == 48_000)
+            #expect(stats.droppedFrames == 14 * 4_096 - 48_000 && stats.generatedFrames == 0)
+            #expect(decoded.count == 48_000 && admissionTone(decoded, frequency: 660, start: 0.025, end: 0.975) < 0.002)
+        } else {
+            // A refused quiet chunk is padded and the tone after it still lands in place.
+            #expect(stats.acceptedFrames == 48_000 + 2 * 4_096 && stats.droppedFrames == 1_152 && stats.generatedFrames == 1_152)
+            #expect(decoded.count == 14 * 4_096 && admissionTone(decoded, frequency: 660, start: 1.05, end: 1.18) > 0.08)
+        }
         admissionBudgetIsEmpty(writer.mediaBudget)
     }
 

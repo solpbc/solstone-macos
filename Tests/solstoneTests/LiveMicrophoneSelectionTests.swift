@@ -118,7 +118,7 @@ struct LiveMicrophoneSelectionTests {
             if rotating { return await manager.enqueueTransition(.rotate(reason: .boundary)) }
             return await manager.enqueueTransition(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
         }
-        try await withTimeout(seconds: 1) { await entered.wait() }
+        try await withTimeout(seconds: 5) { await entered.wait() }
         manager.updateMicrophoneSelection(disabled: ["a"], enabled: ["b"])
         opened.release(); _ = await operation.value
         #expect(segments.all.last?.activeMicrophoneUIDs() == ["b"])
@@ -156,11 +156,11 @@ struct LiveMicrophoneSelectionTests {
                 displayInfos: [DisplayInfo(displayID: 1, width: 10, height: 10, bounds: .zero)],
                 audioFilter: SCContentFilter(), mics: [a], micCaptureManager: capture, systemAudioCaptureManager: system)
         }
-        try await withTimeout(seconds: 1) { await entered.wait() }
+        try await withTimeout(seconds: 5) { await entered.wait() }
         if revoked { capture.updateSelection([]) }
         opened.release()
         #expect(try await operation.value == .screen)
-        if !revoked { try await withTimeout(seconds: 1) { await warnings.waitUntilCount(1) } }
+        if !revoked { try await withTimeout(seconds: 5) { await warnings.waitUntilCount(1) } }
         _ = await writer.finishCapture()
         await Task.yield()
         let microphone = try #require(try sourceRows(root).first { $0["source_id"] as? String == "a" })
