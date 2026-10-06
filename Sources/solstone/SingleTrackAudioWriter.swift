@@ -328,7 +328,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             let equivalent = Int(ceil(Double(eligible) * 48_000 / asbd.mSampleRate))
             guard admissionOrdinal < UInt64.max,
                   let lease = mediaBudget.reserve(.writer, bytes: retainedBytes, equivalentFrames: equivalent) else {
-                admissionTerminal = true
+                // Transient pressure drops this buffer only. It never reached the
+                // timeline, so the next admitted buffer pads the hole in place.
                 noteAdmission(frames: 0, dropped: eligible, stage: "admission_queue")
                 return nil
             }
@@ -336,7 +337,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             if ownsPCM && skipped == 0 { admitted = captured }
             else {
                 guard let temporary = mediaBudget.reserve(.temporary, bytes: retainedBytes * 2) else {
-                    lease.release(); admissionTerminal = true
+                    lease.release()
                     noteAdmission(frames: 0, dropped: eligible, stage: "admission_copy_budget")
                     return nil
                 }
@@ -351,7 +352,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
                 temporary.release()
             }
             guard let admitted else {
-                lease.release(); admissionTerminal = true
+                lease.release()
                 noteAdmission(frames: 0, dropped: eligible, stage: skipped > 0 ? "boundary_clip" : "admission_copy")
                 return nil
             }
@@ -528,7 +529,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
 
         let adjustedTime = CMTimeSubtract(currentTime, firstTime)
         if let retimedBuffer = createRetimedSampleBuffer(sampleBuffer, newTime: adjustedTime) {
-            appendChecked(retimedBuffer, frames: numSamples)
+            // A transient refusal leaves this buffer's interval for the next one to pad.
+            if !appendChecked(retimedBuffer, frames: numSamples, recoverable: true) { lastBufferTime = currentTime }
         } else { recordFailure(stage: "retime", error: nil, dropped: numSamples) }
         lock.unlock()
     }
@@ -634,11 +636,15 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     }
 
     @discardableResult
-    private func appendChecked(_ buffer: CMSampleBuffer, frames: Int, generated: Bool = false) -> Bool {
+    /// `recoverable` appends may fail transiently while the writer is still writing;
+    /// the caller then rolls the timeline back so the next buffer pads the hole.
+    private func appendChecked(_ buffer: CMSampleBuffer, frames: Int, generated: Bool = false,
+                               recoverable: Bool = false) -> Bool {
         var acceptedSuccessfully = false
         // An unencoded required interval cannot be followed by success-looking
-        // shifted media. Preserve the accepted prefix and park this source.
-        defer { if !acceptedSuccessfully { timelineFailed = true } }
+        // shifted media. Preserve the accepted prefix and park this source, unless
+        // the caller can roll its timeline back so later media lands in place.
+        defer { if !acceptedSuccessfully && !(recoverable && writer.status == .writing) { timelineFailed = true } }
         guard !timelineFailed else {
             recordFailure(stage: "timeline", error: nil, dropped: generated ? 0 : frames)
             return false
@@ -648,7 +654,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             return false
         }
         if !generated {
-            let deadline = ProcessInfo.processInfo.systemUptime + 2
+            let deadline = ProcessInfo.processInfo.systemUptime + 0.25
             while writer.status == .writing, !input.isReadyForMoreMediaData,
                   ProcessInfo.processInfo.systemUptime < deadline {
                 Thread.sleep(forTimeInterval: 0.001)
@@ -1005,7 +1011,6 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     internal func reportCaptureFailure(_ error: Error) {
         admissionLock.withLock {
             let admissionFailure = (error as NSError).domain == "SolstoneAudioAdmission"
-            if admissionFailure { admissionTerminal = true }
             noteAdmission(frames: 0, stage: admissionFailure ? "admission_capture" : "capture", error: error, incomplete: true)
         }
     }

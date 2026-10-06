@@ -275,6 +275,26 @@ struct AudioAdmissionTests {
         admissionBudgetIsEmpty(writer.mediaBudget)
     }
 
+    @Test func admissionPressureLeavesAPaddedGapAndLaterAudioLandsInPlace() async throws {
+        let root = try makeTempDirectory("admission-pressure-recovers"); defer { try? FileManager.default.removeItem(at: root) }
+        let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("pressure.m4a"), trackType: .systemAudio,
+            segmentStartTime: .zero)
+        let hold = AdmissionNativeHold()
+        writer._nativeStartWritingHookForTesting = { hold.enter() }
+        defer { hold.release() }
+        let tone = try admissionPCM(frames: 48, frequency: 660)
+        for index in 0..<100 { _ = writer.enqueuePCMBuffer(tone, presentationTime: CMTime(value: Int64(index * 48), timescale: 48_000)) }
+        hold.release()
+        try await withTimeout(seconds: 2) { while writer.statisticsSnapshot.acceptedFrames < 64 * 48 { try await Task.sleep(for: .milliseconds(1)) } }
+        #expect(writer.enqueuePCMBuffer(try admissionPCM(frames: 480, frequency: 660), presentationTime: CMTime(value: 200 * 48, timescale: 48_000)) != nil)
+        _ = await writer.finish()
+        let statistics = writer.statisticsSnapshot
+        #expect(statistics.acceptedFrames == 64 * 48 + 480 && statistics.droppedFrames == 36 * 48 && statistics.generatedFrames == 136 * 48)
+        #expect(statistics.failures.contains { $0.stage == "admission_queue" })
+        #expect(!statistics.failures.contains { ["admission_terminal", "timeline", "padding"].contains($0.stage) })
+        #expect(try #require(try await admissionDecode(writer.url).first).count == 200 * 48 + 480)
+    }
+
     @Test func tinyWriterJobsAreBoundedAndRejectionEvidenceCannotQueueUnboundedReports() async throws {
         let root = try makeTempDirectory("tiny-writer-admission"); defer { try? FileManager.default.removeItem(at: root) }
         let reports = LockedArray<AudioWriterStatistics>([])
@@ -294,7 +314,8 @@ struct AudioAdmissionTests {
         let evidence = writer.statisticsSnapshot
         #expect(evidence.receivedFrames == 1_000 && evidence.acceptedFrames == 0 && evidence.droppedFrames == 936)
         #expect(evidence.failures.contains { $0.stage == "admission_queue" })
-        #expect(evidence.failures.first { $0.stage == "admission_terminal" }?.count == 935)
+        #expect(evidence.failures.first { $0.stage == "admission_queue" }?.count == 936)
+        #expect(!evidence.failures.contains { $0.stage == "admission_terminal" })
         #expect(reportHold.entered.count == 1)
         let usage = writer.mediaBudget.snapshot
         #expect(usage.stages[AudioMediaBudget.Stage.writer.rawValue].jobs == 64)
@@ -531,8 +552,9 @@ struct AudioAdmissionTests {
         #expect(writer.statisticsSnapshot.receivedFrames == 0 && writer.statisticsSnapshot.droppedFrames == 0)
         admissionBudgetIsBounded(writer.mediaBudget)
         _ = capture.detachForBoundary(); capture._resumeProcessingForTesting(); await capture.drainConversion(); _ = await writer.finish()
-        #expect(writer.statisticsSnapshot.receivedFrames == admitted * frames && writer.statisticsSnapshot.droppedFrames == admitted * frames)
-        #expect(writer.statisticsSnapshot.acceptedFrames == 0 && writer.statisticsSnapshot.statisticsComplete == false)
+        // Pressure drops only the refused buffer; audio admitted before it is written.
+        #expect(writer.statisticsSnapshot.receivedFrames == admitted * frames && writer.statisticsSnapshot.droppedFrames == 0)
+        #expect(writer.statisticsSnapshot.acceptedFrames == admitted * frames && writer.statisticsSnapshot.statisticsComplete == false)
         admissionBudgetIsEmpty(writer.mediaBudget)
     }
 
@@ -607,10 +629,11 @@ struct AudioAdmissionTests {
         writer.enqueueAudio(try admissionSample(admissionPCM(frames: 4_800, frequency: 880), time: CMTime(value: 9_600, timescale: 48_000)))
         let info = await writer.finish(captureCutoff: CMTime(value: 19_200, timescale: 48_000)), stats = writer.statisticsSnapshot
         #expect(stats.receivedFrames == 14_400 && stats.acceptedFrames == 4_800 && stats.droppedFrames == 9_600)
-        #expect(stats.generatedFrames == 0 && stats.failures.contains { $0.stage == "admission_copy" })
+        // The refused interval is a padded gap to the cutoff, not the end of the source.
+        #expect(stats.generatedFrames == 14_400 && stats.failures.contains { $0.stage == "admission_copy" })
         let original = try Data(contentsOf: writer.url)
         let prefix = try #require(try await admissionDecode(writer.url).first)
-        #expect(prefix.count == 4_800 && admissionTone(prefix, frequency: 220, start: 0.025, end: 0.075) > 0.15)
+        #expect(prefix.count == 19_200 && admissionTone(prefix, frequency: 220, start: 0.025, end: 0.075) > 0.15)
         try recorder.seal()
         let queue = RemixQueue()
         await queue.enqueue(.init(segmentDirectory: dir, timePrefix: "120000", capturedDurationSeconds: 4,
@@ -620,7 +643,7 @@ struct AudioAdmissionTests {
         let final = root.appendingPathComponent("120000_4")
         #expect(try Data(contentsOf: final.appendingPathComponent("120000_4_audio_system.m4a")) == original)
         let mixed = try #require(try await admissionDecode(final.appendingPathComponent("120000_4_audio.m4a")).first)
-        #expect(mixed.count == 4_800 && admissionTone(mixed, frequency: 220, start: 0.025, end: 0.075) > 0.15)
+        #expect(mixed.count == 19_200 && admissionTone(mixed, frequency: 220, start: 0.025, end: 0.075) > 0.15)
         let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: final.appendingPathComponent("120000_4_meta.json"))) as? [String: Any]
         #expect((meta?["audio_capture"] as? [String: Any])?["state"] as? String == "partial")
         admissionBudgetIsEmpty(writer.mediaBudget)
