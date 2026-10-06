@@ -243,12 +243,14 @@ public final class PauseManager {
 
     private func startUIRefreshTimer() {
         guard uiRefreshTimer == nil else { return }
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshTick += 1
             }
         }
         timer.tolerance = 0.5
+        // Common modes keep the countdown moving while the menu is open.
+        RunLoop.main.add(timer, forMode: .common)
         uiRefreshTimer = timer
     }
 
