@@ -83,6 +83,8 @@ public struct AudioWriterStatistics: Codable, Sendable {
 /// Writes audio from a single source to its own M4A file
 /// Tracks timing offset for later remix alignment
 public final class SingleTrackAudioWriter: @unchecked Sendable {
+    /// Timestamp overlaps up to this are clock jitter and are treated as continuous.
+    static let timestampJitterTolerance: TimeInterval = 0.001
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let outputURL: URL
@@ -457,10 +459,23 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         }
         let firstTime = segmentStartTime
         let priorEnd = lastBufferTime ?? segmentStartTime
-        let gap = CMTimeSubtract(currentTime, priorEnd).seconds
-        guard gap >= -1.0 / asbd.mSampleRate else {
-            recordFailure(stage: "timeline", error: nil, dropped: numSamples)
-            lock.unlock(); return
+        var gap = CMTimeSubtract(currentTime, priorEnd).seconds
+        if gap < -0.5 / asbd.mSampleRate {
+            // Device timestamps jitter and drift against the host clock, so an overlap
+            // is not a failure on its own. Up to the jitter tolerance it is continuous;
+            // beyond it only the frames landing on time already written are trimmed.
+            // A jump back past the whole buffer is a genuine timeline break.
+            let overlap = Int((-gap * asbd.mSampleRate).rounded())
+            if -gap > Self.timestampJitterTolerance {
+                guard overlap < numSamples,
+                      let trimmed = clipBoundary(sampleBuffer, skipping: overlap, frames: numSamples - overlap, format: format) else {
+                    recordFailure(stage: "timeline", error: nil, dropped: numSamples)
+                    lock.unlock(); return
+                }
+                statistics.droppedFrames += overlap
+                sampleBuffer = trimmed; numSamples -= overlap; duration = sampleDuration(trimmed)
+            }
+            currentTime = priorEnd; gap = 0
         }
         if gap > 0.5 / asbd.mSampleRate {
             if silenceAccumulatedSamples > 0 { flushSilence(firstTime: firstTime) }

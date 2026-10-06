@@ -62,6 +62,8 @@ public final class SystemAudioCaptureManager {
 
     /// Health check timer - monitors for missing audio buffers
     private var healthCheckTimer: Timer?
+    /// Serial so audio buffers reach the writer in the order the stream produced them.
+    private let sampleQueue = DispatchQueue(label: "app.solstone.system-audio.samples", qos: .userInitiated)
     private let healthCheckInterval: TimeInterval = 30.0  // Check every 30 seconds
     private var consecutiveEmptyChecks: Int = 0
     private let maxEmptyChecks: Int = 2  // Restart after 2 consecutive empty checks (60s of no audio)
@@ -288,7 +290,7 @@ public final class SystemAudioCaptureManager {
             appendRestartProceedTraceForTesting()
         }
         let newStream = streamFactory(filter, config, delegate)
-        try newStream.addStreamOutput(output, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
+        try newStream.addStreamOutput(output, type: .audio, sampleHandlerQueue: sampleQueue)
 
         activeStreamID = streamID
         retiringStreams[streamID] = newStream

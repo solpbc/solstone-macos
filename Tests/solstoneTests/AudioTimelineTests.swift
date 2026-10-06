@@ -318,6 +318,24 @@ struct AudioTimelineTests {
         #expect(try await timelineDecode(writer.url).first?.count == 4800)
     }
 
+    @Test func timestampJitterAndPartialOverlapAreNeverFailures() async throws {
+        let root = try makeTempDirectory("timeline-jitter-overlap")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("source.m4a"), trackType: .systemAudio, segmentStartTime: .zero)
+        let pcm = try timelinePCM(frames: 4800, frequency: 220)
+        writer.appendPCMBuffer(pcm, presentationTime: .zero)
+        // 10 samples early: clock jitter, kept whole and placed right after the previous buffer.
+        writer.appendPCMBuffer(pcm, presentationTime: CMTime(value: 4790, timescale: 48_000))
+        // 50 ms early: only the 2400 frames on time already written are trimmed.
+        writer.appendPCMBuffer(pcm, presentationTime: CMTime(value: 9600 - 2400, timescale: 48_000))
+        _ = await writer.finish()
+        let statistics = writer.statisticsSnapshot
+        #expect(statistics.failures.isEmpty)
+        #expect(statistics.receivedFrames == 14_400 && statistics.acceptedFrames == 12_000 && statistics.droppedFrames == 2400)
+        #expect(statistics.generatedFrames == 0)
+        #expect(try await timelineDecode(writer.url).first?.count == 12_000)
+    }
+
     @Test func hugeOrInvalidTimesNeverAllocatePaddingOrErasePrefix() async throws {
         let root = try makeTempDirectory("timeline-malformed-time")
         defer { try? FileManager.default.removeItem(at: root) }
