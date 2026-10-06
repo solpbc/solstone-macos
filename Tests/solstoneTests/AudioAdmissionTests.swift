@@ -13,6 +13,88 @@ import Testing
 
 @Suite("Audio admission", .serialized)
 struct AudioAdmissionTests {
+    @Test(arguments: [(48_000.0, 1, 4_096, 12), (44_100.0, 1, 4_096, 11),
+                      (96_000.0, 16, 10_000, 4), (48_000.5, 1, 4_096, 12)])
+    func quietBatchOvershootKeepsEveryFrameAndQueuedOwnership(fixture: (Double, Int, Int, Int)) async throws {
+        let (rate, channels, frames, quietCount) = fixture
+        let root = try makeTempDirectory("quiet-batch-overshoot"); defer { try? FileManager.default.removeItem(at: root) }
+        let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("source.m4a"),
+            trackType: .systemAudio, segmentStartTime: .zero)
+        let chunks = LockedArray<(Int, Double)>([]), calls = LockedCounter(), hold = AdmissionNativeHold()
+        writer._silentBufferAdmissionForTesting = { count, time in chunks.append((count, time.seconds)); return true }
+        writer._nativeAppendHookForTesting = { calls.increment(); if calls.count == 2 { hold.enter() } }
+        defer { hold.release() }
+        var receipts: [AudioWriteReceipt] = []
+        for index in 0..<(quietCount + 2) {
+            let tone = index == quietCount ? 660.0 : 0
+            let pcm = try admissionPCM(frames: frames, frequency: tone, rate: rate, channels: AVAudioChannelCount(channels))
+            let time = CMTime(seconds: Double(index * frames) / rate, preferredTimescale: 1_000_000_000)
+            // Microphone admission is mono; multichannel input follows the
+            // production system-audio CMSampleBuffer boundary.
+            let receipt = channels == 1 ? writer.enqueuePCMBuffer(pcm, presentationTime: time)
+                : writer.enqueueAudio(try admissionSample(pcm, time: time))
+            receipts.append(try #require(receipt))
+        }
+        let fence = writer.makeObservationFence()
+        try await withTimeout(seconds: 2) { await hold.entered.waitUntilCount(1) }
+        #expect(!fence.isComplete && receipts.allSatisfy { !$0.signal.isComplete })
+        #expect(writer.mediaBudget.snapshot.stages[AudioMediaBudget.Stage.writer.rawValue].jobs == receipts.count)
+        admissionBudgetIsBounded(writer.mediaBudget)
+        hold.release(); await fence.wait()
+        #expect(receipts.allSatisfy { $0.signal.isComplete })
+        _ = await writer.finish()
+        let stats = writer.statisticsSnapshot, total = (quietCount + 2) * frames
+        #expect(stats.receivedFrames == total && stats.acceptedFrames == total && stats.droppedFrames == 0)
+        #expect(stats.generatedFrames == 0 && stats.failures.isEmpty && stats.statisticsComplete == true)
+        let generated = chunks.all
+        #expect(generated.count >= 3)
+        for (count, _) in generated {
+            #expect(count > 0 && Double(count) / rate <= 1)
+            #expect(count * channels * 4 <= AudioMediaBudget.bytesPerStage / 2)
+        }
+        #expect(abs(generated[0].1) < 1 / rate)
+        #expect(abs(generated[1].1 - Double(generated[0].0) / rate) < 1 / rate)
+        if channels == 16 { #expect(generated[0].0 * channels * 4 == AudioMediaBudget.bytesPerStage / 2) }
+        let decoded = try #require(try await admissionDecode(writer.url).first)
+        #expect(abs(decoded.count - Int((Double(total) * 48_000 / rate).rounded())) <= 2)
+        let markerStart = Double(quietCount * frames) / rate
+        #expect(admissionRMS(decoded, start: 0.025, end: min(0.5, markerStart - 0.025)) < 0.002)
+        #expect(admissionTone(decoded, frequency: 660, start: markerStart + 0.025,
+            end: markerStart + Double(frames) / rate - 0.025) > 0.08)
+        #expect(hold.timeouts.count == 0)
+        admissionBudgetIsEmpty(writer.mediaBudget)
+    }
+
+    @Test(arguments: [false, true])
+    func laterQuietChunkFailurePreservesPrefixAndAccountsForEveryRejectedFrame(allocation: Bool) async throws {
+        let root = try makeTempDirectory("quiet-chunk-failure"); defer { try? FileManager.default.removeItem(at: root) }
+        let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("source.m4a"),
+            trackType: .systemAudio, segmentStartTime: .zero)
+        let calls = LockedCounter()
+        if allocation {
+            writer._silentBufferAdmissionForTesting = { _, _ in calls.increment(); return calls.count != 2 }
+        } else {
+            writer._appendAdmissionForTesting = { _ in calls.increment(); return calls.count != 2 }
+        }
+        var receipts: [AudioWriteReceipt] = []
+        for index in 0..<14 {
+            let frequency = index < 12 ? 0.0 : 660.0
+            receipts.append(try #require(writer.enqueuePCMBuffer(try admissionPCM(frames: 4_096, frequency: frequency),
+                presentationTime: CMTime(value: Int64(index * 4_096), timescale: 48_000))))
+        }
+        await writer.makeObservationFence().wait(); _ = await writer.finish()
+        let stats = writer.statisticsSnapshot
+        #expect(stats.receivedFrames == 14 * 4_096 && stats.acceptedFrames == 48_000)
+        #expect(stats.droppedFrames == 14 * 4_096 - 48_000 && stats.generatedFrames == 0)
+        #expect(stats.receivedFrames == stats.acceptedFrames + stats.droppedFrames && stats.statisticsComplete == true)
+        #expect(stats.failures.contains { $0.stage == (allocation ? "silence" : "append") })
+        #expect(receipts.allSatisfy { $0.signal.isComplete })
+        let decoded = try #require(try await admissionDecode(writer.url).first)
+        #expect(decoded.count == 48_000 && admissionRMS(decoded, start: 0.025, end: 0.975) < 0.002)
+        #expect(admissionTone(decoded, frequency: 660, start: 0.025, end: 0.975) < 0.002)
+        admissionBudgetIsEmpty(writer.mediaBudget)
+    }
+
     @Test(arguments: [44_100.0, 48_000.0, 96_000.0], [AVAudioChannelCount(1), AVAudioChannelCount(2)])
     func normalBurstChargesRawAndNativeWorkUntilActualAcceptance(rate: Double, channels: AVAudioChannelCount) async throws {
         let root = try makeTempDirectory("normal-admission"); defer { try? FileManager.default.removeItem(at: root) }

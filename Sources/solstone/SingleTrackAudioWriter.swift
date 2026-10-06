@@ -140,6 +140,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     internal var _paddingAdmissionForTesting: (@Sendable (Int) -> Bool)?
     internal var _boundaryClipAdmissionForTesting: (@Sendable (Int) -> Bool)?
     internal var _appendAdmissionForTesting: (@Sendable (Int) -> Bool)?
+    internal var _silentBufferAdmissionForTesting: (@Sendable (Int, CMTime) -> Bool)?
     internal var _segmentStartTimeForTesting: CMTime { segmentStartTime }
     internal func _clipBoundaryForTesting(_ buffer: CMSampleBuffer, skipping: Int) -> CMSampleBuffer? {
         guard let format = CMSampleBufferGetFormatDescription(buffer) else { return nil }
@@ -567,7 +568,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         return rms < Self.silenceThreshold
     }
 
-    /// Flush accumulated silence as a single silent buffer
+    /// Flush accumulated silence in bounded buffers without discarding its tail
     /// Must be called with lock held
     private func flushSilence(firstTime: CMTime) {
         let frames = silenceAccumulatedSamples
@@ -576,18 +577,45 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             retiredSilentWork += pendingSilentWork
             pendingSilentWork.removeAll(keepingCapacity: true)
         }
-        guard frames > 0, let startTime = silenceStartTime, let formatDesc = lastSilentBufferFormat else {
-            if frames > 0 { recordFailure(stage: "silence", error: nil, dropped: frames) }
+        guard frames > 0, let startTime = silenceStartTime, let formatDesc = lastSilentBufferFormat,
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee,
+              lastSilentBufferSampleRate.isFinite, lastSilentBufferSampleRate >= 1,
+              lastSilentBufferSampleRate <= 192_000, asbd.mBytesPerFrame > 0 else {
+            if frames > 0 { timelineFailed = true; recordFailure(stage: "silence", error: nil, dropped: frames) }
             return
         }
-        let adjustedTime = CMTimeSubtract(startTime, firstTime)
-        if let silent = createSilentBuffer(sampleCount: frames, presentationTime: adjustedTime,
-                                                formatDescription: formatDesc, sampleRate: lastSilentBufferSampleRate) {
-            autoreleasepool {
-                if let buffer = silent.buffer { appendChecked(buffer, frames: frames) }
+        let planes = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0 ? 1 : Int(asbd.mChannelsPerFrame)
+        let byteFrames = (AudioMediaBudget.bytesPerStage / 2) / (Int(asbd.mBytesPerFrame) * planes)
+        let chunkLimit = min(Int(lastSilentBufferSampleRate.rounded(.down)), byteFrames)
+        guard chunkLimit > 0 else {
+            timelineFailed = true; recordFailure(stage: "silence", error: nil, dropped: frames); return
+        }
+        // The final quiet input can cross the batching threshold. Keep each
+        // generated allocation bounded while encoding every original frame.
+        var consumed = 0
+        while consumed < frames {
+            let count = min(frames - consumed, chunkLimit)
+            let time = CMTimeAdd(CMTimeSubtract(startTime, firstTime),
+                CMTime(seconds: Double(consumed) / lastSilentBufferSampleRate, preferredTimescale: 1_000_000_000))
+            guard let silent = createSilentBuffer(sampleCount: count, presentationTime: time,
+                formatDescription: formatDesc, sampleRate: lastSilentBufferSampleRate) else {
+                timelineFailed = true
+                recordFailure(stage: "silence", error: nil, dropped: frames - consumed)
+                return
+            }
+            let accepted = autoreleasepool {
+                silent.buffer.map { appendChecked($0, frames: count) } ?? false
             }
             silent.release()
-        } else { recordFailure(stage: "silence", error: nil, dropped: frames) }
+            if !accepted {
+                // appendChecked accounted for this attempted chunk. The suffix
+                // never reached it and must be accounted for exactly once.
+                let suffix = frames - consumed - count
+                if suffix > 0 { recordFailure(stage: "silence", error: nil, dropped: suffix) }
+                return
+            }
+            consumed += count
+        }
     }
 
     @discardableResult
@@ -702,6 +730,9 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
 
     /// Create a silent CMSampleBuffer with the given parameters
     private func createSilentBuffer(sampleCount: Int, presentationTime: CMTime, formatDescription: CMFormatDescription, sampleRate: Double) -> AudioTemporarySampleWork? {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        if _silentBufferAdmissionForTesting?(sampleCount, presentationTime) == false { return nil }
+#endif
         guard let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)?.pointee,
               let extent = AudioPCMExtent(frames: sampleCount, asbd: asbd),
               let lease = mediaBudget.reserve(.temporary, bytes: extent.bytes) else {
@@ -736,8 +767,11 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
 
         // Create sample buffer
         var silentBuffer: CMSampleBuffer?
+        let sampleTime = sampleRate.rounded(.down) == sampleRate
+            ? CMTime(value: 1, timescale: Int32(sampleRate))
+            : CMTime(seconds: 1 / sampleRate, preferredTimescale: 1_000_000_000)
         var timing = CMSampleTimingInfo(
-            duration: CMTimeMake(value: 1, timescale: Int32(sampleRate)),
+            duration: sampleTime,
             presentationTimeStamp: presentationTime,
             decodeTimeStamp: CMTime.invalid
         )
