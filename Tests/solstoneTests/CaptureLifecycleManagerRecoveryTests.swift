@@ -18,6 +18,22 @@ struct CaptureLifecycleManagerRecoveryTests {
         #expect(CaptureLifecycleManager.recoveryDelay(forRetryCount: 20) == 300)
     }
 
+    @Test func ownerPausePreventsScheduledAndImmediateRecoveryResume() async {
+        let scheduler = FakeRecoveryScheduler()
+        let delegate = FakeLifecycleDelegate(state: .error("all displays disconnected"))
+        let manager = makeManager(scheduler: scheduler, delegate: delegate)
+        manager.ownerPauseIsHeld = { true }
+
+        manager.startRecoveryIfNeeded(error: CaptureManager.CaptureError.noDisplaysAvailable)
+        #expect(!manager.isRecoveryScheduled)
+        #expect(!scheduler.hasActiveToken)
+
+        await manager.attemptRecovery()
+
+        #expect(delegate.resumeTriggers.isEmpty)
+        #expect(!manager.isRecoveryScheduled)
+    }
+
     @Test func displayChangeAttemptsRecoveryImmediatelyAndResetsBackoff() async {
         let scheduler = FakeRecoveryScheduler()
         let delegate = FakeLifecycleDelegate(state: .error("all displays disconnected"))
@@ -1079,7 +1095,7 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
         case .committed:
             lifecycleCurrentState = .recording
             appendEvent(.startCompleted(reason.trigger))
-        case .vetoedScreenLocked:
+        case .vetoedScreenLocked, .vetoedOwnerPause:
             appendEvent(.startCompleted(reason.trigger))
         }
         return startResult
@@ -1127,6 +1143,10 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
         lifecycleCurrentState = .paused(reasons: remaining)
         return .stayedPaused
     }
+
+    var lifecycleOwnerPauseIsHeld: Bool { false }
+    func lifecycleAuthorizeResume(_ reason: ResumeReason) -> MicrophoneCaptureManager.RecoveryAuthorization? { nil }
+    func lifecycleCancelResumeAuthorization(_ authorization: MicrophoneCaptureManager.RecoveryAuthorization?) {}
 
     func lifecyclePrepareResume(trigger: String) async throws {
         appendEvent(.resumeStarted(trigger))

@@ -65,6 +65,21 @@ struct DiagnosticEvidenceWireUpTests {
             """))
     }
 
+    @Test func productionPauseManagerUsesStandardDefaultsAndSnapshotDoesNot() throws {
+        let appState = try readWireUpSource("Sources/solstone/AppState.swift")
+        let productionAnchor = "    init(\n        notifier: any UserNotifying = UNUserNotificationCenterNotifier(),"
+        let snapshotAnchor = "    private init(\n        snapshotConfig config: AppConfig,"
+        let productionStart = try #require(appState.range(of: productionAnchor))
+        let snapshotStart = try #require(appState.range(of: snapshotAnchor))
+        let production = String(appState[productionStart.lowerBound..<snapshotStart.lowerBound])
+        let snapshotEnd = try #require(appState[snapshotStart.lowerBound...].range(of: "        let storageManager = StorageManager()"))
+        let snapshot = String(appState[snapshotStart.lowerBound..<snapshotEnd.lowerBound])
+
+        #expect(wireUpContains(production, "let pauseManager = PauseManager(defaults: .standard)"))
+        #expect(wireUpContains(snapshot, "let pauseManager = PauseManager()"))
+        #expect(!wireUpContains(snapshot, "PauseManager(defaults:"))
+    }
+
     @Test func screenTruthAssignmentsAreContained() throws {
         let enumerator = try #require(FileManager.default.enumerator(
             at: URL(fileURLWithPath: "Sources"),

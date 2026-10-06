@@ -218,50 +218,126 @@ struct CaptureCoordinatorTests {
         #expect(scheduler.cancellationCount == 2)
     }
 
-    @Test func startWhileUserPausedClearsPausePolicyWithoutResumeCallback() async throws {
-        let pauseManager = PauseManager()
-        pauseManager.pause(for: .minutes(15))
-        let (coordinator, root) = try makeCoordinator(
-            pauseManager: pauseManager,
-            startOperation: { _, _, _ in .committed }
-        )
-        defer { try? FileManager.default.removeItem(at: root) }
-        var resumeCallbackCount = 0
-        pauseManager.onResume = {
-            resumeCallbackCount += 1
+    @Test func ordinaryStartDoesNotRunOrEndOwnerPause() async throws {
+        for userPausedSession in [false, true] {
+            let isolated = IsolatedUserDefaults()
+            defer { isolated.clear() }
+            let now = Date(timeIntervalSince1970: 1_800_000_000)
+            let pauseManager = makeOwnerPauseManager(defaults: isolated.defaults, now: now)
+            pauseManager.pause(for: .indefinite)
+            let startCount = LockedCounter()
+            let (coordinator, root) = try makeCoordinator(
+                pauseManager: pauseManager,
+                startOperation: { _, _, _ in
+                    startCount.increment()
+                    return .committed
+                }
+            )
+            defer { try? FileManager.default.removeItem(at: root) }
+
+            if userPausedSession {
+                let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111116.incomplete", isDirectory: true))
+                coordinator.captureManager.seedRecordingForTesting(currentSegment: segment)
+                _ = await coordinator.captureManager.enqueueTransition(.pause(reason: .user, stopAudio: true))
+                coordinator.handleCaptureStateChange(.paused(reasons: [.user]))
+            }
+
+            await coordinator.startRecording(reason: .user)
+
+            #expect(startCount.count == 0)
+            #expect(pauseManager.isPaused)
+            #expect(PauseManager(defaults: isolated.defaults, now: { now }).isPaused)
         }
-        coordinator.handleCaptureStateChange(.paused(reasons: [.user]))
-
-        await coordinator.startRecording()
-
-        #expect(!pauseManager.pauseState.isPaused)
-        #expect(pauseManager.pauseState.expirationDate == nil)
-        #expect(resumeCallbackCount == 0)
     }
 
-    @Test func stopWhileUserPausedClearsPausePolicyWithoutResumeCallback() async throws {
-        let pauseManager = PauseManager()
+    @Test func stopLeavesOwnerPauseHeld() async throws {
+        let stopReasons: [StopReason] = [.quit, .update, .user, .userStopped]
+        for indefinite in [true, false] {
+            for reason in stopReasons {
+                let isolated = IsolatedUserDefaults()
+                defer { isolated.clear() }
+                let now = Date(timeIntervalSince1970: 1_800_000_000)
+                let pauseManager = makeOwnerPauseManager(defaults: isolated.defaults, now: now)
+                pauseManager.pause(for: indefinite ? .indefinite : .minutes(15))
+                let scheduler = PermissionPollTestScheduler()
+                let startCount = LockedCounter()
+                let (coordinator, root) = try makeCoordinator(
+                    pauseManager: pauseManager,
+                    startOperation: { _, _, _ in
+                        startCount.increment()
+                        return .committed
+                    },
+                    screenPermissionProvider: grantedScreenPermissionProvider(),
+                    permissionPollScheduler: scheduler.scheduler
+                )
+                defer { try? FileManager.default.removeItem(at: root) }
+                let expectedDeadline = pauseManager.pauseState.expirationDate
+                let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111116.incomplete", isDirectory: true))
+                coordinator.captureManager.seedRecordingForTesting(currentSegment: segment)
+                _ = await coordinator.captureManager.enqueueTransition(.pause(reason: .user, stopAudio: true))
+                var resumeCallbackCount = 0
+                pauseManager.onResume = { _ in resumeCallbackCount += 1 }
+                coordinator.activate()
+                coordinator.handleCaptureStateChange(.paused(reasons: [.user]))
+
+                let outcome = await coordinator.stopRecording(reason: reason)
+
+                guard case .committed = outcome else {
+                    Issue.record("expected stop from user pause to commit for \(reason)")
+                    continue
+                }
+                #expect(pauseManager.isPaused)
+                #expect(pauseManager.pauseState.expirationDate == expectedDeadline)
+                #expect(resumeCallbackCount == 0)
+                let restored = PauseManager(defaults: isolated.defaults, now: { now })
+                #expect(restored.isPaused)
+                #expect(restored.pauseState.expirationDate == expectedDeadline)
+
+                if reason == .update {
+                    coordinator.microphoneAuthorizationReader = { .authorized }
+                    await scheduler.fireOutstandingPasses()
+                    #expect(startCount.count == 0)
+                }
+            }
+        }
+    }
+
+    @Test func lockAndSleepPausesStaySessionOnly() async throws {
+        for reasons: Set<PauseReason> in [[.lock], [.sleep]] {
+            let isolated = IsolatedUserDefaults()
+            defer { isolated.clear() }
+            let pauseManager = PauseManager(defaults: isolated.defaults)
+            let (coordinator, root) = try makeCoordinator(pauseManager: pauseManager)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111116.incomplete", isDirectory: true))
+            coordinator.captureManager.seedRecordingForTesting(currentSegment: segment)
+            for reason in reasons {
+                _ = await coordinator.captureManager.enqueueTransition(.pause(reason: reason, stopAudio: reason == .lock))
+            }
+
+            _ = await coordinator.stopRecording(reason: .quit)
+
+            #expect(!PauseManager(defaults: isolated.defaults).isPaused)
+        }
+
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let pauseManager = makeOwnerPauseManager(defaults: isolated.defaults, now: now)
         pauseManager.pause(for: .minutes(15))
+        let deadline = pauseManager.pauseState.expirationDate
         let (coordinator, root) = try makeCoordinator(pauseManager: pauseManager)
         defer { try? FileManager.default.removeItem(at: root) }
         let segment = FakeCaptureSegment(outputDirectory: root.appendingPathComponent("111116.incomplete", isDirectory: true))
         coordinator.captureManager.seedRecordingForTesting(currentSegment: segment)
         _ = await coordinator.captureManager.enqueueTransition(.pause(reason: .user, stopAudio: true))
-        var resumeCallbackCount = 0
-        pauseManager.onResume = {
-            resumeCallbackCount += 1
-        }
-        coordinator.handleCaptureStateChange(.paused(reasons: [.user]))
+        _ = await coordinator.captureManager.enqueueTransition(.pause(reason: .lock, stopAudio: true))
 
-        let outcome = await coordinator.stopRecording(reason: .user)
+        _ = await coordinator.stopRecording(reason: .quit)
 
-        guard case .committed = outcome else {
-            Issue.record("expected stop from user pause to commit")
-            return
-        }
-        #expect(!pauseManager.pauseState.isPaused)
-        #expect(pauseManager.pauseState.expirationDate == nil)
-        #expect(resumeCallbackCount == 0)
+        let restored = PauseManager(defaults: isolated.defaults, now: { now })
+        #expect(restored.isPaused)
+        #expect(restored.pauseState.expirationDate == deadline)
     }
 
     @Test func preservingPausePolicyKeepsTheTimedDeadline() async throws {
@@ -307,7 +383,7 @@ struct CaptureCoordinatorTests {
         )
         defer { try? FileManager.default.removeItem(at: root) }
         let resumeCallbackCount = LockedCounter()
-        pauseManager.onResume = {
+        pauseManager.onResume = { _ in
             resumeCallbackCount.increment()
         }
         coordinator.handleCaptureStateChange(.paused(reasons: [.user]))
@@ -319,6 +395,166 @@ struct CaptureCoordinatorTests {
         }
         #expect(startCount.count == 0)
         #expect(!pauseManager.pauseState.isPaused)
+    }
+
+    @Test func toggleRecordingWhileHeldIdleResumesWithoutStarting() async throws {
+        let pauseManager = PauseManager()
+        pauseManager.pause(for: .indefinite)
+        let startCount = LockedCounter()
+        let (coordinator, root) = try makeCoordinator(
+            pauseManager: pauseManager,
+            startOperation: { _, _, _ in
+                startCount.increment()
+                return .committed
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        await coordinator.toggleRecording()
+
+        #expect(!pauseManager.isPaused)
+        #expect(startCount.count == 0)
+    }
+
+    @Test func heldPauseBlocksPermissionAutoStartButStillPublishesCheckCompletion() async throws {
+        let scheduler = PermissionPollTestScheduler()
+        let isolated = IsolatedUserDefaults()
+        defer { isolated.clear() }
+        let pauseManager = makeOwnerPauseManager(defaults: isolated.defaults, now: Date())
+        pauseManager.pause(for: .indefinite)
+        let heldStartCount = LockedCounter()
+        let (held, heldRoot) = try makeCoordinator(
+            pauseManager: pauseManager,
+            startOperation: { _, _, _ in
+                heldStartCount.increment()
+                return .committed
+            },
+            screenPermissionProvider: grantedScreenPermissionProvider(),
+            permissionPollScheduler: scheduler.scheduler
+        )
+        defer { try? FileManager.default.removeItem(at: heldRoot) }
+        held.microphoneAuthorizationReader = { .authorized }
+
+        await held.checkPermissionsAndAutoStart()
+
+        #expect(heldStartCount.count == 0)
+        #expect(held.initialPermissionCheckComplete)
+        let coordinatorSource = try readWireUpSource("Sources/solstone/CaptureCoordinator.swift")
+        #expect(wireUpContains(
+            coordinatorSource,
+            "!isRecording && !isUserPaused && !pauseManager.isPaused && !captureManager.isRecoveryScheduled"
+        ))
+
+        let unpausedStartCount = LockedCounter()
+        let (unpaused, unpausedRoot) = try makeCoordinator(
+            startOperation: { _, _, _ in
+                unpausedStartCount.increment()
+                return .committed
+            },
+            screenPermissionProvider: grantedScreenPermissionProvider()
+        )
+        defer { try? FileManager.default.removeItem(at: unpausedRoot) }
+        unpaused.microphoneAuthorizationReader = { .authorized }
+        await unpaused.checkPermissionsAndAutoStart()
+        #expect(unpausedStartCount.count == 1)
+    }
+
+    @Test func resumingHeldIdleStartsImmediatelyUnlessAnotherStartLatchIsSet() async throws {
+        for latch in ["none", "explicit-stop", "user-stop", "recovery"] {
+            let scheduler = PermissionPollTestScheduler()
+            let recoveryScheduler = FakeRecoveryScheduler()
+            let pauseManager = PauseManager()
+            let startCount = LockedCounter()
+            let (coordinator, root) = try makeCoordinator(
+                pauseManager: pauseManager,
+                startOperation: { _, _, _ in
+                    startCount.increment()
+                    return .committed
+                },
+                screenPermissionProvider: grantedScreenPermissionProvider(),
+                permissionPollScheduler: scheduler.scheduler,
+                recoveryScheduler: recoveryScheduler
+            )
+            defer { try? FileManager.default.removeItem(at: root) }
+            coordinator.microphoneAuthorizationReader = { .authorized }
+
+            switch latch {
+            case "explicit-stop":
+                _ = await coordinator.stopRecording(reason: .user)
+            case "user-stop":
+                _ = await coordinator.stopRecording(reason: .userStopped)
+            case "recovery":
+                coordinator.captureManager.lifecycleTransitionToError(
+                    message: "transient",
+                    error: CaptureManager.CaptureError.noDisplaysAvailable,
+                    trigger: "test"
+                )
+            default:
+                break
+            }
+            pauseManager.pause(for: .indefinite)
+            coordinator.activate()
+            pauseManager.resume()
+
+            if latch == "none" {
+                try await waitUntil(timeout: .seconds(2)) { await MainActor.run { startCount.count == 1 } }
+                #expect(startCount.count == 1)
+            } else {
+                try await waitUntil(timeout: .seconds(2)) {
+                    await MainActor.run { coordinator.initialPermissionCheckComplete }
+                }
+                #expect(startCount.count == 0)
+            }
+            #expect(!pauseManager.isPaused)
+            #expect(scheduler.outstandingArmCount > 0)
+        }
+    }
+
+    @Test func sourceChangesWhileHeldIdleDoNotStopOrStart() async throws {
+        for initiallyAdmitted in [true, false] {
+            let scheduler = PermissionPollTestScheduler()
+            let config = AppConfig(
+                isScreenCaptureEnabled: initiallyAdmitted,
+                isMicrophoneCaptureEnabled: initiallyAdmitted,
+                isBrowserIntakeEnabled: false
+            )
+            let startCount = LockedCounter()
+            let state = AppState.forSnapshot(
+                config: config,
+                screenPermissionProvider: ScreenRecordingPermissionProvider(
+                    hasPrompted: { true },
+                    preflight: { true },
+                    checkScreenRecording: { true },
+                    resetPromptedFlag: {}
+                ),
+                permissionPollScheduler: scheduler.scheduler,
+                captureStartOperation: { _, _, _ in
+                    startCount.increment()
+                    return .committed
+                },
+            )
+            state.configSaver = { _ in }
+            state.capture.publishScreenRecordingPermission(.granted)
+            state.microphoneAuthorizationCause = .authorized
+            state.pauseManager.pause(for: .indefinite)
+            state.capture.activate()
+
+            await state.applySelectedSourcesToRunningSession()
+
+            #expect(startCount.count == 0)
+            #expect(!state.capture.isExplicitlyStopped)
+            #expect(state.captureManager.queuedIntentSnapshotForTesting.isEmpty)
+            #expect(state.captureManager.inFlightIntentForTesting == nil)
+
+            var resumedConfig = state.config
+            resumedConfig.isScreenCaptureEnabled = true
+            resumedConfig.isMicrophoneCaptureEnabled = true
+            state.updateConfig(resumedConfig)
+            state.capture.microphoneAuthorizationReader = { .authorized }
+            state.pauseManager.resume()
+            try await waitUntil(timeout: .seconds(2)) { await MainActor.run { startCount.count == 1 } }
+            #expect(startCount.count == 1)
+        }
     }
 
     @Test func autoStartPollDefersToScheduledRecoveryAndFiresWhenUnscheduled() async throws {
@@ -601,10 +837,23 @@ struct CaptureCoordinatorTests {
         startOperation: CaptureCoordinator.StartOperation? = nil,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
         permissionPollScheduler: PermissionPollScheduler? = nil,
+        recoveryScheduler: FakeRecoveryScheduler? = nil,
         classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
     ) throws -> (CaptureCoordinator, URL) {
         let root = try makeTempDirectory("capture-coordinator")
-        let captureManager = CaptureManager(storageManager: StorageManager(baseDirectory: root))
+        let storageManager = StorageManager(baseDirectory: root)
+        let captureManager: CaptureManager
+        if let recoveryScheduler {
+            captureManager = CaptureManager(
+                storageManager: storageManager,
+                streamFactory: defaultCaptureStreamFactory,
+                recoveryScheduler: { delay, fire in
+                    recoveryScheduler.schedule(delay: delay, fire: fire)
+                }
+            )
+        } else {
+            captureManager = CaptureManager(storageManager: storageManager)
+        }
         let coordinator = CaptureCoordinator(
             captureManager: captureManager,
             pauseManager: pauseManager,
@@ -620,6 +869,14 @@ struct CaptureCoordinatorTests {
         coordinator.microphoneAuthorizationCause = .authorized
         coordinator.publishScreenRecordingPermission(.granted)
         return (coordinator, root)
+    }
+
+    private func makeOwnerPauseManager(defaults: UserDefaults, now: Date) -> PauseManager {
+        PauseManager(
+            defaults: defaults,
+            expiryScheduler: { _, _ in FakePauseExpiryTimer {} },
+            now: { now }
+        )
     }
 
     private func grantedScreenPermissionProvider() -> ScreenRecordingPermissionProvider {
@@ -734,6 +991,10 @@ private final class StartOperationHarness: CaptureLifecycleDelegate {
         lifecycleCurrentState = .paused(reasons: remaining)
         return .stayedPaused
     }
+
+    var lifecycleOwnerPauseIsHeld: Bool { false }
+    func lifecycleAuthorizeResume(_ reason: ResumeReason) -> MicrophoneCaptureManager.RecoveryAuthorization? { nil }
+    func lifecycleCancelResumeAuthorization(_ authorization: MicrophoneCaptureManager.RecoveryAuthorization?) {}
 
     func lifecyclePrepareResume(trigger: String) async throws {}
 

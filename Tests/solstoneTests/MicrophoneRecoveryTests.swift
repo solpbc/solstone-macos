@@ -13,6 +13,166 @@ import Testing
 
 @Suite("Microphone recovery")
 struct MicrophoneRecoveryTests {
+    @Test @MainActor func queuedStartCannotOverrideNewerOwnerPause() async throws {
+        let root = try makeTempDirectory("mic-queued-pause-admission")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in })
+        }, retryDelay: { _ in })
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [device()] }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, microphoneCaptureManager: shared)
+        _ = await manager.enqueueTransition(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        _ = await manager.enqueueTransition(.pause(reason: .user, stopAudio: true))
+        let pause = PauseManager(), gate = MicResumePreparationGate()
+        manager.lifecycleManager.ownerPauseIsHeld = { pause.isPaused }
+        manager.beforeResumeNativeStartForTesting = { await gate.wait() }
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
+        let resume = Task { @MainActor in await executor.enqueue(.resume(reason: .user)) }
+        try await waitUntil(timeout: .seconds(3)) { await MainActor.run { gate.entered } }
+        let start = Task { @MainActor in await executor.enqueue(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: [])) }
+        try await waitUntil(timeout: .seconds(3)) { await MainActor.run { executor.queuedIntentCountForTesting == 1 } }
+        let before = lab.engines.count
+        pause.pause(for: .indefinite)
+        gate.release()
+        _ = await resume.value
+        let result = await start.value
+        guard case .vetoed = result else { Issue.record("Queued start must honor the current pause"); return }
+        #expect(pause.isPaused && lab.engines.count == before && !manager.state.isRecording)
+        manager.lifecycleManager.ownerPauseIsHeld = { false }
+        _ = await executor.enqueue(.stop(reason: .user)); shared.stopAll()
+    }
+
+    @Test(arguments: [false, true]) @MainActor
+    func uncommittedResumeRollsBackWhileOtherPauseDoesNotAuthorize(otherPause: Bool) async throws {
+        let root = try makeTempDirectory("mic-resume-veto")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in })
+        }, retryDelay: { _ in })
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [device()] }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, microphoneCaptureManager: shared)
+        _ = await manager.enqueueTransition(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        let capture = try #require(shared.getCapture(for: "u"))
+        for _ in 0..<7 { lab.engines.last!.notify(); await capture.drain() }
+        _ = await manager.enqueueTransition(.pause(reason: .user, stopAudio: true))
+        if otherPause { _ = await manager.enqueueTransition(.pause(reason: .lock, stopAudio: true)) }
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { true }, unlockResumeDelay: {})
+        _ = await executor.enqueue(.resume(reason: .user))
+        #expect(lab.engines.count == (otherPause ? 7 : 8) && manager.state.isPaused)
+        #expect(throws: NSError.self) { try shared.startCapture(for: device()) }
+        _ = await executor.enqueue(.stop(reason: .user)); shared.stopAll()
+    }
+
+    @Test(arguments: [false, true]) @MainActor
+    func timedOutNativePrepareCannotAdmitAfterNewOwnerRequestOrHold(held: Bool) async throws {
+        let root = try makeTempDirectory("mic-escaped-resume")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in })
+        }, retryDelay: { _ in })
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [device()] }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, microphoneCaptureManager: shared)
+        _ = await manager.enqueueTransition(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        let capture = try #require(shared.getCapture(for: "u"))
+        for _ in 0..<7 { lab.engines.last!.notify(); await capture.drain() }
+        _ = await manager.enqueueTransition(.pause(reason: .user, stopAudio: true))
+        let gate = MicResumePreparationGate()
+        manager.beforeResumeNativeStartForTesting = { await gate.wait() }
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {}, transitionTimeoutSeconds: 0.05)
+        let result = await executor.enqueue(.resume(reason: .user))
+        guard case .vetoed = result else { Issue.record("Held prepare must time out"); gate.release(); return }
+        #expect(lab.engines.count == 7)
+        #expect(throws: NSError.self) { try shared.startCapture(for: device()) }
+        if held {
+            manager.lifecycleManager.ownerPauseIsHeld = { true }
+        } else {
+            _ = await executor.enqueue(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+            #expect(manager.state.isRecording && lab.engines.count == 8)
+        }
+        let newer = manager.currentSegmentForTesting?.outputDirectory
+        let before = lab.engines.count
+        gate.release()
+        try await waitUntil(timeout: .seconds(3)) { await MainActor.run { gate.returned } }
+        await Task.yield()
+        #expect(lab.engines.count == before && manager.currentSegmentForTesting?.outputDirectory == newer)
+        if held {
+            #expect(throws: NSError.self) { try shared.startCapture(for: device()) }
+        } else {
+            let current = try #require(shared.getCapture(for: "u"))
+            #expect(current.isCapturing)
+            for _ in 0..<6 { lab.engines.last!.notify(); await current.drain() }
+            #expect(lab.engines.count == before + 6 && current.isCapturing)
+        }
+        manager.lifecycleManager.ownerPauseIsHeld = { false }
+        _ = await executor.enqueue(.stop(reason: .user)); shared.stopAll()
+    }
+
+    @Test(arguments: [false, true]) @MainActor
+    func actualCoordinatorExplicitResumeRenewsExhaustedSelectedMic(heldIdle: Bool) async throws {
+        let root = try makeTempDirectory("mic-coordinator-resume")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in })
+        }, retryDelay: { _ in })
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [device()] }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, microphoneCaptureManager: shared)
+        let pause = PauseManager()
+        let coordinator = CaptureCoordinator(captureManager: manager, pauseManager: pause,
+            audioDeviceMonitor: AudioDeviceMonitor(startListening: false), isTerminating: { false },
+            configProvider: { (sources: .microphone, disabled: [], enabled: []) }, bannerSink: { _ in },
+            permissionPollScheduler: PermissionPollTestScheduler().scheduler)
+        coordinator.microphoneAuthorizationCause = .authorized
+        coordinator.microphoneAuthorizationReader = { .authorized }
+        coordinator.activate()
+        await coordinator.startRecording(reason: .user)
+        let capture = try #require(shared.getCapture(for: "u"))
+        for _ in 0..<7 { lab.engines.last!.notify(); await capture.drain() }
+        #expect(lab.engines.count == 7 && !capture.isCapturing)
+        pause.pause(for: .indefinite)
+        try await waitUntil(timeout: .seconds(3)) { await MainActor.run { manager.state.isPaused } }
+        if heldIdle { _ = await manager.enqueueTransition(.stop(reason: .quit)) }
+        #expect(pause.isPaused && lab.engines.count == 7)
+        await coordinator.toggleRecording()
+        try await waitUntil(timeout: .seconds(3)) { await MainActor.run { manager.state.isRecording } }
+        #expect(lab.engines.count == 8 && shared.getCapture(for: "u")?.isCapturing == true)
+        #expect(!pause.isPaused)
+        _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
+    }
+
+    @Test @MainActor func deadlineResumeDoesNotRenewExhaustedMicrophone() async throws {
+        let root = try makeTempDirectory("mic-deadline-no-renew")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let shared = MicrophoneCaptureManager(captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose, engineFactory: { lab.make() },
+                resolveDeviceID: { _ in id.current }, recoveryDelay: { _ in })
+        }, retryDelay: { _ in })
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [device()] }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler, microphoneCaptureManager: shared)
+        _ = await manager.enqueueTransition(.start(reason: .user, sources: .microphone, disabledMicUIDs: [], enabledMicUIDs: []))
+        let capture = try #require(shared.getCapture(for: "u"))
+        for _ in 0..<7 { lab.engines.last!.notify(); await capture.drain() }
+        _ = await manager.enqueueTransition(.pause(reason: .user, stopAudio: true))
+        let result = await manager.enqueueTransition(.resume(reason: .pauseDeadline))
+        if case .committed = result { Issue.record("Deadline may not reopen the exhausted microphone") }
+        #expect(lab.engines.count == 7)
+        #expect(throws: NSError.self) { try shared.startCapture(for: device()) }
+        _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()
+    }
+
     private func device(_ id: AudioDeviceID = 10, uid: String = "u", name: String = "mic") -> AudioInputDevice {
         AudioInputDevice(id: id, name: name, uid: uid, manufacturer: nil, sampleRate: 48_000, transportType: .usb)
     }
@@ -491,6 +651,19 @@ struct MicrophoneRecoveryTests {
         #expect(failures.filter { $0["stage"] as? String == "disconnect" }.count == 1)
         shared.stopAll()
     }
+}
+
+@MainActor
+private final class MicResumePreparationGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var returned = false
+    private(set) var entered = false
+    func wait() async {
+        entered = true
+        await withCheckedContinuation { continuation = $0 }
+        returned = true
+    }
+    func release() { continuation?.resume(); continuation = nil }
 }
 
 private final class MicEngineLab: @unchecked Sendable {

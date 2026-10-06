@@ -86,6 +86,7 @@ public final class CaptureCoordinator {
 
     private var permissionPollCancellation: PermissionPollScheduler.Cancellation?
     private var isCheckingPermissions = false
+    private var permissionStartReason: StartReason = .autoStart
     private var lastScreenPermissionEvidence: ScreenRecordingPermissionEvidence?
     private var lastMicrophonePermissionEvidence: MicrophonePermissionEvidence?
     private var lastCaptureStateEvidence: CaptureStateEvidence?
@@ -163,11 +164,18 @@ public final class CaptureCoordinator {
         pauseManager.onPause = { [weak self] in
             _ = await self?.captureManager.enqueueTransition(.pause(reason: .user, stopAudio: true))
         }
-        pauseManager.onResume = { [weak self] in
-            _ = await self?.captureManager.enqueueTransition(.resume(reason: .user))
+        pauseManager.onResume = { [weak self] cause in
+            guard let self else { return }
+            if self.captureManager.state.isPaused {
+                _ = await self.captureManager.enqueueTransition(.resume(reason: cause == .explicit ? .user : .pauseDeadline))
+            } else if !self.isRecording {
+                await self.checkPermissionsAndAutoStart(startReason: cause == .explicit ? .user : .autoStart)
+            }
         }
 
-        pauseManager.clearPersistedPauseState()
+        captureManager.lifecycleManager.ownerPauseIsHeld = { [weak self] in
+            self?.pauseManager.isPaused ?? false
+        }
         startPermissionPolling()
     }
 
@@ -211,6 +219,11 @@ public final class CaptureCoordinator {
             return
         }
 
+        if pauseManager.isPaused, !preservingPausePolicy {
+            Logger.general.info("startRecording() ignored because the owner pause is held")
+            return
+        }
+
         if reason == .user {
             isExplicitlyStopped = false
             isUserStopped = false
@@ -239,15 +252,11 @@ public final class CaptureCoordinator {
             return
         }
 
-        let wasUserPaused = isUserPaused
         let outcome = await startOperation(reason, admissionSet, (disabled: config.disabled, enabled: config.enabled))
         switch outcome {
         case .committed:
             if captureManager.activeSources.contains(.screen) {
                 publishScreenRecordingPermission(.granted)
-            }
-            if wasUserPaused, !preservingPausePolicy {
-                pauseManager.clearPolicyStateSilently()
             }
         case .threw(let failure):
             if failure.isPermissionError {
@@ -287,11 +296,7 @@ public final class CaptureCoordinator {
         } else if reason == .userStopped {
             isUserStopped = true
         }
-        let wasUserPaused = isUserPaused
         let outcome = await captureManager.enqueueTransition(.stop(reason: reason))
-        if wasUserPaused, !preservingPausePolicy, case .committed = outcome {
-            pauseManager.clearPolicyStateSilently()
-        }
         return outcome
     }
 
@@ -303,7 +308,7 @@ public final class CaptureCoordinator {
     }
 
     public func toggleRecording() async {
-        if isUserPaused {
+        if pauseManager.isPaused {
             pauseManager.resume()
         } else if isRecording && !isPaused {
             await stopRecording(reason: .user)
@@ -330,10 +335,16 @@ public final class CaptureCoordinator {
         permissionPollCancellation = nil
     }
 
-    internal func checkPermissionsAndAutoStart() async {
+    internal func checkPermissionsAndAutoStart(startReason: StartReason = .autoStart) async {
+        // An explicit resume can arrive while the current permission check is suspended.
+        // Keep its cause within that check; automatic polling never upgrades it.
+        if startReason == .user { permissionStartReason = .user }
         guard !isCheckingPermissions else { return }
         isCheckingPermissions = true
-        defer { isCheckingPermissions = false }
+        defer {
+            isCheckingPermissions = false
+            permissionStartReason = .autoStart
+        }
 
         if screenPermissionProvider.hasPrompted() {
             // Gate on CGPreflightScreenCaptureAccess before touching SCShareableContent.
@@ -368,13 +379,13 @@ public final class CaptureCoordinator {
         let admissionSet = configProvider().sources.intersection(permittedSources)
 
         // Auto-start if admitted sources exist, not explicitly stopped, not user stopped, not paused, not already recording, and recovery is not scheduled
-        if !isUserStopped && !isExplicitlyStopped && !admissionSet.isEmpty && !isRecording && !isUserPaused && !captureManager.isRecoveryScheduled {
+        if !isUserStopped && !isExplicitlyStopped && !admissionSet.isEmpty && !isRecording && !isUserPaused && !pauseManager.isPaused && !captureManager.isRecoveryScheduled {
             if isTerminating() {
                 recorder.enqueue(.permissionAutoStartSkipped)
                 logAdapter.permissionAutoStartSkipped()
             } else {
                 Logger.general.info("[Permissions] admitted sources [\(admissionSet.logDescription, privacy: .public)], auto-starting observation")
-                await startRecording(reason: .autoStart)
+                await startRecording(reason: permissionStartReason)
             }
         }
 

@@ -213,7 +213,7 @@ public func menuPauseControls(
     pauseManagerPaused: Bool,
     browserCapturePermitted: Bool
 ) -> (pause: Bool, resume: Bool) {
-    let resume = mediaUserPaused || (!mediaRecording && pauseManagerPaused && browserCapturePermitted)
+    let resume = mediaUserPaused || (!mediaRecording && !mediaPaused && pauseManagerPaused)
     let pause = !resume && (
         (mediaRecording && !mediaPaused) ||
         (!mediaRecording && !mediaPaused && browserCapturePermitted && !pauseManagerPaused)
@@ -528,6 +528,7 @@ extension StatusHealthSummary {
         serviceMode: ServiceMode?,
         isRecording: Bool,
         isPaused: Bool,
+        ownerPauseHeldIdle: Bool = false,
         held: Bool,
         hasPersistedPairing: Bool,
         uploadStatus: UploadCoordinator.Status,
@@ -548,6 +549,7 @@ extension StatusHealthSummary {
             serviceMode: serviceMode,
             isRecording: isRecording,
             isPaused: isPaused,
+            ownerPauseHeldIdle: ownerPauseHeldIdle,
             held: held,
             hasPersistedPairing: hasPersistedPairing,
             uploadStatus: uploadStatus,
@@ -563,7 +565,12 @@ extension StatusHealthSummary {
             isPairedIngestReady: isPairedIngestReady,
             journalConnectionAXToken: journalConnectionAXToken
         )
-        if !hasPersistedPairing || isRecording || isPaused { return media }
+        if !hasPersistedPairing || isRecording || isPaused
+            || media.axValue == "sources_unavailable"
+            || media.axValue == "capture_error"
+            || (ownerPauseHeldIdle && media.axValue == "paused") {
+            return media
+        }
         let verdict = browserOwnerVerdict(
             mediaSourcesEmpty: selectedSources.isEmpty,
             mediaRecording: isRecording,

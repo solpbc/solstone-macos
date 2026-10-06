@@ -74,6 +74,7 @@ extension StatusHealthSummary {
         serviceMode: ServiceMode?,
         isRecording: Bool,
         isPaused: Bool,
+        ownerPauseHeldIdle: Bool = false,
         held: Bool,
         hasPersistedPairing: Bool,
         uploadStatus: UploadCoordinator.Status,
@@ -157,6 +158,7 @@ extension StatusHealthSummary {
             serviceMode: serviceMode,
             isRecording: isRecording,
             isPaused: isPaused,
+            ownerPauseHeldIdle: ownerPauseHeldIdle,
             held: held,
             uploadStatus: statusForCurrentConnection(
                 uploadStatus,
@@ -185,6 +187,7 @@ extension StatusHealthSummary {
         serviceMode: ServiceMode?,
         isRecording: Bool,
         isPaused: Bool,
+        ownerPauseHeldIdle: Bool,
         held: Bool,
         uploadStatus: UploadCoordinator.Status,
         pendingCount: Int,
@@ -203,11 +206,22 @@ extension StatusHealthSummary {
                 axValue: MenubarStatusRowState.journalMigrationNeeded.axToken
             )
         } else {
+            if ownerPauseHeldIdle, let summary = captureFlagSummary(
+                isRecording: isRecording,
+                isPaused: isPaused,
+                ownerPauseHeldIdle: true,
+                isBundled: false,
+                journalSlot: journalSlot,
+                isSynced: false
+            ) {
+                return summary
+            }
             if held {
                 // isSynced: false so a stale .synced cannot name a journal that received nothing.
                 if let summary = captureFlagSummary(
                     isRecording: isRecording,
                     isPaused: isPaused,
+                    ownerPauseHeldIdle: ownerPauseHeldIdle,
                     isBundled: false,
                     journalSlot: journalSlot,
                     isSynced: false
@@ -287,6 +301,7 @@ extension StatusHealthSummary {
                 if let summary = captureFlagSummary(
                     isRecording: isRecording,
                     isPaused: isPaused,
+                    ownerPauseHeldIdle: ownerPauseHeldIdle,
                     isBundled: false,
                     journalSlot: journalSlot,
                     isSynced: false
@@ -306,6 +321,7 @@ extension StatusHealthSummary {
                 if let summary = captureFlagSummary(
                     isRecording: isRecording,
                     isPaused: isPaused,
+                    ownerPauseHeldIdle: ownerPauseHeldIdle,
                     isBundled: false,
                     journalSlot: journalSlot,
                     isSynced: false
@@ -322,6 +338,7 @@ extension StatusHealthSummary {
                 if let summary = captureFlagSummary(
                     isRecording: isRecording,
                     isPaused: isPaused,
+                    ownerPauseHeldIdle: ownerPauseHeldIdle,
                     isBundled: false,
                     journalSlot: journalSlot,
                     isSynced: false
@@ -339,6 +356,7 @@ extension StatusHealthSummary {
                 if let summary = captureFlagSummary(
                     isRecording: isRecording,
                     isPaused: isPaused,
+                    ownerPauseHeldIdle: ownerPauseHeldIdle,
                     isBundled: false,
                     journalSlot: journalSlot,
                     isSynced: false
@@ -355,6 +373,7 @@ extension StatusHealthSummary {
                 if let summary = captureFlagSummary(
                     isRecording: isRecording,
                     isPaused: isPaused,
+                    ownerPauseHeldIdle: ownerPauseHeldIdle,
                     isBundled: false,
                     journalSlot: journalSlot,
                     isSynced: true
@@ -411,21 +430,12 @@ extension StatusHealthSummary {
     private static func captureFlagSummary(
         isRecording: Bool,
         isPaused: Bool,
+        ownerPauseHeldIdle: Bool,
         isBundled: Bool,
         journalSlot: String,
         isSynced: Bool
     ) -> StatusHealthSummary? {
-        if !isRecording {
-            return StatusHealthSummary(
-                severity: .calm,
-                title: UICopy.MENUBAR_STARTING,
-                subtitle: isBundled
-                    ? "your journal is fine"
-                    : "nothing is reaching your journal yet",
-                axValue: "off"
-            )
-        }
-        if isPaused {
+        if isPaused || ownerPauseHeldIdle {
             let subtitle = isBundled
                 ? "journal healthy on this mac"
                 : (isSynced ? "synced to \(journalSlot)" : "paused · \(journalSlot)")
@@ -434,6 +444,16 @@ extension StatusHealthSummary {
                 title: "solstone is paused",
                 subtitle: subtitle,
                 axValue: "paused"
+            )
+        }
+        if !isRecording {
+            return StatusHealthSummary(
+                severity: .calm,
+                title: UICopy.MENUBAR_STARTING,
+                subtitle: isBundled
+                    ? "your journal is fine"
+                    : "nothing is reaching your journal yet",
+                axValue: "off"
             )
         }
         return nil

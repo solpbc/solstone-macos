@@ -23,6 +23,7 @@ enum ResumeReason: Sendable, Equatable {
     case wake
     case unlock
     case user
+    case pauseDeadline
     case recovery
 
     var trigger: String {
@@ -30,6 +31,7 @@ enum ResumeReason: Sendable, Equatable {
         case .wake: "wake"
         case .unlock: "unlock"
         case .user: "user"
+        case .pauseDeadline: "pauseDeadline"
         case .recovery: "recovery"
         }
     }
@@ -38,7 +40,7 @@ enum ResumeReason: Sendable, Equatable {
         switch self {
         case .wake, .unlock:
             [.sleep, .lock]
-        case .user:
+        case .user, .pauseDeadline:
             [.user]
         case .recovery:
             []
@@ -201,6 +203,7 @@ public enum TransitionOutcome: Sendable {
 }
 
 enum VetoReason: Sendable, Equatable {
+    case ownerPause
     case queuedPause
     case queuedTerminalIntent
     case screenLocked
@@ -219,6 +222,7 @@ public struct TransitionFailure: Error, Sendable {
 enum StartResult: Sendable {
     case committed
     case vetoedScreenLocked
+    case vetoedOwnerPause
 }
 
 enum RotationResult: Sendable {
@@ -442,6 +446,11 @@ final class CaptureExecutor {
             return .dropped
         }
 
+        guard !delegate.lifecycleOwnerPauseIsHeld else {
+            lastVetoReason = .ownerPause
+            return .vetoed
+        }
+
         let state = delegate.lifecycleCurrentState
         let restartingFromError = state.isError
         guard state.isIdle || state.isPaused || restartingFromError else {
@@ -470,6 +479,10 @@ final class CaptureExecutor {
             case .vetoedScreenLocked:
                 lastVetoReason = .screenLocked
                 Logger.capture.info("[Executor] start(\(reason.trigger, privacy: .public)) vetoed because screen is locked")
+                return .vetoed
+            case .vetoedOwnerPause:
+                lastVetoReason = .ownerPause
+                Logger.capture.info("[Executor] start vetoed because owner pause is held")
                 return .vetoed
             }
         } catch let failure as TransitionFailure {
@@ -576,6 +589,10 @@ final class CaptureExecutor {
             return .dropped
         }
 
+        guard !delegate.lifecycleOwnerPauseIsHeld || reason == .wake || reason == .unlock else {
+            lastVetoReason = .ownerPause
+            return .vetoed
+        }
         let state = delegate.lifecycleCurrentState
         switch reason {
         case .wake, .unlock:
@@ -589,7 +606,7 @@ final class CaptureExecutor {
                 Logger.capture.info("[Executor] drop resume(\(reason.trigger, privacy: .public)) because not suspended")
                 return .dropped
             }
-        case .user:
+        case .user, .pauseDeadline:
             guard state.isPaused else {
                 lastVetoReason = .stateChanged
                 Logger.capture.info("[Executor] drop resume(\(reason.trigger, privacy: .public)) on \(state.label, privacy: .public)")
@@ -618,6 +635,16 @@ final class CaptureExecutor {
 
         if reason != .recovery {
             await preResumeSettle()
+        }
+
+        guard !Task.isCancelled, !delegate.lifecycleOwnerPauseIsHeld else {
+            lastVetoReason = .ownerPause
+            return .vetoed
+        }
+        let authorization = delegate.lifecycleAuthorizeResume(reason)
+        var committed = false
+        defer {
+            if !committed { delegate.lifecycleCancelResumeAuthorization(authorization) }
         }
 
         do {
@@ -663,8 +690,8 @@ final class CaptureExecutor {
             return .vetoed
         }
 
-        if isScreenLocked() {
-            lastVetoReason = .screenLocked
+        if isScreenLocked() || delegate.lifecycleOwnerPauseIsHeld {
+            lastVetoReason = delegate.lifecycleOwnerPauseIsHeld ? .ownerPause : .screenLocked
             await shieldedAbort(reason.trigger, restore: restoreReasons)
             suspendedForRecovery = true
             return .vetoed
@@ -682,7 +709,7 @@ final class CaptureExecutor {
                 await shieldedAbort(reason.trigger, restore: restoreReasons)
                 return .vetoed
             }
-        case .user:
+        case .user, .pauseDeadline:
             guard delegate.lifecycleCurrentState.isPaused else {
                 lastVetoReason = .stateChanged
                 await shieldedAbort(reason.trigger, restore: restoreReasons)
@@ -693,6 +720,7 @@ final class CaptureExecutor {
         }
 
         delegate.lifecycleCommitResume(trigger: reason.trigger)
+        committed = true
         suspendedForRecovery = false
         Logger.capture.info("[Executor] resume(\(reason.trigger, privacy: .public)) committed")
         return .committed

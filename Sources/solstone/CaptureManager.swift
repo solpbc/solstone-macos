@@ -104,6 +104,9 @@ public final class CaptureManager {
 
     private let storageManager: StorageManager
     private var currentSegment: (any CaptureSegmentWriting)?
+    #if DEBUG || SOLSTONE_TEST_SUPPORT
+    internal var beforeResumeNativeStartForTesting: (@MainActor () async -> Void)?
+    #endif
     private var segmentTimer: Timer?
     private var segmentTimerRevision: UInt64 = 0
     private var heartbeatTimer: Timer?
@@ -112,7 +115,7 @@ public final class CaptureManager {
     private var displays: [SCDisplay] = []
     private var filtersByDisplayID: [CGDirectDisplayID: SCContentFilter] = [:]
     private let verbose: Bool
-    private let lifecycleManager: CaptureLifecycleManager
+    internal let lifecycleManager: CaptureLifecycleManager
     private let windowExclusionManager: WindowExclusionManager
     private let segmentFactory: SegmentFactory
     private let recoveryCoordinator: IncompleteSegmentRecoveryCoordinator
@@ -429,6 +432,7 @@ public final class CaptureManager {
 
     private func rebuildDisplaysAndFilters() async throws {
         let content = try await shareableContentProvider()
+        try Task.checkCancellation()
         let newDisplays = content.displays
         guard !newDisplays.isEmpty else {
             throw CaptureError.noDisplaysAvailable
@@ -452,6 +456,8 @@ public final class CaptureManager {
 
     /// Starts a new recording segment
     private func startNewSegment() async throws {
+        try Task.checkCancellation()
+        guard !lifecycleManager.ownerPauseIsHeld() else { throw CancellationError() }
         if sessionSources.contains(.screen) {
             guard allowsEmptyDisplayConfigurationForTesting || (!displays.isEmpty && !filtersByDisplayID.isEmpty) else {
                 throw CaptureError.notInitialized
@@ -476,6 +482,8 @@ public final class CaptureManager {
     ///   - timePrefix: Time prefix for file naming
     ///   - mics: Microphone devices to start recording
     private func startNewSegmentWithDirectory(_ segmentDir: URL, timePrefix: String, mics: [AudioInputDevice] = []) async throws {
+        try Task.checkCancellation()
+        guard !lifecycleManager.ownerPauseIsHeld() else { throw CancellationError() }
         if sessionSources.contains(.screen) {
             guard allowsEmptyDisplayConfigurationForTesting || (!displays.isEmpty && !filtersByDisplayID.isEmpty) else {
                 throw CaptureError.notInitialized
@@ -499,6 +507,8 @@ public final class CaptureManager {
         }
 
         // Create segment writer
+        try Task.checkCancellation()
+        guard generation == segmentStartGeneration, !lifecycleManager.ownerPauseIsHeld() else { throw CancellationError() }
         let segment = segmentFactory(
             segmentDir,
             timePrefix,
@@ -875,6 +885,16 @@ public final class CaptureManager {
 
 extension CaptureManager: CaptureLifecycleDelegate {
     var lifecycleCurrentState: CaptureManager.State { state }
+    var lifecycleOwnerPauseIsHeld: Bool { lifecycleManager.ownerPauseIsHeld() }
+
+    func lifecycleAuthorizeResume(_ reason: ResumeReason) -> MicrophoneCaptureManager.RecoveryAuthorization? {
+        guard reason == .user, sessionSources.contains(.microphone), !lifecycleOwnerPauseIsHeld else { return nil }
+        return micCaptureManager.authorizeMicrophoneRequest()
+    }
+
+    func lifecycleCancelResumeAuthorization(_ authorization: MicrophoneCaptureManager.RecoveryAuthorization?) {
+        micCaptureManager.cancelMicrophoneRequest(authorization)
+    }
 
     func lifecycleStartCapture(
         reason: StartReason,
@@ -883,6 +903,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         enabledMicUIDs: Set<String>,
         shouldVetoCommit: @escaping @MainActor () -> Bool
     ) async throws -> StartResult {
+        guard !lifecycleOwnerPauseIsHeld else { return .vetoedOwnerPause }
         guard !sources.isEmpty else {
             throw transitionFailure(for: CaptureError.notInitialized)
         }
@@ -924,12 +945,12 @@ extension CaptureManager: CaptureLifecycleDelegate {
             throw transitionFailure(for: error)
         }
 
-        if shouldVetoCommit() {
+        if shouldVetoCommit() || lifecycleOwnerPauseIsHeld {
             _ = await discardCurrentSegmentWithoutEnqueue(matching: nil)
             await stopPersistentAudioForDiscard()
             self.activeSources = []
             micCaptureManager.cancelMicrophoneRequest(microphoneAuthorization)
-            return .vetoedScreenLocked
+            return lifecycleOwnerPauseIsHeld ? .vetoedOwnerPause : .vetoedScreenLocked
         }
 
         // Microphone intent survives intentional exclusion or temporary loss so
@@ -1129,6 +1150,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
     }
 
     func lifecyclePrepareResume(trigger: String) async throws {
+        try Task.checkCancellation()
         recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
 
         if sessionSources.contains(.screen) && !allowsEmptyDisplayConfigurationForTesting {
@@ -1137,6 +1159,10 @@ extension CaptureManager: CaptureLifecycleDelegate {
             }
         }
 
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
+        await beforeResumeNativeStartForTesting?()
+        #endif
+        try Task.checkCancellation()
         try await startNewSegment()
 
         if activeSources.contains(.microphone) {

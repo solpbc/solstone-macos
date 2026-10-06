@@ -277,6 +277,10 @@ public final class AppState {
             !config.selectedSources.isEmpty && availableSelectedSources.isEmpty
     }
 
+    var ownerPauseHeldIdle: Bool {
+        pauseManager.isPaused && !isRecording && !capture.isPaused
+    }
+
     public var captureSourcesStatusText: String {
         if isRecording || isPaused {
             guard !captureManager.activeSources.isEmpty else { return UICopy.SOURCES_UNAVAILABLE }
@@ -284,6 +288,9 @@ public final class AppState {
         }
         if config.selectedSources.isEmpty { return UICopy.SOURCES_NONE }
         if availableSelectedSources.isEmpty { return UICopy.SOURCES_NONE_GRANTED }
+        if ownerPauseHeldIdle {
+            return UICopy.sourceStatus(availableSelectedSources, isPaused: true)
+        }
         return UICopy.SOURCES_STARTING
     }
 
@@ -1219,7 +1226,7 @@ public final class AppState {
     ) {
         // Load configuration
         let config = AppConfig.loadOrCreateDefault()
-        let pauseManager = PauseManager()
+        let pauseManager = PauseManager(defaults: .standard)
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
         let captureTarget = AppStateBridgeTarget()
@@ -1807,6 +1814,10 @@ public final class AppState {
     /// needs the session rebuilt to take effect. That rebuild is ours to do — the owner flipped
     /// a switch, they did not ask to stop and restart their capture.
     public func applySelectedSourcesToRunningSession() async {
+        if pauseManager.isPaused && !isRecording {
+            return
+        }
+
         if !config.selectedSources.isEmpty {
             capture.clearExplicitStop()
         }
