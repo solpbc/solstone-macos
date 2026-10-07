@@ -1076,8 +1076,8 @@ final class TunnelLifecycleOwner {
         guard !candidates.isEmpty else { throw CarriedPairingControlError.unavailable }
         let candidateOwnerRecord = record
         let controlTransport = makeTransport()
-        let connection = try await controlTransport.connect(pairing: oldPairing, candidates: candidates, onLocalProxyStart: nil)
         defer { Task { await controlTransport.disconnect() } }
+        let connection = try await controlTransport.connect(pairing: oldPairing, candidates: candidates, onLocalProxyStart: nil)
 
         let reply: CarriedPairingRekeyResponse
         if let data = candidate.rekeyReply {
@@ -1085,9 +1085,11 @@ final class TunnelLifecycleOwner {
             catch { throw CarriedPairingControlError.invalidResponse }
         } else {
             let known = try await carriedPairingControl.migrationState(localPort: connection.localPort)
+            // Another operation on the journal is an unknown outcome, not a
+            // verdict on this credential; the pairing stays and the step retries.
             guard known.state == "none" || known.rekeyOperationID == candidate.operationID,
                   known.previousCID == nil || known.previousCID == oldPairing.fingerprint else {
-                throw CarriedPairingControlError.refused
+                throw CarriedPairingControlError.unavailable
             }
             guard credentialStore.owns(oldFingerprint, operationID: candidate.operationID) else {
                 throw PairingCredentialStoreError.staleGeneration

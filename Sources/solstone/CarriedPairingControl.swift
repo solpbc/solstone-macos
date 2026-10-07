@@ -287,7 +287,7 @@ struct URLSessionCarriedPairingControlClient: CarriedPairingControlRequesting {
         let requestBody = CarriedPairingRekeyRequest(
             operationID: candidate.operationID,
             csr: candidate.csrPEM,
-            deviceLabel: deviceLabel,
+            deviceLabel: Self.validatedDeviceLabel(deviceLabel),
             clientLabel: SPLRuntime.clientInfo.userAgent
         )
         let reply: CarriedPairingRekeyResponse = try await send(
@@ -354,12 +354,7 @@ struct URLSessionCarriedPairingControlClient: CarriedPairingControlRequesting {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw CarriedPairingControlError.invalidResponse }
             guard 200..<300 ~= http.statusCode else {
-                if http.statusCode == 404 || http.statusCode == 405 {
-                    throw CarriedPairingControlError.unsupported
-                }
-                if http.statusCode == 409 { throw CarriedPairingControlError.conflict }
-                if http.statusCode >= 500 { throw CarriedPairingControlError.unavailable }
-                throw CarriedPairingControlError.refused
+                throw Self.controlError(status: http.statusCode, body: data)
             }
             do { return try JSONDecoder().decode(Response.self, from: data) }
             catch { throw CarriedPairingControlError.invalidResponse }
@@ -426,6 +421,38 @@ struct URLSessionCarriedPairingControlClient: CarriedPairingControlRequesting {
             localEndpoints: reply.localEndpoints ?? [],
             pairedAt: Date()
         )
+    }
+
+    /// The schema bounds `device_label` to 1...80 code points.
+    static let maxDeviceLabelLength = 80
+
+    static func validatedDeviceLabel(_ label: String) -> String {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bounded = String(String.UnicodeScalarView(trimmed.unicodeScalars.prefix(maxDeviceLabelLength)))
+        return bounded.isEmpty ? "solstone" : bounded
+    }
+
+    private struct ReasonEnvelope: Decodable {
+        let reasonCode: String?
+
+        enum CodingKeys: String, CodingKey {
+            case reasonCode = "reason_code"
+        }
+    }
+
+    /// Only the pinned refusal envelope is a definite refusal. A missing route
+    /// without a migration reason is an older journal, 409 is an outcome to
+    /// reconcile, and every other answer is unknown: the pairing is kept and
+    /// the step retries later.
+    static func controlError(status: Int, body: Data) -> CarriedPairingControlError {
+        let reason = (try? JSONDecoder().decode(ReasonEnvelope.self, from: body))?.reasonCode
+        switch (status, reason) {
+        case (400, "migration_protocol_unsupported"): return .unsupported
+        case (400, "migration_request_invalid"): return .refused
+        case (404, nil), (405, nil): return .unsupported
+        case (409, _): return .conflict
+        default: return .unavailable
+        }
     }
 
     static func validCID(_ value: String) -> Bool {

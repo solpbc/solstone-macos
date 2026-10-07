@@ -147,6 +147,79 @@ struct CarriedPairingControlTests {
     }
 }
 
+@Suite("Carried pairing control response classes", .serialized)
+struct CarriedPairingControlResponseClassTests {
+    private func client() -> URLSessionCarriedPairingControlClient {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CarriedPairingScriptedURLProtocol.self]
+        return URLSessionCarriedPairingControlClient(session: URLSession(configuration: configuration))
+    }
+
+    private func migrationStateError(status: Int, body: String?) async -> CarriedPairingControlError? {
+        CarriedPairingScriptedURLProtocol.script(status: status, body: body.map { Data($0.utf8) } ?? Data())
+        do {
+            _ = try await client().migrationState(localPort: 1234)
+            return nil
+        } catch let error as CarriedPairingControlError {
+            return error
+        } catch {
+            return nil
+        }
+    }
+
+    @Test func onlyThePinnedRefusalEnvelopeIsADefiniteRefusal() async {
+        #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_request_invalid"}"#) == .refused)
+        #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_protocol_unsupported"}"#) == .unsupported)
+        #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_forbidden"}"#) == .unavailable)
+        #expect(await migrationStateError(status: 400, body: nil) == .unavailable)
+        #expect(await migrationStateError(status: 403, body: nil) == .unavailable)
+        #expect(await migrationStateError(status: 410, body: nil) == .unavailable)
+        #expect(await migrationStateError(status: 404, body: nil) == .unsupported)
+        #expect(await migrationStateError(status: 405, body: nil) == .unsupported)
+        #expect(await migrationStateError(status: 404, body: #"{"reason_code":"paired_device_not_found"}"#) == .unavailable)
+        #expect(await migrationStateError(status: 409, body: nil) == .conflict)
+        #expect(await migrationStateError(status: 503, body: nil) == .unavailable)
+    }
+
+    @Test func deviceLabelIsBoundedToTheSchemaBeforeSending() {
+        let long = String(repeating: "x", count: 200)
+        #expect(URLSessionCarriedPairingControlClient.validatedDeviceLabel(long).unicodeScalars.count == 80)
+        #expect(URLSessionCarriedPairingControlClient.validatedDeviceLabel("  studio  ") == "studio")
+        #expect(!URLSessionCarriedPairingControlClient.validatedDeviceLabel("   ").isEmpty)
+    }
+}
+
+private final class CarriedPairingScriptedURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var scriptedStatus = 500
+    nonisolated(unsafe) private static var scriptedBody = Data()
+
+    static func script(status: Int, body: Data) {
+        lock.withLock {
+            scriptedStatus = status
+            scriptedBody = body
+        }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let (status, body) = Self.lock.withLock { (Self.scriptedStatus, Self.scriptedBody) }
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: status,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 private final class CarriedPairingConflictURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }

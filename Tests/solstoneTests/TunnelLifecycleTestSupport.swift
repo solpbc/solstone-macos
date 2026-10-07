@@ -162,6 +162,7 @@ final class CarriedPairingControlRecorder: @unchecked Sendable {
 
 struct FailingCarriedPairingControl: CarriedPairingControlRequesting {
     let recorder: CarriedPairingControlRecorder
+    var migrationStateJSON = #"{"protocol_version":1,"rekey_operation_id":null,"previous_cid":null,"state":"none","replaced_cid":null}"#
 
     func rekey(
         localPort: Int,
@@ -175,10 +176,7 @@ struct FailingCarriedPairingControl: CarriedPairingControlRequesting {
 
     func migrationState(localPort: Int) async throws -> CarriedPairingMigrationReply {
         recorder.recordMigrationState()
-        return try JSONDecoder().decode(
-            CarriedPairingMigrationReply.self,
-            from: Data(#"{"protocol_version":1,"rekey_operation_id":null,"previous_cid":null,"state":"none","replaced_cid":null}"#.utf8)
-        )
+        return try JSONDecoder().decode(CarriedPairingMigrationReply.self, from: Data(migrationStateJSON.utf8))
     }
 
     func decide(localPort: Int, decision: CarriedPairingDecision) async throws -> CarriedPairingDecisionReply {

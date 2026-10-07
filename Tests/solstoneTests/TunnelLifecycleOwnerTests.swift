@@ -271,6 +271,56 @@ struct TunnelLifecycleOwnerTests {
         await owner.stop()
     }
 
+    @Test func migrationStateNamingAnotherOperationIsUnknownAndKeepsThePairing() async throws {
+        let oldPairing = pairing()
+        let store = PairingStore(pairing: oldPairing)
+        var record = try store.loadCarriedPairingRecord()
+        record.localMarker = "marker-from-another-device"
+        try store.saveCarriedPairingRecord(record)
+
+        let controlRecorder = CarriedPairingControlRecorder()
+        let control = FailingCarriedPairingControl(
+            recorder: controlRecorder,
+            migrationStateJSON: #"{"protocol_version":1,"rekey_operation_id":"123e4567-e89b-42d3-a456-426614174999","previous_cid":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","state":"pending","replaced_cid":null}"#
+        )
+        let transport = FakeTunnelTransport()
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]), carriedPairingControl: control)
+        owner.start()
+        try await waitUntil { owner.state == .error(.keychainUnavailable) }
+
+        #expect(owner.carriedPairingStatus == .offline)
+        #expect(controlRecorder.migrationStateCount == 1)
+        #expect(controlRecorder.candidateSnapshots.isEmpty)
+        #expect(store.currentPairing == oldPairing)
+        #expect(try store.loadCarriedPairingRecord().candidate != nil)
+        #expect(owner.localPort == nil)
+        try await waitUntil { transport.disconnectCount >= 1 }
+        await owner.stop()
+    }
+
+    @Test func controlConnectFailureStillDisconnectsTheControlTransport() async throws {
+        let oldPairing = pairing()
+        let store = PairingStore(pairing: oldPairing)
+        var record = try store.loadCarriedPairingRecord()
+        record.localMarker = "marker-from-another-device"
+        try store.saveCarriedPairingRecord(record)
+
+        let controlRecorder = CarriedPairingControlRecorder()
+        let transport = FakeTunnelTransport(results: [.failure(CarriedPairingControlError.unavailable)])
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([transport]),
+            carriedPairingControl: FailingCarriedPairingControl(recorder: controlRecorder)
+        )
+        owner.start()
+        try await waitUntil { owner.state == .error(.keychainUnavailable) }
+
+        try await waitUntil { transport.disconnectCount >= 1 }
+        #expect(controlRecorder.migrationStateCount == 0)
+        #expect(store.currentPairing == oldPairing)
+        await owner.stop()
+    }
+
     @Test func lateRekeyResponseCannotCommitOverReplacementCredential() async throws {
         let oldPairing = pairing()
         let replacement = pairing(clientCertPEM: "replacement-cert")
