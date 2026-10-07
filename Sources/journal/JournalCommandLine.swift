@@ -3,6 +3,9 @@
 
 import Darwin
 import Foundation
+import ServiceManagement
+
+private let journalWatchdogLabel = "app.solstone.journal.watchdog"
 
 /// `Contents/MacOS/journal` is the app. The forwarded command is the bundled
 /// `Contents/Resources/solstone-runtime/bin/solstone` with `journal` prepended to the tail.
@@ -14,6 +17,13 @@ enum JournalCommandLine {
         case commandLine
     }
 
+    enum Action {
+        case app
+        case exec(arguments: [String])
+        case execAfterWatchdogUnregister(arguments: [String])
+        case stop(exitCode: Int32, message: String)
+    }
+
     /// A Finder, Dock, login-item or watchdog launch passes no arguments. Xcode and
     /// `open --args` can pass Cocoa's own `-psn_…` and `-<Default> <value>` arguments,
     /// which stay with the app. A subcommand, a `--` flag, `-h` or `-V` is a command line.
@@ -23,6 +33,30 @@ enum JournalCommandLine {
             return .commandLine
         }
         return .app
+    }
+
+    @MainActor
+    static func dispatch(arguments: [String], loginItems: any LoginItemManaging) -> Action {
+        guard route(arguments: arguments) == .commandLine else { return .app }
+        guard Array(arguments.dropFirst()) == ["setup", "--clean-uninstall", "--yes"] else {
+            return .exec(arguments: arguments)
+        }
+
+        do {
+            // Unregistering the agent does not quit a running Journal.app.
+            try loginItems.unregister()
+        } catch {
+            let serviceError = error as NSError
+            guard serviceError.domain == SMAppServiceErrorDomain,
+                  serviceError.code == Int(kSMErrorJobNotFound) else {
+                return .stop(
+                    exitCode: 78,
+                    message: "journal: could not unregister \(journalWatchdogLabel): \(error.localizedDescription). Native cleanup was not started.\n"
+                )
+            }
+        }
+
+        return .execAfterWatchdogUnregister(arguments: arguments)
     }
 
     static func commandLineURL(executableURL: URL) -> URL {
@@ -67,10 +101,25 @@ enum JournalCommandLine {
 
 @main
 enum JournalEntryPoint {
+    @MainActor
     static func main() {
-        if JournalCommandLine.route(arguments: CommandLine.arguments) == .commandLine {
-            JournalCommandLine.exec(arguments: CommandLine.arguments)
+        switch JournalCommandLine.dispatch(
+            arguments: CommandLine.arguments,
+            loginItems: LiveJournalLoginItemManager()
+        ) {
+        case .app:
+            JournalApp.main()
+        case .exec(let arguments):
+            JournalCommandLine.exec(arguments: arguments)
+        case .execAfterWatchdogUnregister(let arguments):
+            // execv replaces this process, so the notice has to precede exec.
+            FileHandle.standardError.write(Data(
+                "journal: \(journalWatchdogLabel) registration is already gone.\n".utf8
+            ))
+            JournalCommandLine.exec(arguments: arguments)
+        case .stop(let exitCode, let message):
+            FileHandle.standardError.write(Data(message.utf8))
+            exit(exitCode)
         }
-        JournalApp.main()
     }
 }
