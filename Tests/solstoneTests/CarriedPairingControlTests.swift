@@ -169,6 +169,12 @@ struct CarriedPairingControlResponseClassTests {
 
     @Test func onlyThePinnedRefusalEnvelopeIsADefiniteRefusal() async {
         #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_request_invalid"}"#) == .refused)
+        // The old device was removed from the journal: pair again, not "can't reach your journal".
+        #expect(await migrationStateError(status: 403, body: #"{"reason_code":"migration_forbidden"}"#) == .refused)
+        #expect(await migrationStateError(status: 403, body: #"{"reason_code":"migration_replay_forbidden"}"#) == .refused)
+        #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_csr_invalid"}"#) == .refused)
+        #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_key_not_fresh"}"#) == .refused)
+        #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_replay_forbidden"}"#) == .unavailable)
         #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_protocol_unsupported"}"#) == .unsupported)
         #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_forbidden"}"#) == .unavailable)
         #expect(await migrationStateError(status: 400, body: nil) == .unavailable)

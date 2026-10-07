@@ -440,15 +440,24 @@ struct URLSessionCarriedPairingControlClient: CarriedPairingControlRequesting {
         }
     }
 
-    /// Only the pinned refusal envelope is a definite refusal. A missing route
-    /// without a migration reason is an older journal, 409 is an outcome to
-    /// reconcile, and every other answer is unknown: the pairing is kept and
-    /// the step retries later.
+    /// Only the pinned refusal envelopes are definite refusals. A journal that
+    /// no longer lists the old device answers 403 `migration_forbidden`; no
+    /// retry can succeed, so the owner is asked to pair again rather than told
+    /// the journal is unreachable. The other pinned refusals mean this device
+    /// sent something the journal will never accept, with the same answer. A
+    /// missing route without a migration reason is an older journal, 409 is an
+    /// outcome to reconcile, and every other answer is unknown: the pairing is
+    /// kept and the step retries later.
     static func controlError(status: Int, body: Data) -> CarriedPairingControlError {
         let reason = (try? JSONDecoder().decode(ReasonEnvelope.self, from: body))?.reasonCode
         switch (status, reason) {
         case (400, "migration_protocol_unsupported"): return .unsupported
-        case (400, "migration_request_invalid"): return .refused
+        case (400, "migration_request_invalid"),
+             (400, "migration_csr_invalid"),
+             (400, "migration_key_not_fresh"),
+             (403, "migration_forbidden"),
+             (403, "migration_replay_forbidden"):
+            return .refused
         case (404, nil), (405, nil): return .unsupported
         case (409, _): return .conflict
         default: return .unavailable
