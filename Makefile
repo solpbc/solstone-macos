@@ -27,7 +27,7 @@ SIGNING_KC_PASS_FILE   ?= $(HOME)/.config/sol-pbc/signing/keychain-password
 # ASC API key + identifiers used by `make notary-restore` to rebuild the
 # notarytool keychain profile when it evicts (the profile lives inside
 # sol-signing.keychain-db and is reconstructable from these three inputs).
-# Mirrors cso/vault/credentials/apple-asc-api-key.{p8,json} in the extro repo.
+# Mirrors the operator-held App Store Connect API key.
 ASC_API_KEY_FILE       ?= $(HOME)/.config/sol-pbc/signing/apple-asc-api-key.p8
 ASC_API_KEY_ID         ?= SNP7CMKMZ5
 ASC_API_ISSUER         ?= 0fe42f6d-2c46-4f09-a9c2-152b20b3ea19
@@ -127,7 +127,7 @@ brand-sync:
 	# back at the full-bleed cream master — that ships the lone non-native square in
 	# the Dock. The unified wordmark direction (locked 2026-06-25) is ONE mark at all
 	# sizes — no per-size hand-tuned 16/32 variants; `make icons` renders icon-app.svg
-	# at every iconset size. See records/decisions/260625-cmo-sol-app-icon-unified-wordmark.md.
+	# at every iconset size.
 	cp "$(BRAND_DIR)/app-icon/app-icon-macos.svg" assets/icon-app.svg
 	@echo "brand: synced from $(BRAND_DIR)"
 
@@ -328,7 +328,7 @@ check-dev-deps:
 # Read-only check that Developer ID certs + notary profile are ready.
 # If the notary profile has evicted (recurring failure mode), auto-heal
 # from the local ASC API key. Cert checks remain hard-fail because cert
-# loss is a different class of problem and warrants founder attention.
+# loss is a different class of problem and warrants operator attention.
 signing-check:
 	@security find-identity -v -p codesigning | grep -q '"$(DEVELOPER_ID_APP)"' || \
 		{ echo "error: '$(DEVELOPER_ID_APP)' not found in any keychain on the search list"; \
@@ -350,7 +350,7 @@ signing-check:
 notary-restore: unlock-signing
 	@test -f "$(ASC_API_KEY_FILE)" || \
 		{ echo "error: ASC API key missing at $(ASC_API_KEY_FILE)"; \
-		  echo "       copy from extro vault: scp cso/vault/credentials/apple-asc-api-key.p8 pro5e.local:$(ASC_API_KEY_FILE) && ssh pro5e.local chmod 600 $(ASC_API_KEY_FILE)"; \
+		  echo "       copy the operator-held key to $(ASC_API_KEY_FILE) on this host, then chmod 600 it"; \
 		  exit 1; }
 	@xcrun notarytool store-credentials "$(NOTARY_PROFILE)" \
 		--key "$(ASC_API_KEY_FILE)" \
@@ -786,7 +786,6 @@ dmg-journal:
 # from this tree: `scripts/both_dmg.py compose` copies both bundles out of the
 # DMGs the production appcasts serve into BOTH_STAGING, then calls this target.
 # It is unsigned here; `make seal-both` signs it on the signing host.
-# Runbook: extro vpe/playbooks/macos-both-image.md.
 dmg-both:
 	@test -n "$(BOTH_STAGING)" || { echo "error: BOTH_STAGING unset — run make both-compose, not dmg-both"; exit 1; }
 	@test -n "$(BOTH_DMG_NAME)" || { echo "error: BOTH_DMG_NAME unset — run make both-resolve first"; exit 1; }
@@ -921,7 +920,7 @@ seal-both:
 	@echo "✅ Combined image sealed: $(BOTH_DMG_NAME)"
 	@echo "   Size:    $$(du -h "$(BOTH_DMG_NAME)" | cut -f1)"
 
-# The combined image, start to finish (runbook: extro vpe/playbooks/macos-both-image.md):
+# The combined image, start to finish:
 #   both-resolve (publish host) → both-compose (any Mac) → seal-both (signing host)
 #   → both-verify (any Mac) → both-publish (publish host)
 both-resolve:
@@ -1159,7 +1158,7 @@ check-brand-assets-fresh: check-icons-deps
 CF_ACCOUNT_ID          ?= 3f2c1528c7d4d9685819ea9e9e307c92
 
 # Wrangler/CF-auth preflight. Run on the RELEASE HOST *before* dispatching the
-# pro5e DMG build — wrangler's session OAuth degrades silently on a ~24h cadence,
+# signing-host DMG build — wrangler's session OAuth degrades silently on a ~24h cadence,
 # and the R2 publish is the final step, so a stale token otherwise wastes the
 # full ~6min build + notarize before failing. `wrangler whoami` exercises the
 # same account-lookup path that breaks on degrade; we assert exit 0 AND that the

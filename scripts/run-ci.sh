@@ -96,7 +96,7 @@ trap 'trap - TERM; exit 143' TERM
 # read fails with "SecKeychainCopyDomainDefault user: A default keychain could
 # not be found". This run would then abort at PRIOR_DEFAULT below, leaving the
 # slot empty, so one killed run wedges `make ci` for the whole host until a
-# human repairs it. Measured on pro5e 2026-08-19.
+# human repairs it. Measured on the signing host 2026-08-19.
 needs_default_repair() {
   local current
   current="$(security default-keychain -d user 2>/dev/null || true)"

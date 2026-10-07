@@ -61,7 +61,7 @@ LATEST_URL = f"{BASE_URL}/{LATEST_KEY}"
 SPARKLE_NS = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
 TEAM_ID = "7QCG8V4M6H"
 MULTIPART_CHUNK_BYTES = 8 * 1024 * 1024
-DEFAULT_R2_CREDENTIALS_PATH = str(REPO_ROOT.parent / "extro/cso/vault/credentials/cloudflare-r2.json")
+DEFAULT_R2_CREDENTIALS_PATH = os.path.expanduser("~/.config/solstone-release/r2.json")
 
 # What the composed volume holds: the two bundles, the Applications drop link
 # and create-dmg's window state. Anything else is a stray and stops the run.

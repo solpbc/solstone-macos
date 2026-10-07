@@ -44,7 +44,7 @@ MIN_SYSTEM = "15.0"
 # Standard Sparkle "full release notes" hook — points the updater's full-notes
 # link at the branded, appcast-driven macOS release history page.
 DEFAULT_KEY_PATH = "/tmp/sparkle-priv.key"
-DEFAULT_R2_CREDENTIALS_PATH = "/home/jer/projects/extro/cso/vault/credentials/cloudflare-r2.json"
+DEFAULT_R2_CREDENTIALS_PATH = os.path.expanduser("~/.config/solstone-release/r2.json")
 WRANGLER_MAX_UPLOAD_BYTES = 300 * 1024 * 1024
 # Cloudflare account id (account "jer"). wrangler whoami must list this — used by
 # preflight_wrangler() to catch a silently-degraded OAuth token before any upload.
