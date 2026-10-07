@@ -483,6 +483,7 @@ struct SettingsView: View {
             journalMarkDriver.cancel()
         }) {
             journalMarkSheet
+                .allowsAppQuitWhilePresented()
         }
         .onDisappear {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
@@ -1366,6 +1367,7 @@ struct SettingsView: View {
             }
         )) {
             replacementFlowSheet
+                .allowsAppQuitWhilePresented()
         }
         .onDisappear {
             if appState.pairingCoordinator.replacementOfferVisible

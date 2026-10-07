@@ -37,9 +37,11 @@ struct JournalDevicesPane: View {
             model.closePairing()
         }) {
             JournalPairingWindow(model: model)
+                .allowsAppQuitWhilePresented()
         }
         .sheet(item: $model.revokeCandidate) { row in
             RevokeConfirmSheet(model: model, row: row)
+                .allowsAppQuitWhilePresented()
         }
     }
 
