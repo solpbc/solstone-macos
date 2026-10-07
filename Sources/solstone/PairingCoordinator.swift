@@ -468,14 +468,22 @@ final class PairingCoordinator {
             return
         }
         pendingMigrationDecision = record.decision
-        guard markConfirmed, record.replacementOfferID != nil, !record.replacementOfferShown else {
-            replacementOfferVisible = false
-            return
-        }
-        guard let pairing = try? credentialStore.load() else {
-            replacementOfferVisible = false
-            return
-        }
+        // Visibility is derived here; "shown" is recorded only once the offer
+        // sheet is actually on screen, so a launch or a confirmation that never
+        // displayed it cannot consume the one-shot offer.
+        replacementOfferVisible = markConfirmed
+            && record.replacementOfferID != nil
+            && !record.replacementOfferShown
+            && (try? credentialStore.load()) != nil
+    }
+
+    func markReplacementOfferShown() {
+        guard replacementOfferVisible,
+              let credentialStore,
+              var record = try? credentialStore.carriedPairingRecord(),
+              record.replacementOfferID != nil,
+              !record.replacementOfferShown,
+              let pairing = try? credentialStore.load() else { return }
         let expectedRecord = record
         record.replacementOfferShown = true
         do {
@@ -484,7 +492,6 @@ final class PairingCoordinator {
                 expected: expectedRecord,
                 whilePairing: PairingCredentialRevision(from: pairing)
             )
-            replacementOfferVisible = true
         } catch {
             migrationDecisionState = "storage_unavailable"
             replacementOfferVisible = false
@@ -543,7 +550,9 @@ final class PairingCoordinator {
     func dismissReplacementPicker() {
         replacementPickerVisible = false
         selectedReplacementCID = nil
-        deferReplacementOffer()
+        // The sheet recorded the offer as shown when it appeared. An offer
+        // whose sheet never appeared stays owed for the next confirmation.
+        replacementOfferVisible = false
     }
 
     func keepBothDevices() async {

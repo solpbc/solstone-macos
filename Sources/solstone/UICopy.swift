@@ -42,6 +42,8 @@ public enum UICopy {
         static let keyRefusedTitle = "pair again"
         static let keyRefusedBody = "this device couldn't open its saved connection to your journal. anything waiting to send is still here. pair again to reconnect."
         static let pairAgain = "pair again"
+        static let choiceBodyFallback = "same device continues the old device with its name and history, and removes its access to your journal. new device keeps both."
+        static let replaceConfirmTitleFallback = "replace the selected device?"
     }
 
     public static let SOURCES_TITLE = "sources"

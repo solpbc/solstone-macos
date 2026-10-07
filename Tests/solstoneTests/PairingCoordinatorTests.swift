@@ -820,6 +820,14 @@ struct PairingCoordinatorTests {
         #expect(!coordinator.replacementOfferVisible)
         coordinator.refreshPendingActions(markConfirmed: true)
         #expect(coordinator.replacementOfferVisible)
+        // Visible is not shown: only the sheet on screen records the one-shot offer.
+        #expect(!(try store.loadCarriedPairingRecord().replacementOfferShown))
+        // Settings closing before the sheet appeared leaves the offer owed.
+        coordinator.dismissReplacementPicker()
+        #expect(!(try store.loadCarriedPairingRecord().replacementOfferShown))
+        coordinator.refreshPendingActions(markConfirmed: true)
+        #expect(coordinator.replacementOfferVisible)
+        coordinator.markReplacementOfferShown()
         #expect(try store.loadCarriedPairingRecord().replacementOfferShown)
 
         coordinator.dismissReplacementPicker()
@@ -858,6 +866,7 @@ struct PairingCoordinatorTests {
 
         await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
         coordinator.refreshPendingActions(markConfirmed: true)
+        coordinator.markReplacementOfferShown()
         await coordinator.openReplacementPicker()
         #expect(coordinator.replacementPickerVisible)
         #expect(coordinator.replacementTargets.map(\.cid) == [firstCID, secondCID])
@@ -897,6 +906,7 @@ struct PairingCoordinatorTests {
 
         await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
         coordinator.refreshPendingActions(markConfirmed: true)
+        coordinator.markReplacementOfferShown()
         let persistedOfferID = try #require(try store.loadCarriedPairingRecord().replacementOfferID)
         await coordinator.openReplacementPicker()
         coordinator.selectReplacementTarget(cid: targetCID)
@@ -930,6 +940,7 @@ struct PairingCoordinatorTests {
 
         await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
         coordinator.refreshPendingActions(markConfirmed: true)
+        coordinator.markReplacementOfferShown()
         await coordinator.openReplacementPicker()
         coordinator.selectReplacementTarget(cid: targetCID)
         await coordinator.confirmReplacement()

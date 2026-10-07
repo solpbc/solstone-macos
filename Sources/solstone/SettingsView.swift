@@ -1358,7 +1358,8 @@ struct SettingsView: View {
         }
         .sheet(isPresented: Binding(
             get: {
-                appState.pairingCoordinator.replacementOfferVisible
+                // The offer waits until the mark question is off screen.
+                (appState.pairingCoordinator.replacementOfferVisible && !journalMarkDriver.isPresented)
                     || appState.pairingCoordinator.replacementPickerVisible
             },
             set: { presented in
@@ -2103,10 +2104,9 @@ struct SettingsView: View {
                     if decision.choice == nil {
                         if migrationChoiceExpanded {
                             Text(UICopy.Migration.choiceTitle)
-                            Text(UICopy.Migration.choiceBody.replacingOccurrences(
-                                of: "{previous_device_label}",
-                                with: SPLPairingDefaults.deviceLabel
-                            ))
+                            // The journal does not report the previous device's label with a
+                            // pending rekey, so the approved fallback wording is shown.
+                            Text(UICopy.Migration.choiceBodyFallback)
                             HStack {
                                 Button(UICopy.Migration.sameDevice) {
                                     Task { await appState.pairingCoordinator.chooseCarriedPairing(.sameDevice) }
@@ -2334,6 +2334,7 @@ struct SettingsView: View {
             .padding(24)
             .frame(minWidth: 360)
             .accessibilityIdentifier(AXID.Settings.Service.migrationReplacementOffer)
+            .onAppear { appState.pairingCoordinator.markReplacementOfferShown() }
         }
     }
 
@@ -2341,7 +2342,7 @@ struct SettingsView: View {
         let label = appState.pairingCoordinator.replacementTargets.first {
             $0.cid == appState.pairingCoordinator.selectedReplacementCID
         }?.displayLabel
-        guard let label else { return "" }
+        guard let label, !label.isEmpty else { return UICopy.Migration.replaceConfirmTitleFallback }
         return UICopy.Migration.replaceConfirmTitle.replacingOccurrences(
             of: "{selected_device_label}",
             with: label
