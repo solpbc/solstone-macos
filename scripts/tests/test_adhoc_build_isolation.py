@@ -90,7 +90,9 @@ class AdhocBuildIsolationTest(unittest.TestCase):
 
         self.assertEqual(offenders, [])
 
-    def test_login_keychain_marker_only_appears_in_adhoc_bundle_recipe(self):
+    def test_login_keychain_marker_appears_in_no_makefile_target(self):
+        # Every bundle uses the one pinned credential backend; no build recipe
+        # may select a different keychain plane through an Info.plist marker.
         blocks = parse_makefile()
 
         targets_with_marker = sorted(
@@ -98,48 +100,7 @@ class AdhocBuildIsolationTest(unittest.TestCase):
             if MARKER_KEY in "\n".join(block["recipe"])
         )
 
-        self.assertEqual(targets_with_marker, ["bundle-adhoc"])
-
-    def test_login_keychain_marker_is_sealed_by_app_signature(self):
-        blocks = parse_makefile()
-        recipe = blocks["bundle-adhoc"]["recipe"]
-        marker_index = next(
-            (
-                index for index, line in enumerate(recipe)
-                if "plutil -insert" in line and MARKER_KEY in line
-            ),
-            None,
-        )
-        app_codesign_index = None
-
-        for index, line in enumerate(recipe):
-            if not line.lstrip().startswith("@codesign --force"):
-                continue
-            command_lines = [line]
-            while command_lines[-1].rstrip().endswith("\\"):
-                next_index = index + len(command_lines)
-                if next_index >= len(recipe):
-                    break
-                command_lines.append(recipe[next_index])
-            final_argument = command_lines[-1].strip()
-            if final_argument == "solstone.app":
-                app_codesign_index = index
-                break
-
-        self.assertIsNotNone(
-            marker_index,
-            "bundle-adhoc must insert the login-keychain marker into Info.plist",
-        )
-        self.assertIsNotNone(
-            app_codesign_index,
-            "bundle-adhoc app bundle codesign command not found; cannot prove the marker is sealed",
-        )
-        self.assertLess(
-            marker_index,
-            app_codesign_index,
-            "bundle-adhoc inserts the login-keychain marker after app signing; "
-            "the marker must be sealed by the signature so ad-hoc builds stay on the login-keychain plane",
-        )
+        self.assertEqual(targets_with_marker, [])
 
     def test_shared_info_plist_does_not_contain_login_keychain_marker(self):
         self.assertNotIn(MARKER_KEY, INFO_PLIST.read_text(encoding="utf-8"))
