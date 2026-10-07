@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - if the solstone app quits unexpectedly, audio up to about a second before the quit is kept. before, that segment's audio couldn't be read, or was cut off where its screen frames ended.
 - after a gap in audio, the sound that follows now stays at the time it happened. before, it could be placed earlier.
 - holding the solstone menu open no longer stalls audio and screen intake.
+- on a slow network, like a café's wifi, connecting to your journal through the relay now gets enough time to finish. before, the solstone app could give up a moment before it would have connected.
 
 ## [2.0.26] - 2026-10-06
 
