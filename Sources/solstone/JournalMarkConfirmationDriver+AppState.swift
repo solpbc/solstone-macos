@@ -136,15 +136,16 @@ extension JournalMarkConfirmationDriver {
             Logger.journalMark.info("journal-mark skipped: automatic same-machine adoption of an already-linked journal")
             return
         }
-        guard appState.beginJournalMarkConfirmationAttempt() != nil else { return }
+        // The question opens as soon as the pairing lands, before the tunnel connects.
+        // The answer binds to the durable credential that is connected when the mark
+        // is actually fetched; the home base stays held until then.
         startIfNeeded(
             for: state,
             resolveHomeBase: {
                 await appState.resolveHomeBase()
             },
             fetchMark: { baseURL in
-                guard let revision = appState.currentJournalMarkAttemptRevision,
-                      appState.isCurrentJournalMarkAttempt(revision) else { return nil }
+                guard let revision = appState.beginJournalMarkConfirmationAttempt() else { return nil }
                 guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return nil }
                 guard case .mark(let mark) = await fetcher.fetch(baseURL: baseURL, expectedInstanceID: expected) else {
                     return nil
