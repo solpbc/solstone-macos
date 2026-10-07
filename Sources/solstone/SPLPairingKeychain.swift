@@ -30,7 +30,7 @@ enum SPLPairingKeychain {
     }
 }
 
-private enum PairingKeychainError: Error, Equatable {
+enum PairingKeychainError: Error, Equatable {
     case status(OSStatus)
     case unreadableCredential
     case conflictingCredentials
@@ -41,14 +41,11 @@ private enum PairingKeychainError: Error, Equatable {
 /// query names its SecKeychain explicitly, so Security's process search list and
 /// global keychain settings are never changed.
 final class SPLLoginKeychainStore: PairingStoring, @unchecked Sendable {
-    private let keychainURL: URL
+    private let items: any PairingKeychainItems
     private let lock = NSRecursiveLock()
 
-    init(
-        keychainURL: URL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Keychains/login.keychain-db")
-    ) {
-        self.keychainURL = keychainURL
+    init(items: any PairingKeychainItems = SecurityPairingKeychainItems()) {
+        self.items = items
     }
 
     func load() throws -> StoredPairing? {
@@ -228,10 +225,7 @@ final class SPLLoginKeychainStore: PairingStoring, @unchecked Sendable {
 
     func delete() throws {
         try lock.withLock {
-            let status = SecItemDelete(try destinationSearchQuery() as CFDictionary)
-            guard status == errSecSuccess || status == errSecItemNotFound else {
-                throw PairingKeychainError.status(status)
-            }
+            try items.deleteDestination()
         }
     }
 
@@ -366,14 +360,101 @@ final class SPLLoginKeychainStore: PairingStoring, @unchecked Sendable {
         catch { throw PairingKeychainError.unreadableCredential }
     }
 
-    private func openedKeychain() throws -> SecKeychain {
-        var keychain: SecKeychain?
-        let status = SecKeychainOpen(keychainURL.path, &keychain)
-        guard status == errSecSuccess, let keychain else { throw PairingKeychainError.status(status) }
-        return keychain
+    private func readPortableBaseline() throws -> Data? {
+        try items.readPortableBaseline()
     }
 
-    private func destinationIdentityQuery() -> [String: Any] {
+    private func writePortableBaseline(_ data: Data) throws {
+        try items.writePortableBaseline(data)
+        guard try items.readPortableBaseline() == data else { throw PairingKeychainError.conflictingCredentials }
+    }
+
+    private func deletePortableBaseline() throws {
+        try items.deletePortableBaseline()
+    }
+
+    private func readDestination() throws -> Data? {
+        try items.readDestination()
+    }
+
+    private func writeDestination(_ data: Data) throws {
+        try items.writeDestination(data)
+    }
+
+    private func readLegacy() throws -> Data? {
+        try items.readLegacy()
+    }
+
+    private func cleanLegacySource() throws {
+        try items.deleteLegacy()
+    }
+
+    private func cleanLegacySource(record: CarriedPairingRecord) throws {
+        try verifyLegacyCleanupSource(record: record)
+        try cleanLegacySource()
+    }
+
+    private func verifyLegacyCleanupSource(record: CarriedPairingRecord) throws {
+        guard record.legacyCleanupPending,
+              record.legacyCleanupSourceProvenance == Self.legacySourceProvenance,
+              record.legacyCleanupDestinationProvenance == SPLPairingKeychain.destinationProvenance,
+              let expectedDigest = record.legacyCleanupCredentialDigest else {
+            throw PairingKeychainError.unreadableCredential
+        }
+        if let source = try readLegacy(), SHA256Digest.hex(source) != expectedDigest {
+            throw PairingKeychainError.conflictingCredentials
+        }
+    }
+
+    private func readDeviceItem(account: String) throws -> Data? {
+        try items.readDeviceItem(account: account)
+    }
+
+    private func writeDeviceItem(account: String, data: Data) throws {
+        try items.writeDeviceItem(account: account, data: data)
+    }
+
+    private func deleteDeviceItem(account: String) throws {
+        try items.deleteDeviceItem(account: account)
+    }
+}
+
+/// The physical keychain items behind the pairing store, one method per item.
+/// Production reads and writes Security items; tests supply memory, so the
+/// store's state machine is covered without touching a keychain.
+protocol PairingKeychainItems: Sendable {
+    func readDestination() throws -> Data?
+    func writeDestination(_ data: Data) throws
+    func deleteDestination() throws
+    func readPortableBaseline() throws -> Data?
+    func writePortableBaseline(_ data: Data) throws
+    func deletePortableBaseline() throws
+    func readLegacy() throws -> Data?
+    func deleteLegacy() throws
+    func readDeviceItem(account: String) throws -> Data?
+    func writeDeviceItem(account: String, data: Data) throws
+    func deleteDeviceItem(account: String) throws
+}
+
+/// Security-framework items. The credential and the adopted baseline are two
+/// nonsynchronizing items in the user's login keychain file, written through an
+/// explicit `kSecUseKeychain` destination with the app-bound access object, so
+/// Migration Assistant and Time Machine carry them together. The device marker,
+/// the pending candidate and the device record are Data Protection items with
+/// `AfterFirstUnlockThisDeviceOnly`; nothing here is iCloud-synchronizable.
+final class SecurityPairingKeychainItems: PairingKeychainItems, @unchecked Sendable {
+    private let keychainURL: URL
+
+    init(
+        keychainURL: URL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Keychains/login.keychain-db")
+    ) {
+        self.keychainURL = keychainURL
+    }
+
+    // MARK: Queries
+
+    static func destinationIdentityQuery() -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: SPLPairingKeychain.service,
@@ -382,90 +463,94 @@ final class SPLLoginKeychainStore: PairingStoring, @unchecked Sendable {
         ]
     }
 
-    private func destinationSearchQuery() throws -> [String: Any] {
-        var query = destinationIdentityQuery()
-        query[kSecMatchSearchList as String] = [try openedKeychain()] as CFArray
-        return query
-    }
-
-    private func destinationAddQuery() throws -> [String: Any] {
-        var query = destinationIdentityQuery()
-        query[kSecUseKeychain as String] = try openedKeychain()
-        return query
-    }
-
-    private func portableBaselineQuery() -> [String: Any] {
+    static func portableBaselineIdentityQuery() -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: SPLPairingKeychain.migrationService,
             kSecAttrAccount as String: SPLPairingKeychain.portableBaselineAccount,
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any
+        ]
+    }
+
+    static func legacyQuery() -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: SPLPairingKeychain.service,
+            kSecAttrAccount as String: SPLPairingKeychain.account,
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+            kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
+            kSecAttrAccessGroup as String: SPLPairingKeychain.accessGroup
+        ]
+    }
+
+    static func deviceQuery(account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: SPLPairingKeychain.migrationService,
+            kSecAttrAccount as String: account,
             kSecAttrAccessGroup as String: SPLPairingKeychain.accessGroup,
-            kSecAttrSynchronizable as String: kCFBooleanTrue as Any,
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
             kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any
         ]
     }
 
-    private func readPortableBaseline() throws -> Data? {
-        var query = portableBaselineQuery()
+    static let deviceItemAccessibility = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
+
+    private func openedKeychain() throws -> SecKeychain {
+        var keychain: SecKeychain?
+        let status = SecKeychainOpen(keychainURL.path, &keychain)
+        guard status == errSecSuccess, let keychain else { throw PairingKeychainError.status(status) }
+        return keychain
+    }
+
+    private func searchQuery(_ identity: [String: Any]) throws -> [String: Any] {
+        var query = identity
+        query[kSecMatchSearchList as String] = [try openedKeychain()] as CFArray
+        return query
+    }
+
+    private func addQuery(_ identity: [String: Any]) throws -> [String: Any] {
+        var query = identity
+        query[kSecUseKeychain as String] = try openedKeychain()
+        return query
+    }
+
+    // MARK: Login keychain items
+
+    func readDestination() throws -> Data? {
+        try readLoginItem(Self.destinationIdentityQuery())
+    }
+
+    func writeDestination(_ data: Data) throws {
+        try writeLoginItem(Self.destinationIdentityQuery(), data: data)
+    }
+
+    func deleteDestination() throws {
+        try deleteLoginItem(Self.destinationIdentityQuery())
+    }
+
+    func readPortableBaseline() throws -> Data? {
+        try readLoginItem(Self.portableBaselineIdentityQuery())
+    }
+
+    func writePortableBaseline(_ data: Data) throws {
+        try writeLoginItem(Self.portableBaselineIdentityQuery(), data: data)
+    }
+
+    func deletePortableBaseline() throws {
+        try deleteLoginItem(Self.portableBaselineIdentityQuery())
+    }
+
+    private func readLoginItem(_ identity: [String: Any]) throws -> Data? {
+        var query = try searchQuery(identity)
         query[kSecReturnData as String] = kCFBooleanTrue as Any
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        switch status {
-        case errSecSuccess:
-            guard let data = result as? Data else { throw PairingKeychainError.unreadableCredential }
-            return data
-        case errSecItemNotFound: return nil
-        default: throw PairingKeychainError.status(status)
-        }
+        return try copyData(query)
     }
 
-    private func writePortableBaseline(_ data: Data) throws {
-        let query = portableBaselineQuery()
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
-        ]
-        let update = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if update == errSecItemNotFound {
-            var add = query
-            add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-            let status = SecItemAdd(add as CFDictionary, nil)
-            guard status == errSecSuccess || status == errSecDuplicateItem else {
-                throw PairingKeychainError.status(status)
-            }
-        } else if update != errSecSuccess {
-            throw PairingKeychainError.status(update)
-        }
-        guard try readPortableBaseline() == data else { throw PairingKeychainError.conflictingCredentials }
-    }
-
-    private func deletePortableBaseline() throws {
-        let status = SecItemDelete(portableBaselineQuery() as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw PairingKeychainError.status(status)
-        }
-    }
-
-    private func readDestination() throws -> Data? {
-        var query = try destinationSearchQuery()
-        query[kSecReturnData as String] = kCFBooleanTrue as Any
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        switch status {
-        case errSecSuccess:
-            guard let data = result as? Data else { throw PairingKeychainError.unreadableCredential }
-            return data
-        case errSecItemNotFound: return nil
-        default: throw PairingKeychainError.status(status)
-        }
-    }
-
-    private func writeDestination(_ data: Data) throws {
+    private func writeLoginItem(_ identity: [String: Any], data: Data) throws {
         let access = try destinationAccess()
-        let query = try destinationSearchQuery()
+        let query = try searchQuery(identity)
         let attributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccess as String: access
@@ -473,13 +558,20 @@ final class SPLLoginKeychainStore: PairingStoring, @unchecked Sendable {
         let update = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if update == errSecSuccess { return }
         guard update == errSecItemNotFound else { throw PairingKeychainError.status(update) }
-        var add = try destinationAddQuery()
+        var add = try addQuery(identity)
         add[kSecValueData as String] = data
         add[kSecAttrAccess as String] = access
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess || status == errSecDuplicateItem else { throw PairingKeychainError.status(status) }
         if status == errSecDuplicateItem {
-            guard try readDestination() == data else { throw PairingKeychainError.conflictingCredentials }
+            guard try readLoginItem(identity) == data else { throw PairingKeychainError.conflictingCredentials }
+        }
+    }
+
+    private func deleteLoginItem(_ identity: [String: Any]) throws {
+        let status = SecItemDelete(try searchQuery(identity) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw PairingKeychainError.status(status)
         }
     }
 
@@ -517,98 +609,57 @@ final class SPLLoginKeychainStore: PairingStoring, @unchecked Sendable {
         return access
     }
 
-    private func legacyQuery() -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: SPLPairingKeychain.service,
-            kSecAttrAccount as String: SPLPairingKeychain.account,
-            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
-            kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any,
-            kSecAttrAccessGroup as String: SPLPairingKeychain.accessGroup
-        ]
-    }
+    // MARK: Data Protection items
 
-    private func readLegacy() throws -> Data? {
-        var query = legacyQuery()
+    func readLegacy() throws -> Data? {
+        var query = Self.legacyQuery()
         query[kSecReturnData as String] = kCFBooleanTrue as Any
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        switch status {
-        case errSecSuccess:
-            guard let data = result as? Data else { throw PairingKeychainError.unreadableCredential }
-            return data
-        case errSecItemNotFound: return nil
-        default: throw PairingKeychainError.status(status)
-        }
+        return try copyData(query)
     }
 
-    private func cleanLegacySource() throws {
-        let status = SecItemDelete(legacyQuery() as CFDictionary)
+    func deleteLegacy() throws {
+        let status = SecItemDelete(Self.legacyQuery() as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw PairingKeychainError.status(status) }
     }
 
-    private func cleanLegacySource(record: CarriedPairingRecord) throws {
-        try verifyLegacyCleanupSource(record: record)
-        try cleanLegacySource()
-    }
-
-    private func verifyLegacyCleanupSource(record: CarriedPairingRecord) throws {
-        guard record.legacyCleanupPending,
-              record.legacyCleanupSourceProvenance == Self.legacySourceProvenance,
-              record.legacyCleanupDestinationProvenance == SPLPairingKeychain.destinationProvenance,
-              let expectedDigest = record.legacyCleanupCredentialDigest else {
-            throw PairingKeychainError.unreadableCredential
-        }
-        if let source = try readLegacy(), SHA256Digest.hex(source) != expectedDigest {
-            throw PairingKeychainError.conflictingCredentials
-        }
-    }
-
-    private func deviceQuery(account: String) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: SPLPairingKeychain.migrationService,
-            kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: SPLPairingKeychain.accessGroup,
-            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
-            kSecUseDataProtectionKeychain as String: kCFBooleanTrue as Any
-        ]
-    }
-
-    private func readDeviceItem(account: String) throws -> Data? {
-        var query = deviceQuery(account: account)
+    func readDeviceItem(account: String) throws -> Data? {
+        var query = Self.deviceQuery(account: account)
         query[kSecReturnData as String] = kCFBooleanTrue as Any
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        switch status {
-        case errSecSuccess:
-            guard let data = result as? Data else { throw PairingKeychainError.unreadableCredential }
-            return data
-        case errSecItemNotFound: return nil
-        default: throw PairingKeychainError.status(status)
-        }
+        return try copyData(query)
     }
 
-    private func writeDeviceItem(account: String, data: Data) throws {
-        let query = deviceQuery(account: account)
+    func writeDeviceItem(account: String, data: Data) throws {
+        let query = Self.deviceQuery(account: account)
         let updates: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            kSecAttrAccessible as String: Self.deviceItemAccessibility
         ]
         let update = SecItemUpdate(query as CFDictionary, updates as CFDictionary)
         if update == errSecSuccess { return }
         guard update == errSecItemNotFound else { throw PairingKeychainError.status(update) }
         var add = query
         add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        add[kSecAttrAccessible as String] = Self.deviceItemAccessibility
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess else { throw PairingKeychainError.status(status) }
     }
 
-    private func deleteDeviceItem(account: String) throws {
-        let status = SecItemDelete(deviceQuery(account: account) as CFDictionary)
+    func deleteDeviceItem(account: String) throws {
+        let status = SecItemDelete(Self.deviceQuery(account: account) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw PairingKeychainError.status(status) }
+    }
+
+    private func copyData(_ query: [String: Any]) throws -> Data? {
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data else { throw PairingKeychainError.unreadableCredential }
+            return data
+        case errSecItemNotFound: return nil
+        default: throw PairingKeychainError.status(status)
+        }
     }
 }

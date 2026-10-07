@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import Security
 import Testing
 @testable import solstone
 
@@ -9,6 +10,33 @@ struct SPLPairingKeychainTests {
     @Test func selectedStorePinsTheUserLoginKeychainBackend() {
         #expect(SPLPairingKeychain.store() is SPLLoginKeychainStore)
         #expect(SPLPairingKeychain.migrationService == "app.solstone.observer.spl.migration")
+    }
+
+    @Test func portableItemsAreNonsynchronizingLoginKeychainItems() {
+        for query in [
+            SecurityPairingKeychainItems.destinationIdentityQuery(),
+            SecurityPairingKeychainItems.portableBaselineIdentityQuery()
+        ] {
+            #expect(query[kSecClass as String] as? String == kSecClassGenericPassword as String)
+            #expect(query[kSecAttrSynchronizable as String] as? Bool == false)
+            #expect(query[kSecUseDataProtectionKeychain as String] == nil)
+            #expect(query[kSecAttrAccessGroup as String] == nil)
+        }
+        #expect(SecurityPairingKeychainItems.destinationIdentityQuery()[kSecAttrService as String] as? String == SPLPairingKeychain.service)
+        #expect(SecurityPairingKeychainItems.portableBaselineIdentityQuery()[kSecAttrService as String] as? String == SPLPairingKeychain.migrationService)
+    }
+
+    @Test func deviceItemsAreNonsynchronizingDeviceOnlyDataProtectionItems() {
+        for query in [
+            SecurityPairingKeychainItems.deviceQuery(account: "marker"),
+            SecurityPairingKeychainItems.deviceQuery(account: "record"),
+            SecurityPairingKeychainItems.legacyQuery()
+        ] {
+            #expect(query[kSecUseDataProtectionKeychain as String] as? Bool == true)
+            #expect(query[kSecAttrSynchronizable as String] as? Bool == false)
+            #expect(query[kSecAttrAccessGroup as String] as? String == SPLPairingKeychain.accessGroup)
+        }
+        #expect(SecurityPairingKeychainItems.deviceItemAccessibility == kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
     }
 
     @Test func policyLiteralsMatchEntitlementsAppPlist() throws {
