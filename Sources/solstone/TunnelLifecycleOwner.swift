@@ -245,6 +245,9 @@ final class TunnelLifecycleOwner {
     private let tokenRefresher: TunnelDeviceTokenRefreshing
     @ObservationIgnored
     private let makeTransport: @MainActor @Sendable () -> any TunnelTransporting
+    /// How long the retirement control connection may take to reach the journal
+    /// and hear its answer before the owner's unpair or switch proceeds locally.
+    private let retirementControlBudget: Duration
     @ObservationIgnored
     private let pathMonitor: PathMonitor
     @ObservationIgnored
@@ -328,6 +331,7 @@ final class TunnelLifecycleOwner {
         relayAccessSequencer: JournalRelayAccessSequencer? = nil,
         loopbackSession: URLSession? = nil,
         optionalJobDeadline: Duration = .seconds(15),
+        retirementControlBudget: Duration = .seconds(20),
         unlockNotificationCenter: NotificationCenter = DistributedNotificationCenter.default(),
         unlockNotificationName: Notification.Name = Notification.Name("com.apple.screenIsUnlocked")
     ) {
@@ -341,6 +345,7 @@ final class TunnelLifecycleOwner {
         }
         self.pathMonitor = pathMonitoringSource.map { PathMonitor(source: $0) } ?? PathMonitor()
         self.probe = probe
+        self.retirementControlBudget = retirementControlBudget
         self.sleep = sleep
         self.now = now
         self.unlockNotificationCenter = unlockNotificationCenter
@@ -592,6 +597,15 @@ final class TunnelLifecycleOwner {
         let endpoints = usableCandidates(for: pairing)
         guard !endpoints.isEmpty else { return false }
         let controlTransport = makeTransport()
+        // The control connection keeps dialing while every path to the journal
+        // fails, and cancelling this task does not end it: only `disconnect()`
+        // does. Bound it, so an unreachable journal cannot keep an owner paired.
+        let budget = retirementControlBudget
+        let budgetTimer = Task { @MainActor in
+            do { try await Task.sleep(for: budget) } catch { return }
+            await controlTransport.disconnect()
+        }
+        defer { budgetTimer.cancel() }
         do {
             let connection = try await controlTransport.connect(pairing: pairing, candidates: endpoints, onLocalProxyStart: nil)
             let outcome = await JournalSelfRetirement().retire(pairing: pairing, localPort: connection.localPort)

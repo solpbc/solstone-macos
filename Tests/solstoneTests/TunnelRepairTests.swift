@@ -76,4 +76,31 @@ struct TunnelRepairTests {
         try await waitUntil { owner.state == .connected(localPort: 9090, via: .lan) }
         await owner.stop()
     }
+
+    @Test("Retiring an unpaired credential gives up when the journal never answers")
+    func retirementGivesUpOnAnUnreachableJournal() async throws {
+        let stored = pairing(instanceID: "gone-journal", deviceToken: "gone-token")
+        let credentialStore = PairingCredentialStore(store: PairingStore(pairing: stored))
+        let invalidation = try credentialStore.beginInvalidation(for: stored)
+        let stuck = RetriesUntilDisconnectedTransport()
+        let factory = FakeTransportFactory([stuck])
+        let owner = TunnelLifecycleOwner(
+            credentialStore: credentialStore,
+            tokenRefresher: FakeTokenRefresher(ifNeededResults: [.notNeeded(stored)]).seam,
+            makeTransport: { factory.make() },
+            pathMonitoringSource: NoopPathMonitoringSource(),
+            probe: { _, _ in true },
+            retirementControlBudget: .milliseconds(200),
+            unlockNotificationCenter: NotificationCenter()
+        )
+
+        let started = ContinuousClock.now
+        let retired = await owner.retireInvalidatedPairing(stored, operationID: invalidation.operationID)
+        let elapsed = ContinuousClock.now - started
+
+        #expect(retired == false)
+        #expect(stuck.connectedPairings.count == 1)
+        #expect(stuck.disconnectCount >= 1)
+        #expect(elapsed < .seconds(5))
+    }
 }
