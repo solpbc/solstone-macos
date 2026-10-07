@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- the journal app no longer keeps two processor cores busy while your journal runs. since 2.0.27 (build 64) it kept listening for output your journal had already moved into its own log.
+- the journal app no longer keeps two processor cores busy while your journal runs.
 
 ## [2.0.35 (build 73)] - 2026-10-07
 
