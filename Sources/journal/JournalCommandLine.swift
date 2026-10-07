@@ -51,7 +51,7 @@ enum JournalCommandLine {
                   serviceError.code == Int(kSMErrorJobNotFound) else {
                 return .stop(
                     exitCode: 78,
-                    message: "journal: could not unregister \(journalWatchdogLabel): \(error.localizedDescription). Native cleanup was not started.\n"
+                    message: "journal: could not unregister \(journalWatchdogLabel): \(error.localizedDescription). setup cleanup was not started.\n"
                 )
             }
         }
