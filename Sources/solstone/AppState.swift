@@ -1267,6 +1267,9 @@ public final class AppState {
     }
 
     internal func clearJournalMarkConfirmation() {
+        // A cleared answer also ends any mark attempt for the old credential, so a
+        // later pairing never compares its answer against a stale revision.
+        pendingMarkCredentialRevision = nil
         withMutation(keyPath: \.isJournalMarkConfirmed) {
             journalMarkConfirmationStore.clear()
             uploadCoordinator?.updatePairedIngestIdentity(currentPairedIngestIdentity())
