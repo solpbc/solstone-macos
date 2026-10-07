@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - there's no longer a limit of four microphones going into your journal.
 
 ### Fixed
+- audio no longer goes missing where one segment ends and the next begins. before, about a tenth of a second could be lost at each change, and the next segment started with silence in its place.
 - pausing now stops audio from going into your journal right away. before, a little more audio could go in while the segment finished.
 - turning a microphone off in settings now stops its audio from going into your journal right away, and turning one on no longer needs you to restart the solstone app. before, a microphone you turned off kept going in until you turned off all audio.
 - when your mac's audio system restarts, system audio intake resumes within seconds. before, it could stop for more than a minute while the solstone app still looked fine.
