@@ -123,12 +123,23 @@ final class AudioHandoffStream: @unchecked Sendable {
     private var successor: Output?
     private var closed = false
     private var droppedFrames = 0
+    /// Audio past the cutoff has arrived, so everything before it has been routed.
+    private var cutoffCovered = false
 
     init(maximumHeldSeconds: Double) {
         self.maximumHeldSeconds = maximumHeldSeconds
     }
 
     var heldSeconds: Double { lock.withLock { heldSecondsTotal } }
+
+    /// The old writer finishes only once the buffer straddling the cutoff has
+    /// arrived and given it its part, or after `timeout` for a quiet source.
+    func waitUntilCutoffCovered(timeout: TimeInterval) async {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        while !lock.withLock({ cutoffCovered || closed }), ProcessInfo.processInfo.systemUptime < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
 
     /// The old writer, for audio captured before the cutoff that arrives after it let go.
     func setPredecessor(cutoff: CMTime, pcm forward: @escaping (AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?) {
@@ -156,7 +167,7 @@ final class AudioHandoffStream: @unchecked Sendable {
         lock.withLock {
             guard !closed else { return nil }
             // A buffer wholly after the cutoff goes straight on, untouched.
-            if case .some(.pcm(let forward)) = successor, let cutoff, time >= cutoff { return forward(buffer, time) }
+            if case .some(.pcm(let forward)) = successor, let cutoff, time >= cutoff { cutoffCovered = true; return forward(buffer, time) }
             route(buffer, at: time)
             return nil
         }
@@ -167,7 +178,7 @@ final class AudioHandoffStream: @unchecked Sendable {
         lock.withLock {
             guard !closed else { return }
             let time = CMSampleBufferGetPresentationTimeStamp(buffer)
-            if case .some(.sample(let forward)) = successor, let cutoff, time >= cutoff { forward(buffer); return }
+            if case .some(.sample(let forward)) = successor, let cutoff, time >= cutoff { cutoffCovered = true; forward(buffer); return }
             guard let pcm = Self.pcm(from: buffer) else {
                 droppedFrames += CMSampleBufferGetNumSamples(buffer); return
             }
@@ -211,6 +222,9 @@ final class AudioHandoffStream: @unchecked Sendable {
         let rate = buffer.format.sampleRate
         guard buffer.frameLength > 0, rate > 0, time.isNumeric else { return }
         var remainder = buffer, start = time
+        if let cutoff, CMTimeAdd(time, CMTime(value: Int64(buffer.frameLength), timescale: CMTimeScale(rate))) >= cutoff {
+            cutoffCovered = true
+        }
         if let cutoff, time < cutoff {
             // Round up, so the held part never starts before the new origin (it would be trimmed).
             let before = min(Int(buffer.frameLength), Int(ceil(CMTimeSubtract(cutoff, time).seconds * rate)))

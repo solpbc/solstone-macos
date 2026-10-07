@@ -645,11 +645,15 @@ struct AudioAdmissionTests {
         let handoff = AudioRotationHandoff()
         let cutoff = old.prepareToFinishCapture(handoff: handoff)
         #expect(handoff.cutoff == cutoff)
+        let oldWriter = try #require(old._sourceWriterForTesting(device.uid))
+        // As in the app, the old finish is already under way when the buffer
+        // straddling the cutoff arrives; it must still receive its part.
+        let oldFinish = Task { await old.finishAll() }
+        try await Task.sleep(for: .milliseconds(50))
         try feed(20..<30, frequency: 440)                // 2–3 s: straddles the cutoff, before the new writer exists
         await capture.drainConversion()
         #expect(handoff._heldSecondsForTesting(device.uid) > 0.5)
-        let oldWriter = try #require(old._sourceWriterForTesting(device.uid))
-        let oldInputs = await old.finishAll()
+        let oldInputs = await oldFinish.value
 
         let next = PerSourceAudioManager(outputDirectory: root, timePrefix: "new", captureManager: shared, startMicrophoneCapture: { _ in })
         next.setSegmentStartTime(cutoff); next.bindRotationHandoff(handoff)

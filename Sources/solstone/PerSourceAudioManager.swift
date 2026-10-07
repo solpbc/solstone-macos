@@ -52,6 +52,10 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     /// The rotation this segment continues from: its held audio for a source
     /// goes into that source's writer here before anything newer.
     private var rotationHandoff: AudioRotationHandoff?
+    /// Sources this segment handed off, whose old writers wait for the cutoff to be covered.
+    private var handedOffStreams: [String: AudioHandoffStream] = [:]
+    /// Bound on that wait: about one capture buffer, so a quiet source never holds the rotation.
+    static let cutoffCoverageTimeout: TimeInterval = 0.3
 
     public func bindRotationHandoff(_ handoff: AudioRotationHandoff) {
         lock.withLock { rotationHandoff = handoff }
@@ -313,12 +317,15 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         // This prevents audio from being written to the old segment's writers
         let boundaries = lock.withLock { boundaryCaptures }
         let systemBoundary = lock.withLock { systemCutoff }
+        let handedOff = lock.withLock { handedOffStreams }
         // Completion is segment/source-specific. Shared-budget old owners do
         // not gate this writer, and one held writer cannot delay healthy peers.
         var inputs = await withTaskGroup(of: AudioRemixerInput.self) { group in
             for (id, source) in writers {
                 let boundary = boundaries[id]
                 group.addTask {
+                    // A handed-off source first receives its part of the buffer that straddles the cutoff.
+                    await handedOff[id]?.waitUntilCutoffCovered(timeout: Self.cutoffCoverageTimeout)
                     await boundary?.capture.drainConversion()
                     source.legacyCapture?.stop()
                     let cutoff = source.attached ? (id == AudioTrackType.systemSourceID ? systemBoundary : boundary?.cutoff) : nil
@@ -374,6 +381,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
                 let writers = lock.withLock { sourceWriters.filter { $0.value.attached }.mapValues(\.writer) }
                 for (id, writer) in writers {
                     guard let stream = handoff.stream(for: id) else { continue }
+                    lock.withLock { handedOffStreams[id] = stream }
                     if id == AudioTrackType.systemSourceID {
                         stream.setPredecessor(cutoff: cutoff, sample: { [weak writer] in _ = writer?.enqueueAudio($0) })
                     } else {
@@ -410,6 +418,7 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         sourceWriters.removeAll()
         finishingWriters.removeAll()
         boundaryCaptures.removeAll()
+        handedOffStreams.removeAll()
         finishCompleted = true
         micMetadata.removeAll()
         lock.unlock()
