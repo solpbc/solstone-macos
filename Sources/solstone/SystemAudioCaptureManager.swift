@@ -21,8 +21,11 @@ public final class SystemAudioCaptureManager {
         set {
             desiredAudioCallback = newValue
             streamOutput?.onAudioBuffer = newValue
+            audioCallbackRevision &+= 1
         }
     }
+    /// Changes with every destination change, so a caller can undo only its own.
+    private(set) var audioCallbackRevision: UInt64 = 0
     private var desiredAudioCallback: ((CMSampleBuffer) -> Void)?
     public var onCaptureError: ((Error) -> Void)?
     public var onTerminalStop: (@MainActor () -> Void)?
@@ -394,6 +397,12 @@ public final class SystemAudioCaptureManager {
         onAudioBuffer = nil
         onCaptureError = nil
         Logger.audio.info("[SystemAudio] Cleared callback (had callback: \(hadCallback, privacy: .public), stream running: \(self.isRunning, privacy: .public))")
+    }
+
+    /// Clears the callback only if it is still the one `revision` names.
+    func clearCallback(ifRevision revision: UInt64) {
+        guard audioCallbackRevision == revision else { return }
+        clearCallback()
     }
 
     /// Wire up a new callback (called when new segment starts)

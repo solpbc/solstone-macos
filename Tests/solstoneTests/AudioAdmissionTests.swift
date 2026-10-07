@@ -623,7 +623,8 @@ struct AudioAdmissionTests {
 
     /// A rotation must not lose what is said across it. Before the handoff, audio
     /// between the old cutoff and the new writer's attach reached neither segment,
-    /// and the new segment began with padding in its place.
+    /// and the new segment began with padding in its place. Now the two segments
+    /// meet exactly at the cutoff: no padding on either side and every frame kept.
     @Test func rotationCarriesMicrophoneAudioAcrossTheCutoffIntoTheNextSegment() async throws {
         let root = try makeTempDirectory("admission-handoff-mic"); defer { try? FileManager.default.removeItem(at: root) }
         let device = admissionDevice("handoff"), shared = MicrophoneCaptureManager(), capture = ExternalMicCapture(device: admissionDevice("handoff"), gain: 1)
@@ -644,14 +645,16 @@ struct AudioAdmissionTests {
         let handoff = AudioRotationHandoff()
         let cutoff = old.prepareToFinishCapture(handoff: handoff)
         #expect(handoff.cutoff == cutoff)
-        try feed(20..<30, frequency: 440)                // 2–3 s: before the new writer exists
+        try feed(20..<30, frequency: 440)                // 2–3 s: straddles the cutoff, before the new writer exists
         await capture.drainConversion()
-        #expect(handoff._heldSecondsForTesting(device.uid) > 0.9)
+        #expect(handoff._heldSecondsForTesting(device.uid) > 0.5)
+        let oldWriter = try #require(old._sourceWriterForTesting(device.uid))
         let oldInputs = await old.finishAll()
 
         let next = PerSourceAudioManager(outputDirectory: root, timePrefix: "new", captureManager: shared, startMicrophoneCapture: { _ in })
         next.setSegmentStartTime(cutoff); next.bindRotationHandoff(handoff)
         _ = try next.addMicrophone(device)
+        let newWriter = try #require(next._sourceWriterForTesting(device.uid))
         try feed(30..<40, frequency: 660)                // 3–4 s: the new writer is attached
         await capture.drainConversion()
         await MainActor.run { handoff.discard() }
@@ -664,16 +667,20 @@ struct AudioAdmissionTests {
         let newTrack = try #require(try await admissionDecode(newURL).first)
         let lead = CMTimeSubtract(cutoff, admissionHostTime(base)).seconds - 2   // test compute between feed and cutoff
         #expect(lead >= 0 && lead < 0.5)
+        // The segments meet at the cutoff with nothing generated and nothing missing.
+        // At most one frame of padding: the cutoff falls between two samples.
+        #expect(oldWriter.statisticsSnapshot.generatedFrames == 0 && (newWriter.statisticsSnapshot.generatedFrames ?? 99) <= 1)
+        #expect(oldWriter.statisticsSnapshot.droppedFrames == 0 && newWriter.statisticsSnapshot.droppedFrames == 0)
+        #expect(abs(oldTrack.count + newTrack.count - 4 * 48_000) <= 2)
+        #expect(abs(Double(oldTrack.count) / 48_000 - (2 + lead)) < 0.002)
         #expect(admissionTone(oldTrack, frequency: 220, start: 0.1, end: 1.9) > 0.15)
-        // The new segment opens on the held audio, not on padding.
-        #expect(admissionTone(newTrack, frequency: 440, start: 0.05, end: 0.95 - lead) > 0.15)
-        #expect(admissionTone(newTrack, frequency: 660, start: 1.05 - lead, end: 1.95 - lead) > 0.15)
-        #expect(Double(newTrack.count) / 48_000 > 1.9 - lead)
+        #expect(admissionTone(newTrack, frequency: 440, start: 0.02, end: 0.98 - lead) > 0.15)
+        #expect(admissionTone(newTrack, frequency: 660, start: 1.02 - lead, end: 1.98 - lead) > 0.15)
         admissionBudgetIsEmpty(capture.mediaBudget)
     }
 
-    /// System audio held across a rotation is coalesced, so many small captured
-    /// buffers reach the new writer as a few jobs and none are refused.
+    /// System audio held across a rotation is split at the cutoff and coalesced,
+    /// so many small captured buffers reach the new writer as a few jobs.
     @Test func rotationCarriesSystemAudioAcrossTheCutoffWithoutRefusals() async throws {
         let root = try makeTempDirectory("admission-handoff-system"); defer { try? FileManager.default.removeItem(at: root) }
         let base = mach_absolute_time() - AVAudioTime.hostTime(forSeconds: 2)
@@ -688,19 +695,22 @@ struct AudioAdmissionTests {
         let stream = try #require(handoff.stream(for: AudioTrackType.systemSourceID))
         let cutoff = old.prepareToFinishCapture(handoff: handoff)
         // 1 s of 10 ms buffers: one writer job each would exceed the writer's job limit.
-        // 500 Hz is whole cycles per 10 ms buffer, so the held run is one continuous tone.
+        // 500 Hz is whole cycles per 10 ms buffer, so the run is one continuous tone.
         for index in 0..<100 { stream.receive(sample: try sample(2 + Double(index) / 100, frames: 480, frequency: 500)) }
+        let oldWriter = try #require(old._sourceWriterForTesting(AudioTrackType.systemSourceID))
         let oldInputs = await old.finishAll()
 
         let next = PerSourceAudioManager(outputDirectory: root, timePrefix: "new")
         next.setSegmentStartTime(cutoff); next.bindRotationHandoff(handoff); _ = try next.startSystemAudio()
-        try #require(handoff.claim(AudioTrackType.systemSourceID)).attach(sample: { next.appendSystemAudio($0) })
-        #expect(handoff.claim(AudioTrackType.systemSourceID) == nil)
+        let lost = try #require(handoff.claim(AudioTrackType.systemSourceID)).attach(sample: { next.appendSystemAudio($0) })
+        #expect(lost == 0 && handoff.claim(AudioTrackType.systemSourceID) == nil)
         for index in 0..<10 { stream.receive(sample: try sample(3 + Double(index) / 10, frames: 4_800, frequency: 660)) }
         await MainActor.run { handoff.discard() }
         let newWriter = try #require(next._sourceWriterForTesting(AudioTrackType.systemSourceID))
         let newInputs = await next.finishAll()
         #expect(newWriter.statisticsSnapshot.droppedFrames == 0 && newWriter.statisticsSnapshot.failures.isEmpty)
+        // At most one frame of padding: the cutoff falls between two samples.
+        #expect(oldWriter.statisticsSnapshot.generatedFrames == 0 && (newWriter.statisticsSnapshot.generatedFrames ?? 99) <= 1)
 
         let oldURL = try #require(oldInputs.first).url
         let oldTrack = try #require(try await admissionDecode(oldURL).first)
@@ -708,21 +718,27 @@ struct AudioAdmissionTests {
         let newTrack = try #require(try await admissionDecode(newURL).first)
         let lead = CMTimeSubtract(cutoff, admissionHostTime(base)).seconds - 2
         #expect(lead >= 0 && lead < 0.5)
+        #expect(abs(oldTrack.count + newTrack.count - 4 * 48_000) <= 2)
         #expect(admissionTone(oldTrack, frequency: 220, start: 0.1, end: 1.9) > 0.15)
-        #expect(admissionTone(newTrack, frequency: 500, start: 0.05, end: 0.95 - lead) > 0.15)
-        #expect(admissionTone(newTrack, frequency: 660, start: 1.05 - lead, end: 1.95 - lead) > 0.15)
+        #expect(admissionTone(newTrack, frequency: 500, start: 0.02, end: 0.98 - lead) > 0.15)
+        #expect(admissionTone(newTrack, frequency: 660, start: 1.02 - lead, end: 1.98 - lead) > 0.15)
     }
 
     /// End to end through two real segment writers sharing one system-audio
-    /// stream: what the stream delivers between the cutoff and the next start
-    /// opens the next segment.
+    /// stream: what the stream delivers after the old segment's finish opens the
+    /// next segment, with no padding at its start.
     @MainActor @Test func segmentRotationHandsSystemAudioToTheNextSegmentWriter() async throws {
         let root = try makeTempDirectory("admission-handoff-segment"); defer { try? FileManager.default.removeItem(at: root) }
         let system = SystemAudioCaptureManager(streamFactory: FakeCaptureStreamFactory().factory, restartListenerFactory: { _ in {} })
         let display = DisplayInfo(displayID: 42, width: 64, height: 64, bounds: CGRect(x: 0, y: 0, width: 64, height: 64))
+        let managers = LockedArray<PerSourceAudioManager>([])
         func writer(_ prefix: String) -> SegmentWriter {
             SegmentWriter(outputDirectory: root, timePrefix: prefix,
-                screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() })
+                screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() },
+                audioManagerFactory: { directory, prefix, _, verbose in
+                    let manager = PerSourceAudioManager(outputDirectory: directory, timePrefix: prefix, verbose: verbose)
+                    managers.append(manager); return manager
+                })
         }
         func deliver(from start: CMTime, buffers: Range<Int>) throws {
             for index in buffers {
@@ -732,26 +748,55 @@ struct AudioAdmissionTests {
         }
         let first = writer("120000")
         _ = try await first.start(sources: .screen, displayInfos: [display], audioFilter: SCContentFilter(), systemAudioCaptureManager: system)
-        let origin = CMClockGetTime(CMClockGetHostTimeClock())
-        try deliver(from: origin, buffers: 0..<30)                  // 0–0.3 s
-        try await Task.sleep(for: .milliseconds(350))
+        try deliver(from: CMClockGetTime(CMClockGetHostTimeClock()), buffers: 0..<30)
         let handoff = AudioRotationHandoff()
         first.handOffAudio(to: handoff)
-        let cutoff = try #require(handoff.cutoff)
-        try deliver(from: origin, buffers: 30..<80)                 // 0.3–0.8 s: between the segments,
+        #expect(handoff.cutoff == nil)                              // the cutoff is taken by the finish
         _ = await first.finishCapture()
-        try deliver(from: origin, buffers: 80..<130)                // 0.8–1.3 s: and after the old one finished
+        let cutoff = try #require(handoff.cutoff)
+        try deliver(from: cutoff, buffers: 0..<100)                 // 1 s after the cutoff, before the next segment
         let second = writer("120005")
         second.continueAudio(from: handoff)
         _ = try await second.start(sources: .screen, displayInfos: [display], audioFilter: SCContentFilter(), systemAudioCaptureManager: system)
-        try deliver(from: origin, buffers: 130..<160)               // 1.3–1.6 s
+        let manager = try #require(managers.all.last)
+        let newWriter = try #require(manager._sourceWriterForTesting(AudioTrackType.systemSourceID))
+        try deliver(from: cutoff, buffers: 100..<130)               // 1.0–1.3 s, forwarded
         handoff.discard()
+        #expect(system.onAudioBuffer != nil)
         let result = try #require(await second.finishCapture())
         let url = try #require(result.audioInputs.first { $0.timingInfo.trackType.sourceID == AudioTrackType.systemSourceID }).url
         let track = try #require(try await admissionDecode(url).first)
-        let lead = CMTimeSubtract(cutoff, origin).seconds - 0.3
-        #expect(lead >= 0 && lead < 0.5)
-        #expect(admissionTone(track, frequency: 500, start: 0.02, end: 1.28 - lead) > 0.15)
+        #expect((newWriter.statisticsSnapshot.generatedFrames ?? 99) <= 1 && newWriter.statisticsSnapshot.droppedFrames == 0)
+        #expect(admissionTone(track, frequency: 500, start: 0.02, end: 1.28) > 0.15)
+        await system.stop()
+    }
+
+    /// A rotation slow enough that the next segment refuses its stale handoff must
+    /// not leave that segment without system audio when the rotation's leftovers
+    /// are released.
+    @MainActor @Test func aRefusedStaleHandoffNeverClearsTheNextSegmentsSystemAudio() async throws {
+        let root = try makeTempDirectory("admission-handoff-stale"); defer { try? FileManager.default.removeItem(at: root) }
+        let system = SystemAudioCaptureManager(streamFactory: FakeCaptureStreamFactory().factory, restartListenerFactory: { _ in {} })
+        let display = DisplayInfo(displayID: 42, width: 64, height: 64, bounds: CGRect(x: 0, y: 0, width: 64, height: 64))
+        func writer(_ prefix: String) -> SegmentWriter {
+            SegmentWriter(outputDirectory: root, timePrefix: prefix,
+                screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() })
+        }
+        let first = writer("120000")
+        _ = try await first.start(sources: .screen, displayInfos: [display], audioFilter: SCContentFilter(), systemAudioCaptureManager: system)
+        let handoff = AudioRotationHandoff(maximumHeldSeconds: 0.1)
+        first.handOffAudio(to: handoff)
+        _ = await first.finishCapture()
+        try await Task.sleep(for: .milliseconds(200))
+        let second = writer("120005")
+        second.continueAudio(from: handoff)
+        _ = try await second.start(sources: .screen, displayInfos: [display], audioFilter: SCContentFilter(), systemAudioCaptureManager: system)
+        handoff.discard()
+        #expect(system.onAudioBuffer != nil)
+        system._streamOutputForTesting?.deliverAudio(try admissionSample(try admissionPCM(frames: 4_800, frequency: 500),
+            time: CMClockGetTime(CMClockGetHostTimeClock())))
+        let result = try #require(await second.finishCapture())
+        #expect(result.audioInputs.contains { $0.timingInfo.trackType.sourceID == AudioTrackType.systemSourceID })
         await system.stop()
     }
 
@@ -760,25 +805,43 @@ struct AudioAdmissionTests {
     @Test func rotationHandoffIsBoundedClaimedOnceAndReleasedWhenUnclaimed() async throws {
         let handoff = AudioRotationHandoff(), released = LockedCounter()
         let held = try #require(handoff.stream(for: "kept"))
+        let dropped = try #require(handoff.stream(for: "dropped"))
         let release: @MainActor () -> Void = { released.increment() }
-        let droppedStream = handoff.stream(for: "dropped", release: release)
-        let dropped = try #require(droppedStream)
+        handoff.setRelease(for: "dropped", release)
         let start = CMClockGetTime(CMClockGetHostTimeClock())
         for index in 0..<80 {
             let time = CMTimeAdd(start, CMTime(value: Int64(index * 4_800), timescale: 48_000))
             _ = held.receive(pcm: try admissionPCM(frames: 4_800, frequency: 440), at: time)
             _ = dropped.receive(pcm: try admissionPCM(frames: 4_800, frequency: 440), at: time)
         }
-        #expect(abs(handoff._heldSecondsForTesting("kept") - AudioRotationHandoff.maximumHeldSeconds) < 0.01)
+        #expect(abs(handoff._heldSecondsForTesting("kept") - handoff.maximumHeldSeconds) < 0.01)
         let delivered = LockedCounter()
-        try #require(handoff.claim("kept")).attach(pcm: { buffer, _ in delivered.increment(); return nil })
-        // 5 s of 100 ms buffers arrive as 0.5 s chunks.
-        #expect(delivered.count == 10)
+        let lost = try #require(handoff.claim("kept")).attach(pcm: { _, _ in delivered.increment(); return nil })
+        // 5 s of 100 ms buffers arrive as 0.5 s chunks; the 3 s past the bound are reported lost.
+        #expect(delivered.count == 10 && lost == 30 * 4_800)
         #expect(handoff.claim("kept") == nil)
         await MainActor.run { handoff.discard() }
         #expect(released.count == 1)
         #expect(dropped.receive(pcm: try admissionPCM(frames: 4_800, frequency: 440), at: start) == nil)
         #expect(handoff.stream(for: "late") == nil && handoff.claim("dropped") == nil)
+    }
+
+    /// Held audio is split at the cutoff: the earlier part reaches the old writer,
+    /// even when it was held before the cutoff was known.
+    @Test func heldAudioCapturedBeforeTheCutoffGoesToTheOldWriter() async throws {
+        let handoff = AudioRotationHandoff()
+        let stream = try #require(handoff.stream(for: "split"))
+        let start = CMClockGetTime(CMClockGetHostTimeClock())
+        _ = stream.receive(pcm: try admissionPCM(frames: 4_800, frequency: 440), at: start)
+        let before = LockedArray<Int>([]), after = LockedArray<Int>([])
+        stream.setPredecessor(cutoff: CMTimeAdd(start, CMTime(value: 1_200, timescale: 48_000)), pcm: { buffer, time in
+            before.append(Int(buffer.frameLength)); return nil
+        })
+        _ = stream.receive(pcm: try admissionPCM(frames: 4_800, frequency: 440), at: CMTimeAdd(start, CMTime(value: 4_800, timescale: 48_000)))
+        stream.attach(pcm: { buffer, _ in after.append(Int(buffer.frameLength)); return nil })
+        // 1,200 frames before the cutoff; the 3,600 after it and the next 4,800 coalesce.
+        #expect(before.all == [1_200] && after.all == [8_400])
+        await MainActor.run { handoff.discard() }
     }
 
     @Test func admissionCopyFailurePreservesPrefixThroughRealRemix() async throws {

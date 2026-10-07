@@ -7,12 +7,14 @@ import Foundation
 
 /// Carries audio across a segment rotation. The old segment stops taking audio
 /// at one instant, the cutoff, which is also the new segment's origin. Audio
-/// that arrives after the cutoff is held per source until the new segment's
-/// writer for that source attaches, so the new segment begins with what was
-/// captured rather than with padding, and nothing falls between the two.
+/// that arrives after the old segment let go of a source is split at the cutoff:
+/// what was captured before it still goes to the old writer, and the rest is
+/// held until the new segment's writer for that source attaches. The new
+/// segment then begins with what was captured instead of padding, and nothing
+/// falls between the two.
 public final class AudioRotationHandoff: @unchecked Sendable {
     /// Held audio is bounded. Past this, the new writer pads the gap honestly.
-    static let maximumHeldSeconds: Double = 5
+    let maximumHeldSeconds: Double
 
     private let lock = NSLock()
     private var _cutoff: CMTime?
@@ -20,7 +22,11 @@ public final class AudioRotationHandoff: @unchecked Sendable {
     private var releases: [String: @MainActor () -> Void] = [:]
     private var discarded = false
 
-    public init() {}
+    public convenience init() { self.init(maximumHeldSeconds: 5) }
+
+    init(maximumHeldSeconds: Double) {
+        self.maximumHeldSeconds = maximumHeldSeconds
+    }
 
     /// The old segment's cutoff and the new segment's origin, once handed off.
     public var cutoff: CMTime? { lock.withLock { _cutoff } }
@@ -29,16 +35,21 @@ public final class AudioRotationHandoff: @unchecked Sendable {
         lock.withLock { if _cutoff == nil, time.isNumeric { _cutoff = time } }
     }
 
-    /// The old segment hands off one source. `release` runs if no new writer
-    /// claims it, so the source stops delivering into a closed handoff.
-    func stream(for sourceID: String, release: (@MainActor () -> Void)? = nil) -> AudioHandoffStream? {
+    /// One source's stream, created by whichever side of the old segment lets go first.
+    func stream(for sourceID: String) -> AudioHandoffStream? {
         lock.withLock {
             guard !discarded else { return nil }
-            let stream = streams[sourceID] ?? AudioHandoffStream()
+            if let stream = streams[sourceID] { return stream }
+            let stream = AudioHandoffStream(maximumHeldSeconds: maximumHeldSeconds)
             streams[sourceID] = stream
-            if let release { releases[sourceID] = release }
             return stream
         }
+    }
+
+    /// Runs if no new writer claims the source, so it stops delivering into a closed
+    /// stream. It must undo only its own redirect, never a newer destination.
+    func setRelease(for sourceID: String, _ release: @escaping @MainActor () -> Void) {
+        lock.withLock { if !discarded, streams[sourceID] != nil { releases[sourceID] = release } }
     }
 
     /// The new segment claims a source once; its held audio goes to that writer first.
@@ -74,9 +85,10 @@ public final class AudioRotationHandoff: @unchecked Sendable {
 #endif
 }
 
-/// One source's audio between the cutoff and its new writer. Held audio is
-/// copied (so the capture's buffers are released at once) and coalesced into
-/// contiguous chunks, so the flush is a few writer jobs, not one per buffer.
+/// One source's audio between the old segment letting go and the new writer
+/// attaching. Held audio is copied (so the capture's buffers are released at
+/// once) and coalesced into contiguous chunks, so the flush is a few writer
+/// jobs, not one per buffer.
 final class AudioHandoffStream: @unchecked Sendable {
     private struct Chunk {
         let pcm: AVAudioPCMBuffer
@@ -84,24 +96,68 @@ final class AudioHandoffStream: @unchecked Sendable {
         var end: CMTime { CMTimeAdd(start, CMTime(value: Int64(pcm.frameLength), timescale: CMTimeScale(pcm.format.sampleRate))) }
     }
 
+    private enum Output {
+        case pcm((AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?)
+        case sample((CMSampleBuffer) -> Void)
+
+        @discardableResult
+        func send(_ pcm: AVAudioPCMBuffer, at time: CMTime) -> AudioWriteReceipt? {
+            switch self {
+            case .pcm(let forward): return forward(pcm, time)
+            case .sample(let forward):
+                if let sample = AudioHandoffStream.sampleBuffer(from: pcm, presentationTime: time) { forward(sample) }
+                return nil
+            }
+        }
+    }
+
     private static let chunkSeconds = 0.5
+    /// Each chunk is one writer job at the flush; the writer admits 64 at once.
+    private static let maximumChunks = 32
+    private let maximumHeldSeconds: Double
     private let lock = NSLock()
     private var chunks: [Chunk] = []
-    private var heldFrames: [Double: Int] = [:]
-    private var forwardPCM: ((AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?)?
-    private var forwardSample: ((CMSampleBuffer) -> Void)?
+    private var heldSecondsTotal = 0.0
+    private var cutoff: CMTime?
+    private var predecessor: Output?
+    private var successor: Output?
     private var closed = false
+    private var droppedFrames = 0
 
-    var heldSeconds: Double {
-        lock.withLock { heldFrames.reduce(0) { $0 + Double($1.value) / $1.key } }
+    init(maximumHeldSeconds: Double) {
+        self.maximumHeldSeconds = maximumHeldSeconds
+    }
+
+    var heldSeconds: Double { lock.withLock { heldSecondsTotal } }
+
+    /// The old writer, for audio captured before the cutoff that arrives after it let go.
+    func setPredecessor(cutoff: CMTime, pcm forward: @escaping (AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?) {
+        setPredecessor(cutoff: cutoff, output: .pcm(forward))
+    }
+
+    func setPredecessor(cutoff: CMTime, sample forward: @escaping (CMSampleBuffer) -> Void) {
+        setPredecessor(cutoff: cutoff, output: .sample(forward))
+    }
+
+    private func setPredecessor(cutoff: CMTime, output: Output) {
+        lock.withLock {
+            guard !closed, self.cutoff == nil, cutoff.isNumeric else { return }
+            self.cutoff = cutoff
+            predecessor = output
+            // Anything already held arrived before the cutoff was known.
+            let held = chunks
+            chunks.removeAll(); heldSecondsTotal = 0
+            for chunk in held { route(chunk.pcm, at: chunk.start) }
+        }
     }
 
     /// Microphone audio: mono PCM with its presentation time.
     func receive(pcm buffer: AVAudioPCMBuffer, at time: CMTime) -> AudioWriteReceipt? {
         lock.withLock {
             guard !closed else { return nil }
-            if let forwardPCM { return forwardPCM(buffer, time) }
-            hold(buffer, at: time)
+            // A buffer wholly after the cutoff goes straight on, untouched.
+            if case .some(.pcm(let forward)) = successor, let cutoff, time >= cutoff { return forward(buffer, time) }
+            route(buffer, at: time)
             return nil
         }
     }
@@ -110,66 +166,80 @@ final class AudioHandoffStream: @unchecked Sendable {
     func receive(sample buffer: CMSampleBuffer) {
         lock.withLock {
             guard !closed else { return }
-            if let forwardSample { forwardSample(buffer); return }
-            guard let pcm = Self.pcm(from: buffer) else { return }
-            hold(pcm, at: CMSampleBufferGetPresentationTimeStamp(buffer))
-        }
-    }
-
-    /// Flush held audio into the microphone writer, then forward what follows.
-    func attach(pcm forward: @escaping (AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?) {
-        lock.withLock {
-            guard !closed else { return }
-            for chunk in takeChunks() { _ = forward(chunk.pcm, chunk.start) }
-            forwardPCM = forward
-        }
-    }
-
-    /// Flush held audio into the system writer, then forward what follows.
-    func attach(sample forward: @escaping (CMSampleBuffer) -> Void) {
-        lock.withLock {
-            guard !closed else { return }
-            for chunk in takeChunks() {
-                if let sample = Self.sampleBuffer(from: chunk.pcm, presentationTime: chunk.start) { forward(sample) }
+            let time = CMSampleBufferGetPresentationTimeStamp(buffer)
+            if case .some(.sample(let forward)) = successor, let cutoff, time >= cutoff { forward(buffer); return }
+            guard let pcm = Self.pcm(from: buffer) else {
+                droppedFrames += CMSampleBufferGetNumSamples(buffer); return
             }
-            forwardSample = forward
+            route(pcm, at: time)
+        }
+    }
+
+    /// Flush held audio into the new microphone writer, then forward what follows.
+    /// Returns the frames this stream could not carry, for the new segment's record.
+    @discardableResult
+    func attach(pcm forward: @escaping (AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?) -> Int {
+        attach(.pcm(forward))
+    }
+
+    @discardableResult
+    func attach(sample forward: @escaping (CMSampleBuffer) -> Void) -> Int {
+        attach(.sample(forward))
+    }
+
+    private func attach(_ output: Output) -> Int {
+        lock.withLock {
+            guard !closed else { return 0 }
+            let held = chunks
+            chunks.removeAll(); heldSecondsTotal = 0
+            for chunk in held { output.send(chunk.pcm, at: chunk.start) }
+            successor = output
+            return droppedFrames
         }
     }
 
     func close() {
         lock.withLock {
             closed = true
-            chunks.removeAll()
-            heldFrames.removeAll()
-            forwardPCM = nil
-            forwardSample = nil
+            chunks.removeAll(); heldSecondsTotal = 0
+            predecessor = nil; successor = nil
         }
     }
 
-    private func takeChunks() -> [Chunk] {
-        let taken = chunks
-        chunks.removeAll()
-        heldFrames.removeAll()
-        return taken
+    /// Splits at the cutoff: the earlier part to the old writer, the rest held or forwarded.
+    private func route(_ buffer: AVAudioPCMBuffer, at time: CMTime) {
+        let rate = buffer.format.sampleRate
+        guard buffer.frameLength > 0, rate > 0, time.isNumeric else { return }
+        var remainder = buffer, start = time
+        if let cutoff, time < cutoff {
+            let before = min(Int(buffer.frameLength), Int(CMTimeSubtract(cutoff, time).seconds * rate + 0.5))
+            if before > 0, let head = Self.slice(buffer, from: 0, count: before) { predecessor?.send(head, at: time) }
+            guard before < Int(buffer.frameLength),
+                  let tail = Self.slice(buffer, from: before, count: Int(buffer.frameLength) - before) else { return }
+            remainder = tail
+            start = CMTimeAdd(time, CMTime(value: Int64(before), timescale: CMTimeScale(rate)))
+        }
+        if let successor { successor.send(remainder, at: start); return }
+        hold(remainder, at: start)
     }
 
     private func hold(_ buffer: AVAudioPCMBuffer, at time: CMTime) {
         let rate = buffer.format.sampleRate
-        let frames = Int(buffer.frameLength)
-        guard frames > 0, rate > 0, time.isNumeric else { return }
-        let held = heldFrames.reduce(0) { $0 + Double($1.value) / $1.key }
-        guard held + Double(frames) / rate <= AudioRotationHandoff.maximumHeldSeconds else { return }
+        let seconds = Double(buffer.frameLength) / rate
+        guard heldSecondsTotal + seconds <= maximumHeldSeconds else { droppedFrames += Int(buffer.frameLength); return }
         // A contiguous buffer of the same format extends the last chunk in place.
         if let last = chunks.last, last.pcm.format.isEqual(buffer.format),
            abs(CMTimeSubtract(time, last.end).seconds) <= SingleTrackAudioWriter.timestampJitterTolerance,
            Self.append(buffer, to: last.pcm) {
         } else {
-            let capacity = max(AVAudioFrameCount(rate * Self.chunkSeconds), buffer.frameLength)
-            guard let chunk = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: capacity),
-                  Self.append(buffer, to: chunk) else { return }
+            let remaining = AVAudioFrameCount(max(0, (maximumHeldSeconds - heldSecondsTotal) * rate))
+            let capacity = max(min(AVAudioFrameCount(rate * Self.chunkSeconds), remaining), buffer.frameLength)
+            guard chunks.count < Self.maximumChunks,
+                  let chunk = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: capacity),
+                  Self.append(buffer, to: chunk) else { droppedFrames += Int(buffer.frameLength); return }
             chunks.append(Chunk(pcm: chunk, start: time))
         }
-        heldFrames[rate, default: 0] += frames
+        heldSecondsTotal += seconds
     }
 
     /// Appends `buffer`'s frames after `chunk`'s, for any linear PCM layout.
@@ -187,8 +257,22 @@ final class AudioHandoffStream: @unchecked Sendable {
             memcpy(dst.advanced(by: offset), src, size)
         }
         chunk.frameLength += buffer.frameLength
-        for index in destination.indices { destination[index].mDataByteSize = UInt32(Int(chunk.frameLength) * bytesPerFrame) }
         return true
+    }
+
+    private static func slice(_ buffer: AVAudioPCMBuffer, from start: Int, count: Int) -> AVAudioPCMBuffer? {
+        let bytesPerFrame = Int(buffer.format.streamDescription.pointee.mBytesPerFrame)
+        guard count > 0, bytesPerFrame > 0, start + count <= Int(buffer.frameLength),
+              let part = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: AVAudioFrameCount(count)) else { return nil }
+        part.frameLength = AVAudioFrameCount(count)
+        let source = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: buffer.audioBufferList))
+        let destination = UnsafeMutableAudioBufferListPointer(part.mutableAudioBufferList)
+        guard source.count == destination.count else { return nil }
+        for index in source.indices {
+            guard let src = source[index].mData, let dst = destination[index].mData else { return nil }
+            memcpy(dst, src.advanced(by: start * bytesPerFrame), count * bytesPerFrame)
+        }
+        return part
     }
 
     static func pcm(from sample: CMSampleBuffer) -> AVAudioPCMBuffer? {

@@ -213,9 +213,12 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
                 // Audio held since the previous segment's cutoff goes first, then
                 // the capture delivers to this segment's writer directly.
-                rotationHandoff?.claim(sourceID)?.attach(pcm: { [weak writer] buffer, time in
-                    writer?.enqueuePCMBuffer(buffer, presentationTime: time)
-                })
+                if let stream = rotationHandoff?.claim(sourceID) {
+                    let lost = stream.attach(pcm: { [weak writer] buffer, time in
+                        writer?.enqueuePCMBuffer(buffer, presentationTime: time)
+                    })
+                    if lost > 0 { diagnostics?.failure(sourceID, stage: "handoff", error: NSError(domain: "SolstoneAudioHandoff", code: 1)) }
+                }
                 // Wire callback to this segment's writer
                 captureManager.setQueuedCallback(for: device.uid, callback: { [weak writer] buffer, time in
                     writer?.enqueuePCMBuffer(buffer, presentationTime: time)
@@ -351,8 +354,9 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         prepareToFinishCapture(handoff: nil)
     }
 
-    /// Closes admission at one cutoff. With a handoff, microphone audio after
-    /// the cutoff is held for the next segment instead of being dropped.
+    /// Closes admission at one cutoff. With a handoff, the cutoff is taken first
+    /// and each source's later audio is split at it: what was captured before it
+    /// still reaches this segment's writer, and the rest is held for the next.
     @discardableResult
     public func prepareToFinishCapture(handoff: AudioRotationHandoff?) -> CMTime {
         boundaryLock.withLock {
@@ -362,12 +366,29 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             return true
         }
         guard shouldDetach else { return lock.withLock { systemCutoff ?? CMClockGetTime(CMClockGetHostTimeClock()) } }
+        var handoffCutoff: CMTime?
+        if let handoff {
+            handoff.setCutoff(CMClockGetTime(CMClockGetHostTimeClock()))
+            if let cutoff = handoff.cutoff {
+                handoffCutoff = cutoff
+                let writers = lock.withLock { sourceWriters.filter { $0.value.attached }.mapValues(\.writer) }
+                for (id, writer) in writers {
+                    guard let stream = handoff.stream(for: id) else { continue }
+                    if id == AudioTrackType.systemSourceID {
+                        stream.setPredecessor(cutoff: cutoff, sample: { [weak writer] in _ = writer?.enqueueAudio($0) })
+                    } else {
+                        stream.setPredecessor(cutoff: cutoff, pcm: { [weak writer] in writer?.enqueuePCMBuffer($0, presentationTime: $1) })
+                    }
+                }
+            }
+        }
         var boundaries = captureManager?.detachForBoundary(handoff: handoff) ?? [:]
         let legacy = lock.withLock { sourceWriters.compactMapValues(\.legacyCapture) }
         for (id, capture) in legacy { boundaries[id] = (capture, capture.detachForBoundary()) }
-        let cutoff = CMClockGetTime(CMClockGetHostTimeClock())
+        let cutoff = handoffCutoff ?? CMClockGetTime(CMClockGetHostTimeClock())
+        // Every source of a handed-off segment ends at the one cutoff.
+        if handoffCutoff != nil { boundaries = boundaries.mapValues { ($0.capture, cutoff) } }
         lock.withLock { boundaryCaptures = boundaries; systemCutoff = cutoff }
-        handoff?.setCutoff(cutoff)
         return cutoff
         }
     }

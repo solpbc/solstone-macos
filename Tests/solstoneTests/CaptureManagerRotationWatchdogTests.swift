@@ -138,6 +138,9 @@ struct CaptureManagerRotationWatchdogTests {
             return
         }
         #expect(newStartCount.count == 0)
+        // Audio held across the abandoned rotation is dropped, never written anywhere.
+        let handoff = try #require(current.handedOffTo.current)
+        #expect(handoff.stream(for: "late") == nil && handoff.claim(AudioTrackType.systemSourceID) == nil)
         #expect(finalizer.enqueuedDirectories.all == [oldDir])
         #expect(manager.currentSegmentForTesting == nil)
         #expect(manager.state.isPaused)

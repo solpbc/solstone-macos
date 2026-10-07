@@ -154,9 +154,10 @@ public final class SegmentWriter {
     /// Shared finish task so concurrent lifecycle paths close the segment exactly once.
     private var finishTask: Task<SegmentCaptureResult?, Never>?
 
-    /// Set when this segment's audio was handed to the next segment at rotation;
-    /// the shared system-audio destination then belongs to the handoff.
-    private var audioHandedOff = false
+    /// Set when this segment's audio goes to the next segment at rotation; the
+    /// handoff happens in the finish, where the cutoff always was, and the shared
+    /// system-audio destination then belongs to the handoff.
+    private var pendingHandoff: AudioRotationHandoff?
     /// The rotation this segment continues from, set before `start`.
     private var rotationHandoff: AudioRotationHandoff?
 
@@ -263,7 +264,7 @@ public final class SegmentWriter {
         let now = CMClockGetTime(CMClockGetHostTimeClock())
         let handoff = rotationHandoff.flatMap { handoff -> AudioRotationHandoff? in
             guard let cutoff = handoff.cutoff, cutoff <= now,
-                  CMTimeSubtract(now, cutoff).seconds <= AudioRotationHandoff.maximumHeldSeconds else { return nil }
+                  CMTimeSubtract(now, cutoff).seconds <= handoff.maximumHeldSeconds else { return nil }
             return handoff
         }
         let segmentStartTime = handoff?.cutoff ?? now
@@ -307,9 +308,10 @@ public final class SegmentWriter {
                     if let sysAudioManager = systemAudioCaptureManager, let audioFilter {
                         self.systemAudioCaptureManager = sysAudioManager
                         // System audio held since the previous segment's cutoff goes first.
-                        handoff?.claim(AudioTrackType.systemSourceID)?.attach(sample: { [weak manager] buffer in
-                            manager?.appendSystemAudio(buffer)
-                        })
+                        if let stream = handoff?.claim(AudioTrackType.systemSourceID),
+                           stream.attach(sample: { [weak manager] buffer in manager?.appendSystemAudio(buffer) }) > 0 {
+                            diagnostics.failure("system", stage: "handoff", error: NSError(domain: "SolstoneAudioHandoff", code: 1))
+                        }
                         sysAudioManager.setCallback(onError: { diagnostics.failure("system", stage: "capture", error: $0) }) { [weak manager] buffer in
                             manager?.appendSystemAudio(buffer)
                         }
@@ -501,25 +503,32 @@ public final class SegmentWriter {
     /// Stops audio admission now. Pause and stop call this before the slower finish,
     /// so nothing said after the owner paused reaches the segment.
     public func cutAudio() {
-        guard !audioHandedOff else { return }
+        guard pendingHandoff == nil else { return }
         systemAudioCaptureManager?.clearCallback()
         _ = audioManager?.prepareToFinishCapture()
     }
 
-    /// Rotation: stop this segment's audio at one cutoff and hold everything
-    /// after it for the next segment. Call before `finishCapture`.
+    /// Rotation: this segment's finish stops its audio at one cutoff and holds
+    /// everything after it for the next segment. Call before `finishCapture`.
     public func handOffAudio(to handoff: AudioRotationHandoff) {
-        guard !audioHandedOff, finishTask == nil else { return }
-        audioHandedOff = true
-        if let system = systemAudioCaptureManager,
-           let stream = handoff.stream(for: AudioTrackType.systemSourceID, release: { [weak system] in system?.clearCallback() }) {
+        guard pendingHandoff == nil, finishTask == nil else { return }
+        pendingHandoff = handoff
+    }
+
+    /// Redirects system audio into the handoff first, then splits every source at the cutoff.
+    private func performHandoff(_ handoff: AudioRotationHandoff) -> CMTime {
+        if let system = systemAudioCaptureManager, let stream = handoff.stream(for: AudioTrackType.systemSourceID) {
             system.onCaptureError = nil
             system.onAudioBuffer = { stream.receive(sample: $0) }
+            // Undo only this redirect: a newer segment may already own the callback.
+            let revision = system.audioCallbackRevision
+            handoff.setRelease(for: AudioTrackType.systemSourceID) { [weak system] in system?.clearCallback(ifRevision: revision) }
         } else {
             systemAudioCaptureManager?.clearCallback()
         }
         let cutoff = audioManager?.prepareToFinishCapture(handoff: handoff) ?? CMClockGetTime(CMClockGetHostTimeClock())
         handoff.setCutoff(cutoff)
+        return handoff.cutoff ?? cutoff
     }
 
     /// Rotation: continue from the previous segment's cutoff. Call before `start`.
@@ -557,9 +566,14 @@ public final class SegmentWriter {
         }
 
         // Clear system audio callback (stream keeps running for next segment),
-        // unless rotation already handed it to the next segment.
-        if !audioHandedOff { systemAudioCaptureManager?.clearCallback() }
-        let captureCutoff = audioManager?.prepareToFinishCapture() ?? CMClockGetTime(CMClockGetHostTimeClock())
+        // or, at a rotation, hand every source to the next segment.
+        let captureCutoff: CMTime
+        if let pendingHandoff {
+            captureCutoff = performHandoff(pendingHandoff)
+        } else {
+            systemAudioCaptureManager?.clearCallback()
+            captureCutoff = audioManager?.prepareToFinishCapture() ?? CMClockGetTime(CMClockGetHostTimeClock())
+        }
 
         // Capture mic metadata BEFORE finishAll() clears the state
         let micMetadata = getMicMetadata()

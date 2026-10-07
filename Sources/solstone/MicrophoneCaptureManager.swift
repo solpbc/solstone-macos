@@ -251,7 +251,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
                     return true
                 }
             })
-            _ = handoff.stream(for: uid) { [weak capture = entry.capture] in
+            handoff.setRelease(for: uid) { [weak capture = entry.capture] in
                 capture?.clearDestination(ifRevision: result.revision)
             }
             detached[uid] = (entry.capture, result.cutoff)
