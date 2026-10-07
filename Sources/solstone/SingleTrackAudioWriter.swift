@@ -142,6 +142,7 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     internal var _paddingAdmissionForTesting: (@Sendable (Int) -> Bool)?
     internal var _boundaryClipAdmissionForTesting: (@Sendable (Int) -> Bool)?
     internal var _appendAdmissionForTesting: (@Sendable (Int) -> Bool)?
+    internal var _retimeAdmissionForTesting: (@Sendable () -> Bool)?
     internal var _silentBufferAdmissionForTesting: (@Sendable (Int, CMTime) -> Bool)?
     internal var _segmentStartTimeForTesting: CMTime { segmentStartTime }
     internal func _clipBoundaryForTesting(_ buffer: CMSampleBuffer, skipping: Int) -> CMSampleBuffer? {
@@ -529,10 +530,14 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         }
 
         let adjustedTime = CMTimeSubtract(currentTime, firstTime)
+        // A refused append or a failed retime copy leaves this buffer's interval
+        // for the next one to pad, so later audio still lands in place.
         if let retimedBuffer = createRetimedSampleBuffer(sampleBuffer, newTime: adjustedTime) {
-            // A transient refusal leaves this buffer's interval for the next one to pad.
             if !appendChecked(retimedBuffer, frames: numSamples, recoverable: true) { lastBufferTime = currentTime }
-        } else { recordFailure(stage: "retime", error: nil, dropped: numSamples) }
+        } else {
+            recordFailure(stage: "retime", error: nil, dropped: numSamples)
+            lastBufferTime = currentTime
+        }
         lock.unlock()
     }
 
@@ -1098,6 +1103,9 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
 #endif
 
     private func createRetimedSampleBuffer(_ sampleBuffer: CMSampleBuffer, newTime: CMTime) -> CMSampleBuffer? {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        if _retimeAdmissionForTesting?() == false { return nil }
+#endif
         var newSampleBuffer: CMSampleBuffer?
         var timingInfo = CMSampleTimingInfo(
             duration: CMTimeMultiplyByRatio(sampleDuration(sampleBuffer), multiplier: 1, divisor: Int32(max(1, CMSampleBufferGetNumSamples(sampleBuffer)))),

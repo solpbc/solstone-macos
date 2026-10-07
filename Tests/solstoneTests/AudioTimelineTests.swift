@@ -359,6 +359,26 @@ struct AudioTimelineTests {
         #expect(try await timelineDecode(writer.url).first?.count == 14_400)
     }
 
+    @Test func aFailedRetimeIsAPaddedHoleAndTheSourceContinues() async throws {
+        let root = try makeTempDirectory("timeline-failed-retime")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("source.m4a"), trackType: .systemAudio, segmentStartTime: .zero)
+        let pcm = try timelinePCM(frames: 4800, frequency: 220)
+        let refuse = LockedValue<Bool>(); refuse.set(false)
+        writer._retimeAdmissionForTesting = { refuse.current != true }
+        writer.appendPCMBuffer(pcm, presentationTime: .zero)
+        refuse.set(true)
+        writer.appendPCMBuffer(pcm, presentationTime: CMTime(value: 4800, timescale: 48_000))
+        refuse.set(false)
+        writer.appendPCMBuffer(pcm, presentationTime: CMTime(value: 9600, timescale: 48_000))
+        _ = await writer.finish()
+        let statistics = writer.statisticsSnapshot
+        // The failed interval is padding, so the third buffer lands in place.
+        #expect(statistics.acceptedFrames == 9600 && statistics.droppedFrames == 4800 && statistics.generatedFrames == 4800)
+        #expect(statistics.failures.contains { $0.stage == "retime" } && !statistics.failures.contains { $0.stage == "timeline" })
+        #expect(try await timelineDecode(writer.url).first?.count == 14_400)
+    }
+
     @Test func timestampJitterAndPartialOverlapAreNeverFailures() async throws {
         let root = try makeTempDirectory("timeline-jitter-overlap")
         defer { try? FileManager.default.removeItem(at: root) }
