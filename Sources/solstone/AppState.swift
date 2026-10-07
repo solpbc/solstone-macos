@@ -1248,24 +1248,6 @@ public final class AppState {
             !tunnelLifecycleOwner.ordinaryRouteRevoked
     }
 
-    private func carriedPairingDidCommit(
-        oldInstanceID: String,
-        oldFingerprint: String,
-        newPairing: StoredPairing
-    ) {
-        guard oldInstanceID == newPairing.instanceID else { return }
-        let journal = journalMarkConfirmationIdentity(for: newPairing)
-        if journalMarkConfirmationStore.confirmedJournal == journal {
-            recordJournalMarkConfirmed()
-        } else {
-            uploadCoordinator.updatePairedIngestIdentity(nil)
-        }
-        pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
-        let oldIdentity = TunnelPairingIdentity(instanceID: oldInstanceID, fingerprint: oldFingerprint)
-        let newIdentity = TunnelPairingIdentity(instanceID: newPairing.instanceID, fingerprint: newPairing.fingerprint)
-        uploadCoordinator.rebindLastJournalDelivery(from: oldIdentity, to: newIdentity)
-    }
-
     internal func clearJournalMarkConfirmation() {
         // A cleared answer also ends any mark attempt for the old credential, so a
         // later pairing never compares its answer against a stale revision.
@@ -1387,13 +1369,6 @@ public final class AppState {
         let tunnelLifecycleOwner = TunnelLifecycleOwner(
             credentialStore: splCredentialStore,
             clientInfo: splClientInfo,
-            onCarriedPairingCommitted: { [fingerprintTarget] oldInstanceID, oldFingerprint, pairing in
-                fingerprintTarget.state?.carriedPairingDidCommit(
-                    oldInstanceID: oldInstanceID,
-                    oldFingerprint: oldFingerprint,
-                    newPairing: pairing
-                )
-            },
             // Write the refusal down where the owner can read it back. The
             // observer runs on the tunnel's own teardown path, so it hands off
             // to the main actor and returns rather than doing work there.

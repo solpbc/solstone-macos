@@ -2,10 +2,6 @@ import SolstoneCore
 
 public enum UICopy {
     enum Migration {
-        static let choiceTitle = "same device or a new one?"
-        static let choiceBody = "same device continues \"{previous_device_label}\" with its name and history, and removes the old device's access to your journal. new device keeps both."
-        static let sameDevice = "same device"
-        static let newDevice = "new device"
         static let deferChoice = "not now"
         static let replaceOfferTitle = "is this replacing one of your devices?"
         static let replaceOfferBody = "you can keep both, or choose a device for this one to replace."
@@ -17,15 +13,9 @@ public enum UICopy {
         static let replaceConfirmTitle = "replace \"{selected_device_label}\"?"
         static let replaceConfirmBody = "this device continues its name and history. the selected device will lose access to your journal."
         static let replaceDevice = "replace device"
-        static let pendingRow = "device choice"
-        static let pendingValue = "not answered"
-        static let preparingTitle = "getting this device ready"
-        static let preparingBody = "anything waiting to send stays on this device until it's ready."
         static let offlineTitle = "can't reach your journal"
         static let offlineBody = "anything waiting to send stays on this device. try again when your journal is reachable."
         static let tryAgain = "try again"
-        static let unsupportedTitle = "journal update needed"
-        static let unsupportedBody = "your journal doesn't support this move yet. anything waiting to send stays on this device. update your journal, then try again."
         static let storageUnavailableTitle = "saved connection unavailable"
         static let storageUnavailableBody = "this device couldn't read its saved connection. anything waiting to send hasn't been removed."
         static let technicalDetails = "technical details"
@@ -39,10 +29,6 @@ public enum UICopy {
         static let targetMissingBody = "that device is no longer listed in your journal. choose another device, or keep both."
         static let decisionRefusedTitle = "choice needs attention"
         static let decisionRefusedBody = "your journal couldn't apply this choice. your current connection still works."
-        static let keyRefusedTitle = "pair again"
-        static let keyRefusedBody = "this device couldn't open its saved connection to your journal. anything waiting to send is still here. pair again to reconnect."
-        static let pairAgain = "pair again"
-        static let choiceBodyFallback = "same device continues the old device with its name and history, and removes its access to your journal. new device keeps both."
         static let replaceConfirmTitleFallback = "replace the selected device?"
     }
 

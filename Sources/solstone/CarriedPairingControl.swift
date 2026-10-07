@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-import Crypto
 import Foundation
-import Security
-import SPLTunnel
 
 enum CarriedPairingControlError: Error, Equatable {
     case unavailable
@@ -51,89 +48,6 @@ private func decodeRequiredNullable<Value: Decodable, Key: CodingKey>(
         ))
     }
     return try values.decodeNil(forKey: key) ? nil : values.decode(type, forKey: key)
-}
-
-struct CarriedPairingRekeyResponse: Codable, Sendable, Equatable {
-    let protocolVersion: Int
-    let operationID: String
-    let state: String
-    let previousCID: String
-    let cid: String
-    let pairing: CarriedPairingPairingReply
-
-    enum CodingKeys: String, CodingKey, CaseIterable {
-        case protocolVersion = "protocol_version"
-        case operationID = "operation_id"
-        case state
-        case previousCID = "previous_cid"
-        case cid
-        case pairing
-    }
-
-    init(
-        protocolVersion: Int,
-        operationID: String,
-        state: String,
-        previousCID: String,
-        cid: String,
-        pairing: CarriedPairingPairingReply
-    ) {
-        self.protocolVersion = protocolVersion
-        self.operationID = operationID
-        self.state = state
-        self.previousCID = previousCID
-        self.cid = cid
-        self.pairing = pairing
-    }
-
-    init(from decoder: Decoder) throws {
-        try rejectUnknownKeys(decoder, allowed: Set(CodingKeys.allCases.map(\.rawValue)))
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        protocolVersion = try values.decode(Int.self, forKey: .protocolVersion)
-        operationID = try values.decode(String.self, forKey: .operationID)
-        state = try values.decode(String.self, forKey: .state)
-        previousCID = try values.decode(String.self, forKey: .previousCID)
-        cid = try values.decode(String.self, forKey: .cid)
-        pairing = try values.decode(CarriedPairingPairingReply.self, forKey: .pairing)
-    }
-}
-
-struct CarriedPairingPairingReply: Codable, Sendable, Equatable {
-    let clientCert: String
-    let caChain: [String]
-    let instanceID: String
-    let homeLabel: String
-    let fingerprint: String
-    let localEndpoints: [LocalEndpoint]?
-    let relayAccess: CarriedPairingRelayReply?
-
-    enum CodingKeys: String, CodingKey, CaseIterable {
-        case clientCert = "client_cert"
-        case caChain = "ca_chain"
-        case instanceID = "instance_id"
-        case homeLabel = "home_label"
-        case fingerprint
-        case localEndpoints = "local_endpoints"
-        case relayAccess = "relay_access"
-    }
-}
-
-struct CarriedPairingRelayReply: Codable, Sendable, Equatable {
-    let protocolVersion: Int
-    let status: String
-    let relayOrigin: String
-    let instanceID: String
-    let deviceToken: String
-    let expiresAt: String
-
-    enum CodingKeys: String, CodingKey {
-        case protocolVersion = "protocol_version"
-        case status
-        case relayOrigin = "relay_origin"
-        case instanceID = "instance_id"
-        case deviceToken = "device_token"
-        case expiresAt = "expires_at"
-    }
 }
 
 struct CarriedPairingMigrationReply: Decodable, Sendable, Equatable {
@@ -229,24 +143,6 @@ struct CarriedPairingClientList: Decodable, Sendable, Equatable {
     let clients: [CarriedPairingClientRow]
 }
 
-struct CarriedPairingRekeyRequest: Encodable, Sendable {
-    let protocolVersion = 1
-    let operationID: String
-    let csr: String
-    let deviceLabel: String
-    let clientLabel: String
-    let platform = "macos"
-
-    enum CodingKeys: String, CodingKey {
-        case protocolVersion = "protocol_version"
-        case operationID = "operation_id"
-        case csr
-        case deviceLabel = "device_label"
-        case clientLabel = "client_label"
-        case platform
-    }
-}
-
 struct CarriedPairingDecisionRequest: Encodable, Sendable {
     let protocolVersion = 1
     let operationID: String
@@ -270,7 +166,6 @@ struct CarriedPairingDecisionRequest: Encodable, Sendable {
 }
 
 protocol CarriedPairingControlRequesting: Sendable {
-    func rekey(localPort: Int, oldPairing: StoredPairing, candidate: CarriedPairingCandidate, deviceLabel: String) async throws -> CarriedPairingRekeyResponse
     func migrationState(localPort: Int) async throws -> CarriedPairingMigrationReply
     func decide(localPort: Int, decision: CarriedPairingDecision) async throws -> CarriedPairingDecisionReply
     func clients(localPort: Int) async throws -> [CarriedPairingClientRow]
@@ -283,25 +178,6 @@ struct URLSessionCarriedPairingControlClient: CarriedPairingControlRequesting {
         self.session = session
     }
 
-    func rekey(localPort: Int, oldPairing: StoredPairing, candidate: CarriedPairingCandidate, deviceLabel: String) async throws -> CarriedPairingRekeyResponse {
-        let requestBody = CarriedPairingRekeyRequest(
-            operationID: candidate.operationID,
-            csr: candidate.csrPEM,
-            deviceLabel: Self.validatedDeviceLabel(deviceLabel),
-            clientLabel: SPLRuntime.clientInfo.userAgent
-        )
-        let reply: CarriedPairingRekeyResponse = try await send(
-            localPort: localPort,
-            path: "/app/network/api/clients/self/rekey",
-            method: "POST",
-            body: try JSONEncoder().encode(requestBody)
-        )
-        guard Self.rekeyEnvelopeMatches(reply, candidate: candidate, oldPairing: oldPairing),
-              let pairing = try? Self.pairing(from: reply.pairing, privateKeyPEM: candidate.privateKeyPEM),
-              pairing.fingerprint == reply.cid else { throw CarriedPairingControlError.invalidResponse }
-        return reply
-    }
-
     func migrationState(localPort: Int) async throws -> CarriedPairingMigrationReply {
         let reply: CarriedPairingMigrationReply = try await send(localPort: localPort, path: "/app/network/api/clients/self/migration", method: "GET", body: nil)
         guard reply.protocolVersion == 1 else { throw CarriedPairingControlError.invalidResponse }
@@ -309,14 +185,13 @@ struct URLSessionCarriedPairingControlClient: CarriedPairingControlRequesting {
     }
 
     func decide(localPort: Int, decision: CarriedPairingDecision) async throws -> CarriedPairingDecisionReply {
-        guard let choice = decision.choice else { throw CarriedPairingControlError.invalidResponse }
         let reply: CarriedPairingDecisionReply = try await send(
             localPort: localPort,
             path: "/app/network/api/clients/self/migration",
             method: "PUT",
             body: try JSONEncoder().encode(CarriedPairingDecisionRequest(
                 operationID: decision.decisionID,
-                choice: choice,
+                choice: decision.choice,
                 replacesCID: decision.replacesCID
             ))
         )
@@ -365,73 +240,6 @@ struct URLSessionCarriedPairingControlClient: CarriedPairingControlRequesting {
         }
     }
 
-    static func pairing(from reply: CarriedPairingPairingReply, privateKeyPEM: String) throws -> StoredPairing {
-        let clientCertificates = try CertChain.certificates(fromPEM: reply.clientCert)
-        guard let leaf = clientCertificates.first,
-              "sha256:\(CertChain.sha256Fingerprint(of: leaf))" == reply.fingerprint,
-              let certificateKey = SecCertificateCopyKey(leaf) else { throw CarriedPairingControlError.invalidResponse }
-        var keyError: Unmanaged<CFError>?
-        guard let certificatePublicData = SecKeyCopyExternalRepresentation(certificateKey, &keyError) as Data? else {
-            throw CarriedPairingControlError.invalidResponse
-        }
-        let privateKey: P256.Signing.PrivateKey
-        do { privateKey = try P256.Signing.PrivateKey(pemRepresentation: privateKeyPEM) }
-        catch { throw CarriedPairingControlError.invalidResponse }
-        guard privateKey.publicKey.x963Representation == certificatePublicData else {
-            throw CarriedPairingControlError.invalidResponse
-        }
-
-        let caPEM = reply.caChain.joined(separator: "\n")
-        let caCertificates = try CertChain.certificates(fromPEM: caPEM)
-        guard let ca = caCertificates.first,
-              try CertChain.jidFromSPKI(CertChain.canonicalP256SubjectPublicKeyInfoDER(certificate: ca)) == reply.instanceID else {
-            throw CarriedPairingControlError.invalidResponse
-        }
-        var trust: SecTrust?
-        guard SecTrustCreateWithCertificates(clientCertificates as CFArray, SecPolicyCreateBasicX509(), &trust) == errSecSuccess,
-              let trust,
-              SecTrustSetAnchorCertificates(trust, caCertificates as CFArray) == errSecSuccess,
-              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess else {
-            throw CarriedPairingControlError.invalidResponse
-        }
-        var trustError: CFError?
-        guard SecTrustEvaluateWithError(trust, &trustError) else {
-            throw CarriedPairingControlError.invalidResponse
-        }
-        let relayEnrollment: RelayEnrollment
-        if let relay = reply.relayAccess {
-            guard relay.protocolVersion == 2,
-                  relay.status == "ready",
-                  relay.instanceID == reply.instanceID,
-                  URL(string: relay.relayOrigin)?.scheme != nil,
-                  !relay.deviceToken.isEmpty else { throw CarriedPairingControlError.invalidResponse }
-            relayEnrollment = .enrolled(deviceToken: relay.deviceToken, expiresAt: relay.expiresAt)
-        } else {
-            relayEnrollment = .unavailable
-        }
-        return StoredPairing(
-            instanceID: reply.instanceID,
-            homeLabel: reply.homeLabel,
-            relayEndpoint: reply.relayAccess?.relayOrigin ?? "",
-            fingerprint: reply.fingerprint,
-            clientCertPEM: reply.clientCert,
-            clientKeyPEM: privateKeyPEM,
-            caChainPEM: caPEM,
-            relayEnrollment: relayEnrollment,
-            localEndpoints: reply.localEndpoints ?? [],
-            pairedAt: Date()
-        )
-    }
-
-    /// The schema bounds `device_label` to 1...80 code points.
-    static let maxDeviceLabelLength = 80
-
-    static func validatedDeviceLabel(_ label: String) -> String {
-        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        let bounded = String(String.UnicodeScalarView(trimmed.unicodeScalars.prefix(maxDeviceLabelLength)))
-        return bounded.isEmpty ? "solstone" : bounded
-    }
-
     private struct ReasonEnvelope: Decodable {
         let reasonCode: String?
 
@@ -440,24 +248,15 @@ struct URLSessionCarriedPairingControlClient: CarriedPairingControlRequesting {
         }
     }
 
-    /// Only the pinned refusal envelopes are definite refusals. A journal that
-    /// no longer lists the old device answers 403 `migration_forbidden`; no
-    /// retry can succeed, so the owner is asked to pair again rather than told
-    /// the journal is unreachable. The other pinned refusals mean this device
-    /// sent something the journal will never accept, with the same answer. A
-    /// missing route without a migration reason is an older journal, 409 is an
-    /// outcome to reconcile, and every other answer is unknown: the pairing is
-    /// kept and the step retries later.
+    /// Only the pinned refusal envelope is a definite refusal. A missing route
+    /// without a migration reason is an older journal, 409 is an outcome to
+    /// reconcile, and every other answer is unknown: the pairing is kept and
+    /// the step retries later.
     static func controlError(status: Int, body: Data) -> CarriedPairingControlError {
         let reason = (try? JSONDecoder().decode(ReasonEnvelope.self, from: body))?.reasonCode
         switch (status, reason) {
         case (400, "migration_protocol_unsupported"): return .unsupported
-        case (400, "migration_request_invalid"),
-             (400, "migration_csr_invalid"),
-             (400, "migration_key_not_fresh"),
-             (403, "migration_forbidden"),
-             (403, "migration_replay_forbidden"):
-            return .refused
+        case (400, "migration_request_invalid"): return .refused
         case (404, nil), (405, nil): return .unsupported
         case (409, _): return .conflict
         default: return .unavailable
@@ -469,18 +268,5 @@ struct URLSessionCarriedPairingControlClient: CarriedPairingControlRequesting {
         guard value.hasPrefix(prefix) else { return false }
         let digest = value.dropFirst(prefix.count)
         return digest.count == 64 && digest.allSatisfy { $0.isHexDigit && !$0.isUppercase }
-    }
-
-    static func rekeyEnvelopeMatches(
-        _ reply: CarriedPairingRekeyResponse,
-        candidate: CarriedPairingCandidate,
-        oldPairing: StoredPairing
-    ) -> Bool {
-        reply.protocolVersion == 1
-            && reply.operationID == candidate.operationID
-            && reply.state == "pending"
-            && candidate.previousFingerprint == oldPairing.fingerprint
-            && reply.previousCID == candidate.previousFingerprint
-            && Self.validCID(reply.cid)
     }
 }

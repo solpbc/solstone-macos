@@ -7,65 +7,33 @@ import Testing
 @testable import solstone
 
 struct SPLPairingKeychainTests {
-    @Test func selectedStorePinsTheUserLoginKeychainBackend() {
-        #expect(SPLPairingKeychain.store() is SPLLoginKeychainStore)
-        #expect(SPLPairingKeychain.migrationService == "app.solstone.observer.spl.migration")
-    }
-
-    @Test func portableItemsAreNonsynchronizingLoginKeychainItems() {
-        for query in [
-            SecurityPairingKeychainItems.destinationIdentityQuery(),
-            SecurityPairingKeychainItems.portableBaselineIdentityQuery()
-        ] {
-            #expect(query[kSecClass as String] as? String == kSecClassGenericPassword as String)
-            #expect(query[kSecAttrSynchronizable as String] as? Bool == false)
-            #expect(query[kSecUseDataProtectionKeychain as String] == nil)
-            #expect(query[kSecAttrAccessGroup as String] == nil)
-        }
-        #expect(SecurityPairingKeychainItems.destinationIdentityQuery()[kSecAttrService as String] as? String == SPLPairingKeychain.service)
-        #expect(SecurityPairingKeychainItems.portableBaselineIdentityQuery()[kSecAttrService as String] as? String == SPLPairingKeychain.migrationService)
-    }
-
-    @Test func deviceItemsAreNonsynchronizingDeviceOnlyDataProtectionItems() {
-        for query in [
-            SecurityPairingKeychainItems.deviceQuery(account: "marker"),
-            SecurityPairingKeychainItems.deviceQuery(account: "record"),
-            SecurityPairingKeychainItems.legacyQuery()
-        ] {
-            #expect(query[kSecUseDataProtectionKeychain as String] as? Bool == true)
-            #expect(query[kSecAttrSynchronizable as String] as? Bool == false)
-            #expect(query[kSecAttrAccessGroup as String] as? String == SPLPairingKeychain.accessGroup)
-        }
-        #expect(SecurityPairingKeychainItems.deviceItemAccessibility == kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
-    }
-
-    @Test func loginItemUpdatesChangeTheSecretNeverTheAccessList() {
-        // Passing an access object on update is a change-ACL operation, and
-        // macOS asks for the login keychain password for every one of those.
-        let attributes = SecurityPairingKeychainItems.loginItemUpdateAttributes(data: Data([1, 2, 3]))
-        #expect(attributes.keys.sorted() == [kSecValueData as String])
-        #expect(attributes[kSecAttrAccess as String] == nil)
-        #expect(attributes[kSecValueData as String] as? Data == Data([1, 2, 3]))
-    }
-
-    @Test func aLockedLoginKeychainIsNotTreatedAsUnlocked() {
-        let unlocked = SecKeychainStatus(kSecUnlockStateStatus)
-        let readable = SecKeychainStatus(kSecReadPermStatus)
-        let writable = SecKeychainStatus(kSecWritePermStatus)
-        #expect(SecurityPairingKeychainItems.isUnlocked(unlocked | readable | writable))
-        #expect(SecurityPairingKeychainItems.isUnlocked(unlocked))
-        #expect(!SecurityPairingKeychainItems.isUnlocked(readable | writable))
-        #expect(!SecurityPairingKeychainItems.isUnlocked(0))
+    @Test func storeUsesTheDataProtectionKeychainOnly() {
+        #expect(SPLPairingKeychain.store() is SPLPairingStore)
     }
 
     @Test func policyLiteralsMatchEntitlementsAppPlist() throws {
+        let production = SPLPairingKeychain.productionPolicy
+        #expect(production.service == SPLPairingKeychain.service)
+        #expect(production.account == SPLPairingKeychain.account)
+        #expect(production.accessGroup == SPLPairingKeychain.accessGroup)
+        #expect(production.useDataProtectionKeychain)
+        #expect(production.accessibility == .afterFirstUnlockThisDeviceOnly)
         #expect(SPLPairingKeychain.service == "app.solstone.observer.spl")
         #expect(SPLPairingKeychain.account == "spl-pairing-bundle")
         #expect(SPLPairingKeychain.accessGroup == "7QCG8V4M6H.app.solstone.observer.spl")
 
-        let accessGroup = SPLPairingKeychain.accessGroup
+        let accessGroup = try #require(production.accessGroup)
         let entitlementGroups = try entitlementsAppKeychainAccessGroups()
         #expect(entitlementGroups.contains(accessGroup))
+    }
+
+    @Test func recordItemIsANonsynchronizingDeviceOnlyDataProtectionItem() {
+        let query = SPLPairingKeychain.recordQuery()
+        #expect(query[kSecUseDataProtectionKeychain as String] as? Bool == true)
+        #expect(query[kSecAttrSynchronizable as String] as? Bool == false)
+        #expect(query[kSecAttrAccessGroup as String] as? String == SPLPairingKeychain.accessGroup)
+        #expect(query[kSecAttrService as String] as? String == SPLPairingKeychain.recordService)
+        #expect(SPLPairingKeychain.recordAccessibility == kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
     }
 
     private func entitlementsAppKeychainAccessGroups() throws -> [String] {

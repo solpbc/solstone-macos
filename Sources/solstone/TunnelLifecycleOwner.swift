@@ -117,7 +117,6 @@ final class TunnelLifecycleOwner {
     private(set) var isPairedHome = false
     private(set) var ordinaryRouteRevoked = false
     private(set) var relayAccessStatus: PairingRelayAccessStatus = .noPairing
-    private(set) var carriedPairingStatus: CarriedPairingLifecycleStatus?
     private(set) var liveRelayEligible: Bool = true
     /// The journal addresses dialed in the current connection cycle, distinct
     /// and in dial order. A `.connecting` plan is not a dial, and the relay is
@@ -247,10 +246,6 @@ final class TunnelLifecycleOwner {
     @ObservationIgnored
     private let makeTransport: @MainActor @Sendable () -> any TunnelTransporting
     @ObservationIgnored
-    private let carriedPairingControl: any CarriedPairingControlRequesting
-    @ObservationIgnored
-    private let onCarriedPairingCommitted: @MainActor @Sendable (String, String, StoredPairing) -> Void
-    @ObservationIgnored
     private let pathMonitor: PathMonitor
     @ObservationIgnored
     private let probe: @Sendable (Int, Duration) async -> Bool
@@ -323,8 +318,6 @@ final class TunnelLifecycleOwner {
         clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
         tokenRefresher: TunnelDeviceTokenRefreshing? = nil,
         makeTransport: (@MainActor @Sendable () -> any TunnelTransporting)? = nil,
-        carriedPairingControl: any CarriedPairingControlRequesting = URLSessionCarriedPairingControlClient(),
-        onCarriedPairingCommitted: @escaping @MainActor @Sendable (String, String, StoredPairing) -> Void = { _, _, _ in },
         onPeerStreamReset: PeerStreamResetObserver? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
         pathMonitoringSource: (any PathMonitoringSource)? = nil,
@@ -346,8 +339,6 @@ final class TunnelLifecycleOwner {
         self.makeTransport = makeTransport ?? {
             SPLTunnelTransport(clientInfo: clientInfo, onPeerStreamReset: onPeerStreamReset)
         }
-        self.carriedPairingControl = carriedPairingControl
-        self.onCarriedPairingCommitted = onCarriedPairingCommitted
         self.pathMonitor = pathMonitoringSource.map { PathMonitor(source: $0) } ?? PathMonitor()
         self.probe = probe
         self.sleep = sleep
@@ -433,7 +424,7 @@ final class TunnelLifecycleOwner {
         installWakeUnlockObservers()
         startPathMonitor()
         startTask = Task { @MainActor [weak self] in
-            await self?.prepareAndConnect()
+            await self?.connectFromStoredPairing()
         }
     }
 
@@ -495,7 +486,7 @@ final class TunnelLifecycleOwner {
             await self.disconnectCurrentTransport()
             await previous?.value
             guard self.running, !Task.isCancelled, self.transportAttemptID == attempt else { return }
-            await self.prepareAndConnect()
+            await self.connectFromStoredPairing()
         }
     }
 
@@ -511,7 +502,7 @@ final class TunnelLifecycleOwner {
                 await self.disconnectCurrentTransport()
                 await previous?.value
                 guard self.running, self.transportAttemptID == attempt else { return }
-                await self.prepareAndConnect()
+                await self.connectFromStoredPairing()
             }
             return
         }
@@ -959,227 +950,6 @@ final class TunnelLifecycleOwner {
         startProbe()
     }
 
-    private func prepareAndConnect() async {
-        guard running, !Task.isCancelled else { return }
-        switch loadPairingCached() {
-        case .absent:
-            carriedPairingAdmission = .absent
-            await connectFromStoredPairing()
-            return
-        case .failed:
-            carriedPairingAdmission = .blocked
-            carriedPairingStatus = .storageUnavailable
-            await failWithKeychainUnavailable()
-            return
-        case .loaded(let pairing):
-            let admission = credentialStore.admission(for: pairing)
-            carriedPairingAdmission = admission
-            switch admission {
-            case .ready:
-                carriedPairingStatus = nil
-                await connectFromStoredPairing()
-            case .absent:
-                carriedPairingStatus = nil
-                await connectFromStoredPairing()
-            case .blocked:
-                carriedPairingStatus = nil
-                await failWithKeychainUnavailable()
-            case .migrationRequired:
-                carriedPairingStatus = .preparing
-                transportAttemptID &+= 1
-                let attempt = transportAttemptID
-                await disconnectCurrentTransport()
-                guard running, !Task.isCancelled, transportAttemptID == attempt else { return }
-                do {
-                    try await resumeCarriedPairing(oldPairing: pairing)
-                    guard running, !Task.isCancelled, transportAttemptID == attempt,
-                          let committed = try credentialStore.load(),
-                          credentialStore.admission(for: committed) == .ready else { return }
-                    setCachedPairingOutcome(.loaded(committed))
-                    carriedPairingAdmission = .ready
-                    carriedPairingStatus = nil
-                    await connectFromStoredPairing()
-                } catch {
-                    splOwnerLog.error("carried pairing control did not complete: \(String(describing: type(of: error)), privacy: .public)")
-                    carriedPairingAdmission = .blocked
-                    carriedPairingStatus = Self.carriedPairingStatus(for: error)
-                    state = .error(.keychainUnavailable)
-                    health = .unknown
-                }
-            }
-        }
-    }
-
-    private static func carriedPairingStatus(for error: Error) -> CarriedPairingLifecycleStatus {
-        if let controlError = error as? CarriedPairingControlError {
-            switch controlError {
-            case .unavailable: return .offline
-            case .unsupported, .invalidResponse: return .unsupported
-            case .refused: return .keyRefused
-            case .conflict: return .offline
-            }
-        }
-        if error is PairingCredentialStoreError { return .storageUnavailable }
-        return .offline
-    }
-
-    private func resumeCarriedPairing(oldPairing: StoredPairing) async throws {
-        var record = try credentialStore.carriedPairingRecord()
-        if let candidate = record.candidate,
-           candidate.rekeyFingerprint == oldPairing.fingerprint {
-            try finishCarriedPairingCommit(candidate: candidate, pairing: oldPairing, record: &record)
-            return
-        }
-
-        let oldFingerprint = PairingCredentialRevision(from: oldPairing)
-        if let staleCandidate = record.candidate {
-            let candidateStillOwnsCurrentCredential = staleCandidate.previousFingerprint == oldFingerprint.fingerprint
-                && staleCandidate.previousRevision == oldFingerprint.revision
-                && staleCandidate.previousInstanceID == oldPairing.instanceID
-            if !candidateStillOwnsCurrentCredential {
-                guard record.invalidation == nil,
-                      let baseline = record.completedPortableBaseline,
-                      record.localMarker != baseline.marker else {
-                    throw PairingCredentialStoreError.staleGeneration
-                }
-                let expectedRecord = record
-                record.candidate = nil
-                try credentialStore.saveCarriedPairingRecord(record, expected: expectedRecord, whilePairing: oldFingerprint)
-            }
-        }
-        var candidate = record.candidate
-        if candidate == nil {
-            let material = try CryptoCSR.generate(deviceLabel: oldPairing.homeLabel.isEmpty ? "solstone" : oldPairing.homeLabel)
-            candidate = CarriedPairingCandidate(
-                operationID: UUID().uuidString.lowercased(),
-                csrPEM: material.csrPEM,
-                privateKeyPEM: material.privateKeyPEM,
-                previousFingerprint: oldFingerprint.fingerprint,
-                previousRevision: oldFingerprint.revision,
-                previousInstanceID: oldPairing.instanceID,
-                rekeyReply: nil,
-                rekeyFingerprint: nil
-            )
-            let expectedRecord = record
-            record.candidate = candidate
-            try credentialStore.saveCarriedPairingRecord(record, expected: expectedRecord, whilePairing: oldFingerprint)
-        }
-        guard var candidate,
-              candidate.previousFingerprint == oldFingerprint.fingerprint,
-              candidate.previousRevision == oldFingerprint.revision,
-              candidate.previousInstanceID == oldPairing.instanceID,
-              credentialStore.owns(oldFingerprint, operationID: candidate.operationID) else {
-            throw PairingCredentialStoreError.staleGeneration
-        }
-
-        let candidates = usableCandidates(for: oldPairing)
-        guard !candidates.isEmpty else { throw CarriedPairingControlError.unavailable }
-        let candidateOwnerRecord = record
-        let controlTransport = makeTransport()
-        defer { Task { await controlTransport.disconnect() } }
-        let connection = try await controlTransport.connect(pairing: oldPairing, candidates: candidates, onLocalProxyStart: nil)
-
-        let reply: CarriedPairingRekeyResponse
-        if let data = candidate.rekeyReply {
-            do { reply = try JSONDecoder().decode(CarriedPairingRekeyResponse.self, from: data) }
-            catch { throw CarriedPairingControlError.invalidResponse }
-        } else {
-            let known = try await carriedPairingControl.migrationState(localPort: connection.localPort)
-            // Another operation on the journal is an unknown outcome, not a
-            // verdict on this credential; the pairing stays and the step retries.
-            guard known.state == "none" || known.rekeyOperationID == candidate.operationID,
-                  known.previousCID == nil || known.previousCID == oldPairing.fingerprint else {
-                throw CarriedPairingControlError.unavailable
-            }
-            guard credentialStore.owns(oldFingerprint, operationID: candidate.operationID) else {
-                throw PairingCredentialStoreError.staleGeneration
-            }
-            reply = try await carriedPairingControl.rekey(
-                localPort: connection.localPort,
-                oldPairing: oldPairing,
-                candidate: candidate,
-                deviceLabel: SPLPairingDefaults.deviceLabel
-            )
-            guard credentialStore.owns(oldFingerprint, operationID: candidate.operationID) else {
-                throw PairingCredentialStoreError.staleGeneration
-            }
-            let responseData = try JSONEncoder().encode(reply)
-            candidate.rekeyReply = responseData
-            candidate.rekeyFingerprint = reply.cid
-            var updatedRecord = candidateOwnerRecord
-            updatedRecord.candidate = candidate
-            try credentialStore.saveCarriedPairingRecord(
-                updatedRecord,
-                expected: candidateOwnerRecord,
-                whilePairing: oldFingerprint
-            )
-            record = updatedRecord
-        }
-
-        guard URLSessionCarriedPairingControlClient.rekeyEnvelopeMatches(
-                reply,
-                candidate: candidate,
-                oldPairing: oldPairing
-              ),
-              let pairing = try? URLSessionCarriedPairingControlClient.pairing(from: reply.pairing, privateKeyPEM: candidate.privateKeyPEM),
-              pairing.fingerprint == reply.cid,
-              pairing.instanceID == candidate.previousInstanceID,
-              credentialStore.owns(oldFingerprint, operationID: candidate.operationID) else {
-            throw CarriedPairingControlError.invalidResponse
-        }
-
-        await controlTransport.disconnect()
-        try credentialStore.save(pairing, replacing: candidate, expectedRecord: record)
-        setCachedPairingOutcome(.loaded(pairing))
-        var committedRecord = try credentialStore.carriedPairingRecord()
-        guard committedRecord.candidate?.operationID == candidate.operationID,
-              committedRecord.candidate?.rekeyFingerprint == pairing.fingerprint,
-              let current = try credentialStore.load(),
-              PairingCredentialRevision(from: current) == PairingCredentialRevision(from: pairing) else {
-            throw PairingCredentialStoreError.staleGeneration
-        }
-        try finishCarriedPairingCommit(candidate: candidate, pairing: pairing, record: &committedRecord)
-    }
-
-    private func finishCarriedPairingCommit(
-        candidate: CarriedPairingCandidate,
-        pairing: StoredPairing,
-        record: inout CarriedPairingRecord
-    ) throws {
-        guard candidate.rekeyFingerprint == pairing.fingerprint,
-              candidate.previousInstanceID == pairing.instanceID else {
-            throw PairingCredentialStoreError.staleGeneration
-        }
-        let expectedRevision = PairingCredentialRevision(from: pairing)
-        guard let current = try credentialStore.load(),
-              PairingCredentialRevision(from: current) == expectedRevision,
-              record.candidate?.operationID == candidate.operationID else {
-            throw PairingCredentialStoreError.staleGeneration
-        }
-        let recordCandidateRecord = record
-        record.candidate = nil
-        record.decision = CarriedPairingDecision(
-            decisionID: UUID().uuidString.lowercased(),
-            operationID: candidate.operationID,
-            previousCID: candidate.previousFingerprint,
-            choice: nil,
-            replacesCID: nil,
-            credentialFingerprint: pairing.fingerprint,
-            credentialRevision: expectedRevision.revision,
-            submitted: false
-        )
-        try credentialStore.saveCarriedPairingRecord(record, expected: recordCandidateRecord, whilePairing: expectedRevision)
-        guard let durablePairing = try credentialStore.load(),
-              PairingCredentialRevision(from: durablePairing) == expectedRevision,
-              let durableRecord = try? credentialStore.carriedPairingRecord(),
-              durableRecord.decision?.operationID == candidate.operationID,
-              durableRecord.decision?.credentialFingerprint == expectedRevision.fingerprint,
-              durableRecord.decision?.credentialRevision == expectedRevision.revision else {
-            throw PairingCredentialStoreError.staleGeneration
-        }
-        onCarriedPairingCommitted(candidate.previousInstanceID, candidate.previousFingerprint, pairing)
-    }
-
     private func connectFromStoredPairing() async {
         guard running, !Task.isCancelled else {
             return
@@ -1199,7 +969,10 @@ final class TunnelLifecycleOwner {
 
         let admission = credentialStore.admission(for: pairing)
         carriedPairingAdmission = admission
-        guard admission == .ready else { return }
+        guard admission == .ready else {
+            await failWithKeychainUnavailable()
+            return
+        }
 
         guard !usableCandidates(for: pairing).isEmpty else {
             becomeDormant(tunnelManaged: false)

@@ -111,8 +111,6 @@ enum AXContract {
         AXID.Settings.Service.pairingMarkContinueAnyway,
         AXID.Settings.Service.pairingMarkCancelPairing,
         AXID.Settings.Service.migrationChoiceRow,
-        AXID.Settings.Service.migrationChoiceSameDevice,
-        AXID.Settings.Service.migrationChoiceNewDevice,
         AXID.Settings.Service.migrationChoiceDefer,
         AXID.Settings.Service.migrationDecisionCheck,
         AXID.Settings.Service.migrationReplacementOffer,

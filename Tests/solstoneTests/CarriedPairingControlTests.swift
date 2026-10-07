@@ -8,7 +8,6 @@ import Testing
 @Suite("Carried pairing control decoding")
 struct CarriedPairingControlTests {
     private let cid = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    private let operationID = "123e4567-e89b-42d3-a456-426614174000"
 
     @Test func migrationStateRequiresNullableFieldsAndAllowsFreshPairTerminalState() throws {
         let none = #"{"protocol_version":1,"rekey_operation_id":null,"previous_cid":null,"state":"none","replaced_cid":null}"#
@@ -84,67 +83,6 @@ struct CarriedPairingControlTests {
             }
         }
     }
-
-    @Test func rekeyEnvelopeBindsOperationProtocolStateAndCurrentCID() {
-        let oldPairing = pairing(fingerprint: cid)
-        let candidate = CarriedPairingCandidate(
-            operationID: operationID,
-            csrPEM: "candidate-csr",
-            privateKeyPEM: "candidate-key",
-            previousFingerprint: cid,
-            previousRevision: "revision-a",
-            previousInstanceID: oldPairing.instanceID
-        )
-        let valid = CarriedPairingRekeyResponse(
-            protocolVersion: 1,
-            operationID: operationID,
-            state: "pending",
-            previousCID: cid,
-            cid: cid,
-            pairing: CarriedPairingPairingReply(
-                clientCert: "certificate",
-                caChain: [],
-                instanceID: oldPairing.instanceID,
-                homeLabel: "test-home",
-                fingerprint: cid,
-                localEndpoints: nil,
-                relayAccess: nil
-            )
-        )
-
-        #expect(URLSessionCarriedPairingControlClient.rekeyEnvelopeMatches(
-            valid,
-            candidate: candidate,
-            oldPairing: oldPairing
-        ))
-
-        var invalid = valid
-        invalid = CarriedPairingRekeyResponse(protocolVersion: 2, operationID: valid.operationID, state: valid.state,
-            previousCID: valid.previousCID, cid: valid.cid, pairing: valid.pairing)
-        #expect(!URLSessionCarriedPairingControlClient.rekeyEnvelopeMatches(invalid, candidate: candidate, oldPairing: oldPairing))
-        invalid = CarriedPairingRekeyResponse(protocolVersion: 1, operationID: "different-operation", state: valid.state,
-            previousCID: valid.previousCID, cid: valid.cid, pairing: valid.pairing)
-        #expect(!URLSessionCarriedPairingControlClient.rekeyEnvelopeMatches(invalid, candidate: candidate, oldPairing: oldPairing))
-        invalid = CarriedPairingRekeyResponse(protocolVersion: 1, operationID: valid.operationID, state: "new_device",
-            previousCID: valid.previousCID, cid: valid.cid, pairing: valid.pairing)
-        #expect(!URLSessionCarriedPairingControlClient.rekeyEnvelopeMatches(invalid, candidate: candidate, oldPairing: oldPairing))
-        invalid = CarriedPairingRekeyResponse(protocolVersion: 1, operationID: valid.operationID, state: valid.state,
-            previousCID: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            cid: valid.cid, pairing: valid.pairing)
-        #expect(!URLSessionCarriedPairingControlClient.rekeyEnvelopeMatches(invalid, candidate: candidate, oldPairing: oldPairing))
-        invalid = CarriedPairingRekeyResponse(protocolVersion: 1, operationID: valid.operationID, state: valid.state,
-            previousCID: valid.previousCID, cid: "sha256:bad", pairing: valid.pairing)
-        #expect(!URLSessionCarriedPairingControlClient.rekeyEnvelopeMatches(invalid, candidate: candidate, oldPairing: oldPairing))
-    }
-
-    @Test func rekeyResponseRejectsUnexpectedEnvelopeKeys() throws {
-        let valid = #"{"protocol_version":1,"operation_id":"123e4567-e89b-42d3-a456-426614174000","state":"pending","previous_cid":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","cid":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pairing":{"client_cert":"certificate","ca_chain":[],"instance_id":"instance","home_label":"home","fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}"#
-        let withUnknownKey = valid.replacingOccurrences(of: #""pairing":{"#, with: #""unexpected":true,"pairing":{"#)
-
-        #expect(throws: (any Error).self) {
-            try JSONDecoder().decode(CarriedPairingRekeyResponse.self, from: Data(withUnknownKey.utf8))
-        }
-    }
 }
 
 @Suite("Carried pairing control response classes", .serialized)
@@ -169,12 +107,6 @@ struct CarriedPairingControlResponseClassTests {
 
     @Test func onlyThePinnedRefusalEnvelopeIsADefiniteRefusal() async {
         #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_request_invalid"}"#) == .refused)
-        // The old device was removed from the journal: pair again, not "can't reach your journal".
-        #expect(await migrationStateError(status: 403, body: #"{"reason_code":"migration_forbidden"}"#) == .refused)
-        #expect(await migrationStateError(status: 403, body: #"{"reason_code":"migration_replay_forbidden"}"#) == .refused)
-        #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_csr_invalid"}"#) == .refused)
-        #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_key_not_fresh"}"#) == .refused)
-        #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_replay_forbidden"}"#) == .unavailable)
         #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_protocol_unsupported"}"#) == .unsupported)
         #expect(await migrationStateError(status: 400, body: #"{"reason_code":"migration_forbidden"}"#) == .unavailable)
         #expect(await migrationStateError(status: 400, body: nil) == .unavailable)
@@ -185,13 +117,6 @@ struct CarriedPairingControlResponseClassTests {
         #expect(await migrationStateError(status: 404, body: #"{"reason_code":"paired_device_not_found"}"#) == .unavailable)
         #expect(await migrationStateError(status: 409, body: nil) == .conflict)
         #expect(await migrationStateError(status: 503, body: nil) == .unavailable)
-    }
-
-    @Test func deviceLabelIsBoundedToTheSchemaBeforeSending() {
-        let long = String(repeating: "x", count: 200)
-        #expect(URLSessionCarriedPairingControlClient.validatedDeviceLabel(long).unicodeScalars.count == 80)
-        #expect(URLSessionCarriedPairingControlClient.validatedDeviceLabel("  studio  ") == "studio")
-        #expect(!URLSessionCarriedPairingControlClient.validatedDeviceLabel("   ").isEmpty)
     }
 }
 

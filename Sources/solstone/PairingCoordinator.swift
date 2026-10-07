@@ -278,8 +278,7 @@ final class PairingCoordinator {
             do {
                 let record = credentialUnreadable ? nil : try credentialStore.carriedPairingRecord()
                 if let record, let invalidation = record.invalidation {
-                    guard invalidation.remoteRetirementAttempted,
-                          !record.legacyCleanupPending else {
+                    guard invalidation.remoteRetirementAttempted else {
                         state = .failed(.localSetup)
                         return false
                     }
@@ -328,8 +327,7 @@ final class PairingCoordinator {
                 return
             }
             guard latestRecord.invalidation == invalidation,
-                  invalidation.remoteRetirementAttempted,
-                  !latestRecord.legacyCleanupPending else {
+                  invalidation.remoteRetirementAttempted else {
                 state = .failed(.localSetup)
                 return
             }
@@ -624,47 +622,8 @@ final class PairingCoordinator {
         replacementPickerVisible = true
     }
 
-    func chooseCarriedPairing(_ choice: CarriedPairingChoice) async {
-        guard choice != .replaceDevice,
-              let credentialStore,
-              let pairing = try? credentialStore.load(),
-              var record = try? credentialStore.carriedPairingRecord(),
-              let current = record.decision,
-              record.invalidation == nil,
-              current.choice == nil,
-              current.credentialFingerprint == pairing.fingerprint,
-              current.credentialRevision == PairingCredentialRevision(from: pairing).revision else { return }
-        guard migrationDecisionIsCurrent(current, store: credentialStore) else { return }
-        let expectedRecord = record
-        let submitted = CarriedPairingDecision(
-            decisionID: current.decisionID,
-            operationID: current.operationID,
-            previousCID: current.previousCID,
-            choice: choice,
-            replacesCID: nil,
-            credentialFingerprint: current.credentialFingerprint,
-            credentialRevision: current.credentialRevision,
-            submitted: true
-        )
-        record.decision = submitted
-        do {
-            try credentialStore.saveCarriedPairingRecord(
-                record,
-                expected: expectedRecord,
-                whilePairing: PairingCredentialRevision(from: pairing)
-            )
-            pendingMigrationDecision = submitted
-            migrationDecisionState = "deciding"
-        } catch {
-            guard migrationDecisionIsCurrent(current, store: credentialStore) else { return }
-            migrationDecisionState = "storage_unavailable"
-            return
-        }
-        await transmitDecision(submitted, reconcileFirst: false)
-    }
-
     func checkPendingMigrationDecision() async {
-        guard let decision = pendingMigrationDecision, decision.submitted else { return }
+        guard let decision = pendingMigrationDecision else { return }
         await transmitDecision(decision, reconcileFirst: true)
     }
 
@@ -710,13 +669,10 @@ final class PairingCoordinator {
         }
         let decision = CarriedPairingDecision(
             decisionID: decisionID,
-            operationID: nil,
-            previousCID: nil,
             choice: choice,
             replacesCID: replacesCID,
             credentialFingerprint: pairing.fingerprint,
-            credentialRevision: PairingCredentialRevision(from: pairing).revision,
-            submitted: true
+            credentialRevision: PairingCredentialRevision(from: pairing).revision
         )
         do {
             var record = try credentialStore.carriedPairingRecord()
@@ -744,7 +700,7 @@ final class PairingCoordinator {
         guard let pairing = try? credentialStore.load(),
               pairing.fingerprint == decision.credentialFingerprint,
               PairingCredentialRevision(from: pairing).revision == decision.credentialRevision,
-              let port = localPort(), let choice = decision.choice else {
+              let port = localPort() else {
             migrationDecisionState = "offline"
             return
         }
@@ -752,32 +708,14 @@ final class PairingCoordinator {
             do {
                 let remote = try await carriedPairingControl.migrationState(localPort: port)
                 guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
-                guard remote.protocolVersion == 1 else {
+                guard remote.protocolVersion == 1,
+                      remote.rekeyOperationID == nil,
+                      remote.previousCID == nil,
+                      remote.state == "none"
+                        || (remote.state == Self.terminalState(for: decision.choice)
+                            && remote.replacedCID == decision.replacesCID) else {
                     migrationDecisionState = "decision_unknown"
                     return
-                }
-                if let operationID = decision.operationID {
-                    guard remote.rekeyOperationID == operationID,
-                          remote.previousCID == decision.previousCID else {
-                        migrationDecisionState = "decision_unknown"
-                        return
-                    }
-                    let matchingTerminal = Self.isTerminal(remote.state)
-                        && Self.terminalState(for: choice) == remote.state
-                        && Self.expectedReplacedCID(for: decision) == remote.replacedCID
-                    guard remote.state == "pending" || matchingTerminal else {
-                        migrationDecisionState = "decision_unknown"
-                        return
-                    }
-                } else {
-                    guard remote.rekeyOperationID == nil,
-                          remote.previousCID == nil,
-                          remote.state == "none"
-                            || (remote.state == Self.terminalState(for: choice)
-                                && remote.replacedCID == Self.expectedReplacedCID(for: decision)) else {
-                        migrationDecisionState = "decision_unknown"
-                        return
-                    }
                 }
             } catch {
                 guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
@@ -789,12 +727,7 @@ final class PairingCoordinator {
         do {
             let reply = try await carriedPairingControl.decide(localPort: port, decision: decision)
             guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
-            guard reply.protocolVersion == 1,
-                  reply.operationID == decision.decisionID,
-                  reply.state == Self.terminalState(for: choice),
-                  reply.cid == pairing.fingerprint,
-                  reply.previousCID == decision.previousCID,
-                  reply.replacedCID == Self.expectedReplacedCID(for: decision) else {
+            guard Self.replyConfirms(reply, decision: decision, pairing: pairing) else {
                 migrationDecisionState = "decision_unknown"
                 return
             }
@@ -803,75 +736,27 @@ final class PairingCoordinator {
             guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
             migrationDecisionState = "decision_refused"
         } catch CarriedPairingControlError.conflict {
-            if decision.operationID == nil {
-                await replayConflictedFreshDecision(decision, pairing: pairing, port: port)
-            } else {
-                await reconcileConflictedDecision(decision, pairing: pairing, port: port)
-            }
+            await replayConflictedDecision(decision, pairing: pairing, port: port)
         } catch {
             guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
             migrationDecisionState = "decision_unknown"
         }
     }
 
-    private func reconcileConflictedDecision(
+    /// The status API cannot name a replacement decision. Replay its
+    /// already-persisted UUID and exact body so an accepted first request can
+    /// return its terminal result without inventing a second operation.
+    private func replayConflictedDecision(
         _ decision: CarriedPairingDecision,
         pairing: StoredPairing,
         port: Int
     ) async {
         guard let credentialStore,
-              migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
-        guard let operationID = decision.operationID else {
-            migrationDecisionState = "decision_unknown"
-            return
-        }
-        do {
-            let remote = try await carriedPairingControl.migrationState(localPort: port)
-            guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
-            guard remote.protocolVersion == 1,
-                  remote.rekeyOperationID == operationID,
-                  remote.previousCID == decision.previousCID else {
-                migrationDecisionState = "decision_unknown"
-                return
-            }
-            let expectedState = Self.terminalState(for: decision.choice ?? .newDevice)
-            let expectedReplacement = Self.expectedReplacedCID(for: decision)
-            guard Self.isTerminal(remote.state),
-                  remote.state == expectedState,
-                  remote.replacedCID == expectedReplacement,
-                  pairing.fingerprint == decision.credentialFingerprint else {
-                migrationDecisionState = "decision_unknown"
-                return
-            }
-            finishDecision(decision)
-        } catch {
-            guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
-            migrationDecisionState = "decision_unknown"
-        }
-    }
-
-    /// A fresh replacement decision has no rekey operation for the status API
-    /// to identify. Replay its already-persisted UUID and exact body so an
-    /// accepted first request can return its terminal result without inventing
-    /// a second operation.
-    private func replayConflictedFreshDecision(
-        _ decision: CarriedPairingDecision,
-        pairing: StoredPairing,
-        port: Int
-    ) async {
-        guard let credentialStore,
-              decision.operationID == nil,
               migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
         do {
             let reply = try await carriedPairingControl.decide(localPort: port, decision: decision)
             guard migrationDecisionIsCurrent(decision, store: credentialStore) else { return }
-            guard let choice = decision.choice,
-                  reply.protocolVersion == 1,
-                  reply.operationID == decision.decisionID,
-                  reply.state == Self.terminalState(for: choice),
-                  reply.cid == pairing.fingerprint,
-                  reply.previousCID == nil,
-                  reply.replacedCID == Self.expectedReplacedCID(for: decision) else {
+            guard Self.replyConfirms(reply, decision: decision, pairing: pairing) else {
                 migrationDecisionState = "decision_unknown"
                 return
             }
@@ -888,14 +773,6 @@ final class PairingCoordinator {
               PairingCredentialRevision(from: pairing).revision == decision.credentialRevision,
               let record = try? store.carriedPairingRecord() else { return false }
         guard record.invalidation == nil, record.decision == decision else { return false }
-        if let operationID = decision.operationID {
-            if let candidate = record.candidate {
-                return candidate.operationID == operationID &&
-                    candidate.rekeyFingerprint == decision.credentialFingerprint
-            }
-            return record.completedPortableBaseline?.fingerprint == decision.credentialFingerprint &&
-                record.completedPortableBaseline?.credentialRevision == decision.credentialRevision
-        }
         return record.replacementOfferID == decision.decisionID && record.replacementOfferShown
     }
 
@@ -912,10 +789,8 @@ final class PairingCoordinator {
             guard record.invalidation == nil, record.decision == decision else { return }
             let expectedRecord = record
             record.decision = nil
-            if decision.operationID == nil {
-                record.replacementOfferID = nil
-                record.replacementOfferShown = true
-            }
+            record.replacementOfferID = nil
+            record.replacementOfferShown = true
             try credentialStore.saveCarriedPairingRecord(
                 record,
                 expected: expectedRecord,
@@ -930,24 +805,26 @@ final class PairingCoordinator {
         }
     }
 
-    private static func isTerminal(_ state: String) -> Bool {
-        ["new_device", "same_device", "replaced_device"].contains(state)
-    }
-
     private static func terminalState(for choice: CarriedPairingChoice) -> String {
         switch choice {
         case .newDevice: "new_device"
-        case .sameDevice: "same_device"
         case .replaceDevice: "replaced_device"
         }
     }
 
-    private static func expectedReplacedCID(for decision: CarriedPairingDecision) -> String? {
-        switch decision.choice {
-        case .sameDevice: decision.previousCID
-        case .replaceDevice: decision.replacesCID
-        case .newDevice, .none: nil
-        }
+    /// Only the exact terminal answer for this decision confirms it; anything
+    /// else stays unknown.
+    private static func replyConfirms(
+        _ reply: CarriedPairingDecisionReply,
+        decision: CarriedPairingDecision,
+        pairing: StoredPairing
+    ) -> Bool {
+        reply.protocolVersion == 1
+            && reply.operationID == decision.decisionID
+            && reply.state == terminalState(for: decision.choice)
+            && reply.cid == pairing.fingerprint
+            && reply.previousCID == nil
+            && reply.replacedCID == decision.replacesCID
     }
 
     private func parsePairURL(_ rawLink: String) throws -> PairURL {
@@ -1015,9 +892,8 @@ final class PairingCoordinator {
                 record.replacementOfferID = UUID().uuidString.lowercased()
                 record.replacementOfferShown = false
                 record.decision = nil
-                // A fresh pairing owes nothing to an older credential's pending
-                // rekey or interrupted removal; leaving them would block admission.
-                record.candidate = nil
+                // A fresh pairing owes nothing to an older credential's
+                // interrupted removal; leaving it would block admission.
                 record.invalidation = nil
                 try credentialStore.saveCarriedPairingRecord(record)
             }

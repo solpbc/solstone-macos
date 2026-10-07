@@ -220,7 +220,6 @@ struct SettingsView: View {
     @State private var localLinkInProgress = false
     @State private var localLinkError: String?
     @State private var showPairingFlow = false
-    @State private var migrationChoiceExpanded = true
     @State private var replacementConfirmationPresented = false
     @State var entitlementOpenFailed = false
     @State var supportOpenFailed = false
@@ -1527,7 +1526,6 @@ struct SettingsView: View {
                 }
 
                 carriedPairingMigrationPane
-                carriedPairingLifecycleNotice
 
                 if Self.journalMarkHeldLineVisible(
                     needsJournalMarkConfirmation: appState.needsJournalMarkConfirmation,
@@ -2097,38 +2095,10 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var carriedPairingMigrationPane: some View {
-        if let decision = appState.pairingCoordinator.pendingMigrationDecision {
+        if appState.pairingCoordinator.pendingMigrationDecision != nil {
             GroupBox {
                 VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent(UICopy.Migration.pendingRow, value: UICopy.Migration.pendingValue)
-                    if decision.choice == nil {
-                        if migrationChoiceExpanded {
-                            Text(UICopy.Migration.choiceTitle)
-                            // The journal does not report the previous device's label with a
-                            // pending rekey, so the approved fallback wording is shown.
-                            Text(UICopy.Migration.choiceBodyFallback)
-                            HStack {
-                                Button(UICopy.Migration.sameDevice) {
-                                    Task { await appState.pairingCoordinator.chooseCarriedPairing(.sameDevice) }
-                                }
-                                .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceSameDevice)
-                                Button(UICopy.Migration.newDevice) {
-                                    Task { await appState.pairingCoordinator.chooseCarriedPairing(.newDevice) }
-                                }
-                                .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceNewDevice)
-                                Button(UICopy.Migration.deferChoice) {
-                                    migrationChoiceExpanded = false
-                                }
-                                .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceDefer)
-                            }
-                        } else {
-                            Button(UICopy.Migration.pendingRow) {
-                                migrationChoiceExpanded = true
-                            }
-                            .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceRow)
-                        }
-                    }
-                    migrationDecisionNotice(for: decision)
+                    migrationDecisionNotice
                 }
             }
             .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceRow)
@@ -2136,21 +2106,10 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func migrationDecisionNotice(for decision: CarriedPairingDecision) -> some View {
-        let status = appState.pairingCoordinator.migrationDecisionState
-            ?? (decision.submitted ? "decision_unknown" : nil)
-        switch status {
+    private var migrationDecisionNotice: some View {
+        switch appState.pairingCoordinator.migrationDecisionState ?? "decision_unknown" {
         case "deciding":
             Text(UICopy.Migration.decidingTitle)
-        case "decision_unknown":
-            VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.Migration.decisionUnknownTitle)
-                Text(UICopy.Migration.decisionUnknownBody)
-                Button(UICopy.Migration.checkAgain) {
-                    Task { await appState.pairingCoordinator.checkPendingMigrationDecision() }
-                }
-                .accessibilityIdentifier(AXID.Settings.Service.migrationDecisionCheck)
-            }
         case "decision_refused":
             VStack(alignment: .leading, spacing: 6) {
                 Text(UICopy.Migration.decisionRefusedTitle)
@@ -2171,76 +2130,15 @@ struct SettingsView: View {
                     Task { await appState.pairingCoordinator.checkPendingMigrationDecision() }
                 }
             }
-        case "list_unavailable":
-            VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.Migration.listUnavailableTitle)
-                Text(UICopy.Migration.listUnavailableBody)
-                Button(UICopy.Migration.tryAgain) {
-                    Task { await appState.pairingCoordinator.chooseAnotherReplacementDevice() }
-                }
-            }
-        case "target_missing":
-            VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.Migration.targetMissingTitle)
-                Text(UICopy.Migration.targetMissingBody)
-                Button(UICopy.Migration.chooseDevice) {
-                    Task { await appState.pairingCoordinator.chooseAnotherReplacementDevice() }
-                }
-            }
-        case "unsupported":
-            VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.Migration.unsupportedTitle)
-                Text(UICopy.Migration.unsupportedBody)
-                Button(UICopy.Migration.tryAgain) { Task { await appState.reevaluateTunnelPairing() } }
-            }
-        case "key_refused":
-            VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.Migration.keyRefusedTitle)
-                Text(UICopy.Migration.keyRefusedBody)
-                Button(UICopy.Migration.pairAgain) { showPairingFlow = true }
-            }
-        case .none:
-            EmptyView()
         default:
-            EmptyView()
-        }
-    }
-
-    @ViewBuilder
-    private var carriedPairingLifecycleNotice: some View {
-        switch appState.tunnelLifecycleOwner.carriedPairingStatus {
-        case .preparing:
             VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.Migration.preparingTitle)
-                Text(UICopy.Migration.preparingBody)
+                Text(UICopy.Migration.decisionUnknownTitle)
+                Text(UICopy.Migration.decisionUnknownBody)
+                Button(UICopy.Migration.checkAgain) {
+                    Task { await appState.pairingCoordinator.checkPendingMigrationDecision() }
+                }
+                .accessibilityIdentifier(AXID.Settings.Service.migrationDecisionCheck)
             }
-            .accessibilityIdentifier(AXID.Settings.Service.migrationChoiceRow)
-        case .offline:
-            VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.Migration.offlineTitle)
-                Text(UICopy.Migration.offlineBody)
-                Button(UICopy.Migration.tryAgain) { Task { await appState.reevaluateTunnelPairing() } }
-            }
-        case .unsupported:
-            VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.Migration.unsupportedTitle)
-                Text(UICopy.Migration.unsupportedBody)
-                Button(UICopy.Migration.tryAgain) { Task { await appState.reevaluateTunnelPairing() } }
-            }
-        case .storageUnavailable:
-            VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.Migration.storageUnavailableTitle)
-                Text(UICopy.Migration.storageUnavailableBody)
-                Button(UICopy.Migration.technicalDetails) { openMigrationTechnicalDetails() }
-            }
-        case .keyRefused:
-            VStack(alignment: .leading, spacing: 6) {
-                Text(UICopy.Migration.keyRefusedTitle)
-                Text(UICopy.Migration.keyRefusedBody)
-                Button(UICopy.Migration.pairAgain) { showPairingFlow = true }
-            }
-        case .none:
-            EmptyView()
         }
     }
 

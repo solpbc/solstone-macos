@@ -29,7 +29,6 @@ internal enum LastJournalDeliveryWriteResult: Equatable, Sendable {
 internal protocol LastJournalDeliveryStoring: Sendable {
     func read() -> LastJournalDeliveryRead
     func write(_ payload: LastJournalDeliveryPayload) -> LastJournalDeliveryWriteResult
-    func rebind(from oldFingerprint: String, to newFingerprint: String) -> LastJournalDeliveryWriteResult
 }
 
 internal final class UserDefaultsLastJournalDeliveryStore: LastJournalDeliveryStoring, @unchecked Sendable {
@@ -68,11 +67,6 @@ internal final class UserDefaultsLastJournalDeliveryStore: LastJournalDeliverySt
         }
         return .confirmed
     }
-
-    func rebind(from oldFingerprint: String, to newFingerprint: String) -> LastJournalDeliveryWriteResult {
-        guard case .found(let payload) = read(), payload.fingerprint == oldFingerprint else { return .failed }
-        return write(LastJournalDeliveryPayload(date: payload.date, fingerprint: newFingerprint))
-    }
 }
 
 internal final class InMemoryLastJournalDeliveryStore: LastJournalDeliveryStoring, @unchecked Sendable {
@@ -97,11 +91,6 @@ internal final class InMemoryLastJournalDeliveryStore: LastJournalDeliveryStorin
         }
         readResult = .found(payload)
         return .confirmed
-    }
-
-    func rebind(from oldFingerprint: String, to newFingerprint: String) -> LastJournalDeliveryWriteResult {
-        guard case .found(let payload) = readResult, payload.fingerprint == oldFingerprint else { return .failed }
-        return write(LastJournalDeliveryPayload(date: payload.date, fingerprint: newFingerprint))
     }
 }
 

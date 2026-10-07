@@ -7,7 +7,6 @@ import SPLTunnel
 public enum PairingCredentialStoreError: Error, Equatable, Sendable {
     case staleGeneration
     case noPairingFound
-    case credentialCleanupPending
     case underlying(String)
 }
 
@@ -20,9 +19,7 @@ public protocol PairingStoring: Sendable {
 }
 
 /// Memory-backed credential storage for snapshot and preview compositions.
-/// Those never read or write a real keychain; a held pairing reads as an
-/// already-adopted baseline on this device, the state a real store reaches
-/// after a verified write.
+/// Those never read or write a real keychain.
 final class InMemoryPairingStore: PairingStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var pairing: StoredPairing?
@@ -30,7 +27,6 @@ final class InMemoryPairingStore: PairingStoring, @unchecked Sendable {
 
     init(pairing: StoredPairing? = nil) {
         self.pairing = pairing
-        if let pairing { adopt(pairing) }
     }
 
     func load() throws -> StoredPairing? {
@@ -38,10 +34,7 @@ final class InMemoryPairingStore: PairingStoring, @unchecked Sendable {
     }
 
     func save(_ pairing: StoredPairing) throws {
-        lock.withLock {
-            self.pairing = pairing
-            adopt(pairing)
-        }
+        lock.withLock { self.pairing = pairing }
     }
 
     func delete() throws {
@@ -54,18 +47,6 @@ final class InMemoryPairingStore: PairingStoring, @unchecked Sendable {
 
     func saveCarriedPairingRecord(_ record: CarriedPairingRecord) throws {
         lock.withLock { self.record = record }
-    }
-
-    private func adopt(_ pairing: StoredPairing) {
-        let marker = record.localMarker ?? UUID().uuidString
-        let revision = PairingCredentialRevision(from: pairing)
-        record.localMarker = marker
-        record.completedPortableBaseline = CarriedPairingBaseline(
-            journalIdentity: journalMarkConfirmationIdentity(for: pairing),
-            fingerprint: revision.fingerprint,
-            credentialRevision: revision.revision,
-            marker: marker
-        )
     }
 }
 
@@ -171,82 +152,13 @@ public final class PairingCredentialStore: @unchecked Sendable {
         migrationRecordCache = record
     }
 
-    func save(
-        _ pairing: StoredPairing,
-        replacing candidate: CarriedPairingCandidate,
-        expectedRecord: CarriedPairingRecord
-    ) throws {
-        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        browserIdentityLock.lock()
-        defer { browserIdentityLock.unlock() }
-        #endif
-        lock.lock()
-        defer { lock.unlock() }
-        guard let current = try load(),
-              PairingCredentialRevision(from: current).fingerprint == candidate.previousFingerprint,
-              PairingCredentialRevision(from: current).revision == candidate.previousRevision,
-              current.instanceID == candidate.previousInstanceID else {
-            throw PairingCredentialStoreError.staleGeneration
-        }
-        let durableRecord = try store.loadCarriedPairingRecord()
-        migrationRecordCache = durableRecord
-        guard durableRecord == expectedRecord,
-              durableRecord.invalidation == nil,
-              durableRecord.candidate?.operationID == candidate.operationID,
-              durableRecord.candidate?.rekeyFingerprint == pairing.fingerprint else {
-            throw PairingCredentialStoreError.staleGeneration
-        }
-        try save(pairing)
-    }
-
+    /// Ordinary traffic is admitted only for a stored credential with no durable
+    /// invalidation in progress.
     func admission(for pairing: StoredPairing?) -> CarriedPairingAdmission {
         lock.lock()
         defer { lock.unlock() }
-        do {
-            let record = try carriedPairingRecord()
-            if record.invalidation != nil { return .blocked }
-            if let candidate = record.candidate {
-                guard let pairing else { return .blocked }
-                let current = PairingCredentialRevision(from: pairing)
-                if candidate.rekeyFingerprint == current.fingerprint
-                    || (candidate.previousFingerprint == current.fingerprint
-                        && candidate.previousRevision == current.revision
-                        && candidate.previousInstanceID == pairing.instanceID) {
-                    return .migrationRequired
-                }
-                if let baseline = record.completedPortableBaseline,
-                   !SPLPairingKeychain.localMarkerMatches(record, baseline: baseline) {
-                    return .migrationRequired
-                }
-                return .blocked
-            }
-            if let baseline = record.completedPortableBaseline {
-                guard let pairing else { return .absent }
-                guard SPLPairingKeychain.localMarkerMatches(record, baseline: baseline),
-                      baseline.fingerprint == pairing.fingerprint,
-                      baseline.journalIdentity == journalMarkConfirmationIdentity(for: pairing),
-                      baseline.credentialRevision == PairingCredentialRevision(from: pairing).revision,
-                      !baseline.sourceProvenance.isEmpty,
-                      baseline.destinationProvenance == SPLPairingKeychain.destinationProvenance else {
-                    return .migrationRequired
-                }
-                return .ready
-            }
-            if record.initialMovePrepared { return .migrationRequired }
-            if let preparedFingerprint = record.preparedCredentialFingerprint {
-                guard let pairing,
-                      preparedFingerprint == pairing.fingerprint,
-                      record.preparedCredentialRevision == PairingCredentialRevision(from: pairing).revision,
-                      record.preparedJournalIdentity == journalMarkConfirmationIdentity(for: pairing) else {
-                    return pairing == nil ? .absent : .blocked
-                }
-                return .migrationRequired
-            }
-            guard record.localMarker == nil else { return .blocked }
-            return pairing == nil ? .absent : .blocked
-        } catch {
-            return .blocked
-        }
+        guard let record = try? carriedPairingRecord(), record.invalidation == nil else { return .blocked }
+        return pairing == nil ? .absent : .ready
     }
 
     func ordinarySyncRevision(for identity: TunnelPairingIdentity?) -> String? {
@@ -324,17 +236,10 @@ public final class PairingCredentialStore: @unchecked Sendable {
         guard let pairing = try? load(), let record = try? carriedPairingRecord() else { return false }
         let current = PairingCredentialRevision(from: pairing)
         guard current == fingerprint else { return false }
-        if let invalidation = record.invalidation {
-            return invalidation.operationID == operationID
-                && invalidation.fingerprint == fingerprint.fingerprint
-                && invalidation.revision == fingerprint.revision
-        }
-        if let candidate = record.candidate {
-            return candidate.operationID == operationID
-                && candidate.previousFingerprint == fingerprint.fingerprint
-                && candidate.previousRevision == fingerprint.revision
-        }
-        return false
+        guard let invalidation = record.invalidation else { return false }
+        return invalidation.operationID == operationID
+            && invalidation.fingerprint == fingerprint.fingerprint
+            && invalidation.revision == fingerprint.revision
     }
 
     func beginInvalidation(for pairing: StoredPairing, operationID: String = UUID().uuidString) throws -> CarriedPairingInvalidation {
@@ -426,10 +331,6 @@ public final class PairingCredentialStore: @unchecked Sendable {
             throw PairingCredentialStoreError.staleGeneration
         }
         record.invalidation = nil
-        if record.candidate?.previousFingerprint == fingerprint,
-           record.candidate?.previousRevision == revision {
-            record.candidate = nil
-        }
         if record.decision?.credentialFingerprint == fingerprint,
            record.decision?.credentialRevision == revision {
             record.decision = nil
@@ -462,9 +363,8 @@ public final class PairingCredentialStore: @unchecked Sendable {
         }
         let previous = cachedPairing
         cachedPairing = loaded
-        // The backend may complete an initial move while loading the credential.
-        // Refresh the serialized state from that same backend before callers
-        // evaluate admission for the returned pairing.
+        // Refresh the device record with the credential so callers never
+        // evaluate admission for the returned pairing against a stale cache.
         migrationRecordCache = durableMigrationRecord
         let identity = loaded.map { Self.identityToken(for: $0) }
         if identity.map({ Data($0.utf8) }) != lastIdentityToken.map({ Data($0.utf8) }) {
@@ -537,7 +437,6 @@ public final class PairingCredentialStore: @unchecked Sendable {
             #endif
             throw error
         }
-        migrationRecordCache = try? store.loadCarriedPairingRecord()
         cachedPairing = pairing
         lastIdentityToken = token
         storedPairingGeneration &+= 1
@@ -594,11 +493,6 @@ public final class PairingCredentialStore: @unchecked Sendable {
         }
         try delete(expectedGeneration: storedPairingGeneration)
         guard try store.load() == nil else { throw PairingCredentialStoreError.staleGeneration }
-        let cleanupRecord = try store.loadCarriedPairingRecord()
-        migrationRecordCache = cleanupRecord
-        guard !cleanupRecord.legacyCleanupPending else {
-            throw PairingCredentialStoreError.credentialCleanupPending
-        }
     }
 
     public func delete(expectedGeneration: UInt64? = nil, expectedAccessGeneration: UInt64? = nil) throws {

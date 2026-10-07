@@ -293,15 +293,6 @@ public final class UploadCoordinator {
         minimumProgressEpoch = await syncService.revokeOrdinaryTraffic()
     }
 
-    func rebindLastJournalDelivery(from old: TunnelPairingIdentity, to new: TunnelPairingIdentity) {
-        guard old.instanceID == new.instanceID else { return }
-        _ = lastDeliveryStore.rebind(
-            from: tunnelJournalConnectionFingerprint(for: old).value,
-            to: tunnelJournalConnectionFingerprint(for: new).value
-        )
-        refreshLastJournalDelivery()
-    }
-
     var isPairedIngestReady: Bool {
         pairedIngestIdentity != nil && ordinaryAdmission()
     }

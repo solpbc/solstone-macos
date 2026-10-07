@@ -132,8 +132,6 @@ enum AXID {
             static let pairingMarkContinueAnyway = "settings.service.pairing.markContinueAnyway"
             static let pairingMarkCancelPairing = "settings.service.pairing.markCancelPairing"
             static let migrationChoiceRow = "settings.service.migration.choice.row"
-            static let migrationChoiceSameDevice = "settings.service.migration.choice.sameDevice"
-            static let migrationChoiceNewDevice = "settings.service.migration.choice.newDevice"
             static let migrationChoiceDefer = "settings.service.migration.choice.defer"
             static let migrationDecisionCheck = "settings.service.migration.decision.check"
             static let migrationReplacementOffer = "settings.service.migration.replacement.offer"

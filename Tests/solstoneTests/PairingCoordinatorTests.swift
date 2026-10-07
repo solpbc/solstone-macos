@@ -488,134 +488,20 @@ struct PairingCoordinatorTests {
         #expect(try store.loadCarriedPairingRecord().invalidation == nil)
     }
 
-    @Test func legacyCleanupTombstoneKeepsInvalidationUntilSourceCleanupCompletes() async throws {
-        let prior = pairing()
-        let store = PairingStore(pairing: prior)
-        var record = try store.loadCarriedPairingRecord()
-        record.legacyCleanupPending = true
-        try store.saveCarriedPairingRecord(record)
-        let clear = ClearRecorder()
-        let coordinator = makeCoordinator(
-            store: store,
-            outcomes: [],
-            clear: clear,
-            retireOwnCredential: { _, _ in true }
-        )
-
-        #expect(!(await coordinator.unpair()))
-        #expect(store.currentPairing == nil)
-        #expect(try store.loadCarriedPairingRecord().invalidation?.remoteRetirementConfirmed == true)
-        #expect(try store.loadCarriedPairingRecord().legacyCleanupPending)
-        #expect(clear.count == 0)
-
-        record = try store.loadCarriedPairingRecord()
-        record.legacyCleanupPending = false
-        try store.saveCarriedPairingRecord(record)
-        let reopened = makeCoordinator(store: store, outcomes: [], clear: clear)
-        await reopened.recoverDurableInvalidation()
-
-        #expect(try store.loadCarriedPairingRecord().invalidation == nil)
-        #expect(clear.count == 1)
-    }
-
-    @Test func carriedChoiceIsDeferredAndUnknownSubmissionPersistsBeforeRetryReconciliation() async throws {
-        let current = pairingWithFingerprint("sha256:" + String(repeating: "b", count: 64))
-        let store = PairingStore(pairing: current)
-        let revision = PairingCredentialRevision(from: current)
-        var record = try store.loadCarriedPairingRecord()
-        record.decision = CarriedPairingDecision(
-            decisionID: "123e4567-e89b-42d3-a456-426614174000",
-            operationID: "123e4567-e89b-42d3-a456-426614174001",
-            previousCID: "sha256:" + String(repeating: "a", count: 64),
-            choice: nil,
-            replacesCID: nil,
-            credentialFingerprint: current.fingerprint,
-            credentialRevision: revision.revision,
-            submitted: false
-        )
-        try store.saveCarriedPairingRecord(record)
-        let control = PairingControlScript(mode: .unavailable, store: store)
-        let coordinator = makeCoordinator(
-            store: store,
-            outcomes: [],
-            carriedPairingControl: control.client,
-            localPort: { 7070 }
-        )
-
-        coordinator.refreshPendingActions(markConfirmed: false)
-        #expect(coordinator.pendingMigrationDecision?.choice == nil)
-        await coordinator.checkPendingMigrationDecision()
-        #expect(control.events.isEmpty)
-
-        await coordinator.chooseCarriedPairing(.newDevice)
-        #expect(control.events == ["decide"])
-        #expect(control.decisionObservedAsDurable?.choice == .newDevice)
-        #expect(control.decisionObservedAsDurable?.submitted == true)
-        #expect(coordinator.migrationDecisionState == "decision_unknown")
-        #expect(try store.loadCarriedPairingRecord().decision?.choice == .newDevice)
-
-        await coordinator.checkPendingMigrationDecision()
-        #expect(control.events == ["decide", "state", "decide"])
-        #expect(coordinator.pendingMigrationDecision?.decisionID == record.decision?.decisionID)
-        #expect(coordinator.migrationDecisionState == "decision_unknown")
-    }
-
-    @Test func durableInvalidationBlocksADeferredCarriedChoiceBeforeSubmission() async throws {
-        let current = pairingWithFingerprint("sha256:" + String(repeating: "b", count: 64))
-        let store = PairingStore(pairing: current)
-        let credentials = PairingCredentialStore(store: store)
-        _ = try credentials.load()
-        let revision = PairingCredentialRevision(from: current)
-        var record = try store.loadCarriedPairingRecord()
-        record.decision = CarriedPairingDecision(
-            decisionID: "123e4567-e89b-42d3-a456-426614174040",
-            operationID: "123e4567-e89b-42d3-a456-426614174041",
-            previousCID: "sha256:" + String(repeating: "a", count: 64),
-            choice: nil,
-            replacesCID: nil,
-            credentialFingerprint: current.fingerprint,
-            credentialRevision: revision.revision,
-            submitted: false
-        )
-        try credentials.saveCarriedPairingRecord(record)
-        _ = try credentials.beginInvalidation(for: current, operationID: "choice-invalidated")
-        let control = PairingControlScript(mode: .accepted, store: store)
-        let coordinator = makeCoordinator(
-            store: store,
-            outcomes: [],
-            carriedPairingControl: control.client,
-            localPort: { 7070 }
-        )
-        coordinator.refreshPendingActions(markConfirmed: false)
-        let initialDecision = coordinator.pendingMigrationDecision
-
-        await coordinator.chooseCarriedPairing(.newDevice)
-
-        #expect(control.events.isEmpty)
-        #expect(coordinator.pendingMigrationDecision == initialDecision)
-        #expect(coordinator.migrationDecisionState == nil)
-        #expect(try credentials.carriedPairingRecord().invalidation?.operationID == "choice-invalidated")
-    }
-
     @Test func persistedChoiceCannotSubmitOrReconcileAfterDurableInvalidation() async throws {
         let current = pairingWithFingerprint("sha256:" + String(repeating: "b", count: 64))
         let store = PairingStore(pairing: current)
         let credentials = PairingCredentialStore(store: store)
         _ = try credentials.load()
         let revision = PairingCredentialRevision(from: current)
-        var record = try credentials.carriedPairingRecord()
         let decision = CarriedPairingDecision(
             decisionID: "123e4567-e89b-42d3-a456-426614174050",
-            operationID: "123e4567-e89b-42d3-a456-426614174051",
-            previousCID: "sha256:" + String(repeating: "a", count: 64),
             choice: .newDevice,
             replacesCID: nil,
             credentialFingerprint: current.fingerprint,
-            credentialRevision: revision.revision,
-            submitted: true
+            credentialRevision: revision.revision
         )
-        record.decision = decision
-        try credentials.saveCarriedPairingRecord(record)
+        try credentials.saveCarriedPairingRecord(offeredRecord(with: decision))
         _ = try credentials.beginInvalidation(for: current, operationID: "decision-invalidated")
         let control = PairingControlScript(mode: .accepted, store: store)
         let coordinator = makeCoordinator(
@@ -640,18 +526,13 @@ struct PairingCoordinatorTests {
         let current = pairingWithFingerprint("sha256:" + String(repeating: "b", count: 64))
         let store = PairingStore(pairing: current)
         let revision = PairingCredentialRevision(from: current)
-        var record = try store.loadCarriedPairingRecord()
-        record.decision = CarriedPairingDecision(
+        try store.saveCarriedPairingRecord(offeredRecord(with: CarriedPairingDecision(
             decisionID: "123e4567-e89b-42d3-a456-426614174010",
-            operationID: "123e4567-e89b-42d3-a456-426614174011",
-            previousCID: "sha256:" + String(repeating: "a", count: 64),
-            choice: nil,
+            choice: .newDevice,
             replacesCID: nil,
             credentialFingerprint: current.fingerprint,
-            credentialRevision: revision.revision,
-            submitted: false
-        )
-        try store.saveCarriedPairingRecord(record)
+            credentialRevision: revision.revision
+        )))
         let control = PairingControlScript(mode: .mismatchedTerminal, store: store)
         let coordinator = makeCoordinator(
             store: store,
@@ -661,69 +542,26 @@ struct PairingCoordinatorTests {
         )
 
         coordinator.refreshPendingActions(markConfirmed: false)
-        await coordinator.chooseCarriedPairing(.sameDevice)
+        await coordinator.checkPendingMigrationDecision()
 
+        #expect(control.events == ["state", "decide"])
         #expect(coordinator.migrationDecisionState == "decision_unknown")
-        #expect(coordinator.pendingMigrationDecision?.choice == .sameDevice)
-        #expect(try store.loadCarriedPairingRecord().decision?.choice == .sameDevice)
+        #expect(coordinator.pendingMigrationDecision?.choice == .newDevice)
+        #expect(try store.loadCarriedPairingRecord().decision?.choice == .newDevice)
     }
 
-    @Test(arguments: [PairingControlScript.Mode.conflictAlreadyDecided, .conflictUnresolved])
-    func decisionConflictReconcilesExactOperationBeforeCompleting(_ mode: PairingControlScript.Mode) async throws {
-        let current = pairingWithFingerprint("sha256:" + String(repeating: "b", count: 64))
-        let store = PairingStore(pairing: current)
-        let revision = PairingCredentialRevision(from: current)
-        var record = try store.loadCarriedPairingRecord()
-        record.decision = CarriedPairingDecision(
-            decisionID: "123e4567-e89b-42d3-a456-426614174020",
-            operationID: "123e4567-e89b-42d3-a456-426614174021",
-            previousCID: "sha256:" + String(repeating: "a", count: 64),
-            choice: nil,
-            replacesCID: nil,
-            credentialFingerprint: current.fingerprint,
-            credentialRevision: revision.revision,
-            submitted: false
-        )
-        try store.saveCarriedPairingRecord(record)
-        let control = PairingControlScript(mode: mode, store: store)
-        let coordinator = makeCoordinator(
-            store: store,
-            outcomes: [],
-            carriedPairingControl: control.client,
-            localPort: { 7070 }
-        )
-        coordinator.refreshPendingActions(markConfirmed: false)
-
-        await coordinator.chooseCarriedPairing(.newDevice)
-
-        #expect(control.events == ["decide", "state"])
-        if case .conflictAlreadyDecided = mode {
-            #expect(coordinator.pendingMigrationDecision == nil)
-            #expect(try store.loadCarriedPairingRecord().decision == nil)
-        } else {
-            #expect(coordinator.pendingMigrationDecision?.choice == .newDevice)
-            #expect(coordinator.migrationDecisionState == "decision_unknown")
-            #expect(try store.loadCarriedPairingRecord().decision?.choice == .newDevice)
-        }
-    }
-
-    @Test func lateCarriedDecisionCannotChangePresentationAfterUnpairAndSameJournalReplacement() async throws {
+    @Test func lateDecisionCannotChangePresentationAfterUnpairAndSameJournalReplacement() async throws {
         let old = pairingWithFingerprint("sha256:" + String(repeating: "b", count: 64))
         let replacement = pairingWithFingerprint("sha256:" + String(repeating: "c", count: 64))
         let store = PairingStore(pairing: old)
         let revision = PairingCredentialRevision(from: old)
-        var record = try store.loadCarriedPairingRecord()
-        record.decision = CarriedPairingDecision(
+        try store.saveCarriedPairingRecord(offeredRecord(with: CarriedPairingDecision(
             decisionID: "123e4567-e89b-42d3-a456-426614174030",
-            operationID: "123e4567-e89b-42d3-a456-426614174031",
-            previousCID: "sha256:" + String(repeating: "a", count: 64),
-            choice: nil,
+            choice: .newDevice,
             replacesCID: nil,
             credentialFingerprint: old.fingerprint,
-            credentialRevision: revision.revision,
-            submitted: false
-        )
-        try store.saveCarriedPairingRecord(record)
+            credentialRevision: revision.revision
+        )))
         let gate = OneShotContinuationGate()
         let control = PairingControlScript(mode: .accepted, store: store, decisionGate: gate)
         let coordinator = makeCoordinator(
@@ -734,7 +572,7 @@ struct PairingCoordinatorTests {
         )
         coordinator.refreshPendingActions(markConfirmed: false)
 
-        let choiceTask = Task { await coordinator.chooseCarriedPairing(.newDevice) }
+        let choiceTask = Task { await coordinator.checkPendingMigrationDecision() }
         await control.waitUntilDecisionStarts()
 
         #expect(await coordinator.unpair())
@@ -753,23 +591,18 @@ struct PairingCoordinatorTests {
         #expect(coordinator.migrationDecisionState == decisionPresentation)
     }
 
-    @Test func lateCarriedDecisionCannotChangePresentationAfterConfirmedSwitch() async throws {
+    @Test func lateDecisionCannotChangePresentationAfterConfirmedSwitch() async throws {
         let old = pairing(instanceID: "11111111-1111-1111-1111-111111111111", caChainPEM: testCACertPEM)
         let replacement = pairing(instanceID: "22222222-2222-2222-2222-222222222222", caChainPEM: otherCACertPEM)
         let store = PairingStore(pairing: old)
         let revision = PairingCredentialRevision(from: old)
-        var record = try store.loadCarriedPairingRecord()
-        record.decision = CarriedPairingDecision(
+        try store.saveCarriedPairingRecord(offeredRecord(with: CarriedPairingDecision(
             decisionID: "123e4567-e89b-42d3-a456-426614174060",
-            operationID: "123e4567-e89b-42d3-a456-426614174061",
-            previousCID: "sha256:" + String(repeating: "a", count: 64),
             choice: .newDevice,
             replacesCID: nil,
             credentialFingerprint: old.fingerprint,
-            credentialRevision: revision.revision,
-            submitted: true
-        )
-        try store.saveCarriedPairingRecord(record)
+            credentialRevision: revision.revision
+        )))
         let gate = OneShotContinuationGate()
         let control = PairingControlScript(mode: .accepted, store: store, decisionGate: gate)
         let coordinator = makeCoordinator(
@@ -880,7 +713,6 @@ struct PairingCoordinatorTests {
 
         #expect(control.decisionObservedAsDurable?.choice == .replaceDevice)
         #expect(control.decisionObservedAsDurable?.replacesCID == secondCID)
-        #expect(control.decisionObservedAsDurable?.submitted == true)
         #expect(control.events.filter { $0 == "decide" }.count == 1)
         #expect(try store.loadCarriedPairingRecord().decision == nil)
         #expect(try store.loadCarriedPairingRecord().replacementOfferID == nil)
@@ -1340,13 +1172,20 @@ private func pairingWithFingerprint(_ fingerprint: String) -> StoredPairing {
     )
 }
 
+/// A fresh-pair decision persisted with the shown offer it answers.
+func offeredRecord(with decision: CarriedPairingDecision) -> CarriedPairingRecord {
+    var record = CarriedPairingRecord.empty
+    record.replacementOfferID = decision.decisionID
+    record.replacementOfferShown = true
+    record.decision = decision
+    return record
+}
+
 final class PairingControlScript: @unchecked Sendable {
     enum Mode: Sendable, Equatable {
         case unavailable
         case mismatchedTerminal
         case accepted
-        case conflictAlreadyDecided
-        case conflictUnresolved
         case freshConflictAppliedReplay
         case freshConflictUnresolved
     }
@@ -1381,45 +1220,13 @@ final class PairingControlScript: @unchecked Sendable {
 
     func migrationState() throws -> CarriedPairingMigrationReply {
         lock.withLock { eventValues.append("state") }
-        let decision = try store.loadCarriedPairingRecord().decision
-        let response: [String: Any]
-        if let decision, let operationID = decision.operationID, let previousCID = decision.previousCID {
-            let state: String
-            let replacedCID: Any
-            switch mode {
-            case .conflictAlreadyDecided:
-                switch decision.choice {
-                case .sameDevice: state = "same_device"
-                case .newDevice: state = "new_device"
-                case .replaceDevice: state = "replaced_device"
-                case .none: state = "pending"
-                }
-                if decision.choice == .sameDevice, let previousCID = decision.previousCID {
-                    replacedCID = previousCID
-                } else {
-                    replacedCID = NSNull()
-                }
-            case .conflictUnresolved, .accepted, .unavailable, .mismatchedTerminal,
-                 .freshConflictAppliedReplay, .freshConflictUnresolved:
-                state = "pending"
-                replacedCID = NSNull()
-            }
-            response = [
-                "protocol_version": 1,
-                "rekey_operation_id": operationID,
-                "previous_cid": previousCID,
-                "state": state,
-                "replaced_cid": replacedCID
-            ]
-        } else {
-            response = [
-                "protocol_version": 1,
-                "rekey_operation_id": NSNull(),
-                "previous_cid": NSNull(),
-                "state": "none",
-                "replaced_cid": NSNull()
-            ]
-        }
+        let response: [String: Any] = [
+            "protocol_version": 1,
+            "rekey_operation_id": NSNull(),
+            "previous_cid": NSNull(),
+            "state": "none",
+            "replaced_cid": NSNull()
+        ]
         let data = try JSONSerialization.data(withJSONObject: response)
         return try JSONDecoder().decode(CarriedPairingMigrationReply.self, from: data)
     }
@@ -1433,11 +1240,7 @@ final class PairingControlScript: @unchecked Sendable {
             decisionSubmissionCount += 1
         }
         if case .unavailable = mode { throw CarriedPairingControlError.unavailable }
-        if mode == .conflictAlreadyDecided || mode == .conflictUnresolved {
-            throw CarriedPairingControlError.conflict
-        }
-        if decision.operationID == nil,
-           (mode == .freshConflictAppliedReplay || mode == .freshConflictUnresolved) {
+        if mode == .freshConflictAppliedReplay || mode == .freshConflictUnresolved {
             let count = lock.withLock { decisionSubmissionCount }
             if count == 1 || mode == .freshConflictUnresolved {
                 throw CarriedPairingControlError.conflict
@@ -1446,30 +1249,22 @@ final class PairingControlScript: @unchecked Sendable {
 
         let acceptedState: String
         switch decision.choice {
-        case .sameDevice: acceptedState = "same_device"
         case .newDevice: acceptedState = "new_device"
         case .replaceDevice: acceptedState = "replaced_device"
-        case .none: acceptedState = "none"
         }
         let state: String
         if case .mismatchedTerminal = mode {
-            state = acceptedState == "same_device" ? "new_device" : "same_device"
+            state = acceptedState == "new_device" ? "same_device" : "new_device"
         } else {
             state = acceptedState
-        }
-        let replacedCID: Any
-        switch decision.choice {
-        case .sameDevice: replacedCID = decision.previousCID ?? NSNull()
-        case .replaceDevice: replacedCID = decision.replacesCID ?? NSNull()
-        case .newDevice, .none: replacedCID = NSNull()
         }
         let response: [String: Any] = [
             "protocol_version": 1,
             "operation_id": decision.decisionID,
             "state": state,
-            "previous_cid": decision.previousCID ?? NSNull(),
+            "previous_cid": NSNull(),
             "cid": decision.credentialFingerprint,
-            "replaced_cid": replacedCID,
+            "replaced_cid": decision.replacesCID ?? NSNull(),
             "display_label": "Current device"
         ]
         let data = try JSONSerialization.data(withJSONObject: response)
@@ -1495,15 +1290,6 @@ final class PairingControlScript: @unchecked Sendable {
 
 private struct PairingCoordinatorControlClient: CarriedPairingControlRequesting {
     let script: PairingControlScript
-
-    func rekey(
-        localPort: Int,
-        oldPairing: StoredPairing,
-        candidate: CarriedPairingCandidate,
-        deviceLabel: String
-    ) async throws -> CarriedPairingRekeyResponse {
-        throw CarriedPairingControlError.unavailable
-    }
 
     func migrationState(localPort: Int) async throws -> CarriedPairingMigrationReply {
         try script.migrationState()

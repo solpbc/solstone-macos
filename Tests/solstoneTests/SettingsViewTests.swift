@@ -41,13 +41,13 @@ struct SettingsViewTests {
 
     @Test func migrationControlsExposeSemanticActionsWithoutDefaultPairChoice() throws {
         let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
-        let choiceStart = try #require(source.range(of: "Button(UICopy.Migration.sameDevice)"))
+        let choiceStart = try #require(source.range(of: "Button(UICopy.Migration.keepBoth)"))
         let choiceEnd = try #require(source[choiceStart.lowerBound...].range(
             of: ".accessibilityIdentifier(AXID.Settings.Service.migrationChoiceDefer)"
         ))
         let choices = source[choiceStart.lowerBound..<choiceEnd.upperBound]
-        #expect(choices.contains("AXID.Settings.Service.migrationChoiceSameDevice"))
-        #expect(choices.contains("AXID.Settings.Service.migrationChoiceNewDevice"))
+        #expect(choices.contains("AXID.Settings.Service.migrationKeepBoth"))
+        #expect(choices.contains("AXID.Settings.Service.migrationChooseDevice"))
         #expect(choices.contains("AXID.Settings.Service.migrationChoiceDefer"))
         #expect(!choices.contains(".keyboardShortcut(.defaultAction)"))
 

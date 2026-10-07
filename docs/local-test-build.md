@@ -17,7 +17,7 @@ make run
 
 ## local pairing
 
-pairing material always uses the app's pinned user login-keychain backend. The backend requires the running app to satisfy its stable Developer ID designated requirement before it can write credentials. Ad-hoc and self-signed bundles can still be used for local UI and capture work, but they cannot write pairing credentials. Use a Developer ID-signed bundle to test pairing.
+pairing material lives only in the app's Data Protection keychain group. That group is bound to the project's team ID, so only the project's Developer ID-signed bundle (`make bundle-dist`), with its entitlements and embedded provisioning profile, can save a pairing. Ad-hoc and self-signed bundles can be used for local UI and capture work, but they cannot save a pairing.
 
 do not distribute local test builds.
 
@@ -47,7 +47,7 @@ codesign -d --entitlements - --xml solstone.app | plutil -p -
 codesign --verify --strict --verbose=2 solstone.app
 ```
 
-the local bundle does not set a keychain-plane Info.plist override. The app uses the same explicit login-keychain destination as production. The ad-hoc entitlements remain unchanged and do not grant access to the production Data Protection keychain group.
+the local bundle should not contain `keychain-access-groups` or `com.apple.developer.team-identifier` entitlements.
 
 ## gotchas
 

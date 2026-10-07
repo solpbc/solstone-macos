@@ -8,67 +8,20 @@ import Testing
 
 @Suite("PairingCredentialStore")
 struct PairingCredentialStoreTests {
-    @Test func onlyMatchingCompletedPortableBaselineAndDeviceMarkerAdmitTraffic() throws {
+    @Test func aStoredCredentialIsAdmittedUnlessADurableInvalidationIsPending() throws {
         let stored = pairing()
         let backend = PairingStore(pairing: stored)
         let credentials = PairingCredentialStore(store: backend)
         let loaded = try #require(try credentials.load())
+        // A credential saved before the device record existed is still ready.
         #expect(credentials.admission(for: loaded) == .ready)
+        #expect(credentials.admission(for: nil) == .absent)
 
-        var record = try backend.loadCarriedPairingRecord()
-        record.localMarker = "marker-from-another-device"
-        try backend.saveCarriedPairingRecord(record)
-        let restored = PairingCredentialStore(store: backend)
-        #expect(restored.admission(for: loaded) == .migrationRequired)
+        _ = try credentials.beginInvalidation(for: loaded, operationID: "unpair")
+        #expect(credentials.admission(for: loaded) == .blocked)
     }
 
-    @Test func markerWithoutBaselineNeverAdmitsAndPreparedMoveRequiresRecovery() throws {
-        let stored = pairing()
-        let backend = PairingStore(pairing: stored)
-        var record = CarriedPairingRecord.empty
-        record.localMarker = "marker-alone"
-        try backend.saveCarriedPairingRecord(record)
-        #expect(PairingCredentialStore(store: backend).admission(for: stored) == .blocked)
-
-        record.initialMovePrepared = true
-        try backend.saveCarriedPairingRecord(record)
-        #expect(PairingCredentialStore(store: backend).admission(for: stored) == .migrationRequired)
-    }
-
-    @Test func completedBaselineAndMatchingMarkerAdmitInterruptedCompletion() throws {
-        let stored = pairing()
-        let backend = PairingStore(pairing: stored)
-        var record = try backend.loadCarriedPairingRecord()
-        let revision = PairingCredentialRevision(from: stored)
-        record.initialMovePrepared = true
-        record.preparedCredentialFingerprint = revision.fingerprint
-        record.preparedCredentialRevision = revision.revision
-        record.preparedJournalIdentity = journalMarkConfirmationIdentity(for: stored)
-        try backend.saveCarriedPairingRecord(record)
-
-        #expect(PairingCredentialStore(store: backend).admission(for: stored) == .ready)
-    }
-
-    @Test(arguments: [false, true])
-    func completedBaselineDoesNotAdoptWhenActualMarkerIsAbsentOrMismatched(markerPresent: Bool) throws {
-        let stored = pairing()
-        let backend = PairingStore(pairing: stored)
-        var record = try backend.loadCarriedPairingRecord()
-        let baselineMarker = try #require(record.completedPortableBaseline?.marker)
-        let revision = PairingCredentialRevision(from: stored)
-        record.initialMovePrepared = true
-        record.preparedCredentialFingerprint = revision.fingerprint
-        record.preparedCredentialRevision = revision.revision
-        record.preparedJournalIdentity = journalMarkConfirmationIdentity(for: stored)
-        record.localMarker = markerPresent ? "marker-from-restored-device" : nil
-        if markerPresent { #expect(record.localMarker != baselineMarker) }
-        try backend.saveCarriedPairingRecord(record)
-
-        #expect(PairingCredentialStore(store: backend).admission(for: stored) == .migrationRequired)
-        #expect(try backend.loadCarriedPairingRecord().completedPortableBaseline?.marker == baselineMarker)
-    }
-
-    @Test func unreadableDeviceMarkerStateBlocksAdmission() throws {
+    @Test func unreadableDeviceRecordBlocksAdmission() throws {
         let stored = pairing()
         let backend = PairingStore(pairing: stored)
         backend.setCarriedRecordLoadError(SPLKeychainError.loadFailed(status: -1))
@@ -76,24 +29,13 @@ struct PairingCredentialStoreTests {
         #expect(PairingCredentialStore(store: backend).admission(for: stored) == .blocked)
     }
 
-    @Test func candidateOwnershipIncludesCredentialRevisionAndOperationID() throws {
+    @Test func invalidationOwnershipIncludesCredentialRevisionAndOperationID() throws {
         let old = pairing()
         let backend = PairingStore(pairing: old)
         let credentials = PairingCredentialStore(store: backend)
         _ = try credentials.load()
-        var record = try backend.loadCarriedPairingRecord()
         let oldRevision = PairingCredentialRevision(from: old)
-        record.candidate = CarriedPairingCandidate(
-            operationID: "operation-a",
-            csrPEM: "csr",
-            privateKeyPEM: "private-key",
-            previousFingerprint: oldRevision.fingerprint,
-            previousRevision: oldRevision.revision,
-            previousInstanceID: old.instanceID,
-            rekeyReply: nil,
-            rekeyFingerprint: nil
-        )
-        try credentials.saveCarriedPairingRecord(record)
+        _ = try credentials.beginInvalidation(for: old, operationID: "operation-a")
         #expect(credentials.owns(oldRevision, operationID: "operation-a"))
         #expect(!credentials.owns(oldRevision, operationID: "operation-b"))
 
@@ -149,28 +91,6 @@ struct PairingCredentialStoreTests {
         #expect(!credentials.markAnswerIsCurrent(oldRevision))
     }
 
-    @Test func mismatchedPortableMarkerDiscardsStaleCandidateBeforeFreshAdmission() throws {
-        let stored = pairing()
-        let backend = PairingStore(pairing: stored)
-        let credentials = PairingCredentialStore(store: backend)
-        _ = try credentials.load()
-        var record = try backend.loadCarriedPairingRecord()
-        record.localMarker = "marker-from-restored-device"
-        record.candidate = CarriedPairingCandidate(
-            operationID: "stale-operation",
-            csrPEM: "old-csr",
-            privateKeyPEM: "old-private-key",
-            previousFingerprint: "old-fingerprint",
-            previousRevision: "old-revision",
-            previousInstanceID: stored.instanceID,
-            rekeyReply: nil,
-            rekeyFingerprint: nil
-        )
-        try backend.saveCarriedPairingRecord(record)
-
-        #expect(PairingCredentialStore(store: backend).admission(for: stored) == .migrationRequired)
-    }
-
     @Test func staleSameJournalInvalidationCannotDeleteReplacementCredential() throws {
         let old = pairing()
         let backend = PairingStore(pairing: old)
@@ -201,7 +121,7 @@ struct PairingCredentialStoreTests {
         #expect(credentials.admission(for: replacement) == .blocked)
     }
 
-    @Test func lateInvalidationCannotClearReplacementOperationsForSameJournal() throws {
+    @Test func lateInvalidationCannotClearReplacementDecisionForSameJournal() throws {
         let old = pairing()
         let backend = PairingStore(pairing: old)
         let credentials = PairingCredentialStore(store: backend)
@@ -226,25 +146,12 @@ struct PairingCredentialStoreTests {
         try credentials.save(replacement, after: invalidation)
         let replacementRevision = PairingCredentialRevision(from: replacement)
         var record = try credentials.carriedPairingRecord()
-        record.candidate = CarriedPairingCandidate(
-            operationID: "new-operation",
-            csrPEM: "new-csr",
-            privateKeyPEM: "new-private-key",
-            previousFingerprint: replacementRevision.fingerprint,
-            previousRevision: replacementRevision.revision,
-            previousInstanceID: replacement.instanceID,
-            rekeyReply: nil,
-            rekeyFingerprint: nil
-        )
         record.decision = CarriedPairingDecision(
             decisionID: "new-decision",
-            operationID: "new-operation",
-            previousCID: old.fingerprint,
-            choice: nil,
+            choice: .newDevice,
             replacesCID: nil,
             credentialFingerprint: replacement.fingerprint,
-            credentialRevision: replacementRevision.revision,
-            submitted: false
+            credentialRevision: replacementRevision.revision
         )
         try credentials.saveCarriedPairingRecord(record)
 
@@ -265,7 +172,6 @@ struct PairingCredentialStoreTests {
 
         let latest = try credentials.carriedPairingRecord()
         #expect(latest.invalidation == nil)
-        #expect(latest.candidate?.operationID == "new-operation")
         #expect(latest.decision?.decisionID == "new-decision")
     }
 }
