@@ -212,7 +212,8 @@ final class AudioHandoffStream: @unchecked Sendable {
         guard buffer.frameLength > 0, rate > 0, time.isNumeric else { return }
         var remainder = buffer, start = time
         if let cutoff, time < cutoff {
-            let before = min(Int(buffer.frameLength), Int(CMTimeSubtract(cutoff, time).seconds * rate + 0.5))
+            // Round up, so the held part never starts before the new origin (it would be trimmed).
+            let before = min(Int(buffer.frameLength), Int(ceil(CMTimeSubtract(cutoff, time).seconds * rate)))
             if before > 0, let head = Self.slice(buffer, from: 0, count: before) { predecessor?.send(head, at: time) }
             guard before < Int(buffer.frameLength),
                   let tail = Self.slice(buffer, from: before, count: Int(buffer.frameLength) - before) else { return }

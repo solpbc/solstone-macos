@@ -668,8 +668,11 @@ struct AudioAdmissionTests {
         let lead = CMTimeSubtract(cutoff, admissionHostTime(base)).seconds - 2   // test compute between feed and cutoff
         #expect(lead >= 0 && lead < 0.5)
         // The segments meet at the cutoff with nothing generated and nothing missing.
-        // At most one frame of padding: the cutoff falls between two samples.
-        #expect(oldWriter.statisticsSnapshot.generatedFrames == 0 && (newWriter.statisticsSnapshot.generatedFrames ?? 99) <= 1)
+        // The cutoff is an arbitrary host time, off the 48 kHz grid, so the writer may pad
+        // one frame (21 µs) where the held audio starts and where forwarding takes over.
+        let seams = newWriter.statisticsSnapshot
+        #expect(oldWriter.statisticsSnapshot.generatedFrames == 0 && (seams.gapCount ?? 99) <= 2 && (seams.generatedFrames ?? 99) <= (seams.gapCount ?? 0),
+            "generated old \(oldWriter.statisticsSnapshot.generatedFrames ?? -1) new \(seams.generatedFrames ?? -1) gaps \(seams.gapCount ?? -1)")
         #expect(oldWriter.statisticsSnapshot.droppedFrames == 0 && newWriter.statisticsSnapshot.droppedFrames == 0)
         #expect(abs(oldTrack.count + newTrack.count - 4 * 48_000) <= 2)
         #expect(abs(Double(oldTrack.count) / 48_000 - (2 + lead)) < 0.002)
@@ -709,8 +712,11 @@ struct AudioAdmissionTests {
         let newWriter = try #require(next._sourceWriterForTesting(AudioTrackType.systemSourceID))
         let newInputs = await next.finishAll()
         #expect(newWriter.statisticsSnapshot.droppedFrames == 0 && newWriter.statisticsSnapshot.failures.isEmpty)
-        // At most one frame of padding: the cutoff falls between two samples.
-        #expect(oldWriter.statisticsSnapshot.generatedFrames == 0 && (newWriter.statisticsSnapshot.generatedFrames ?? 99) <= 1)
+        // The cutoff is an arbitrary host time, off the 48 kHz grid, so the writer may pad
+        // one frame (21 µs) where the held audio starts and where forwarding takes over.
+        let seams = newWriter.statisticsSnapshot
+        #expect(oldWriter.statisticsSnapshot.generatedFrames == 0 && (seams.gapCount ?? 99) <= 2 && (seams.generatedFrames ?? 99) <= (seams.gapCount ?? 0),
+            "generated old \(oldWriter.statisticsSnapshot.generatedFrames ?? -1) new \(seams.generatedFrames ?? -1) gaps \(seams.gapCount ?? -1)")
 
         let oldURL = try #require(oldInputs.first).url
         let oldTrack = try #require(try await admissionDecode(oldURL).first)
@@ -766,7 +772,8 @@ struct AudioAdmissionTests {
         let result = try #require(await second.finishCapture())
         let url = try #require(result.audioInputs.first { $0.timingInfo.trackType.sourceID == AudioTrackType.systemSourceID }).url
         let track = try #require(try await admissionDecode(url).first)
-        #expect((newWriter.statisticsSnapshot.generatedFrames ?? 99) <= 1 && newWriter.statisticsSnapshot.droppedFrames == 0)
+        let seams = newWriter.statisticsSnapshot
+        #expect((seams.gapCount ?? 99) <= 2 && (seams.generatedFrames ?? 99) <= (seams.gapCount ?? 0) && seams.droppedFrames == 0)
         #expect(admissionTone(track, frequency: 500, start: 0.02, end: 1.28) > 0.15)
         await system.stop()
     }
