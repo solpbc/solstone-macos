@@ -298,6 +298,7 @@ struct JournalAddressVisibilityTests {
     private func makeFailingCoordinator() -> PairingCoordinator {
         PairingCoordinator(
             pair: { _, _, _ in throw DialError.connectTimeout },
+            keychainStore: InMemoryPairingStore(),
             loadPairing: { nil },
             savePairing: { _ in },
             relayEndpoint: { URL(string: "https://relay.test")! },

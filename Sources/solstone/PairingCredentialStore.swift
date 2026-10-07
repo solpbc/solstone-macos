@@ -19,6 +19,56 @@ public protocol PairingStoring: Sendable {
     func saveCarriedPairingRecord(_ record: CarriedPairingRecord) throws
 }
 
+/// Memory-backed credential storage for snapshot and preview compositions.
+/// Those never read or write a real keychain; a held pairing reads as an
+/// already-adopted baseline on this device, the state a real store reaches
+/// after a verified write.
+final class InMemoryPairingStore: PairingStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var pairing: StoredPairing?
+    private var record = CarriedPairingRecord.empty
+
+    init(pairing: StoredPairing? = nil) {
+        self.pairing = pairing
+        if let pairing { adopt(pairing) }
+    }
+
+    func load() throws -> StoredPairing? {
+        lock.withLock { pairing }
+    }
+
+    func save(_ pairing: StoredPairing) throws {
+        lock.withLock {
+            self.pairing = pairing
+            adopt(pairing)
+        }
+    }
+
+    func delete() throws {
+        lock.withLock { pairing = nil }
+    }
+
+    func loadCarriedPairingRecord() throws -> CarriedPairingRecord {
+        lock.withLock { record }
+    }
+
+    func saveCarriedPairingRecord(_ record: CarriedPairingRecord) throws {
+        lock.withLock { self.record = record }
+    }
+
+    private func adopt(_ pairing: StoredPairing) {
+        let marker = record.localMarker ?? UUID().uuidString
+        let revision = PairingCredentialRevision(from: pairing)
+        record.localMarker = marker
+        record.completedPortableBaseline = CarriedPairingBaseline(
+            journalIdentity: journalMarkConfirmationIdentity(for: pairing),
+            fingerprint: revision.fingerprint,
+            credentialRevision: revision.revision,
+            marker: marker
+        )
+    }
+}
+
 public final class PairingCredentialStore: @unchecked Sendable {
     private let lock = NSRecursiveLock()
     private let store: any PairingStoring

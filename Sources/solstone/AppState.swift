@@ -1808,12 +1808,19 @@ public final class AppState {
         } else {
             tunnelPairingLoad = { nil }
         }
-        let tunnelLifecycleOwner = TunnelLifecycleOwner.dormantForSnapshot(loadPairing: tunnelPairingLoad)
+        // Snapshots never open a keychain. The owner and the coordinator share one
+        // memory-backed store seeded from the pairing this composition holds.
+        let snapshotPairingStore: any PairingStoring = pairingStoring
+            ?? InMemoryPairingStore(pairing: (try? tunnelPairingLoad()) ?? nil)
+        let tunnelLifecycleOwner = TunnelLifecycleOwner.dormantForSnapshot(
+            keychainStore: snapshotPairingStore,
+            loadPairing: tunnelPairingLoad
+        )
         self.tunnelLifecycleOwner = tunnelLifecycleOwner
         self.credentialStore = nil
         self.pairingCoordinator = PairingCoordinator(
             pair: pairingOperation,
-            keychainStore: pairingStoring ?? SPLPairingKeychain.store(),
+            keychainStore: snapshotPairingStore,
             loadPairing: pairingLoad ?? { nil },
             savePairing: pairingSave ?? { _ in },
             reactivate: { [fingerprintTarget] in

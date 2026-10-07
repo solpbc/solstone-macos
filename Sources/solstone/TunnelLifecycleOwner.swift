@@ -408,10 +408,18 @@ final class TunnelLifecycleOwner {
         refreshTunnelManagedFromStoredPairing()
     }
 
+    /// A dormant owner for snapshots and previews. It never opens a keychain:
+    /// credential state lives in memory, seeded from the supplied pairing.
     static func dormantForSnapshot(
-        loadPairing: @escaping @Sendable () throws -> StoredPairing? = { try SPLPairingKeychain.store().load() }
+        keychainStore: (any PairingStoring)? = nil,
+        loadPairing: @escaping @Sendable () throws -> StoredPairing? = { nil }
     ) -> TunnelLifecycleOwner {
-        TunnelLifecycleOwner(loadPairing: loadPairing, pathMonitoringSource: NoopPathMonitoringSource())
+        let store = keychainStore ?? InMemoryPairingStore(pairing: (try? loadPairing()) ?? nil)
+        return TunnelLifecycleOwner(
+            keychainStore: store,
+            loadPairing: loadPairing,
+            pathMonitoringSource: NoopPathMonitoringSource()
+        )
     }
 
     func start() {
