@@ -37,7 +37,6 @@ import pathlib
 import plistlib
 import re
 import shutil
-import socket
 import stat
 import subprocess
 import sys
@@ -381,7 +380,6 @@ def cmd_compose(args: argparse.Namespace) -> None:
         "schema": SCHEMA,
         "image": name,
         "composed_at": now_utc(),
-        "composed_on": socket.gethostname(),
         "source_commit": run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT).stdout.strip(),
         "volume_entries": listing,
         "unsigned_sha256": sha256_file(image),
@@ -428,7 +426,6 @@ def cmd_verify(args: argparse.Namespace) -> None:
         "schema": SCHEMA,
         "image": receipt["image"],
         "verified_at": now_utc(),
-        "verified_on": socket.gethostname(),
         "sha256": sha256_file(image),
         "length": image.stat().st_size,
         "checks": [
