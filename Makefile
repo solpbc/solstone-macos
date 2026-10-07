@@ -1347,7 +1347,7 @@ publish-appcast-journal-staging:
 	$(PUBLISH_PY) scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal --build $(JOURNAL_DIST_BUILD) --staging
 
 # Cut a GitHub Release: annotated tag + `gh release create` with the DMG
-# attached and CHANGELOG notes. Run AFTER `make publish-appcast` and founder
+# attached and CHANGELOG notes. Run AFTER `make publish-appcast` and operator
 # approval — the DMG must still be in CWD (publish-appcast.py's flow scp's it
 # in). Sparkle is the primary update channel; this is source-release hygiene
 # and the GitHub front door. Mirrors solstone / solstone-linux release.sh.

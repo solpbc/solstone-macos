@@ -398,7 +398,7 @@ struct SnapshotTests {
         )
     }
 
-    // The screen the founder was looking at: everything granted, nothing running.
+    // Everything granted, nothing running.
     @Test func settingsStatusBothSourcesOff() throws {
         let state = AppState.forSnapshot(
             config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false)

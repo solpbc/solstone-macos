@@ -7,8 +7,8 @@ import Foundation
 /// The sun, all day — time-of-day background pattern.
 ///
 /// Ported from the sun-arc reference implementation (`sunarc.js` plus its index)
-/// (founder lock 2026-09-19, amended 2026-09-23: the day in both appearances). Vendor the
-/// reference math (`SUNARC.both()`); do not re-derive it from the token constants alone.
+/// with the day in both appearances. Vendor the reference math (`SUNARC.both()`);
+/// do not re-derive it from the token constants alone.
 /// Section numbers below (§3, §4, §4a, §6, §7, §8a) refer to that spec; constant names follow
 /// the sun-arc token section «the sun, all day».
 public enum SunArc {
