@@ -149,5 +149,11 @@ func consumeSupervisedJournalChildOutput(
     handler: SupervisedJournalChildOutputHandler
 ) {
     let data = handle.availableData
+    // An empty read is end-of-file: the child closed this end, as a hosted supervisor
+    // does when it moves its output into the journal. Stop watching the pipe, or the
+    // handler fires again at once, forever, and holds a core busy.
+    if data.isEmpty {
+        handle.readabilityHandler = nil
+    }
     handler.consume(stream: stream, data: data)
 }

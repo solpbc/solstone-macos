@@ -31,6 +31,23 @@ struct SupervisedJournalChildOutputTests {
         readHandle.readabilityHandler = nil
     }
 
+    @Test func endOfFileStopsWatchingThePipe() async throws {
+        let pipe = Pipe()
+        let handler = SupervisedJournalChildOutputHandler(sink: NoOpSupervisedJournalChildOutputSink())
+        let readHandle = pipe.fileHandleForReading
+        readHandle.readabilityHandler = { handle in
+            consumeSupervisedJournalChildOutput(from: handle, stream: .stdout, handler: handler)
+        }
+        try pipe.fileHandleForWriting.write(contentsOf: Data("last line\n".utf8))
+        try pipe.fileHandleForWriting.close()
+        let deadline = Date().addingTimeInterval(10)
+        while readHandle.readabilityHandler != nil, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(readHandle.readabilityHandler == nil)
+        readHandle.readabilityHandler = nil
+    }
+
     @Test func ac2_markerBytesDoNotAppearInEmissions() {
         let sink = RecordingSupervisedJournalChildOutputSink()
         let handler = SupervisedJournalChildOutputHandler(sink: sink)
