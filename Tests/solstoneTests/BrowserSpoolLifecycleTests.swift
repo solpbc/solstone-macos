@@ -190,6 +190,13 @@ private final class LifecycleTransport: BrowserUploadTransport, @unchecked Senda
         }
     }
 
+    func setFirstOutcomeSuccessThenFail() {
+        lock.withLock {
+            outcome = .fail
+            queuedOutcomes = [.succeed]
+        }
+    }
+
     func setStoredSegmentKey(_ key: String?) { lock.withLock { storedSegmentKey = key } }
 
     func setDayListing(_ listing: IngestProtocolV3.SegmentsDay) { lock.withLock { dayListing = listing } }
@@ -446,6 +453,7 @@ struct BrowserSpoolLifecycleTests {
     private func fixture(
         date: Date = Date(timeIntervalSince1970: 1_700_000_100),
         token: String = "lifecycle-pairing",
+        pairingGeneration: UInt64 = 1,
         transport: LifecycleTransport = LifecycleTransport(),
         syncPaused: @escaping @Sendable () async -> Bool = { false }
     ) throws -> LifecycleFixture {
@@ -456,7 +464,7 @@ struct BrowserSpoolLifecycleTests {
         let clock = LifecycleClock(date: date, zone: TimeZone(secondsFromGMT: 0)!)
         let route = BrowserIntakeRouteState()
         _ = route.update(BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1:49321",
-            identityDigest: BrowserIntakeStore.identityDigest(of: token), pairingGeneration: 1,
+            identityDigest: BrowserIntakeStore.identityDigest(of: token), pairingGeneration: pairingGeneration,
             transportIncarnation: 1, credentialIsCurrent: { true }))
         let injector = BrowserIntakeIOInjector()
         let pause = LifecyclePause()
@@ -719,7 +727,7 @@ struct BrowserSpoolLifecycleTests {
 
     @Test @MainActor func leasedUploadFinishesWithCapturedRouteAfterReplacement() async throws {
         let transport = LifecycleTransport()
-        transport.setOutcomeSuccess(true)
+        transport.setFirstOutcomeSuccessThenFail()
         transport.suspendAfterFirstChunk()
         let fixture = try fixture(transport: transport)
         defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
@@ -740,13 +748,25 @@ struct BrowserSpoolLifecycleTests {
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(fixture.owner.store.getDestinationGeneration() != oldGeneration)
         transport.resumeStream()
-        #expect(await waitForDurableAck(fixture, periodId: periodID))
-        let binding = try #require(try fixture.owner.store.storedDeliveryBinding(periodId: periodID))
-        #expect(binding.identityDigest == BrowserIntakeStore.identityDigest(of: "lifecycle-pairing"))
-        #expect(binding.pairingGeneration == 1)
-        #expect(binding.transportIncarnation == 1)
+        // The journal accepted the bytes on the captured route, but that route was
+        // replaced while they were in flight: its answer binds no receipt and
+        // releases nothing. The next attempt goes out on the new route.
+        await fixture.updateRoute(.held)
+        await fixture.updateRoute(.url("http://127.0.0.1:49321"))
+        #expect(await transport.waitForAttempts(2))
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(try fixture.owner.store.storedDeliveryBinding(periodId: periodID) == nil)
         #expect(try Data(contentsOf: payload) == original)
         #expect(fixture.owner.store.getPeriod(periodId: periodID)?.state == "finalized")
+
+        transport.setOutcomeSuccess(true)
+        await fixture.updateRoute(.held)
+        await fixture.updateRoute(.url("http://127.0.0.1:49321"))
+        #expect(await waitForPeriodState(fixture, periodId: periodID, state: "delivered"))
+        let binding = try #require(try fixture.owner.store.storedDeliveryBinding(periodId: periodID))
+        #expect(binding.identityDigest == BrowserIntakeStore.identityDigest(of: "replacement-pairing"))
+        #expect(Set(transport.hashes).count == 1)
+        #expect(FileManager.default.fileExists(atPath: payload.path) == false)
         fixture.owner.stop()
     }
     @Test func timezoneNotificationFinalizesWithChangedCivilDay() async throws {
@@ -884,7 +904,8 @@ struct BrowserSpoolLifecycleTests {
         let transport = LifecycleTransport()
         transport.setOutcomeSuccess(true)
         transport.suspendAfterFirstChunk()
-        let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired), transport: transport)
+        let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired),
+            pairingGeneration: credentials.pairingGeneration, transport: transport)
         defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
         let state = AppState.forSnapshot()
         await state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
@@ -927,7 +948,8 @@ struct BrowserSpoolLifecycleTests {
         _ = try credentials.load()
         let transport = LifecycleTransport()
         transport.setOutcomeSuccess(true)
-        let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired), transport: transport,
+        let fixture = try fixture(token: PairingCredentialStore.identityToken(for: paired),
+            pairingGeneration: credentials.pairingGeneration, transport: transport,
             syncPaused: { await MainActor.run { state.config.syncPaused } })
         defer { fixture.owner.stop(); try? FileManager.default.removeItem(at: fixture.root) }
         await state.configureBrowserIntake(owner: fixture.owner, credentialStore: credentials)
@@ -1390,7 +1412,7 @@ struct BrowserSpoolLifecycleTests {
         #expect(FileManager.default.fileExists(atPath: stoppedPayload.path))
         #expect(try FileManager.default.contentsOfDirectory(atPath: stopped.owner.store.stagingRootURL().path).isEmpty)
     }
-    @Test func segmentRemovedResponseNeverReleasesBrowserCustodyWithoutReceipt() async throws {
+    @Test func segmentRemovedProofCleansOnlyItsPeriodAndRecoveryFinishesUnlink() async throws {
         let removedTransport = LifecycleTransport()
         removedTransport.setFirstOutcomeSegmentRemovedThenFail()
         let fixture = try fixture(transport: removedTransport)
@@ -1424,8 +1446,8 @@ struct BrowserSpoolLifecycleTests {
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await removedTransport.waitForAttempts(2))
-        #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
-        #expect(FileManager.default.fileExists(atPath: payload.path))
+        #expect(await waitForPeriodState(fixture, periodId: periodId, state: "removed"))
+        #expect(FileManager.default.fileExists(atPath: payload.path) == false)
         #expect(fixture.owner.store.getPeriod(periodId: secondPeriodId)?.state == "finalized")
         #expect(FileManager.default.fileExists(atPath: secondPayload.path))
         await fixture.updateRoute(.held)
@@ -1433,8 +1455,8 @@ struct BrowserSpoolLifecycleTests {
         #expect(await removedTransport.waitForAttempts(3))
         try await Task.sleep(for: .milliseconds(80))
         #expect(removedTransport.attempts >= 3)
-        #expect(fixture.owner.store.getPeriod(periodId: periodId)?.state == "finalized")
-        #expect(removedTransport.hashes.filter { $0 == firstHash }.count >= 2)
+        #expect(fixture.owner.store.getPeriod(periodId: periodId)?.state == "removed")
+        #expect(removedTransport.hashes.filter { $0 == firstHash }.count == 1)
         #expect(FileManager.default.fileExists(atPath: secondPayload.path))
         fixture.owner.stop()
 
@@ -1465,7 +1487,7 @@ struct BrowserSpoolLifecycleTests {
         await interrupted.updateRoute(.held)
         await interrupted.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await recoveryTransport.waitForAttempts(1))
-        #expect(interrupted.owner.store.getPeriod(periodId: interruptedPeriod)?.state == "finalized")
+        #expect(interrupted.owner.store.getPeriod(periodId: interruptedPeriod)?.state == "removed")
         #expect(interrupted.owner.store.getPeriod(periodId: interruptedPeriod)?.cleanupDurable == false)
         #expect(FileManager.default.fileExists(atPath: interruptedPayload.path))
         interrupted.owner.stop()
@@ -1481,14 +1503,14 @@ struct BrowserSpoolLifecycleTests {
             ioInjector: interrupted.injector
         )
         await recovered.start()
-        #expect(recovered.store.getPeriod(periodId: interruptedPeriod)?.state == "finalized")
-        #expect(FileManager.default.fileExists(atPath: interruptedPayload.path))
+        #expect(recovered.store.getPeriod(periodId: interruptedPeriod) == nil || recovered.store.getPeriod(periodId: interruptedPeriod)?.cleanupDurable == true)
+        #expect(FileManager.default.fileExists(atPath: interruptedPayload.path) == false)
         let replay = try reply(await recovered.accept(
             bytes: batch(interruptedGeneration, id: "25252525252525252525252525252525", queuedAtMs: 1_700_000_100_000),
             direction: "extension_to_host"
         ))
         #expect(replay["result"] as? String == "duplicate")
-        #expect(recoveryTransport.attempts >= 1)
+        #expect(recoveryTransport.attempts == 1)
         #expect(recovered.store.storeIsFailed() == false)
         recovered.stop()
     }
@@ -2196,20 +2218,20 @@ struct BrowserSpoolLifecycleTests {
         let secondPeriodId = try #require(second["period_id"] as? String)
         let firstPayload = fixture.owner.store.periodFileURL(for: firstPeriodId)
         let secondPayload = fixture.owner.store.periodFileURL(for: secondPeriodId)
+        #expect(FileManager.default.fileExists(atPath: firstPayload.path))
+        // An ordinary `.ok` POST on the admitted route is an authoritative receipt
+        // and releases each period it proves, the stale one included.
         fixture.pause.set(false)
         fixture.clock.advance(seconds: 301)
         #expect(await transport.waitForAttempts(2))
+        #expect(await waitForPeriodState(fixture, periodId: firstPeriodId, state: "delivered"))
+        #expect(await waitForPeriodState(fixture, periodId: secondPeriodId, state: "delivered"))
+        #expect(FileManager.default.fileExists(atPath: firstPayload.path) == false)
+        #expect(FileManager.default.fileExists(atPath: secondPayload.path) == false)
+        // With nothing held, a wall-clock rollback cannot bring stale custody back.
         fixture.clock.setWallDate(Date(timeIntervalSince1970: 1_600_000_000))
         let rolledBack = try decodedState(fixture.owner.authority.status(), projection: fixture.projection)
-        #expect(rolledBack.custodyStale)
-        #expect(FileManager.default.fileExists(atPath: firstPayload.path))
-        #expect(FileManager.default.fileExists(atPath: secondPayload.path))
-        let persistedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: firstPeriodId)
-        let binding = try #require(persistedBinding)
-        try fixture.owner.store.releaseProven(periodId: firstPeriodId, binding: binding, nowMs: fixture.owner.store.getFloorMs())
-        let youngerOnly = try decodedState(fixture.owner.authority.status(), projection: fixture.projection)
-        #expect(!youngerOnly.custodyStale)
-        #expect(FileManager.default.fileExists(atPath: secondPayload.path))
+        #expect(!rolledBack.custodyStale)
         fixture.owner.stop()
     }
 
@@ -2295,21 +2317,14 @@ struct BrowserSpoolLifecycleTests {
         await fixture.updateRoute(.held)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await transport.waitForAttempts(1))
-        if removed {
-            #expect(await waitForDeliveryState(fixture, state: "failed"))
-            let retained = try #require(fixture.owner.store.getPeriod(periodId: deliveredPeriodId))
-            #expect(retained.state == "finalized")
-            #expect(retained.deliveredAtMs == nil)
-            #expect(FileManager.default.fileExists(atPath: fixture.owner.store.periodFileURL(for: deliveredPeriodId).path))
-            fixture.owner.stop()
-            return
+        if !removed {
+            let storedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: deliveredPeriodId)
+            let binding = try #require(storedBinding)
+            transport.setDayListing(matchingListing(binding.ack))
+            await fixture.updateRoute(.held)
+            await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         }
-        let storedBinding = try fixture.owner.store.storedDeliveryBinding(periodId: deliveredPeriodId)
-        let binding = try #require(storedBinding)
-        transport.setDayListing(matchingListing(binding.ack))
-        await fixture.updateRoute(.held)
-        await fixture.updateRoute(.url("http://127.0.0.1:49321"))
-        #expect(await waitForPeriodState(fixture, periodId: deliveredPeriodId, state: "delivered"))
+        #expect(await waitForPeriodState(fixture, periodId: deliveredPeriodId, state: removed ? "removed" : "delivered"))
         let deliveredAt = try #require(fixture.owner.store.getPeriod(periodId: deliveredPeriodId)?.deliveredAtMs)
         #expect(try reply(await fixture.owner.accept(bytes: firstBytes, direction: "extension_to_host"))["result"] as? String == "duplicate")
 

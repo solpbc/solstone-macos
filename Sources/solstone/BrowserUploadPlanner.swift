@@ -302,21 +302,58 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                     status: response.status
                 )
                 let binding = BrowserDeliveryBinding(ack: ack, route: capture.route)
+                // An answer that arrives after its route was replaced binds no receipt
+                // and releases nothing; the bytes stay held for the current route.
+                guard routeState.matches(capture.route) else {
+                    Logger.upload.notice("Browser upload answer for period \(period.periodId, privacy: .public) arrived on a replaced route; bytes held")
+                    return
+                }
+                try store.publishDeliveryAck(binding)
+                // A collision response gives an opaque key but no stream.
+                // Hold the payload until a listing supplies physical coordinates.
+                guard response.status != .collision else {
+                    recordDeliveryFailure(nil, period: period, capture: capture, lease: lease)
+                    return
+                }
                 let commit = admissionLock.withLock { carriedPairingAdmissionCommit }
-                let committed = try commit(capture.route) { [store, routeState, nowMs] in
+                let released = try commit(capture.route) { [store, routeState, nowMs] in
                     guard routeState.matches(capture.route) else { return false }
-                    try store.publishDeliveryAck(binding)
-                    guard routeState.matches(capture.route) else { return false }
-                    // A collision response gives an opaque key but no stream.
-                    // Hold the payload until a listing supplies physical coordinates.
-                    if response.status != .collision {
-                        try store.releaseProven(periodId: period.periodId, binding: binding, nowMs: nowMs())
-                    }
+                    try store.releaseProven(periodId: period.periodId, binding: binding, nowMs: nowMs())
                     return true
                 }
-                guard committed else { return }
+                guard released else {
+                    Logger.upload.notice("Browser custody release skipped for period \(period.periodId, privacy: .public): route replaced or admission closed; receipt kept")
+                    return
+                }
                 recordDeliveryFailure(nil, period: period, capture: capture, lease: lease)
             case .failure(let error):
+                if case .segmentScoped(.segmentRemoved) = classifyUpload(error), lease.isValid(),
+                   let part = prepared.stagedParts.first {
+                    // The owner removed this segment from the journal; resending it would
+                    // resurrect what they deleted. Record the proof and drop the local copy
+                    // through the same admitted connection that received the answer.
+                    let proof = BrowserIngestAck(
+                        generation: capture.destinationGeneration ?? "",
+                        source: "browser",
+                        periodId: period.periodId,
+                        filename: "browser_pages.jsonl",
+                        sha256: part.sha256,
+                        size: part.size,
+                        metadata: prepared.metadata,
+                        requestedDay: day,
+                        requestedSegment: segment,
+                        canonicalKey: period.canonicalKey ?? segment,
+                        status: .duplicate
+                    )
+                    let proofBinding = BrowserDeliveryBinding(ack: proof, route: capture.route)
+                    let commit = admissionLock.withLock { carriedPairingAdmissionCommit }
+                    _ = try commit(capture.route) { [store, routeState, nowMs] in
+                        guard routeState.matches(capture.route) else { return false }
+                        try store.removeProvenSegment(periodId: period.periodId, binding: proofBinding, nowMs: nowMs())
+                        return true
+                    }
+                    return
+                }
                 let failure = classifyUpload(error)
                 Logger.upload.error("Browser upload failed for period \(period.periodId, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 recordDeliveryFailure(failureCode(for: failure), period: period, capture: capture, lease: lease)
