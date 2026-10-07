@@ -39,6 +39,25 @@ struct SPLPairingKeychainTests {
         #expect(SecurityPairingKeychainItems.deviceItemAccessibility == kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
     }
 
+    @Test func loginItemUpdatesChangeTheSecretNeverTheAccessList() {
+        // Passing an access object on update is a change-ACL operation, and
+        // macOS asks for the login keychain password for every one of those.
+        let attributes = SecurityPairingKeychainItems.loginItemUpdateAttributes(data: Data([1, 2, 3]))
+        #expect(attributes.keys.sorted() == [kSecValueData as String])
+        #expect(attributes[kSecAttrAccess as String] == nil)
+        #expect(attributes[kSecValueData as String] as? Data == Data([1, 2, 3]))
+    }
+
+    @Test func aLockedLoginKeychainIsNotTreatedAsUnlocked() {
+        let unlocked = SecKeychainStatus(kSecUnlockStateStatus)
+        let readable = SecKeychainStatus(kSecReadPermStatus)
+        let writable = SecKeychainStatus(kSecWritePermStatus)
+        #expect(SecurityPairingKeychainItems.isUnlocked(unlocked | readable | writable))
+        #expect(SecurityPairingKeychainItems.isUnlocked(unlocked))
+        #expect(!SecurityPairingKeychainItems.isUnlocked(readable | writable))
+        #expect(!SecurityPairingKeychainItems.isUnlocked(0))
+    }
+
     @Test func policyLiteralsMatchEntitlementsAppPlist() throws {
         #expect(SPLPairingKeychain.service == "app.solstone.observer.spl")
         #expect(SPLPairingKeychain.account == "spl-pairing-bundle")

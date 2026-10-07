@@ -503,15 +503,31 @@ final class SecurityPairingKeychainItems: PairingKeychainItems, @unchecked Senda
         return keychain
     }
 
+    /// A locked login keychain answers every item call with an unlock prompt,
+    /// and a prompt nobody answers blocks pairing. Read the lock state first and
+    /// report a locked keychain as unavailable storage instead.
+    private func unlockedKeychain() throws -> SecKeychain {
+        let keychain = try openedKeychain()
+        var status = SecKeychainStatus()
+        let statusResult = SecKeychainGetStatus(keychain, &status)
+        guard statusResult == errSecSuccess else { throw PairingKeychainError.status(statusResult) }
+        guard Self.isUnlocked(status) else { throw PairingKeychainError.status(errSecInteractionNotAllowed) }
+        return keychain
+    }
+
+    static func isUnlocked(_ status: SecKeychainStatus) -> Bool {
+        status & SecKeychainStatus(kSecUnlockStateStatus) != 0
+    }
+
     private func searchQuery(_ identity: [String: Any]) throws -> [String: Any] {
         var query = identity
-        query[kSecMatchSearchList as String] = [try openedKeychain()] as CFArray
+        query[kSecMatchSearchList as String] = [try unlockedKeychain()] as CFArray
         return query
     }
 
     private func addQuery(_ identity: [String: Any]) throws -> [String: Any] {
         var query = identity
-        query[kSecUseKeychain as String] = try openedKeychain()
+        query[kSecUseKeychain as String] = try unlockedKeychain()
         return query
     }
 
@@ -548,19 +564,21 @@ final class SecurityPairingKeychainItems: PairingKeychainItems, @unchecked Senda
         return try copyData(query)
     }
 
+    /// An update changes the secret only. The access object is set once, when the
+    /// item is added: rewriting it is a change-ACL operation, and macOS asks for
+    /// the login keychain password for every change-ACL operation.
+    static func loginItemUpdateAttributes(data: Data) -> [String: Any] {
+        [kSecValueData as String: data]
+    }
+
     private func writeLoginItem(_ identity: [String: Any], data: Data) throws {
-        let access = try destinationAccess()
         let query = try searchQuery(identity)
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccess as String: access
-        ]
-        let update = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        let update = SecItemUpdate(query as CFDictionary, Self.loginItemUpdateAttributes(data: data) as CFDictionary)
         if update == errSecSuccess { return }
         guard update == errSecItemNotFound else { throw PairingKeychainError.status(update) }
         var add = try addQuery(identity)
         add[kSecValueData as String] = data
-        add[kSecAttrAccess as String] = access
+        add[kSecAttrAccess as String] = try destinationAccess()
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess || status == errSecDuplicateItem else { throw PairingKeychainError.status(status) }
         if status == errSecDuplicateItem {
@@ -599,8 +617,9 @@ final class SecurityPairingKeychainItems: PairingKeychainItems, @unchecked Senda
         // Supplying this access object explicitly restricts sensitive item
         // operations to the calling app. For signed macOS code, the keychain
         // records the app's designated requirement, so updates with the same
-        // Developer ID identity retain access without a cdhash ACL. Never omit
-        // kSecAttrAccess or continue with an implicit item ACL.
+        // Developer ID identity retain access without a cdhash ACL. Never add
+        // an item without kSecAttrAccess or with an implicit item ACL; never
+        // pass it on an update (see loginItemUpdateAttributes).
         var access: SecAccess?
         let accessStatus = SecAccessCreate("Solstone pairing credential" as CFString, nil, &access)
         guard accessStatus == errSecSuccess, let access else {
