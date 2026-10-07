@@ -13,7 +13,7 @@ final class PairingStore: @unchecked Sendable {
     private var loadOutcomes: [Result<StoredPairing?, any Error>]
     private let loadError: (any Error)?
     private let saveError: (any Error)?
-    private let deleteError: (any Error)?
+    private var deleteError: (any Error)?
     private var carriedRecordSaveError: (any Error)?
     private var carriedRecordSaveAfterWriteError: (any Error)?
     private var carriedRecordLoadError: (any Error)?
@@ -114,6 +114,10 @@ final class PairingStore: @unchecked Sendable {
         if let carriedRecordSaveError { throw carriedRecordSaveError }
         lock.withLock { carriedPairingRecord = record }
         if let carriedRecordSaveAfterWriteError { throw carriedRecordSaveAfterWriteError }
+    }
+
+    func setDeleteError(_ error: (any Error)?) {
+        lock.withLock { deleteError = error }
     }
 
     func setCarriedRecordSaveError(_ error: (any Error)?) {

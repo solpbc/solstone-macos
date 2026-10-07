@@ -322,7 +322,7 @@ struct PairingCoordinatorTests {
     }
 
     // Acceptance 3: Unpair edge cases.
-    @Test func unpairWhenCredentialLoadFailsPreservesPairingAndSkipsRetirement() async throws {
+    @Test func unpairWhenLoadThrowsSkipsRetireDeletesAndEndsSelfRetirement() async throws {
         let order = OrderRecorder()
         let store = PairingStore(pairing: pairing(), loadError: PairScriptError.noOutcome)
         let reactivate = ReactivateRecorder()
@@ -335,20 +335,20 @@ struct PairingCoordinatorTests {
                 return true
             },
             endSelfRetirement: {
+                #expect(store.deleted)
                 order.record("endSelfRetirement")
             }
         )
 
-        #expect(!(await coordinator.unpair()))
+        #expect(await coordinator.unpair())
 
-        #expect(coordinator.state == .failed(.localSetup))
-        #expect(store.currentPairing != nil)
-        #expect(!store.deleted)
-        #expect(await reactivate.count == 0)
-        #expect(order.events.isEmpty)
+        #expect(coordinator.state == .idle)
+        #expect(store.deleted)
+        #expect(await reactivate.count == 1)
+        #expect(order.events == ["endSelfRetirement"])
     }
 
-    @Test func unpairWhenNoCredentialExistsDoesNotDeleteOrRetire() async throws {
+    @Test func unpairWhenLoadReturnsNilSkipsRetireDeletesAndEndsSelfRetirement() async throws {
         let order = OrderRecorder()
         let store = PairingStore(pairing: nil)
         let coordinator = makeCoordinator(
@@ -359,6 +359,7 @@ struct PairingCoordinatorTests {
                 return true
             },
             endSelfRetirement: {
+                #expect(store.deleted)
                 order.record("endSelfRetirement")
             }
         )
@@ -366,8 +367,39 @@ struct PairingCoordinatorTests {
         #expect(await coordinator.unpair())
 
         #expect(coordinator.state == .idle)
-        #expect(!store.deleted)
+        #expect(store.deleted)
         #expect(order.events == ["endSelfRetirement"])
+    }
+
+    @Test func unreachableJournalUnpairStillRemovesTheLocalPairingAfterDurableInvalidation() async throws {
+        let order = OrderRecorder()
+        let store = PairingStore(pairing: pairing())
+        let reactivate = ReactivateRecorder()
+        let clear = ClearRecorder()
+        let coordinator = makeCoordinator(
+            store: store,
+            outcomes: [],
+            reactivate: reactivate,
+            clear: clear,
+            retireOwnCredential: { _, _ in
+                #expect((try? store.loadCarriedPairingRecord())?.invalidation != nil)
+                order.record("retire")
+                return false
+            },
+            endSelfRetirement: {
+                order.record("endSelfRetirement")
+            }
+        )
+
+        #expect(await coordinator.unpair())
+
+        #expect(coordinator.state == .idle)
+        #expect(store.deleted)
+        #expect(store.currentPairing == nil)
+        #expect(try store.loadCarriedPairingRecord().invalidation == nil)
+        #expect(await reactivate.count == 1)
+        #expect(clear.count == 1)
+        #expect(order.events == ["retire", "endSelfRetirement"])
     }
 
     @Test func unpairWhenDeleteThrowsFailsLocalSetupAndEndsSelfRetirementWithoutReactivate() async throws {
@@ -420,6 +452,9 @@ struct PairingCoordinatorTests {
         let prior = pairing()
         let store = PairingStore(pairing: prior)
         let firstOperation = LockedValue<String>()
+        // The journal does not answer and the local delete is interrupted, so the
+        // durable invalidation outlives the first attempt.
+        store.setDeleteError(PairScriptError.noOutcome)
         let firstCoordinator = makeCoordinator(
             store: store,
             outcomes: [],
@@ -435,6 +470,7 @@ struct PairingCoordinatorTests {
         #expect(!pending.remoteRetirementConfirmed)
         #expect(store.currentPairing == prior)
 
+        store.setDeleteError(nil)
         let retryOperation = LockedValue<String>()
         let reopened = makeCoordinator(
             store: store,

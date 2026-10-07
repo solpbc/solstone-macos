@@ -240,12 +240,15 @@ final class PairingCoordinator {
         guard state != .pairing else { return false }
         state = .pairing
         let stored: StoredPairing?
+        var credentialUnreadable = false
         do {
             stored = try loadPairing()
         } catch {
+            // An unreadable credential has no identity to invalidate or retire,
+            // but the owner asked to unpair: remove whatever is stored.
             pairingLog.error("pairing load failed before unpair: \(String(describing: type(of: error)), privacy: .public)")
-            state = .failed(.localSetup)
-            return false
+            stored = nil
+            credentialUnreadable = true
         }
         if let stored {
             guard let credentialStore else {
@@ -273,9 +276,9 @@ final class PairingCoordinator {
             }
         } else if let credentialStore {
             do {
-                let record = try credentialStore.carriedPairingRecord()
-                if let invalidation = record.invalidation {
-                    guard invalidation.remoteRetirementConfirmed,
+                let record = credentialUnreadable ? nil : try credentialStore.carriedPairingRecord()
+                if let record, let invalidation = record.invalidation {
+                    guard invalidation.remoteRetirementAttempted,
                           !record.legacyCleanupPending else {
                         state = .failed(.localSetup)
                         return false
@@ -290,7 +293,10 @@ final class PairingCoordinator {
                         expectedCurrentPairing: nil
                     )
                 }
+                try await Task.detached { try credentialStore.delete() }.value
             } catch {
+                pairingLog.error("pairing delete failed without a readable credential: \(String(describing: type(of: error)), privacy: .public)")
+                endSelfRetirement()
                 state = .failed(.localSetup)
                 return false
             }
@@ -322,7 +328,7 @@ final class PairingCoordinator {
                 return
             }
             guard latestRecord.invalidation == invalidation,
-                  invalidation.remoteRetirementConfirmed,
+                  invalidation.remoteRetirementAttempted,
                   !latestRecord.legacyCleanupPending else {
                 state = .failed(.localSetup)
                 return
@@ -358,15 +364,18 @@ final class PairingCoordinator {
         } else {
             retired = await retireOwnCredential(pairing, invalidation.operationID)
         }
-        guard retired, credentialStore.owns(identity, operationID: invalidation.operationID) else {
-            state = .failed(.network)
+        guard credentialStore.owns(identity, operationID: invalidation.operationID) else {
+            state = .failed(.localSetup)
             endSelfRetirement()
             return
+        }
+        if !retired {
+            pairingLog.notice("journal did not confirm credential retirement; local removal proceeds under the durable invalidation")
         }
         do {
             var completed = invalidation
             completed.remoteRetirementAttempted = true
-            completed.remoteRetirementConfirmed = true
+            completed.remoteRetirementConfirmed = retired
             try credentialStore.updateInvalidation(completed, whilePairing: pairing)
             guard let current = try loadPairing(), PairingCredentialRevision(from: current) == identity else {
                 throw PairingCredentialStoreError.staleGeneration
@@ -442,10 +451,11 @@ final class PairingCoordinator {
             state = .failed(.localSetup)
             return false
         }
-        guard retired else {
-            endSelfRetirement()
-            state = .failed(.network)
-            return false
+        // The invalidation is durable, so obsolete work stays fenced whether or
+        // not the journal answered. An unreachable journal must not keep the
+        // owner paired; local removal proceeds and the attempt is recorded.
+        if !retired {
+            pairingLog.notice("journal did not confirm credential retirement; local removal proceeds under the durable invalidation")
         }
         return true
     }
@@ -996,6 +1006,10 @@ final class PairingCoordinator {
                 record.replacementOfferID = UUID().uuidString.lowercased()
                 record.replacementOfferShown = false
                 record.decision = nil
+                // A fresh pairing owes nothing to an older credential's pending
+                // rekey or interrupted removal; leaving them would block admission.
+                record.candidate = nil
+                record.invalidation = nil
                 try credentialStore.saveCarriedPairingRecord(record)
             }
         } catch {

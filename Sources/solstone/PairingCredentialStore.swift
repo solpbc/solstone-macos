@@ -568,7 +568,7 @@ public final class PairingCredentialStore: @unchecked Sendable {
               record.invalidation?.fingerprint == invalidation.fingerprint,
               record.invalidation?.revision == invalidation.revision,
               record.invalidation?.journalIdentity == invalidation.journalIdentity,
-              record.invalidation?.remoteRetirementConfirmed == true else {
+              record.invalidation?.remoteRetirementAttempted == true else {
             throw PairingCredentialStoreError.staleGeneration
         }
         try save(pairing)
@@ -589,7 +589,7 @@ public final class PairingCredentialStore: @unchecked Sendable {
               record.invalidation?.fingerprint == invalidation.fingerprint,
               record.invalidation?.revision == invalidation.revision,
               record.invalidation?.journalIdentity == invalidation.journalIdentity,
-              record.invalidation?.remoteRetirementConfirmed == true else {
+              record.invalidation?.remoteRetirementAttempted == true else {
             throw PairingCredentialStoreError.staleGeneration
         }
         try delete(expectedGeneration: storedPairingGeneration)
