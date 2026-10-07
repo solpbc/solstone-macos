@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.35 (build 73)] - 2026-10-07
+
+### Changed
+- updated the bundled journal to [2.0.35](https://solstone.app/releases#v2.0.35) →
+
+### Fixed
+- quitting the journal app while "add a device" or a "remove" question is open now quits it. before, the journal app stayed open, and logging out or restarting your mac could be refused.
+
 ## [2.0.34 (build 72)] - 2026-10-06
 
 ### Changed

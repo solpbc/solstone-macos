@@ -7,14 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.27] - 2026-10-07
+
+### Added
+- after you pair the solstone app with your journal and confirm its mark, the solstone app asks "is this replacing one of your devices?" you can keep both, or choose the device this mac replaces. the device you choose loses access to your journal.
+
 ### Changed
-- a bluetooth headset no longer sounds worse just because the solstone app is open: its microphone goes into your journal while another app, such as a call app, is using it, or always if you choose. a headset connected when this version first opens switches to this; you can change any headset in settings.
+- a bluetooth headset no longer sounds worse just because the solstone app is open: its microphone goes into your journal while another app, such as a call app, is using it, or always if you choose. each headset still set to always switches to this the first time this version sees it connected; you can change any headset in settings.
 - there's no longer a limit of four microphones going into your journal.
 
 ### Fixed
-- audio no longer goes missing where one segment ends and the next begins. before, about a tenth of a second could be lost at each change, and the next segment started with silence in its place.
 - pausing now stops audio from going into your journal right away. before, a little more audio could go in while the segment finished.
 - turning a microphone off in settings now stops its audio from going into your journal right away, and turning one on no longer needs you to restart the solstone app. before, a microphone you turned off kept going in until you turned off all audio.
+- audio no longer goes missing where one segment ends and the next begins. before, about a tenth of a second could be lost at each change, and the next segment started with silence in its place.
 - when your mac's audio system restarts, system audio intake resumes within seconds. before, it could stop for more than a minute while the solstone app still looked fine.
 - when a microphone disconnects and comes back, its audio intake now resumes on its own. if a microphone or system audio keeps failing to restart, the solstone app keeps trying instead of waiting for you to pause and resume, and the menu names what isn't coming through.
 - unplugging a microphone, turning one off, or having none connected no longer shows "audio may be incomplete for this segment."
@@ -23,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - after a gap in audio, the sound that follows now stays at the time it happened. before, it could be placed earlier.
 - holding the solstone menu open no longer stalls audio and screen intake.
 - on a slow network, like a café's wifi, connecting to your journal through the relay now gets enough time to finish. before, the solstone app could give up a moment before it would have connected.
+- quitting the solstone app while it's asking you to confirm your journal's mark now quits it. before, intake stopped but the solstone app stayed open, and logging out or restarting your mac could be refused.
 
 ## [2.0.26] - 2026-10-06
 
