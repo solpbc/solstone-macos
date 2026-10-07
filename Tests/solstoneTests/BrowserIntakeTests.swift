@@ -1026,8 +1026,8 @@ struct BrowserIntakeAdmissionTests {
         #expect(FileManager.default.fileExists(atPath: pFileURL.path))
 
         await planner.planAndUpload()
-        #expect(store.getPeriod(periodId: pid)?.state == "finalized")
-        #expect(FileManager.default.fileExists(atPath: pFileURL.path))
+        #expect(store.getPeriod(periodId: pid)?.state == "removed")
+        #expect(!FileManager.default.fileExists(atPath: pFileURL.path))
     }
 
     @Test func test3_collisionAndLostResponseProof() throws {
