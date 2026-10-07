@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- the question about replacing a device is now skipped when your journal lists no other paired device. it still appears when another device is listed.
+
 ## [2.0.27] - 2026-10-07
 
 ### Added
