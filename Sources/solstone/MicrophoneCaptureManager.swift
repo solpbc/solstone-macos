@@ -225,9 +225,38 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         for entry in detached.values { await entry.capture.drain() }
     }
 
-    internal func detachForBoundary() -> [String: (capture: ExternalMicCapture, cutoff: CMTime)] {
-        let all = lock.withLock { captures }
-        return all.mapValues { capture in (capture, capture.detachForBoundary()) }
+    /// With a handoff, each selected microphone's later audio is held for the
+    /// next segment in the same step that detaches it from this one.
+    internal func detachForBoundary(handoff: AudioRotationHandoff? = nil) -> [String: (capture: ExternalMicCapture, cutoff: CMTime)] {
+        let all = lock.withLock { captures.map { (uid: $0.key, capture: $0.value, allowed: selectionAllows($0.key),
+            revision: selectionRevisions[$0.key, default: 0]) } }
+        var detached: [String: (capture: ExternalMicCapture, cutoff: CMTime)] = [:]
+        for entry in all {
+            guard entry.allowed, let handoff, let stream = handoff.stream(for: entry.uid) else {
+                detached[entry.uid] = (entry.capture, entry.capture.detachForBoundary())
+                continue
+            }
+            let uid = entry.uid, revision = entry.revision
+            let result = entry.capture.detachForBoundary(successor: { [weak self] buffer, time in
+                guard let self else { return nil }
+                return self.lock.withLock {
+                    guard self.selectionAllows(uid), self.selectionRevisions[uid, default: 0] == revision else { return nil }
+                    return stream.receive(pcm: buffer, at: time)
+                }
+            }, admissionGate: { [weak self] operation in
+                guard let self else { return false }
+                return self.lock.withLock {
+                    guard self.selectionAllows(uid), self.selectionRevisions[uid, default: 0] == revision else { return false }
+                    operation()
+                    return true
+                }
+            })
+            _ = handoff.stream(for: uid) { [weak capture = entry.capture] in
+                capture?.clearDestination(ifRevision: result.revision)
+            }
+            detached[uid] = (entry.capture, result.cutoff)
+        }
+        return detached
     }
 
     private func detachCallbacks() -> [ExternalMicCapture] {

@@ -198,7 +198,10 @@ final class FakeAudioManager: SegmentAudioManaging, @unchecked Sendable {
         self.behavior = behavior
     }
 
-    func setSegmentStartTime(_ time: CMTime) {}
+    let segmentStartTime = LockedValue<CMTime>()
+    let rotationHandoff = LockedValue<AudioRotationHandoff>()
+    func setSegmentStartTime(_ time: CMTime) { segmentStartTime.set(time) }
+    func bindRotationHandoff(_ handoff: AudioRotationHandoff) { rotationHandoff.set(handoff) }
 
     func startSystemAudio() throws -> String {
         startSystemAudioCount.increment()
@@ -251,6 +254,18 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
     let finishGate: OneShotContinuationGate?
     let startCount = LockedCounter()
     let finishCaptureCount = LockedCounter()
+    /// The rotation handoff this segment gave its audio to, and the finish count then.
+    let handedOffTo = LockedValue<AudioRotationHandoff>()
+    let finishCountAtHandoff = LockedValue<Int>()
+    /// The rotation handoff this segment continued from, and the start count then.
+    let continuedFrom = LockedValue<AudioRotationHandoff>()
+    let startCountAtContinue = LockedValue<Int>()
+    func handOffAudio(to handoff: AudioRotationHandoff) {
+        handedOffTo.set(handoff); finishCountAtHandoff.set(finishCaptureCount.count)
+    }
+    func continueAudio(from handoff: AudioRotationHandoff) {
+        continuedFrom.set(handoff); startCountAtContinue.set(startCount.count)
+    }
     private var retainedSystemAudioCaptureManager: SystemAudioCaptureManager?
 
     init(

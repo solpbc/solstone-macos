@@ -31,6 +31,8 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     func recordMicrophoneStall(deviceUID: String)
     func sourcesWithLoss() -> [String]
     func cutAudio()
+    func handOffAudio(to handoff: AudioRotationHandoff)
+    func continueAudio(from handoff: AudioRotationHandoff)
     var onTerminalStop: (@MainActor () -> Void)? { get set }
     var onCaptureIssue: (@MainActor (String) -> Void)? { get set }
 }
@@ -40,6 +42,8 @@ public extension CaptureSegmentWriting {
     func recordMicrophoneStall(deviceUID: String) { deselectMicrophone(deviceUID: deviceUID) }
     func sourcesWithLoss() -> [String] { [] }
     func cutAudio() {}
+    func handOffAudio(to handoff: AudioRotationHandoff) {}
+    func continueAudio(from handoff: AudioRotationHandoff) {}
     var onCaptureIssue: (@MainActor (String) -> Void)? {
         get { nil }
         set {}
@@ -523,7 +527,8 @@ public final class CaptureManager {
     ///   - segmentDir: Directory to write segment files to
     ///   - timePrefix: Time prefix for file naming
     ///   - mics: Microphone devices to start recording
-    private func startNewSegmentWithDirectory(_ segmentDir: URL, timePrefix: String, mics: [AudioInputDevice] = []) async throws {
+    private func startNewSegmentWithDirectory(_ segmentDir: URL, timePrefix: String, mics: [AudioInputDevice] = [],
+                                              audioHandoff: AudioRotationHandoff? = nil) async throws {
         try Task.checkCancellation()
         guard !lifecycleManager.ownerPauseIsHeld() else { throw CancellationError() }
         if sessionSources.contains(.screen) {
@@ -559,6 +564,7 @@ public final class CaptureManager {
         )
         currentAudioCaptureIssue = nil
         currentAudioHealthNote = nil
+        if let audioHandoff { segment.continueAudio(from: audioHandoff) }
         segment.onTerminalStop = { [weak self] in
             self?.handleTerminalStreamStop()
         }
@@ -1156,8 +1162,14 @@ extension CaptureManager: CaptureLifecycleDelegate {
             return .failed(transitionFailure(for: error))
         }
 
+        // The old segment's audio stops at one cutoff, which is also the new
+        // segment's origin; audio after it is held until the new writers attach.
+        // Whatever no new writer claims is dropped when the rotation ends.
+        let audioHandoff = AudioRotationHandoff()
+        defer { audioHandoff.discard() }
         var oldResult: SegmentCaptureResult?
         if let segment = currentSegment {
+            segment.handOffAudio(to: audioHandoff)
             oldResult = await segment.finishCapture()
         }
         if let oldResult {
@@ -1166,6 +1178,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
         if shouldVetoCommit() {
             Logger.capture.info("Segment rotation superseded by pause/lock; bailing without a new segment")
+            audioHandoff.discard()
             await markDiscardedSegmentFailedAndRecover(newSegmentDir)
             return .superseded
         }
@@ -1176,7 +1189,8 @@ extension CaptureManager: CaptureLifecycleDelegate {
             try await self.startNewSegmentWithDirectory(
                 newSegmentDir,
                 timePrefix: newTimePrefix,
-                mics: availableMics
+                mics: availableMics,
+                audioHandoff: audioHandoff
             )
         }
 
@@ -1216,6 +1230,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
         if shouldVetoCommit() {
             Logger.capture.info("Segment rotation superseded by pause/lock; bailing without a new segment")
+            audioHandoff.discard()
             _ = await discardCurrentSegmentWithoutEnqueue(matching: newSegmentDir)
             await stopPersistentAudioForDiscard()
             await markDiscardedSegmentFailedAndRecover(newSegmentDir)

@@ -49,6 +49,13 @@ public final class PerSourceAudioManager: @unchecked Sendable {
     private var systemCutoff: CMTime?
     private var systemBudget = AudioMediaBudget()
     private var diagnostics: AudioCaptureRecorder?
+    /// The rotation this segment continues from: its held audio for a source
+    /// goes into that source's writer here before anything newer.
+    private var rotationHandoff: AudioRotationHandoff?
+
+    public func bindRotationHandoff(_ handoff: AudioRotationHandoff) {
+        lock.withLock { rotationHandoff = handoff }
+    }
 
     public func bindDiagnostics(_ recorder: AudioCaptureRecorder) {
         lock.withLock { diagnostics = recorder }
@@ -204,6 +211,11 @@ public final class PerSourceAudioManager: @unchecked Sendable {
                     throw MicrophoneCaptureManager.SelectionError.selectionChanged
                 }
 
+                // Audio held since the previous segment's cutoff goes first, then
+                // the capture delivers to this segment's writer directly.
+                rotationHandoff?.claim(sourceID)?.attach(pcm: { [weak writer] buffer, time in
+                    writer?.enqueuePCMBuffer(buffer, presentationTime: time)
+                })
                 // Wire callback to this segment's writer
                 captureManager.setQueuedCallback(for: device.uid, callback: { [weak writer] buffer, time in
                     writer?.enqueuePCMBuffer(buffer, presentationTime: time)
@@ -336,6 +348,13 @@ public final class PerSourceAudioManager: @unchecked Sendable {
 
     @discardableResult
     public func prepareToFinishCapture() -> CMTime {
+        prepareToFinishCapture(handoff: nil)
+    }
+
+    /// Closes admission at one cutoff. With a handoff, microphone audio after
+    /// the cutoff is held for the next segment instead of being dropped.
+    @discardableResult
+    public func prepareToFinishCapture(handoff: AudioRotationHandoff?) -> CMTime {
         boundaryLock.withLock {
         let shouldDetach = lock.withLock { () -> Bool in
             guard !admissionClosed else { return false }
@@ -343,11 +362,12 @@ public final class PerSourceAudioManager: @unchecked Sendable {
             return true
         }
         guard shouldDetach else { return lock.withLock { systemCutoff ?? CMClockGetTime(CMClockGetHostTimeClock()) } }
-        var boundaries = captureManager?.detachForBoundary() ?? [:]
+        var boundaries = captureManager?.detachForBoundary(handoff: handoff) ?? [:]
         let legacy = lock.withLock { sourceWriters.compactMapValues(\.legacyCapture) }
         for (id, capture) in legacy { boundaries[id] = (capture, capture.detachForBoundary()) }
         let cutoff = CMClockGetTime(CMClockGetHostTimeClock())
         lock.withLock { boundaryCaptures = boundaries; systemCutoff = cutoff }
+        handoff?.setCutoff(cutoff)
         return cutoff
         }
     }

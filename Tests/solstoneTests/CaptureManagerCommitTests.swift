@@ -40,6 +40,37 @@ struct CaptureManagerCommitTests {
         #expect(manager.currentAudioCaptureIssue == nil)
         _ = await executor.enqueue(.stop(reason: .user))
     }
+    @Test func rotationHandsOldAudioToTheNewSegmentBeforeEitherFinishesOrStarts() async throws {
+        let root = try makeTempDirectory("capture-rotation-handoff")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let created = LockedArray<FakeCaptureSegment>([])
+        let now = LockedValue<Date>()
+        let firstNow = Date(timeIntervalSince1970: 1_790_955_600)
+        now.set(firstNow)
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in
+                let segment = FakeCaptureSegment(outputDirectory: directory)
+                created.append(segment)
+                return segment
+            }, finalizer: FakeFinalizer(), now: { now.current ?? firstNow }, allowsEmptyDisplayConfigurationForTesting: true)
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
+        guard case .committed = await executor.enqueue(.start(reason: .user, sources: [.screen], disabledMicUIDs: [], enabledMicUIDs: [])) else {
+            Issue.record("expected start"); return
+        }
+        #expect(created.all.first?.continuedFrom.current == nil)
+        now.set(firstNow.addingTimeInterval(301))
+        guard case .committed = await executor.enqueue(.rotate(reason: .boundary)) else { Issue.record("expected rotation"); return }
+        let segments = created.all
+        try #require(segments.count == 2)
+        let handoff = try #require(segments[0].handedOffTo.current)
+        #expect(segments[0].finishCountAtHandoff.current == 0)
+        #expect(segments[1].continuedFrom.current === handoff)
+        #expect(segments[1].startCountAtContinue.current == 0)
+        // The rotation is over, so nothing more can be held for it.
+        #expect(handoff.stream(for: "late") == nil)
+        _ = await executor.enqueue(.stop(reason: .user))
+    }
+
     @Test func stopRecordingFinishesAndEnqueuesActiveSegment() async throws {
         let finalizer = FakeFinalizer()
         let (manager, root) = try makeManager(finalizer: finalizer)

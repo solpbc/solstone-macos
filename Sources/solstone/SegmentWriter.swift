@@ -88,6 +88,8 @@ public protocol SegmentAudioManaging: AnyObject, Sendable {
     func audioStatistics() -> [String: AudioWriterStatistics]
     func audioOwnership() -> AudioNativeOwnership?
     func prepareToFinishCapture() -> CMTime
+    func prepareToFinishCapture(handoff: AudioRotationHandoff?) -> CMTime
+    func bindRotationHandoff(_ handoff: AudioRotationHandoff)
 }
 
 public extension SegmentAudioManaging {
@@ -97,6 +99,8 @@ public extension SegmentAudioManaging {
     func audioStatistics() -> [String: AudioWriterStatistics] { [:] }
     func audioOwnership() -> AudioNativeOwnership? { nil }
     func prepareToFinishCapture() -> CMTime { CMClockGetTime(CMClockGetHostTimeClock()) }
+    func prepareToFinishCapture(handoff: AudioRotationHandoff?) -> CMTime { prepareToFinishCapture() }
+    func bindRotationHandoff(_ handoff: AudioRotationHandoff) {}
 }
 
 extension ScreenshotCapturer: SegmentScreenshotCapturing {}
@@ -149,6 +153,12 @@ public final class SegmentWriter {
 
     /// Shared finish task so concurrent lifecycle paths close the segment exactly once.
     private var finishTask: Task<SegmentCaptureResult?, Never>?
+
+    /// Set when this segment's audio was handed to the next segment at rotation;
+    /// the shared system-audio destination then belongs to the handoff.
+    private var audioHandedOff = false
+    /// The rotation this segment continues from, set before `start`.
+    private var rotationHandoff: AudioRotationHandoff?
 
     /// Segment duration in seconds (default 5 minutes, can be changed for debug mode)
     public static var segmentDuration: TimeInterval = 300
@@ -248,7 +258,15 @@ public final class SegmentWriter {
         var screenError: Error?
         var micError: Error?
         var micAwaitingRecovery = false
-        let segmentStartTime = CMClockGetTime(CMClockGetHostTimeClock())
+        // A rotated segment starts at the previous segment's cutoff, and the audio
+        // held since then fills it. An implausibly old cutoff starts fresh instead.
+        let now = CMClockGetTime(CMClockGetHostTimeClock())
+        let handoff = rotationHandoff.flatMap { handoff -> AudioRotationHandoff? in
+            guard let cutoff = handoff.cutoff, cutoff <= now,
+                  CMTimeSubtract(now, cutoff).seconds <= AudioRotationHandoff.maximumHeldSeconds else { return nil }
+            return handoff
+        }
+        let segmentStartTime = handoff?.cutoff ?? now
         captureStartHostTime = segmentStartTime
 
         let initialMics = micCaptureManager?.microphonesForStartup(fallback: mics) ?? mics
@@ -273,6 +291,7 @@ public final class SegmentWriter {
             manager?.bindDiagnostics(diagnostics)
             if let systemAudioCaptureManager { manager?.bindSystemAudioBudget(systemAudioCaptureManager.mediaBudget) }
             manager?.setSegmentStartTime(segmentStartTime)
+            if let handoff { manager?.bindRotationHandoff(handoff) }
         } else {
             manager = nil
             self.audioManager = nil
@@ -287,6 +306,10 @@ public final class SegmentWriter {
                     if let manager { _ = try manager.startSystemAudio() }
                     if let sysAudioManager = systemAudioCaptureManager, let audioFilter {
                         self.systemAudioCaptureManager = sysAudioManager
+                        // System audio held since the previous segment's cutoff goes first.
+                        handoff?.claim(AudioTrackType.systemSourceID)?.attach(sample: { [weak manager] buffer in
+                            manager?.appendSystemAudio(buffer)
+                        })
                         sysAudioManager.setCallback(onError: { diagnostics.failure("system", stage: "capture", error: $0) }) { [weak manager] buffer in
                             manager?.appendSystemAudio(buffer)
                         }
@@ -340,6 +363,7 @@ public final class SegmentWriter {
                     // still part of this same segment and keeps its origin.
                     captureStartHostTime = segmentStartTime
                     microphoneManager.setSegmentStartTime(segmentStartTime)
+                    if let handoff { microphoneManager.bindRotationHandoff(handoff) }
                     manager = microphoneManager
                     self.audioManager = microphoneManager
                 }
@@ -477,8 +501,30 @@ public final class SegmentWriter {
     /// Stops audio admission now. Pause and stop call this before the slower finish,
     /// so nothing said after the owner paused reaches the segment.
     public func cutAudio() {
+        guard !audioHandedOff else { return }
         systemAudioCaptureManager?.clearCallback()
         _ = audioManager?.prepareToFinishCapture()
+    }
+
+    /// Rotation: stop this segment's audio at one cutoff and hold everything
+    /// after it for the next segment. Call before `finishCapture`.
+    public func handOffAudio(to handoff: AudioRotationHandoff) {
+        guard !audioHandedOff, finishTask == nil else { return }
+        audioHandedOff = true
+        if let system = systemAudioCaptureManager,
+           let stream = handoff.stream(for: AudioTrackType.systemSourceID, release: { [weak system] in system?.clearCallback() }) {
+            system.onCaptureError = nil
+            system.onAudioBuffer = { stream.receive(sample: $0) }
+        } else {
+            systemAudioCaptureManager?.clearCallback()
+        }
+        let cutoff = audioManager?.prepareToFinishCapture(handoff: handoff) ?? CMClockGetTime(CMClockGetHostTimeClock())
+        handoff.setCutoff(cutoff)
+    }
+
+    /// Rotation: continue from the previous segment's cutoff. Call before `start`.
+    public func continueAudio(from handoff: AudioRotationHandoff) {
+        rotationHandoff = handoff
     }
 
     public func finishCapture() async -> SegmentCaptureResult? {
@@ -510,8 +556,9 @@ public final class SegmentWriter {
             }
         }
 
-        // Clear system audio callback (stream keeps running for next segment)
-        systemAudioCaptureManager?.clearCallback()
+        // Clear system audio callback (stream keeps running for next segment),
+        // unless rotation already handed it to the next segment.
+        if !audioHandedOff { systemAudioCaptureManager?.clearCallback() }
         let captureCutoff = audioManager?.prepareToFinishCapture() ?? CMClockGetTime(CMClockGetHostTimeClock())
 
         // Capture mic metadata BEFORE finishAll() clears the state

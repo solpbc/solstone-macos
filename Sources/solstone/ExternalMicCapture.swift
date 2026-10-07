@@ -420,6 +420,14 @@ public final class ExternalMicCapture: @unchecked Sendable {
     /// EOS runs after every already admitted buffer and retains its old callback.
     @discardableResult
     internal func detachForBoundary() -> CMTime {
+        detachForBoundary(successor: nil, admissionGate: nil).cutoff
+    }
+
+    /// A rotation detaches and, in the same step, sends later audio to
+    /// `successor`, so no buffer falls between the old and new destinations.
+    /// The returned revision identifies that successor for `clearDestination`.
+    internal func detachForBoundary(successor: ((AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?)?,
+                                    admissionGate: ((() -> Void) -> Bool)?) -> (cutoff: CMTime, revision: UInt64) {
         callbackLock.withLock {
             _onAudioBuffer = nil; _onCaptureError = nil
             _queuedAudio = nil; _admissionGate = nil; _rawAdmissionError = nil
@@ -429,7 +437,21 @@ public final class ExternalMicCapture: @unchecked Sendable {
                 drainGeneration &+= 1
                 writerQueue.async { [self] in finishConversionStream() }
             }
-            return cutoff
+            if let successor {
+                _queuedAudio = successor; _admissionGate = admissionGate
+                destinationRevision &+= 1
+            }
+            return (cutoff, destinationRevision)
+        }
+    }
+
+    /// Clears the destination only if it is still the one `revision` names.
+    internal func clearDestination(ifRevision revision: UInt64) {
+        callbackLock.withLock {
+            guard destinationRevision == revision else { return }
+            _onAudioBuffer = nil; _onCaptureError = nil
+            _queuedAudio = nil; _admissionGate = nil; _rawAdmissionError = nil
+            destinationRevision &+= 1
         }
     }
 

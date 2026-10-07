@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import AVFoundation
+import CoreMedia
 import Foundation
 import ScreenCaptureKit
 import SolstoneCore
@@ -391,6 +392,29 @@ struct IndependentCapturePipelineTests {
         #expect(capture["state"] as? String == "partial")
         let system = try #require((capture["sources"] as? [[String: Any]])?.first { $0["source_id"] as? String == "system" })
         #expect((system["failures"] as? [[String: Any]])?.contains { $0["stage"] as? String == "screen_start" } == true)
+    }
+
+    @Test func rotatedSegmentStartsAtThePreviousCutoffAndAStaleCutoffStartsFresh() async throws {
+        let root = try makeTempDirectory("source-rotation-origin")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for stale in [false, true] {
+            let audio = FakeAudioManager()
+            let writer = SegmentWriter(outputDirectory: root, timePrefix: stale ? "120005" : "120000",
+                audioManagerFactory: { _, _, _, _ in audio })
+            let handoff = AudioRotationHandoff()
+            let before = CMClockGetTime(CMClockGetHostTimeClock())
+            let cutoff = CMTimeSubtract(before, CMTime(seconds: stale ? 30 : 0.4, preferredTimescale: 1_000_000_000))
+            handoff.setCutoff(cutoff)
+            writer.continueAudio(from: handoff)
+            _ = try await writer.start(sources: .microphone, mics: [testMicrophone])
+            let origin = try #require(audio.segmentStartTime.current)
+            if stale {
+                #expect(origin >= before && audio.rotationHandoff.current == nil)
+            } else {
+                #expect(origin == cutoff && audio.rotationHandoff.current === handoff)
+            }
+            _ = await writer.finishCapture()
+        }
     }
 
     @Test func screenOnlyNeverAttachesMicrophones() async throws {
