@@ -94,6 +94,10 @@ final class PairingCoordinator {
     private var pendingSwitchLink: PairURL?
     @ObservationIgnored
     private let classifiedLog: any ClassifiedLogSinking
+    @ObservationIgnored
+    private var freshPairMarkConfirmed = false
+    @ObservationIgnored
+    private var inFlightFreshPairEligibility: (revision: PairingCredentialRevision, attempt: String)?
 
     var tunnelState: TunnelLifecycleState {
         ownerState()
@@ -458,21 +462,145 @@ final class PairingCoordinator {
         return true
     }
 
-    func refreshPendingActions(markConfirmed: Bool) {
+    @discardableResult
+    func refreshPendingActions(markConfirmed: Bool) -> Task<Void, Never> {
+        freshPairMarkConfirmed = markConfirmed
         guard let credentialStore,
-              var record = try? credentialStore.carriedPairingRecord() else {
+              let record = try? credentialStore.carriedPairingRecord() else {
             pendingMigrationDecision = nil
             replacementOfferVisible = false
-            return
+            return Task {}
         }
         pendingMigrationDecision = record.decision
+        let pairing = try? credentialStore.load()
+        let currentRevision = pairing.map { PairingCredentialRevision(from: $0) }
         // Visibility is derived here; "shown" is recorded only once the offer
         // sheet is actually on screen, so a launch or a confirmation that never
         // displayed it cannot consume the one-shot offer.
         replacementOfferVisible = markConfirmed
             && record.replacementOfferID != nil
             && !record.replacementOfferShown
-            && (try? credentialStore.load()) != nil
+            && pairing != nil
+            && (record.freshPairObligation == nil || (currentRevision != nil && record.freshPairObligation == currentRevision))
+
+        guard markConfirmed,
+              let pairing,
+              let currentRevision,
+              record.freshPairObligation == currentRevision,
+              record.replacementOfferID == nil,
+              !record.replacementOfferShown,
+              record.decision == nil,
+              record.invalidation == nil else {
+            return Task {}
+        }
+        guard let port = localPort() else { return Task {} }
+        if let flight = inFlightFreshPairEligibility, flight.revision == currentRevision {
+            return Task {}
+        }
+        let attempt = UUID().uuidString.lowercased()
+        var attemptRecord = record
+        attemptRecord.freshPairEligibilityAttempt = attempt
+        do {
+            try credentialStore.saveCarriedPairingRecord(
+                attemptRecord,
+                expected: record,
+                whilePairing: currentRevision
+            )
+        } catch {
+            pairingLog.error("fresh pairing eligibility save failed: \(String(describing: type(of: error)), privacy: .public)")
+            return Task {}
+        }
+        inFlightFreshPairEligibility = (revision: currentRevision, attempt: attempt)
+        return Task { [weak self] in
+            await self?.finishFreshPairEligibility(port: port, revision: currentRevision, attempt: attempt)
+        }
+    }
+
+    private func finishFreshPairEligibility(
+        port: Int,
+        revision: PairingCredentialRevision,
+        attempt: String
+    ) async {
+        defer {
+            if inFlightFreshPairEligibility?.revision == revision && inFlightFreshPairEligibility?.attempt == attempt {
+                inFlightFreshPairEligibility = nil
+            }
+        }
+        guard let credentialStore else { return }
+        let rows: [CarriedPairingClientRow]
+        do {
+            rows = try await carriedPairingControl.clients(localPort: port)
+        } catch {
+            pairingLog.error("fresh pairing client list failed: \(String(describing: type(of: error)), privacy: .public)")
+            guard let currentPairing = try? credentialStore.load(),
+                  PairingCredentialRevision(from: currentPairing) == revision,
+                  let record = try? credentialStore.carriedPairingRecord(),
+                  record.freshPairObligation == revision,
+                  record.freshPairEligibilityAttempt == attempt,
+                  record.replacementOfferID == nil,
+                  !record.replacementOfferShown,
+                  record.decision == nil,
+                  record.invalidation == nil else { return }
+            var offerRecord = record
+            offerRecord.freshPairObligation = nil
+            offerRecord.freshPairEligibilityAttempt = nil
+            offerRecord.replacementOfferID = UUID().uuidString.lowercased()
+            offerRecord.replacementOfferShown = false
+            offerRecord.decision = nil
+            do {
+                try credentialStore.saveCarriedPairingRecord(
+                    offerRecord,
+                    expected: record,
+                    whilePairing: revision
+                )
+            } catch {
+                pairingLog.error("fresh pairing follow-up state save failed: \(String(describing: type(of: error)), privacy: .public)")
+                return
+            }
+            replacementOfferVisible = freshPairMarkConfirmed
+                && offerRecord.replacementOfferID != nil
+                && !offerRecord.replacementOfferShown
+            return
+        }
+
+        guard let currentPairing = try? credentialStore.load(),
+              PairingCredentialRevision(from: currentPairing) == revision,
+              let record = try? credentialStore.carriedPairingRecord(),
+              record.freshPairObligation == revision,
+              record.freshPairEligibilityAttempt == attempt,
+              record.replacementOfferID == nil,
+              !record.replacementOfferShown,
+              record.decision == nil,
+              record.invalidation == nil else {
+            return
+        }
+
+        let otherRows = rows.filter { $0.cid != currentPairing.fingerprint }
+        var outcomeRecord = record
+        outcomeRecord.freshPairObligation = nil
+        outcomeRecord.freshPairEligibilityAttempt = nil
+        outcomeRecord.replacementOfferShown = false
+        outcomeRecord.decision = nil
+        if otherRows.isEmpty {
+            outcomeRecord.replacementOfferID = nil
+        } else {
+            outcomeRecord.replacementOfferID = UUID().uuidString.lowercased()
+        }
+
+        do {
+            try credentialStore.saveCarriedPairingRecord(
+                outcomeRecord,
+                expected: record,
+                whilePairing: revision
+            )
+        } catch {
+            pairingLog.error("fresh pairing follow-up state save failed: \(String(describing: type(of: error)), privacy: .public)")
+            return
+        }
+
+        replacementOfferVisible = freshPairMarkConfirmed
+            && outcomeRecord.replacementOfferID != nil
+            && !outcomeRecord.replacementOfferShown
     }
 
     func markReplacementOfferShown() {
@@ -879,23 +1007,29 @@ final class PairingCoordinator {
         }
 
         do {
-            if let invalidation, let credentialStore {
-                try credentialStore.clearInvalidation(
-                    operationID: invalidation.operationID,
-                    fingerprint: invalidation.fingerprint,
-                    revision: invalidation.revision,
-                    expectedCurrentPairing: PairingCredentialRevision(from: pairing)
-                )
-            }
-            if successState == .paired || successState == .switched, let credentialStore {
-                var record = try credentialStore.carriedPairingRecord()
-                record.replacementOfferID = UUID().uuidString.lowercased()
+            if successState == .alreadyConnected {
+                if let invalidation, let credentialStore {
+                    try credentialStore.clearInvalidation(
+                        operationID: invalidation.operationID,
+                        fingerprint: invalidation.fingerprint,
+                        revision: invalidation.revision,
+                        expectedCurrentPairing: PairingCredentialRevision(from: pairing)
+                    )
+                }
+            } else if (successState == .paired || successState == .switched), let credentialStore {
+                let expectedRecord = try credentialStore.carriedPairingRecord()
+                var record = expectedRecord
+                record.freshPairObligation = PairingCredentialRevision(from: pairing)
+                record.freshPairEligibilityAttempt = nil
+                record.replacementOfferID = nil
                 record.replacementOfferShown = false
                 record.decision = nil
-                // A fresh pairing owes nothing to an older credential's
-                // interrupted removal; leaving it would block admission.
                 record.invalidation = nil
-                try credentialStore.saveCarriedPairingRecord(record)
+                try credentialStore.saveCarriedPairingRecord(
+                    record,
+                    expected: expectedRecord,
+                    whilePairing: PairingCredentialRevision(from: pairing)
+                )
             }
         } catch {
             pairingLog.error("pairing follow-up state save failed: \(String(describing: type(of: error)), privacy: .public)")
@@ -909,7 +1043,7 @@ final class PairingCoordinator {
         clearLastSuccessfulJournalContact()
         await reactivate()
         state = successState
-        refreshPendingActions(markConfirmed: false)
+        _ = refreshPendingActions(markConfirmed: false)
     }
 
     static func failure(for error: any Error) -> PairingFailure {

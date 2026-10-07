@@ -633,45 +633,67 @@ struct PairingCoordinatorTests {
     }
 
     @Test func freshPairReplacementOfferIsDeferredAndDismissalSubmitsNothing() async throws {
-        let saved = pairingWithFingerprint("sha256:" + String(repeating: "b", count: 64))
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
         let store = PairingStore(pairing: nil)
-        let control = PairingControlScript(mode: .accepted, store: store)
+        let control = PairingControlScript(
+            mode: .accepted,
+            store: store,
+            clients: [
+                CarriedPairingClientRow(cid: selfCID, displayLabel: "Laptop"),
+                CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")
+            ]
+        )
+        let portHolder = LockedValue<Int>()
         let coordinator = makeCoordinator(
             store: store,
             outcomes: [.success(saved)],
             carriedPairingControl: control.client,
-            localPort: { 7070 }
+            localPort: { portHolder.current }
         )
 
         await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
         var record = try store.loadCarriedPairingRecord()
-        let offerID = try #require(record.replacementOfferID)
+        #expect(record.replacementOfferID == nil)
         #expect(!record.replacementOfferShown)
         #expect(!coordinator.replacementOfferVisible)
+        #expect(record.freshPairObligation == PairingCredentialRevision(from: saved))
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
 
-        coordinator.refreshPendingActions(markConfirmed: false)
+        _ = coordinator.refreshPendingActions(markConfirmed: false)
         #expect(!coordinator.replacementOfferVisible)
-        coordinator.refreshPendingActions(markConfirmed: true)
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
+
+        await coordinator.refreshPendingActions(markConfirmed: true).value
+        #expect(!coordinator.replacementOfferVisible)
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
+
+        portHolder.set(7070)
+        await coordinator.refreshPendingActions(markConfirmed: true).value
         #expect(coordinator.replacementOfferVisible)
-        // Visible is not shown: only the sheet on screen records the one-shot offer.
-        #expect(!(try store.loadCarriedPairingRecord().replacementOfferShown))
-        // Settings closing before the sheet appeared leaves the offer owed.
+        record = try store.loadCarriedPairingRecord()
+        let offerID = try #require(record.replacementOfferID)
+        #expect(!record.replacementOfferShown)
+        #expect(record.freshPairObligation == nil)
+        #expect(control.events.filter { $0 == "clients" }.count == 1)
+
         coordinator.dismissReplacementPicker()
         #expect(!(try store.loadCarriedPairingRecord().replacementOfferShown))
-        coordinator.refreshPendingActions(markConfirmed: true)
+        _ = coordinator.refreshPendingActions(markConfirmed: true)
         #expect(coordinator.replacementOfferVisible)
         coordinator.markReplacementOfferShown()
         #expect(try store.loadCarriedPairingRecord().replacementOfferShown)
 
         coordinator.dismissReplacementPicker()
         #expect(!coordinator.replacementOfferVisible)
-        #expect(control.events.isEmpty)
+        #expect(control.events.filter { $0 == "decide" }.isEmpty)
         record = try store.loadCarriedPairingRecord()
         #expect(record.replacementOfferID == offerID)
         #expect(record.replacementOfferShown)
         #expect(record.decision == nil)
 
-        coordinator.refreshPendingActions(markConfirmed: true)
+        _ = coordinator.refreshPendingActions(markConfirmed: true)
         #expect(!coordinator.replacementOfferVisible)
     }
 
@@ -698,7 +720,7 @@ struct PairingCoordinatorTests {
         )
 
         await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
-        coordinator.refreshPendingActions(markConfirmed: true)
+        await coordinator.refreshPendingActions(markConfirmed: true).value
         coordinator.markReplacementOfferShown()
         await coordinator.openReplacementPicker()
         #expect(coordinator.replacementPickerVisible)
@@ -737,7 +759,7 @@ struct PairingCoordinatorTests {
         )
 
         await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
-        coordinator.refreshPendingActions(markConfirmed: true)
+        await coordinator.refreshPendingActions(markConfirmed: true).value
         coordinator.markReplacementOfferShown()
         let persistedOfferID = try #require(try store.loadCarriedPairingRecord().replacementOfferID)
         await coordinator.openReplacementPicker()
@@ -771,7 +793,7 @@ struct PairingCoordinatorTests {
         )
 
         await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
-        coordinator.refreshPendingActions(markConfirmed: true)
+        await coordinator.refreshPendingActions(markConfirmed: true).value
         coordinator.markReplacementOfferShown()
         await coordinator.openReplacementPicker()
         coordinator.selectReplacementTarget(cid: targetCID)
@@ -784,6 +806,736 @@ struct PairingCoordinatorTests {
         #expect(coordinator.migrationDecisionState == "decision_unknown")
         #expect(try store.loadCarriedPairingRecord().decision == submitted)
         #expect(try store.loadCarriedPairingRecord().replacementOfferID == submitted.decisionID)
+    }
+
+    @Test func emptyAndSelfOnlyListRetiresFreshObligationAndDoesNotShowOffer() async throws {
+        // Case 1: Empty list
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+        let store = PairingStore(pairing: nil)
+        let control = PairingControlScript(
+            mode: .accepted,
+            store: store,
+            clients: []
+        )
+        let coordinator = makeCoordinator(
+            store: store,
+            outcomes: [.success(saved)],
+            carriedPairingControl: control.client,
+            localPort: { 7070 }
+        )
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        await coordinator.refreshPendingActions(markConfirmed: true).value
+
+        var record = try store.loadCarriedPairingRecord()
+        #expect(record.replacementOfferID == nil)
+        #expect(!record.replacementOfferShown)
+        #expect(record.decision == nil)
+        #expect(record.freshPairObligation == nil)
+        #expect(!coordinator.replacementOfferVisible)
+        #expect(!coordinator.replacementPickerVisible)
+        #expect(coordinator.replacementTargets.isEmpty)
+        #expect(coordinator.selectedReplacementCID == nil)
+        #expect(coordinator.migrationDecisionState == nil)
+        #expect(!coordinator.replacementListUnavailable)
+        #expect(control.events.filter { $0 == "decide" }.isEmpty)
+        #expect(control.events.filter { $0 == "clients" }.count == 1)
+
+        let coordinator2 = makeCoordinator(
+            store: store,
+            outcomes: [],
+            carriedPairingControl: control.client,
+            localPort: { 7070 }
+        )
+        await coordinator2.refreshPendingActions(markConfirmed: true).value
+        #expect(!coordinator2.replacementOfferVisible)
+        #expect(control.events.filter { $0 == "clients" }.count == 1)
+
+        // Case 2: Self-only list
+        let storeSelf = PairingStore(pairing: nil)
+        let controlSelf = PairingControlScript(
+            mode: .accepted,
+            store: storeSelf,
+            clients: [CarriedPairingClientRow(cid: selfCID, displayLabel: "My Mac")]
+        )
+        let coordinatorSelf = makeCoordinator(
+            store: storeSelf,
+            outcomes: [.success(saved)],
+            carriedPairingControl: controlSelf.client,
+            localPort: { 7070 }
+        )
+
+        await coordinatorSelf.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        await coordinatorSelf.refreshPendingActions(markConfirmed: true).value
+
+        record = try storeSelf.loadCarriedPairingRecord()
+        #expect(record.replacementOfferID == nil)
+        #expect(!record.replacementOfferShown)
+        #expect(record.decision == nil)
+        #expect(record.freshPairObligation == nil)
+        #expect(!coordinatorSelf.replacementOfferVisible)
+        #expect(controlSelf.events.filter { $0 == "clients" }.count == 1)
+    }
+
+    @Test func nonEmptyClientsKeepsOfferAndPickerReloadsWithoutRetiring() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let otherCID2 = "sha256:" + String(repeating: "d", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+
+        // (a) List not containing self
+        let storeA = PairingStore(pairing: nil)
+        let controlA = PairingControlScript(
+            mode: .accepted,
+            store: storeA,
+            clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")]
+        )
+        let coordA = makeCoordinator(store: storeA, outcomes: [.success(saved)], carriedPairingControl: controlA.client, localPort: { 7070 })
+        await coordA.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        await coordA.refreshPendingActions(markConfirmed: true).value
+        #expect(coordA.replacementOfferVisible)
+        #expect(try storeA.loadCarriedPairingRecord().replacementOfferID != nil)
+        #expect(!(try storeA.loadCarriedPairingRecord().replacementOfferShown))
+        #expect(controlA.events.filter { $0 == "decide" }.isEmpty)
+
+        // (b) Self plus other with picker reload
+        let store = PairingStore(pairing: nil)
+        let control = PairingControlScript(
+            mode: .accepted,
+            store: store,
+            clients: [
+                CarriedPairingClientRow(cid: selfCID, displayLabel: "Self"),
+                CarriedPairingClientRow(cid: otherCID, displayLabel: "Laptop 1"),
+                CarriedPairingClientRow(cid: otherCID2, displayLabel: "Laptop 2")
+            ]
+        )
+        let coordinator = makeCoordinator(
+            store: store,
+            outcomes: [.success(saved)],
+            carriedPairingControl: control.client,
+            localPort: { 7070 }
+        )
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        await coordinator.refreshPendingActions(markConfirmed: true).value
+        #expect(coordinator.replacementOfferVisible)
+        let initialOfferID = try #require(try store.loadCarriedPairingRecord().replacementOfferID)
+        #expect(control.events.filter { $0 == "decide" }.isEmpty)
+
+        coordinator.markReplacementOfferShown()
+        await coordinator.openReplacementPicker()
+        #expect(coordinator.replacementPickerVisible)
+        #expect(coordinator.replacementTargets.count == 2)
+
+        // Later picker reload returns only self (no other CID)
+        control.enqueueClientsOutcome(.success([CarriedPairingClientRow(cid: selfCID, displayLabel: "Self")]))
+        await coordinator.chooseAnotherReplacementDevice()
+        #expect(coordinator.replacementPickerVisible)
+        #expect(coordinator.replacementTargets.isEmpty)
+        let recordAfterReload = try store.loadCarriedPairingRecord()
+        #expect(recordAfterReload.replacementOfferID == initialOfferID)
+        #expect(recordAfterReload.replacementOfferShown)
+        #expect(recordAfterReload.decision == nil)
+        #expect(control.events.filter { $0 == "decide" }.isEmpty)
+    }
+
+    @Test func clientsFailureKeepsOfferDurableAndRecoverable() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+
+        // Unavailable failure
+        let store1 = PairingStore(pairing: nil)
+        let control1 = PairingControlScript(mode: .accepted, store: store1)
+        control1.enqueueClientsOutcome(.failure(.unavailable))
+        let coordinator1 = makeCoordinator(
+            store: store1,
+            outcomes: [.success(saved)],
+            carriedPairingControl: control1.client,
+            localPort: { 7070 }
+        )
+
+        await coordinator1.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        await coordinator1.refreshPendingActions(markConfirmed: true).value
+
+        let record1 = try store1.loadCarriedPairingRecord()
+        #expect(record1.replacementOfferID != nil)
+        #expect(!record1.replacementOfferShown)
+        #expect(record1.decision == nil)
+        #expect(record1.freshPairObligation == nil)
+        #expect(coordinator1.replacementOfferVisible)
+
+        let newCoordinator1 = makeCoordinator(
+            store: store1,
+            outcomes: [],
+            carriedPairingControl: control1.client,
+            localPort: { 7070 }
+        )
+        await newCoordinator1.refreshPendingActions(markConfirmed: true).value
+        #expect(newCoordinator1.replacementOfferVisible)
+        #expect(control1.events.filter { $0 == "clients" }.count == 1)
+
+        // InvalidResponse failure
+        let store2 = PairingStore(pairing: nil)
+        let control2 = PairingControlScript(mode: .accepted, store: store2)
+        control2.enqueueClientsOutcome(.failure(.invalidResponse))
+        let coordinator2 = makeCoordinator(
+            store: store2,
+            outcomes: [.success(saved)],
+            carriedPairingControl: control2.client,
+            localPort: { 7070 }
+        )
+
+        await coordinator2.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        await coordinator2.refreshPendingActions(markConfirmed: true).value
+
+        let record2 = try store2.loadCarriedPairingRecord()
+        #expect(record2.replacementOfferID != nil)
+        #expect(!record2.replacementOfferShown)
+        #expect(record2.decision == nil)
+        #expect(record2.freshPairObligation == nil)
+        #expect(coordinator2.replacementOfferVisible)
+    }
+
+    @Test func crashWindowLeavesObligationDurableAndResolvableByNewCoordinator() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+        let store = PairingStore(pairing: nil)
+        let reactivateGate = OneShotContinuationGate()
+        let reactivateStarted = LockedCounter()
+        let control = PairingControlScript(
+            mode: .accepted,
+            store: store,
+            clients: [
+                CarriedPairingClientRow(cid: selfCID, displayLabel: "Laptop"),
+                CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")
+            ]
+        )
+        let coordinator1 = makeCoordinator(
+            store: store,
+            outcomes: [.success(saved)],
+            reactivateGate: reactivateGate,
+            reactivateStarted: reactivateStarted,
+            carriedPairingControl: control.client,
+            localPort: { 7070 }
+        )
+
+        let pairTask = Task { await coordinator1.submitPairingLink(relayPairLink(instanceID: saved.instanceID)) }
+        await reactivateStarted.waitUntilCount(1)
+
+        // While blocked in the crash interval before reactivate:
+        #expect(store.currentPairing == saved)
+        let pendingRecord = try store.loadCarriedPairingRecord()
+        #expect(pendingRecord.freshPairObligation == PairingCredentialRevision(from: saved))
+        #expect(pendingRecord.replacementOfferID == nil)
+        #expect(!pendingRecord.replacementOfferShown)
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
+
+        // A second coordinator resolves the obligation
+        let coordinator2 = makeCoordinator(
+            store: store,
+            outcomes: [],
+            carriedPairingControl: control.client,
+            localPort: { 7070 }
+        )
+        await coordinator2.refreshPendingActions(markConfirmed: true).value
+        #expect(coordinator2.replacementOfferVisible)
+        #expect(try store.loadCarriedPairingRecord().replacementOfferID != nil)
+        #expect(try store.loadCarriedPairingRecord().freshPairObligation == nil)
+
+        reactivateGate.release()
+        await pairTask.value
+        #expect(control.events.filter { $0 == "clients" }.count == 1)
+
+        // .alreadyConnected writes no obligation and no offer
+        let rePairRefreshed = pairingWithFingerprint(selfCID)
+        let rePairStore = PairingStore(pairing: saved)
+        let rePairCoordinator = makeCoordinator(
+            store: rePairStore,
+            outcomes: [.success(rePairRefreshed)],
+            carriedPairingControl: control.client,
+            localPort: { 7070 }
+        )
+        await rePairCoordinator.submitPairingLink(try directPairLink(caPEM: testCACertPEM))
+        #expect(rePairCoordinator.state == .alreadyConnected)
+        let rePairRecord = try rePairStore.loadCarriedPairingRecord()
+        #expect(rePairRecord.freshPairObligation == nil)
+        #expect(rePairRecord.replacementOfferID == nil)
+
+        // Thrown credential save leaves prior pairing, prior record with seeded offer, and 0 clients calls
+        let priorPairing = pairingWithFingerprint("sha256:" + String(repeating: "a", count: 64))
+        let failStore = PairingStore(pairing: priorPairing, saveError: PairScriptError.saveFailed)
+        var priorRecord = CarriedPairingRecord.empty
+        priorRecord.replacementOfferID = "prior-offer-id"
+        try failStore.saveCarriedPairingRecord(priorRecord)
+        let failControl = PairingControlScript(mode: .accepted, store: failStore)
+        let failCoordinator = makeCoordinator(
+            store: failStore,
+            outcomes: [.success(saved)],
+            retireOwnCredential: { _, _ in true },
+            carriedPairingControl: failControl.client,
+            localPort: { 7070 }
+        )
+        let failLink = try relayPairLink(caPEM: otherCACertPEM)
+        await failCoordinator.submitPairingLink(failLink)
+        await failCoordinator.confirmSwitch()
+        #expect(failCoordinator.state == PairingFlowState.saveFailed)
+        #expect(failStore.currentPairing == priorPairing)
+        #expect(try failStore.loadCarriedPairingRecord().replacementOfferID == "prior-offer-id")
+        #expect(failControl.events.filter { $0 == "clients" }.isEmpty)
+    }
+
+    @Test func crashWindowResolvesEmptyAndUnavailable() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+
+        // Case 1: Second coordinator's clients() returns [] -> retires
+        let storeEmpty = PairingStore(pairing: nil)
+        let reactivateGate1 = OneShotContinuationGate()
+        let reactivateStarted1 = LockedCounter()
+        let control1 = PairingControlScript(mode: .accepted, store: storeEmpty)
+        let coordinator1 = makeCoordinator(
+            store: storeEmpty,
+            outcomes: [.success(saved)],
+            reactivateGate: reactivateGate1,
+            reactivateStarted: reactivateStarted1,
+            carriedPairingControl: control1.client,
+            localPort: { 7070 }
+        )
+        let pairTask1 = Task { await coordinator1.submitPairingLink(relayPairLink(instanceID: saved.instanceID)) }
+        await reactivateStarted1.waitUntilCount(1)
+
+        let control2 = PairingControlScript(mode: .accepted, store: storeEmpty, clients: [])
+        let coordinator2 = makeCoordinator(
+            store: storeEmpty,
+            outcomes: [],
+            carriedPairingControl: control2.client,
+            localPort: { 7070 }
+        )
+        await coordinator2.refreshPendingActions(markConfirmed: true).value
+        var recordEmpty = try storeEmpty.loadCarriedPairingRecord()
+        #expect(recordEmpty.freshPairObligation == nil)
+        #expect(recordEmpty.replacementOfferID == nil)
+        #expect(!recordEmpty.replacementOfferShown)
+        #expect(recordEmpty.decision == nil)
+        #expect(!coordinator2.replacementOfferVisible)
+        #expect(control2.events.filter { $0 == "decide" }.isEmpty)
+
+        reactivateGate1.release()
+        await pairTask1.value
+        #expect(control1.events.filter { $0 == "clients" }.isEmpty)
+        recordEmpty = try storeEmpty.loadCarriedPairingRecord()
+        #expect(recordEmpty.replacementOfferID == nil)
+
+        // Case 2: Second coordinator's clients() throws .unavailable -> offer kept
+        let storeUnavail = PairingStore(pairing: nil)
+        let reactivateGate2 = OneShotContinuationGate()
+        let reactivateStarted2 = LockedCounter()
+        let control3 = PairingControlScript(mode: .accepted, store: storeUnavail, clients: [])
+        control3.enqueueClientsOutcome(.failure(.invalidResponse))
+        let coordinator3 = makeCoordinator(
+            store: storeUnavail,
+            outcomes: [.success(saved)],
+            reactivateGate: reactivateGate2,
+            reactivateStarted: reactivateStarted2,
+            carriedPairingControl: control3.client,
+            localPort: { 7070 }
+        )
+        let pairTask2 = Task { await coordinator3.submitPairingLink(relayPairLink(instanceID: saved.instanceID)) }
+        await reactivateStarted2.waitUntilCount(1)
+
+        let control4 = PairingControlScript(mode: .accepted, store: storeUnavail)
+        control4.enqueueClientsOutcome(.failure(.unavailable))
+        let coordinator4 = makeCoordinator(
+            store: storeUnavail,
+            outcomes: [],
+            carriedPairingControl: control4.client,
+            localPort: { 7070 }
+        )
+        await coordinator4.refreshPendingActions(markConfirmed: true).value
+        var recordUnavail = try storeUnavail.loadCarriedPairingRecord()
+        let persistedOfferID = try #require(recordUnavail.replacementOfferID)
+        #expect(recordUnavail.freshPairObligation == nil)
+        #expect(!recordUnavail.replacementOfferShown)
+        #expect(recordUnavail.decision == nil)
+        #expect(coordinator4.replacementOfferVisible)
+        #expect(control4.events.filter { $0 == "decide" }.isEmpty)
+
+        reactivateGate2.release()
+        await pairTask2.value
+        recordUnavail = try storeUnavail.loadCarriedPairingRecord()
+        #expect(recordUnavail.replacementOfferID == persistedOfferID)
+        #expect(recordUnavail.freshPairObligation == nil)
+        #expect(control3.events.filter { $0 == "clients" }.isEmpty)
+    }
+
+    @Test func stopInsideClientsOldTaskLosesToSecondCoordinator() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+
+        // Observation 1: First script returns [] (would retire). Second script returns other CID (keeps offer).
+        let store1 = PairingStore(pairing: nil)
+        let gate1 = OneShotContinuationGate()
+        let control1 = PairingControlScript(mode: .accepted, store: store1, clients: [], clientsGate: gate1)
+        let coord1 = makeCoordinator(store: store1, outcomes: [.success(saved)], carriedPairingControl: control1.client, localPort: { 7070 })
+        await coord1.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task1 = Task { await coord1.refreshPendingActions(markConfirmed: true).value }
+        await control1.waitUntilClientsStart()
+
+        let control2 = PairingControlScript(mode: .accepted, store: store1, clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")])
+        let coord2 = makeCoordinator(store: store1, outcomes: [], carriedPairingControl: control2.client, localPort: { 7070 })
+        await coord2.refreshPendingActions(markConfirmed: true).value
+        let offerID2 = try #require(try store1.loadCarriedPairingRecord().replacementOfferID)
+        #expect(coord2.replacementOfferVisible)
+
+        gate1.release()
+        await task1.value
+
+        let finalRecord1 = try store1.loadCarriedPairingRecord()
+        #expect(finalRecord1.replacementOfferID == offerID2)
+        #expect(finalRecord1.freshPairObligation == nil)
+        #expect(coord2.replacementOfferVisible)
+        #expect(!coord1.replacementOfferVisible)
+        #expect(control1.events.filter { $0 == "decide" }.isEmpty)
+        #expect(control2.events.filter { $0 == "decide" }.isEmpty)
+
+        // Observation 2: First script returns other CID. Second script returns [] and retires.
+        let store2 = PairingStore(pairing: nil)
+        let gate2 = OneShotContinuationGate()
+        let control3 = PairingControlScript(mode: .accepted, store: store2, clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")], clientsGate: gate2)
+        let coord3 = makeCoordinator(store: store2, outcomes: [.success(saved)], carriedPairingControl: control3.client, localPort: { 7070 })
+        await coord3.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task2 = Task { await coord3.refreshPendingActions(markConfirmed: true).value }
+        await control3.waitUntilClientsStart()
+
+        let control4 = PairingControlScript(mode: .accepted, store: store2, clients: [])
+        let coord4 = makeCoordinator(store: store2, outcomes: [], carriedPairingControl: control4.client, localPort: { 7070 })
+        await coord4.refreshPendingActions(markConfirmed: true).value
+        #expect(try store2.loadCarriedPairingRecord().replacementOfferID == nil)
+        #expect(!coord4.replacementOfferVisible)
+
+        gate2.release()
+        await task2.value
+
+        let finalRecord2 = try store2.loadCarriedPairingRecord()
+        #expect(finalRecord2.replacementOfferID == nil)
+        #expect(finalRecord2.freshPairObligation == nil)
+        #expect(!coord3.replacementOfferVisible)
+        #expect(!coord4.replacementOfferVisible)
+
+        // Observation 3: First script throws .invalidResponse. Second script throws .unavailable and keeps offer.
+        let store3 = PairingStore(pairing: nil)
+        let gate3 = OneShotContinuationGate()
+        let control5 = PairingControlScript(mode: .accepted, store: store3, clientsGate: gate3)
+        control5.enqueueClientsOutcome(.failure(.invalidResponse), gate: gate3)
+        let coord5 = makeCoordinator(store: store3, outcomes: [.success(saved)], carriedPairingControl: control5.client, localPort: { 7070 })
+        await coord5.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task3 = Task { await coord5.refreshPendingActions(markConfirmed: true).value }
+        await control5.waitUntilClientsStart()
+
+        let control6 = PairingControlScript(mode: .accepted, store: store3)
+        control6.enqueueClientsOutcome(.failure(.unavailable))
+        let coord6 = makeCoordinator(store: store3, outcomes: [], carriedPairingControl: control6.client, localPort: { 7070 })
+        await coord6.refreshPendingActions(markConfirmed: true).value
+        let writtenOfferID = try #require(try store3.loadCarriedPairingRecord().replacementOfferID)
+
+        gate3.release()
+        await task3.value
+
+        let finalRecord3 = try store3.loadCarriedPairingRecord()
+        #expect(finalRecord3.replacementOfferID == writtenOfferID)
+        #expect(finalRecord3.freshPairObligation == nil)
+        #expect(!finalRecord3.replacementOfferShown)
+    }
+
+    @Test func unpairThenPairAgainWhileClientsIsParked() async throws {
+        let firstPairing = pairingWithFingerprint("sha256:" + String(repeating: "b", count: 64))
+        let repairedPairing = pairingWithFingerprint("sha256:" + String(repeating: "c", count: 64))
+        let store = PairingStore(pairing: nil)
+        let gate = OneShotContinuationGate()
+        let control = PairingControlScript(mode: .accepted, store: store, clients: [], clientsGate: gate)
+        let coordinator = makeCoordinator(
+            store: store,
+            outcomes: [.success(firstPairing), .success(repairedPairing)],
+            carriedPairingControl: control.client,
+            localPort: { 7070 }
+        )
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: firstPairing.instanceID))
+        let firstRefresh = Task { await coordinator.refreshPendingActions(markConfirmed: true).value }
+        await control.waitUntilClientsStart()
+
+        #expect(await coordinator.unpair())
+        await coordinator.submitPairingLink(relayPairLink(instanceID: repairedPairing.instanceID))
+
+        let snapshotRecord = try store.loadCarriedPairingRecord()
+        #expect(snapshotRecord.freshPairObligation == PairingCredentialRevision(from: repairedPairing))
+        #expect(snapshotRecord.replacementOfferID == nil)
+
+        gate.release()
+        await firstRefresh.value
+
+        let finalRecord = try store.loadCarriedPairingRecord()
+        #expect(finalRecord == snapshotRecord)
+        #expect(finalRecord.freshPairObligation == PairingCredentialRevision(from: repairedPairing))
+        #expect(finalRecord.replacementOfferID == nil)
+        #expect(finalRecord.decision == nil)
+        #expect(control.events.filter { $0 == "decide" }.isEmpty)
+        #expect(!coordinator.replacementOfferVisible)
+    }
+
+    @Test func credentialChangeWhileClientsIsParkedDiscardsLateResult() async throws {
+        let firstPairing = pairingWithFingerprint("sha256:" + String(repeating: "b", count: 64))
+        let changedPairing = pairingWithFingerprint("sha256:" + String(repeating: "d", count: 64))
+        let otherCID = "sha256:" + String(repeating: "e", count: 64)
+        let store = PairingStore(pairing: nil)
+        let gate = OneShotContinuationGate()
+        let control = PairingControlScript(
+            mode: .accepted,
+            store: store,
+            clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")],
+            clientsGate: gate
+        )
+        let coordinator = makeCoordinator(
+            store: store,
+            outcomes: [.success(firstPairing)],
+            carriedPairingControl: control.client,
+            localPort: { 7070 }
+        )
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: firstPairing.instanceID))
+        let refreshTask = Task { await coordinator.refreshPendingActions(markConfirmed: true).value }
+        await control.waitUntilClientsStart()
+
+        // Bypass activate and save a different credential directly
+        try store.save(changedPairing)
+        let snapshotRecord = try store.loadCarriedPairingRecord()
+
+        gate.release()
+        await refreshTask.value
+
+        let finalRecord = try store.loadCarriedPairingRecord()
+        #expect(finalRecord == snapshotRecord)
+        #expect(finalRecord.freshPairObligation == PairingCredentialRevision(from: firstPairing))
+        #expect(finalRecord.replacementOfferID == nil)
+        #expect(!coordinator.replacementOfferVisible)
+        #expect(control.events.filter { $0 == "decide" }.isEmpty)
+    }
+
+    @Test func parkInsideClientsAllowsAdmissionAndVerifiesPreRequisites() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+        let store = PairingStore(pairing: nil)
+        let credentials = PairingCredentialStore(store: store)
+        let clientsGate = OneShotContinuationGate()
+        let control = PairingControlScript(
+            mode: .accepted,
+            store: store,
+            clients: [
+                CarriedPairingClientRow(cid: selfCID, displayLabel: "Laptop"),
+                CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")
+            ],
+            clientsGate: clientsGate
+        )
+        let portHolder = LockedValue<Int>()
+        let reactivate = ReactivateRecorder()
+        let coordinator = makeCoordinator(
+            store: store,
+            outcomes: [.success(saved)],
+            reactivate: reactivate,
+            carriedPairingControl: control.client,
+            localPort: { portHolder.current }
+        )
+
+        // Refresh before obligation exists: no clients
+        _ = coordinator.refreshPendingActions(markConfirmed: true)
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        #expect(await reactivate.count == 1)
+
+        // Admission is ready while obligation is pending
+        #expect(credentials.admission(for: saved) == .ready)
+
+        // Refresh with markConfirmed == false: no clients
+        _ = coordinator.refreshPendingActions(markConfirmed: false)
+        #expect(!coordinator.replacementOfferVisible)
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
+
+        // Refresh with portHolder nil: no clients
+        _ = coordinator.refreshPendingActions(markConfirmed: true)
+        #expect(!coordinator.replacementOfferVisible)
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
+
+        // Mark confirmed and port set -> reaches clients()
+        portHolder.set(7070)
+        let refreshTask = Task { await coordinator.refreshPendingActions(markConfirmed: true).value }
+        await control.waitUntilClientsStart()
+
+        // Admission is still ready while parked in clients()
+        #expect(credentials.admission(for: saved) == .ready)
+
+        clientsGate.release()
+        await refreshTask.value
+
+        #expect(coordinator.replacementOfferVisible)
+        #expect(try store.loadCarriedPairingRecord().freshPairObligation == nil)
+    }
+
+    @Test func parkedClientsIgnoresDuplicateRefreshAndHandlesConcurrentMutationsAndRetries() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+        let store = PairingStore(pairing: nil)
+        let clientsGate = OneShotContinuationGate()
+        let control = PairingControlScript(
+            mode: .accepted,
+            store: store,
+            clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")],
+            clientsGate: clientsGate
+        )
+        let coordinator = makeCoordinator(
+            store: store,
+            outcomes: [.success(saved)],
+            carriedPairingControl: control.client,
+            localPort: { 7070 }
+        )
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let firstRefresh = Task { await coordinator.refreshPendingActions(markConfirmed: true).value }
+        await control.waitUntilClientsStart()
+
+        // Duplicate refresh while in flight: does not start second clients read and does not set shown
+        _ = coordinator.refreshPendingActions(markConfirmed: true)
+        #expect(control.events.filter { $0 == "clients" }.count == 1)
+        #expect(!(try store.loadCarriedPairingRecord().replacementOfferShown))
+
+        // Save error armed after attempt save and before gate release
+        store.setCarriedRecordSaveError(PairScriptError.saveFailed)
+        clientsGate.release()
+        await firstRefresh.value
+
+        // Obligation remains due to save failure
+        var record = try store.loadCarriedPairingRecord()
+        #expect(record.freshPairObligation == PairingCredentialRevision(from: saved))
+
+        // Clearing error allows subsequent refresh to resolve
+        store.setCarriedRecordSaveError(nil)
+        await coordinator.refreshPendingActions(markConfirmed: true).value
+        record = try store.loadCarriedPairingRecord()
+        #expect(record.freshPairObligation == nil)
+        #expect(record.replacementOfferID != nil)
+        #expect(coordinator.replacementOfferVisible)
+
+        // Stale winner test: coordinator 1 parked, coordinator 2 modifies decision
+        let gate2 = OneShotContinuationGate()
+        let storeRace = PairingStore(pairing: saved)
+        let revision = PairingCredentialRevision(from: saved)
+        var oblRecord = CarriedPairingRecord.empty
+        oblRecord.freshPairObligation = revision
+        try storeRace.saveCarriedPairingRecord(oblRecord)
+
+        let controlRace = PairingControlScript(
+            mode: .accepted,
+            store: storeRace,
+            clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")],
+            clientsGate: gate2
+        )
+        let raceCoord1 = makeCoordinator(store: storeRace, outcomes: [], carriedPairingControl: controlRace.client, localPort: { 7070 })
+        let raceTask = Task { await raceCoord1.refreshPendingActions(markConfirmed: true).value }
+        await controlRace.waitUntilClientsStart()
+
+        // Concurrent winner writes a decision
+        var winnerRecord = try storeRace.loadCarriedPairingRecord()
+        winnerRecord.decision = CarriedPairingDecision(
+            decisionID: "winner-decision",
+            choice: .newDevice,
+            replacesCID: nil,
+            credentialFingerprint: saved.fingerprint,
+            credentialRevision: revision.revision
+        )
+        try storeRace.saveCarriedPairingRecord(winnerRecord)
+
+        gate2.release()
+        await raceTask.value
+
+        // Winner's record was not overwritten
+        let finalRaceRecord = try storeRace.loadCarriedPairingRecord()
+        #expect(finalRaceRecord.decision?.decisionID == "winner-decision")
+        #expect(!raceCoord1.replacementOfferVisible)
+    }
+
+    @Test func legacyAndCompletedRecordsDoNotTriggerFreshEligibility() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+
+        // Legacy empty record
+        let legacyStore = PairingStore(pairing: saved)
+        try legacyStore.saveCarriedPairingRecord(.empty)
+        let legacyControl = PairingControlScript(mode: .accepted, store: legacyStore, clients: [CarriedPairingClientRow(cid: "other", displayLabel: "Other")])
+        let legacyCoord = makeCoordinator(store: legacyStore, outcomes: [], carriedPairingControl: legacyControl.client, localPort: { 7070 })
+
+        await legacyCoord.refreshPendingActions(markConfirmed: true).value
+        #expect(legacyControl.events.filter { $0 == "clients" }.isEmpty)
+        #expect(!legacyCoord.replacementOfferVisible)
+
+        // Completed record
+        let completedStore = PairingStore(pairing: saved)
+        var completedRecord = CarriedPairingRecord.empty
+        completedRecord.replacementOfferShown = true
+        try completedStore.saveCarriedPairingRecord(completedRecord)
+        let completedControl = PairingControlScript(mode: .accepted, store: completedStore, clients: [CarriedPairingClientRow(cid: "other", displayLabel: "Other")])
+        let completedCoord = makeCoordinator(store: completedStore, outcomes: [], carriedPairingControl: completedControl.client, localPort: { 7070 })
+
+        await completedCoord.refreshPendingActions(markConfirmed: true).value
+        #expect(completedControl.events.filter { $0 == "clients" }.isEmpty)
+        #expect(!completedCoord.replacementOfferVisible)
+
+        // JSON omitting new keys decodes with nil obligation & admission is ready
+        let legacyJSON = """
+        {"replacementOfferShown":false}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(CarriedPairingRecord.self, from: legacyJSON)
+        #expect(decoded.freshPairObligation == nil)
+        #expect(decoded.freshPairEligibilityAttempt == nil)
+        #expect(decoded.replacementOfferID == nil)
+        #expect(!decoded.replacementOfferShown)
+        #expect(decoded.decision == nil)
+        #expect(decoded.invalidation == nil)
+
+        let credStore = PairingCredentialStore(store: legacyStore)
+        #expect(credStore.admission(for: saved) == .ready)
+    }
+
+    @Test func confirmedSwitchReplacesPriorOfferWithFreshObligation() async throws {
+        let old = pairing(instanceID: "11111111-1111-1111-1111-111111111111", caChainPEM: testCACertPEM)
+        let replacement = pairing(instanceID: "22222222-2222-2222-2222-222222222222", caChainPEM: otherCACertPEM)
+        let store = PairingStore(pairing: old)
+        var priorRecord = CarriedPairingRecord.empty
+        priorRecord.replacementOfferID = "prior-offer-id"
+        priorRecord.replacementOfferShown = false
+        try store.saveCarriedPairingRecord(priorRecord)
+
+        let script = PairScript([.success(replacement)])
+        let coordinator = makeCoordinator(store: store, script: script, retireOwnCredential: { _, _ in true })
+
+        let link = try relayPairLink(caPEM: otherCACertPEM)
+        await coordinator.submitPairingLink(link)
+        #expect(coordinator.state == .switchConfirmPending)
+
+        await coordinator.confirmSwitch()
+        #expect(coordinator.state == .switched)
+
+        let record = try store.loadCarriedPairingRecord()
+        #expect(record.replacementOfferID == nil)
+        #expect(record.freshPairObligation == PairingCredentialRevision(from: replacement))
+        #expect(!record.replacementOfferShown)
+
+        _ = coordinator.refreshPendingActions(markConfirmed: false)
+        #expect(!coordinator.replacementOfferVisible)
     }
 
     // Acceptance 9: linkNamesJournal checks.
@@ -1019,6 +1771,8 @@ struct PairingCoordinatorTests {
         store: PairingStore,
         outcomes: [PairScriptOutcome],
         reactivate: ReactivateRecorder = ReactivateRecorder(),
+        reactivateGate: OneShotContinuationGate? = nil,
+        reactivateStarted: LockedCounter? = nil,
         clear: ClearRecorder = ClearRecorder(),
         onSave: @escaping @Sendable () -> Void = {},
         retireOwnCredential: @escaping @MainActor @Sendable (StoredPairing, String) async -> Bool = { _, _ in true },
@@ -1031,6 +1785,8 @@ struct PairingCoordinatorTests {
             store: store,
             script: PairScript(outcomes),
             reactivate: reactivate,
+            reactivateGate: reactivateGate,
+            reactivateStarted: reactivateStarted,
             clear: clear,
             onSave: onSave,
             retireOwnCredential: retireOwnCredential,
@@ -1045,6 +1801,8 @@ struct PairingCoordinatorTests {
         store: PairingStore,
         script: PairScript,
         reactivate: ReactivateRecorder = ReactivateRecorder(),
+        reactivateGate: OneShotContinuationGate? = nil,
+        reactivateStarted: LockedCounter? = nil,
         ownerState: TunnelLifecycleState = .disconnected,
         clear: ClearRecorder = ClearRecorder(),
         onSave: @escaping @Sendable () -> Void = {},
@@ -1065,6 +1823,8 @@ struct PairingCoordinatorTests {
                 try store.save($0)
             },
             reactivate: {
+                reactivateStarted?.increment()
+                await reactivateGate?.wait()
                 await reactivate.record()
             },
             ownerState: { ownerState },
@@ -1194,6 +1954,9 @@ final class PairingControlScript: @unchecked Sendable {
     private let mode: Mode
     private let store: PairingStore
     private let clientsValue: [CarriedPairingClientRow]
+    private let clientsGate: OneShotContinuationGate?
+    private var clientsOutcomes: [(result: Result<[CarriedPairingClientRow], CarriedPairingControlError>, gate: OneShotContinuationGate?)] = []
+    private let clientsStarted = LockedCounter()
     private let decisionGate: OneShotContinuationGate?
     private let decisionStarted = LockedCounter()
     private var eventValues: [String] = []
@@ -1205,11 +1968,13 @@ final class PairingControlScript: @unchecked Sendable {
         mode: Mode,
         store: PairingStore,
         clients: [CarriedPairingClientRow] = [],
+        clientsGate: OneShotContinuationGate? = nil,
         decisionGate: OneShotContinuationGate? = nil
     ) {
         self.mode = mode
         self.store = store
         self.clientsValue = clients
+        self.clientsGate = clientsGate
         self.decisionGate = decisionGate
     }
 
@@ -1217,6 +1982,15 @@ final class PairingControlScript: @unchecked Sendable {
     var events: [String] { lock.withLock { eventValues } }
     var decisionObservedAsDurable: CarriedPairingDecision? { lock.withLock { durableDecision } }
     var decisionSnapshots: [CarriedPairingDecision?] { lock.withLock { decisionValues } }
+
+    func enqueueClientsOutcome(
+        _ result: Result<[CarriedPairingClientRow], CarriedPairingControlError>,
+        gate: OneShotContinuationGate? = nil
+    ) {
+        lock.withLock {
+            clientsOutcomes.append((result: result, gate: gate))
+        }
+    }
 
     func migrationState() throws -> CarriedPairingMigrationReply {
         lock.withLock { eventValues.append("state") }
@@ -1282,9 +2056,25 @@ final class PairingControlScript: @unchecked Sendable {
         await decisionStarted.waitUntilCount(1)
     }
 
-    func clients() -> [CarriedPairingClientRow] {
-        lock.withLock { eventValues.append("clients") }
+    func clients() async throws -> [CarriedPairingClientRow] {
+        let (outcome, gate) = lock.withLock { () -> (Result<[CarriedPairingClientRow], CarriedPairingControlError>?, OneShotContinuationGate?) in
+            eventValues.append("clients")
+            if !clientsOutcomes.isEmpty {
+                let popped = clientsOutcomes.removeFirst()
+                return (popped.result, popped.gate)
+            }
+            return (nil, clientsGate)
+        }
+        clientsStarted.increment()
+        await gate?.wait()
+        if let outcome {
+            return try outcome.get()
+        }
         return clientsValue
+    }
+
+    func waitUntilClientsStart(target: Int = 1) async {
+        await clientsStarted.waitUntilCount(target)
     }
 }
 
@@ -1301,7 +2091,7 @@ private struct PairingCoordinatorControlClient: CarriedPairingControlRequesting 
     }
 
     func clients(localPort: Int) async throws -> [CarriedPairingClientRow] {
-        script.clients()
+        try await script.clients()
     }
 }
 

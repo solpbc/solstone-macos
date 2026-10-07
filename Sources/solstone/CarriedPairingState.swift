@@ -43,6 +43,8 @@ public struct CarriedPairingRecord: Codable, Sendable, Equatable {
     var replacementOfferID: String?
     var replacementOfferShown = false
     var invalidation: CarriedPairingInvalidation?
+    var freshPairObligation: PairingCredentialRevision?
+    var freshPairEligibilityAttempt: String?
 
     static let empty = CarriedPairingRecord()
 }

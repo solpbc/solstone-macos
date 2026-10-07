@@ -1351,10 +1351,10 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
-            appState.pairingCoordinator.refreshPendingActions(markConfirmed: appState.isJournalMarkConfirmed)
+            _ = appState.pairingCoordinator.refreshPendingActions(markConfirmed: appState.isJournalMarkConfirmed)
         }
         .onChange(of: appState.isJournalMarkConfirmed) { _, confirmed in
-            appState.pairingCoordinator.refreshPendingActions(markConfirmed: confirmed)
+            _ = appState.pairingCoordinator.refreshPendingActions(markConfirmed: confirmed)
         }
         .sheet(isPresented: Binding(
             get: {

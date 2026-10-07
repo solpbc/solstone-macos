@@ -1183,7 +1183,7 @@ public final class AppState {
             if let mark { confirmedMark = mark }
             journalMarkConfirmationStore.confirm(journal)
             uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
-            pairingCoordinator.refreshPendingActions(markConfirmed: true)
+            _ = pairingCoordinator.refreshPendingActions(markConfirmed: true)
             guard isPairedIngestReady else { return }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             if let owner = browserIntakeOwner {
@@ -1255,7 +1255,7 @@ public final class AppState {
         withMutation(keyPath: \.isJournalMarkConfirmed) {
             journalMarkConfirmationStore.clear()
             uploadCoordinator?.updatePairedIngestIdentity(currentPairedIngestIdentity())
-            pairingCoordinator.refreshPendingActions(markConfirmed: false)
+            _ = pairingCoordinator.refreshPendingActions(markConfirmed: false)
         }
     }
 
@@ -1856,7 +1856,7 @@ public final class AppState {
     // MARK: - Recording Control
 
     internal func startTunnelLifecycleOwner() {
-        pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
+        _ = pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
         tunnelLifecycleOwner.start()
         Task { await pairingCoordinator.recoverDurableInvalidation() }
         startTunnelLifecycleObservation()
@@ -1896,6 +1896,7 @@ public final class AppState {
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
 
         guard isConnected(newState), !isConnected(previousState) else { return }
+        _ = pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         if let owner = browserIntakeOwner {
             Task { await owner.scheduleDelivery() }
