@@ -1811,7 +1811,7 @@ public final class AppState {
         // Snapshots never open a keychain. The owner and the coordinator share one
         // memory-backed store seeded from the pairing this composition holds.
         let snapshotPairingStore: any PairingStoring = pairingStoring
-            ?? InMemoryPairingStore(pairing: (try? tunnelPairingLoad()) ?? nil)
+            ?? InMemoryPairingStore(pairing: initialTunnelPairing)
         let tunnelLifecycleOwner = TunnelLifecycleOwner.dormantForSnapshot(
             keychainStore: snapshotPairingStore,
             loadPairing: tunnelPairingLoad
