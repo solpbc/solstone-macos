@@ -132,7 +132,7 @@ final class PairingCoordinator {
         if let savePairing {
             self.savePairing = savePairing
         } else {
-            self.savePairing = { try store.save($0) }
+            self.savePairing = { try store.saveFreshPair($0) }
         }
         self.reactivate = reactivate
         self.ownerState = ownerState
@@ -532,7 +532,8 @@ final class PairingCoordinator {
             rows = try await carriedPairingControl.clients(localPort: port)
         } catch {
             pairingLog.error("fresh pairing client list failed: \(String(describing: type(of: error)), privacy: .public)")
-            guard let currentPairing = try? credentialStore.load(),
+            guard freshPairMarkConfirmed,
+                  let currentPairing = try? credentialStore.load(),
                   PairingCredentialRevision(from: currentPairing) == revision,
                   let record = try? credentialStore.carriedPairingRecord(),
                   record.freshPairObligation == revision,
@@ -563,7 +564,8 @@ final class PairingCoordinator {
             return
         }
 
-        guard let currentPairing = try? credentialStore.load(),
+        guard freshPairMarkConfirmed,
+              let currentPairing = try? credentialStore.load(),
               PairingCredentialRevision(from: currentPairing) == revision,
               let record = try? credentialStore.carriedPairingRecord(),
               record.freshPairObligation == revision,
@@ -987,7 +989,11 @@ final class PairingCoordinator {
         do {
             if let invalidation, let credentialStore {
                 try await Task.detached {
-                    try credentialStore.save(pairing, after: invalidation)
+                    if successState == .switched {
+                        try credentialStore.saveFreshPair(pairing, after: invalidation)
+                    } else {
+                        try credentialStore.save(pairing, after: invalidation)
+                    }
                 }.value
             } else {
                 let savePairing = self.savePairing
@@ -1020,6 +1026,7 @@ final class PairingCoordinator {
                 let expectedRecord = try credentialStore.carriedPairingRecord()
                 var record = expectedRecord
                 record.freshPairObligation = PairingCredentialRevision(from: pairing)
+                record.freshPairIntent = nil
                 record.freshPairEligibilityAttempt = nil
                 record.replacementOfferID = nil
                 record.replacementOfferShown = false

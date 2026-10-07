@@ -44,6 +44,7 @@ public struct CarriedPairingRecord: Codable, Sendable, Equatable {
     var replacementOfferShown = false
     var invalidation: CarriedPairingInvalidation?
     var freshPairObligation: PairingCredentialRevision?
+    var freshPairIntent: PairingCredentialRevision?
     var freshPairEligibilityAttempt: String?
 
     static let empty = CarriedPairingRecord()

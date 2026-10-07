@@ -114,13 +114,29 @@ public final class PairingCredentialStore: @unchecked Sendable {
         lock.withLock { (storedPairingGeneration, storedAccessGeneration) }
     }
 
+    private func project(_ record: CarriedPairingRecord, pairing: StoredPairing?) -> CarriedPairingRecord {
+        guard let pairing else { return record }
+        let revision = PairingCredentialRevision(from: pairing)
+        guard record.freshPairIntent == revision else { return record }
+        if record.freshPairObligation == revision {
+            var committed = record
+            committed.freshPairIntent = nil
+            return committed
+        }
+        var committed = CarriedPairingRecord()
+        committed.freshPairObligation = revision
+        return committed
+    }
+
     func carriedPairingRecord() throws -> CarriedPairingRecord {
         lock.lock()
         defer { lock.unlock() }
         if let migrationRecordCache { return migrationRecordCache }
+        let rawPairing = try store.load()
         let record = try store.loadCarriedPairingRecord()
-        migrationRecordCache = record
-        return record
+        let projected = project(record, pairing: rawPairing)
+        migrationRecordCache = projected
+        return projected
     }
 
     func saveCarriedPairingRecord(_ record: CarriedPairingRecord) throws {
@@ -128,7 +144,8 @@ public final class PairingCredentialStore: @unchecked Sendable {
         defer { lock.unlock() }
         do {
             try store.saveCarriedPairingRecord(record)
-            migrationRecordCache = record
+            let pairing = cachedPairing ?? (try? store.load())
+            migrationRecordCache = project(record, pairing: pairing)
         } catch {
             migrationRecordCache = nil
             throw error
@@ -146,10 +163,11 @@ public final class PairingCredentialStore: @unchecked Sendable {
             throw PairingCredentialStoreError.staleGeneration
         }
         let durableRecord = try store.loadCarriedPairingRecord()
-        migrationRecordCache = durableRecord
-        guard durableRecord == expected else { throw PairingCredentialStoreError.staleGeneration }
+        let projectedDurable = project(durableRecord, pairing: pairing)
+        migrationRecordCache = projectedDurable
+        guard projectedDurable == expected else { throw PairingCredentialStoreError.staleGeneration }
         try store.saveCarriedPairingRecord(record)
-        migrationRecordCache = record
+        migrationRecordCache = project(record, pairing: pairing)
     }
 
     /// Ordinary traffic is admitted only for a stored credential with no durable
@@ -365,7 +383,7 @@ public final class PairingCredentialStore: @unchecked Sendable {
         cachedPairing = loaded
         // Refresh the device record with the credential so callers never
         // evaluate admission for the returned pairing against a stale cache.
-        migrationRecordCache = durableMigrationRecord
+        migrationRecordCache = project(durableMigrationRecord, pairing: loaded)
         let identity = loaded.map { Self.identityToken(for: $0) }
         if identity.map({ Data($0.utf8) }) != lastIdentityToken.map({ Data($0.utf8) }) {
             lastIdentityToken = identity
@@ -438,6 +456,7 @@ public final class PairingCredentialStore: @unchecked Sendable {
             throw error
         }
         cachedPairing = pairing
+        migrationRecordCache = nil
         lastIdentityToken = token
         storedPairingGeneration &+= 1
         storedAccessGeneration &+= 1
@@ -450,6 +469,53 @@ public final class PairingCredentialStore: @unchecked Sendable {
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         afterHook?(token)
         #endif
+    }
+
+    func saveFreshPair(_ pairing: StoredPairing) throws {
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIdentityLock.lock()
+        defer { browserIdentityLock.unlock() }
+        #endif
+        lock.lock()
+        defer { lock.unlock() }
+        var rawRecord = try store.loadCarriedPairingRecord()
+        rawRecord.freshPairIntent = PairingCredentialRevision(from: pairing)
+        try store.saveCarriedPairingRecord(rawRecord)
+        do {
+            try save(pairing)
+        } catch {
+            migrationRecordCache = nil
+            throw error
+        }
+    }
+
+    func saveFreshPair(_ pairing: StoredPairing, after invalidation: CarriedPairingInvalidation) throws {
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIdentityLock.lock()
+        defer { browserIdentityLock.unlock() }
+        #endif
+        lock.lock()
+        defer { lock.unlock() }
+        guard let current = try load(),
+              PairingCredentialRevision(from: current).fingerprint == invalidation.fingerprint,
+              PairingCredentialRevision(from: current).revision == invalidation.revision,
+              let record = try? carriedPairingRecord(),
+              record.invalidation?.operationID == invalidation.operationID,
+              record.invalidation?.fingerprint == invalidation.fingerprint,
+              record.invalidation?.revision == invalidation.revision,
+              record.invalidation?.journalIdentity == invalidation.journalIdentity,
+              record.invalidation?.remoteRetirementAttempted == true else {
+            throw PairingCredentialStoreError.staleGeneration
+        }
+        var rawRecord = try store.loadCarriedPairingRecord()
+        rawRecord.freshPairIntent = PairingCredentialRevision(from: pairing)
+        try store.saveCarriedPairingRecord(rawRecord)
+        do {
+            try save(pairing)
+        } catch {
+            migrationRecordCache = nil
+            throw error
+        }
     }
 
     func save(_ pairing: StoredPairing, after invalidation: CarriedPairingInvalidation) throws {

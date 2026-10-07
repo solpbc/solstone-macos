@@ -1500,6 +1500,7 @@ struct PairingCoordinatorTests {
         """.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(CarriedPairingRecord.self, from: legacyJSON)
         #expect(decoded.freshPairObligation == nil)
+        #expect(decoded.freshPairIntent == nil)
         #expect(decoded.freshPairEligibilityAttempt == nil)
         #expect(decoded.replacementOfferID == nil)
         #expect(!decoded.replacementOfferShown)
@@ -1789,6 +1790,504 @@ struct PairingCoordinatorTests {
             reactivateStarted: reactivateStarted,
             clear: clear,
             onSave: onSave,
+            retireOwnCredential: retireOwnCredential,
+            endSelfRetirement: endSelfRetirement,
+            carriedPairingControl: carriedPairingControl,
+            localPort: localPort,
+            classifiedLog: classifiedLog
+        )
+    }
+
+    // MARK: - Fresh-Pair Durability & Mark Fence Tests
+
+    @Test func freshPairInterruptAfterCredentialDurableClassifiesOnReconstruction() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+
+        let tempDir = URL(fileURLWithPath: "/var/tmp/solstone-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = FileBackedPairingStore(directory: tempDir)
+
+        let gate = OneShotContinuationGate()
+        let semaphore = DispatchSemaphore(value: 0)
+        let snapshotDirEmpty = URL(fileURLWithPath: "/var/tmp/solstone-test-snap1-\(UUID().uuidString)")
+        let snapshotDirNonEmpty = URL(fileURLWithPath: "/var/tmp/solstone-test-snap2-\(UUID().uuidString)")
+        let snapshotDirUnavail = URL(fileURLWithPath: "/var/tmp/solstone-test-snap3-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: snapshotDirEmpty)
+            try? FileManager.default.removeItem(at: snapshotDirNonEmpty)
+            try? FileManager.default.removeItem(at: snapshotDirUnavail)
+        }
+
+        store.blockAfterCredentialDurable = {
+            try? FileManager.default.copyItem(at: tempDir, to: snapshotDirEmpty)
+            try? FileManager.default.copyItem(at: tempDir, to: snapshotDirNonEmpty)
+            try? FileManager.default.copyItem(at: tempDir, to: snapshotDirUnavail)
+            gate.release()
+            semaphore.wait()
+        }
+
+        let script = PairScript([.success(saved)])
+        let coordinator = makeFileBackedCoordinator(store: store, script: script)
+        let pairTask = Task { await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID)) }
+
+        await gate.wait()
+
+        // 1a: Empty clients list retires obligation on reconstruction
+        let snapshotStoreEmpty = FileBackedPairingStore(directory: snapshotDirEmpty)
+        let controlEmpty = PairingControlScript(mode: .accepted, store: PairingStore(pairing: nil), clients: [CarriedPairingClientRow(cid: selfCID, displayLabel: "Self")])
+        let coordEmpty = makeFileBackedCoordinator(store: snapshotStoreEmpty, script: PairScript([]), carriedPairingControl: controlEmpty.client, localPort: { 7070 })
+        await coordEmpty.refreshPendingActions(markConfirmed: true).value
+        #expect(!coordEmpty.replacementOfferVisible)
+        let recordEmpty = try snapshotStoreEmpty.loadCarriedPairingRecord()
+        #expect(recordEmpty.freshPairObligation == nil)
+        #expect(recordEmpty.replacementOfferID == nil)
+
+        // 1b: Nonempty clients list creates replacement offer on reconstruction
+        let snapshotStoreNonEmpty = FileBackedPairingStore(directory: snapshotDirNonEmpty)
+        let controlNonEmpty = PairingControlScript(mode: .accepted, store: PairingStore(pairing: nil), clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")])
+        let coordNonEmpty = makeFileBackedCoordinator(store: snapshotStoreNonEmpty, script: PairScript([]), carriedPairingControl: controlNonEmpty.client, localPort: { 7070 })
+        await coordNonEmpty.refreshPendingActions(markConfirmed: true).value
+        #expect(coordNonEmpty.replacementOfferVisible)
+        let recordNonEmpty = try snapshotStoreNonEmpty.loadCarriedPairingRecord()
+        #expect(recordNonEmpty.freshPairObligation == nil)
+        #expect(recordNonEmpty.replacementOfferID != nil)
+
+        // 1c: Unavailable clients list creates replacement offer on reconstruction
+        let snapshotStoreUnavail = FileBackedPairingStore(directory: snapshotDirUnavail)
+        let controlUnavail = PairingControlScript(mode: .accepted, store: PairingStore(pairing: nil))
+        controlUnavail.enqueueClientsOutcome(.failure(.unavailable))
+        let coordUnavail = makeFileBackedCoordinator(store: snapshotStoreUnavail, script: PairScript([]), carriedPairingControl: controlUnavail.client, localPort: { 7070 })
+        await coordUnavail.refreshPendingActions(markConfirmed: true).value
+        #expect(coordUnavail.replacementOfferVisible)
+        let recordUnavail = try snapshotStoreUnavail.loadCarriedPairingRecord()
+        #expect(recordUnavail.freshPairObligation == nil)
+        #expect(recordUnavail.replacementOfferID != nil)
+
+        semaphore.signal()
+        await pairTask.value
+    }
+
+    @Test func freshPairInterruptBeforeCredentialKeepsPreviousDecision() async throws {
+        let oldPairing = pairing(instanceID: "11111111-1111-1111-1111-111111111111", caChainPEM: testCACertPEM)
+        let newPairing = pairing(instanceID: "22222222-2222-2222-2222-222222222222", caChainPEM: otherCACertPEM)
+
+        let tempDir = URL(fileURLWithPath: "/var/tmp/solstone-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = FileBackedPairingStore(directory: tempDir)
+        try store.save(oldPairing)
+
+        let seededDecision = CarriedPairingDecision(
+            decisionID: "seeded-decision",
+            choice: .newDevice,
+            replacesCID: nil,
+            credentialFingerprint: oldPairing.fingerprint,
+            credentialRevision: PairingCredentialRevision(from: oldPairing).revision
+        )
+        var seededRecord = CarriedPairingRecord.empty
+        seededRecord.decision = seededDecision
+        seededRecord.replacementOfferID = "seeded-decision"
+        seededRecord.replacementOfferShown = true
+        try store.saveCarriedPairingRecord(seededRecord)
+
+        let gate = OneShotContinuationGate()
+        let semaphore = DispatchSemaphore(value: 0)
+        let snapshotDir = URL(fileURLWithPath: "/var/tmp/solstone-test-snap-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: snapshotDir) }
+
+        store.blockAfterIntentDurable = {
+            try? FileManager.default.copyItem(at: tempDir, to: snapshotDir)
+            gate.release()
+            semaphore.wait()
+        }
+
+        let script = PairScript([.success(newPairing)])
+        let coordinator = makeFileBackedCoordinator(store: store, script: script, retireOwnCredential: { _, _ in true })
+
+        await coordinator.submitPairingLink(try relayPairLink(caPEM: otherCACertPEM))
+        #expect(coordinator.state == .switchConfirmPending)
+
+        let confirmTask = Task { await coordinator.confirmSwitch() }
+        await gate.wait()
+
+        // Snapshot inspection
+        let snapshotStore = FileBackedPairingStore(directory: snapshotDir)
+        let snapshotCred = try snapshotStore.load()
+        #expect(snapshotCred == oldPairing)
+        let snapshotRecord = try snapshotStore.loadCarriedPairingRecord()
+        #expect(snapshotRecord.decision == seededDecision)
+        #expect(snapshotRecord.freshPairObligation != PairingCredentialRevision(from: newPairing))
+
+        let control = PairingControlScript(mode: .accepted, store: PairingStore(pairing: nil), clients: [CarriedPairingClientRow(cid: "other", displayLabel: "Other")])
+        let snapshotCoord = makeFileBackedCoordinator(store: snapshotStore, script: PairScript([]), carriedPairingControl: control.client, localPort: { 7070 })
+        await snapshotCoord.refreshPendingActions(markConfirmed: true).value
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
+
+        semaphore.signal()
+        await confirmTask.value
+    }
+
+    @Test func freshPairIntentWriteFailureReportsSaveFailedAndKeepsPreviousDecision() async throws {
+        let oldPairing = pairing(instanceID: "11111111-1111-1111-1111-111111111111", caChainPEM: testCACertPEM)
+        let newPairing = pairing(instanceID: "22222222-2222-2222-2222-222222222222", caChainPEM: otherCACertPEM)
+
+        let tempDir = URL(fileURLWithPath: "/var/tmp/solstone-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = FileBackedPairingStore(directory: tempDir)
+        try store.save(oldPairing)
+
+        let seededDecision = CarriedPairingDecision(
+            decisionID: "seeded-decision",
+            choice: .newDevice,
+            replacesCID: nil,
+            credentialFingerprint: oldPairing.fingerprint,
+            credentialRevision: PairingCredentialRevision(from: oldPairing).revision
+        )
+        var seededRecord = CarriedPairingRecord.empty
+        seededRecord.decision = seededDecision
+        seededRecord.replacementOfferID = "seeded-decision"
+        seededRecord.replacementOfferShown = true
+        try store.saveCarriedPairingRecord(seededRecord)
+
+        store.failNextIntentWrite = true
+
+        let script = PairScript([.success(newPairing), .success(newPairing)])
+        let control = PairingControlScript(mode: .accepted, store: PairingStore(pairing: nil), clients: [CarriedPairingClientRow(cid: "other", displayLabel: "Other")])
+        let coordinator = makeFileBackedCoordinator(store: store, script: script, retireOwnCredential: { _, _ in true }, carriedPairingControl: control.client, localPort: { 7070 })
+
+        await coordinator.submitPairingLink(try relayPairLink(caPEM: otherCACertPEM))
+        #expect(coordinator.state == .switchConfirmPending)
+
+        await coordinator.confirmSwitch()
+        #expect(coordinator.state == .saveFailed)
+
+        #expect(try store.load() == oldPairing)
+        let afterFailRecord = try store.loadCarriedPairingRecord()
+        #expect(afterFailRecord.decision == seededDecision)
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
+
+        // Retry allowed to save succeeds and classifies
+        await coordinator.submitPairingLink(try relayPairLink(caPEM: otherCACertPEM))
+        #expect(coordinator.state == .switchConfirmPending)
+        await coordinator.confirmSwitch()
+        #expect(coordinator.state == .switched)
+
+        await coordinator.refreshPendingActions(markConfirmed: true).value
+        #expect(control.events.filter { $0 == "clients" }.count == 1)
+        #expect(coordinator.replacementOfferVisible)
+    }
+
+    @Test func freshPairCredentialWriteFailureReportsSaveFailedAndKeepsPreviousDecision() async throws {
+        let oldPairing = pairing(instanceID: "11111111-1111-1111-1111-111111111111", caChainPEM: testCACertPEM)
+        let newPairing = pairing(instanceID: "22222222-2222-2222-2222-222222222222", caChainPEM: otherCACertPEM)
+
+        let tempDir = URL(fileURLWithPath: "/var/tmp/solstone-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = FileBackedPairingStore(directory: tempDir)
+        try store.save(oldPairing)
+
+        let seededDecision = CarriedPairingDecision(
+            decisionID: "seeded-decision",
+            choice: .newDevice,
+            replacesCID: nil,
+            credentialFingerprint: oldPairing.fingerprint,
+            credentialRevision: PairingCredentialRevision(from: oldPairing).revision
+        )
+        var seededRecord = CarriedPairingRecord.empty
+        seededRecord.decision = seededDecision
+        seededRecord.replacementOfferID = "seeded-decision"
+        seededRecord.replacementOfferShown = true
+        try store.saveCarriedPairingRecord(seededRecord)
+
+        store.failNextCredentialSave = true
+
+        let script = PairScript([.success(newPairing), .success(newPairing)])
+        let control = PairingControlScript(mode: .accepted, store: PairingStore(pairing: nil), clients: [CarriedPairingClientRow(cid: "other", displayLabel: "Other")])
+        let coordinator = makeFileBackedCoordinator(store: store, script: script, retireOwnCredential: { _, _ in true }, carriedPairingControl: control.client, localPort: { 7070 })
+
+        await coordinator.submitPairingLink(try relayPairLink(caPEM: otherCACertPEM))
+        #expect(coordinator.state == .switchConfirmPending)
+
+        await coordinator.confirmSwitch()
+        #expect(coordinator.state == .saveFailed)
+
+        #expect(try store.load() == oldPairing)
+        let afterFailRecord = try store.loadCarriedPairingRecord()
+        #expect(afterFailRecord.decision == seededDecision)
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
+
+        // Retry allowed to save succeeds and classifies
+        await coordinator.submitPairingLink(try relayPairLink(caPEM: otherCACertPEM))
+        #expect(coordinator.state == .switchConfirmPending)
+        await coordinator.confirmSwitch()
+        #expect(coordinator.state == .switched)
+
+        await coordinator.refreshPendingActions(markConfirmed: true).value
+        #expect(control.events.filter { $0 == "clients" }.count == 1)
+        #expect(coordinator.replacementOfferVisible)
+    }
+
+    @Test func staleFreshPairIntentDoesNotBindToNewerCredential() async throws {
+        let pairingA = pairing(instanceID: "11111111-1111-1111-1111-111111111111", caChainPEM: testCACertPEM)
+        let pairingB = pairing(instanceID: "22222222-2222-2222-2222-222222222222", caChainPEM: otherCACertPEM)
+
+        let tempDir = URL(fileURLWithPath: "/var/tmp/solstone-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = FileBackedPairingStore(directory: tempDir)
+
+        let gate = OneShotContinuationGate()
+        let semaphore = DispatchSemaphore(value: 0)
+        let snapshotDir = URL(fileURLWithPath: "/var/tmp/solstone-test-snap-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: snapshotDir) }
+
+        store.blockAfterIntentDurable = {
+            try? FileManager.default.copyItem(at: tempDir, to: snapshotDir)
+            gate.release()
+            semaphore.wait()
+        }
+
+        let scriptA = PairScript([.success(pairingA)])
+        let coordA = makeFileBackedCoordinator(store: store, script: scriptA)
+        let taskA = Task { await coordA.submitPairingLink(relayPairLink(instanceID: pairingA.instanceID)) }
+
+        await gate.wait()
+
+        // On the snapshot (which has intent A and no credential), commit B
+        let snapshotStore = FileBackedPairingStore(directory: snapshotDir)
+        let scriptB = PairScript([.success(pairingB)])
+        let coordB = makeFileBackedCoordinator(store: snapshotStore, script: scriptB)
+        await coordB.submitPairingLink(try relayPairLink(caPEM: otherCACertPEM))
+        #expect(coordB.state == .paired)
+
+        let recordB = try snapshotStore.loadCarriedPairingRecord()
+        #expect(recordB.freshPairObligation == PairingCredentialRevision(from: pairingB))
+
+        semaphore.signal()
+        await taskA.value
+
+        // Unpair and fresh-pair B on store
+        #expect(await coordA.unpair())
+        let scriptB2 = PairScript([.success(pairingB)])
+        let coordB2 = makeFileBackedCoordinator(store: store, script: scriptB2)
+        await coordB2.submitPairingLink(try relayPairLink(caPEM: otherCACertPEM))
+        #expect(coordB2.state == .paired)
+        let finalRecord = try store.loadCarriedPairingRecord()
+        #expect(finalRecord.freshPairObligation == PairingCredentialRevision(from: pairingB))
+    }
+
+    @Test func legacyCredentialWithoutFreshIntentIsNotEnrolled() async throws {
+        let legacyPairing = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
+        let tempDir = URL(fileURLWithPath: "/var/tmp/solstone-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = FileBackedPairingStore(directory: tempDir)
+        try store.save(legacyPairing)
+
+        let legacyJSON = """
+        {"replacementOfferShown":false}
+        """.data(using: .utf8)!
+        try legacyJSON.write(to: tempDir.appendingPathComponent("record.json"))
+
+        let control = PairingControlScript(mode: .accepted, store: PairingStore(pairing: nil), clients: [CarriedPairingClientRow(cid: "other", displayLabel: "Other")])
+        let coordinator = makeFileBackedCoordinator(store: store, script: PairScript([]), carriedPairingControl: control.client, localPort: { 7070 })
+
+        await coordinator.refreshPendingActions(markConfirmed: true).value
+        #expect(control.events.filter { $0 == "clients" }.isEmpty)
+        #expect(!coordinator.replacementOfferVisible)
+    }
+
+    @Test func withdrawnMarkDoesNotPersistFreshPairListOutcome() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+        let revision = PairingCredentialRevision(from: saved)
+
+        // 1. Empty outcome
+        let store1 = PairingStore(pairing: nil)
+        let gate1 = OneShotContinuationGate()
+        let control1 = PairingControlScript(mode: .accepted, store: store1, clients: [], clientsGate: gate1)
+        let coord1 = makeCoordinator(store: store1, outcomes: [.success(saved)], carriedPairingControl: control1.client, localPort: { 7070 })
+        await coord1.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task1 = Task { await coord1.refreshPendingActions(markConfirmed: true).value }
+        await control1.waitUntilClientsStart()
+        _ = coord1.refreshPendingActions(markConfirmed: false)
+        gate1.release()
+        await task1.value
+        let rec1 = try store1.loadCarriedPairingRecord()
+        #expect(rec1.freshPairObligation == revision)
+        #expect(rec1.replacementOfferID == nil)
+        #expect(!coord1.replacementOfferVisible)
+
+        // 2. Nonempty outcome
+        let store2 = PairingStore(pairing: nil)
+        let gate2 = OneShotContinuationGate()
+        let control2 = PairingControlScript(mode: .accepted, store: store2, clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")], clientsGate: gate2)
+        let coord2 = makeCoordinator(store: store2, outcomes: [.success(saved)], carriedPairingControl: control2.client, localPort: { 7070 })
+        await coord2.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task2 = Task { await coord2.refreshPendingActions(markConfirmed: true).value }
+        await control2.waitUntilClientsStart()
+        _ = coord2.refreshPendingActions(markConfirmed: false)
+        gate2.release()
+        await task2.value
+        let rec2 = try store2.loadCarriedPairingRecord()
+        #expect(rec2.freshPairObligation == revision)
+        #expect(rec2.replacementOfferID == nil)
+        #expect(!coord2.replacementOfferVisible)
+
+        // 3. Unavailable outcome
+        let store3 = PairingStore(pairing: nil)
+        let gate3 = OneShotContinuationGate()
+        let control3 = PairingControlScript(mode: .accepted, store: store3, clientsGate: gate3)
+        control3.enqueueClientsOutcome(.failure(.unavailable), gate: gate3)
+        let coord3 = makeCoordinator(store: store3, outcomes: [.success(saved)], carriedPairingControl: control3.client, localPort: { 7070 })
+        await coord3.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task3 = Task { await coord3.refreshPendingActions(markConfirmed: true).value }
+        await control3.waitUntilClientsStart()
+        _ = coord3.refreshPendingActions(markConfirmed: false)
+        gate3.release()
+        await task3.value
+        let rec3 = try store3.loadCarriedPairingRecord()
+        #expect(rec3.freshPairObligation == revision)
+        #expect(rec3.replacementOfferID == nil)
+        #expect(!coord3.replacementOfferVisible)
+    }
+
+    @Test func reconfirmAfterWithdrawnMarkClassifiesOnSameCoordinator() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+
+        let store = PairingStore(pairing: nil)
+        let gate = OneShotContinuationGate()
+        let control = PairingControlScript(mode: .accepted, store: store, clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")], clientsGate: gate)
+        let coord = makeCoordinator(store: store, outcomes: [.success(saved)], carriedPairingControl: control.client, localPort: { 7070 })
+
+        await coord.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task = Task { await coord.refreshPendingActions(markConfirmed: true).value }
+        await control.waitUntilClientsStart()
+        _ = coord.refreshPendingActions(markConfirmed: false)
+        gate.release()
+        await task.value
+
+        #expect(control.events.filter { $0 == "clients" }.count == 1)
+        #expect(!coord.replacementOfferVisible)
+
+        // Reconfirm on same coordinator
+        await coord.refreshPendingActions(markConfirmed: true).value
+        #expect(control.events.filter { $0 == "clients" }.count == 2)
+        #expect(coord.replacementOfferVisible)
+        let rec = try store.loadCarriedPairingRecord()
+        #expect(rec.freshPairObligation == nil)
+        #expect(rec.replacementOfferID != nil)
+    }
+
+    @Test func reconfirmAfterWithdrawnMarkClassifiesOnReconstructedCoordinator() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+
+        let store = PairingStore(pairing: nil)
+        let gate = OneShotContinuationGate()
+        let control = PairingControlScript(mode: .accepted, store: store, clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")], clientsGate: gate)
+        let coord = makeCoordinator(store: store, outcomes: [.success(saved)], carriedPairingControl: control.client, localPort: { 7070 })
+
+        await coord.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task = Task { await coord.refreshPendingActions(markConfirmed: true).value }
+        await control.waitUntilClientsStart()
+        _ = coord.refreshPendingActions(markConfirmed: false)
+        gate.release()
+        await task.value
+
+        #expect(control.events.filter { $0 == "clients" }.count == 1)
+        #expect(!coord.replacementOfferVisible)
+
+        // Reconstructed coordinator over same store
+        let newControl = PairingControlScript(mode: .accepted, store: store, clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")])
+        let newCoord = makeCoordinator(store: store, outcomes: [], carriedPairingControl: newControl.client, localPort: { 7070 })
+        await newCoord.refreshPendingActions(markConfirmed: true).value
+        #expect(newControl.events.filter { $0 == "clients" }.count == 1)
+        #expect(newCoord.replacementOfferVisible)
+        let rec = try store.loadCarriedPairingRecord()
+        #expect(rec.freshPairObligation == nil)
+        #expect(rec.replacementOfferID != nil)
+    }
+
+    @Test func heldMarkAtClientsResumeKeepsListOutcomes() async throws {
+        let selfCID = "sha256:" + String(repeating: "b", count: 64)
+        let otherCID = "sha256:" + String(repeating: "c", count: 64)
+        let saved = pairingWithFingerprint(selfCID)
+
+        // 1. Empty outcome
+        let store1 = PairingStore(pairing: nil)
+        let gate1 = OneShotContinuationGate()
+        let control1 = PairingControlScript(mode: .accepted, store: store1, clients: [], clientsGate: gate1)
+        let coord1 = makeCoordinator(store: store1, outcomes: [.success(saved)], carriedPairingControl: control1.client, localPort: { 7070 })
+        await coord1.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task1 = Task { await coord1.refreshPendingActions(markConfirmed: true).value }
+        await control1.waitUntilClientsStart()
+        gate1.release()
+        await task1.value
+        let rec1 = try store1.loadCarriedPairingRecord()
+        #expect(rec1.freshPairObligation == nil)
+        #expect(rec1.replacementOfferID == nil)
+        #expect(!coord1.replacementOfferVisible)
+
+        // 2. Nonempty outcome
+        let store2 = PairingStore(pairing: nil)
+        let gate2 = OneShotContinuationGate()
+        let control2 = PairingControlScript(mode: .accepted, store: store2, clients: [CarriedPairingClientRow(cid: otherCID, displayLabel: "Other")], clientsGate: gate2)
+        let coord2 = makeCoordinator(store: store2, outcomes: [.success(saved)], carriedPairingControl: control2.client, localPort: { 7070 })
+        await coord2.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task2 = Task { await coord2.refreshPendingActions(markConfirmed: true).value }
+        await control2.waitUntilClientsStart()
+        gate2.release()
+        await task2.value
+        let rec2 = try store2.loadCarriedPairingRecord()
+        #expect(rec2.freshPairObligation == nil)
+        #expect(rec2.replacementOfferID != nil)
+        #expect(coord2.replacementOfferVisible)
+
+        // 3. Unavailable outcome
+        let store3 = PairingStore(pairing: nil)
+        let gate3 = OneShotContinuationGate()
+        let control3 = PairingControlScript(mode: .accepted, store: store3, clientsGate: gate3)
+        control3.enqueueClientsOutcome(.failure(.unavailable), gate: gate3)
+        let coord3 = makeCoordinator(store: store3, outcomes: [.success(saved)], carriedPairingControl: control3.client, localPort: { 7070 })
+        await coord3.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+        let task3 = Task { await coord3.refreshPendingActions(markConfirmed: true).value }
+        await control3.waitUntilClientsStart()
+        gate3.release()
+        await task3.value
+        let rec3 = try store3.loadCarriedPairingRecord()
+        #expect(rec3.freshPairObligation == nil)
+        #expect(rec3.replacementOfferID != nil)
+        #expect(coord3.replacementOfferVisible)
+    }
+
+    private func makeFileBackedCoordinator(
+        store: FileBackedPairingStore,
+        script: PairScript,
+        reactivate: ReactivateRecorder = ReactivateRecorder(),
+        ownerState: TunnelLifecycleState = .disconnected,
+        clear: ClearRecorder = ClearRecorder(),
+        retireOwnCredential: @escaping @MainActor @Sendable (StoredPairing, String) async -> Bool = { _, _ in true },
+        endSelfRetirement: @escaping @MainActor @Sendable () -> Void = {},
+        carriedPairingControl: any CarriedPairingControlRequesting = URLSessionCarriedPairingControlClient(),
+        localPort: @escaping @MainActor @Sendable () -> Int? = { nil },
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
+    ) -> PairingCoordinator {
+        PairingCoordinator(
+            pair: { pairURL, deviceLabel, relayEndpoint in
+                try await script.pair(pairURL: pairURL, deviceLabel: deviceLabel, relayEndpoint: relayEndpoint)
+            },
+            keychainStore: store,
+            reactivate: {
+                await reactivate.record()
+            },
+            ownerState: { ownerState },
+            relayEndpoint: { URL(string: "https://relay.test")! },
+            deviceLabel: { "test mac" },
+            clearLastSuccessfulJournalContact: { clear.record() },
             retireOwnCredential: retireOwnCredential,
             endSelfRetirement: endSelfRetirement,
             carriedPairingControl: carriedPairingControl,
