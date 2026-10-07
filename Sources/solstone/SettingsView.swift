@@ -2205,6 +2205,7 @@ struct SettingsView: View {
             }
             .padding(24)
             .frame(minWidth: 360)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier(AXID.Settings.Service.migrationPicker)
         } else {
             VStack(alignment: .leading, spacing: 12) {
@@ -2233,6 +2234,7 @@ struct SettingsView: View {
             }
             .padding(24)
             .frame(minWidth: 360)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier(AXID.Settings.Service.migrationReplacementOffer)
             .onAppear { appState.pairingCoordinator.markReplacementOfferShown() }
         }
