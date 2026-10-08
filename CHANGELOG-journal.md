@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.36 (build 74)] - 2026-10-08
+
+### Changed
+- updated the bundled journal to [2.0.36](https://solstone.app/releases#v2.0.36) →
+
 ### Fixed
 - the journal app no longer keeps two processor cores busy while your journal runs.
-- before moving the journal app to Trash, the removal command in [INSTALL.md](https://github.com/solpbc/solstone-journal/blob/main/INSTALL.md#uninstall-on-mac) now stops it from starting at login.
+- before moving the journal app to Trash, the removal command in [INSTALL.md](https://github.com/solpbc/solstone-journal/blob/v2.0.36/INSTALL.md#uninstall-on-mac) now stops it from starting at login.
 
 ## [2.0.35 (build 73)] - 2026-10-07
 
