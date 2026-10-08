@@ -11,6 +11,7 @@ import Testing
 struct JournalClientSelfTests {
     private func makeTestSession(store: ObserverURLProtocolStore) -> URLSession {
         store.registerRoute(path: "/api/system/about", method: "GET", statusCode: 404)
+        store.registerRoute(path: "/app/network/local-endpoints", method: "GET", statusCode: 404)
         let config = observerURLProtocolConfiguration(store: store)
         config.connectionProxyDictionary = [:]
         config.timeoutIntervalForRequest = 15

@@ -123,6 +123,9 @@ final class TunnelLifecycleOwner {
     /// never listed.
     private(set) var triedAddresses: [String] = []
     private(set) var connectedThrough: JournalConnectedThrough?
+    /// The direct address the current connection came through; nil through the relay.
+    private var connectedDirectEndpoint: LocalEndpoint?
+    private let addressSession: URLSession
     private(set) var pendingDurableClear: (pairingGen: UInt64, accessGen: UInt64)?
     private(set) var transportAttemptID: UInt64 = 0
     private(set) var transportIncarnation: UInt64 = 0
@@ -352,6 +355,7 @@ final class TunnelLifecycleOwner {
         self.unlockNotificationName = unlockNotificationName
 
         let session = loopbackSession ?? BoundedLoopbackClient.sharedSession
+        self.addressSession = session
         let jv = self.journalVersion
         self.clientSelfSequencer = clientSelfSequencer ?? JournalClientSelfSequencer(
             session: session,
@@ -469,6 +473,7 @@ final class TunnelLifecycleOwner {
         journalVersion.clear()
         triedAddresses = []
         connectedThrough = nil
+        connectedDirectEndpoint = nil
         invalidatePairingCache()
         liveRelayEligible = true
         pendingDurableClear = nil
@@ -644,6 +649,7 @@ final class TunnelLifecycleOwner {
         }
         if case .connected = new {} else {
             connectedThrough = nil
+            connectedDirectEndpoint = nil
         }
         updateConnectionVerdict()
         if case .connected(let port, _) = new {
@@ -686,9 +692,54 @@ final class TunnelLifecycleOwner {
                                   pairingGeneration: pGen, accessMutationGeneration: aGen, transportAttempt: self.transportAttemptID),
                     burstID: burst
                 )
+                // A pairing with this Mac's own journal keeps its one loopback address.
+                if !Self.isHomePairing(pairing) {
+                    await self.refreshJournalAddresses(localPort: port, incarnation: incarnation, pairingGeneration: pGen)
+                }
             }
         } else {
             journalVersion.disconnected()
+        }
+    }
+
+    /// Saves the journal's current direct addresses on the pairing, so later dials use them after a
+    /// restart or days offline. The direct address this connection came through is kept even when
+    /// the list leaves it out; an empty or failed read changes nothing. Reached through the relay,
+    /// the new addresses are tried at once; a working direct connection keeps running.
+    private func refreshJournalAddresses(localPort: Int, incarnation: UInt64, pairingGeneration: UInt64) async {
+        guard let url = URL(string: "http://127.0.0.1:\(localPort)/app/network/local-endpoints") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.attachLoopbackCapability()
+        guard let result = try? await BoundedLoopbackClient.execute(
+                  request: request,
+                  session: addressSession,
+                  deadline: BoundedLoopbackClient.defaultDeadline
+              ),
+              result.response.statusCode == 200,
+              let body = try? JSONDecoder().decode(JournalLocalEndpoints.self, from: result.data),
+              (body.v ?? 0) >= 2 else {
+            splOwnerLog.notice("journal address refresh unavailable; keeping the saved addresses")
+            return
+        }
+        guard running, transportIncarnation == incarnation, self.localPort == localPort else { return }
+        var addresses = body.endpoints
+        let connected = connectedDirectEndpoint
+        if let connected, !addresses.contains(where: { $0.host == connected.host && $0.port == connected.port }) {
+            addresses.append(connected)
+        }
+        guard !addresses.isEmpty,
+              let current = currentStoredPairing(),
+              addresses != current.localEndpoints,
+              let updated = try? credentialStore.replaceLocalEndpoints(
+                  expectedPairingGen: pairingGeneration,
+                  endpoints: addresses
+              ) else { return }
+        setCachedPairingOutcome(.loaded(updated))
+        splOwnerLog.notice("journal addresses updated count=\(addresses.count, privacy: .public)")
+        if connected == nil {
+            await replaceLiveTransport(with: updated)
         }
     }
 
@@ -1423,6 +1474,11 @@ final class TunnelLifecycleOwner {
                 }()
                 state = .connected(localPort: port, via: Self.route(for: via))
                 connectedThrough = JournalConnectedThrough(via)
+                if case .lanDirect(let host, let port) = via {
+                    connectedDirectEndpoint = LocalEndpoint(host: host, port: port, scope: "lan")
+                } else {
+                    connectedDirectEndpoint = nil
+                }
                 if !wasConnected {
                     startProbe()
                 }
@@ -2247,4 +2303,11 @@ private final class CandidateConnectionWait {
         self.continuation = nil
         continuation?.resume(with: result)
     }
+}
+
+/// The journal's `/app/network/local-endpoints` body: `{"v":2,"endpoints":[{ip,port,scope}],...}`.
+/// From `v` 2 the list carries the journal's configured address, so it can replace the saved set.
+private struct JournalLocalEndpoints: Decodable {
+    let v: Int?
+    let endpoints: [LocalEndpoint]
 }

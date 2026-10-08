@@ -676,6 +676,39 @@ public final class PairingCredentialStore: @unchecked Sendable {
         return (pairing: updated, newAccessGen: storedAccessGeneration)
     }
 
+    /// Saves the journal's current direct addresses on the pairing. Not an access change, so
+    /// neither generation moves.
+    public func replaceLocalEndpoints(
+        expectedPairingGen: UInt64,
+        endpoints: [LocalEndpoint]
+    ) throws -> StoredPairing {
+        lock.lock()
+        defer { lock.unlock() }
+        guard expectedPairingGen == storedPairingGeneration else {
+            throw PairingCredentialStoreError.staleGeneration
+        }
+        guard let existing = cachedPairing ?? (try? store.load()) else {
+            throw PairingCredentialStoreError.noPairingFound
+        }
+
+        let updated = StoredPairing(
+            instanceID: existing.instanceID,
+            homeLabel: existing.homeLabel,
+            relayEndpoint: existing.relayEndpoint,
+            fingerprint: existing.fingerprint,
+            clientCertPEM: existing.clientCertPEM,
+            clientKeyPEM: existing.clientKeyPEM,
+            caChainPEM: existing.caChainPEM,
+            relayEnrollment: existing.relayEnrollment,
+            localEndpoints: endpoints,
+            pairedAt: existing.pairedAt
+        )
+
+        try store.save(updated)
+        cachedPairing = updated
+        return updated
+    }
+
     public func clearRelayAccess(
         expectedPairingGen: UInt64,
         expectedAccessGen: UInt64

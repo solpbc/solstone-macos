@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - when this mac is set up for a journal somewhere else, re-link now says it needs a pairing link from that journal, instead of only showing the place to paste one.
 - copy diagnostics now reads everything again when you press it, with the time it was read, and includes how your recent linking attempts ended. before, it copied what the panel showed when you opened it.
 - when the solstone app on your mac moves back to your local network from the relay or a vpn, it now keeps the new local connection. before, it could drop that connection a moment after moving, cutting off anything on its way to your journal, and connect again.
+- the solstone app now saves your journal's current addresses each time it connects, so once it has connected after your journal's address changes, it keeps using the new one without pairing again. a journal on this mac is unaffected.
+
 
 ## [2.0.28] - 2026-10-08
 

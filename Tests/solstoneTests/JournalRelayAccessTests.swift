@@ -200,6 +200,9 @@ struct JournalRelayAccessTests {
         // About is fetched on this same store beside publication. An unregistered
         // path pops the one-item relay FIFO; this 404 models an older journal.
         store.registerRoute(path: "/api/system/about", method: "GET", statusCode: 404)
+        // The address refresh runs on a pairing with no loopback address; this 404 models an
+        // older journal so it never pops the relay FIFO.
+        store.registerRoute(path: "/app/network/local-endpoints", method: "GET", statusCode: 404)
         _ = try? credStore.load()
         let session = makeTestSession(store: store)
         let transportFactory: @MainActor @Sendable () -> any TunnelTransporting = {
@@ -901,6 +904,121 @@ extension JournalRelayAccessTests {
         }
         try await Task.sleep(for: .milliseconds(150))
         #expect(supervisors.count == 2)
+        await owner.stop()
+    }
+
+    /// Lets the burst's jobs and any speculative transport replacement finish before `stop()`, so
+    /// nothing from this test keeps running into the next suite.
+    @MainActor
+    private func settle(_ owner: TunnelLifecycleOwner, _ supervisors: ActualSupervisorRecorder) async throws {
+        try await waitUntil {
+            let accessBusy = await owner.relayAccessSequencer.isBusy
+            let metadataBusy = await owner.clientSelfSequencer.isBusy
+            return !accessBusy && !metadataBusy
+        }
+        var last = supervisors.count
+        var quietRounds = 0
+        while quietRounds < 3 {
+            try await Task.sleep(for: .milliseconds(150))
+            if supervisors.count == last {
+                quietRounds += 1
+            } else {
+                last = supervisors.count
+                quietRounds = 0
+            }
+        }
+    }
+
+    @Test("A connection saves the journal's current addresses on the pairing; this Mac's own journal keeps its loopback")
+    @MainActor
+    func connectionSavesTheJournalsCurrentAddresses() async throws {
+        let http = ObserverURLProtocolStore()
+        http.registerRoute(path: "/app/network/api/relay/access", body: Self.freshReadyBody())
+        http.registerRoute(path: "/app/network/api/clients/self", body: Self.actualMetadataBody)
+        http.registerRoute(
+            path: "/app/network/local-endpoints",
+            body: #"{"v":2,"endpoints":[{"ip":"203.0.113.7","port":7657,"scope":"lan"},{"ip":"10.8.0.2","port":7657,"scope":"vpn"}],"ttl_s":3600,"generated_at":"2026-10-08T22:00:00Z"}"#
+        )
+        let addressRequests = { http.snapshotRequests().filter { $0.url?.path == "/app/network/local-endpoints" }.count }
+        let expected = [
+            LocalEndpoint(host: "203.0.113.7", port: 7657, scope: "lan"),
+            LocalEndpoint(host: "10.8.0.2", port: 7657, scope: "vpn"),
+        ]
+
+        let remote = PairingStore(pairing: pairing(
+            instanceID: "test-instance",
+            deviceToken: "old-token",
+            localEndpoints: [LocalEndpoint(host: "10.0.0.10", port: 7657, scope: "lan")]
+        ))
+        let supervisors = ActualSupervisorRecorder(useActualSupervisor: true)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: PairingCredentialStore(store: remote),
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: { SPLTunnelTransport(makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }) },
+            pathMonitoringSource: NoopPathMonitoringSource(), probe: { _, _ in true },
+            loopbackSession: makeTestSession(store: http)
+        )
+        owner.start()
+        try await waitUntil {
+            Array(remote.currentPairing?.localEndpoints.prefix(2) ?? []) == expected
+        }
+        // The retired 10.0.0.10 stays only if this connection came through it.
+        let saved = remote.currentPairing?.localEndpoints ?? []
+        #expect(saved.count == 2 || saved.last == LocalEndpoint(host: "10.0.0.10", port: 7657, scope: "lan"))
+        #expect(Array(owner.pairedAddresses.prefix(2)) == ["203.0.113.7:7657", "10.8.0.2:7657"])
+        try await settle(owner, supervisors)
+        await owner.stop()
+
+        let requestsBefore = addressRequests()
+        let home = PairingStore(pairing: pairing(instanceID: "test-instance", deviceToken: "old-token"))
+        let homeSupervisors = ActualSupervisorRecorder(useActualSupervisor: true)
+        let homeOwner = TunnelLifecycleOwner(
+            credentialStore: PairingCredentialStore(store: home),
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: { SPLTunnelTransport(makeSession: { homeSupervisors.make(pairing: $0, info: $1, policy: $2) }) },
+            pathMonitoringSource: NoopPathMonitoringSource(), probe: { _, _ in true },
+            loopbackSession: makeTestSession(store: http)
+        )
+        homeOwner.start()
+        try await waitUntil {
+            let accessBusy = await homeOwner.relayAccessSequencer.isBusy
+            return homeSupervisors.count >= 1 && !accessBusy
+                && http.snapshotRequests().contains { $0.url?.path.hasSuffix("/relay/access") == true }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(addressRequests() == requestsBefore)
+        #expect(home.currentPairing?.localEndpoints == [LocalEndpoint(host: "127.0.0.1", port: 1234, scope: "local")])
+        try await settle(homeOwner, homeSupervisors)
+        await homeOwner.stop()
+    }
+
+    @Test("An empty address list, or an older journal's list, leaves the saved addresses alone", arguments: [
+        #"{"v":2,"endpoints":[],"ttl_s":3600,"generated_at":"2026-10-08T22:00:00Z"}"#,
+        #"{"v":1,"endpoints":[{"ip":"10.0.0.3","port":7657,"scope":"lan"}],"ttl_s":3600,"generated_at":"2026-10-08T22:00:00Z"}"#,
+    ])
+    @MainActor
+    func emptyAddressListKeepsTheSavedSet(body: String) async throws {
+        let http = ObserverURLProtocolStore()
+        http.registerRoute(path: "/app/network/api/relay/access", body: Self.freshReadyBody())
+        http.registerRoute(path: "/app/network/api/clients/self", body: Self.actualMetadataBody)
+        http.registerRoute(path: "/app/network/local-endpoints", body: body)
+        let original = [LocalEndpoint(host: "10.0.0.10", port: 7657, scope: "lan")]
+        let disk = PairingStore(pairing: pairing(instanceID: "test-instance", deviceToken: "old-token", localEndpoints: original))
+        let supervisors = ActualSupervisorRecorder(useActualSupervisor: true)
+        let owner = TunnelLifecycleOwner(
+            credentialStore: PairingCredentialStore(store: disk),
+            tokenRefresher: FakeTokenRefresher().seam,
+            makeTransport: { SPLTunnelTransport(makeSession: { supervisors.make(pairing: $0, info: $1, policy: $2) }) },
+            pathMonitoringSource: NoopPathMonitoringSource(), probe: { _, _ in true },
+            loopbackSession: makeTestSession(store: http)
+        )
+        owner.start()
+        try await waitUntil {
+            http.snapshotRequests().contains { $0.url?.path == "/app/network/local-endpoints" }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(disk.currentPairing?.localEndpoints == original)
+        try await settle(owner, supervisors)
         await owner.stop()
     }
 
