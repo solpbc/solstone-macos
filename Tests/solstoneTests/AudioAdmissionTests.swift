@@ -910,7 +910,20 @@ struct AudioAdmissionTests {
         await writer.makeObservationFence().wait()
         #expect(writer.statisticsSnapshot.acceptedFrames == 96_000)
         let prefixURL = root.appendingPathComponent("prefix.m4a")
-        try Data(contentsOf: writer.url).write(to: prefixURL)
+        // The append fence drains our queue; AVAssetWriter commits movie
+        // fragments asynchronously. Wait for a readable snapshot before
+        // entering the held append whose quarantine this test exercises.
+        var readable = false
+        for _ in 0..<200 {
+            try Data(contentsOf: writer.url).write(to: prefixURL)
+            if let duration = try? await AVURLAsset(url: prefixURL).load(.duration),
+               duration.seconds > 0.1 {
+                readable = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(readable, "the native writer did not commit a readable prefix")
         let prefix = try #require(try await admissionDecode(prefixURL).first)
         #expect(prefix.count > 4_800 && admissionTone(prefix, frequency: 220, start: 0.025, end: 0.075) > 0.08)
         let hold = AdmissionNativeHold(), completed = LockedCounter()
