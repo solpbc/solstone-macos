@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- when the solstone app on your mac moves back to your local network from the relay or a vpn, it now keeps the new local connection. before, it could drop that connection a moment after moving, cutting off anything on its way to your journal, and connect again.
+
 ## [2.0.28] - 2026-10-08
 
 ### Fixed
