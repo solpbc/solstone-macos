@@ -46,6 +46,28 @@ internal enum DiagnosticEvidenceCode: String, Codable, Equatable, Sendable, Case
     case tunnelCarrierFailed = "tunnel.carrier_failed"
     case syncUploadExceedsLimits = "sync.upload_exceeds_limits"
     case syncUploadPreparationFailed = "sync.upload_preparation_failed"
+    // Pairing: who started it, which way it went and how it ended. Codes only:
+    // never a link, an address, a key or a journal identity.
+    case pairingAdoptionStarted = "pairing.adoption.started"
+    case pairingAdoptionPaired = "pairing.adoption.paired"
+    case pairingAdoptionFailed = "pairing.adoption.failed"
+    case pairingMarkSkippedForAdoption = "pairing.mark.skipped_for_adoption"
+    case pairingRelinkStarted = "pairing.relink.started"
+    case pairingRelinkNeedsPairingLink = "pairing.relink.needs_pairing_link"
+    case pairingSameMachineStarted = "pairing.same_machine.started"
+    case pairingSameMachinePaired = "pairing.same_machine.paired"
+    case pairingSameMachineAlreadyLinked = "pairing.same_machine.already_linked"
+    case pairingSameMachineUnreachable = "pairing.same_machine.unreachable"
+    case pairingSameMachineRefused = "pairing.same_machine.refused"
+    case pairingSameMachineUnexpectedAnswer = "pairing.same_machine.unexpected_answer"
+    case pairingSameMachineCeremonyFailed = "pairing.same_machine.ceremony_failed"
+    case pairingSameMachineSaveFailed = "pairing.same_machine.save_failed"
+    case pairingSameMachineCredentialsUnavailable = "pairing.same_machine.credentials_unavailable"
+    case pairingSameMachineOtherJournalPaired = "pairing.same_machine.other_journal_paired"
+    case pairingLinkSubmitted = "pairing.link.submitted"
+    case pairingLinkPaired = "pairing.link.paired"
+    case pairingLinkFailed = "pairing.link.failed"
+    case pairingLinkSaveFailed = "pairing.link.save_failed"
 }
 
 internal struct DiagnosticEvidenceEntry: Equatable, Sendable {

@@ -157,6 +157,188 @@ struct SameMachineHomeMigrationTests {
         #expect(driver.isPresented)
     }
 
+    @Test func ownerRelinkAfterAFailedAutomaticAdoptionStillAsksForTheMark() async throws {
+        // The adoption failed, so it landed no pairing of its own, and the owner then pressed
+        // re-link. That pairing is theirs: if the adoption's mark exemption is still standing,
+        // the mark is never asked, so it is never confirmed, and nothing is sent.
+        let ownerPairing = pairing(
+            instanceID: "home-instance",
+            localEndpoints: [LocalEndpoint(host: "127.0.0.1", port: 1234, scope: "local")]
+        )
+        let store = PairingStore(pairing: nil)
+        let pairStart = PairStartRecorder(responses: [
+            .failure(SameMachinePairStartFailure(kind: .httpStatus(400), detail: "refused")),
+            .success(sameMachinePairStartResponse(pairLink: loopbackDirectPairLink)),
+        ])
+        let state = AppState.forLoginItemTest(
+            config: loopbackRegisteredConfig(),
+            loginService: NoopLoginItemService(),
+            sameMachinePairStart: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            },
+            pairingStoring: store,
+            pairingOperation: { _, _, _ in ownerPairing },
+            pairingLoad: { try store.load() },
+            pairingSave: { try store.save($0) }
+        )
+
+        state.triggerSameMachineMigrationIfEligible()
+        try await waitUntil {
+            state.sameMachineMigrationLastResult == SameMachineHomePairingResult.failed(.pairStart(.httpStatus(400)))
+        }
+
+        let driver = JournalMarkConfirmationDriver()
+        resetForJournalRelink(appState: state, journalMarkDriver: driver)
+        let result = await performSameMachineHomePairing(
+            baseURL: ServiceMode.bundledServiceURL,
+            existingPairing: state.tunnelLifecycleOwner.sameMachineStoredPairingState,
+            startPairing: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            },
+            submitPairingLink: { link in
+                await state.pairingCoordinator.submitPairingLink(link)
+                return state.pairingCoordinator.state
+            }
+        )
+        #expect(result == .pairingStarted)
+        #expect(store.savedPairings == [ownerPairing])
+
+        driver.startIfNeeded(for: .paired, appState: state)
+
+        #expect(driver.isPresented)
+    }
+
+    @Test func failedAutomaticAdoptionLeavesNoMarkExemptionStanding() async throws {
+        let pairStart = PairStartRecorder(responses: [
+            .failure(SameMachinePairStartFailure(kind: .httpStatus(400), detail: "refused")),
+        ])
+        let state = AppState.forLoginItemTest(
+            config: loopbackRegisteredConfig(),
+            loginService: NoopLoginItemService(),
+            sameMachinePairStart: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            }
+        )
+
+        state.triggerSameMachineMigrationIfEligible()
+        try await waitUntil {
+            state.sameMachineMigrationLastResult == SameMachineHomePairingResult.failed(.pairStart(.httpStatus(400)))
+        }
+
+        #expect(!state.isAdoptingSameMachineHomeAutomatically)
+    }
+
+    @Test func ownerPairingStopsAnAdoptionStillWaitingToRetry() async throws {
+        // The adoption retries a journal that isn't answering yet. If the owner starts a pairing
+        // in the meantime, a later retry must not re-arm the mark exemption under it.
+        let pairStart = PairStartRecorder(responses: [
+            .failure(SameMachinePairStartFailure(kind: .transport, detail: "journal starting")),
+            .success(sameMachinePairStartResponse(pairLink: loopbackDirectPairLink)),
+        ])
+        let state = AppState.forLoginItemTest(
+            config: loopbackRegisteredConfig(),
+            loginService: NoopLoginItemService(),
+            sameMachinePairStart: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            }
+        )
+
+        state.triggerSameMachineMigrationIfEligible()
+        try await waitUntil {
+            await pairStart.callCount == 1
+        }
+        state.beginOwnerPairingAttempt()
+        try await Task.sleep(for: .seconds(2))
+
+        #expect(await pairStart.callCount == 1)
+        #expect(!state.isAdoptingSameMachineHomeAutomatically)
+    }
+
+    @Test func ownerSameMachineLinkRecordsItsAttemptAndHowItEnded() async throws {
+        let harness = DiagnosticEvidenceHarness()
+        let ownerPairing = pairing(
+            instanceID: "home-instance",
+            localEndpoints: [LocalEndpoint(host: "127.0.0.1", port: 1234, scope: "local")]
+        )
+        let store = PairingStore(pairing: nil)
+        let pairStart = PairStartRecorder(responses: [
+            .failure(SameMachinePairStartFailure(kind: .httpStatus(400), detail: "refused")),
+            .success(sameMachinePairStartResponse(pairLink: loopbackDirectPairLink)),
+        ])
+        let state = AppState.forLoginItemTest(
+            config: loopbackRegisteredConfig(),
+            loginService: NoopLoginItemService(),
+            sameMachinePairStart: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            },
+            pairingStoring: store,
+            pairingOperation: { _, _, _ in ownerPairing },
+            pairingLoad: { try store.load() },
+            pairingSave: { try store.save($0) },
+            recorder: harness.recorder
+        )
+        state.triggerSameMachineMigrationIfEligible()
+        try await waitUntil {
+            state.sameMachineMigrationLastResult == SameMachineHomePairingResult.failed(.pairStart(.httpStatus(400)))
+        }
+
+        let driver = JournalMarkConfirmationDriver()
+        let outcome = await runOwnerSameMachineLink(
+            appState: state,
+            journalMarkDriver: driver,
+            startPairing: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            }
+        )
+        driver.startIfNeeded(for: state.pairingCoordinator.state, appState: state)
+
+        #expect(outcome.message == nil)
+        #expect(driver.isPresented)
+        #expect(await harness.entries().map(\.code) == [
+            .pairingAdoptionStarted,
+            .pairingAdoptionFailed,
+            .pairingSameMachineStarted,
+            .pairingSameMachinePaired,
+        ])
+    }
+
+    @Test func ownerSameMachineLinkOnAnAlreadyLinkedMacSaysSo() async throws {
+        let harness = DiagnosticEvidenceHarness()
+        let homePairing = pairing(
+            instanceID: "home-instance",
+            localEndpoints: [LocalEndpoint(host: "127.0.0.1", port: 1234, scope: "local")]
+        )
+        let store = PairingStore(pairing: homePairing)
+        let pairStart = PairStartRecorder(responses: [])
+        let state = AppState.forLoginItemTest(
+            config: AppConfig(serverURL: ServiceMode.bundledServiceURL, serviceMode: .bundled),
+            loginService: NoopLoginItemService(),
+            sameMachinePairStart: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            },
+            pairingStoring: store,
+            pairingLoad: { try store.load() },
+            pairingSave: { try store.save($0) },
+            recorder: harness.recorder
+        )
+
+        let outcome = await runOwnerSameMachineLink(
+            appState: state,
+            journalMarkDriver: JournalMarkConfirmationDriver(),
+            startPairing: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            }
+        )
+
+        #expect(outcome.tone == .notice)
+        #expect(outcome.message == UICopy.SAME_MACHINE_LINK_ALREADY_LINKED)
+        #expect(await pairStart.callCount == 0)
+        #expect(await harness.entries().map(\.code) == [
+            .pairingSameMachineStarted,
+            .pairingSameMachineAlreadyLinked,
+        ])
+    }
+
     @Test func pairStartRefusedReportsNotYetPairedAndCaptureContinues() async {
         let state = AppState.forSnapshot(config: loopbackRegisteredConfig())
         state.isRecording = true

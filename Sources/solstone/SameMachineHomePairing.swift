@@ -119,7 +119,7 @@ struct SameMachinePairStartClient: Sendable {
         _ kind: SameMachinePairStartFailureKind,
         _ detail: String
     ) -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> {
-        Logger.setup.debug("\(detail, privacy: .public)")
+        Logger.setup.notice("\(detail, privacy: .public)")
         return .failure(SameMachinePairStartFailure(kind: kind, detail: detail))
     }
 }

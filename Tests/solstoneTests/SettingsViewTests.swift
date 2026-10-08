@@ -20,25 +20,6 @@ struct SettingsViewTests {
         #expect(!wireUpContains(source, "if affordances.showTunnelRetry"))
     }
 
-    @Test func confirmLocalJournalLinkClosesPairingFormOnSuccessOrNoOp() throws {
-        // A successful (or already-paired, no-op) same-machine pair must not reopen the
-        // paste-a-pairing-link form: the app already has everything it needs. Regression for
-        // the bug where a successful confirm re-showed the manual paste field.
-        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
-        #expect(wireUpContains(source, """
-            case .pairingStarted, .notEligible:
-                localLinkInProgress = false
-                localDiscoveryCompleted = true
-                showPairingFlow = false
-            """))
-        #expect(!wireUpContains(source, """
-            case .pairingStarted, .notEligible:
-                localLinkInProgress = false
-                localDiscoveryCompleted = true
-                showPairingFlow = true
-        """))
-    }
-
     @Test func migrationControlsExposeSemanticActionsWithoutDefaultPairChoice() throws {
         let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
         let choiceStart = try #require(source.range(of: "Button(UICopy.Migration.keepBoth)"))

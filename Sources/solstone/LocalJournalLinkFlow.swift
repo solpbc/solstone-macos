@@ -3,6 +3,7 @@
 
 import Foundation
 import JournalMarkKit
+import os
 import SolstoneCore
 
 enum LocalJournalDiscoveryResult: Equatable {
@@ -262,7 +263,136 @@ func resetForJournalRelink(
     journalMarkDriver: JournalMarkConfirmationDriver
 ) {
     journalMarkDriver.resetForNewPairAttempt()
-    appState.clearConfirmedMark()
+    appState.beginOwnerPairingAttempt()
+}
+
+/// What re-link or confirm tells the owner when it ends, and the code diagnostics keep for it.
+/// A link that landed says nothing here: the mark question follows it.
+struct SameMachineLinkOutcome: Equatable {
+    enum Tone: Equatable {
+        case notice
+        case error
+    }
+
+    let message: String?
+    let tone: Tone
+    /// The journal answered but would not link this way, so a pasted pairing link is the way on.
+    let offersPairingLink: Bool
+    let evidence: DiagnosticEvidenceCode
+}
+
+func sameMachineLinkOutcome(
+    for result: SameMachineHomePairingResult,
+    failedAddress: String?
+) -> SameMachineLinkOutcome {
+    switch result {
+    case .pairingStarted:
+        return SameMachineLinkOutcome(message: nil, tone: .notice, offersPairingLink: false, evidence: .pairingSameMachinePaired)
+    case .notEligible:
+        return SameMachineLinkOutcome(
+            message: UICopy.SAME_MACHINE_LINK_ALREADY_LINKED,
+            tone: .notice,
+            offersPairingLink: false,
+            evidence: .pairingSameMachineAlreadyLinked
+        )
+    case .failed(let failure):
+        return sameMachineLinkFailureOutcome(failure, failedAddress: failedAddress)
+    }
+}
+
+private func sameMachineLinkFailureOutcome(
+    _ failure: SameMachineHomePairingFailure,
+    failedAddress: String?
+) -> SameMachineLinkOutcome {
+    func error(_ message: String, offersPairingLink: Bool = false, _ evidence: DiagnosticEvidenceCode) -> SameMachineLinkOutcome {
+        SameMachineLinkOutcome(message: message, tone: .error, offersPairingLink: offersPairingLink, evidence: evidence)
+    }
+
+    switch failure {
+    case .pairStart(.transport), .pairStart(.httpStatus(503)):
+        return error(UICopy.SAME_MACHINE_LINK_UNREACHABLE, .pairingSameMachineUnreachable)
+    case .pairStart(.httpStatus(let status)) where (400..<500).contains(status):
+        return error(UICopy.SAME_MACHINE_LINK_REFUSED, offersPairingLink: true, .pairingSameMachineRefused)
+    case .pairStart, .linkShape:
+        return error(UICopy.SAME_MACHINE_LINK_UNEXPECTED, offersPairingLink: true, .pairingSameMachineUnexpectedAnswer)
+    case .ceremony(.failed(let pairingFailure)):
+        return error(pairingFailure.message(address: failedAddress), .pairingSameMachineCeremonyFailed)
+    case .ceremony(.saveFailed):
+        return error(UICopy.PAIRING_SAVE_FAILED, .pairingSameMachineSaveFailed)
+    case .ceremony:
+        return error(UICopy.SAME_MACHINE_LINK_UNFINISHED, .pairingSameMachineCeremonyFailed)
+    case .pairingUnavailable:
+        return error(UICopy.SAME_MACHINE_LINK_CREDENTIALS_UNAVAILABLE, .pairingSameMachineCredentialsUnavailable)
+    case .differentHomeAlreadyPaired:
+        return error(UICopy.SAME_MACHINE_LINK_OTHER_JOURNAL, .pairingSameMachineOtherJournalPaired)
+    }
+}
+
+/// The owner's re-link or confirm for the journal on this Mac, end to end except for what the
+/// settings pane shows. The mark question is owed again, the attempt and its ending are kept for
+/// diagnostics, and a Mac that turns out to be linked already re-asks a mark still unanswered.
+@MainActor
+func runOwnerSameMachineLink(
+    appState: AppState,
+    journalMarkDriver: JournalMarkConfirmationDriver,
+    startPairing: @escaping @MainActor @Sendable (
+        _ baseURL: String,
+        _ deviceLabel: String
+    ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>
+) async -> SameMachineLinkOutcome {
+    resetForJournalRelink(appState: appState, journalMarkDriver: journalMarkDriver)
+    appState.recordDiagnosticEvidence(.pairingSameMachineStarted)
+
+    let result = await performSameMachineHomePairing(
+        baseURL: ServiceMode.bundledServiceURL,
+        existingPairing: appState.tunnelLifecycleOwner.sameMachineStoredPairingState,
+        startPairing: startPairing,
+        submitPairingLink: { exactPairLink in
+            await appState.pairingCoordinator.submitPairingLink(exactPairLink)
+            return appState.pairingCoordinator.state
+        }
+    )
+
+    let outcome = sameMachineLinkOutcome(for: result, failedAddress: appState.pairingCoordinator.failedAddress)
+    appState.recordDiagnosticEvidence(outcome.evidence)
+    switch result {
+    case .pairingStarted:
+        break
+    case .notEligible:
+        journalMarkDriver.startIfUnconfirmed(appState: appState)
+    case .failed(let failure):
+        Logger.setup.notice("same-machine link did not complete: \(String(describing: failure), privacy: .public)")
+    }
+    return outcome
+}
+
+/// How a pasted pairing link ended, for diagnostics. A switch still waiting on the owner has
+/// not ended, so it keeps no code.
+func pairingLinkEvidence(for state: PairingFlowState) -> DiagnosticEvidenceCode? {
+    switch state {
+    case .paired, .alreadyConnected, .switched:
+        return .pairingLinkPaired
+    case .failed:
+        return .pairingLinkFailed
+    case .saveFailed:
+        return .pairingLinkSaveFailed
+    case .idle, .pairing, .switchConfirmPending:
+        return nil
+    }
+}
+
+/// Where a saved journal address sends, as host and port only, for owner copy.
+func journalAddressForOwner(_ serverURL: String?) -> String? {
+    guard let serverURL,
+          let components = URLComponents(string: serverURL),
+          let host = components.host,
+          !host.isEmpty else {
+        return nil
+    }
+    guard let port = components.port else {
+        return host
+    }
+    return "\(host):\(port)"
 }
 
 func resolvedJournalDisplayName(

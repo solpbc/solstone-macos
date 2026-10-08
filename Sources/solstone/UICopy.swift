@@ -187,6 +187,19 @@ public enum UICopy {
     public static let PAIRING_NOTENTITLED_RECOVERY = "your journal is paired, but it isn't on the paid plan, so it can't sync over the internet. you can still reach it directly, without the plan, whenever your journal is reachable."
     public static let PAIRING_DISCONNECT_CONFIRM = "disconnect this mac from your journal? your journal keeps everything. you can pair again anytime."
     public static let PAIRING_SAVE_FAILED = "pairing worked, but this mac couldn't save it. try again."
+    public static let SAME_MACHINE_LINK_ALREADY_LINKED = "already linked to your journal on this mac."
+    public static let SAME_MACHINE_LINK_UNREACHABLE = "couldn't reach your journal on this mac. make sure the journal app is open, then try again."
+    public static let SAME_MACHINE_LINK_REFUSED = "your journal on this mac didn't accept the request to link. try again, or paste a pairing link from your journal's network app below."
+    public static let SAME_MACHINE_LINK_UNEXPECTED = "your journal on this mac sent back something the solstone app couldn't use. try again, or paste a pairing link from your journal's network app below."
+    public static let SAME_MACHINE_LINK_UNFINISHED = "linking didn't finish. try again."
+    public static let SAME_MACHINE_LINK_CREDENTIALS_UNAVAILABLE = "this mac couldn't read its saved connection, so it can't link yet. try again, or restart solstone."
+    public static let SAME_MACHINE_LINK_OTHER_JOURNAL = "this mac is already paired with a journal on another device."
+    public static func relinkNeedsPairingLink(address: String?) -> String {
+        guard let address else {
+            return "linking again takes a pairing link. get one from your journal's network app and paste it below."
+        }
+        return "this mac is set up for a journal at \(address), so linking again takes a pairing link from that journal. get one from its network app and paste it below."
+    }
     public static let JOURNAL_MARK_CONFIRM_QUESTION = "does this match your journal?"
     public static let JOURNAL_MARK_CONFIRM_SUBTEXT = "your journal shows this same mark in its network app. it should match, exactly."
     public static let JOURNAL_MARK_CONFIRM_BUTTON = "yes, this is my journal"
@@ -289,6 +302,7 @@ public enum UICopy {
     public static let SETTINGS_DIAGNOSTICS_COPIED = "copied"
     public static let SETTINGS_DIAGNOSTICS_COPY_ANNOUNCEMENT = "diagnostics copied to the clipboard"
     public static let SETTINGS_DIAGNOSTICS_COPY_FAILED = "couldn't copy diagnostics"
+    public static let SETTINGS_DIAGNOSTICS_CHECKED_AT = "checked at"
     public static let SETTINGS_DIAGNOSTICS_APP_VERSION = "app version"
     public static let SETTINGS_DIAGNOSTICS_SCREEN_RECORDING = "screen recording"
     public static let SETTINGS_DIAGNOSTICS_MICROPHONE = "microphone"

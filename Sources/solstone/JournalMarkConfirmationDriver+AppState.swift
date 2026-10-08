@@ -133,6 +133,9 @@ extension JournalMarkConfirmationDriver {
         // its mark, including a fresh link to a journal on this same Mac — the release gate
         // drives that confirmation and fails `pairing_mark_absent` without it.
         guard !appState.isAdoptingSameMachineHomeAutomatically else {
+            if Self.successKey(for: state) != nil {
+                appState.recordDiagnosticEvidence(.pairingMarkSkippedForAdoption)
+            }
             Logger.journalMark.info("journal-mark skipped: automatic same-machine adoption of an already-linked journal")
             return
         }

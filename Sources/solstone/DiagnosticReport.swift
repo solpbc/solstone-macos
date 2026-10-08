@@ -43,13 +43,16 @@ internal struct DiagnosticReport: Equatable, Sendable {
     let lastDeliveryTimestamp: Date?
     let lastJournalContactState: LastJournalContactAXState
     let lastJournalContactTimestamp: Date?
+    /// When this report was read. The copied text leads with it, so two copies can be told apart.
+    var checkedAt: Date? = nil
 
     var text: String {
-        rows.map { row in
+        let header = checkedAt.map { ["\(UICopy.SETTINGS_DIAGNOSTICS_CHECKED_AT): \(diagnosticUTCString($0))"] } ?? []
+        return (header + rows.map { row in
             let continuationPrefix = String(repeating: " ", count: row.label.count + 2)
             let value = (row.machineValue ?? row.value).replacingOccurrences(of: "\n", with: "\n\(continuationPrefix)")
             return "\(row.label): \(value)"
-        }.joined(separator: "\n")
+        }).joined(separator: "\n")
     }
 }
 
@@ -249,7 +252,8 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
         lastDeliveryState: input.lastDelivery.diagnosticAXState,
         lastDeliveryTimestamp: input.lastDelivery.deliveredAt,
         lastJournalContactState: input.lastJournalContact.diagnosticAXState,
-        lastJournalContactTimestamp: input.lastJournalContact.connectedAt
+        lastJournalContactTimestamp: input.lastJournalContact.connectedAt,
+        checkedAt: input.now
     )
 }
 

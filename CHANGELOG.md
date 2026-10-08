@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- re-linking the solstone app to the journal on this mac now asks you to confirm your journal's mark, then what's waiting goes into your journal. before, if the app had tried to link by itself at startup and couldn't, a re-link could finish without asking, and nothing went into your journal until the app restarted.
+- when re-link can't link to the journal on this mac, settings now says why, such as your journal not responding or this mac not being able to read its saved connection. before, each of these read "couldn't connect to your journal. try again.", and a mac that was already linked said nothing.
+- when this mac is set up for a journal somewhere else, re-link now says it needs a pairing link from that journal, instead of only showing the place to paste one.
+- copy diagnostics now reads everything again when you press it, with the time it was read, and includes how your recent linking attempts ended. before, it copied what the panel showed when you opened it.
 - when the solstone app on your mac moves back to your local network from the relay or a vpn, it now keeps the new local connection. before, it could drop that connection a moment after moving, cutting off anything on its way to your journal, and connect again.
 
 ## [2.0.28] - 2026-10-08

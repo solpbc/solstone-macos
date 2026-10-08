@@ -219,6 +219,9 @@ struct SettingsView: View {
     @State private var lastProbeFinishedAt: Date?
     @State private var localLinkInProgress = false
     @State private var localLinkError: String?
+    @State private var localLinkNotice: String?
+    /// Re-link found this Mac set to send somewhere a same-machine link can't reach.
+    @State private var relinkNeedsPairingLink = false
     @State private var showPairingFlow = false
     @State private var replacementConfirmationPresented = false
     @State var entitlementOpenFailed = false
@@ -624,6 +627,7 @@ struct SettingsView: View {
         switch state {
         case .paired, .alreadyConnected, .switched:
             showPairingFlow = false
+            relinkNeedsPairingLink = false
             pairingLink = ""
         default:
             break
@@ -1568,6 +1572,10 @@ struct SettingsView: View {
                     Text(localLinkError)
                         .font(.caption)
                         .foregroundStyle(.red)
+                } else if let localLinkNotice {
+                    Text(localLinkNotice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 if pairingCanUnpair {
@@ -1762,6 +1770,10 @@ struct SettingsView: View {
                     Text(localLinkError)
                         .font(.caption)
                         .foregroundStyle(.red)
+                } else if let localLinkNotice {
+                    Text(localLinkNotice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(.vertical, 4)
@@ -2029,6 +2041,12 @@ struct SettingsView: View {
     private var pairingSection: some View {
         GroupBox("pairing") {
             VStack(alignment: .leading, spacing: 12) {
+                if relinkNeedsPairingLink {
+                    Text(UICopy.relinkNeedsPairingLink(address: journalAddressForOwner(appState.config.serverURL)))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("pairing link").font(.caption).foregroundStyle(.secondary)
                     TextField(UICopy.PAIRING_LINK_PLACEHOLDER, text: $pairingLink)
@@ -2567,13 +2585,16 @@ struct SettingsView: View {
         pairingMismatch = false
         journalMarkRederiveEligible = false
         journalMarkRederiveStarted = false
+        relinkNeedsPairingLink = false
         journalMarkDriver.resetForNewPairAttempt()
-        appState.clearConfirmedMark()
-        // The owner is pairing on purpose, so the mark question is owed again. This is the only
-        // thing that re-arms it after an automatic same-machine adoption suppressed it.
-        appState.isAdoptingSameMachineHomeAutomatically = false
-        Task {
+        // The owner is pairing on purpose, so the mark question is owed again.
+        appState.beginOwnerPairingAttempt()
+        appState.recordDiagnosticEvidence(.pairingLinkSubmitted)
+        Task { @MainActor in
             await appState.pairingCoordinator.submitPairingLink(pairingLink)
+            if let code = pairingLinkEvidence(for: appState.pairingCoordinator.state) {
+                appState.recordDiagnosticEvidence(code)
+            }
         }
     }
 
@@ -2815,11 +2836,15 @@ struct SettingsView: View {
 
     private func relinkJournal() {
         resetForJournalRelink(appState: appState, journalMarkDriver: journalMarkDriver)
+        appState.recordDiagnosticEvidence(.pairingRelinkStarted)
         localLinkError = nil
+        localLinkNotice = nil
         if BundledJournalEndpoint.isBundledServiceURL(appState.config.serverURL) ||
             appState.config.serviceMode == .bundled {
             confirmLocalJournalLink()
         } else {
+            appState.recordDiagnosticEvidence(.pairingRelinkNeedsPairingLink)
+            relinkNeedsPairingLink = true
             showPairingFlow = true
         }
     }
@@ -2827,27 +2852,23 @@ struct SettingsView: View {
     private func confirmLocalJournalLink() {
         localLinkInProgress = true
         localLinkError = nil
-        resetForJournalRelink(appState: appState, journalMarkDriver: journalMarkDriver)
+        localLinkNotice = nil
+        relinkNeedsPairingLink = false
 
         Task { @MainActor in
-            let result = await performSameMachineHomePairing(
-                baseURL: ServiceMode.bundledServiceURL,
-                existingPairing: appState.tunnelLifecycleOwner.sameMachineStoredPairingState,
-                startPairing: sameMachinePairStart,
-                submitPairingLink: { exactPairLink in
-                    await appState.pairingCoordinator.submitPairingLink(exactPairLink)
-                    return appState.pairingCoordinator.state
-                }
+            let outcome = await runOwnerSameMachineLink(
+                appState: appState,
+                journalMarkDriver: journalMarkDriver,
+                startPairing: sameMachinePairStart
             )
-
-            switch result {
-            case .pairingStarted, .notEligible:
-                localLinkInProgress = false
+            localLinkInProgress = false
+            showPairingFlow = outcome.offersPairingLink
+            switch outcome.tone {
+            case .notice:
+                localLinkNotice = outcome.message
                 localDiscoveryCompleted = true
-                showPairingFlow = false
-            case .failed:
-                localLinkInProgress = false
-                localLinkError = "couldn't connect to your journal. try again."
+            case .error:
+                localLinkError = outcome.message
             }
         }
     }
@@ -4013,7 +4034,7 @@ struct SettingsView: View {
                                         )
                                 }
                                 Button(UICopy.SETTINGS_DIAGNOSTICS_COPY) {
-                                    copyDiagnostics(diagnosticReport)
+                                    copyDiagnostics()
                                 }
                                 .accessibilityIdentifier(AXID.Settings.Help.diagnosticsCopy)
                                 AXStateCompanion(
@@ -4105,47 +4126,54 @@ struct SettingsView: View {
         diagnosticsExpanded = true
         diagnosticsLoading = true
         Task { @MainActor in
-            let evidence = await appState.readDiagnosticEvidence()
-            let backlog = await appState.uploadCoordinator.readDiagnosticBacklog()
+            let report = await readDiagnosticReport()
             guard shouldPublishDiagnosticLoad(
                 loadGeneration,
                 activeGeneration: diagnosticLoadGeneration,
                 diagnosticsExpanded: diagnosticsExpanded
             ) else { return }
-            var reportInput = DiagnosticReportInput(
-                appVersion: AppVersion.short,
-                screenRecording: currentScreenPermissionOutcome,
-                microphone: currentMicrophonePermissionOutcome,
-                isRecording: appState.isRecording,
-                isPaused: appState.isPaused,
-                ownerPauseHeldIdle: appState.ownerPauseHeldIdle,
-                hasError: appState.errorMessage != nil,
-                lastDelivery: appState.uploadCoordinator.lastJournalDeliveryOutcome,
-                lastJournalContact: appState.uploadCoordinator.lastSuccessfulJournalContactOutcome,
-                evidence: evidence,
-                ingestReason: appState.uploadCoordinator.lastErrorReason,
-                ingestRoute: appState.uploadCoordinator.lastRequestedIngestPath,
-                now: Date(),
-                activeSources: appState.captureManager.activeSources,
-                connection: DiagnosticConnectionInput(
-                    isPaired: appState.tunnelLifecycleOwner.cachedPairingIdentity != nil,
-                    pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses,
-                    dialableRelayHost: appState.tunnelLifecycleOwner.dialableRelayHost,
-                    triedAddresses: appState.tunnelLifecycleOwner.triedAddresses,
-                    connectedThrough: appState.tunnelLifecycleOwner.connectedThrough
-                )
-            )
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-            reportInput.browserRows = buildBrowserDiagnosticRows(
-                snapshot: appState.browserHostSnapshot.value,
-                repair: appState.browserRepair,
-                now: Date()
-            )
-#endif
-            reportInput.backlog = backlog
-            diagnosticReport = buildDiagnosticReport(reportInput)
+            diagnosticReport = report
             diagnosticsLoading = false
         }
+    }
+
+    /// Reads everything the report shows, now. Copy reads again rather than reusing what the
+    /// panel showed when it opened, so a copy taken after a re-link carries what happened.
+    private func readDiagnosticReport() async -> DiagnosticReport {
+        let evidence = await appState.readDiagnosticEvidence()
+        let backlog = await appState.uploadCoordinator.readDiagnosticBacklog()
+        var reportInput = DiagnosticReportInput(
+            appVersion: AppVersion.short,
+            screenRecording: currentScreenPermissionOutcome,
+            microphone: currentMicrophonePermissionOutcome,
+            isRecording: appState.isRecording,
+            isPaused: appState.isPaused,
+            ownerPauseHeldIdle: appState.ownerPauseHeldIdle,
+            hasError: appState.errorMessage != nil,
+            lastDelivery: appState.uploadCoordinator.lastJournalDeliveryOutcome,
+            lastJournalContact: appState.uploadCoordinator.lastSuccessfulJournalContactOutcome,
+            evidence: evidence,
+            ingestReason: appState.uploadCoordinator.lastErrorReason,
+            ingestRoute: appState.uploadCoordinator.lastRequestedIngestPath,
+            now: Date(),
+            activeSources: appState.captureManager.activeSources,
+            connection: DiagnosticConnectionInput(
+                isPaired: appState.tunnelLifecycleOwner.cachedPairingIdentity != nil,
+                pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses,
+                dialableRelayHost: appState.tunnelLifecycleOwner.dialableRelayHost,
+                triedAddresses: appState.tunnelLifecycleOwner.triedAddresses,
+                connectedThrough: appState.tunnelLifecycleOwner.connectedThrough
+            )
+        )
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        reportInput.browserRows = buildBrowserDiagnosticRows(
+            snapshot: appState.browserHostSnapshot.value,
+            repair: appState.browserRepair,
+            now: Date()
+        )
+#endif
+        reportInput.backlog = backlog
+        return buildDiagnosticReport(reportInput)
     }
 
     private func openProblemReport(aboutSnapshot: String) {
@@ -4188,12 +4216,24 @@ struct SettingsView: View {
         )
     }
 
-    private func copyDiagnostics(_ report: DiagnosticReport) {
-        diagnosticCopyFeedback = performDiagnosticCopy(
-            report,
-            write: diagnosticClipboardWrite,
-            announce: diagnosticAnnouncement
-        )
+    private func copyDiagnostics() {
+        diagnosticLoadGeneration &+= 1
+        let loadGeneration = diagnosticLoadGeneration
+        diagnosticCopyFeedback = nil
+        Task { @MainActor in
+            let report = await readDiagnosticReport()
+            guard shouldPublishDiagnosticLoad(
+                loadGeneration,
+                activeGeneration: diagnosticLoadGeneration,
+                diagnosticsExpanded: diagnosticsExpanded
+            ) else { return }
+            diagnosticReport = report
+            diagnosticCopyFeedback = performDiagnosticCopy(
+                report,
+                write: diagnosticClipboardWrite,
+                announce: diagnosticAnnouncement
+            )
+        }
     }
 
     private var logExportFailureReasonValue: String {

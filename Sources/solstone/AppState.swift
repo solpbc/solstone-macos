@@ -147,8 +147,12 @@ public final class AppState {
     internal private(set) var sameMachineMigrationLastResult: SameMachineHomePairingResult?
     /// True only while the automatic same-machine adoption is driving the pairing ceremony.
     /// Owner-initiated pairing never sets it, so the journal-mark confirmation still runs there.
+    /// An adoption that lands no pairing clears it, and so does every pairing the owner starts.
     /// Settable within the module so both branches can be exercised directly in tests.
     internal var isAdoptingSameMachineHomeAutomatically = false
+    /// Once the owner starts a pairing of their own, the automatic adoption does not run again
+    /// in this launch, so it can never re-arm the mark exemption under the owner's pairing.
+    private var ownerStartedPairingThisLaunch = false
 
     // MARK: - State
 
@@ -870,7 +874,8 @@ public final class AppState {
                     }
                 }
 
-                guard self.isEligibleForSameMachineMigration() else { return }
+                guard !self.ownerStartedPairingThisLaunch,
+                      self.isEligibleForSameMachineMigration() else { return }
                 await self.runSameMachineHomeMigration()
                 guard self.shouldRetrySameMachineMigration else { return }
             }
@@ -927,8 +932,10 @@ public final class AppState {
         // observed asynchronously, so the mark driver runs *after* the await below completes —
         // a `defer` here closes the window before the thing it is meant to cover ever happens,
         // which is exactly how the first attempt at this failed on the rig while passing tests.
-        // The flag is cleared instead by the owner starting a pairing of their own.
+        // The flag is cleared instead when this attempt lands no pairing, or by the owner
+        // starting a pairing of their own.
         isAdoptingSameMachineHomeAutomatically = true
+        recorder.enqueue(.pairingAdoptionStarted)
 
         let result = await performSameMachineHomePairing(
             baseURL: baseURL,
@@ -945,11 +952,29 @@ public final class AppState {
         // owner was already sending to from this Mac.
         if case .pairingStarted = result {
             recordJournalMarkConfirmed()
+            recorder.enqueue(.pairingAdoptionPaired)
         }
 
         if case .failed(let failure) = result {
-            Logger.setup.debug("same-machine home migration did not complete: \(String(describing: failure), privacy: .public)")
+            // No pairing landed, so there is no mark for the exemption to cover. Left standing,
+            // it would silence the mark on the owner's own re-link later in this launch, and
+            // nothing would be sent until the app restarted.
+            isAdoptingSameMachineHomeAutomatically = false
+            recorder.enqueue(.pairingAdoptionFailed)
+            Logger.setup.notice("same-machine home migration did not complete: \(String(describing: failure), privacy: .public)")
         }
+    }
+
+    /// The owner started a pairing of their own: re-link, confirm, or a pasted link. The mark
+    /// question is owed again, and the automatic adoption steps aside for the rest of this launch.
+    internal func beginOwnerPairingAttempt() {
+        clearConfirmedMark()
+        isAdoptingSameMachineHomeAutomatically = false
+        ownerStartedPairingThisLaunch = true
+    }
+
+    internal func recordDiagnosticEvidence(_ code: DiagnosticEvidenceCode) {
+        recorder.enqueue(code)
     }
 
     internal func clearLastSuccessfulJournalContact() {
@@ -1643,7 +1668,8 @@ public final class AppState {
         pairingStoring: (any PairingStoring)? = nil,
         pairingOperation: PairingCoordinator.PairOperation? = nil,
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
-        pairingSave: PairingCoordinator.SavePairing? = nil
+        pairingSave: PairingCoordinator.SavePairing? = nil,
+        recorder: DiagnosticEvidenceRecorder = .dormant
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -1662,7 +1688,8 @@ public final class AppState {
             pairingStoring: pairingStoring,
             pairingOperation: pairingOperation,
             pairingLoad: pairingLoad,
-            pairingSave: pairingSave
+            pairingSave: pairingSave,
+            recorder: recorder
         )
     }
 

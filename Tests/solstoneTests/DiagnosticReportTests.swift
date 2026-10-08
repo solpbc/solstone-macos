@@ -34,6 +34,7 @@ struct DiagnosticReportTests {
 #endif
         })
         #expect(report.text == """
+        checked at: 1970-01-01T00:16:40.000Z
         app version: 1.2.3
         screen recording: granted
         microphone: not granted
