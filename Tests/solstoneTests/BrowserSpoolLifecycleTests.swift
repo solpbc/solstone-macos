@@ -657,10 +657,16 @@ struct BrowserSpoolLifecycleTests {
         let fileURL = fixture.owner.store.periodFileURL(for: periodId)
         let ackURL = BrowserIngestAckStore.ackURL(periodDirectory: fileURL.deletingLastPathComponent())
         try BrowserIngestAckStore.write(ack, to: ackURL, ioInjector: fixture.injector)
-        fixture.pause.set(false)
+        // The upload fails, so a second pass (one the owner queued while paused can start
+        // after the unpause) would upload again. Pause from inside the first delivery.
+        let pause = fixture.pause
+        fixture.injector.setFailure { point in
+            if point == .size { pause.set(true) }
+        }
         await fixture.updateRoute(.held)
+        fixture.pause.set(false)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
-        try await Task.sleep(for: .milliseconds(80))
+        #expect(await fixture.transport.waitForAttempts(1))
         #expect(fixture.transport.attempts == 1)
         #expect(FileManager.default.fileExists(atPath: fileURL.path))
         fixture.owner.stop()
@@ -1222,8 +1228,18 @@ struct BrowserSpoolLifecycleTests {
         let periodId = try #require(accepted["period_id"] as? String)
         fixture.clock.advance(seconds: 301)
         #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
-        fixture.pause.set(false)
+        // The collision answer holds the bytes, so any later pass uploads again. A pass the
+        // owner queued while paused can start after the unpause; pause again from inside each
+        // pass that publishes an ack so every step below runs exactly one delivery.
+        let pause = fixture.pause
+        let proofs = Counter()
+        fixture.injector.setFailure { point in
+            guard point == .proof else { return }
+            pause.set(true)
+            _ = proofs.increment()
+        }
         await fixture.updateRoute(.held)
+        fixture.pause.set(false)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await transport.waitForAttempts(1))
         let durableDeadline = ContinuousClock.now + .seconds(2)
@@ -1256,16 +1272,20 @@ struct BrowserSpoolLifecycleTests {
         ))
         let readsBeforeMismatch = transport.dayReads
         await fixture.updateRoute(.held)
+        fixture.pause.set(false)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         let mismatchDeadline = ContinuousClock.now + .seconds(2)
-        while transport.dayReads == readsBeforeMismatch && ContinuousClock.now < mismatchDeadline {
+        while proofs.current < 2 && ContinuousClock.now < mismatchDeadline {
             try await Task.sleep(for: .milliseconds(10))
         }
+        #expect(transport.dayReads > readsBeforeMismatch)
         #expect(FileManager.default.fileExists(atPath: fixture.owner.store.periodFileURL(for: periodId).path))
         #expect(fixture.owner.store.getPeriod(periodId: periodId)?.state == "finalized")
 
+        fixture.injector.setFailure(nil)
         transport.setDayListing(matchingListing(binding.ack))
         await fixture.updateRoute(.held)
+        fixture.pause.set(false)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await waitForPeriodState(fixture, periodId: periodId, state: "delivered"))
         #expect(transport.attempts == 2)
@@ -1296,24 +1316,32 @@ struct BrowserSpoolLifecycleTests {
         let parentSyncFailures = Counter()
         let proofCalls = Counter()
         let injector = fixture.injector
+        let pause = fixture.pause
         fixture.injector.setFailure { point in
             guard point == .proof, proofCalls.increment() == 1 else { return }
             injector.setFailure { point in
                 guard point == .sync else { return }
                 if syncCalls.increment() == 2 {
+                    // A delivery pass the owner queued while paused can still start after the
+                    // unpause; a second pass would re-upload (the listing cannot yet prove the
+                    // bytes) and make the ack durable. Pause again inside the failing pass so
+                    // no later pass can move the state checked below.
+                    pause.set(true)
                     parentSyncFailures.increment()
                     throw LifecycleInjectedFailure.injected
                 }
             }
         }
-        fixture.pause.set(false)
+        // Hold the route across the unpause: a queued pass that runs now finds no route,
+        // and the fresh route starts the one pass that delivers.
         await fixture.updateRoute(.held)
+        fixture.pause.set(false)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await transport.waitForAttempts(1))
         let fileURL = fixture.owner.store.periodFileURL(for: periodId)
         let ackURL = BrowserIngestAckStore.ackURL(periodDirectory: fileURL.deletingLastPathComponent())
-        let ackDeadline = ContinuousClock.now + .seconds(3)
-        while !FileManager.default.fileExists(atPath: ackURL.path), ContinuousClock.now < ackDeadline {
+        let failureDeadline = ContinuousClock.now + .seconds(3)
+        while parentSyncFailures.current == 0, ContinuousClock.now < failureDeadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(FileManager.default.fileExists(atPath: ackURL.path))
@@ -1327,6 +1355,7 @@ struct BrowserSpoolLifecycleTests {
         transport.setDayListing(matchingListing(binding.ack))
 
         await fixture.updateRoute(.held)
+        fixture.pause.set(false)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await waitForPeriodState(fixture, periodId: periodId, state: "delivered"))
         #expect(fixture.owner.store.getPeriod(periodId: periodId)?.ackDurable == true)
@@ -1916,8 +1945,15 @@ struct BrowserSpoolLifecycleTests {
         let payload = fixture.owner.store.periodFileURL(for: periodId)
         fixture.clock.advance(seconds: 301)
         #expect(await waitForPeriodState(fixture, periodId: periodId, state: "finalized"))
-        fixture.pause.set(false)
+        // The collision answer holds the bytes, so a second pass would upload again and use
+        // up the proof step counted below. A pass the owner queued while paused can start
+        // after the unpause; pause again from inside the first pass that publishes an ack.
+        let pause = fixture.pause
+        fixture.injector.setFailure { point in
+            if point == .proof { pause.set(true) }
+        }
         await fixture.updateRoute(.held)
+        fixture.pause.set(false)
         await fixture.updateRoute(.url("http://127.0.0.1:49321"))
         #expect(await transport.waitForAttempts(1))
         #expect(await waitForDurableAck(fixture, periodId: periodId))
@@ -1945,9 +1981,19 @@ struct BrowserSpoolLifecycleTests {
         transport.setDayListing(listing(originalAck, key: "reassigned-alias-before-restart"))
         let proofCalls = Counter()
         fixture.injector.setFailure { point in
-            if point == .proof, proofCalls.increment() >= 2 { throw LifecycleInjectedFailure.injected }
+            if point == .proof, proofCalls.increment() >= 2 {
+                pause.set(true)
+                throw LifecycleInjectedFailure.injected
+            }
         }
-        await fixture.owner.planner.planAndUpload()
+        await fixture.updateRoute(.held)
+        fixture.pause.set(false)
+        await fixture.updateRoute(.url("http://127.0.0.1:49321"))
+        let releaseFailureDeadline = ContinuousClock.now + .seconds(3)
+        while proofCalls.current < 2 && ContinuousClock.now < releaseFailureDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(transport.attempts == 1)
         let persisted = try #require(fixture.owner.store.storedDeliveryBinding(periodId: periodId)?.ack)
         #expect(persisted.canonicalKey == "reassigned-alias-before-restart")
         #expect(persisted.physicalSegment == originalAck.requestedSegment)
