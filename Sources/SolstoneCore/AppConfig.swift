@@ -242,7 +242,13 @@ public struct AppConfig: Sendable {
             excludedApps = (try? JSONDecoder().decode([AppEntry].self, from: data)) ?? []
         }
 
-        let serverURL = defaults.string(forKey: Keys.serverURL)
+        // Builds 1.4.7 to 1.4.16 saved this app's own loopback tunnel port here while paired.
+        // That port changes every launch and never names a journal, and delivery has used the
+        // pairing alone since, so a saved one is dropped instead of being shown as a journal.
+        let savedServerURL = defaults.string(forKey: Keys.serverURL)
+        let isSavedTunnelPort = LoopbackHost.isLoopbackURL(savedServerURL)
+            && !BundledJournalEndpoint.isBundledServiceURL(savedServerURL)
+        let serverURL = isSavedTunnelPort ? nil : savedServerURL
         let serviceMode: ServiceMode?
         if let raw = defaults.string(forKey: Keys.serviceMode), let parsed = ServiceMode(rawValue: raw) {
             serviceMode = parsed
@@ -260,7 +266,7 @@ public struct AppConfig: Sendable {
             excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool ?? true,
             excludePrivateBrowsingAccessibility: defaults.bool(forKey: Keys.excludePrivateBrowsingAccessibility),
             serverURL: serverURL,
-            serverKey: defaults.string(forKey: Keys.serverKey),
+            serverKey: isSavedTunnelPort ? nil : defaults.string(forKey: Keys.serverKey),
             syncPaused: defaults.bool(forKey: Keys.syncPaused),
             debugSegments: defaults.bool(forKey: Keys.debugSegments),
             preserveSyncedSegments: defaults.bool(forKey: Keys.preserveSyncedSegments),

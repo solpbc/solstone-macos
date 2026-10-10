@@ -65,6 +65,36 @@ struct AppConfigMigrationTests {
         #expect(UserDefaults.standard.string(forKey: "serviceMode") == nil)
     }
 
+    @Test func aSavedTunnelPortLoadsAsNoJournalAddress() throws {
+        clearServiceDefaults()
+        defer { clearServiceDefaults() }
+
+        let defaults = UserDefaults.standard
+        defaults.set("http://127.0.0.1:50020", forKey: "serverURL")
+        defaults.set("observer-key", forKey: "serverKey")
+        defaults.set("external", forKey: "serviceMode")
+
+        let loaded = AppConfig.load()
+        #expect(loaded.serverURL == nil)
+        #expect(loaded.serverKey == nil)
+        #expect(!loaded.isUploadConfigured)
+    }
+
+    @Test(arguments: [ServiceMode.bundledServiceURL, "http://127.0.0.1:5015", "http://journal.local:5015", "https://example.com"])
+    func aJournalAddressStillLoads(_ address: String) throws {
+        clearServiceDefaults()
+        defer { clearServiceDefaults() }
+
+        let defaults = UserDefaults.standard
+        defaults.set(address, forKey: "serverURL")
+        defaults.set("key", forKey: "serverKey")
+
+        let loaded = AppConfig.load()
+        #expect(loaded.serverURL == address)
+        #expect(loaded.serverKey == "key")
+        #expect(loaded.isUploadConfigured)
+    }
+
     @Test func loadOrCreateDefaultMigratesJSONConfig() throws {
         clearConfigDefaults()
         defer { clearConfigDefaults() }
