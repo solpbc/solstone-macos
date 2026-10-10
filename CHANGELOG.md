@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.30] - 2026-10-10
+
 ### Fixed
 
 - if your journal runs on this mac, settings now finds it and asks you to confirm your journal's mark. before, on some macs, after you moved to a new mac or pressed disconnect, settings showed a journal on another device at an address like 127.0.0.1:50020, and re-link asked for a pairing link from a journal at that address, where no journal was.
