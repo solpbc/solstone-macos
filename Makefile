@@ -140,6 +140,7 @@ release:
 	swift build -c release
 
 SWIFT_BUILD_FLAGS ?=
+BROWSER_PREVIEW ?= 1
 BROWSER_DEVELOPMENT_HOST ?= 0
 ifeq ($(BROWSER_DEVELOPMENT_HOST),1)
 ifneq ($(BROWSER_PREVIEW),1)
