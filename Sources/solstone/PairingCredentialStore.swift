@@ -70,7 +70,8 @@ public final class PairingCredentialStore: @unchecked Sendable {
     }
 
     // Serialize the before/write/after lifecycle, including reloads and hook
-    // installation. No credential lock spans a callback or async network work.
+    // installation. Acquire this before the credential lock in every caller
+    // that reloads, matching load/save/delete.
     // Hooks must not call an identity operation on this store recursively.
     private let browserIdentityLock = NSRecursiveLock()
     private var browserMutationLock: NSLock?
@@ -157,6 +158,10 @@ public final class PairingCredentialStore: @unchecked Sendable {
         expected: CarriedPairingRecord,
         whilePairing expectedPairing: PairingCredentialRevision
     ) throws {
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIdentityLock.lock()
+        defer { browserIdentityLock.unlock() }
+        #endif
         lock.lock()
         defer { lock.unlock() }
         guard let pairing = try load(), PairingCredentialRevision(from: pairing) == expectedPairing else {
@@ -180,6 +185,10 @@ public final class PairingCredentialStore: @unchecked Sendable {
     }
 
     func ordinarySyncRevision(for identity: TunnelPairingIdentity?) -> String? {
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIdentityLock.lock()
+        defer { browserIdentityLock.unlock() }
+        #endif
         lock.lock()
         defer { lock.unlock() }
         guard let identity, let pairing = try? load(),
@@ -190,6 +199,10 @@ public final class PairingCredentialStore: @unchecked Sendable {
     }
 
     func ordinarySyncIsCurrent(_ context: JournalUploadContext) -> Bool {
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIdentityLock.lock()
+        defer { browserIdentityLock.unlock() }
+        #endif
         lock.lock()
         defer { lock.unlock() }
         guard let expectedRevision = context.credentialRevision,
@@ -202,6 +215,10 @@ public final class PairingCredentialStore: @unchecked Sendable {
     }
 
     func markAnswerIsCurrent(_ expectedRevision: PairingCredentialRevision) -> Bool {
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIdentityLock.lock()
+        defer { browserIdentityLock.unlock() }
+        #endif
         lock.lock()
         defer { lock.unlock() }
         guard let pairing = try? load(),
@@ -216,6 +233,10 @@ public final class PairingCredentialStore: @unchecked Sendable {
         _ context: JournalUploadContext,
         operation: () throws -> T
     ) throws -> T? {
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIdentityLock.lock()
+        defer { browserIdentityLock.unlock() }
+        #endif
         lock.lock()
         defer { lock.unlock() }
         guard let expectedRevision = context.credentialRevision,
@@ -249,6 +270,10 @@ public final class PairingCredentialStore: @unchecked Sendable {
 #endif
 
     func owns(_ fingerprint: PairingCredentialRevision, operationID: String) -> Bool {
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIdentityLock.lock()
+        defer { browserIdentityLock.unlock() }
+        #endif
         lock.lock()
         defer { lock.unlock() }
         guard let pairing = try? load(), let record = try? carriedPairingRecord() else { return false }
@@ -312,6 +337,10 @@ public final class PairingCredentialStore: @unchecked Sendable {
         _ invalidation: CarriedPairingInvalidation,
         whilePairing pairing: StoredPairing
     ) throws {
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIdentityLock.lock()
+        defer { browserIdentityLock.unlock() }
+        #endif
         lock.lock()
         defer { lock.unlock() }
         guard let current = try load(),
@@ -335,6 +364,10 @@ public final class PairingCredentialStore: @unchecked Sendable {
         revision: String,
         expectedCurrentPairing: PairingCredentialRevision?
     ) throws {
+        #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        browserIdentityLock.lock()
+        defer { browserIdentityLock.unlock() }
+        #endif
         lock.lock()
         defer { lock.unlock() }
         let current = try load()
