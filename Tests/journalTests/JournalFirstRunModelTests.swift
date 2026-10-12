@@ -380,7 +380,7 @@ struct FirstRunModelFixture {
     let browser: FakeBrowser
     let routeLog: RouteLog
 
-    var routes: [JournalFirstRunRoute] { routeLog.routes }
+    @MainActor var routes: [JournalFirstRunRoute] { routeLog.routes }
 }
 
 @MainActor
