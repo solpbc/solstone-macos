@@ -48,6 +48,8 @@ public struct NativeHostAllowlist: Sendable, Equatable {
 public enum NativeHostBrandHint: String, Sendable, Equatable {
     case chromium
     case firefox
+    /// The Safari bridge inside the app, never a launched helper.
+    case safari
 }
 
 public enum NativeHostMode: String, Sendable, Equatable {

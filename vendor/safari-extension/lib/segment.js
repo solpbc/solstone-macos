@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 sol pbc
+
+(function () {
+  "use strict";
+
+  function blocksToMap(blocks) {
+    const m = new Map();
+    for (const b of blocks || []) {
+      if (b && b.id !== undefined) m.set(b.id, b);
+    }
+    return m;
+  }
+
+  function blockFingerprint(b) {
+    if (!b) return "";
+    return (b.type || "") + "\x00" + (b.text || "") + "\x00" + JSON.stringify(b.attrs || {});
+  }
+
+  function diffBlocks(prev, next) {
+    const prevMap = blocksToMap(prev);
+    const nextMap = blocksToMap(next);
+    const added = [];
+    const updated = [];
+    const removed = [];
+    for (const [id, b] of nextMap) {
+      const old = prevMap.get(id);
+      if (!old) added.push(b);
+      else if (blockFingerprint(old) !== blockFingerprint(b)) updated.push(b);
+    }
+    for (const id of prevMap.keys()) {
+      if (!nextMap.has(id)) removed.push(id);
+    }
+    return { added, updated, removed };
+  }
+
+  function snapshotLine(site, meta, blocks, ts, rel) {
+    return {
+      t: "segment_start",
+      ts,
+      rel,
+      site: site || "",
+      url: (meta && meta.url) || "",
+      title: (meta && meta.title) || "",
+      adapter: (meta && meta.adapter) || "",
+      n: (blocks && blocks.length) || 0,
+      blocks: blocks || [],
+    };
+  }
+
+  function deltaLines(site, diff, ts, rel) {
+    const lines = [];
+    for (const b of diff.added) lines.push({ t: "delta", ts, rel, site: site || "", op: "add", block: b });
+    for (const b of diff.updated) lines.push({ t: "delta", ts, rel, site: site || "", op: "update", block: b });
+    for (const id of diff.removed) lines.push({ t: "delta", ts, rel, site: site || "", op: "remove", block: { id } });
+    return lines;
+  }
+
+  globalThis.SolstoneSegment = {
+    blocksToMap,
+    blockFingerprint,
+    diffBlocks,
+    snapshotLine,
+    deltaLines,
+  };
+})();

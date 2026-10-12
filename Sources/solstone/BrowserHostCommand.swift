@@ -53,7 +53,7 @@ enum BrowserHostCommand {
             report = registration.check(mode: mode)
             endpoint = fence.inspectEndpoint()
         }
-        for brand in BrowserBrand.allCases {
+        for brand in BrowserBrand.nativeMessagingHosts {
             guard let result = report.outcomes[brand] else {
                 output("unknown registration_incomplete")
                 continue

@@ -60,7 +60,8 @@ globalThis.SolstoneNativeBrowserSchemas = {
             "enum": [
               "chrome",
               "edge",
-              "firefox"
+              "firefox",
+              "safari"
             ]
           },
           "inst": {

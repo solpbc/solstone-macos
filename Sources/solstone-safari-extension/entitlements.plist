@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <!-- The app group is the only path from the sandboxed handler to the app.
+         Team-prefixed, so the Developer ID signature authorizes it without a profile. -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>7QCG8V4M6H.app.solstone.observer</string>
+    </array>
+</dict>
+</plist>

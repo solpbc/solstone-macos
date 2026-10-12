@@ -1,0 +1,315 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (c) 2026 sol pbc -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>solstone settings</title>
+    <style>
+      @font-face { font-family: "Comfortaa"; src: url("fonts/comfortaa.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+      @font-face { font-family: "InterBody"; src: url("fonts/inter.woff2") format("woff2"); font-weight: 400 600; font-display: swap; }
+      :root {
+        --ground: #faf3e4;
+        --surface: #fefcf8;
+        --ink: #1a1a1a;
+        --soft: #5b5246;
+        --muted: #6e6453;
+        --line: #ece3d0;
+        --field-line: #96896F;
+        --orange: #e8923a;
+        --orange-wash: #fbefdd;
+        --focus: #B06A1A;
+        --success: #3F9D6A;
+        --success-ink: #166534;
+        --success-wash: #e7f1e9;
+        --warn: #C99A2E;
+        --bad: #9f2d2d;
+        --bad-wash: #f8e9e6;
+      }
+      [hidden] { display: none !important; }
+      body {
+        box-sizing: border-box;
+        overflow-x: hidden;
+        font: 14px/1.5 "InterBody", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--ground);
+        color: var(--ink);
+        margin: 0;
+        padding: 28px;
+      }
+      .wrap { max-width: 620px; margin: 0 auto; }
+      h1 {
+        margin: 0;
+        font-family: "Comfortaa", system-ui, sans-serif;
+        font-weight: 700;
+        font-size: 19px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        letter-spacing: -0.3px;
+      }
+      h1 .desc { font-family: "InterBody", sans-serif; font-weight: 400; font-size: 13px; color: var(--muted); }
+      h2 { font-size: 15px; margin: 0 0 8px; }
+      h3 { font-size: 14px; margin: 16px 0 6px; }
+      p { margin: 8px 0 0; }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px 18px;
+        margin: 16px 0;
+      }
+      .warm-card { background: var(--orange-wash); }
+      .step {
+        padding: 12px 0;
+        border-top: 1px solid var(--line);
+      }
+      .step:first-child {
+        padding-top: 0;
+        border-top: 0;
+      }
+      .muted { color: var(--muted); font-size: 13px; }
+      .strongish { color: var(--ink); }
+      label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 3px; }
+      input {
+        font: inherit;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 9px 10px;
+        border: 1px solid var(--field-line);
+        border-radius: 9px;
+        background: #fff;
+        color: var(--ink);
+      }
+      input[type="checkbox"] { width: auto; }
+      button {
+        min-height: 34px;
+        font: inherit;
+        border: 1px solid var(--field-line);
+        background: var(--surface);
+        color: var(--ink);
+        border-radius: 9px;
+        padding: 7px 12px;
+        cursor: pointer;
+      }
+      button.primary { background: var(--orange); border-color: var(--orange); color: var(--ink); font-weight: 600; }
+      button:disabled { cursor: default; opacity: .5; }
+      button:focus-visible,
+      input:focus-visible,
+      summary:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      .lead-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+      .journal-lead { color: var(--soft); }
+      .state-chip {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 24px;
+        box-sizing: border-box;
+        padding: 2px 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--ink);
+        font-size: 12px;
+      }
+      .state-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+      .state-chip.ok { color: var(--success-ink); background: var(--success-wash); border-color: transparent; }
+      .state-chip.ok::before { background: var(--success); }
+      .state-chip.attention { color: var(--bad); background: var(--bad-wash); border-color: transparent; }
+      .state-chip.attention::before { background: var(--bad); }
+      .state-chip.unavailable { border-color: var(--warn); }
+      .state-chip.unavailable::before { background: var(--warn); }
+      .destination-box {
+        margin-top: 12px;
+        padding: 10px 11px;
+        border-radius: 10px;
+        background: var(--surface);
+      }
+      .destination-box .key { color: var(--muted); font-size: 11px; letter-spacing: .04em; }
+      .destination-box .value { margin-top: 3px; font-weight: 600; }
+      .destination-box .detail { margin-top: 2px; color: var(--soft); font-size: 12px; overflow-wrap: anywhere; }
+      details { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+      summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+      .disclosure {
+        font: inherit;
+        color: var(--soft);
+        margin: 12px 0 0;
+      }
+      .disclosure p { margin: 12px 0 0; }
+      .disclosure ul { margin: 8px 0 0; padding-left: 22px; }
+      .disclosure li { margin-top: 6px; padding-left: 2px; }
+      .disclosure > :first-child { margin-top: 0; }
+      .addrow { display: flex; gap: 8px; align-items: flex-end; }
+      .addrow > div { flex: 1; }
+      .site {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 9px 0;
+        border-top: 1px solid var(--line);
+      }
+      .site:first-child { border-top: 0; }
+      .site-copy { min-width: 0; overflow-wrap: anywhere; }
+      .site-host { font-weight: 600; overflow-wrap: anywhere; }
+      .site-state { color: var(--soft); font-size: 12px; }
+      .site-state.ok { color: var(--success-ink); }
+      .site-state.bad { color: var(--bad); }
+      .site-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px; }
+      .site button { min-height: 24px; padding: 3px 10px; font-size: 12px; }
+      .marker-label { display: flex; align-items: center; gap: 8px; margin: 6px 0; color: var(--ink); }
+      .action-message { min-height: 0; margin: 12px 0; color: var(--muted); font-size: 12px; }
+      .action-message.ok { color: var(--success-ink); }
+      .action-message.bad { color: var(--bad); }
+      footer { color: var(--muted); font-size: 12px; }
+      @media (max-width: 620px) {
+        body { padding: 18px; }
+        .site { align-items: flex-start; flex-direction: column; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header id="pageHeader">
+        <h1 id="pageTitle">
+          <img id="optionsMark" src="brand/mark-healthy.svg" width="24" height="24" alt="" />
+          solstone <span class="desc" id="pageSubTitle">in your browser</span>
+        </h1>
+      </header>
+
+      <div id="welcomeView" hidden>
+        <!-- Warm Card: 3 lines in exact order -->
+        <div id="warmCard" class="card warm-card">
+          <p id="warmKinship0" class="strongish"></p>
+          <p id="warmKinship1" class="strongish"></p>
+          <p id="warmKinship2" class="strongish"></p>
+        </div>
+
+        <!-- Light Card: 3 Steps -->
+        <div id="stepsCard" class="card">
+          <!-- Step 1 -->
+          <section id="step1Section" class="step">
+            <h2 id="step1HeadingRow">
+              <span id="step1Check" hidden>✓ </span>
+              <span id="step1Heading">looking for the solstone app on this computer…</span>
+            </h2>
+            <p id="step1Body" class="muted"></p>
+            <div id="step1Actions" class="actions">
+              <button id="step1ActionBtn" class="primary" type="button" hidden></button>
+            </div>
+          </section>
+
+          <!-- Step 2 -->
+          <section id="step2Section" class="step">
+            <h2 id="step2HeadingRow">
+              <span id="step2Check" hidden>✓ </span>
+              <span id="step2Heading">what the solstone extension takes in</span>
+            </h2>
+            <div id="step2Content">
+              <div id="step2DisclosureBody" class="disclosure"></div>
+              <p id="step2PendingText" class="muted" hidden></p>
+              <div class="actions" id="step2Actions">
+                <button id="agreeDisclosureBtn" class="primary" type="button" hidden>agree and go on</button>
+              </div>
+            </div>
+            <div id="step2Completed" hidden>
+              <details id="step2ReReadDetails">
+                <summary id="step2ReadAgain">read it again</summary>
+                <div id="step2ReReadBody" class="disclosure"></div>
+              </details>
+            </div>
+          </section>
+
+          <!-- Step 3 -->
+          <section id="step3Section" class="step">
+            <h2 id="step3HeadingRow">
+              <span id="step3Check" hidden>✓ </span>
+              <span id="step3Heading">choose your first site</span>
+            </h2>
+            <div id="step3Content" hidden>
+              <p id="step3Body" class="muted"></p>
+              <label class="marker-label" style="margin-top: 14px;">
+                <input type="checkbox" id="welcomeShowPageIndicator" />
+                show a small solstone mark on pages you've added
+              </label>
+              <div id="welcomeSiteList"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div id="settingsView">
+        <section id="statusCard" class="card">
+          <div class="lead-row">
+            <div id="statusLead" class="journal-lead"></div>
+            <span id="statusStateChip" class="state-chip calm"></span>
+          </div>
+          <p id="statusReason" class="muted" hidden></p>
+          <div id="statusAlso"></div>
+          <div id="statusActions"></div>
+        </section>
+
+        <section id="sitesCard" class="card">
+          <h2>your sites</h2>
+          <div id="sitesMain">
+            <form id="addForm" novalidate>
+              <div class="addrow">
+                <div>
+                  <label for="newHost">add this site</label>
+                  <input id="newHost" placeholder="mail.google.com" />
+                </div>
+                <button id="addBtn" class="primary" type="submit">add this site</button>
+              </div>
+            </form>
+            <div id="siteList"></div>
+          </div>
+          <section id="siteDisclosure" hidden>
+            <h3 id="siteDisclosureTitle"></h3>
+            <p id="siteDisclosureWhat" class="strongish"></p>
+            <p id="siteDisclosureUnsent"></p>
+            <div class="destination-box">
+              <div class="key">it goes to</div>
+              <div id="siteDisclosureDestination" class="value"></div>
+              <div id="siteDisclosureDestinationDetail" class="detail"></div>
+            </div>
+            <p id="siteDisclosureChrome"></p>
+            <div class="actions">
+              <button id="siteDisclosureConfirm" class="primary" type="button"></button>
+              <button id="siteDisclosureCancel" type="button"></button>
+            </div>
+          </section>
+        </section>
+
+        <section id="indicatorCard" class="card">
+          <h2>on-page marker</h2>
+          <label class="marker-label">
+            <input type="checkbox" id="showPageIndicator" />
+            show a small solstone mark on pages you've added
+          </label>
+        </section>
+
+        <section id="disclosureCard" class="card">
+          <h2>what the solstone extension takes in</h2>
+          <details id="disclosureDetails">
+            <summary>read it again</summary>
+            <div id="settingsDisclosureBody" class="disclosure"></div>
+          </details>
+        </section>
+      </div>
+
+      <div id="actionMessage" class="action-message" aria-live="polite"></div>
+      <footer id="pageFooter">solstone <span id="ver"></span></footer>
+    </div>
+    <script src="lib/copy.js"></script>
+    <script src="lib/hosts.js"></script>
+    <script src="lib/status.js"></script>
+    <script src="lib/failures.js"></script>
+    <script src="lib/disclosure.js"></script>
+    <script src="lib/popup_view.js"></script>
+    <script src="lib/actions.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

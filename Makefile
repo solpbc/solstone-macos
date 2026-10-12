@@ -1,4 +1,4 @@
-.PHONY: build release release-universal debug-universal release-universal-journal release-universal-adhoc release-browser-preview run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
+.PHONY: build release release-universal safari-appex debug-universal release-universal-journal release-universal-adhoc release-browser-preview run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal assemble-journal-app journal-app-unsigned bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal seal-both \
         supply-chain-check release-dmg-smoke release-dmg-smoke-journal both-resolve both-compose both-verify both-publish journal-native-runtime journal-native-fetch-accepted journal-native-runtime-accepted brand-sync \
         release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
@@ -153,12 +153,32 @@ ifeq ($(BROWSER_PREVIEW),1)
 SWIFT_BUILD_FLAGS += -Xswiftc -DSOLSTONE_BROWSER_INTAKE_PREVIEW
 endif
 
+# The Safari extension's handler is an app extension, so it is built here
+# rather than as a package product: it needs the extension entry point.
+SAFARI_APPEX_SOURCE := Sources/solstone-safari-extension
+SAFARI_APPEX_BUILD := .build/safari-appex
+SAFARI_APPEX_BUNDLE := solstone.app/Contents/PlugIns/solstone-safari-extension.appex
+SAFARI_EXTENSION_FILES := vendor/safari-extension
+
+safari-appex:
+	@mkdir -p $(SAFARI_APPEX_BUILD)
+	@for arch in arm64 x86_64; do \
+		xcrun swiftc -O -target $$arch-apple-macos15.0 -application-extension -parse-as-library \
+			-module-name SolstoneSafariExtension -framework SafariServices \
+			-Xlinker -e -Xlinker _NSExtensionMain \
+			$(SAFARI_APPEX_SOURCE)/SafariWebExtensionHandler.swift \
+			-o $(SAFARI_APPEX_BUILD)/solstone-safari-extension-$$arch || exit 1; \
+	done
+	@lipo -create -output $(SAFARI_APPEX_BUILD)/solstone-safari-extension \
+		$(SAFARI_APPEX_BUILD)/solstone-safari-extension-arm64 $(SAFARI_APPEX_BUILD)/solstone-safari-extension-x86_64
+
 # Build universal binary (arm64 + x86_64)
 release-universal:
 	swift build -c release --arch arm64 --arch x86_64 --product solstone $(SWIFT_BUILD_FLAGS)
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-watchdog $(SWIFT_BUILD_FLAGS)
 ifeq ($(BROWSER_PREVIEW),1)
 	swift build -c release --arch arm64 --arch x86_64 --product solstone-browser-host $(SWIFT_BUILD_FLAGS)
+	@$(MAKE) safari-appex
 endif
 
 # Debug executable with the production Developer ID signing and keychain plane.
@@ -168,6 +188,7 @@ debug-universal:
 	swift build -c debug --arch arm64 --arch x86_64 --product solstone-watchdog $(SWIFT_BUILD_FLAGS)
 ifeq ($(BROWSER_PREVIEW),1)
 	swift build -c debug --arch arm64 --arch x86_64 --product solstone-browser-host $(SWIFT_BUILD_FLAGS)
+	@$(MAKE) safari-appex
 endif
 
 # Local ad-hoc test builds only; never shipped; never set by any production target.
@@ -524,6 +545,16 @@ endif
 		--entitlements Sources/solstone-browser-host/entitlements.plist \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		solstone.app/Contents/MacOS/solstone-browser-host
+	@test -f $(SAFARI_EXTENSION_FILES)/manifest.json || { echo "error: $(SAFARI_EXTENSION_FILES) is missing; run scripts/vendor_safari_extension.sh"; exit 1; }
+	@mkdir -p $(SAFARI_APPEX_BUNDLE)/Contents/MacOS $(SAFARI_APPEX_BUNDLE)/Contents/Resources
+	@cp $(SAFARI_APPEX_BUILD)/solstone-safari-extension $(SAFARI_APPEX_BUNDLE)/Contents/MacOS/
+	@sed -e 's/__SHORT_VERSION__/$(DIST_VERSION)/' -e 's/__BUNDLE_VERSION__/$(DIST_BUILD)/' \
+		$(SAFARI_APPEX_SOURCE)/Info.plist > $(SAFARI_APPEX_BUNDLE)/Contents/Info.plist
+	@cp -R $(SAFARI_EXTENSION_FILES)/. $(SAFARI_APPEX_BUNDLE)/Contents/Resources/
+	@codesign --force --options runtime --timestamp \
+		--entitlements $(SAFARI_APPEX_SOURCE)/entitlements.plist \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		$(SAFARI_APPEX_BUNDLE)
 endif
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \

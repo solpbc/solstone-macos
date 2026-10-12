@@ -1,5 +1,5 @@
 {
-  "bundle_version": "1.2.0",
+  "bundle_version": "1.3.0",
   "wire_protocol": 1,
   "journal": {
     "id": "solstone-journal-format:browser-jsonl",
@@ -46,7 +46,8 @@
     "brand": [
       "chrome",
       "edge",
-      "firefox"
+      "firefox",
+      "safari"
     ],
     "capture": [
       "unavailable",
@@ -94,13 +95,15 @@
       "host": "app.solstone.browser",
       "chrome_id": "eibbeeoifjoabddfmgeggnageolkcnim",
       "edge_id": "eibbeeoifjoabddfmgeggnageolkcnim",
-      "firefox_id": "browser@solstone.app"
+      "firefox_id": "browser@solstone.app",
+      "safari_id": "app.solstone.observer.safari (7QCG8V4M6H)"
     },
     "dev": {
       "host": "app.solstone.browser.dev",
       "chrome_id": "fgfnkcefedeheoeamppkiiloncfekakf",
       "edge_id": "fgfnkcefedeheoeamppkiiloncfekakf",
-      "firefox_id": "browser.dev@solstone.app"
+      "firefox_id": "browser.dev@solstone.app",
+      "safari_id": ""
     }
   },
   "string_bounds": {

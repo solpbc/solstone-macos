@@ -23,5 +23,12 @@
     <array>
         <string>7QCG8V4M6H.app.solstone.observer.spl</string>
     </array>
+    <!-- The Safari extension's sandboxed handler reaches the app only through this
+         group's container. Team-prefixed, so the signature authorizes it; the
+         embedded profile need not list it. -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>7QCG8V4M6H.app.solstone.observer</string>
+    </array>
 </dict>
 </plist>

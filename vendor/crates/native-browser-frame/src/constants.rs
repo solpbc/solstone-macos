@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
-pub const BUNDLE_VERSION: &str = "1.2.0";
+pub const BUNDLE_VERSION: &str = "1.3.0";
 pub const WIRE_PROTOCOL: u32 = 1;
 
 pub const EXTENSION_TO_HOST_MAX: usize = 33554432;
@@ -44,7 +44,7 @@ pub const TEXT_MAX: usize = 2001;
 pub const BLOCK_DEPTH_MAX: u64 = 4096;
 pub const BLOCKS_MAX: usize = 1500;
 
-pub const BRAND_ENUM: &[&str] = &["chrome", "edge", "firefox"];
+pub const BRAND_ENUM: &[&str] = &["chrome", "edge", "firefox", "safari"];
 pub const CAPTURE_ENUM: &[&str] = &["unavailable", "not_paired", "permitted", "paused", "intake_off"];
 pub const DELIVERY_ENUM: &[&str] = &["unknown", "kept_locally", "delivered", "idle", "failed"];
 pub const FAILURE_ENUM: &[&str] = &["relay_unavailable", "journal_rejected", "local_io", "resource_exhausted", "queue_full", "age_policy", "unaccepted_lost"];

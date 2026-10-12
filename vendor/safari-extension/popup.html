@@ -1,0 +1,276 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Copyright (c) 2026 sol pbc -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face { font-family: "Comfortaa"; src: url("fonts/comfortaa.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+      @font-face { font-family: "InterBody"; src: url("fonts/inter.woff2") format("woff2"); font-weight: 400 600; font-display: swap; }
+      :root {
+        --ground: #faf3e4;
+        --surface: #fefcf8;
+        --ink: #1a1a1a;
+        --soft: #5b5246;
+        --muted: #6e6453;
+        --line: #ece3d0;
+        --field-line: #96896F;
+        --orange: #e8923a;
+        --focus: #B06A1A;
+        --success: #3F9D6A;
+        --warn: #C99A2E;
+        --bad: #9f2d2d;
+        --bad-wash: #f8e9e6;
+      }
+      [hidden] { display: none !important; }
+      body {
+        width: 300px;
+        max-height: 600px;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        box-sizing: border-box;
+        font: 13px/1.45 "InterBody", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--ground);
+        color: var(--ink);
+      }
+      header, footer { flex: none; }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 13px 14px 9px;
+      }
+      header img { display: block; }
+      .word {
+        font: 700 16px/1 "Comfortaa", system-ui, sans-serif;
+        letter-spacing: -0.3px;
+      }
+      .desc { color: var(--muted); font-size: 12px; }
+      main {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+        padding: 0 14px 12px;
+      }
+      #verdict, #page, #siteCount, #actionMessage { flex: none; }
+      #siteIssues {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      #disclosure {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      .verdict {
+        display: grid;
+        grid-template-columns: 10px 1fr;
+        column-gap: 9px;
+        padding: 12px;
+        border-radius: 12px;
+        background: var(--surface);
+      }
+      .verdict.attention { background: var(--bad-wash); }
+      .verdict.ok,
+      .verdict.calm,
+      .verdict.unavailable { background: var(--surface); }
+      .dot {
+        width: 8px;
+        height: 8px;
+        margin-top: 5px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+      .dot.ok { background: var(--success); }
+      .dot.neutral { background: var(--muted); }
+      .dot.bad { background: var(--bad); }
+      .dot.warn { background: var(--warn); }
+      .v-copy { min-width: 0; }
+      .v-head {
+        margin: 0;
+        /* Body face, not Comfortaa. The wordmark is this surface's brand moment;
+           a status verdict is UI text, and the display face reads soft and wide
+           at 15px where legibility is the whole job. */
+        font: 600 14px/1.35 "InterBody", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: var(--ink);
+      }
+      .v-dest { margin-top: 3px; color: var(--soft); }
+      .v-why { margin: 7px 0 0; color: var(--soft); font-size: 12px; }
+      .v-act { margin-top: 9px; }
+      .blk {
+        padding: 11px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .blk-h {
+        margin: 0 0 7px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: .04em;
+        /* House style is lowercase, authored rather than transform-forced, so a
+           third-party proper noun keeps its own case. No ALL CAPS. */
+      }
+      .site-issue {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 3px 8px;
+        padding: 8px 0;
+        border-top: 1px solid var(--line);
+      }
+      .site-issue:first-child { border-top: 0; padding-top: 0; }
+      .site-issue .h { font-weight: 600; overflow-wrap: anywhere; }
+      .site-issue .w { color: var(--soft); font-size: 12px; }
+      .site-issue button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+      .page-line {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .page-host { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+      .page-state { color: var(--soft); font-size: 12px; text-align: right; }
+      .pact { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 9px; }
+      .site-count {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--soft);
+        font-size: 12px;
+      }
+      button {
+        min-height: 34px;
+        padding: 7px 10px;
+        border: 1px solid var(--field-line);
+        border-radius: 9px;
+        background: var(--surface);
+        color: var(--ink);
+        font: inherit;
+        cursor: pointer;
+      }
+      /* The primary is a filled control with 7.13:1 ink on its orange ground. */
+      button.primary {
+        border-color: var(--orange);
+        background: var(--orange);
+        color: var(--ink);
+        font-weight: 600;
+      }
+      button:disabled { cursor: default; opacity: .5; }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+      a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+      .action-message { min-height: 0; margin-top: 7px; color: var(--bad); font-size: 12px; }
+      .about-block { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: inherit; margin: 0 0 8px; }
+      .about-block:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+      .sheet { padding: 0 14px 14px; }
+      .sheet h1 { margin: 0; font: 700 16px/1.3 "Comfortaa", system-ui, sans-serif; }
+      .sheet p { margin: 10px 0 0; color: var(--soft); }
+      .sheet .strongish { color: var(--ink); }
+      .destbox {
+        margin-top: 12px;
+        padding: 10px 11px;
+        border-radius: 10px;
+        background: var(--surface);
+      }
+      .destbox .k { color: var(--muted); font-size: 11px; letter-spacing: .04em; }
+      .destbox .v { margin-top: 3px; font-weight: 600; }
+      .destbox .u { margin-top: 2px; color: var(--soft); font-size: 12px; overflow-wrap: anywhere; }
+      .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 13px; }
+      footer {
+        padding: 9px 14px 12px;
+        border-top: 1px solid var(--line);
+        font-size: 12px;
+        text-align: right;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <img id="headerMark" src="brand/mark-healthy.svg" width="20" height="20" alt="" />
+      <span class="word">solstone</span>
+      <span class="desc">in your browser</span>
+    </header>
+
+    <main id="popupMain">
+      <section id="verdict" class="verdict calm" role="status">
+        <span id="verdictDot" class="dot neutral" aria-hidden="true"></span>
+        <div class="v-copy">
+          <h1 id="verdictHeadline" class="v-head"></h1>
+          <div id="verdictSub" class="v-dest"></div>
+          <p id="verdictReason" class="v-why" hidden></p>
+          <div id="verdictActions" class="v-act"></div>
+        </div>
+      </section>
+
+      <section id="siteIssues" class="blk" hidden>
+        <h2 class="blk-h">sites that need attention</h2>
+        <div id="siteIssueRows"></div>
+      </section>
+
+      <section id="page" class="blk">
+        <h2 class="blk-h">this page</h2>
+        <div class="page-line">
+          <span id="pageHost" class="page-host"></span>
+          <span id="currentPageState" class="page-state"></span>
+        </div>
+        <div class="pact">
+          <button id="pageSiteAction" type="button"></button>
+          <button id="pauseAction" type="button"></button>
+        </div>
+      </section>
+
+      <section id="siteCount" class="blk" hidden>
+        <h2 class="blk-h">your sites</h2>
+        <div class="site-count">
+          <span id="siteCountText"></span>
+          <a id="allSitesLink" href="#">all sites ›</a>
+        </div>
+      </section>
+
+      <section id="about" class="blk">
+        <h2 class="blk-h">about</h2>
+        <pre id="aboutBlock" class="about-block" tabindex="0"></pre>
+        <button id="aboutCopy" type="button">copy</button>
+        <div id="aboutMessage" class="action-message" aria-live="polite"></div>
+      </section>
+      <div id="actionMessage" class="action-message" aria-live="polite"></div>
+    </main>
+
+    <section id="disclosure" class="sheet" hidden>
+      <h1 id="disclosureTitle"></h1>
+      <p id="disclosureWhat" class="strongish"></p>
+      <p id="disclosureUnsent"></p>
+      <div class="destbox">
+        <div class="k">it goes to</div>
+        <div id="disclosureDestination" class="v"></div>
+        <div id="disclosureDestinationDetail" class="u"></div>
+      </div>
+      <p id="disclosureChrome"></p>
+      <div class="acts">
+        <button id="disclosureConfirm" class="primary" type="button"></button>
+        <button id="disclosureCancel" type="button"></button>
+      </div>
+    </section>
+
+    <footer id="popupFooter">
+      <a href="#" id="settingsLink">settings ›</a>
+    </footer>
+
+    <script src="lib/copy.js"></script>
+    <script src="lib/about.js"></script>
+    <script src="lib/hosts.js"></script>
+    <script src="lib/status.js"></script>
+    <script src="lib/failures.js"></script>
+    <script src="lib/disclosure.js"></script>
+    <script src="lib/popup_view.js"></script>
+    <script src="lib/actions.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

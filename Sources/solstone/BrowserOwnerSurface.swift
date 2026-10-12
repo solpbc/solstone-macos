@@ -12,6 +12,7 @@ extension BrowserBrand {
         case .chrome: return "Chrome"
         case .edge: return "Edge"
         case .firefox: return "Firefox"
+        case .safari: return "Safari"
         }
     }
 }
@@ -149,7 +150,7 @@ public struct BrowserRepairController: Equatable, Sendable {
             (brand, BrowserHostRegistrationSummary(state: outcome.state, reasonCode: outcome.reasonCode))
         })
         let dev = devReport ?? report
-        let allVerified = BrowserBrand.allCases.allSatisfy { brand in
+        let allVerified = BrowserBrand.nativeMessagingHosts.allSatisfy { brand in
             let prodState = report.outcomes[brand]?.state
             let devState = dev.outcomes[brand]?.state
             let prodOk = prodState == .ready || prodState == .changed
@@ -319,7 +320,7 @@ public func browserOwnerVerdict(
         if fullPrimary {
             return BrowserOwnerVerdict(lead: .custodyFull, fullSecondary: false, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
         }
-        let allProfiles = snapshot.profiles.chrome + snapshot.profiles.edge + snapshot.profiles.firefox
+        let allProfiles = snapshot.profiles.all
         let liveProfiles = allProfiles.filter { sessionAuthorizes($0, now: now) }
         if liveProfiles.isEmpty {
             return BrowserOwnerVerdict(lead: .waiting, fullSecondary: fullSecondary, stale: snapshot.custodyStale, showsDeliveryLine: deliveryLine)
@@ -440,15 +441,15 @@ public func buildBrowserDiagnosticRows(
     }
     let browsersSeen = seenParts.isEmpty ? "none yet" : seenParts.joined(separator: ", ")
 
-    let allReady = BrowserBrand.allCases.allSatisfy {
+    let allReady = BrowserBrand.nativeMessagingHosts.allSatisfy {
         snapshot.registration[$0]?.state == .ready || snapshot.registration[$0]?.state == .changed
     }
     let setupValue: String
     if allReady && snapshot.listener == .available {
-        let brandNames = BrowserBrand.allCases.map(\.displayName).joined(separator: ", ")
+        let brandNames = BrowserBrand.nativeMessagingHosts.map(\.displayName).joined(separator: ", ")
         setupValue = "\(brandNames) ready"
     } else {
-        let brandParts = BrowserBrand.allCases.map { brand -> String in
+        let brandParts = BrowserBrand.nativeMessagingHosts.map { brand -> String in
             let reg = snapshot.registration[brand]
             if snapshot.listener == .available, reg?.state == .changed {
                 return "\(brand.displayName): repaired at launch"
@@ -491,7 +492,8 @@ public func menubarBrowserRowTitle(snapshot: BrowserHostSnapshotValue, now: Date
     let allProfiles = [
         (BrowserBrand.chrome, snapshot.profiles.chrome),
         (BrowserBrand.edge, snapshot.profiles.edge),
-        (BrowserBrand.firefox, snapshot.profiles.firefox)
+        (BrowserBrand.firefox, snapshot.profiles.firefox),
+        (BrowserBrand.safari, snapshot.profiles.safari)
     ]
     let liveBrands = allProfiles.compactMap { (brand, profiles) -> String? in
         let live = profiles.filter { sessionAuthorizes($0, now: now) }
@@ -696,7 +698,7 @@ private func ownerHold(_ snapshot: BrowserHostSnapshotValue) -> String? {
 }
 
 private func sessionAuthorizes(_ snapshot: BrowserHostSnapshotValue, now: Date) -> Bool {
-    let profiles = snapshot.profiles.chrome + snapshot.profiles.edge + snapshot.profiles.firefox
+    let profiles = snapshot.profiles.all
     if profiles.isEmpty { return false }
     return profiles.contains { sessionAuthorizes($0, now: now) }
 }
@@ -714,6 +716,7 @@ private func profiles(_ snapshot: BrowserHostSnapshotValue, _ brand: BrowserBran
     case .chrome: return snapshot.profiles.chrome
     case .edge: return snapshot.profiles.edge
     case .firefox: return snapshot.profiles.firefox
+    case .safari: return snapshot.profiles.safari
     }
 }
 

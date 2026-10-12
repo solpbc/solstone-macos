@@ -99,6 +99,7 @@ public final class AppState {
         case .chrome: bundleID = "com.google.Chrome"
         case .edge: bundleID = "com.microsoft.edgemac"
         case .firefox: bundleID = "org.mozilla.firefox"
+        case .safari: bundleID = "com.apple.Safari"
         }
         if let application = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
             NSWorkspace.shared.open(
@@ -112,6 +113,9 @@ public final class AppState {
         return NSWorkspace.shared.open(url)
     }
     var browserStoreLaunch: [BrowserBrand: BrowserStoreLaunch] = [:]
+    var safariExtensionControl = SafariExtensionControl.live
+    var safariExtensionState: SafariExtensionAXState = .unknown
+    var safariSettingsLaunch: BrowserStoreLaunch = .disabled
     public private(set) var browserUploadGate: BrowserUploadGate?
     public private(set) var browserUploadPlanner: BrowserUploadPlanner?
     #endif
@@ -771,6 +775,21 @@ public final class AppState {
                 listenerHoldsFence: holdsFence,
                 endpoint: endpoint
             )
+        }
+    }
+
+    func refreshSafariExtensionState() {
+        safariExtensionControl.readState { [weak self] state in
+            Task { @MainActor in self?.safariExtensionState = state }
+        }
+    }
+
+    func openSafariExtensionSettings() {
+        safariExtensionControl.showSettings { [weak self] opened in
+            Task { @MainActor in
+                self?.safariSettingsLaunch = opened ? .opened : .failed
+                self?.refreshSafariExtensionState()
+            }
         }
     }
 
@@ -2329,6 +2348,7 @@ public final class AppState {
                 generation: generation,
                 modes: NativeHostMode.enabledModes
             )
+            SafariExtensionBridge.shared.start()
         }
     }
 

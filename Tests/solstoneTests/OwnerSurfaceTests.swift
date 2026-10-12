@@ -279,6 +279,18 @@ struct OwnerSurfaceStatusTests {
         #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: closed, now: now) == .waiting)
     }
 
+    @Test func aLiveSafariSessionCountsLikeAnyOtherBrowser() {
+        var snapshot = BrowserHostSnapshotValue(capture: "permitted", delivery: "idle")
+        snapshot.listener = .available
+        let seen = now.addingTimeInterval(-10)
+        let live = BrowserHostProfile(lastSeen: seen, handshake: .compatible, byeReason: nil, leaseExpiry: now.addingTimeInterval(30))
+        snapshot.profiles = BrowserHostProfileGroup(safari: [live])
+        #expect(browserOwnerStatusLead(mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: snapshot, now: now) == .ready)
+        #expect(menubarBrowserRowTitle(snapshot: snapshot, now: now) == UICopy.menubarBrowsersLive("Safari"))
+        let safari = browserBrandRows(snapshot, now: now).first { $0.brand == .safari }
+        #expect(safari?.connectedCount == 1)
+    }
+
     @Test func localReceiptIsNotDelivered() {
         #expect(!browserPresentsLocalReceiptAsDelivered("kept_locally"))
         #expect(browserPresentsLocalReceiptAsDelivered("delivered"))

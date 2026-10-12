@@ -826,6 +826,37 @@ struct BrowserIntakeAdmissionTests {
         owner.stop()
     }
 
+    @Test func reloadingTheSameCredentialNeverWithdrawsTheDestination() async throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let owner = try BrowserIntakeOwner.start(
+            spoolRoot: tempRoot,
+            projection: projection,
+            credentialSnapshot: BrowserCredentialSnapshot(identityToken: "reload-same"),
+            transport: ScriptedBrowserTransport(),
+            routeResolver: HomeBaseURLResolver { .url("http://127.0.0.1:49330") },
+            routeState: BrowserIntakeRouteState()
+        )
+        defer { owner.stop() }
+        await owner.start()
+        let generation = try #require(owner.store.getDestinationGeneration())
+
+        // Live sessions read the destination while credentials are reloaded elsewhere.
+        let reads = Task.detached { () -> [String?] in
+            var seen: [String?] = []
+            for _ in 0..<400 { seen.append(await owner.currentFacts().destinationGeneration) }
+            return seen
+        }
+        for _ in 0..<400 { try owner.credentialReloaded(identityToken: "reload-same") }
+        #expect(await reads.value.allSatisfy { $0 == generation })
+
+        // A reload that finds a different identity still fences and moves on.
+        try owner.credentialReloaded(identityToken: "reload-other")
+        #expect(owner.store.getDestinationGeneration() != nil)
+        #expect(await owner.currentFacts().destinationGeneration == owner.store.getDestinationGeneration())
+    }
+
     @Test func credentialReplacementKeepsPagesHeldUntilRouteConfirmation() async throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }

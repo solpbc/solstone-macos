@@ -665,6 +665,17 @@ final class BrowserHostSessionBudget: @unchecked Sendable {
     }
 }
 
+extension NativeHostBrandHint {
+    /// A hello must claim the browser its connection's launcher stands for.
+    func admits(_ brand: BrowserBrand) -> Bool {
+        switch self {
+        case .chromium: return brand == .chrome || brand == .edge
+        case .firefox: return brand == .firefox
+        case .safari: return brand == .safari
+        }
+    }
+}
+
 public struct BrowserHostConnectionContext: Sendable {
     public let brandHint: NativeHostBrandHint
     public let mode: NativeHostMode
@@ -1276,6 +1287,7 @@ public actor BrowserHostListener {
         var chrome: [BrowserHostProfile] = []
         var edge: [BrowserHostProfile] = []
         var firefox: [BrowserHostProfile] = []
+        var safari: [BrowserHostProfile] = []
         for (key, profile) in profiles.entries {
             let live = profiles.sessionID(brand: key.brand, inst: key.inst).flatMap { sessionAuthorities[$0] }
             let expiry = admissionGate.isOpen() && live?.isLive == true && live?.epoch == owner?.store.getDestinationGeneration()
@@ -1286,9 +1298,10 @@ public actor BrowserHostListener {
             case .chrome: chrome.append(profile)
             case .edge: edge.append(profile)
             case .firefox: firefox.append(profile)
+            case .safari: safari.append(profile)
             }
         }
-        return BrowserHostProfileGroup(chrome: chrome, edge: edge, firefox: firefox)
+        return BrowserHostProfileGroup(chrome: chrome, edge: edge, firefox: firefox, safari: safari)
     }
 
     func recordProfile(_ id: UUID, brand: BrowserBrand, inst: String, epoch: String? = nil, handshake: BrowserHostHandshake, bye: String? = nil) async {
@@ -1372,12 +1385,12 @@ public actor BrowserHostListener {
         switch decoded {
         case .accept(.hello(let hello)):
             guard let brand = BrowserBrand(rawValue: hello.brand),
-                  (context.brandHint == .firefox) == (brand == .firefox) else { return .close }
+                  context.brandHint.admits(brand) else { return .close }
             guard isAllowlisted(mode: context.mode, brand: brand, projection: projection) else { return .close }
             return .compatible(brand: brand, inst: hello.inst, hello: hello)
         case .unsupported:
             guard let brand = brand(in: body),
-                  (context.brandHint == .firefox) == (brand == .firefox) else { return .close }
+                  context.brandHint.admits(brand) else { return .close }
             let allowlisted = isAllowlisted(mode: context.mode, brand: brand, projection: projection)
             let inst = inst(in: body) ?? UUID().uuidString
             let obsolete = !isCurrent()
@@ -1406,12 +1419,14 @@ public actor BrowserHostListener {
             case .chrome: return !projection.prodHosts.chromeId.isEmpty
             case .edge: return !projection.prodHosts.edgeId.isEmpty
             case .firefox: return !projection.prodHosts.firefoxId.isEmpty
+            case .safari: return !projection.prodHosts.safariId.isEmpty
             }
         case .development:
             switch brand {
             case .chrome: return !projection.devHosts.chromeId.isEmpty
             case .edge: return !projection.devHosts.edgeId.isEmpty
             case .firefox: return !projection.devHosts.firefoxId.isEmpty
+            case .safari: return !projection.devHosts.safariId.isEmpty
             }
         }
     }

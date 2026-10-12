@@ -275,6 +275,28 @@ struct BrowserHostPureProfileTableTests {
 
 @Suite("BrowserHostPureDispatch")
 struct BrowserHostPureDispatchTests {
+    @Test func safariHelloIsAdmittedOnlyThroughTheSafariBridge() async throws {
+        let projection = try nativeHostProjection()
+        let updateGate = BrowserHostUpdateGate(checkForUpdates: {})
+        func hello(_ brand: String) -> Data {
+            Data("{\"type\":\"hello\",\"protocol\":\(projection.wireProtocol),\"version\":\"1.0.0\",\"brand\":\"\(brand)\",\"inst\":\"inst-s\"}".utf8)
+        }
+        func decide(_ body: Data, _ hint: NativeHostBrandHint) async -> BrowserHostListener.BrowserHostFirstMessageDecision {
+            await BrowserHostListener.decideFirstMessage(
+                body: body, context: BrowserHostConnectionContext(brandHint: hint, mode: .production),
+                acceptingModes: [.production], isFresh: true, projection: projection, updateGate: updateGate
+            )
+        }
+        guard case .compatible(let brand, _, _) = await decide(hello("safari"), .safari) else {
+            Issue.record("Safari hello through the Safari bridge should be compatible")
+            return
+        }
+        #expect(brand == .safari)
+        #expect(await decide(hello("safari"), .chromium) == .close)
+        #expect(await decide(hello("safari"), .firefox) == .close)
+        #expect(await decide(hello("chrome"), .safari) == .close)
+    }
+
     @Test func decideFirstMessageHandling() async throws {
         let projection = try nativeHostProjection()
         let counter = AtomicCounter()

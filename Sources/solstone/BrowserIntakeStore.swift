@@ -1351,6 +1351,15 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         return res
     }
 
+    /// True when `token` is the identity already in force under a live destination generation.
+    func identityIsInForce(_ token: String?) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isStoreFailed, !deliveryStopped, deliveryProofsOpen, let token, !token.isEmpty,
+              let generation = destinationGeneration, !generation.isEmpty else { return false }
+        return BrowserOpaqueString.equals(activeIdentityToken, Self.identityDigest(of: token))
+    }
+
     func reconcileIdentity(_ token: String?, mode: BrowserIdentityChangeMode, nowMs: UInt64) throws -> String? {
         lock.lock()
         defer { lock.unlock() }

@@ -76,6 +76,12 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         lock.unlock()
     }
 
+    public func admissionIsOpen() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !admissionClosed
+    }
+
     public func reopenAdmission() {
         lock.lock()
         if !stopped { admissionClosed = false }

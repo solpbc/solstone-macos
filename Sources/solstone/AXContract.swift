@@ -48,6 +48,8 @@ enum AXContract {
         AXID.Settings.Sources.browserChrome,
         AXID.Settings.Sources.browserEdge,
         AXID.Settings.Sources.browserFirefox,
+        AXID.Settings.Sources.browserSafari,
+        AXID.Settings.Sources.browserSafariSettings,
         AXID.Settings.Sources.browserRepair,
         AXID.Settings.Sources.browserStoreChrome,
         AXID.Settings.Sources.browserStoreEdge,
@@ -349,6 +351,7 @@ enum AXContract {
         result["BrowserRepairAXState"] = BrowserRepairAXState.axTokens
         result["BrowserRetiredAXState"] = BrowserRetiredAXState.allCases.map(\.axToken)
         result["BrowserStoreLaunchAXState"] = BrowserStoreLaunchAXState.axTokens
+        result["SafariExtensionAXState"] = SafariExtensionAXState.axTokens
         result["BrowserHostRegistrationState"] = BrowserHostRegistrationState.axTokens
 #endif
         return result
@@ -426,9 +429,11 @@ enum AXContract {
             AXID.About.aboutCopyFeedback: .freeform
         ]
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        for id in [AXID.Settings.Sources.browserChrome, AXID.Settings.Sources.browserEdge, AXID.Settings.Sources.browserFirefox] {
+        for id in [AXID.Settings.Sources.browserChrome, AXID.Settings.Sources.browserEdge, AXID.Settings.Sources.browserFirefox,
+                   AXID.Settings.Sources.browserSafari] {
             result[id] = .enum("BrowserProfileAXState")
         }
+        result[AXID.Settings.Sources.browserSafariSettings] = .enum("SafariExtensionAXState")
         result[AXID.Settings.Sources.browserRepair] = .enum("BrowserRepairAXState")
         result[AXID.Settings.Sources.browserWaitingState] = .enum("BrowserRetiredAXState")
         for id in [AXID.Settings.Sources.browserStoreChrome, AXID.Settings.Sources.browserStoreEdge, AXID.Settings.Sources.browserStoreFirefox] {
@@ -451,7 +456,8 @@ enum AXContract {
             AXID.Settings.Sources.browserFirefox, AXID.Settings.Sources.browserRepair,
             AXID.Settings.Sources.browserWaitingState,
             AXID.Settings.Sources.browserStoreChrome, AXID.Settings.Sources.browserStoreEdge,
-            AXID.Settings.Sources.browserStoreFirefox
+            AXID.Settings.Sources.browserStoreFirefox,
+            AXID.Settings.Sources.browserSafari, AXID.Settings.Sources.browserSafariSettings
         ])
 #endif
         return keys

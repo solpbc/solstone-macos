@@ -1,9 +1,9 @@
 {
   "generator": {
     "name": "solstone-native-browser-gen",
-    "version": "1.2.0"
+    "version": "1.3.0"
   },
-  "bundle_version": "1.2.0",
+  "bundle_version": "1.3.0",
   "wire_protocol": 1,
   "journal": {
     "id": "solstone-journal-format:browser-jsonl",
@@ -12,16 +12,16 @@
     "sha256": "c14e66318587b8fa451ef1363e113885bdd80a41ce680b0c62fcc9033460a2e1"
   },
   "artifacts": {
-    "contracts/native-browser/authority.json": "d741b72f1b3d0ab820ca8c2b3dc877d52756c709c6e0640ebdaf2fb98938269d",
+    "contracts/native-browser/authority.json": "326148437e9cbd51043e3d94be7deb97ab9a1333d53434a4427e1392053fb214",
     "contracts/native-browser/browser.schema.json": "c14e66318587b8fa451ef1363e113885bdd80a41ce680b0c62fcc9033460a2e1",
-    "contracts/native-browser/envelope.schema.json": "e1e7a9910bd9c4021574914c36e5bfdebf570f8129001c05555a26e66d3571a2",
-    "contracts/native-browser/schemas.js": "e9d1c11a5d79a6e02afa754cc42d3852eba43f403f69c2511c29391097ca25af",
-    "contracts/native-browser/constants.js": "f2abe49f612c551a5b1844e4f5feb0379371395aeb73f12d14954d465655fb2f",
-    "crates/native-browser-frame/src/constants.rs": "1922b6672ee869e2fd335960b146e8ebdadbd31a0872a3f6362e70b8fe9b7fd0",
-    "contracts/native-browser/corpus.json": "19d1b4c285c9d95721a7cfffcaafb069f1824c78ab9289587cc7fc7f80569037",
+    "contracts/native-browser/envelope.schema.json": "9ace302a8acb3ce4fc99263f2019e4abd5cd208842adad3f3ee7d95247c142b8",
+    "contracts/native-browser/schemas.js": "5a4511fde65eca4db798b2b8b89b5ae9bf906f2ff543d772b56ab16773c9a20d",
+    "contracts/native-browser/constants.js": "7d71d8c2c1c954e8e04befd0318b5137d08087b30024fb8e1562f9697f544ba1",
+    "crates/native-browser-frame/src/constants.rs": "4171fa9dc6793a10c1604656aa461fd86d2c732e44f265ab15a1fff58fd01088",
+    "contracts/native-browser/corpus.json": "87795e3903da0652da0fec224053a497773624f9cbc45bd8a97ade0cf7b8233c",
     "contracts/native-browser/recipes.json": "90edf430e0854fff26eedf18b2108f5151e2ef931cc00b50a492cd435714b737",
-    "contracts/native-browser/swift.json": "ce72fa3b1ed32153c0a45690555da52635eeff29a2c883968cd74e6c049dbf61",
-    "contracts/native-browser/adoption.schema.json": "34415dbb5eb6b1de6cdd54c24770dc98a6f1c490ac72acd555628118317f0599",
+    "contracts/native-browser/swift.json": "1f747693009d9fc397af123faabdf5f4b4e991724599a830cbad5912ccc4bc69",
+    "contracts/native-browser/adoption.schema.json": "e28b2b4731b1d6fd197233173e5f10a7f77bc1b230f7ca276b6de4b08fc64a7e",
     "contracts/native-browser/registration/production/chrome/linux.json": "e7875ae358fe40c95821e9a5420af9aba668141c4c2c662ace30c57e5091b9e8",
     "contracts/native-browser/registration/production/chrome/macos.json": "e7875ae358fe40c95821e9a5420af9aba668141c4c2c662ace30c57e5091b9e8",
     "contracts/native-browser/registration/production/chrome/windows.json": "e7875ae358fe40c95821e9a5420af9aba668141c4c2c662ace30c57e5091b9e8",

@@ -483,6 +483,10 @@ public actor BrowserIntakeOwner {
 
     public nonisolated func credentialReloaded(identityToken: String?) throws {
         guard !stopController.isStopped() else { return }
+        // Credentials are reloaded from many places. A reload that finds the identity
+        // already in force changes nothing, and fencing admission for it would briefly
+        // read as no destination, which withdraws every live browser session.
+        if authority.admissionIsOpen(), store.identityIsInForce(identityToken) { return }
         authority.closeAdmission()
         gate.invalidateCurrentLease()
         store.closeDeliveryProofs()

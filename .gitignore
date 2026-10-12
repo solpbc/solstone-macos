@@ -60,6 +60,8 @@ vendor/*
 !vendor/*.sha256
 !vendor/contracts/
 !vendor/crates/
+!vendor/safari-extension/
+!vendor/safari-extension.json
 
 # AppIcon.iconset is an intermediate artifact built by `make icons`
 # in a temp dir. The shipping artifact is AppIcon.icns. Use

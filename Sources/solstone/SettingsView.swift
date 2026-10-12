@@ -934,6 +934,8 @@ struct SettingsView: View {
                 }
             }
 
+            safariExtensionRow
+
             Text(UICopy.SOURCES_BROWSER_FOOTNOTE)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1034,6 +1036,7 @@ struct SettingsView: View {
         case .chrome: return AXID.Settings.Sources.browserChrome
         case .edge: return AXID.Settings.Sources.browserEdge
         case .firefox: return AXID.Settings.Sources.browserFirefox
+        case .safari: return AXID.Settings.Sources.browserSafari
         }
     }
 
@@ -1042,6 +1045,36 @@ struct SettingsView: View {
         case .chrome: return AXID.Settings.Sources.browserStoreChrome
         case .edge: return AXID.Settings.Sources.browserStoreEdge
         case .firefox: return AXID.Settings.Sources.browserStoreFirefox
+        case .safari: return AXID.Settings.Sources.browserSafariSettings
+        }
+    }
+
+    /// Safari's extension ships inside this app: the owner turns it on in
+    /// Safari's own settings, which this opens, and the row says whether it's on.
+    private var safariExtensionRow: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Button(UICopy.SOURCES_BROWSER_SAFARI_SETTINGS_ACTION) {
+                    appState.openSafariExtensionSettings()
+                }
+                .accessibilityIdentifier(AXID.Settings.Sources.browserSafariSettings)
+                .accessibilityValue(appState.safariExtensionState.axToken)
+
+                switch appState.safariExtensionState {
+                case .on: Text(UICopy.SOURCES_BROWSER_SAFARI_ON).foregroundStyle(.secondary)
+                case .off: Text(UICopy.SOURCES_BROWSER_SAFARI_OFF).foregroundStyle(.secondary)
+                case .unknown: EmptyView()
+                }
+            }
+            if appState.safariSettingsLaunch == .failed {
+                Text(UICopy.SOURCES_BROWSER_SAFARI_SETTINGS_FAILED)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+        .onAppear { appState.refreshSafariExtensionState() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            appState.refreshSafariExtensionState()
         }
     }
 #endif

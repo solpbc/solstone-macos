@@ -60,6 +60,8 @@ enum AXID {
             static let browserChrome = "settings.sources.browsers.chrome"
             static let browserEdge = "settings.sources.browsers.edge"
             static let browserFirefox = "settings.sources.browsers.firefox"
+            static let browserSafari = "settings.sources.browsers.safari"
+            static let browserSafariSettings = "settings.sources.browsers.safari.settings"
             static let browserRepair = "settings.sources.browsers.repair"
             static let browserStoreChrome = "settings.sources.browsers.store.chrome"
             static let browserStoreEdge = "settings.sources.browsers.store.edge"

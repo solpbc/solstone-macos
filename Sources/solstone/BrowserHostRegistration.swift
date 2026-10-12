@@ -91,8 +91,8 @@ public struct BrowserHostRegistrationReport: Sendable, Equatable {
     public let outcomes: [BrowserBrand: BrowserHostRegistrationOutcome]
     public let changedAny: Bool
     public var isComplete: Bool {
-        outcomes.count == BrowserBrand.allCases.count && outcomes.values.allSatisfy {
-            $0.state == .ready || $0.state == .changed
+        BrowserBrand.nativeMessagingHosts.allSatisfy {
+            outcomes[$0]?.state == .ready || outcomes[$0]?.state == .changed
         }
     }
 }
@@ -142,7 +142,7 @@ public struct BrowserHostRegistration: Sendable {
 
         var outcomes: [BrowserBrand: BrowserHostRegistrationOutcome] = [:]
         var changedAny = false
-        for brand in BrowserBrand.allCases {
+        for brand in BrowserBrand.nativeMessagingHosts {
             do {
                 let templateURL = contract
                     .appendingPathComponent("registration", isDirectory: true)
@@ -255,6 +255,7 @@ public struct BrowserHostRegistration: Sendable {
         case .chrome: suffix = "Library/Application Support/Google/Chrome/NativeMessagingHosts"
         case .edge: suffix = "Library/Application Support/Microsoft Edge/NativeMessagingHosts"
         case .firefox: suffix = "Library/Application Support/Mozilla/NativeMessagingHosts"
+        case .safari: preconditionFailure("Safari has no native-messaging manifest")
         }
         return home.appendingPathComponent(suffix, isDirectory: true)
     }
@@ -297,7 +298,7 @@ public struct BrowserHostRegistration: Sendable {
     }
 
     private func refusedAll(_ reason: String) -> BrowserHostRegistrationReport {
-        let outcomes = Dictionary(uniqueKeysWithValues: BrowserBrand.allCases.map {
+        let outcomes = Dictionary(uniqueKeysWithValues: BrowserBrand.nativeMessagingHosts.map {
             ($0, outcome($0, .refused, nil, reason))
         })
         return BrowserHostRegistrationReport(outcomes: outcomes, changedAny: false)

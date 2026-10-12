@@ -240,6 +240,8 @@
       "settings.sources.browsers.firefox",
       "settings.sources.browsers.group",
       "settings.sources.browsers.repair",
+      "settings.sources.browsers.safari",
+      "settings.sources.browsers.safari.settings",
       "settings.sources.browsers.store.chrome",
       "settings.sources.browsers.store.edge",
       "settings.sources.browsers.store.firefox",
@@ -464,6 +466,14 @@
     "settings.sources.browsers.repair" : {
       "kind" : "enum",
       "vocabulary" : "BrowserRepairAXState"
+    },
+    "settings.sources.browsers.safari" : {
+      "kind" : "enum",
+      "vocabulary" : "BrowserProfileAXState"
+    },
+    "settings.sources.browsers.safari.settings" : {
+      "kind" : "enum",
+      "vocabulary" : "SafariExtensionAXState"
     },
     "settings.sources.browsers.store.chrome" : {
       "kind" : "enum",
@@ -780,6 +790,11 @@
       "waiting",
       "working",
       "not_working"
+    ],
+    "SafariExtensionAXState" : [
+      "on",
+      "off",
+      "unknown"
     ],
     "SettingsObservationAXState" : [
       "off",

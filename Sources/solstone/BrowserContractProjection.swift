@@ -34,6 +34,8 @@ public final class BrowserContractProjection: Sendable {
         public let chromeId: String
         public let edgeId: String
         public let firefoxId: String
+        /// Empty when the mode carries no Safari identity.
+        public let safariId: String
     }
 
     public struct StringBounds: Sendable {
@@ -167,13 +169,15 @@ public final class BrowserContractProjection: Sendable {
             host: prodHost,
             chromeId: prodChromeId,
             edgeId: prodEdgeId,
-            firefoxId: prodFirefoxId
+            firefoxId: prodFirefoxId,
+            safariId: prodDict["safari_id"] as? String ?? ""
         )
         self.devHosts = HostIds(
             host: devHost,
             chromeId: devChromeId,
             edgeId: devEdgeId,
-            firefoxId: devFirefoxId
+            firefoxId: devFirefoxId,
+            safariId: devDict["safari_id"] as? String ?? ""
         )
         self.receiptClasses = receiptClasses
         self.legacyPermanentReasons = legacyPermanentReasons

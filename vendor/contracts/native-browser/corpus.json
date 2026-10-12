@@ -6,6 +6,12 @@
     "payload": "{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.0.0\",\"brand\":\"chrome\",\"inst\":\"desktop_inst_1\"}"
   },
   {
+    "id": "hello_safari_positive",
+    "direction": "extension_to_host",
+    "expect": "accept",
+    "payload": "{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.0.0\",\"brand\":\"safari\",\"inst\":\"desktop_inst_safari\"}"
+  },
+  {
     "id": "hello_wrong_direction",
     "direction": "host_to_extension",
     "expect": "refuse",
@@ -164,7 +170,7 @@
     "direction": "extension_to_host",
     "expect": "refuse",
     "code": "invalid_enum",
-    "payload": "{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.0.0\",\"brand\":\"safari\",\"inst\":\"inst1\"}"
+    "payload": "{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.0.0\",\"brand\":\"opera\",\"inst\":\"inst1\"}"
   },
   {
     "id": "hello_ack_invalid_capture",

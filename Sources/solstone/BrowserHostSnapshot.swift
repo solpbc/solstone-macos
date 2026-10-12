@@ -10,6 +10,11 @@ public enum BrowserBrand: String, CaseIterable, Hashable, Sendable {
     case chrome
     case edge
     case firefox
+    case safari
+
+    /// Brands reached through a native-messaging host manifest. Safari's
+    /// extension ships inside the app and reaches it through the Safari bridge.
+    public static let nativeMessagingHosts: [BrowserBrand] = [.chrome, .edge, .firefox]
 }
 
 public enum BrowserHostHandshake: Sendable, Equatable {
@@ -51,12 +56,17 @@ public struct BrowserHostProfileGroup: Sendable, Equatable {
     public let chrome: [BrowserHostProfile]
     public let edge: [BrowserHostProfile]
     public let firefox: [BrowserHostProfile]
+    public let safari: [BrowserHostProfile]
 
-    public init(chrome: [BrowserHostProfile] = [], edge: [BrowserHostProfile] = [], firefox: [BrowserHostProfile] = []) {
+    public init(chrome: [BrowserHostProfile] = [], edge: [BrowserHostProfile] = [], firefox: [BrowserHostProfile] = [],
+                safari: [BrowserHostProfile] = []) {
         self.chrome = chrome
         self.edge = edge
         self.firefox = firefox
+        self.safari = safari
     }
+
+    public var all: [BrowserHostProfile] { chrome + edge + firefox + safari }
 }
 
 public struct BrowserHostRegistrationSummary: Sendable, Equatable {

@@ -854,6 +854,21 @@ public enum BrowserRepairAXState: String, CaseIterable, Sendable {
     public var axToken: String { rawValue }
 }
 
+/// Whether the owner has turned the solstone extension on in Safari.
+public enum SafariExtensionAXState: String, CaseIterable, Sendable {
+    case on
+    case off
+    case unknown
+
+    public static let axTokens = [
+        "on",
+        "off",
+        "unknown"
+    ]
+
+    public var axToken: String { rawValue }
+}
+
 public enum BrowserStoreLaunchAXState: String, CaseIterable, Sendable {
     case disabled
     case opened

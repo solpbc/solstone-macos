@@ -853,7 +853,7 @@ public enum BrowserPayloadDecoder {
         }
         let protocolVal = (protocolRaw as! NSNumber).intValue
 
-        if !["chrome", "edge", "firefox"].contains(brand) {
+        if BrowserBrand(rawValue: brand) == nil {
             return .refuse(BrowserRefusal(code: "invalid_enum"))
         }
         if scalarCount(version) > projection.stringBounds.version || inst.isEmpty || scalarCount(inst) > projection.stringBounds.instStringMax {

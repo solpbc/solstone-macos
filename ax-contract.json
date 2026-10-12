@@ -240,6 +240,8 @@
       "settings.sources.browsers.firefox",
       "settings.sources.browsers.group",
       "settings.sources.browsers.repair",
+      "settings.sources.browsers.safari",
+      "settings.sources.browsers.safari.settings",
       "settings.sources.browsers.store.chrome",
       "settings.sources.browsers.store.edge",
       "settings.sources.browsers.store.firefox",

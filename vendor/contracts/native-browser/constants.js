@@ -5,7 +5,7 @@
   "use strict";
 
   globalThis.SolstoneNativeBrowserConstants = Object.freeze({
-  "BUNDLE_VERSION": "1.2.0",
+  "BUNDLE_VERSION": "1.3.0",
   "WIRE_PROTOCOL": 1,
   "EXTENSION_TO_HOST_MAX": 33554432,
   "HOST_TO_EXTENSION_MAX": 65536,
@@ -59,7 +59,8 @@
   "BRAND_ENUM": [
     "chrome",
     "edge",
-    "firefox"
+    "firefox",
+    "safari"
   ],
   "CAPTURE_ENUM": [
     "unavailable",
@@ -106,13 +107,15 @@
       "host": "app.solstone.browser",
       "chrome_id": "eibbeeoifjoabddfmgeggnageolkcnim",
       "edge_id": "eibbeeoifjoabddfmgeggnageolkcnim",
-      "firefox_id": "browser@solstone.app"
+      "firefox_id": "browser@solstone.app",
+      "safari_id": "app.solstone.observer.safari (7QCG8V4M6H)"
     },
     "dev": {
       "host": "app.solstone.browser.dev",
       "chrome_id": "fgfnkcefedeheoeamppkiiloncfekakf",
       "edge_id": "fgfnkcefedeheoeamppkiiloncfekakf",
-      "firefox_id": "browser.dev@solstone.app"
+      "firefox_id": "browser.dev@solstone.app",
+      "safari_id": ""
     }
   },
   "REGISTRATION": {

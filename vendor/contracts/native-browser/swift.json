@@ -1,6 +1,6 @@
 {
   "constants": {
-    "BUNDLE_VERSION": "1.2.0",
+    "BUNDLE_VERSION": "1.3.0",
     "WIRE_PROTOCOL": 1,
     "EXTENSION_TO_HOST_MAX": 33554432,
     "HOST_TO_EXTENSION_MAX": 65536,
@@ -54,7 +54,8 @@
     "BRAND_ENUM": [
       "chrome",
       "edge",
-      "firefox"
+      "firefox",
+      "safari"
     ],
     "CAPTURE_ENUM": [
       "unavailable",
@@ -101,13 +102,15 @@
         "host": "app.solstone.browser",
         "chrome_id": "eibbeeoifjoabddfmgeggnageolkcnim",
         "edge_id": "eibbeeoifjoabddfmgeggnageolkcnim",
-        "firefox_id": "browser@solstone.app"
+        "firefox_id": "browser@solstone.app",
+        "safari_id": "app.solstone.observer.safari (7QCG8V4M6H)"
       },
       "dev": {
         "host": "app.solstone.browser.dev",
         "chrome_id": "fgfnkcefedeheoeamppkiiloncfekakf",
         "edge_id": "fgfnkcefedeheoeamppkiiloncfekakf",
-        "firefox_id": "browser.dev@solstone.app"
+        "firefox_id": "browser.dev@solstone.app",
+        "safari_id": ""
       }
     },
     "REGISTRATION": {
@@ -332,6 +335,12 @@
       "payload": "{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.0.0\",\"brand\":\"chrome\",\"inst\":\"desktop_inst_1\"}"
     },
     {
+      "id": "hello_safari_positive",
+      "direction": "extension_to_host",
+      "expect": "accept",
+      "payload": "{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.0.0\",\"brand\":\"safari\",\"inst\":\"desktop_inst_safari\"}"
+    },
+    {
       "id": "hello_wrong_direction",
       "direction": "host_to_extension",
       "expect": "refuse",
@@ -490,7 +499,7 @@
       "direction": "extension_to_host",
       "expect": "refuse",
       "code": "invalid_enum",
-      "payload": "{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.0.0\",\"brand\":\"safari\",\"inst\":\"inst1\"}"
+      "payload": "{\"type\":\"hello\",\"protocol\":1,\"version\":\"1.0.0\",\"brand\":\"opera\",\"inst\":\"inst1\"}"
     },
     {
       "id": "hello_ack_invalid_capture",
