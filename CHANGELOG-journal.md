@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- creating your journal now finishes in your browser.
+
 ## [2.0.42 (build 80)] - 2026-10-12
 
 ### Changed

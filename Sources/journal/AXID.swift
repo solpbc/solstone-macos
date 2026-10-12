@@ -37,16 +37,7 @@ enum AXID {
             static let setupLogState = "journal.ritual.setup.log.state"
             static let setupErrorState = "journal.ritual.setup.error.state"
             static let setupRetry = "journal.ritual.setup.retry"
-            static let markCard = "journal.ritual.mark.card"
-            static let markTryAnother = "journal.ritual.mark.tryAnother"
-            static let markLock = "journal.ritual.mark.lock"
-            static let markLoadingState = "journal.ritual.mark.loading.state"
-            static let markLockedState = "journal.ritual.mark.locked.state"
-            static let markErrorState = "journal.ritual.mark.error.state"
-            static let finalizeProgressState = "journal.ritual.finalize.progress.state"
-            static let finalizeWarningsState = "journal.ritual.finalize.warnings.state"
-            static let finalizeErrorState = "journal.ritual.finalize.error.state"
-            static let finalizeRetry = "journal.ritual.finalize.retry"
+            static let browserReopen = "journal.ritual.browser.reopen"
         }
 
         enum Adopt {

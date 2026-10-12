@@ -21,8 +21,7 @@ struct JournalIconManagerTests {
             applier: applier,
             inspector: inspector,
             logger: FakeIconLogger(),
-            bundlePath: fixture.bundleURL.path,
-            notificationCenter: NotificationCenter()
+            bundlePath: fixture.bundleURL.path
         )
 
         manager.reassertOnLaunch()
@@ -45,8 +44,7 @@ struct JournalIconManagerTests {
             applier: applier,
             inspector: FakeBundleIconInspector(hasCustomIcon: true),
             logger: FakeIconLogger(),
-            bundlePath: fixture.bundleURL.path,
-            notificationCenter: NotificationCenter()
+            bundlePath: fixture.bundleURL.path
         )
 
         manager.reassertOnLaunch()
@@ -64,38 +62,13 @@ struct JournalIconManagerTests {
             applier: applier,
             inspector: FakeBundleIconInspector(hasCustomIcon: false),
             logger: FakeIconLogger(),
-            bundlePath: fixture.bundleURL.path,
-            notificationCenter: NotificationCenter()
+            bundlePath: fixture.bundleURL.path
         )
 
         manager.reassertOnLaunch()
         await drainIconWork()
 
         #expect(applier.applyCalls == 0)
-    }
-
-    @Test func notificationTriggerAppliesOwnerAndWritesCache() async throws {
-        let fixture = try makeFixture()
-        defer { fixture.clear() }
-        let center = NotificationCenter()
-        let applier = FakeIconApplier()
-        let manager = JournalIconManager(
-            config: fixture.config,
-            applier: applier,
-            inspector: FakeBundleIconInspector(hasCustomIcon: false),
-            logger: FakeIconLogger(),
-            bundlePath: fixture.bundleURL.path,
-            notificationCenter: center
-        )
-
-        manager.start()
-        await drainIconWork()
-        _ = JournalMarkLockedNotification.post(mark: .uiTestSample, center: center)
-        await waitForIconCondition { applier.applyCalls == 1 }
-
-        #expect(applier.applyCalls == 1)
-        #expect(fixture.config.cachedIconMark() == .uiTestSample)
-        #expect(fixture.config.iconMarkAppliedAtLeastOnce)
     }
 
     @Test func triggerArrivingMidComposeIsNoOp() async throws {
@@ -107,8 +80,7 @@ struct JournalIconManagerTests {
             applier: applier,
             inspector: FakeBundleIconInspector(hasCustomIcon: false),
             logger: FakeIconLogger(),
-            bundlePath: fixture.bundleURL.path,
-            notificationCenter: NotificationCenter()
+            bundlePath: fixture.bundleURL.path
         )
         applier.onApply = {
             manager.reassertOnLaunch()
@@ -131,8 +103,7 @@ struct JournalIconManagerTests {
             applier: applier,
             inspector: FakeBundleIconInspector(hasCustomIcon: false),
             logger: logger,
-            bundlePath: fixture.bundleURL.path,
-            notificationCenter: NotificationCenter()
+            bundlePath: fixture.bundleURL.path
         )
 
         manager.handleIdentityMark(.uiTestSample)
@@ -156,8 +127,7 @@ struct JournalIconManagerTests {
             applier: applier,
             inspector: FakeBundleIconInspector(hasCustomIcon: false),
             logger: logger,
-            bundlePath: fixture.bundleURL.path,
-            notificationCenter: NotificationCenter()
+            bundlePath: fixture.bundleURL.path
         )
         let invalid = JournalMark(
             icon1: JournalMark.Icon(

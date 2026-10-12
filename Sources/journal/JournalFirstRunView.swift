@@ -2,7 +2,6 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
-import JournalMarkKit
 import SolstoneCore
 import SwiftUI
 
@@ -50,10 +49,8 @@ struct JournalFirstRunView: View {
             nameLocationView
         case .setupProgress:
             setupProgressView
-        case .markReveal:
-            markRevealView
-        case .finalizing:
-            finalizingView
+        case .finishInBrowser:
+            finishInBrowserView
         }
     }
 
@@ -151,107 +148,26 @@ struct JournalFirstRunView: View {
         .frame(maxWidth: 620, maxHeight: .infinity, alignment: .center)
     }
 
-    private var markRevealView: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text(JournalFirstRunCopy.markTitle)
-                .font(.title2.weight(.semibold))
-            Text(JournalFirstRunCopy.markRevealSubtitle)
-                .foregroundStyle(.secondary)
-
-            if let mark = model.currentMark {
-                JournalMarkView(mark: mark, isConfirmed: model.markLocked)
-                    .journalMarkPop(generation: model.markRenderGeneration)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier(AXID.Journal.Ritual.markCard)
-            }
-
-            Text(JournalFirstRunCopy.markRevealExplainer)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 10) {
-                Button {
-                    Task { await model.regenerateMark() }
-                } label: {
-                    Label(JournalFirstRunCopy.tryAnotherButton, systemImage: "shuffle")
-                }
-                .disabled(model.isTryingAnotherMark || model.isLockingMark)
-                .accessibilityIdentifier(AXID.Journal.Ritual.markTryAnother)
-
-                Button {
-                    Task { await model.lockCurrentMark() }
-                } label: {
-                    Label(JournalFirstRunCopy.lockButton, systemImage: "lock")
-                }
-                .disabled(model.currentMark == nil || model.isTryingAnotherMark || model.isLockingMark)
-                .keyboardShortcut(.defaultAction)
-                .accessibilityIdentifier(AXID.Journal.Ritual.markLock)
-            }
-
-            if model.isTryingAnotherMark {
-                Text(JournalFirstRunCopy.tryAnotherLoading)
-                    .foregroundStyle(.secondary)
-            }
-            AXStateCompanion(
-                id: AXID.Journal.Ritual.markLoadingState,
-                value: (model.isTryingAnotherMark ? JournalFirstRunBusyState.running : .idle).axToken
-            )
-            AXStateCompanion(id: AXID.Journal.Ritual.markLockedState, value: model.markState.axToken)
-
-            if let error = model.errorMessage {
-                Text(error)
-                    .foregroundStyle(.red)
-                AXStateCompanion(id: AXID.Journal.Ritual.markErrorState, value: error)
-            } else {
-                AXStateCompanion(id: AXID.Journal.Ritual.markErrorState, value: "")
-            }
-        }
-        .padding(32)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .frame(maxWidth: 620, maxHeight: .infinity, alignment: .center)
-    }
-
-    private var finalizingView: some View {
+    private var finishInBrowserView: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(JournalFirstRunCopy.finishingTitle)
+            Text(JournalFirstRunCopy.finishInBrowserTitle)
                 .font(.title2.weight(.semibold))
 
-            HStack(spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 ProgressView()
-                    .controlSize(.large)
-                Text(JournalFirstRunCopy.finishingLoading)
+                    .controlSize(.small)
+                Text(JournalFirstRunCopy.finishInBrowserLine)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            AXStateCompanion(
-                id: AXID.Journal.Ritual.finalizeProgressState,
-                value: (model.isFinalizing ? JournalFirstRunBusyState.running : .idle).axToken
-            )
 
-            if !model.finalizeWarnings.isEmpty {
-                Text(JournalFirstRunCopy.finishedWithNotes)
-                    .font(.headline)
-                ForEach(model.finalizeWarnings, id: \.self) { warning in
-                    Text(warning)
-                        .foregroundStyle(.secondary)
-                }
+            Button {
+                model.reopenInBrowser()
+            } label: {
+                Label(JournalFirstRunCopy.reopenInBrowserButton, systemImage: "safari")
             }
-            AXStateCompanion(
-                id: AXID.Journal.Ritual.finalizeWarningsState,
-                value: model.finalizeWarnings.joined(separator: "\n")
-            )
-
-            if let error = model.errorMessage {
-                Text(error)
-                    .foregroundStyle(.red)
-                AXStateCompanion(id: AXID.Journal.Ritual.finalizeErrorState, value: error)
-                Button {
-                    Task { await model.finalizeAndLandHome() }
-                } label: {
-                    Label(JournalFirstRunCopy.tryAgain, systemImage: "arrow.clockwise")
-                }
-                .accessibilityIdentifier(AXID.Journal.Ritual.finalizeRetry)
-            } else {
-                AXStateCompanion(id: AXID.Journal.Ritual.finalizeErrorState, value: "")
-            }
+            .keyboardShortcut(.defaultAction)
+            .accessibilityIdentifier(AXID.Journal.Ritual.browserReopen)
         }
         .padding(32)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))

@@ -84,8 +84,6 @@ final class JournalIconManager {
     private let inspector: any JournalBundleIconInspecting
     private let logger: any JournalIconLogging
     private let bundlePath: String
-    private let notificationCenter: NotificationCenter
-    private var notificationObserver: NSObjectProtocol?
     private var inFlight: Task<Void, Never>?
 
     init(
@@ -93,32 +91,16 @@ final class JournalIconManager {
         applier: any JournalIconApplying = NSWorkspaceIconApplier(),
         inspector: any JournalBundleIconInspecting = FinderInfoBundleIconInspector(),
         logger: any JournalIconLogging = JournalLoggerIconLog(),
-        bundlePath: String = Bundle.main.bundlePath,
-        notificationCenter: NotificationCenter = .default
+        bundlePath: String = Bundle.main.bundlePath
     ) {
         self.config = config
         self.applier = applier
         self.inspector = inspector
         self.logger = logger
         self.bundlePath = bundlePath
-        self.notificationCenter = notificationCenter
     }
 
     func start() {
-        if notificationObserver == nil {
-            notificationObserver = notificationCenter.addObserver(
-                forName: .journalMarkLocked,
-                object: nil,
-                queue: nil
-            ) { [weak self] notification in
-                guard let mark = JournalMarkLockedNotification.mark(from: notification) else {
-                    return
-                }
-                Task { @MainActor [weak self] in
-                    self?.enqueue(.owner(mark))
-                }
-            }
-        }
         reassertOnLaunch()
     }
 
