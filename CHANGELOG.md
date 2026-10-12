@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- the solstone extension now works in Safari on this mac, with Safari 18.4 or later. it comes with the solstone app: check solstone under extensions in Safari's settings, or press the "open Safari settings" button under sources in the solstone app's settings, which also says whether it's on. it takes in nothing from private windows, even if you let Safari run it there.
+
+### Fixed
+
+- a browser that reconnects to the solstone app now stays connected. before, if it reconnected while its earlier connection was still open, the app could drop both, and nothing new from that browser went into your journal for up to a minute.
+
 ## [2.0.32] - 2026-10-12
 
 ## [2.0.31] - 2026-10-10
