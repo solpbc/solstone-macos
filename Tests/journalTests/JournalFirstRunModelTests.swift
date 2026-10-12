@@ -135,12 +135,15 @@ struct JournalFirstRunModelTests {
         await gate.waitForCalls(2)
 
         await fixture.model.prepareForTermination()
-        await run.value
+        try await Task.sleep(for: .milliseconds(20))
         let after = await gate.calls
-        try await Task.sleep(for: .milliseconds(50))
+        try await Task.sleep(for: .milliseconds(100))
 
+        // Not awaiting `run` on purpose: a wait that ignored termination would never
+        // return, and this must fail rather than hang.
         #expect(await gate.calls == after)
         #expect(fixture.model.route == .ritual(.finishInBrowser))
+        run.cancel()
     }
 
     @Test func browserThatWillNotOpenKeepsTheStateWithoutAnError() async throws {
