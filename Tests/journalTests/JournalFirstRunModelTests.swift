@@ -88,7 +88,7 @@ struct JournalFirstRunModelTests {
         #expect(fixture.windowModel.markPresentation == .mark(.uiTestSample))
     }
 
-    @Test func reopeningAfterTheTabClosesOpensThePageAgainWithoutASecondPoll() async throws {
+    @Test(.timeLimit(.minutes(1))) func reopeningAfterTheTabClosesOpensThePageAgainWithoutASecondPoll() async throws {
         let gate = ProbeGate()
         let fixture = makeModel(
             startResults: [true],
@@ -128,7 +128,7 @@ struct JournalFirstRunModelTests {
         #expect(fixture.browser.opened.count == 1)
     }
 
-    @Test func terminationWhileWaitingStopsPollingAndNeverLandsHome() async throws {
+    @Test(.timeLimit(.minutes(1))) func terminationWhileWaitingStopsPollingAndNeverLandsHome() async throws {
         let gate = ProbeGate()
         let fixture = makeModel(startResults: [true], probeResults: [], initClient: gate)
         let run = Task { await fixture.model.continueFromNameLocation() }
