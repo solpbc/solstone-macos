@@ -88,29 +88,28 @@ struct JournalFirstRunModelTests {
         #expect(fixture.windowModel.markPresentation == .mark(.uiTestSample))
     }
 
-    @Test func reopeningAfterTheTabClosesOpensThePageAgainWithOnePoll() async throws {
+    @Test func reopeningAfterTheTabClosesOpensThePageAgainWithoutASecondPoll() async throws {
         let gate = ProbeGate()
         let fixture = makeModel(
             startResults: [true],
             probeResults: [],
             initClient: gate,
-            browserPollInterval: .milliseconds(20)
+            browserPollInterval: .seconds(30)
         )
         let run = Task { await fixture.model.continueFromNameLocation() }
+        // The probe after start, then the wait's first probe; the wait then sleeps.
         await gate.waitForCalls(2)
         #expect(fixture.model.route == .ritual(.finishInBrowser))
 
         fixture.model.reopenInBrowser()
-        let before = await gate.calls
-        try await Task.sleep(for: .milliseconds(200))
-        let during = await gate.calls - before
-        // One poll loop at 20 ms makes about ten probes in 200 ms; a second loop would double it.
-        #expect(during <= 14)
+        try await Task.sleep(for: .milliseconds(100))
+
+        // A second wait would probe at once; the live one is still asleep.
+        #expect(await gate.calls == 2)
         #expect(fixture.browser.opened.count == 2)
 
-        await gate.finish()
+        await fixture.model.prepareForTermination()
         await run.value
-        #expect(fixture.model.route == .home)
     }
 
     @Test func probeErrorsWhileWaitingKeepWaitingWithoutAnError() async throws {
