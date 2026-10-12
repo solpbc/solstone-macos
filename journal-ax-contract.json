@@ -93,18 +93,9 @@
       "journal.home.updates",
       "journal.journal.diskUsage.state",
       "journal.journal.location.path.state",
-      "journal.ritual.finalize.error.state",
-      "journal.ritual.finalize.progress.state",
-      "journal.ritual.finalize.retry",
-      "journal.ritual.finalize.warnings.state",
+      "journal.ritual.browser.reopen",
       "journal.ritual.location.choose",
       "journal.ritual.location.field",
-      "journal.ritual.mark.card",
-      "journal.ritual.mark.error.state",
-      "journal.ritual.mark.loading.state",
-      "journal.ritual.mark.lock",
-      "journal.ritual.mark.locked.state",
-      "journal.ritual.mark.tryAnother",
       "journal.ritual.nameLocation.continue",
       "journal.ritual.nameLocation.error.state",
       "journal.ritual.root",
@@ -210,27 +201,6 @@
     },
     "journal.journal.location.path.state" : {
       "kind" : "freeform"
-    },
-    "journal.ritual.finalize.error.state" : {
-      "kind" : "freeform"
-    },
-    "journal.ritual.finalize.progress.state" : {
-      "kind" : "enum",
-      "vocabulary" : "JournalFirstRunBusyState"
-    },
-    "journal.ritual.finalize.warnings.state" : {
-      "kind" : "freeform"
-    },
-    "journal.ritual.mark.error.state" : {
-      "kind" : "freeform"
-    },
-    "journal.ritual.mark.loading.state" : {
-      "kind" : "enum",
-      "vocabulary" : "JournalFirstRunBusyState"
-    },
-    "journal.ritual.mark.locked.state" : {
-      "kind" : "enum",
-      "vocabulary" : "JournalFirstRunMarkState"
     },
     "journal.ritual.nameLocation.error.state" : {
       "kind" : "freeform"
@@ -347,23 +317,11 @@
       "enabled",
       "disabled"
     ],
-    "JournalFirstRunBusyState" : [
-      "idle",
-      "running",
-      "failed"
-    ],
-    "JournalFirstRunMarkState" : [
-      "unlocked",
-      "trying",
-      "locked",
-      "hidden"
-    ],
     "JournalFirstRunRouteState" : [
       "deciding",
       "name_location",
       "setup_progress",
-      "mark_reveal",
-      "finalizing",
+      "finish_in_browser",
       "adopting",
       "home"
     ],
