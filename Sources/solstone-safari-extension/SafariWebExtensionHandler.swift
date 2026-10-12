@@ -14,7 +14,7 @@ import os
 private let groupIdentifier = "7QCG8V4M6H.app.solstone.observer"
 private let socketName = "safari.sock"
 private let maxConnections = 16
-private let logger = Logger(subsystem: "app.solstone.observer.safari", category: "relay")
+private let logger = Logger(subsystem: "app.solstone.observer", category: "safari")
 
 /// Sockets this process holds, one per extension connection, oldest first.
 private final class RelaySockets: @unchecked Sendable {
