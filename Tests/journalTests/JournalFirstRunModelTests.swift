@@ -109,7 +109,7 @@ struct JournalFirstRunModelTests {
         #expect(fixture.browser.opened.count == 2)
 
         await fixture.model.prepareForTermination()
-        await run.value
+        run.cancel()
     }
 
     @Test func probeErrorsWhileWaitingKeepWaitingWithoutAnError() async throws {
