@@ -68,8 +68,7 @@ public enum UICopy {
     // Group & store
     public static let SOURCES_BROWSERS_GROUP_TITLE = "browsers"
     public static let SOURCES_BROWSERS_NO_HISTORY = "no browser connected yet"
-    public static let SOURCES_BROWSERS_NO_STORE = "the solstone extension isn't in the browser stores yet."
-    public static let SOURCES_BROWSERS_STORES_CONFIGURED = "add the solstone extension to Chrome, Edge or Firefox on this mac, then choose which sites to share. what you share goes into your journal."
+    public static let SOURCES_BROWSERS_STORES_CONFIGURED = "add the solstone extension to a browser on this mac, then choose which sites to share. what you share goes into your journal."
     public static func sourcesBrowserAddAction(browser: String) -> String { "add to \(browser)" }
     public static func sourcesBrowserLaunchFailure(browser: String) -> String { "couldn't open the store page in \(browser)." }
 

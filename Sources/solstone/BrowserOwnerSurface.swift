@@ -70,6 +70,13 @@ public struct BrowserStoreCatalog: Equatable, Sendable {
     public var urls: [BrowserBrand: URL]
 
     public static let preview = BrowserStoreCatalog(urls: [:])
+    public static let live: BrowserStoreCatalog = {
+        let storeURL = URL(string: "https://chromewebstore.google.com/detail/solstone/eibbeeoifjoabddfmgeggnageolkcnim")!
+        return BrowserStoreCatalog(urls: [
+            .chrome: storeURL,
+            .edge: storeURL
+        ])
+    }()
 
     public init(urls: [BrowserBrand: URL] = [:]) {
         self.urls = urls
@@ -507,6 +514,13 @@ public func performBrowserStoreOpen(
 ) -> BrowserStoreLaunch {
     guard let url = catalog.url(for: brand) else { return .disabled }
     return open(url, brand) ? .opened : .failed
+}
+
+public func offeredBrowserStoreBrands(catalog: BrowserStoreCatalog, rows: [BrowserBrandRow]) -> Set<BrowserBrand> {
+    Set(rows.compactMap { row in
+        guard row.lastSeen == nil, catalog.url(for: row.brand) != nil else { return nil }
+        return row.brand
+    })
 }
 
 public func browserCapturePermitsPause(_ snapshot: BrowserHostSnapshotValue, now: Date) -> Bool {

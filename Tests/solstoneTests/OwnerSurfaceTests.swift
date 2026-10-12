@@ -141,6 +141,54 @@ struct OwnerSurfaceSourcesTests {
         let older = calendar.date(byAdding: .day, value: -3, to: calendar.startOfDay(for: now))!
         #expect(browserRelativeTimeBucket(lastSeen: older, now: now, calendar: calendar) == .date(older))
     }
+
+    @Test func liveStoreCatalogTargetsChromeAndEdgeOnly() {
+        let expectedURL = URL(string: "https://chromewebstore.google.com/detail/solstone/eibbeeoifjoabddfmgeggnageolkcnim")!
+        let catalog = BrowserStoreCatalog.live
+        #expect(catalog.url(for: .chrome) == expectedURL)
+        #expect(catalog.url(for: .edge) == expectedURL)
+        #expect(catalog.url(for: .chrome) == catalog.url(for: .edge))
+        #expect(catalog.url(for: .firefox) == nil)
+        #expect(Set(catalog.urls.keys) == Set([.chrome, .edge]))
+
+        var openerCalled = false
+        let disabled = performBrowserStoreOpen(brand: .firefox, catalog: .live) { _, _ in
+            openerCalled = true
+            return true
+        }
+        #expect(disabled == .disabled)
+        #expect(!openerCalled)
+    }
+
+    @Test func offeredBrowserStoreBrandsFiltersSeenAndUnlistedBrands() {
+        let unseenRows = [
+            BrowserBrandRow(brand: .chrome, connectedCount: 0, lastSeen: nil, registration: .unknown),
+            BrowserBrandRow(brand: .edge, connectedCount: 0, lastSeen: nil, registration: .unknown),
+            BrowserBrandRow(brand: .firefox, connectedCount: 0, lastSeen: nil, registration: .unknown)
+        ]
+        #expect(offeredBrowserStoreBrands(catalog: .live, rows: unseenRows) == Set([.chrome, .edge]))
+
+        let chromeSeenRows = [
+            BrowserBrandRow(brand: .chrome, connectedCount: 0, lastSeen: .justNow, registration: .unknown),
+            BrowserBrandRow(brand: .edge, connectedCount: 0, lastSeen: nil, registration: .unknown),
+            BrowserBrandRow(brand: .firefox, connectedCount: 0, lastSeen: nil, registration: .unknown)
+        ]
+        #expect(offeredBrowserStoreBrands(catalog: .live, rows: chromeSeenRows) == Set([.edge]))
+
+        let bothSeenFirefoxUnseenRows = [
+            BrowserBrandRow(brand: .chrome, connectedCount: 0, lastSeen: .justNow, registration: .unknown),
+            BrowserBrandRow(brand: .edge, connectedCount: 1, lastSeen: .justNow, registration: .unknown),
+            BrowserBrandRow(brand: .firefox, connectedCount: 0, lastSeen: nil, registration: .unknown)
+        ]
+        #expect(offeredBrowserStoreBrands(catalog: .live, rows: bothSeenFirefoxUnseenRows) == Set())
+
+        let allSeenRows = [
+            BrowserBrandRow(brand: .chrome, connectedCount: 0, lastSeen: .justNow, registration: .unknown),
+            BrowserBrandRow(brand: .edge, connectedCount: 0, lastSeen: .justNow, registration: .unknown),
+            BrowserBrandRow(brand: .firefox, connectedCount: 0, lastSeen: .justNow, registration: .unknown)
+        ]
+        #expect(offeredBrowserStoreBrands(catalog: .live, rows: allSeenRows) == Set())
+    }
 }
 
 @Suite("OwnerSurfaceStatus")

@@ -14,6 +14,9 @@ struct AppStateSnapshotTests {
         #expect(state.errorMessage == nil)
         #expect(state.initialPermissionCheckComplete == false)
         #expect(state.observationRowState == .starting)
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        #expect(AppState.forSnapshot().browserStoreCatalog == .live)
+#endif
     }
 
     @Test func captureTruthProjectionsForwardToCoordinator() {

@@ -872,7 +872,7 @@ struct SettingsView: View {
         let verdict = browserOwnerVerdict(mediaSourcesEmpty: appState.config.selectedSources.isEmpty,
             mediaRecording: appState.isRecording, mediaPaused: appState.isPaused, snapshot: snapshot, now: Date())
         let hasAnyHistory = rows.contains { $0.lastSeen != nil }
-        let hasAnyStore = BrowserBrand.allCases.contains { appState.browserStoreCatalog.url(for: $0) != nil }
+        let offered = offeredBrowserStoreBrands(catalog: appState.browserStoreCatalog, rows: rows)
 
         return VStack(alignment: .leading, spacing: 8) {
             Text(UICopy.SOURCES_BROWSERS_GROUP_TITLE)
@@ -882,13 +882,7 @@ struct SettingsView: View {
             if !hasAnyHistory {
                 Text(UICopy.SOURCES_BROWSERS_NO_HISTORY)
                     .foregroundStyle(.secondary)
-            }
-
-            if hasAnyStore {
                 Text(UICopy.SOURCES_BROWSERS_STORES_CONFIGURED)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text(UICopy.SOURCES_BROWSERS_NO_STORE)
                     .foregroundStyle(.secondary)
             }
 
@@ -924,20 +918,18 @@ struct SettingsView: View {
                 }
             }
 
-            ForEach(BrowserBrand.allCases, id: \.self) { brand in
-                if appState.browserStoreCatalog.url(for: brand) != nil {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Button(UICopy.sourcesBrowserAddAction(browser: brand.displayName)) {
-                            appState.openBrowserStore(brand)
-                        }
-                        .accessibilityIdentifier(browserStoreAXID(brand))
-                        .accessibilityValue(browserStoreValue(brand).axToken)
+            ForEach(BrowserBrand.allCases.filter(offered.contains), id: \.self) { brand in
+                VStack(alignment: .leading, spacing: 2) {
+                    Button(UICopy.sourcesBrowserAddAction(browser: brand.displayName)) {
+                        appState.openBrowserStore(brand)
+                    }
+                    .accessibilityIdentifier(browserStoreAXID(brand))
+                    .accessibilityValue(browserStoreValue(brand).axToken)
 
-                        if appState.browserStoreLaunch[brand] == .failed {
-                            Text(UICopy.sourcesBrowserLaunchFailure(browser: brand.displayName))
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
+                    if appState.browserStoreLaunch[brand] == .failed {
+                        Text(UICopy.sourcesBrowserLaunchFailure(browser: brand.displayName))
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
                 }
             }

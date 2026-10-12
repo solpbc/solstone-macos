@@ -92,7 +92,7 @@ public final class AppState {
             }
         }
     }
-    var browserStoreCatalog = BrowserStoreCatalog.preview
+    var browserStoreCatalog = BrowserStoreCatalog.live
     var browserStoreOpener: @MainActor (URL, BrowserBrand) -> Bool = { url, brand in
         let bundleID: String
         switch brand {
@@ -775,11 +775,11 @@ public final class AppState {
     }
 
     func openBrowserStore(_ brand: BrowserBrand) {
-        guard let url = browserStoreCatalog.url(for: brand) else {
-            browserStoreLaunch[brand] = .disabled
-            return
-        }
-        browserStoreLaunch[brand] = browserStoreOpener(url, brand) ? .opened : .failed
+        browserStoreLaunch[brand] = performBrowserStoreOpen(
+            brand: brand,
+            catalog: browserStoreCatalog,
+            open: browserStoreOpener
+        )
     }
 #endif
 
