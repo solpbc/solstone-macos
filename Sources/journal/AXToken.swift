@@ -22,23 +22,9 @@ enum JournalFirstRunRouteState: CaseIterable {
     case deciding
     case nameLocation
     case setupProgress
-    case markReveal
-    case finalizing
+    case finishInBrowser
     case adopting
     case home
-}
-
-enum JournalFirstRunBusyState: CaseIterable {
-    case idle
-    case running
-    case failed
-}
-
-enum JournalFirstRunMarkState: CaseIterable {
-    case unlocked
-    case trying
-    case locked
-    case hidden
 }
 
 enum JournalAdoptState: CaseIterable {
@@ -122,42 +108,16 @@ extension JournalDevicesCopiedState {
 }
 
 extension JournalFirstRunRouteState {
-    static let axTokens = ["deciding", "name_location", "setup_progress", "mark_reveal", "finalizing", "adopting", "home"]
+    static let axTokens = ["deciding", "name_location", "setup_progress", "finish_in_browser", "adopting", "home"]
 
     var axToken: String {
         switch self {
         case .deciding: return "deciding"
         case .nameLocation: return "name_location"
         case .setupProgress: return "setup_progress"
-        case .markReveal: return "mark_reveal"
-        case .finalizing: return "finalizing"
+        case .finishInBrowser: return "finish_in_browser"
         case .adopting: return "adopting"
         case .home: return "home"
-        }
-    }
-}
-
-extension JournalFirstRunBusyState {
-    static let axTokens = ["idle", "running", "failed"]
-
-    var axToken: String {
-        switch self {
-        case .idle: return "idle"
-        case .running: return "running"
-        case .failed: return "failed"
-        }
-    }
-}
-
-extension JournalFirstRunMarkState {
-    static let axTokens = ["unlocked", "trying", "locked", "hidden"]
-
-    var axToken: String {
-        switch self {
-        case .unlocked: return "unlocked"
-        case .trying: return "trying"
-        case .locked: return "locked"
-        case .hidden: return "hidden"
         }
     }
 }
@@ -185,10 +145,8 @@ extension JournalFirstRunRoute {
             return JournalFirstRunRouteState.nameLocation.axToken
         case .ritual(.setupProgress):
             return JournalFirstRunRouteState.setupProgress.axToken
-        case .ritual(.markReveal):
-            return JournalFirstRunRouteState.markReveal.axToken
-        case .ritual(.finalizing):
-            return JournalFirstRunRouteState.finalizing.axToken
+        case .ritual(.finishInBrowser):
+            return JournalFirstRunRouteState.finishInBrowser.axToken
         case .adopting:
             return JournalFirstRunRouteState.adopting.axToken
         case .home:
@@ -198,12 +156,6 @@ extension JournalFirstRunRoute {
 }
 
 extension JournalFirstRunModel {
-    var markState: JournalFirstRunMarkState {
-        if currentMark == nil { return .hidden }
-        if isTryingAnotherMark { return .trying }
-        return markLocked ? .locked : .unlocked
-    }
-
     var adoptState: JournalAdoptState {
         if adoptMessage == JournalFirstRunCopy.adoptLandingLine { return .landed }
         if route == .home { return .landed }

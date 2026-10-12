@@ -125,32 +125,6 @@ struct JournalInitClientTests {
         }
     }
 
-    @Test func notificationHelperReadsOnlyValidatedMarkPayload() {
-        let validNotification = Notification(
-            name: .journalMarkLocked,
-            object: nil,
-            userInfo: [JournalMarkLockedNotification.markUserInfoKey: JournalMark.uiTestSample]
-        )
-        let invalidMark = JournalMark(
-            icon1: JournalMark.uiTestSample.icon1,
-            icon2: JournalMark.Icon(
-                name: JournalMark.uiTestSample.icon2.name,
-                color: JournalMark.uiTestSample.icon2.color,
-                rot: 90,
-                svg: JournalMark.uiTestSample.icon2.svg
-            ),
-            words: JournalMark.uiTestSample.words
-        )
-        let invalidNotification = Notification(
-            name: .journalMarkLocked,
-            object: nil,
-            userInfo: [JournalMarkLockedNotification.markUserInfoKey: invalidMark]
-        )
-
-        #expect(JournalMarkLockedNotification.mark(from: validNotification) == .uiTestSample)
-        #expect(JournalMarkLockedNotification.mark(from: invalidNotification) == nil)
-    }
-
     private static func client(store: ObserverURLProtocolStore, baseURL: String = "http://127.0.0.1:5015") -> JournalInitClient {
         JournalInitClient(
             baseURL: baseURL,

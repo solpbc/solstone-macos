@@ -5,6 +5,7 @@ import Foundation
 import JournalMarkKit
 import JournalRuntime
 import JournalRuntimeTestSupport
+import Observation
 import SolstoneCore
 import Testing
 @testable import journal
@@ -28,123 +29,150 @@ struct JournalFirstRunModelTests {
         #expect(starts == 0)
     }
 
-    @Test func createFlowOrdersSetupSupervisorMarkLockFinalize() async throws {
+    @Test func createFlowOpensTheJournalPageThenLandsHomeWhenTheJournalSaysDone() async throws {
         let trace = FirstRunTrace()
         let fixture = makeModel(
             trace: trace,
             startResults: [true],
-            probeResults: [.incomplete, .incomplete],
-            getMarkResponses: [.unlockedResponse],
-            lockResponse: .lockedResponse,
-            finalizeResponse: .success
+            probeResults: [.incomplete, .incomplete, .complete]
         )
 
         await fixture.model.continueFromNameLocation()
-        await fixture.model.lockCurrentMark()
 
-        #expect(await trace.snapshot() == [
-            "setup",
-            "supervisor",
-            "probe",
-            "getMark",
-            "lockMark",
-            "probe",
-            "finalize",
-        ])
+        #expect(await trace.snapshot() == ["setup", "supervisor", "probe", "probe", "probe"])
+        #expect(fixture.browser.opened == [URL(string: "http://127.0.0.1:5015/init")!])
+        #expect(fixture.routes.contains(.ritual(.finishInBrowser)))
         #expect(fixture.model.route == .home)
-        #expect(fixture.windowModel.markPresentation == .mark(.uiTestSample))
+        #expect(fixture.model.errorMessage == nil)
     }
 
-    @Test func landingHomeKeepsLockedMarkAfterWindowLoad() async throws {
-        let fixture = makeModel(
-            startResults: [true],
-            probeResults: [.incomplete, .incomplete],
-            getMarkResponses: [.unlockedResponse],
-            lockResponse: .lockedResponse
-        )
+    @Test func alreadyCompleteJournalGoesStraightHomeWithoutTheBrowser() async throws {
+        let trace = FirstRunTrace()
+        let fixture = makeModel(trace: trace, startResults: [true], probeResults: [.complete])
 
-        await fixture.model.continueFromNameLocation()
-        await fixture.model.lockCurrentMark()
-        await fixture.windowModel.loadForWindowOpen()
+        await fixture.model.resumeConfiguredRoot(try makeTemporaryDirectory())
 
+        #expect(await trace.snapshot() == ["supervisor", "probe"])
+        #expect(fixture.browser.opened.isEmpty)
         #expect(fixture.model.route == .home)
-        #expect(fixture.windowModel.markPresentation == .mark(.uiTestSample))
     }
 
-    @Test func finalizeWarningsLandHome() async throws {
-        let fixture = makeModel(
-            startResults: [true],
-            probeResults: [.incomplete, .incomplete],
-            getMarkResponses: [.unlockedResponse],
-            lockResponse: .lockedResponse,
-            finalizeResponse: JournalInitFinalizeResponse(success: true, redirect: "/", warnings: ["note"])
-        )
-
-        await fixture.model.continueFromNameLocation()
-        await fixture.model.lockCurrentMark()
-
-        #expect(fixture.model.route == .home)
-        #expect(fixture.model.finalizeWarnings == ["note"])
-    }
-
-    @Test func resumePreSetupRunsSetupThenRoutesToMarkReveal() async throws {
+    @Test func resumePreSetupRunsSetupThenHandsOffToTheBrowser() async throws {
         let trace = FirstRunTrace()
         let fixture = makeModel(
             trace: trace,
             startResults: [false, true],
-            probeResults: [.incomplete],
-            getMarkResponses: [.unlockedResponse]
-        )
-        let root = try makeTemporaryDirectory()
-
-        await fixture.model.resumeConfiguredRoot(root)
-
-        #expect(await trace.snapshot() == ["supervisor", "setup", "supervisor", "probe", "getMark"])
-        #expect(fixture.model.route == .ritual(.markReveal))
-    }
-
-    @Test func resumePostSetupPreLockRoutesToMarkReveal() async throws {
-        let trace = FirstRunTrace()
-        let fixture = makeModel(
-            trace: trace,
-            startResults: [true],
-            probeResults: [.incomplete],
-            getMarkResponses: [.unlockedResponse]
+            probeResults: [.incomplete, .complete]
         )
 
         await fixture.model.resumeConfiguredRoot(try makeTemporaryDirectory())
 
-        #expect(await trace.snapshot() == ["supervisor", "probe", "getMark"])
-        #expect(fixture.model.route == .ritual(.markReveal))
-    }
-
-    @Test func resumePostLockPreFinalizeAutoFinalizesThenLandsHome() async throws {
-        let trace = FirstRunTrace()
-        let fixture = makeModel(
-            trace: trace,
-            startResults: [true],
-            probeResults: [.incomplete, .incomplete],
-            getMarkResponses: [.lockedResponse]
-        )
-
-        await fixture.model.resumeConfiguredRoot(try makeTemporaryDirectory())
-
-        #expect(await trace.snapshot() == ["supervisor", "probe", "getMark", "probe", "finalize"])
-        #expect(fixture.initClient.finalizeCalls == 1)
+        #expect(await trace.snapshot() == ["supervisor", "setup", "supervisor", "probe", "probe"])
+        #expect(fixture.browser.opened.count == 1)
         #expect(fixture.model.route == .home)
     }
 
-    @Test func resumeCompleteLandsHomeWithoutRepostingFinalize() async throws {
+    @Test func landingHomeReadsTheIdentitySoTheMarkReachesTheIcon() async throws {
+        let capture = IdentityMarkSpy()
         let fixture = makeModel(
             startResults: [true],
-            probeResults: [.complete],
-            getMarkResponses: [.lockedResponse]
+            probeResults: [.incomplete, .complete],
+            fetchIdentity: { _ in .mark(.uiTestSample) },
+            onIdentityMark: { capture.append($0) }
         )
 
-        await fixture.model.resumeConfiguredRoot(try makeTemporaryDirectory())
+        await fixture.model.continueFromNameLocation()
 
-        #expect(fixture.initClient.finalizeCalls == 0)
         #expect(fixture.model.route == .home)
+        #expect(capture.snapshot() == [.uiTestSample])
+        #expect(fixture.windowModel.markPresentation == .mark(.uiTestSample))
+    }
+
+    @Test(.timeLimit(.minutes(1))) func reopeningAfterTheTabClosesOpensThePageAgainWithoutASecondPoll() async throws {
+        let gate = ProbeGate()
+        let fixture = makeModel(
+            startResults: [true],
+            probeResults: [],
+            initClient: gate,
+            browserPollInterval: .seconds(30)
+        )
+        let run = Task { await fixture.model.continueFromNameLocation() }
+        // The probe after start, then the wait's first probe; the wait then sleeps.
+        await gate.waitForCalls(2)
+        #expect(fixture.model.route == .ritual(.finishInBrowser))
+
+        fixture.model.reopenInBrowser()
+        try await Task.sleep(for: .milliseconds(100))
+
+        // A second wait would probe at once; the live one is still asleep.
+        #expect(await gate.calls == 2)
+        #expect(fixture.browser.opened.count == 2)
+
+        await fixture.model.prepareForTermination()
+        run.cancel()
+    }
+
+    @Test func probeErrorsWhileWaitingKeepWaitingWithoutAnError() async throws {
+        let fixture = makeModel(
+            startResults: [true],
+            probeResults: [.incomplete],
+            probeErrors: [nil, URLError(.cannotConnectToHost), URLError(.timedOut), nil],
+            trailingProbe: .complete
+        )
+
+        await fixture.model.continueFromNameLocation()
+
+        #expect(fixture.model.route == .home)
+        #expect(fixture.model.errorMessage == nil)
+        #expect(fixture.routes.contains(.ritual(.finishInBrowser)))
+        #expect(fixture.browser.opened.count == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func terminationWhileWaitingStopsPollingAndNeverLandsHome() async throws {
+        let gate = ProbeGate()
+        let fixture = makeModel(startResults: [true], probeResults: [], initClient: gate)
+        let run = Task { await fixture.model.continueFromNameLocation() }
+        await gate.waitForCalls(2)
+
+        await fixture.model.prepareForTermination()
+        try await Task.sleep(for: .milliseconds(20))
+        let after = await gate.calls
+        try await Task.sleep(for: .milliseconds(100))
+
+        // Not awaiting `run` on purpose: a wait that ignored termination would never
+        // return, and this must fail rather than hang.
+        #expect(await gate.calls == after)
+        #expect(fixture.model.route == .ritual(.finishInBrowser))
+        run.cancel()
+    }
+
+    @Test func browserThatWillNotOpenKeepsTheStateWithoutAnError() async throws {
+        let fixture = makeModel(
+            startResults: [true],
+            probeResults: [.incomplete, .complete],
+            opens: false
+        )
+
+        await fixture.model.continueFromNameLocation()
+
+        #expect(fixture.browser.opened.count == 1)
+        #expect(fixture.routes.contains(.ritual(.finishInBrowser)))
+        #expect(fixture.model.errorMessage == nil)
+        #expect(fixture.model.route == .home)
+    }
+
+    @Test func firstProbeFailureAfterStartIsShown() async throws {
+        let fixture = makeModel(
+            startResults: [true],
+            probeResults: [],
+            probeErrors: [URLError(.cannotConnectToHost)]
+        )
+
+        await fixture.model.continueFromNameLocation()
+
+        #expect(fixture.model.errorMessage != nil)
+        #expect(fixture.browser.opened.isEmpty)
+        #expect(fixture.model.route == .ritual(.setupProgress))
     }
 
     @Test func discoveryHandoffQualifiesSeedsNameLocationAndConsumesOnContinue() async throws {
@@ -274,7 +302,6 @@ struct JournalFirstRunModelTests {
             trace: trace,
             startResults: [false, true],
             probeResults: [.complete],
-            getMarkResponses: [.lockedResponse],
             handoffStore: handoffStore
         )
 
@@ -295,7 +322,6 @@ struct JournalFirstRunModelTests {
             "setup",
             "supervisor",
             "probe",
-            "getMark",
         ])
     }
 
@@ -345,63 +371,6 @@ struct JournalFirstRunModelTests {
         #expect(fixture.model.errorMessage == nil)
     }
 
-    @Test func journalMarkLockedPostsExactlyOnceWithValidatedMark() async throws {
-        let center = NotificationCenter()
-        let capture = NotificationCapture()
-        let token = center.addObserver(
-            forName: .journalMarkLocked,
-            object: nil,
-            queue: nil
-        ) { notification in
-            if let mark = JournalMarkLockedNotification.mark(from: notification) {
-                capture.append(mark)
-            }
-        }
-        defer { center.removeObserver(token) }
-
-        let fixture = makeModel(
-            startResults: [true, true],
-            probeResults: [.incomplete, .incomplete, .complete],
-            getMarkResponses: [.unlockedResponse, .lockedResponse],
-            lockResponse: .lockedResponse,
-            notificationCenter: center
-        )
-
-        await fixture.model.continueFromNameLocation()
-        await fixture.model.lockCurrentMark()
-        await fixture.model.resumeConfiguredRoot(try makeTemporaryDirectory())
-
-        #expect(capture.snapshot() == [.uiTestSample])
-    }
-
-    @Test func finalizeRetrySkipsSecondPostWhenProbeReportsComplete() async throws {
-        let store = ObserverURLProtocolStore()
-        store.enqueue(statusCode: 200)
-        store.enqueue(statusCode: 500, body: #"{"error":"lost response"}"#)
-        store.enqueue(statusCode: 302)
-        let client = JournalInitClient(
-            sessionConfiguration: observerURLProtocolConfiguration(store: store)
-        )
-        let fixture = makeModel(
-            startResults: [],
-            probeResults: [],
-            initClient: client
-        )
-        fixture.config.journalRoot = try makeTemporaryDirectory()
-        fixture.model.currentMark = .uiTestSample
-        fixture.model.markLocked = true
-
-        await fixture.model.finalizeAndLandHome()
-        await fixture.model.finalizeAndLandHome()
-
-        #expect(store.snapshotRequests().map { $0.url?.path } == [
-            "/init",
-            "/init/finalize",
-            "/init",
-        ])
-        #expect(fixture.model.route == .home)
-        #expect(fixture.windowModel.markPresentation == .mark(.uiTestSample))
-    }
 }
 
 struct FirstRunModelFixture {
@@ -410,6 +379,41 @@ struct FirstRunModelFixture {
     let windowModel: JournalWindowModel
     let setupRunner: FakeSetupRunner
     let initClient: FakeInitClient
+    let browser: FakeBrowser
+    let routeLog: RouteLog
+
+    @MainActor var routes: [JournalFirstRunRoute] { routeLog.routes }
+}
+
+@MainActor
+final class RouteLog {
+    private(set) var routes: [JournalFirstRunRoute] = []
+
+    func track(_ model: JournalFirstRunModel) {
+        withObservationTracking {
+            routes.append(model.route)
+        } onChange: { [weak self, weak model] in
+            Task { @MainActor in
+                guard let self, let model else { return }
+                self.track(model)
+            }
+        }
+    }
+}
+
+@MainActor
+final class FakeBrowser {
+    private(set) var opened: [URL] = []
+    let result: Bool
+
+    init(result: Bool) {
+        self.result = result
+    }
+
+    func open(_ url: URL) -> Bool {
+        opened.append(url)
+        return result
+    }
 }
 
 @MainActor
@@ -418,37 +422,41 @@ func makeModel(
     config: JournalAppConfig? = nil,
     startResults: [Bool],
     probeResults: [JournalInitSetupProbe],
+    probeErrors: [Error?] = [],
+    trailingProbe: JournalInitSetupProbe = .complete,
     initClient injectedInitClient: (any JournalInitClienting)? = nil,
-    getMarkResponses: [JournalInitMarkResponse] = [],
-    lockResponse: JournalInitMarkResponse = .lockedResponse,
-    finalizeResponse: JournalInitFinalizeResponse = .success,
     setupError: Error? = nil,
     handoffStore: any JournalHandoffStoring = EmptyHandoffStore(),
-    notificationCenter: NotificationCenter = NotificationCenter(),
     journalFileReader: any OnDiskJournalFileReading = FakeFirstRunJournalFileReader(),
-    discoveryQualificationTimeout: TimeInterval = 1.0
+    discoveryQualificationTimeout: TimeInterval = 1.0,
+    fetchIdentity: JournalWindowModel.IdentityFetch? = nil,
+    onIdentityMark: JournalWindowModel.IdentityMarkObserver? = nil,
+    opens: Bool = true,
+    browserPollInterval: Duration = .milliseconds(1)
 ) -> FirstRunModelFixture {
     let config = config ?? makeConfig()
     let supervisor = JournalSupervisor()
     let windowModel = JournalWindowModel(
         config: config,
         supervisor: supervisor,
-        fetchIdentity: { _ in .unavailable },
+        fetchIdentity: fetchIdentity ?? { _ in .unavailable },
+        identityRetryPause: {},
         fetchDiskUsage: { _ in 0 },
         fetchHealth: { _, _ in .unknown(JournalDiagnostic(commandLabel: "health")) },
         fetchVersion: { _, _ in nil },
-        appBuild: "67"
+        appBuild: "67",
+        onIdentityMark: onIdentityMark
     )
     let setupRunner = FakeSetupRunner(trace: trace, error: setupError)
     let fakeInitClient = FakeInitClient(
         trace: trace,
         probeResults: probeResults,
-        getMarkResponses: getMarkResponses,
-        lockResponse: lockResponse,
-        finalizeResponse: finalizeResponse
+        probeErrors: probeErrors,
+        trailingProbe: trailingProbe
     )
     let initClient = injectedInitClient ?? fakeInitClient
     let starts = StartSequence(trace: trace, results: startResults)
+    let browser = FakeBrowser(result: opens)
     let model = JournalFirstRunModel(
         config: config,
         setupRunner: setupRunner,
@@ -457,17 +465,22 @@ func makeModel(
             await starts.start(root: root)
         },
         handoffStore: handoffStore,
-        notificationCenter: notificationCenter,
         journalFileReader: journalFileReader,
         discoveryQualificationTimeout: discoveryQualificationTimeout,
+        openURL: { browser.open($0) },
+        browserPollInterval: browserPollInterval,
         windowModel: windowModel
     )
+    let routeLog = RouteLog()
+    routeLog.track(model)
     return FirstRunModelFixture(
         model: model,
         config: config,
         windowModel: windowModel,
         setupRunner: setupRunner,
-        initClient: fakeInitClient
+        initClient: fakeInitClient,
+        browser: browser,
+        routeLog: routeLog
     )
 }
 
@@ -582,58 +595,68 @@ final class FakeInitClient: JournalInitClienting, @unchecked Sendable {
     private let trace: FirstRunTrace
     private let lock = NSLock()
     private var probeResults: [JournalInitSetupProbe]
-    private var getMarkResponses: [JournalInitMarkResponse]
-    private let lockResponse: JournalInitMarkResponse
-    private let finalizeResponse: JournalInitFinalizeResponse
-    private var finalizes = 0
-
-    var finalizeCalls: Int { lock.withLock { finalizes } }
+    private var probeErrors: [Error?]
+    private let trailingProbe: JournalInitSetupProbe
 
     init(
         trace: FirstRunTrace,
         probeResults: [JournalInitSetupProbe],
-        getMarkResponses: [JournalInitMarkResponse],
-        lockResponse: JournalInitMarkResponse,
-        finalizeResponse: JournalInitFinalizeResponse
+        probeErrors: [Error?] = [],
+        trailingProbe: JournalInitSetupProbe = .complete
     ) {
         self.trace = trace
         self.probeResults = probeResults
-        self.getMarkResponses = getMarkResponses
-        self.lockResponse = lockResponse
-        self.finalizeResponse = finalizeResponse
-    }
-
-    func getMark() async throws -> JournalInitMarkResponse {
-        await trace.append("getMark")
-        return lock.withLock {
-            getMarkResponses.isEmpty ? .unlockedResponse : getMarkResponses.removeFirst()
-        }
-    }
-
-    func regenerateMark() async throws -> JournalInitMarkResponse {
-        await trace.append("regenerateMark")
-        return .unlockedResponse
-    }
-
-    func lockMark() async throws -> JournalInitMarkResponse {
-        await trace.append("lockMark")
-        return lockResponse
-    }
-
-    func finalize(body: JournalInitFinalizeRequest) async throws -> JournalInitFinalizeResponse {
-        _ = body
-        await trace.append("finalize")
-        lock.withLock { finalizes += 1 }
-        return finalizeResponse
+        self.probeErrors = probeErrors
+        self.trailingProbe = trailingProbe
     }
 
     func probeSetupComplete() async throws -> JournalInitSetupProbe {
         await trace.append("probe")
-        return lock.withLock {
-            probeResults.isEmpty ? .complete : probeResults.removeFirst()
+        let next: Result<JournalInitSetupProbe, Error> = lock.withLock {
+            if !probeErrors.isEmpty, let error = probeErrors.removeFirst() {
+                return .failure(error)
+            }
+            return .success(probeResults.isEmpty ? trailingProbe : probeResults.removeFirst())
         }
+        return try next.get()
+    }
+}
+
+/// Reports incomplete until `finish()`, counting probes, so a test can act while the app waits.
+actor ProbeGate: JournalInitClienting {
+    private(set) var calls = 0
+    private var done = false
+    private var waiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    func probeSetupComplete() async throws -> JournalInitSetupProbe {
+        calls += 1
+        let ready = waiters.filter { calls >= $0.0 }
+        waiters.removeAll { calls >= $0.0 }
+        ready.forEach { $0.1.resume() }
+        return done ? .complete : .incomplete
     }
 
+    func waitForCalls(_ count: Int) async {
+        if calls >= count { return }
+        await withCheckedContinuation { waiters.append((count, $0)) }
+    }
+
+    func finish() {
+        done = true
+    }
+}
+
+final class IdentityMarkSpy: @unchecked Sendable {
+    private let lock = NSLock()
+    private var marks: [JournalMark] = []
+
+    func append(_ mark: JournalMark) {
+        lock.withLock { marks.append(mark) }
+    }
+
+    func snapshot() -> [JournalMark] {
+        lock.withLock { marks }
+    }
 }
 
 struct EmptyHandoffStore: JournalHandoffStoring {
@@ -698,32 +721,10 @@ enum FakeHandoffLoadError: Error {
     case corrupt
 }
 
-final class NotificationCapture: @unchecked Sendable {
-    private let lock = NSLock()
-    private var marks: [JournalMark] = []
-
-    func append(_ mark: JournalMark) {
-        lock.withLock { marks.append(mark) }
-    }
-
-    func snapshot() -> [JournalMark] {
-        lock.withLock { marks }
-    }
-}
-
 @MainActor
 private final class FirstRunFakeLoginItemManager: LoginItemManaging {
     func register() throws {}
     func unregister() throws {}
-}
-
-extension JournalInitMarkResponse {
-    static let unlockedResponse = JournalInitMarkResponse(mark: .uiTestSample, locked: false)
-    static let lockedResponse = JournalInitMarkResponse(mark: .uiTestSample, locked: true)
-}
-
-extension JournalInitFinalizeResponse {
-    static let success = JournalInitFinalizeResponse(success: true, redirect: "/", warnings: [])
 }
 
 private actor CancellationAwareSetupRunner: JournalSetupRunning {

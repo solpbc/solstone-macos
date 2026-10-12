@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.0.43 (build 81)] - 2026-10-12
+## [2.0.43 (build 82)] - 2026-10-12
 
 ### Changed
+- when you set up a journal, the rest of setup now opens in your browser. along with your mark, you can now also add your name there and choose how your journal thinks and what happens to your original media. the journal app moves on once you finish.
 - updated the bundled journal to [2.0.43](https://solstone.app/releases#v2.0.43) →
 
 ## [2.0.42 (build 80)] - 2026-10-12
