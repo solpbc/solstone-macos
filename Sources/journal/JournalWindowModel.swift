@@ -322,18 +322,13 @@ final class JournalWindowModel {
         await fetchIdentityIfNeeded()
     }
 
-    func applyFirstRunLanding(identityMark: JournalMark?) {
+    /// Forgets any identity read from before the first run finished. The caller then reads the
+    /// journal's identity again, which reports a committed mark through `onIdentityMark`.
+    func applyFirstRunLanding() {
         identityLandingGeneration += 1
-        if let validatedMark = identityMark.flatMap(JournalMark.validate) {
-            identityFetchCompleted = true
-            identityRead = .mark(validatedMark)
-            devicesModel.markPresentation = .mark(validatedMark)
-            onIdentityMark?(validatedMark)
-        } else {
-            identityFetchCompleted = false
-            identityRead = isConfigured ? nil : .uncommitted
-            devicesModel.markPresentation = markPresentation
-        }
+        identityFetchCompleted = false
+        identityRead = isConfigured ? nil : .uncommitted
+        devicesModel.markPresentation = markPresentation
     }
 
     func handlePaneOpen(_ pane: JournalPane) {

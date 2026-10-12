@@ -22,7 +22,6 @@ struct JournalHandoffStoreTests {
             config: fixture.config,
             startResults: [false],
             probeResults: [.complete],
-            getMarkResponses: [JournalInitMarkResponse.lockedResponse],
             handoffStore: fixture.store
         )
 
@@ -38,7 +37,6 @@ struct JournalHandoffStoreTests {
             config: fixture.config,
             startResults: [true],
             probeResults: [.complete],
-            getMarkResponses: [JournalInitMarkResponse.lockedResponse],
             handoffStore: fixture.store
         )
 
@@ -47,42 +45,30 @@ struct JournalHandoffStoreTests {
         #expect(!fixture.store.exists())
         #expect(success.model.route == .home)
         #expect(success.model.adoptMessage == JournalFirstRunCopy.adoptLandingLine)
-        #expect(await successTrace.snapshot() == ["setup", "supervisor", "probe", "getMark"])
+        #expect(await successTrace.snapshot() == ["setup", "supervisor", "probe"])
+        #expect(success.browser.opened.isEmpty)
     }
 
-    @Test func unlockedAdoptLandsHomeHiddenWithoutNotification() async throws {
+    @Test func incompleteAdoptHandsOffToTheBrowserThenLandsHome() async throws {
         let fixture = try makeHandoffFixture()
         defer { try? FileManager.default.removeItem(at: fixture.base.deletingLastPathComponent()) }
-        let center = NotificationCenter()
-        let capture = NotificationCapture()
-        let token = center.addObserver(
-            forName: .journalMarkLocked,
-            object: nil,
-            queue: nil
-        ) { notification in
-            if let mark = JournalMarkLockedNotification.mark(from: notification) {
-                capture.append(mark)
-            }
-        }
-        defer { center.removeObserver(token) }
-
+        let trace = FirstRunTrace()
         let modelFixture = makeModel(
-            trace: FirstRunTrace(),
+            trace: trace,
             config: fixture.config,
             startResults: [true],
-            probeResults: [.incomplete],
-            getMarkResponses: [JournalInitMarkResponse.unlockedResponse],
-            handoffStore: fixture.store,
-            notificationCenter: center
+            probeResults: [.incomplete, .incomplete, .complete],
+            handoffStore: fixture.store
         )
 
         await modelFixture.model.adoptFromHandoff()
 
-        #expect(modelFixture.model.route == .home)
-        #expect(modelFixture.model.currentMark == nil)
-        #expect(modelFixture.windowModel.markPresentation == .loading)
-        #expect(capture.snapshot().isEmpty)
         #expect(!fixture.store.exists())
+        #expect(await trace.snapshot() == ["setup", "supervisor", "probe", "probe", "probe"])
+        #expect(modelFixture.browser.opened == [URL(string: "http://127.0.0.1:5015/init")!])
+        #expect(modelFixture.routes.contains(.ritual(.finishInBrowser)))
+        #expect(modelFixture.model.route == .home)
+        #expect(modelFixture.model.adoptMessage == JournalFirstRunCopy.adoptLandingLine)
     }
 
     @Test func blockedGateSurfacesOwnerMessageAndKeepsHandoff() async throws {
@@ -104,18 +90,11 @@ struct JournalHandoffStoreTests {
         let model = JournalFirstRunModel(
             config: fixture.config,
             setupRunner: FakeSetupRunner(trace: trace),
-            initClient: FakeInitClient(
-                trace: trace,
-                probeResults: [],
-                getMarkResponses: [],
-                lockResponse: .lockedResponse,
-                finalizeResponse: .success
-            ),
+            initClient: FakeInitClient(trace: trace, probeResults: []),
             startSupervisor: { [supervisor] root in
                 await supervisor.start(journalRoot: root)
             },
             handoffStore: fixture.store,
-            notificationCenter: NotificationCenter(),
             windowModel: windowModel
         )
 

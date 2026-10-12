@@ -64,7 +64,7 @@ struct JournalWindowModelTests {
                               fetchIdentity: { _ in await reads.fetch() },
                               onIdentityMark: { capture.append($0) })
 
-        model.applyFirstRunLanding(identityMark: nil)
+        model.applyFirstRunLanding()
         #expect(model.markPresentation == .loading)
         #expect(model.devicesModel.markPresentation == .loading)
         await model.loadForWindowOpen()
@@ -95,24 +95,6 @@ struct JournalWindowModelTests {
         #expect(model.devicesModel.markPresentation == .mark(.uiTestSample))
     }
 
-    @Test func lateFetchDoesNotOverwriteAFirstRunLandingMark() async throws {
-        let fixture = try makeConfiguredFixture()
-        defer { fixture.clear() }
-        let fetch = PausedIdentityFetch()
-        let capture = IdentityMarkCapture()
-        let model = makeModel(config: fixture.config, fetchIdentity: { _ in await fetch.fetch() },
-                              onIdentityMark: { capture.append($0) })
-        let loading = Task { await model.fetchIdentityIfNeeded() }
-        await fetch.waitUntilStarted()
-        model.applyFirstRunLanding(identityMark: .uiTestSample)
-        await fetch.resume(with: .unavailable)
-        await loading.value
-
-        #expect(model.markPresentation == .mark(.uiTestSample))
-        #expect(model.devicesModel.markPresentation == .mark(.uiTestSample))
-        #expect(capture.snapshot() == [.uiTestSample])
-    }
-
     @Test func missingLandingMarkDuringAFetchStillGetsANewRead() async throws {
         let fixture = try makeConfiguredFixture()
         defer { fixture.clear() }
@@ -124,7 +106,7 @@ struct JournalWindowModelTests {
         })
         let loading = Task { await model.fetchIdentityIfNeeded() }
         await fetch.waitUntilStarted()
-        model.applyFirstRunLanding(identityMark: nil)
+        model.applyFirstRunLanding()
         var landingLoad: Task<Void, Never>?
         await withCheckedContinuation { (started: CheckedContinuation<Void, Never>) in
             landingLoad = Task {
@@ -218,20 +200,6 @@ struct JournalWindowModelTests {
         await model.fetchIdentityIfNeeded()
 
         #expect(capture.snapshot().isEmpty)
-    }
-
-    @Test func onIdentityMarkFiresAfterFirstRunLandingMark() async throws {
-        let fixture = try makeConfiguredFixture()
-        defer { fixture.clear() }
-        let capture = IdentityMarkCapture()
-        let model = makeModel(
-            config: fixture.config,
-            onIdentityMark: { mark in capture.append(mark) }
-        )
-
-        model.applyFirstRunLanding(identityMark: .uiTestSample)
-
-        #expect(capture.snapshot() == [.uiTestSample])
     }
 
     @Test func markPresentationDerivesCorrectlyFromConfigAndRead() async throws {

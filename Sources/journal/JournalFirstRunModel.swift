@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import AppKit
 import Foundation
 import JournalMarkKit
 import JournalRuntime
@@ -18,8 +19,7 @@ enum JournalFirstRunRoute: Equatable {
 enum JournalFirstRunStep: Equatable {
     case nameLocation
     case setupProgress
-    case markReveal
-    case finalizing
+    case finishInBrowser
 }
 
 protocol JournalSetupRunning: Sendable {
@@ -33,10 +33,6 @@ protocol JournalSetupRunning: Sendable {
 extension JournalSetupRunner: JournalSetupRunning {}
 
 protocol JournalInitClienting: Sendable {
-    func getMark() async throws -> JournalInitMarkResponse
-    func regenerateMark() async throws -> JournalInitMarkResponse
-    func lockMark() async throws -> JournalInitMarkResponse
-    func finalize(body: JournalInitFinalizeRequest) async throws -> JournalInitFinalizeResponse
     func probeSetupComplete() async throws -> JournalInitSetupProbe
 }
 
@@ -46,6 +42,9 @@ extension JournalInitClient: JournalInitClienting {}
 @Observable
 final class JournalFirstRunModel {
     typealias SupervisorStart = @MainActor @Sendable (URL) async -> Bool
+    typealias URLOpener = @MainActor (URL) -> Bool
+
+    static let defaultInitPageURL = URL(string: "http://127.0.0.1:5015/init")!
 
     @ObservationIgnored private let config: JournalAppConfig
     @ObservationIgnored private let setupRunner: any JournalSetupRunning
@@ -54,7 +53,9 @@ final class JournalFirstRunModel {
     @ObservationIgnored private let handoffStore: any JournalHandoffStoring
     @ObservationIgnored private let journalFileReader: any OnDiskJournalFileReading
     @ObservationIgnored private let discoveryQualificationTimeout: TimeInterval
-    @ObservationIgnored private let notificationCenter: NotificationCenter
+    @ObservationIgnored private let initPageURL: URL
+    @ObservationIgnored private let openURL: URLOpener
+    @ObservationIgnored private let browserPollInterval: Duration
     @ObservationIgnored private weak var windowModel: JournalWindowModel?
 
     var route: JournalFirstRunRoute = .deciding
@@ -62,20 +63,14 @@ final class JournalFirstRunModel {
     var setupEvents: [JournalSetupProgressEvent] = []
     var setupRenderedLog = ""
     var currentStep: String?
-    var currentMark: JournalMark?
-    var markRenderGeneration = 0
-    var markLocked = false
-    var isTryingAnotherMark = false
-    var isLockingMark = false
-    var isFinalizing = false
-    var finalizeWarnings: [String] = []
     var adoptMessage: String?
     var errorMessage: String?
 
     @ObservationIgnored private var setupTask: Task<JournalSetupResult, Error>?
+    @ObservationIgnored private var browserWaitTask: Task<Void, Never>?
+    @ObservationIgnored private var browserWaitGeneration = 0
     private var isTerminating = false
 
-    private var hasPostedJournalMarkLocked = false
     private var pendingDiscoveryHandoff: JournalHandoff?
 
     init(
@@ -84,9 +79,11 @@ final class JournalFirstRunModel {
         initClient: any JournalInitClienting = JournalInitClient(),
         startSupervisor: @escaping SupervisorStart,
         handoffStore: any JournalHandoffStoring = JournalHandoffStore(),
-        notificationCenter: NotificationCenter = .default,
         journalFileReader: any OnDiskJournalFileReading = LiveOnDiskJournalFileReader(),
         discoveryQualificationTimeout: TimeInterval = 1.0,
+        initPageURL: URL = JournalFirstRunModel.defaultInitPageURL,
+        openURL: @escaping URLOpener = { NSWorkspace.shared.open($0) },
+        browserPollInterval: Duration = .seconds(2),
         windowModel: JournalWindowModel? = nil
     ) {
         self.config = config
@@ -96,7 +93,9 @@ final class JournalFirstRunModel {
         self.handoffStore = handoffStore
         self.journalFileReader = journalFileReader
         self.discoveryQualificationTimeout = discoveryQualificationTimeout
-        self.notificationCenter = notificationCenter
+        self.initPageURL = initPageURL
+        self.openURL = openURL
+        self.browserPollInterval = browserPollInterval
         self.windowModel = windowModel
 
         self.journalRoot = FileManager.default.homeDirectoryForCurrentUser
@@ -220,6 +219,8 @@ final class JournalFirstRunModel {
 
     func prepareForTermination() async {
         isTerminating = true
+        browserWaitTask?.cancel()
+        browserWaitTask = nil
         let task = setupTask
         task?.cancel()
         _ = try? await task?.value
@@ -227,6 +228,9 @@ final class JournalFirstRunModel {
 
     func resetAfterFailedUpdaterInstall() {
         isTerminating = false
+        if route == .ritual(.finishInBrowser) {
+            startBrowserWaitIfNeeded()
+        }
     }
 
     private func runSetup(at journalRoot: URL) async throws {
@@ -254,59 +258,6 @@ final class JournalFirstRunModel {
         try Task.checkCancellation()
         guard !isTerminating, !task.isCancelled else { throw CancellationError() }
         setupRenderedLog = result.renderedLog
-    }
-
-    func regenerateMark() async {
-        guard !isTryingAnotherMark else { return }
-        isTryingAnotherMark = true
-        errorMessage = nil
-        do {
-            let response = try await initClient.regenerateMark()
-            applyMarkResponse(response)
-        } catch {
-            errorMessage = readableMessage(for: error)
-        }
-        isTryingAnotherMark = false
-    }
-
-    func lockCurrentMark() async {
-        guard !isLockingMark else { return }
-        isLockingMark = true
-        errorMessage = nil
-        do {
-            let response = try await initClient.lockMark()
-            applyMarkResponse(response)
-            await finalizeAndLandHome()
-        } catch {
-            errorMessage = readableMessage(for: error)
-        }
-        isLockingMark = false
-    }
-
-    func finalizeAndLandHome() async {
-        guard !isFinalizing else { return }
-        route = .ritual(.finalizing)
-        isFinalizing = true
-        errorMessage = nil
-
-        do {
-            switch try await initClient.probeSetupComplete() {
-            case .complete:
-                isFinalizing = false
-                landHome(lockedMark: markLocked ? currentMark : nil)
-                return
-            case .incomplete:
-                break
-            }
-
-            let response = try await initClient.finalize(body: JournalInitFinalizeRequest())
-            finalizeWarnings = response.warnings
-            isFinalizing = false
-            landHome(lockedMark: markLocked ? currentMark : nil)
-        } catch {
-            isFinalizing = false
-            errorMessage = readableMessage(for: error)
-        }
     }
 
     func resumeConfiguredRoot(_ root: URL) async {
@@ -349,77 +300,95 @@ final class JournalFirstRunModel {
     }
 
     private func completeAdoptAfterSuccessfulStart() async throws {
-        switch try await initClient.probeSetupComplete() {
+        let probe = try await initClient.probeSetupComplete()
+        try handoffStore.consume()
+        adoptMessage = JournalFirstRunCopy.adoptLandingLine
+        switch probe {
         case .complete:
-            try handoffStore.consume()
-            adoptMessage = JournalFirstRunCopy.adoptLandingLine
-            let response = try? await initClient.getMark()
-            if let response, response.locked {
-                applyMarkResponse(response)
-                landHome(lockedMark: response.mark)
-            } else {
-                landHome(lockedMark: nil)
-            }
+            await landHome()
         case .incomplete:
-            let response = try await initClient.getMark()
-            if response.locked {
-                try handoffStore.consume()
-                applyMarkResponse(response)
-                adoptMessage = JournalFirstRunCopy.adoptLandingLine
-                await finalizeAndLandHome()
-            } else {
-                try handoffStore.consume()
-                currentMark = nil
-                markLocked = false
-                adoptMessage = JournalFirstRunCopy.adoptLandingLine
-                landHome(lockedMark: nil)
-            }
+            await finishInBrowser()
         }
     }
 
     private func routeAfterProbe() async {
+        let probe: JournalInitSetupProbe
         do {
-            switch try await initClient.probeSetupComplete() {
-            case .complete:
-                let response = try? await initClient.getMark()
-                if let response, response.locked {
-                    applyMarkResponse(response)
-                    landHome(lockedMark: response.mark)
-                } else {
-                    landHome(lockedMark: nil)
-                }
-            case .incomplete:
-                let response = try await initClient.getMark()
-                applyMarkResponse(response)
-                if response.locked {
-                    await finalizeAndLandHome()
-                } else {
-                    route = .ritual(.markReveal)
-                }
-            }
+            probe = try await initClient.probeSetupComplete()
         } catch {
             errorMessage = readableMessage(for: error)
+            return
+        }
+        switch probe {
+        case .complete:
+            await landHome()
+        case .incomplete:
+            await finishInBrowser()
         }
     }
 
-    private func landHome(lockedMark: JournalMark?) {
-        let validatedMark = lockedMark.flatMap(JournalMark.validate)
-        if let validatedMark {
-            currentMark = validatedMark
-            markLocked = true
-            if !hasPostedJournalMarkLocked {
-                _ = JournalMarkLockedNotification.post(mark: validatedMark, center: notificationCenter)
-                hasPostedJournalMarkLocked = true
-            }
-        } else {
-            currentMark = nil
-            markLocked = false
-        }
+    /// The journal's own first-run page finishes creating the journal: it asks for the mark and
+    /// the owner's choices, then records the first run as done. This app only opens it in the
+    /// owner's browser and waits for the journal to report it done.
+    private func finishInBrowser() async {
+        errorMessage = nil
+        route = .ritual(.finishInBrowser)
+        openInitPage()
+        await startBrowserWaitIfNeeded().value
+    }
 
-        windowModel?.applyFirstRunLanding(
-            identityMark: validatedMark
-        )
+    /// Opens the page again, for an owner who closed it before finishing.
+    func reopenInBrowser() {
+        openInitPage()
+        startBrowserWaitIfNeeded()
+    }
+
+    private func openInitPage() {
+        if !openURL(initPageURL) {
+            Logger.journalApp.error("failed to open \(self.initPageURL.absoluteString, privacy: .public) in the browser")
+        }
+    }
+
+    @discardableResult
+    private func startBrowserWaitIfNeeded() -> Task<Void, Never> {
+        if let browserWaitTask {
+            return browserWaitTask
+        }
+        browserWaitGeneration += 1
+        let generation = browserWaitGeneration
+        let task = Task { @MainActor [weak self] in
+            await self?.waitForSetupComplete()
+            if self?.browserWaitGeneration == generation {
+                self?.browserWaitTask = nil
+            }
+        }
+        browserWaitTask = task
+        return task
+    }
+
+    private func waitForSetupComplete() async {
+        while !Task.isCancelled, !isTerminating {
+            do {
+                if try await initClient.probeSetupComplete() == .complete {
+                    guard !Task.isCancelled, !isTerminating else { return }
+                    await landHome()
+                    return
+                }
+            } catch {
+                Logger.journalApp.debug("first-run probe while waiting on the browser: \(String(describing: error), privacy: .public)")
+            }
+            do {
+                try await Task.sleep(for: browserPollInterval)
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func landHome() async {
+        windowModel?.applyFirstRunLanding()
         route = .home
+        await windowModel?.fetchIdentityIfNeeded()
     }
 
     private func applySetupEvent(_ event: JournalSetupProgressEvent) {
@@ -433,12 +402,6 @@ final class JournalFirstRunModel {
         case .warning, .completed:
             break
         }
-    }
-
-    private func applyMarkResponse(_ response: JournalInitMarkResponse) {
-        currentMark = response.mark
-        markLocked = response.locked
-        markRenderGeneration += 1
     }
 
     private func supervisorFailureMessage() -> String {

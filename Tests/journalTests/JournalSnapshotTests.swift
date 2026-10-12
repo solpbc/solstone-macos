@@ -84,7 +84,7 @@ struct JournalSnapshotTests {
         try await renderUpdates()
         try await renderFirstRunNameEntry()
         try await renderFirstRunSetupProgress()
-        try await renderFirstRunMarkReveal()
+        try await renderFirstRunFinishInBrowser()
         try await renderFirstRunLockedHome()
         try await renderFirstRunAdoptLanding()
     }
@@ -330,12 +330,10 @@ struct JournalSnapshotTests {
         try await renderFirstRun(fixture.model, to: "journal-first-run-setup-progress.png")
     }
 
-    private func renderFirstRunMarkReveal() async throws {
+    private func renderFirstRunFinishInBrowser() async throws {
         let fixture = makeModel(startResults: [], probeResults: [])
-        fixture.model.route = .ritual(.markReveal)
-        fixture.model.currentMark = .uiTestSample
-        fixture.model.markRenderGeneration = 1
-        try await renderFirstRun(fixture.model, to: "journal-first-run-mark-reveal.png")
+        fixture.model.route = .ritual(.finishInBrowser)
+        try await renderFirstRun(fixture.model, to: "journal-first-run-finish-in-browser.png")
     }
 
     private func renderFirstRunLockedHome() async throws {
