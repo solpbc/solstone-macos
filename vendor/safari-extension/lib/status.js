@@ -71,6 +71,8 @@
         let action = null;
         if (updateCheck === "pending") {
           reason = `the solstone app on this computer needs a newer version of this extension. ${bName} is checking for it now.`;
+        } else if (updateCheck === "manual" && status.brand === "safari") {
+          reason = "the solstone app on this computer needs a newer version of this extension. in Safari it comes with the solstone app, so update the solstone app.";
         } else if (updateCheck === "manual") {
           reason = `the solstone app on this computer needs a newer version of this extension. in Firefox, open Add-ons and themes, then choose Check for Updates from the gear menu.`;
         } else if (updateCheck === "update-available") {
@@ -584,6 +586,8 @@
     if (!Array.isArray(tabs)) return { known: false, openOrigins: null, anyGrantedTabOpen: null };
     const origins = new Set();
     for (const tab of tabs) {
+      // Nothing is taken in from a private tab, so it never counts as open.
+      if (tab?.incognito === true) continue;
       try {
         const url = new URL(tab?.url || "");
         if (url.protocol === "http:" || url.protocol === "https:") origins.add(url.origin);

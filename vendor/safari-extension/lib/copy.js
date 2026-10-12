@@ -20,6 +20,7 @@
     if (brand === "firefox") return "Firefox";
     if (brand === "edge") return "Edge";
     if (brand === "chrome") return "Chrome";
+    if (brand === "safari") return "Safari";
     return "your browser";
   }
 

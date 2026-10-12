@@ -416,8 +416,23 @@ async function runReconcile() {
   return actions;
 }
 
+// Safari's "Clear Storage…" for the extension empties storage.local but keeps
+// its IndexedDB. The identifier is mirrored into storage.local, so a missing
+// mirror means the owner cleared it, and what the database kept goes too.
+async function forgetClearedSafariStorage() {
+  const kept = await DB.get("meta", "inst");
+  if (!kept) return false;
+  const mirror = await chrome.storage.local.get("inst");
+  if (mirror.inst === kept) return false;
+  for (const store of ["meta", "outbox", "producer"]) await DB.clear(store);
+  return true;
+}
+
 async function doInit() {
   await chrome.alarms.create(ALARM_NAME, { periodInMinutes: 1 });
+
+  const safari = globalThis.SolstoneSafariPort?.isSafari(chrome.runtime) === true;
+  if (safari) await forgetClearedSafariStorage();
 
   let inst = await DB.get("meta", "inst");
   if (!inst) {
@@ -426,6 +441,10 @@ async function doInit() {
     const newInst = Uuid.uuidv7String(Uuid.uuidv7Bytes(Date.now(), random));
     await DB.put("meta", newInst, "inst");
     inst = newInst;
+  }
+  if (safari) {
+    const mirror = await chrome.storage.local.get("inst");
+    if (mirror.inst !== inst) await chrome.storage.local.set({ inst });
   }
 
   const consentVersion = (await DB.get("meta", "consentVersion")) || 0;
@@ -574,6 +593,12 @@ chrome.tabs.onUpdated?.addListener(() => refreshOpenTabs());
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
     ensureInit().then(async () => {
+      // Safari doesn't tell a running extension that its storage was cleared.
+      if (globalThis.SolstoneSafariPort?.isSafari(chrome.runtime) === true &&
+          await forgetClearedSafariStorage()) {
+        chrome.runtime.reload();
+        return;
+      }
       if (port) {
         await port.poll();
       }
@@ -677,6 +702,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 chrome.runtime.onStartup.addListener(init);
+
 chrome.runtime.onUpdateAvailable?.addListener(() => {
   if (!port) return;
   port.updateCheck = "update-available";
