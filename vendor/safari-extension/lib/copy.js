@@ -39,7 +39,7 @@ never pixels. never raw HTML. never a site you didn't add.
 
 where it goes: nothing leaves this browser except to the solstone app on this computer. from there it goes into your journal over the link the solstone app already uses.
 
-the solstone extension doesn't run in private windows. that covers this extension only.
+the solstone extension takes in nothing from private windows, even where your browser lets it run there. that covers this extension only.
 
 pause any time in the solstone extension, or pause the solstone app to stop everything at once. pausing doesn't hold back what's already taken in. if you remove a site, nothing new comes from it; what's already in your journal stays there.
 
