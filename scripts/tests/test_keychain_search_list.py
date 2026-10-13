@@ -302,8 +302,8 @@ class KeychainSearchListStaticTest(unittest.TestCase):
     def test_run_ci_uses_shared_helper_for_search_list_mutations(self):
         content = RUN_CI.read_text(encoding="utf-8")
 
-        self.assertIn('python3 scripts/keychain_search_list.py prepend "$TEST_KC"', content)
-        self.assertIn('python3 scripts/keychain_search_list.py remove "$TEST_KC"', content)
+        self.assertIn('python3 "$SCRIPT_DIR/keychain_search_list.py" prepend "$TEST_KC"', content)
+        self.assertIn('python3 "$SCRIPT_DIR/keychain_search_list.py" remove "$TEST_KC"', content)
         self.assertNotIn("PRIOR_LIST", content)
         self.assertNotIn("xargs", content)
         self.assertNotIn("tr -d", content)

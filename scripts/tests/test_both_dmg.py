@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import plistlib
 import sys
 import tempfile
 import unittest
@@ -89,6 +90,18 @@ class TreeDigestTest(unittest.TestCase):
             os.symlink("../Resources", bundle / "Contents/Frameworks/Current")
             link, _ = both_dmg.tree_digest(bundle)
             self.assertNotEqual(mode, link)
+
+
+class TrustedKeyTest(unittest.TestCase):
+    def test_capture_key_matches_the_capture_plist(self):
+        with (REPO_ROOT / "Sources/solstone/Info.plist").open("rb") as handle:
+            plist = plistlib.load(handle)
+        self.assertEqual(both_dmg.public_ed_key("sol"), plist["SUPublicEDKey"])
+
+    def test_every_app_has_a_pinned_key_and_nothing_else_does(self):
+        self.assertEqual(set(both_dmg.TRUSTED_SPARKLE_PUBLIC_KEYS), {"sol", "journal"})
+        with self.assertRaises(SystemExit):
+            both_dmg.public_ed_key("unknown")
 
 
 class MakefileNeverRebuildsTest(unittest.TestCase):

@@ -138,58 +138,6 @@ class MakefileJournalIdentityContractTest(unittest.TestCase):
         self.assertNotIn("DMG_VOLNAME            ?= sol\n", text)
         self.assertNotIn('--volname "sol + journal"', text)
 
-    def target_block(self, target):
-        text = MAKEFILE.read_text()
-        start = text.index(f"{target}:")
-        search_from = start + 1
-        while True:
-            candidate = text.find("\n", search_from)
-            if candidate == -1:
-                return text[start:]
-            line_start = candidate + 1
-            if line_start >= len(text):
-                return text[start:]
-            if text[line_start] not in ("\t", " ", "\n", "#"):
-                line_end = text.find("\n", line_start)
-                if line_end == -1:
-                    line_end = len(text)
-                if ":" in text[line_start:line_end]:
-                    return text[start:candidate]
-            search_from = candidate + 1
-
-    def test_makefile_journal_dmg_name_is_derived_from_identity(self):
-        text = MAKEFILE.read_text()
-        self.assertIn("RELEASE_IDENTITY       := python3 scripts/release_identity.py", text)
-        self.assertIn("JOURNAL_DMG_NAME       ?= $(shell $(RELEASE_IDENTITY) identity --app journal", text)
-        self.assertIn("--build '$(JOURNAL_DIST_BUILD)' --field dmg_name", text)
-        self.assertNotIn("|| echo sol-$(DIST_VERSION).dmg", text)
-        self.assertNotIn(
-            "|| echo journal-$(JOURNAL_DIST_VERSION)-build-$(JOURNAL_DIST_BUILD).dmg",
-            text,
-        )
-
-    def test_journal_dmg_targets_consume_journal_dmg_name(self):
-        for target in (
-            "dmg-journal",
-            "notarize-journal",
-            "staple-journal",
-            "verify-notarization-journal",
-            "release-dmg-journal",
-            "release-dmg-smoke-journal",
-        ):
-            with self.subTest(target=target):
-                self.assertIn("$(JOURNAL_DMG_NAME)", self.target_block(target))
-
-    def test_journal_publish_targets_forward_version_and_build(self):
-        for target in ("publish-appcast-journal", "publish-appcast-journal-staging"):
-            with self.subTest(target=target):
-                block = self.target_block(target)
-                self.assertIn("$(JOURNAL_DIST_VERSION)", block)
-                self.assertIn("--build $(JOURNAL_DIST_BUILD)", block)
-
-        github = self.target_block("github-release-journal")
-        self.assertIn("--build $(JOURNAL_DIST_BUILD) $(JOURNAL_DIST_VERSION)", github)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,8 +9,9 @@ let package = Package(
     platforms: [
         .macOS(.v15)
     ],
-    // The shared Mac libraries the Journal app (in solstone-journal) consumes at an
-    // exact revision. The capture app and its helpers stay local to this package.
+    // The shared Mac libraries the Journal app consumes at an exact revision of this
+    // repository (solstone-journal, platforms/macos). The capture app and its helpers
+    // stay local to this package.
     products: [
         .library(name: "SolstoneCore", targets: ["SolstoneCore"]),
         .library(name: "JournalMarkKit", targets: ["JournalMarkKit"]),
@@ -32,16 +33,6 @@ let package = Package(
             ]
         ),
         .target(
-            name: "JournalRuntime",
-            dependencies: [
-                .target(name: "SolstoneCore")
-            ],
-            path: "Sources/JournalRuntime",
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
-            ]
-        ),
-        .target(
             name: "JournalMarkKit",
             dependencies: [
                 .target(name: "SolstoneCore")
@@ -56,14 +47,6 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreText")
-            ]
-        ),
-        .executableTarget(
-            name: "journal-icon-gen",
-            dependencies: ["JournalMarkKit"],
-            path: "Sources/journal-icon-gen",
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
             ]
         ),
         .target(
@@ -144,32 +127,6 @@ let package = Package(
                 .define("SOLSTONE_BROWSER_INTAKE_PREVIEW", .when(configuration: .debug))
             ]
         ),
-        .executableTarget(
-            name: "journal",
-            dependencies: [
-                .target(name: "SolstoneCore"),
-                .target(name: "JournalRuntime"),
-                .target(name: "JournalMarkKit"),
-                .target(name: "UpdateKit"),
-                .product(name: "Sparkle", package: "Sparkle")
-            ],
-            path: "Sources/journal",
-            exclude: [
-                "Info.plist",
-                "entitlements.plist",
-                "app.solstone.journal.watchdog.plist"
-            ],
-            resources: [
-                .copy("Resources")
-            ],
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
-            ],
-            linkerSettings: [
-                .linkedFramework("AppKit"),
-                .linkedFramework("ServiceManagement")
-            ]
-        ),
         .target(
             name: "ObjCHelpers",
             path: "Sources/ObjCHelpers",
@@ -181,34 +138,6 @@ let package = Package(
                 .target(name: "SolstoneCore")
             ],
             path: "Tests/MacTestSupport",
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
-            ]
-        ),
-        .target(
-            name: "JournalRuntimeTestSupport",
-            dependencies: [
-                .target(name: "JournalMarkKit"),
-                .target(name: "JournalRuntime"),
-                .target(name: "SolstoneCore")
-            ],
-            path: "Tests/JournalRuntimeTestSupport",
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
-            ]
-        ),
-        .testTarget(
-            name: "JournalRuntimeTests",
-            dependencies: [
-                .target(name: "JournalRuntime"),
-                .target(name: "JournalRuntimeTestSupport"),
-                .target(name: "MacTestSupport"),
-                .target(name: "SolstoneCore")
-            ],
-            path: "Tests/JournalRuntimeTests",
-            resources: [
-                .copy("Fixtures")
-            ],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
@@ -245,11 +174,9 @@ let package = Package(
             dependencies: [
                 .target(name: "solstone"),
                 .target(name: "SolstoneCore"),
-                .target(name: "JournalRuntime"),
                 .target(name: "JournalMarkKit"),
                 .target(name: "UpdateKit"),
                 .product(name: "SPLTunnel", package: "spl-swift"),
-                .target(name: "JournalRuntimeTestSupport"),
                 .target(name: "MacTestSupport"),
                 .target(name: "WatchdogKit")
             ],
@@ -260,22 +187,6 @@ let package = Package(
             swiftSettings: [
                 .swiftLanguageMode(.v6),
                 .define("SOLSTONE_BROWSER_INTAKE_PREVIEW", .when(configuration: .debug))
-            ]
-        ),
-        .testTarget(
-            name: "journalTests",
-            dependencies: [
-                .target(name: "journal"),
-                .target(name: "JournalMarkKit"),
-                .target(name: "JournalRuntime"),
-                .target(name: "JournalRuntimeTestSupport"),
-                .target(name: "MacTestSupport"),
-                .target(name: "SolstoneCore"),
-                .target(name: "UpdateKit")
-            ],
-            path: "Tests/journalTests",
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
             ]
         ),
     ]

@@ -34,7 +34,6 @@ import hashlib
 import json
 import os
 import pathlib
-import plistlib
 import re
 import shutil
 import stat
@@ -189,12 +188,22 @@ def newest_item(app: str) -> dict[str, Any]:
     return newest
 
 
+# The Sparkle EdDSA public key each app ships, and the only keys this composer
+# trusts. A key carried by a downloaded candidate never authorizes itself. The
+# Journal app's source lives in solstone-journal now, so its key is pinned here
+# rather than read from a sibling checkout; the capture key is tested against
+# Sources/solstone/Info.plist. Rotating a Sparkle key changes this table in the
+# same landing as the plists.
+TRUSTED_SPARKLE_PUBLIC_KEYS: dict[str, str] = {
+    "sol": "5EP/CLtfMrN2qC8zWsHeIWcPVPjqFH7hW4m8cGX7Qg0=",
+    "journal": "5EP/CLtfMrN2qC8zWsHeIWcPVPjqFH7hW4m8cGX7Qg0=",
+}
+
+
 def public_ed_key(app: str) -> str:
-    plist_path = REPO_ROOT / APP_CONFIG[app]["plist_path"]
-    with open(plist_path, "rb") as handle:
-        key = plistlib.load(handle).get("SUPublicEDKey", "")
+    key = TRUSTED_SPARKLE_PUBLIC_KEYS.get(app, "")
     if not key:
-        die(f"{plist_path}: SUPublicEDKey missing")
+        die(f"no trusted Sparkle public key for {app}")
     return key
 
 

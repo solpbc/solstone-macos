@@ -5,6 +5,14 @@
 # `make ci` wrapper: run swift + python tests inside an ephemeral macOS test
 # keychain and retain the combined output in scratch/ci.log.
 #
+# Usage: run-ci.sh [--package-root DIR] [swift test arguments...]
+#   The package root defaults to this repository. The Journal app's package
+#   (solstone-journal, platforms/macos) passes its own root and runs this script
+#   from its pinned checkout of this repository, so both apps share one lock,
+#   one keychain sequence and one set of test steps: `make
+#   check-brand-assets-fresh`, `swift test --no-parallel`, and the package's
+#   own scripts/tests Python suite.
+#
 # Why: tests that exercise SecItemAdd against the default user keychain can fail
 # under non-interactive SSH with errSecInteractionNotAllowed (-25308) because the
 # login keychain is locked and refuses to fire a GUI unlock prompt. The login
@@ -36,18 +44,25 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$REPO_ROOT"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ORIGINAL_ARGS=("$@")
+PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ "${1:-}" = "--package-root" ]; then
+  [ -n "${2:-}" ] || { echo "error: --package-root needs a directory" >&2; exit 2; }
+  PACKAGE_ROOT="$(cd "$2" && pwd)"
+  shift 2
+fi
+cd "$PACKAGE_ROOT"
 
 # Take the host CI lock before touching any shared state — in particular before
 # truncating scratch/ci.log, which belongs to whoever currently holds the lock.
 # The guard tests the fd itself rather than a marker variable, so a stale export
 # in one of the long-lived tmux build windows cannot silently disable the lock.
 if [ -z "${SOLSTONE_CI_LOCK_FD:-}" ] || [ ! -e "/dev/fd/${SOLSTONE_CI_LOCK_FD}" ]; then
-  exec python3 "$REPO_ROOT/scripts/ci_lock.py" -- "$REPO_ROOT/scripts/run-ci.sh" "$@"
+  exec python3 "$SCRIPT_DIR/ci_lock.py" -- "$SCRIPT_DIR/run-ci.sh" ${ORIGINAL_ARGS[@]+"${ORIGINAL_ARGS[@]}"}
 fi
 
-CI_LOG="$REPO_ROOT/scratch/ci.log"
+CI_LOG="$PACKAGE_ROOT/scratch/ci.log"
 TEST_KC="$HOME/Library/Keychains/ci-test.keychain-db"
 LOGIN_KC="$HOME/Library/Keychains/login.keychain-db"
 TEST_PASS="$(openssl rand -hex 16)"
@@ -64,7 +79,7 @@ teardown() {
   TEARDOWN_DONE=1
 
   if [ -n "$PRIOR_DEFAULT" ]; then
-    python3 scripts/keychain_search_list.py restore-default-if-current "$TEST_KC" "$PRIOR_DEFAULT" || {
+    python3 "$SCRIPT_DIR/keychain_search_list.py" restore-default-if-current "$TEST_KC" "$PRIOR_DEFAULT" || {
       echo "warn: failed to restore prior default keychain" >&2
       true
     }
@@ -72,7 +87,7 @@ teardown() {
     echo "warn: prior default keychain was not recorded; skipping default restore" >&2 || true
   fi
 
-  python3 scripts/keychain_search_list.py remove "$TEST_KC" || {
+  python3 "$SCRIPT_DIR/keychain_search_list.py" remove "$TEST_KC" || {
     echo "warn: failed to remove CI keychain from user search list" >&2
     true
   }
@@ -123,16 +138,16 @@ security create-keychain -p "$TEST_PASS" "$TEST_KC"
 security set-keychain-settings -lut 7200 "$TEST_KC"
 security unlock-keychain -p "$TEST_PASS" "$TEST_KC"
 
-PRIOR_DEFAULT="$(python3 scripts/keychain_search_list.py current-default)"
+PRIOR_DEFAULT="$(python3 "$SCRIPT_DIR/keychain_search_list.py" current-default)"
 
-python3 scripts/keychain_search_list.py prepend "$TEST_KC"
+python3 "$SCRIPT_DIR/keychain_search_list.py" prepend "$TEST_KC"
 security default-keychain -d user -s "$TEST_KC"
 
 CI_SWIFT_ARGUMENTS=("$@")
 
 run_tests() {
   echo "==> brand asset freshness"
-  ./scripts/check-brand-assets-fresh.sh 2>&1
+  make -s check-brand-assets-fresh 2>&1
   echo "==> swift test"
   # Suite-level parallelism overloads short deterministic fixture deadlines.
   # Individual concurrency/race tests still drive their own competing tasks.

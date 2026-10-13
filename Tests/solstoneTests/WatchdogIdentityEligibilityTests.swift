@@ -434,16 +434,11 @@ struct WatchdogIdentityEligibilityTests {
         let sources = try swiftFiles(under: root.appendingPathComponent("Sources"))
             .map { try String(contentsOf: $0, encoding: .utf8) }
         let exitReason = try String(contentsOf: core.appendingPathComponent("ExitReason.swift"), encoding: .utf8)
-        let journalApp = try String(contentsOf: root.appendingPathComponent("Sources/journal/JournalApp.swift"), encoding: .utf8)
-        let journalSupervisor = try String(contentsOf: root.appendingPathComponent("Sources/journal/JournalSupervisor.swift"), encoding: .utf8)
         let watchdogSource = try String(contentsOf: watchdog, encoding: .utf8)
 
         #expect(!exitReason.contains("default:"))
         #expect(!exitReason.contains("@unknown default:"))
         #expect(exitReason.contains("allCases.first"))
-        #expect(journalApp.contains("await supervisor.terminate(reason: \"ordinary-quit\")"))
-        #expect(journalApp.contains("await supervisor?.terminate(reason: \"updater-install\")"))
-        #expect(journalSupervisor.contains("func terminate(reason: String = \"ordinary-quit\")"))
         #expect(!sources.contains { $0.contains("throttle") || $0.contains("RelaunchDecision") })
         #expect(!FileManager.default.fileExists(atPath: core.appendingPathComponent("RelaunchDecision.swift").path))
         #expect(!FileManager.default.fileExists(atPath: core.appendingPathComponent("ObserverPresence.swift").path))

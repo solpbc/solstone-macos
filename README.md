@@ -36,7 +36,7 @@ These Make targets build a local test app. They do not build or bundle the journ
 - `make build`: Compile a debug build without assembling an app bundle.
 - `make test`: Run the Swift tests.
 - `make ci`: Run the full project gate.
-- `make integration-native`: Run the on-demand integration tier against a native journal runtime in an isolated home: the staged accepted runtime if present, otherwise the runtime inside the installed journal app. Its first line names what ran. Opt-in; not part of `make ci`.
+- `make integration-native`: Run the on-demand integration tier: the app's real door, proxy and transport against a native journal runtime in an isolated home. It needs `SOLSTONE_NATIVE_RUNTIME_DIR` (a native runtime tree) and `SOLSTONE_JOURNAL_INTEGRATION_FIXTURE` (built by `make integration-fixture` in the journal repository's `platforms/macos`). Its first lines name what ran. Opt-in; not part of `make ci`.
 - `make icons`: Regenerate app assets when you change their SVG sources.
 - `make clean`: Remove build artifacts.
 
@@ -46,7 +46,7 @@ mac presents permission prompts for what you choose to share. The relevant setti
 
 ## Architecture
 
-This is one Swift Package Manager repository. `solstone` is the app executable, `solstone-watchdog` is its helper, and shared code lives alongside them in the package. See [Package.swift](Package.swift) for the target graph.
+This is one Swift Package Manager repository. `solstone` is the app executable and `solstone-watchdog` is its helper. The package also exports the mac libraries it shares with the journal app: `SolstoneCore`, `JournalMarkKit`, `UpdateKit`, `WatchdogKit` and the test-only `MacTestSupport`. The journal app itself is built from [solstone-journal](https://github.com/solpbc/solstone-journal/tree/main/platforms/macos), which uses those libraries at an exact commit of this repository. A change to a shared library reaches the journal app when that pin moves. See [Package.swift](Package.swift) for the target graph.
 
 ## Local files
 

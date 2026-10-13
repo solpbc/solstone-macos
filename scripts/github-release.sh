@@ -6,18 +6,25 @@
 #
 # Usage:
 #   scripts/github-release.sh --app sol [<version>]
-#   scripts/github-release.sh --app journal --build <build> [<version>]
+#   scripts/github-release.sh --app journal --build <build> --app-root <dir> [<version>]
+#
+# The app root holds the app's Info.plist, changelog and DMG; it defaults to the
+# Git top level of the working directory. The Journal app lives in a nested
+# package (solstone-journal, platforms/macos) and passes that directory. Tags
+# and releases go to the repository that contains the app root.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIT_BIN="${GIT_BIN:-git}"
 GH_BIN="${GH_BIN:-gh}"
-RELEASE_IDENTITY_BIN="${RELEASE_IDENTITY_BIN:-scripts/release_identity.py}"
-EXTRACT_CHANGELOG_BIN="${EXTRACT_CHANGELOG_BIN:-scripts/extract_changelog.sh}"
+RELEASE_IDENTITY_BIN="${RELEASE_IDENTITY_BIN:-$SCRIPT_DIR/release_identity.py}"
+EXTRACT_CHANGELOG_BIN="${EXTRACT_CHANGELOG_BIN:-$SCRIPT_DIR/extract_changelog.sh}"
 GIT_REMOTE="${GIT_REMOTE:-origin}"
 
 APP=""
 VERSION_ARG=""
 BUILD_ARG=""
+APP_ROOT_ARG=""
 DRY_RUN="${GITHUB_RELEASE_DRY_RUN:-0}"
 
 while [[ $# -gt 0 ]]; do
@@ -30,6 +37,11 @@ while [[ $# -gt 0 ]]; do
     --build)
       [[ $# -ge 2 ]] || { echo "error: --build requires a value" >&2; exit 2; }
       BUILD_ARG="$2"
+      shift 2
+      ;;
+    --app-root)
+      [[ $# -ge 2 ]] || { echo "error: --app-root requires a directory" >&2; exit 2; }
+      APP_ROOT_ARG="$2"
       shift 2
       ;;
     --dry-run)
@@ -60,8 +72,11 @@ case "$APP" in
     ;;
 esac
 
-REPO_ROOT=$("$GIT_BIN" rev-parse --show-toplevel)
-cd "$REPO_ROOT"
+if [[ -n "$APP_ROOT_ARG" ]]; then
+  cd "$APP_ROOT_ARG"
+else
+  cd "$("$GIT_BIN" rev-parse --show-toplevel)"
+fi
 
 case "$APP" in
   sol)

@@ -122,7 +122,7 @@ class CutChangelogTest(unittest.TestCase):
     def test_makefile_preflights_changelog_before_plist_mutation(self):
         text = MAKEFILE.read_text(encoding="utf-8")
         start = text.index("bump-release:")
-        end = text.index("\nbump-release-journal:", start)
+        end = text.index("\n# Unlock the sol-signing keychain", start)
         target = text[start:end]
 
         self.assertLess(

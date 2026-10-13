@@ -1,7 +1,12 @@
-.PHONY: build release release-universal safari-appex debug-universal release-universal-journal release-universal-adhoc release-browser-preview run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
-        signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-dist-journal assemble-journal-app journal-app-unsigned bundle-adhoc bundle-adhoc-debug dmg dmg-journal dmg-both notarize notarize-journal notarize-both staple staple-journal staple-both verify-notarization verify-notarization-journal verify-notarization-both release-dmg release-dmg-journal seal-both \
-        supply-chain-check release-dmg-smoke release-dmg-smoke-journal both-resolve both-compose both-verify both-publish journal-native-runtime journal-native-fetch-accepted journal-native-runtime-accepted brand-sync \
-        release-preflight bump-release bump-release-journal journal-app-dev run-journal publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal
+.PHONY: build release release-universal safari-appex debug-universal release-universal-adhoc release-browser-preview run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
+        signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-adhoc bundle-adhoc-debug dmg dmg-both notarize notarize-both staple staple-both verify-notarization verify-notarization-both release-dmg seal-both \
+        supply-chain-check release-dmg-smoke both-resolve both-compose both-verify both-publish brand-sync \
+        release-preflight bump-release publish-preflight publish-appcast publish-appcast-staging github-release
+
+# The Journal app's source, build, signing and publication live in
+# solstone-journal (platforms/macos), which consumes this repository's shared
+# libraries and release helpers at an exact commit. This Makefile builds and
+# ships the capture app (solstone.app) and composes the combined image.
 
 # Default goal when running bare `make` — build the project. brand-sync is
 # opt-in (run it manually when the brand spec updates).
@@ -36,9 +41,6 @@ KEYCHAIN_SEARCH_LIST   := python3 scripts/keychain_search_list.py
 DIST_VERSION           := $(shell $(RELEASE_IDENTITY) identity --app sol --plist Sources/solstone/Info.plist --field short_version 2>/dev/null || echo 0.0.0)
 DIST_BUILD             := $(shell $(RELEASE_IDENTITY) identity --app sol --plist Sources/solstone/Info.plist --field bundle_version 2>/dev/null || echo 0)
 DMG_NAME               ?= $(shell $(RELEASE_IDENTITY) identity --app sol --version '$(DIST_VERSION)' --field dmg_name)
-JOURNAL_DIST_VERSION   := $(shell $(RELEASE_IDENTITY) identity --app journal --plist Sources/journal/Info.plist --field short_version 2>/dev/null || echo 0.0.0)
-JOURNAL_DIST_BUILD     := $(shell $(RELEASE_IDENTITY) identity --app journal --plist Sources/journal/Info.plist --field bundle_version 2>/dev/null || echo 0)
-JOURNAL_DMG_NAME       ?= $(shell $(RELEASE_IDENTITY) identity --app journal --version '$(JOURNAL_DIST_VERSION)' --build '$(JOURNAL_DIST_BUILD)' --field dmg_name)
 # The combined image is composed from each app's published DMG, so its name
 # comes from the resolved inputs (scripts/both_dmg.py), never from this tree.
 BOTH_DIR               ?= .both
@@ -60,54 +62,6 @@ ADHOC_SIGN_ID      ?= $(shell scripts/adhoc-dev-cert.sh identity 2>/dev/null || 
 ADHOC_ENTITLEMENTS ?= $(ENTITLEMENTS_PLIST)
 BUNDLE_BUILD_TARGET ?= release-universal
 BUNDLE_CONFIGURATION ?= Release
-# Two --arch flags are load-bearing: release-universal-adhoc (below) uses the same
-# multi-arch shape to select SwiftPM's Apple/Xcode backend, which writes to
-# .build/apple/Products/Release (what bundle-dist-journal copies from). Journal is
-# arm64-only, so both flags are arm64; do not collapse them to one flag, and do not
-# swap in --build-system swiftbuild, which writes to .build/out/Products/Release instead.
-JOURNAL_RELEASE_APPLE_ARCH_FLAGS := --arch arm64 --arch arm64
-
-# journal.app carries the Rust-native distribution tree directly. Development
-# builds bind a clean source commit; shipping builds consume an already-accepted
-# archive by SHA-256. Both embed a provenance receipt beside the entrypoints.
-JOURNAL_NATIVE_SOURCE_DIR ?= ../solstone-journal
-JOURNAL_NATIVE_EXPECTED_COMMIT ?=
-JOURNAL_NATIVE_TARGET ?= macos-arm64
-JOURNAL_NATIVE_OUTPUT_DIR ?= .build/journal-native-output
-JOURNAL_NATIVE_RUNTIME_DIR ?= .build/journal-native-runtime
-# The released runtime every owner runs, embedded in the installed journal app.
-INSTALLED_JOURNAL_RUNTIME ?= /Applications/journal.app/Contents/Resources/solstone-runtime
-JOURNAL_NATIVE_PROVENANCE_RECEIPT ?= $(JOURNAL_NATIVE_RUNTIME_DIR)/journal-native-provenance.json
-JOURNAL_NATIVE_ACCEPTED_ARCHIVE ?=
-JOURNAL_NATIVE_ACCEPTED_SHA256 ?=
-JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE ?=
-JOURNAL_NATIVE_ACCEPTED_MANIFEST ?=
-JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE ?=
-JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT ?=
-JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT ?=
-JOURNAL_NATIVE_MINISIGN ?= /opt/homebrew/bin/minisign
-# Or name the release and let the compose fetch its five signed inputs from the
-# published origin: JOURNAL_NATIVE_ACCEPTED_VERSION=<version> with the accepted
-# JOURNAL_NATIVE_ACCEPTED_SHA256 replaces the five paths above. The manifest is
-# trusted only once its minisign signature verifies against the pinned release
-# key, and each other input only if it matches the signed manifest's digest.
-JOURNAL_NATIVE_ACCEPTED_VERSION ?=
-JOURNAL_NATIVE_ORIGIN ?= https://updates.solstone.app/solstone-journal
-JOURNAL_NATIVE_FETCH_DIR ?= .build/journal-native-accepted
-ifneq ($(strip $(JOURNAL_NATIVE_ACCEPTED_VERSION)),)
-ifneq ($(strip $(JOURNAL_NATIVE_ACCEPTED_ARCHIVE)$(JOURNAL_NATIVE_ACCEPTED_MANIFEST)$(JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE)$(JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT)$(JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT)),)
-$(error JOURNAL_NATIVE_ACCEPTED_VERSION fetches the signed journal inputs; do not also pass their paths)
-endif
-JOURNAL_NATIVE_ACCEPTED_STEM := $(JOURNAL_NATIVE_FETCH_DIR)/solstone-journal-$(JOURNAL_NATIVE_ACCEPTED_VERSION)-$(JOURNAL_NATIVE_TARGET)
-JOURNAL_NATIVE_ACCEPTED_ARCHIVE := $(JOURNAL_NATIVE_ACCEPTED_STEM).tar.gz
-JOURNAL_NATIVE_ACCEPTED_MANIFEST := $(JOURNAL_NATIVE_ACCEPTED_STEM).manifest.json
-JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE := $(JOURNAL_NATIVE_ACCEPTED_STEM).manifest.json.minisig
-JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT := $(JOURNAL_NATIVE_ACCEPTED_STEM).release
-JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT := $(JOURNAL_NATIVE_ACCEPTED_STEM).signing.json
-endif
-JOURNAL_NATIVE_RUNTIME_TREE_MAP ?= .build/journal-native-runtime-tree.map
-JOURNAL_NATIVE_RUNTIME_ENTRY_PROVENANCE := journal.app/Contents/Resources/solstone_journal.bundle/Contents/Resources/Resources/runtime-entry-candidate-provenance.json
-
 # Re-vendor brand SVGs from the canonical source. `make ci` gates on the
 # committed *generated* output staying current with these SVGs (via
 # check-brand-assets-fresh below) — it does not run brand-sync itself, since
@@ -210,66 +164,6 @@ BROWSER_HOST_CODESIGN_OPTIONS := --options runtime
 release-browser-preview:
 	@$(MAKE) bundle-dist BROWSER_PREVIEW=1
 
-release-universal-journal:
-	swift build -c release $(JOURNAL_RELEASE_APPLE_ARCH_FLAGS) --product journal
-	swift build -c release $(JOURNAL_RELEASE_APPLE_ARCH_FLAGS) --product solstone-watchdog
-
-journal-native-runtime:
-	@python3 scripts/journal_native_provenance.py check-source \
-		--source-dir "$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))" \
-		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)"
-	@$(MAKE) -C "$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))" ci-full-prep
-	@python3 scripts/journal_native_provenance.py check-source \
-		--source-dir "$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))" \
-		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)"
-	@rm -rf "$(JOURNAL_NATIVE_OUTPUT_DIR)" "$(JOURNAL_NATIVE_RUNTIME_DIR)"
-	@mkdir -p "$(JOURNAL_NATIVE_OUTPUT_DIR)" "$(JOURNAL_NATIVE_RUNTIME_DIR)"
-	@(cd "$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))" && cargo run --manifest-path core/Cargo.toml -p solstone-core-distribution --bin solstone-distribution --locked --offline -- produce "$(JOURNAL_NATIVE_TARGET)" "$(abspath $(JOURNAL_NATIVE_OUTPUT_DIR))")
-	@set -- "$(JOURNAL_NATIVE_OUTPUT_DIR)"/*.tar.gz; \
-		test "$$#" -eq 1 && test -f "$$1" || { echo "error: expected exactly one native journal tarball in $(JOURNAL_NATIVE_OUTPUT_DIR)"; exit 1; }; \
-		tar -xzf "$$1" -C "$(JOURNAL_NATIVE_RUNTIME_DIR)"
-	@test -x "$(JOURNAL_NATIVE_RUNTIME_DIR)/bin/journal" || { echo "error: native journal runtime is missing bin/journal"; exit 1; }
-	@test -x "$(JOURNAL_NATIVE_RUNTIME_DIR)/bin/solstone" || { echo "error: native journal runtime is missing bin/solstone"; exit 1; }
-	@python3 scripts/journal_native_provenance.py write-receipt \
-		--source-dir "$(abspath $(JOURNAL_NATIVE_SOURCE_DIR))" \
-		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" \
-		--target "$(JOURNAL_NATIVE_TARGET)" \
-		--output-dir "$(abspath $(JOURNAL_NATIVE_OUTPUT_DIR))" \
-		--runtime-dir "$(abspath $(JOURNAL_NATIVE_RUNTIME_DIR))" \
-		--receipt "$(abspath $(JOURNAL_NATIVE_PROVENANCE_RECEIPT))"
-
-# With JOURNAL_NATIVE_ACCEPTED_VERSION set, fetch the release's signed inputs from
-# the published origin first; with explicit paths instead, this does nothing.
-journal-native-fetch-accepted:
-	@if [ -n "$(strip $(JOURNAL_NATIVE_ACCEPTED_VERSION))" ]; then \
-		test -n "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" || { echo "error: JOURNAL_NATIVE_ACCEPTED_SHA256=<sha256> required"; exit 1; }; \
-		python3 scripts/journal_native_provenance.py fetch-accepted \
-			--version "$(JOURNAL_NATIVE_ACCEPTED_VERSION)" \
-			--target "$(JOURNAL_NATIVE_TARGET)" \
-			--expected-sha256 "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" \
-			--origin "$(JOURNAL_NATIVE_ORIGIN)" \
-			--minisign "$(JOURNAL_NATIVE_MINISIGN)" \
-			--output-dir "$(abspath $(JOURNAL_NATIVE_FETCH_DIR))"; \
-	fi
-
-# Shipping consumes the journal lane's already-produced, accepted archive. The
-# source-build target above remains available for local development, but release
-# packaging must not silently rebuild a payload with different bytes.
-journal-native-runtime-accepted: journal-native-fetch-accepted
-	@test -n "$(JOURNAL_NATIVE_ACCEPTED_ARCHIVE)" || { echo "error: JOURNAL_NATIVE_ACCEPTED_ARCHIVE=/absolute/path required"; exit 1; }
-	@test -n "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" || { echo "error: JOURNAL_NATIVE_ACCEPTED_SHA256=<sha256> required"; exit 1; }
-	@test -n "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" || { echo "error: JOURNAL_NATIVE_EXPECTED_COMMIT=<accepted-sha40> required"; exit 1; }
-	@test -n "$(JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE)" || { echo "error: JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE=<receipt-or-record> required"; exit 1; }
-	@python3 scripts/journal_native_provenance.py stage-accepted \
-		--archive "$(abspath $(JOURNAL_NATIVE_ACCEPTED_ARCHIVE))" \
-		--expected-sha256 "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" \
-		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" \
-		--acceptance-evidence "$(JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE)" \
-		--target "$(JOURNAL_NATIVE_TARGET)" \
-		--workspace-root "$(CURDIR)" \
-		--runtime-dir "$(abspath $(JOURNAL_NATIVE_RUNTIME_DIR))" \
-		--receipt "$(abspath $(JOURNAL_NATIVE_PROVENANCE_RECEIPT))"
-
 # Run the built app from the source tree and stream all logs to a timestamped
 # file in scratch/. Run `make bundle-dist` first to produce solstone.app.
 # Keeps capturing across app restarts. Ctrl+C to stop.
@@ -306,25 +200,24 @@ ci-release:
 
 .PHONY: ci-release
 
-# On-demand integration tier: the apps' real Journal-runtime code against a
-# native journal runtime, inside an isolated home. Opt-in only; `make ci`
-# compiles these suites and lists them as skipped. Runtime selection, in order:
-# SOLSTONE_NATIVE_RUNTIME_DIR, the staged accepted runtime (a release clone has
-# one after `make journal-native-runtime-accepted ...`), then the runtime inside
-# the installed journal app. The first output line names what actually ran: the
-# version and a digest over the whole runtime tree (the launcher binaries are
-# identical across releases, so a single file's digest would not tell them apart).
+# On-demand integration tier: the capture app's real door, proxy and SPL
+# transport against a native journal runtime, inside an isolated home. Opt-in
+# only; `make ci` compiles these suites and lists them as skipped. The journal is
+# started by the Journal package's test-only `journal-integration-fixture`
+# (solstone-journal, platforms/macos: `make integration-fixture`), so this
+# package never imports the Journal app's runtime code. Both inputs are explicit:
+#   SOLSTONE_NATIVE_RUNTIME_DIR           an accepted native runtime tree
+#   SOLSTONE_JOURNAL_INTEGRATION_FIXTURE  the built fixture executable
+# The first output line names the runtime version and a digest over its tree.
 # Not a release gate: signed-artifact, Sparkle and relay acceptance stay on the
 # release rig.
 integration-native:
 	@RUNTIME="$${SOLSTONE_NATIVE_RUNTIME_DIR:-}"; \
-		if [ -z "$$RUNTIME" ]; then \
-			if [ -x "$(JOURNAL_NATIVE_RUNTIME_DIR)/bin/journal" ]; then RUNTIME="$(JOURNAL_NATIVE_RUNTIME_DIR)"; \
-			elif [ -x "$(INSTALLED_JOURNAL_RUNTIME)/bin/journal" ]; then RUNTIME="$(INSTALLED_JOURNAL_RUNTIME)"; \
-			else echo "error: no native journal runtime: stage one, install journal.app, or set SOLSTONE_NATIVE_RUNTIME_DIR"; exit 1; fi; \
-		fi; \
+		test -n "$$RUNTIME" || { echo "error: SOLSTONE_NATIVE_RUNTIME_DIR=<accepted native runtime tree> required"; exit 1; }; \
 		test -x "$$RUNTIME/bin/journal" || { echo "error: no journal binary at $$RUNTIME/bin/journal"; exit 1; }; \
+		test -x "$${SOLSTONE_JOURNAL_INTEGRATION_FIXTURE:-}" || { echo "error: SOLSTONE_JOURNAL_INTEGRATION_FIXTURE=<built journal-integration-fixture> required"; exit 1; }; \
 		echo "integration-native: runtime $$("$$RUNTIME/bin/journal" --version) tree-sha256=$$(cd "$$RUNTIME" && find bin lib share -type f | sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1) at $$RUNTIME"; \
+		echo "integration-native: fixture $$(shasum -a 256 "$$SOLSTONE_JOURNAL_INTEGRATION_FIXTURE" | cut -d' ' -f1) at $$SOLSTONE_JOURNAL_INTEGRATION_FIXTURE"; \
 		SOLSTONE_NATIVE_INTEGRATION=1 SOLSTONE_NATIVE_RUNTIME_DIR="$$RUNTIME" swift test --no-parallel --filter NativeIntegration
 
 # Render view snapshots
@@ -340,10 +233,9 @@ check-dev-deps:
 # =======================================================================
 # Distribution pipeline: Developer ID signed + notarized DMG
 #
-# Use `make release-dmg` or `make release-dmg-journal`
-# to produce signed, notarized, stapled DMGs ready to hand out for ad-hoc install.
-# `make bundle-dist` signs solstone.app without the journal runtime plane; `make
-# bundle-dist-journal` signs journal.app with its bundled Rust runtime tree.
+# Use `make release-dmg` to produce a signed, notarized, stapled DMG ready to
+# hand out for ad-hoc install. `make bundle-dist` signs solstone.app without the
+# journal runtime plane.
 # All signing runs headless over SSH using the sol-signing keychain (see
 # header).
 # =======================================================================
@@ -407,8 +299,7 @@ release-preflight: signing-check
 		[ "$$AHEAD" = "0" ] || { echo "warn: $$AHEAD local commit(s) ahead of upstream — push before release"; }
 	@echo "✓ release pre-flight clean: tree clean, no stale processes, signing ready"
 
-# Bump the solstone app's user-visible version and root changelog only. The
-# journal app has its own release identity and carries a native runtime.
+# Bump the solstone app's user-visible version and root changelog.
 #
 # Usage: make bump-release VERSION=1.1.4 BUILD=6
 #   VERSION  required, semver — sets CFBundleShortVersionString
@@ -438,41 +329,6 @@ bump-release:
 	@echo "  4. git commit -m 'release: bump to $(VERSION) (build $(BUILD))'"
 	@echo "  5. git push origin main"
 	@echo "  6. make release-preflight && make release-dmg"
-
-bump-release-journal:
-	@test -n "$(VERSION)" || { echo "error: VERSION=... required (e.g. VERSION=1.0.1)"; exit 1; }
-	@test -n "$(BUILD)"   || { echo "error: BUILD=... required (e.g. BUILD=2)"; exit 1; }
-	@test -z "$(SOLSTONE)" || { echo "error: SOLSTONE= is retired; journal release prep uses VERSION and BUILD only"; exit 1; }
-	@CURRENT_BUILD="$(JOURNAL_DIST_BUILD)"; \
-		python3 -c "import sys; sys.exit(0 if int('$(BUILD)') > int('$$CURRENT_BUILD') else 1)" || \
-		{ echo "error: BUILD=$(BUILD) must be strictly greater than current journal build $$CURRENT_BUILD"; exit 1; }
-	@/usr/bin/plutil -replace CFBundleShortVersionString -string "$(VERSION)" Sources/journal/Info.plist
-	@/usr/bin/plutil -replace CFBundleVersion -string "$(BUILD)" Sources/journal/Info.plist
-	@python3 -c 'import json, pathlib, plistlib; p = pathlib.Path("Sources/journal/Resources/runtime-entry-candidate-provenance.json"); data = json.loads(p.read_text()); info = plistlib.loads(pathlib.Path("Sources/journal/Info.plist").read_bytes()); data["target"] = dict(zip(("bundle_identifier", "bundle_short_version", "bundle_version"), (info["CFBundleIdentifier"], info["CFBundleShortVersionString"], info["CFBundleVersion"]))); p.write_text(json.dumps(data, indent=2) + "\n")'
-	@echo "✓ journal Info.plist: CFBundleShortVersionString=$(VERSION), CFBundleVersion=$(BUILD)"
-# The scaffold below writes placeholder bullets and trusts you to replace
-# them. Pasting the previous block satisfies it just as well as writing
-# the delta, and that is how nine published blocks came to hold five
-# distinct texts: 2.0.6 identical to 2.0.5, 2.0.4 identical to 2.0.3,
-# and five 2.0.1 builds collapsing into three. Repaired 2026-09-12.
-# Write what THIS build changes. A build with no journal-visible change
-# gets one honest line saying so; it does not get the last one back.
-	@CHANGELOG_KEY="$$( $(RELEASE_IDENTITY) identity --app journal --version "$(VERSION)" --build "$(BUILD)" --field changelog_key )"; \
-	if grep -Fq "## [$$CHANGELOG_KEY]" CHANGELOG-journal.md; then \
-		echo "note: CHANGELOG-journal.md already has an entry for $$CHANGELOG_KEY; leaving it alone"; \
-	else \
-		TODAY="$$(date +%Y-%m-%d)"; \
-		awk -v k="$$CHANGELOG_KEY" -v d="$$TODAY" 'NR==1 {print; next} /^## \[/ && !/^## \[Unreleased\]/ && !inserted {print "## [" k "] - " d "\n\n### Added\n- (describe new journal-visible additions)\n\n### Changed\n- (describe journal behavior changes)\n\n### Fixed\n- (describe journal bug fixes)\n"; inserted=1} {print}' CHANGELOG-journal.md > CHANGELOG-journal.md.tmp && mv CHANGELOG-journal.md.tmp CHANGELOG-journal.md; \
-		echo "✓ CHANGELOG-journal.md: scaffolded entry for [$$CHANGELOG_KEY] — $$TODAY (FILL IN BEFORE COMMIT)"; \
-	fi
-	@echo ""
-	@echo "next steps:"
-	@echo "  1. edit CHANGELOG-journal.md — replace scaffold bullets with real release notes"
-	@echo "  2. git diff to review"
-	@echo "  3. git add Sources/journal/Info.plist CHANGELOG-journal.md"
-	@echo "  4. git commit -m 'release: bump journal to $(VERSION) (build $(BUILD))'"
-	@echo "  5. git push origin main"
-	@echo "  6. make release-preflight && make release-dmg-journal JOURNAL_NATIVE_ACCEPTED_VERSION=<version> JOURNAL_NATIVE_ACCEPTED_SHA256=<sha256> JOURNAL_NATIVE_EXPECTED_COMMIT=<accepted-sha40> JOURNAL_NATIVE_ACCEPTANCE_EVIDENCE=<receipt-or-record>"
 
 # Unlock the sol-signing keychain and add it to the session search list.
 # Fresh SSH sessions don't always inherit the user-domain search list, so
@@ -641,145 +497,6 @@ endif
 bundle-adhoc-debug:
 	@$(MAKE) bundle-adhoc ADHOC_ENTITLEMENTS=Sources/solstone/entitlements-adhoc-debug.plist
 
-journal-app-dev: journal-native-runtime
-	@echo "Building journal dev app..."
-	@swift build -c release --product journal
-	@swift build -c release --product solstone-watchdog
-	@BUILD_DIR="$$(swift build -c release --show-bin-path)"; \
-		echo "Assembling journal.app from $$BUILD_DIR"; \
-		rm -rf journal.app; \
-		mkdir -p journal.app/Contents/MacOS journal.app/Contents/Resources journal.app/Contents/Frameworks journal.app/Contents/Library/LaunchAgents; \
-		cp "$$BUILD_DIR/journal" journal.app/Contents/MacOS/; \
-		cp "$$BUILD_DIR/solstone-watchdog" journal.app/Contents/MacOS/; \
-		cp Sources/journal/Info.plist journal.app/Contents/; \
-		cp Sources/journal/Resources/AppIcon.icns journal.app/Contents/Resources/; \
-		cp -R "$(JOURNAL_NATIVE_RUNTIME_DIR)" journal.app/Contents/Resources/solstone-runtime; \
-		cp Sources/journal/app.solstone.journal.watchdog.plist journal.app/Contents/Library/LaunchAgents/; \
-		test -d "$$BUILD_DIR/solstone_JournalMarkKit.bundle" || { echo "error: solstone_JournalMarkKit.bundle missing from $$BUILD_DIR"; exit 1; }; \
-		cp -R "$$BUILD_DIR/solstone_JournalMarkKit.bundle" journal.app/Contents/Resources/; \
-		if [ -d "$$BUILD_DIR/solstone_journal.bundle" ]; then \
-			cp -R "$$BUILD_DIR/solstone_journal.bundle" journal.app/Contents/Resources/; \
-		fi; \
-		if [ -d "$(SPARKLE_FRAMEWORK)" ]; then \
-			cp -R "$(SPARKLE_FRAMEWORK)" journal.app/Contents/Frameworks/; \
-		elif [ -d "$$BUILD_DIR/Sparkle.framework" ]; then \
-			cp -R "$$BUILD_DIR/Sparkle.framework" journal.app/Contents/Frameworks/; \
-		else \
-			echo "error: Sparkle.framework not found at $(SPARKLE_FRAMEWORK) or $$BUILD_DIR/Sparkle.framework"; \
-			exit 1; \
-		fi; \
-		RPATH_LOG="$$(mktemp -t journal-rpath)"; \
-		if install_name_tool -add_rpath "@executable_path/../Frameworks" journal.app/Contents/MacOS/journal 2>"$$RPATH_LOG"; then \
-			rm -f "$$RPATH_LOG"; \
-		elif grep -Eq 'would duplicate path|already exists' "$$RPATH_LOG"; then \
-			rm -f "$$RPATH_LOG"; \
-		else \
-			cat "$$RPATH_LOG"; \
-			rm -f "$$RPATH_LOG"; \
-			exit 1; \
-		fi; \
-		echo "✓ Assembled: journal.app"; \
-		find journal.app/Contents -maxdepth 3 \( -path '*/Versions' -o -path '*/_CodeSignature' \) -prune -o \( -type f -o -type d \) -print | sort
-
-assemble-journal-app: release-universal-journal
-	@rm -rf journal.app
-	@mkdir -p journal.app/Contents/MacOS journal.app/Contents/Resources journal.app/Contents/Frameworks journal.app/Contents/Library/LaunchAgents
-	@cp .build/apple/Products/Release/journal journal.app/Contents/MacOS/
-	@cp .build/apple/Products/Release/solstone-watchdog journal.app/Contents/MacOS/
-	@cp Sources/journal/Info.plist journal.app/Contents/
-	@cp Sources/journal/Resources/AppIcon.icns journal.app/Contents/Resources/
-	@cp Sources/journal/app.solstone.journal.watchdog.plist journal.app/Contents/Library/LaunchAgents/
-	@test -d .build/apple/Products/Release/solstone_JournalMarkKit.bundle || { echo "error: solstone_JournalMarkKit.bundle missing from .build/apple/Products/Release"; exit 1; }
-	@test -d .build/apple/Products/Release/solstone_journal.bundle || { echo "error: solstone_journal.bundle missing from .build/apple/Products/Release"; exit 1; }
-	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle journal.app/Contents/Resources/
-	@cp -r .build/apple/Products/Release/solstone_journal.bundle journal.app/Contents/Resources/
-
-journal-app-unsigned: assemble-journal-app
-
-bundle-dist-journal: unlock-signing signing-check journal-native-runtime-accepted release-universal-journal assemble-journal-app
-	@cp -R "$(JOURNAL_NATIVE_RUNTIME_DIR)" journal.app/Contents/Resources/solstone-runtime
-	@python3 scripts/journal_native_provenance.py write-candidate \
-		--archive "$(abspath $(JOURNAL_NATIVE_ACCEPTED_ARCHIVE))" \
-		--expected-sha256 "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" \
-		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" \
-		--target "$(JOURNAL_NATIVE_TARGET)" \
-		--manifest "$(abspath $(JOURNAL_NATIVE_ACCEPTED_MANIFEST))" \
-		--manifest-signature "$(abspath $(JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE))" \
-		--release-receipt "$(abspath $(JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT))" \
-		--signing-receipt "$(abspath $(JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT))" \
-		--minisign "$(JOURNAL_NATIVE_MINISIGN)" \
-		--runtime-dir "$(abspath journal.app/Contents/Resources/solstone-runtime)" \
-		--native-receipt "$(abspath journal.app/Contents/Resources/solstone-runtime/journal-native-provenance.json)" \
-		--info-plist "$(abspath journal.app/Contents/Info.plist)" \
-		--output "$(abspath $(JOURNAL_NATIVE_RUNTIME_ENTRY_PROVENANCE))" \
-		--tree-map "$(abspath $(JOURNAL_NATIVE_RUNTIME_TREE_MAP))"
-	@cp -R "$(SPARKLE_FRAMEWORK)" journal.app/Contents/Frameworks/
-	@RPATH_LOG="$$(mktemp -t journal-rpath)"; \
-		if install_name_tool -add_rpath "@executable_path/../Frameworks" journal.app/Contents/MacOS/journal 2>"$$RPATH_LOG"; then \
-			rm -f "$$RPATH_LOG"; \
-		elif grep -Eq 'would duplicate path|already exists' "$$RPATH_LOG"; then \
-			rm -f "$$RPATH_LOG"; \
-		else \
-			cat "$$RPATH_LOG"; \
-			rm -f "$$RPATH_LOG"; \
-			exit 1; \
-		fi
-	@codesign --force --options runtime --timestamp \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		journal.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc
-	@codesign --force --options runtime --timestamp \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		journal.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc
-	@codesign --force --options runtime --timestamp \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		journal.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate
-	@codesign --force --options runtime --timestamp \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		journal.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app
-	@codesign --force --options runtime --timestamp \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		journal.app/Contents/Frameworks/Sparkle.framework
-	@codesign --force --options runtime --timestamp \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		journal.app/Contents/Resources/solstone_JournalMarkKit.bundle
-	@codesign --force --options runtime --timestamp \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		journal.app/Contents/Resources/solstone_journal.bundle
-	@codesign --force --options runtime --timestamp \
-		--identifier app.solstone.journal.watchdog \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		journal.app/Contents/MacOS/solstone-watchdog
-	@codesign --force --options runtime --timestamp \
-		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
-		--entitlements Sources/journal/entitlements.plist \
-		journal.app
-	@codesign --verify --strict --deep --verbose=2 journal.app
-	@test ! -f journal.app/Contents/embedded.provisionprofile || { echo "error: journal.app must not embed a provisioning profile"; exit 1; }
-	@! codesign -d --entitlements - --xml journal.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q 'keychain-access-groups' || { echo "error: journal.app must not carry keychain-access-groups"; exit 1; }
-	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -Fq 'Identifier=app.solstone.journal.watchdog' || { echo "error: journal watchdog identifier mismatch"; exit 1; }
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-sol
-	@python3 scripts/journal_native_provenance.py verify-candidate \
-		--archive "$(abspath $(JOURNAL_NATIVE_ACCEPTED_ARCHIVE))" \
-		--expected-sha256 "$(JOURNAL_NATIVE_ACCEPTED_SHA256)" \
-		--expected-commit "$(JOURNAL_NATIVE_EXPECTED_COMMIT)" \
-		--target "$(JOURNAL_NATIVE_TARGET)" \
-		--manifest "$(abspath $(JOURNAL_NATIVE_ACCEPTED_MANIFEST))" \
-		--manifest-signature "$(abspath $(JOURNAL_NATIVE_ACCEPTED_MANIFEST_SIGNATURE))" \
-		--release-receipt "$(abspath $(JOURNAL_NATIVE_ACCEPTED_RELEASE_RECEIPT))" \
-		--signing-receipt "$(abspath $(JOURNAL_NATIVE_ACCEPTED_SIGNING_RECEIPT))" \
-		--minisign "$(JOURNAL_NATIVE_MINISIGN)" \
-		--runtime-dir "$(abspath journal.app/Contents/Resources/solstone-runtime)" \
-		--native-receipt "$(abspath journal.app/Contents/Resources/solstone-runtime/journal-native-provenance.json)" \
-		--info-plist "$(abspath journal.app/Contents/Info.plist)" \
-		--output "$(abspath $(JOURNAL_NATIVE_RUNTIME_ENTRY_PROVENANCE))" \
-		--tree-map "$(abspath $(JOURNAL_NATIVE_RUNTIME_TREE_MAP))"
-	@echo "✓ Signed: journal.app (native journal runtime, no profile/keychain-group verified)"
-
-run-journal: journal-app-dev
-	@open journal.app
-	@/usr/bin/log stream --predicate 'subsystem == "app.solstone.journal" OR subsystem == "app.solstone.journal.watchdog"' --level debug
-
 # Create and sign DMGs using create-dmg. Worker targets are standalone: build
 # bundles first, then run dmg/notarize/staple/verify explicitly. Recursive
 # orchestrators intentionally build each app bundle once; `make -n release-dmg*`
@@ -806,9 +523,6 @@ dmg:
 	  $(DMG_NAME) $(DMG_APP)
 	@codesign --force --timestamp --sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" $(DMG_NAME)
 	@echo "✓ Built: $(DMG_NAME)"
-
-dmg-journal:
-	@$(MAKE) dmg DMG_NAME=$(JOURNAL_DMG_NAME) DMG_APP=journal.app DMG_VOLNAME=journal DMG_ICON=journal.app
 
 # The combined image's window: both apps in one tray, an arrow to Applications.
 # The background is 1640x840 at 144 dpi, so it fills the 820x420 window at 2x.
@@ -849,9 +563,6 @@ notarize:
 		--keychain-profile "$(NOTARY_PROFILE)" --keychain "$(SIGNING_KEYCHAIN)" \
 		--wait
 
-notarize-journal:
-	@$(MAKE) notarize DMG_NAME=$(JOURNAL_DMG_NAME)
-
 notarize-both:
 	@$(MAKE) notarize DMG_NAME=$(BOTH_DMG_NAME)
 
@@ -859,9 +570,6 @@ notarize-both:
 staple:
 	@test -f "$(DMG_NAME)" || { echo "error: $(DMG_NAME) not found — run make notarize* first"; exit 1; }
 	@xcrun stapler staple $(DMG_NAME)
-
-staple-journal:
-	@$(MAKE) staple DMG_NAME=$(JOURNAL_DMG_NAME)
 
 staple-both:
 	@$(MAKE) staple DMG_NAME=$(BOTH_DMG_NAME)
@@ -889,23 +597,6 @@ verify-notarization:
 		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@echo "✓ $(DMG_NAME) notarized + stapled"
 
-verify-notarization-journal:
-	@test -f "$(JOURNAL_DMG_NAME)" || { echo "error: $(JOURNAL_DMG_NAME) not found — run make staple-journal first"; exit 1; }
-	@test -d journal.app || { echo "error: journal.app not found — run make bundle-dist-journal first"; exit 1; }
-	@spctl --assess --type open --context context:primary-signature -v $(JOURNAL_DMG_NAME) || \
-		{ echo "journal spctl verification failed"; exit 1; }
-	@xcrun stapler validate $(JOURNAL_DMG_NAME)
-	@codesign --verify --strict --verbose=2 journal.app/Contents/MacOS/solstone-watchdog || { echo "journal watchdog signature invalid"; exit 1; }
-	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || { echo "journal watchdog missing Team ID 7QCG8V4M6H"; exit 1; }
-	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'flags=0x10000(runtime)' || { echo "journal watchdog missing hardened runtime flag"; exit 1; }
-	@codesign -dvvv journal.app/Contents/MacOS/solstone-watchdog 2>&1 | grep -q 'Identifier=app.solstone.journal.watchdog' || { echo "journal watchdog identifier mismatch"; exit 1; }
-	@lipo -archs journal.app/Contents/MacOS/solstone-watchdog | grep -q 'arm64' || { echo "journal watchdog missing arm64 slice"; exit 1; }
-	@test -x journal.app/Contents/Resources/solstone-runtime/bin/journal || { echo "error: journal native runtime missing bin/journal"; exit 1; }
-	@test -x journal.app/Contents/Resources/solstone-runtime/bin/solstone || { echo "error: journal native runtime missing bin/solstone"; exit 1; }
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal
-	@codesign --verify --strict --verbose=2 journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-sol
-	@echo "✓ $(JOURNAL_DMG_NAME) notarized + stapled"
-
 # The combined image's bundles are checked against the published ones by
 # `make both-verify`; this checks only the image's own signature and ticket, so
 # it needs no disk-image attach on the signing host.
@@ -929,18 +620,6 @@ release-dmg:
 	@echo "   Signed:  $(DEVELOPER_ID_APP)"
 	@echo "   Notary:  $(NOTARY_PROFILE)"
 	@echo "   Size:    $$(du -h $(DMG_NAME) | cut -f1)"
-
-release-dmg-journal:
-	@$(MAKE) bundle-dist-journal
-	@$(MAKE) dmg-journal
-	@$(MAKE) notarize-journal
-	@$(MAKE) staple-journal
-	@$(MAKE) verify-notarization-journal
-	@echo ""
-	@echo "✅ Journal distribution DMG ready: $(JOURNAL_DMG_NAME)"
-	@echo "   Signed:  $(DEVELOPER_ID_APP)"
-	@echo "   Notary:  $(NOTARY_PROFILE)"
-	@echo "   Size:    $$(du -h $(JOURNAL_DMG_NAME) | cut -f1)"
 
 # Sign, notarize and staple a composed combined image. Signing host only.
 seal-both:
@@ -976,12 +655,6 @@ supply-chain-check:
 	@if grep -qiE '^##[[:space:]]+(uv|python-build-standalone)$$' THIRD_PARTY_NOTICES.md; then \
 	    echo "error: THIRD_PARTY_NOTICES.md still lists the retired python-era runtime"; exit 1; \
 	fi
-	@echo "── native journal runtime ──"
-	@if [ -x journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal ]; then \
-	    codesign -dvvv journal.app/Contents/Resources/solstone-runtime/bin/solstone-core-journal 2>&1 || true; \
-	else \
-	    echo "(not built yet — run make bundle-dist-journal to assemble the signed native runtime)"; \
-	fi
 	@echo "supply-chain checklist: ok"
 
 release-dmg-smoke:
@@ -993,18 +666,6 @@ release-dmg-smoke:
 	    BAD="$$(find "$$MOUNT/solstone.app" -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
 	    [ -z "$$BAD" ] || { echo "error: mounted solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }; \
 	    echo "release-dmg-smoke: ok"
-
-release-dmg-smoke-journal:
-	@test -f "$(JOURNAL_DMG_NAME)" || { echo "error: $(JOURNAL_DMG_NAME) not found — run make release-dmg-journal first"; exit 1; }
-	@MOUNT="$$(mktemp -d -t journal-smoke)"; \
-	    trap "hdiutil detach \"$$MOUNT\" -quiet -force >/dev/null 2>&1 || true; rm -rf \"$$MOUNT\"" EXIT; \
-	    hdiutil attach "$(JOURNAL_DMG_NAME)" -mountpoint "$$MOUNT" -nobrowse -quiet || { echo "error: journal hdiutil attach failed"; exit 1; }; \
-	    codesign --verify --strict --deep --verbose=2 "$$MOUNT/journal.app" || { echo "error: journal dmg .app codesign verify failed"; exit 1; }; \
-	    test -x "$$MOUNT/journal.app/Contents/Resources/solstone-runtime/bin/journal" || { echo "error: journal native runtime missing bin/journal"; exit 1; }; \
-	    test -x "$$MOUNT/journal.app/Contents/Resources/solstone-runtime/bin/solstone" || { echo "error: journal native runtime missing bin/solstone"; exit 1; }; \
-	    "$$MOUNT/journal.app/Contents/Resources/solstone-runtime/bin/journal" --version; \
-	    "$$MOUNT/journal.app/Contents/Resources/solstone-runtime/bin/solstone" --version; \
-	    echo "release-dmg-smoke-journal: ok"
 
 # Install development dependencies needed for local build workflows
 install: check-dev-deps
@@ -1089,12 +750,10 @@ reset-full:
 icons: export SOURCE_DATE_EPOCH := 1700000000
 icons: check-icons-deps
 	@echo "Generating icons from SVG sources..."
-	@swift run -c release journal-icon-gen assets/icon-journal.svg
-	@mkdir -p Sources/solstone/Resources Sources/journal/Resources
+	@mkdir -p Sources/solstone/Resources
 	@TMPDIR=$$(mktemp -d) && \
 	ICONSET=$$TMPDIR/AppIcon.iconset && \
-	JOURNAL_ICONSET=$$TMPDIR/JournalAppIcon.iconset && \
-	mkdir -p $$ICONSET $$JOURNAL_ICONSET && \
+	mkdir -p $$ICONSET && \
 	\
 	echo "  Rendering app icon sizes (per-size SVG selection — never downsample)..." && \
 	for size in 16 32 64 128 256 512 1024; do \
@@ -1121,27 +780,6 @@ icons: check-icons-deps
 	iconutil -c icns $$ICONSET -o Sources/solstone/Resources/AppIcon.icns && \
 	echo "  ✓ AppIcon.icns" && \
 	\
-	echo "  Rendering journal app icon sizes..." && \
-	for size in 16 32 64 128 256 512 1024; do \
-		rsvg-convert -w $$size -h $$size assets/icon-journal.svg \
-			-o $$TMPDIR/journal_icon_$${size}.png; \
-		echo "    $${size}x$${size}  (assets/icon-journal.svg)"; \
-	done && \
-	\
-	cp $$TMPDIR/journal_icon_16.png    $$JOURNAL_ICONSET/icon_16x16.png && \
-	cp $$TMPDIR/journal_icon_32.png    $$JOURNAL_ICONSET/icon_16x16@2x.png && \
-	cp $$TMPDIR/journal_icon_32.png    $$JOURNAL_ICONSET/icon_32x32.png && \
-	cp $$TMPDIR/journal_icon_64.png    $$JOURNAL_ICONSET/icon_32x32@2x.png && \
-	cp $$TMPDIR/journal_icon_128.png   $$JOURNAL_ICONSET/icon_128x128.png && \
-	cp $$TMPDIR/journal_icon_256.png   $$JOURNAL_ICONSET/icon_128x128@2x.png && \
-	cp $$TMPDIR/journal_icon_256.png   $$JOURNAL_ICONSET/icon_256x256.png && \
-	cp $$TMPDIR/journal_icon_512.png   $$JOURNAL_ICONSET/icon_256x256@2x.png && \
-	cp $$TMPDIR/journal_icon_512.png   $$JOURNAL_ICONSET/icon_512x512.png && \
-	cp $$TMPDIR/journal_icon_1024.png  $$JOURNAL_ICONSET/icon_512x512@2x.png && \
-	\
-	iconutil -c icns $$JOURNAL_ICONSET -o Sources/journal/Resources/AppIcon.icns && \
-	echo "  ✓ journal AppIcon.icns" && \
-	\
 	echo "  Rendering status bar template icons (vector PDF — renders crisp at any density)..." && \
 		rsvg-convert -f pdf assets/sol-ring-mb.svg \
 			-o Sources/solstone/Resources/sol-ring-template.pdf && \
@@ -1164,7 +802,7 @@ icons: check-icons-deps
 		echo "  ✓ sol-ring-icon-error-template.pdf" && \
 	\
 	rm -rf $$TMPDIR && \
-	echo "Icons generated in Sources/solstone/Resources/ and Sources/journal/Resources/"
+	echo "Icons generated in Sources/solstone/Resources/"
 
 check-icons-deps:
 	@which rsvg-convert > /dev/null 2>&1 || \
@@ -1172,13 +810,12 @@ check-icons-deps:
 	@which iconutil > /dev/null 2>&1 || \
 		(echo "error: iconutil not found (requires macOS)"; exit 1)
 
-# Fails when a committed generated brand asset (AppIcon.icns x2, the menubar
-# template PDFs, or the machine-generated
-# assets/icon-journal.svg) no longer matches what `make icons` produces from
-# its current source. Wired into `make ci` via scripts/run-ci.sh so staleness
-# fails the routine gate instead of waiting for someone to notice.
+# Fails when a committed generated brand asset (AppIcon.icns or the menubar
+# template PDFs) no longer matches what `make icons` produces from its current
+# source. Wired into `make ci` via scripts/run-ci.sh so staleness fails the
+# routine gate instead of waiting for someone to notice.
 check-brand-assets-fresh: check-icons-deps
-	@./scripts/check-brand-assets-fresh.sh
+	@./scripts/check-brand-assets-fresh.sh Sources/solstone/Resources
 
 # ────────────────────────────────────────────────────────────────
 # Publish targets — RELEASE HOST ONLY
@@ -1217,21 +854,30 @@ PUBLISH_PY := uv run --no-project --with 'pynacl>=1.6,<2' --with boto3 python3
 # ────────────────────────────────────────────────────────────────
 # ja1r linkage gate — production publishes are fail-closed on it.
 #
-# The gate lives in extro-tools (tools/solstone-macos-gate), pinned to one
-# revision in scripts/ja1r-gate/extro-tools.rev. That file is the ONLY place
-# the sha is written; the sync never follows extro-tools main.
+# The gate, its rig sync and its offline verifier live in extro-tools
+# (tools/solstone-macos-gate), pinned to one revision in
+# scripts/ja1r-gate/extro-tools.rev. That file is the ONLY place the sha is
+# written; the sync never follows extro-tools main. The Journal app's package
+# (solstone-journal, platforms/macos) carries its own pin and calls the same
+# harness for the journal profile.
+#
+# Every lane reads both apps' AX contracts: ax-contract.json from this checkout
+# and journal-ax-contract.json from a Journal app checkout, named here as
+# JOURNAL_APP_CHECKOUT (the package root inside a solstone-journal clone). Each
+# report and the sync receipt bind both commits.
 #
 # Workflow — one command runs all three steps:
-#   python3 <gate-dir>/release_gate.py --profile {sol|journal|paired} …
-#   It calls ja1r-gate-sync here, runs every lane on the rig and the spl-link
-#   coordinator locally, collects the reports, calls verify-ja1r-gate-<profile>
-#   here, and retains every raw artifact before teardown. Harness README §
-#   "One command per profile" is the flag reference.
+#   python3 <gate-dir>/release_gate.py --profile {sol|paired} …
+#   It syncs the harness and both checkouts to the rig, runs every lane on the
+#   rig and the spl-link coordinator locally, collects the reports, calls
+#   verify-ja1r-gate-<profile> here, and retains every raw artifact before
+#   teardown. Harness README § "One command per profile" is the flag reference.
 #
 # The three steps it composes, for a retry or a one-off:
-#   1. make ja1r-gate-sync     — push the pinned harness + this exact HEAD to
-#                                the rig, read the revision marker back off it,
-#                                and write .ja1r-gate/sync-receipt.json.
+#   1. make ja1r-gate-sync     — push the pinned harness + this exact HEAD + the
+#                                Journal app checkout's HEAD to the rig, read the
+#                                revision marker back off it, and write
+#                                .ja1r-gate/sync-receipt.json.
 #   2. run the lanes on ja1r   — redirect each lane's stdout into a report file
 #                                (the direct harness lanes write no files
 #                                themselves). See the README for fresh-use,
@@ -1240,22 +886,23 @@ PUBLISH_PY := uv run --no-project --with 'pynacl>=1.6,<2' --with boto3 python3
 #                                publish-appcast depends on.
 #
 # Three workflows: fresh use, V2 upgrade, remote delivery. Report counts are
-# fail-closed: sol=3, journal=3, paired=4 (one upgrade execution per changed app).
+# fail-closed: sol=3, paired=4 (one upgrade execution per changed app).
 # Every profile includes spl-link.json and hashes the exact selected sol DMG.
-# For a Journal-only cut, supply DMG_NAME for the RELEASED Solstone companion.
 # This binds observed artifact identity/hash; it does not prove build provenance.
 # App version/build cycles are independent, including when both apps ship together.
 #
 # The verifier never infers an expected identity from the evidence it is
 # checking: every version/build/baseline below is passed in explicitly. Only the
 # artifact actually being published may come from its Info.plist, which is why
-# the sol profile still needs the journal identity typed in (in a sol-only
-# release the journal riding along is the RELEASED one, not the tree's).
+# the Journal identity is always typed in here.
 # ────────────────────────────────────────────────────────────────
 EXTRO_TOOLS_DIR         ?= $(abspath ..)/extro-tools
+GATE_TOOLS              := $(EXTRO_TOOLS_DIR)/tools/solstone-macos-gate
+JOURNAL_APP_CHECKOUT    ?= $(abspath ..)/solstone-journal/platforms/macos
 JA1R_HOST               ?= ja1r.local
 JA1R_HARNESS_DIR        ?= $$HOME/extro-tools/tools/solstone-macos-gate
-JA1R_PRODUCT_DIR        ?= $$HOME/projects/solstone-macos
+JA1R_SOL_DIR            ?= $$HOME/projects/solstone-macos
+JA1R_JOURNAL_DIR        ?= $$HOME/projects/solstone-journal/platforms/macos
 JA1R_GATE_SYNC_RECEIPT  ?= .ja1r-gate/sync-receipt.json
 
 # Default report directories are scoped by profile and app identity, not attempt.
@@ -1267,18 +914,22 @@ JA1R_GATE_SYNC_RECEIPT  ?= .ja1r-gate/sync-receipt.json
 JA1R_GATE_REPORTS_ROOT  ?= .ja1r-gate/reports
 JA1R_GATE_REPORT_DIR    ?=
 JA1R_GATE_REPORT_DIR_SOL     = $(JA1R_GATE_REPORTS_ROOT)/sol-$(DIST_VERSION)-$(DIST_BUILD)
-JA1R_GATE_REPORT_DIR_JOURNAL = $(JA1R_GATE_REPORTS_ROOT)/journal-$(JOURNAL_DIST_VERSION)-$(JOURNAL_DIST_BUILD)
-JA1R_GATE_REPORT_DIR_PAIRED  = $(JA1R_GATE_REPORTS_ROOT)/paired-sol-$(DIST_VERSION)-$(DIST_BUILD)-journal-$(JOURNAL_DIST_VERSION)-$(JOURNAL_DIST_BUILD)
+JA1R_GATE_REPORT_DIR_PAIRED  = $(JA1R_GATE_REPORTS_ROOT)/paired-sol-$(DIST_VERSION)-$(DIST_BUILD)-journal-$(JA1R_GATE_JOURNAL_VERSION)-$(JA1R_GATE_JOURNAL_BUILD)
 
 PRODUCT_HEAD := $(shell git rev-parse HEAD 2>/dev/null)
+JOURNAL_APP_HEAD = $(shell git -C '$(JOURNAL_APP_CHECKOUT)' rev-parse HEAD 2>/dev/null)
 
-VERIFY_JA1R := python3 scripts/verify-ja1r-linkage-gate.py
+VERIFY_JA1R = python3 '$(GATE_TOOLS)/verify-ja1r-linkage-gate.py' \
+	--pin-file scripts/ja1r-gate/extro-tools.rev \
+	--sol-commit '$(PRODUCT_HEAD)' --journal-commit '$(JOURNAL_APP_HEAD)'
 
 ja1r-gate-sync:
 	@EXTRO_TOOLS_DIR='$(EXTRO_TOOLS_DIR)' JA1R_HOST='$(JA1R_HOST)' \
-	 JA1R_HARNESS_DIR='$(JA1R_HARNESS_DIR)' JA1R_PRODUCT_DIR='$(JA1R_PRODUCT_DIR)' \
-	 JA1R_GATE_SYNC_RECEIPT='$(JA1R_GATE_SYNC_RECEIPT)' \
-	 bash scripts/ja1r-gate/sync.sh
+	 JA1R_HARNESS_DIR='$(JA1R_HARNESS_DIR)' JA1R_SOL_DIR='$(JA1R_SOL_DIR)' \
+	 JA1R_JOURNAL_DIR='$(JA1R_JOURNAL_DIR)' JA1R_GATE_SYNC_RECEIPT='$(JA1R_GATE_SYNC_RECEIPT)' \
+	 SOL_CHECKOUT='$(CURDIR)' JOURNAL_CHECKOUT='$(JOURNAL_APP_CHECKOUT)' \
+	 PIN_FILE='$(CURDIR)/scripts/ja1r-gate/extro-tools.rev' \
+	 bash '$(GATE_TOOLS)/sync.sh'
 
 # Refuse a dirty tree: PRODUCT_HEAD would misrepresent what is being published.
 ja1r-gate-clean-tree:
@@ -1306,16 +957,14 @@ define require_gate_vars
 endef
 
 # Remote delivery (spl-link) is one of the three required workflows for every
-# profile now, not an extra only sol/paired carried -- all three targets pass
-# --sol-dmg. For a journal-only cut this hashes the RELEASED (unchanged) sol
-# DMG the operator staged at $(DMG_NAME); DIST_VERSION stays at the last
-# released sol version when only the journal candidate moved.
+# profile; both targets pass --sol-dmg. The Journal riding along in a sol-only
+# cut is the RELEASED one, so its identity and DMG name are always supplied.
 verify-ja1r-gate-sol: ja1r-gate-clean-tree
-	$(call require_gate_vars,sol,JA1R_GATE_JOURNAL_VERSION JA1R_GATE_JOURNAL_BUILD JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_RUNTIME_PIN)
+	$(call require_gate_vars,sol,JA1R_GATE_JOURNAL_VERSION JA1R_GATE_JOURNAL_BUILD JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_RUNTIME_PIN JOURNAL_DMG_NAME)
+	@test -n '$(JOURNAL_APP_HEAD)' || { echo "error: JOURNAL_APP_CHECKOUT=$(JOURNAL_APP_CHECKOUT) is not a Journal app checkout in a git clone" >&2; exit 1; }
 	$(VERIFY_JA1R) --profile sol \
 		--report-dir '$(or $(JA1R_GATE_REPORT_DIR),$(JA1R_GATE_REPORT_DIR_SOL))' \
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
-		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
 		--sol-dmg '$(DMG_NAME)' \
 		--journal-dmg '$(JOURNAL_DMG_NAME)' \
@@ -1325,39 +974,22 @@ verify-ja1r-gate-sol: ja1r-gate-clean-tree
 		--sol-baseline-version '$(JA1R_GATE_SOL_BASELINE_VERSION)' \
 		--sol-baseline-build '$(JA1R_GATE_SOL_BASELINE_BUILD)'
 
-verify-ja1r-gate-journal: ja1r-gate-clean-tree
-	$(call require_gate_vars,journal,JA1R_GATE_SOL_VERSION JA1R_GATE_SOL_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)
-	$(VERIFY_JA1R) --profile journal \
-		--report-dir '$(or $(JA1R_GATE_REPORT_DIR),$(JA1R_GATE_REPORT_DIR_JOURNAL))' \
-		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
-		--product-commit '$(PRODUCT_HEAD)' \
-		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
-		--expected-journal-baseline-runtime '$(JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)' \
-		--sol-dmg '$(DMG_NAME)' \
-		--journal-dmg '$(JOURNAL_DMG_NAME)' \
-		--sol-target-version '$(JA1R_GATE_SOL_VERSION)' \
-		--sol-target-build '$(JA1R_GATE_SOL_BUILD)' \
-		--companion-sol-version '$(JA1R_GATE_SOL_VERSION)' \
-		--companion-sol-build '$(JA1R_GATE_SOL_BUILD)' \
-		--journal-target-version '$(JOURNAL_DIST_VERSION)' \
-		--journal-target-build '$(JOURNAL_DIST_BUILD)' \
-		--journal-baseline-version '$(JA1R_GATE_JOURNAL_BASELINE_VERSION)' \
-		--journal-baseline-build '$(JA1R_GATE_JOURNAL_BASELINE_BUILD)'
-
+# Both candidates in one evidence set; the Journal candidate's identity and DMG
+# come from its own package and are typed in here.
 verify-ja1r-gate-paired: ja1r-gate-clean-tree
-	$(call require_gate_vars,paired,JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)
+	$(call require_gate_vars,paired,JA1R_GATE_JOURNAL_VERSION JA1R_GATE_JOURNAL_BUILD JA1R_GATE_SOL_BASELINE_VERSION JA1R_GATE_SOL_BASELINE_BUILD JA1R_GATE_JOURNAL_BASELINE_VERSION JA1R_GATE_JOURNAL_BASELINE_BUILD JA1R_GATE_JOURNAL_RUNTIME_PIN JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN JOURNAL_DMG_NAME)
+	@test -n '$(JOURNAL_APP_HEAD)' || { echo "error: JOURNAL_APP_CHECKOUT=$(JOURNAL_APP_CHECKOUT) is not a Journal app checkout in a git clone" >&2; exit 1; }
 	$(VERIFY_JA1R) --profile paired \
 		--report-dir '$(or $(JA1R_GATE_REPORT_DIR),$(JA1R_GATE_REPORT_DIR_PAIRED))' \
 		--sync-receipt '$(JA1R_GATE_SYNC_RECEIPT)' \
-		--product-commit '$(PRODUCT_HEAD)' \
 		--expected-journal-runtime '$(JA1R_GATE_JOURNAL_RUNTIME_PIN)' \
 		--expected-journal-baseline-runtime '$(JA1R_GATE_JOURNAL_BASELINE_RUNTIME_PIN)' \
 		--sol-dmg '$(DMG_NAME)' \
 		--journal-dmg '$(JOURNAL_DMG_NAME)' \
 		--sol-target-version '$(DIST_VERSION)' --sol-target-build '$(DIST_BUILD)' \
 		--companion-sol-version '$(DIST_VERSION)' --companion-sol-build '$(DIST_BUILD)' \
-		--journal-target-version '$(JOURNAL_DIST_VERSION)' \
-		--journal-target-build '$(JOURNAL_DIST_BUILD)' \
+		--journal-target-version '$(JA1R_GATE_JOURNAL_VERSION)' \
+		--journal-target-build '$(JA1R_GATE_JOURNAL_BUILD)' \
 		--sol-baseline-version '$(JA1R_GATE_SOL_BASELINE_VERSION)' \
 		--sol-baseline-build '$(JA1R_GATE_SOL_BASELINE_BUILD)' \
 		--journal-baseline-version '$(JA1R_GATE_JOURNAL_BASELINE_VERSION)' \
@@ -1371,14 +1003,6 @@ publish-appcast: publish-preflight verify-ja1r-gate-sol
 publish-appcast-staging: publish-preflight
 	$(PUBLISH_PY) scripts/publish-appcast.py $(DIST_VERSION) --app sol --staging
 
-publish-appcast-journal: verify-ja1r-gate-journal
-	@$(MAKE) publish-preflight
-	$(PUBLISH_PY) scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal --build $(JOURNAL_DIST_BUILD)
-
-publish-appcast-journal-staging:
-	@$(MAKE) publish-preflight
-	$(PUBLISH_PY) scripts/publish-appcast.py $(JOURNAL_DIST_VERSION) --app journal --build $(JOURNAL_DIST_BUILD) --staging
-
 # Cut a GitHub Release: annotated tag + `gh release create` with the DMG
 # attached and CHANGELOG notes. Run AFTER `make publish-appcast` and operator
 # approval — the DMG must still be in CWD (publish-appcast.py's flow scp's it
@@ -1387,8 +1011,5 @@ publish-appcast-journal-staging:
 github-release:
 	@bash scripts/github-release.sh --app sol $(DIST_VERSION)
 
-github-release-journal:
-	@bash scripts/github-release.sh --app journal --build $(JOURNAL_DIST_BUILD) $(JOURNAL_DIST_VERSION)
-
-.PHONY: publish-preflight publish-appcast publish-appcast-staging publish-appcast-journal publish-appcast-journal-staging github-release github-release-journal \
-        ja1r-gate-sync ja1r-gate-clean-tree verify-ja1r-gate-sol verify-ja1r-gate-journal verify-ja1r-gate-paired
+.PHONY: publish-preflight publish-appcast publish-appcast-staging github-release \
+        ja1r-gate-sync ja1r-gate-clean-tree verify-ja1r-gate-sol verify-ja1r-gate-paired

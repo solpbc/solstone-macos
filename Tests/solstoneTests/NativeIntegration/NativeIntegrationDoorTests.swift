@@ -4,13 +4,12 @@
 import Darwin
 import Foundation
 import JournalMarkKit
-import JournalRuntimeTestSupport
 import SPLTunnel
 import Testing
-@testable import JournalRuntime
 @testable import solstone
 
-/// The proxy meets the real door. Against the staged native runtime: establish the journal
+/// The proxy meets the real door. Against a real native runtime, which the Journal package's
+/// `journal-integration-fixture` starts under the Journal app's own supervisor: establish the journal
 /// session the way the Journal app does (mark lock, finalize), pair the way the sol app does
 /// (same-machine pair-start, the SPL ceremony over the real door), connect the real
 /// `SPLTunnelTransport`, and then drive raw TCP through the real `LoopbackProxy`:
@@ -27,8 +26,8 @@ import Testing
     "NativeIntegration door",
     .serialized,
     .enabled(
-        if: NativeRuntimeFixture.isEnabled,
-        "set SOLSTONE_NATIVE_INTEGRATION=1 (make integration-native) to run against the staged native journal runtime"
+        if: NativeJournalFixture.isEnabled,
+        "set SOLSTONE_NATIVE_INTEGRATION=1 (make integration-native) to run against a native journal runtime"
     )
 )
 @MainActor
@@ -65,63 +64,37 @@ struct NativeIntegrationDoorTests {
     }
 
     @Test func proxyServesThroughRealDoorUnderIdlePreconnectionsAndHeldStreams() async throws {
-        let fixture = try NativeRuntimeFixture(label: "door")
-        defer { fixture.clear() }
-        let setup = try await NativeIntegrationHelpers.runAppSetup(fixture)
-        try #require(setup.succeeded, "\(setup.stderr)")
-
-        let directPort = try NativeRuntimeFixture.reserveLoopbackPort()
-        let conveyPort = try NativeRuntimeFixture.reserveLoopbackPort()
-        try NativeIntegrationHelpers.configureDirectDoorPort(fixture, port: directPort)
-        try await JournalRequiredModelsReconciler().reconcile(runtime: fixture.runtime, journalRoot: fixture.journalRoot)
-
-        let runner = SupervisedJournalRunner(
-            statusSink: { _ in },
-            gate: MockSingleSupervisorGate(result: .success),
-            requiredModels: JournalRequiredModelsReconciler()
-        )
-        let reader = LiveJournalProcessContainmentEvidenceReader()
-        let admitted = AdmittedProcesses()
-        defer { NativeIntegrationHelpers.killSurvivors(admitted.all()) }
-
-        try await runner.start(
-            runtime: fixture.runtime,
-            journalRoot: fixture.journalRoot,
-            port: conveyPort,
-            receiptContext: NativeIntegrationHelpers.silentReceiptContext()
-        )
-        let identity = try #require(await runner.currentIdentity())
-        admitted.record([identity.pid])
-        let readiness = await JournalReadinessGate().waitUntilReady(
-            journalRoot: fixture.journalRoot,
-            runtime: fixture.runtime,
-            timeout: .seconds(120),
-            terminalCheck: { await runner.terminalReason() },
-            identityProvider: { await runner.currentIdentity() },
-            readinessAcceptance: { await runner.markReady(identity: $0) }
-        )
-        try #require(readiness == .ready, "\(readiness)")
-        if let evidence = reader.containmentEvidence(for: identity.pid),
-           let group = reader.processIDs(inProcessGroup: evidence.processGroupID) {
-            admitted.record(group)
+        let fixture = try await NativeJournalFixture.start()
+        do {
+            try await exerciseDoor(fixture)
+        } catch {
+            _ = try? await fixture.stop()
+            throw error
         }
+        let stopped = try await fixture.stop()
+        #expect(stopped.allAdmittedProcessesGone, "the fixture's journal processes outlived it")
+        #expect(stopped.forbiddenHomeArtifacts.isEmpty, "\(stopped.forbiddenHomeArtifacts)")
+        #expect(stopped.fixtureTreeRemoved, "the fixture left its temporary tree behind")
+    }
 
+    private func exerciseDoor(_ fixture: NativeJournalFixture) async throws {
+        let ready = fixture.ready
+        let directPort = ready.directDoorPort
+        let conveyBase = ready.conveyBaseURL
         // The door is withheld until the session is established. Establish it the way the
         // Journal app's first run does, over the same HTTP client.
-        let conveyBase = "http://127.0.0.1:\(conveyPort)"
-        let withheld = try #require(NativeIntegrationHelpers.readDirectDoorRecord(fixture))
-        #expect(withheld.state == "withheld", "fresh journal should withhold the door, saw \(withheld.state)")
+        #expect(ready.doorState == "withheld", "fresh journal should withhold the door, saw \(ready.doorState)")
         let initClient = JournalInitClient(baseURL: conveyBase)
         _ = try await initClient.getMark()
         let locked = try await initClient.lockMark()
         #expect(locked.locked)
         let finalized = try await initClient.finalize()
         #expect(finalized.success)
-        let doorBound = await NativeIntegrationHelpers.waitUntil(timeout: .seconds(20)) {
-            NativeIntegrationHelpers.loopbackPortAccepts(directPort)
+        let doorBound = await NativeJournalFixture.waitUntil(timeout: .seconds(20)) {
+            NativeJournalFixture.loopbackPortAccepts(directPort)
         }
         #expect(doorBound, "door did not bind on 127.0.0.1:\(directPort) after finalize")
-        #expect(NativeIntegrationHelpers.readDirectDoorRecord(fixture)?.state == "bound")
+        #expect(fixture.directDoorState() == "bound")
 
         // Pair the way the sol app does: same-machine pair-start, then the SPL ceremony over
         // the real door. The pairing stays in memory; nothing touches a keychain.
@@ -252,12 +225,6 @@ struct NativeIntegrationDoorTests {
         #expect(afterUpload.hasPrefix("HTTP/1.1 200"), "proxy port did not survive the large upload: \(afterUpload.prefix(120))")
 
         await transport.disconnect()
-        await runner.stopForTermination()
-        let gone = await NativeIntegrationHelpers.waitUntil(timeout: .seconds(20)) {
-            admitted.all().allSatisfy { !NativeIntegrationHelpers.processExists($0) }
-        }
-        #expect(gone, "survivors after termination: \(admitted.all().filter(NativeIntegrationHelpers.processExists))")
-        #expect(fixture.forbiddenHomeArtifacts().isEmpty, "\(fixture.forbiddenHomeArtifacts())")
     }
 }
 
@@ -265,13 +232,177 @@ private enum DoorTestError: Error, CustomStringConvertible {
     case pairStart(String)
     case pairLink(String)
     case socket(String)
+    case fixture(String)
 
     var description: String {
         switch self {
         case .pairStart(let detail): return "same-machine pair-start failed: \(detail)"
         case .pairLink(let detail): return "same-machine pair link rejected: \(detail)"
         case .socket(let detail): return "loopback socket: \(detail)"
+        case .fixture(let detail): return "journal integration fixture: \(detail)"
         }
+    }
+}
+
+/// The Journal package's `journal-integration-fixture`, run as a child process. It starts the
+/// runtime named by SOLSTONE_NATIVE_RUNTIME_DIR under the Journal app's supervisor in an
+/// isolated home, and owns stopping it and removing that home. The tier fails, rather than
+/// skips, when it is enabled without a fixture.
+private final class NativeJournalFixture: @unchecked Sendable {
+    static let enableEnvironmentKey = "SOLSTONE_NATIVE_INTEGRATION"
+    static let fixtureEnvironmentKey = "SOLSTONE_JOURNAL_INTEGRATION_FIXTURE"
+
+    static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment[enableEnvironmentKey] == "1"
+    }
+
+    struct Ready {
+        let journalRoot: URL
+        let conveyBaseURL: String
+        let directDoorPort: Int
+        let doorState: String
+    }
+
+    struct Stopped {
+        let allAdmittedProcessesGone: Bool
+        let forbiddenHomeArtifacts: [String]
+        let fixtureTreeRemoved: Bool
+    }
+
+    let ready: Ready
+    private let process: Process
+    private let input: FileHandle
+    private let records: RecordQueue
+
+    private init(ready: Ready, process: Process, input: FileHandle, records: RecordQueue) {
+        self.ready = ready
+        self.process = process
+        self.input = input
+        self.records = records
+    }
+
+    /// Startup covers native setup, two required-model reconciliations and readiness.
+    static func start(timeout: Duration = .seconds(600)) async throws -> NativeJournalFixture {
+        guard let path = ProcessInfo.processInfo.environment[fixtureEnvironmentKey], !path.isEmpty else {
+            throw DoorTestError.fixture("\(fixtureEnvironmentKey) is not set; build journal-integration-fixture in solstone-journal/platforms/macos and pass its path")
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        let stdinPipe = Pipe()
+        let stdoutPipe = Pipe()
+        process.standardInput = stdinPipe
+        process.standardOutput = stdoutPipe
+        process.standardError = FileHandle.standardError
+        let records = RecordQueue()
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if chunk.isEmpty {
+                handle.readabilityHandler = nil
+                records.finish()
+            } else {
+                records.append(chunk)
+            }
+        }
+        try process.run()
+        let record = await records.next(within: timeout)
+        guard let record, record["event"] as? String == "ready",
+              let root = record["journal_root"] as? String,
+              let base = record["convey_base_url"] as? String,
+              let port = record["direct_door_port"] as? Int,
+              let state = record["door_state"] as? String else {
+            try? stdinPipe.fileHandleForWriting.close()
+            process.waitUntilExit()
+            throw DoorTestError.fixture("no ready record before the deadline: \(String(describing: record))")
+        }
+        let ready = Ready(journalRoot: URL(fileURLWithPath: root, isDirectory: true), conveyBaseURL: base,
+                          directDoorPort: port, doorState: state)
+        return NativeJournalFixture(ready: ready, process: process, input: stdinPipe.fileHandleForWriting,
+                                    records: records)
+    }
+
+    /// The door record the native runtime publishes, read directly under the fixture's journal.
+    func directDoorState() -> String? {
+        let url = ready.journalRoot.appendingPathComponent("health/direct-door.json")
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return object["state"] as? String
+    }
+
+    /// Asks the fixture to stop its journal and remove its home; returns its measured report.
+    /// Stopping covers the supervisor's own wait and the 20-second disappearance check.
+    func stop(timeout: Duration = .seconds(120)) async throws -> Stopped {
+        try? input.write(contentsOf: Data("stop\n".utf8))
+        try? input.close()
+        let stopped = await records.next(within: timeout)
+        process.waitUntilExit()
+        guard let stopped, stopped["event"] as? String == "stopped" else {
+            throw DoorTestError.fixture("no stopped record: \(String(describing: stopped))")
+        }
+        guard process.terminationStatus == 0 else {
+            throw DoorTestError.fixture("exited \(process.terminationStatus) after \(stopped)")
+        }
+        return Stopped(
+            allAdmittedProcessesGone: stopped["all_admitted_processes_gone"] as? Bool ?? false,
+            forbiddenHomeArtifacts: stopped["forbidden_home_artifacts"] as? [String] ?? ["<missing>"],
+            fixtureTreeRemoved: stopped["fixture_tree_removed"] as? Bool ?? false
+        )
+    }
+
+    @MainActor
+    static func waitUntil(timeout: Duration, _ condition: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return condition()
+    }
+
+    static func loopbackPortAccepts(_ port: Int) -> Bool {
+        guard let descriptor = try? LoopbackHTTP.connect(port: port) else { return false }
+        close(descriptor)
+        return true
+    }
+}
+
+/// The fixture's stdout, split into JSON records as it arrives.
+private final class RecordQueue: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending = Data()
+    private var records: [[String: Any]] = []
+    private var finished = false
+
+    func append(_ chunk: Data) {
+        lock.withLock {
+            pending.append(chunk)
+            while let newline = pending.firstIndex(of: UInt8(ascii: "\n")) {
+                let line = pending[pending.startIndex..<newline]
+                pending.removeSubrange(pending.startIndex...newline)
+                if let record = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] {
+                    records.append(record)
+                }
+            }
+        }
+    }
+
+    func finish() {
+        lock.withLock { finished = true }
+    }
+
+    /// The next record, or nil once stdout closed or the deadline passed.
+    func next(within timeout: Duration) async -> [String: Any]? {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            let (record, done): ([String: Any]?, Bool) = lock.withLock {
+                records.isEmpty ? (nil, finished) : (records.removeFirst(), false)
+            }
+            if let record { return record }
+            if done { return nil }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return nil
     }
 }
 

@@ -176,22 +176,6 @@ struct WatchdogTests {
         #expect(plist["AssociatedBundleIdentifiers"] as? [String] == ["app.solstone.observer"])
     }
 
-    @Test func journalPlistKeepsInertWatchdogEnvironmentContract() throws {
-        let plist = try loadWatchdogPlist("Sources/journal/app.solstone.journal.watchdog.plist")
-
-        #expect(plist["Label"] as? String == "app.solstone.journal.watchdog")
-        #expect(plist["BundleProgram"] as? String == "Contents/MacOS/solstone-watchdog")
-        #expect(plist["RunAtLoad"] as? Bool == true)
-        #expect(plist["ThrottleInterval"] as? Int == 30)
-        #expect(plist["AssociatedBundleIdentifiers"] as? [String] == ["app.solstone.journal"])
-
-        let environment = try #require(plist["EnvironmentVariables"] as? [String: String])
-        #expect(environment["SOLSTONE_WATCHDOG_TARGET_BUNDLE_ID"] == "app.solstone.journal")
-        #expect(environment["SOLSTONE_WATCHDOG_LOGGER_SUBSYSTEM"] == "app.solstone.journal.watchdog")
-        #expect(environment["SOLSTONE_WATCHDOG_MARKER_DISCRIMINATOR"] == ExpectedExitMarker.journalMarkerDiscriminator)
-        #expect(!environment.values.contains { $0.hasPrefix("/") })
-    }
-
     private func loadWatchdogPlist(_ relativePath: String) throws -> [String: Any] {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

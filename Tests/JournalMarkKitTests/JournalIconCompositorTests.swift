@@ -3,6 +3,7 @@
 
 import AppKit
 import CoreGraphics
+import MacTestSupport
 import Testing
 @testable import JournalMarkKit
 
@@ -48,21 +49,6 @@ struct JournalIconCompositorTests {
         defer { JournalIconWordLayout.forceFontUnavailableForTesting = false }
 
         #expect(JournalIconCompositor.tile(spec: .uiTestSample, side: 256).kind == .generic)
-    }
-
-    @Test func committedICNSCornersStayTransparentAtEveryLadderSide() throws {
-        let url = repoRootURL().appendingPathComponent("Sources/journal/Resources/AppIcon.icns")
-        let image = try #require(NSImage(contentsOf: url))
-
-        for side in JournalIconCompositor.ladderSides {
-            var rect = NSRect(x: 0, y: 0, width: side, height: side)
-            let cgImage = try #require(image.cgImage(forProposedRect: &rect, context: nil, hints: nil))
-            let snapshot = try #require(RGBASnapshot(image: cgImage))
-            #expect(snapshot.alphaAt(x: 0, y: 0) == 0)
-            #expect(snapshot.alphaAt(x: snapshot.width - 1, y: 0) == 0)
-            #expect(snapshot.alphaAt(x: 0, y: snapshot.height - 1) == 0)
-            #expect(snapshot.alphaAt(x: snapshot.width - 1, y: snapshot.height - 1) == 0)
-        }
     }
 
     @Test func ownerBorderColorAppearsNearExpectedChipCenters() throws {

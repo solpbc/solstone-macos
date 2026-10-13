@@ -188,7 +188,7 @@ class RunCiLockWiringTest(unittest.TestCase):
         self.content = RUN_CI.read_text(encoding="utf-8")
 
     def test_lock_is_taken_before_the_shared_log_is_truncated(self):
-        exec_at = self.content.index('exec python3 "$REPO_ROOT/scripts/ci_lock.py"')
+        exec_at = self.content.index('exec python3 "$SCRIPT_DIR/ci_lock.py"')
         truncate_at = self.content.index(': > "$CI_LOG"')
         keychain_at = self.content.index('security delete-keychain "$TEST_KC"')
         self.assertLess(exec_at, truncate_at)
