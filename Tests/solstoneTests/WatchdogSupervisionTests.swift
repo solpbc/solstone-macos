@@ -5,7 +5,7 @@ import AppKit
 import Foundation
 import Testing
 @testable import SolstoneCore
-@testable import solstone_watchdog
+@testable import WatchdogKit
 @testable import solstone
 
 @Suite("Watchdog supervision", .serialized)

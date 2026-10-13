@@ -398,10 +398,12 @@ final class WatchdogCoordinator {
 
 }
 
-@main
-struct SolstoneWatchdog {
+/// The one watchdog both apps ship. Each app's `solstone-watchdog` executable is a
+/// one-line bootstrap that calls `run()`; the product it supervises comes from the
+/// bundle the executable sits in.
+public enum SolstoneWatchdog {
     @MainActor
-    static func main() {
+    public static func run() {
         let coordinator = WatchdogCoordinator()
         guard coordinator.start() == .polling else { return }
         withExtendedLifetime(coordinator) {

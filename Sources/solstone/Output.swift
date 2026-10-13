@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Darwin
+import SolstoneCore
 
 /// Unbuffered stdout output
 public enum Stdout {

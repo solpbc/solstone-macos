@@ -5,7 +5,8 @@ import CoreFoundation
 import Foundation
 import Testing
 @testable import SolstoneCore
-@testable import solstone_watchdog
+@testable import WatchdogKit
+@testable import solstone
 
 @Suite("Watchdog", .serialized)
 struct WatchdogTests {

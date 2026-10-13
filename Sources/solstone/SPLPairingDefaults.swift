@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import SolstoneCore
 
 public enum SPLPairingDefaults {
     // Production operated relay. A 0x06 pair link with selector 0x00 carries no

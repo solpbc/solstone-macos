@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import SolstoneCore
 
 public enum LoopbackHost {
     public static func isLoopbackURL(_ serverURL: String?) -> Bool {

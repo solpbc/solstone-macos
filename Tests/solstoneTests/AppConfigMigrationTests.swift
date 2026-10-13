@@ -1,7 +1,8 @@
 import Foundation
-import JournalRuntimeTestSupport
+import MacTestSupport
 import Testing
 import SolstoneCore
+@testable import solstone
 
 @Suite("AppConfigMigration", .serialized)
 @MainActor

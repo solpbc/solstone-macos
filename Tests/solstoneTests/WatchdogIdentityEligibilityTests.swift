@@ -5,7 +5,7 @@ import Darwin
 import Foundation
 import Testing
 @testable import SolstoneCore
-@testable import solstone_watchdog
+@testable import WatchdogKit
 
 @Suite("Watchdog identity and eligibility", .serialized)
 struct WatchdogIdentityEligibilityTests {
@@ -416,7 +416,7 @@ struct WatchdogIdentityEligibilityTests {
             #expect(!content.contains("/var/folders/"))
             #expect(!content.contains("$TMPDIR"))
         }
-        let watchdogURLs = swiftFiles(under: root.appendingPathComponent("Sources/solstone-watchdog"))
+        let watchdogURLs = swiftFiles(under: root.appendingPathComponent("Sources/WatchdogKit"))
             + swiftFiles(under: root.appendingPathComponent("Sources/SolstoneCore"))
         for url in watchdogURLs {
             let content = try String(contentsOf: url, encoding: .utf8)
@@ -430,7 +430,7 @@ struct WatchdogIdentityEligibilityTests {
     @Test func watchdogSupervisionSourceContractsStayClean() throws {
         let root = repositoryRoot()
         let core = root.appendingPathComponent("Sources/SolstoneCore")
-        let watchdog = root.appendingPathComponent("Sources/solstone-watchdog/Watchdog.swift")
+        let watchdog = root.appendingPathComponent("Sources/WatchdogKit/Watchdog.swift")
         let sources = try swiftFiles(under: root.appendingPathComponent("Sources"))
             .map { try String(contentsOf: $0, encoding: .utf8) }
         let exitReason = try String(contentsOf: core.appendingPathComponent("ExitReason.swift"), encoding: .utf8)

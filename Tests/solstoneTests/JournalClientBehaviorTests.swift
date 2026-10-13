@@ -3,7 +3,7 @@
 
 import Foundation
 import JournalMarkKit
-import JournalRuntimeTestSupport
+import MacTestSupport
 import Testing
 import SolstoneCore
 @testable import solstone

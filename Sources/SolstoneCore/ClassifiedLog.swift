@@ -29,7 +29,6 @@ public protocol ClassifiedLogSinking: Sendable {
 public struct LoggerClassifiedLogSink: ClassifiedLogSinking {
     public static let general = LoggerClassifiedLogSink(logger: .general)
     public static let journal = LoggerClassifiedLogSink(logger: .journal)
-    public static let upload = LoggerClassifiedLogSink(logger: .upload)
     public static let setup = LoggerClassifiedLogSink(logger: .setup)
 
     private let logger: Logger

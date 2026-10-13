@@ -93,7 +93,7 @@ Host semantics:
 
 - Use host parsing, not substring matching.
 - Loopback means `localhost`, IPv4 `127.0.0.0/8`, or IPv6 `::1`.
-- Reuse or extend `Sources/SolstoneCore/LoopbackHost.swift:5-15`. Current helper covers `localhost` and `127.0.0.1` at the bundled port; implementation must add true loopback-host semantics there or in a sibling helper, then route `BundledJournalEndpoint.isBundledServiceURL` through it. Do not duplicate parser logic in `SettingsView`.
+- Reuse or extend `Sources/solstone/LoopbackHost.swift:5-15`. Current helper covers `localhost` and `127.0.0.1` at the bundled port; implementation must add true loopback-host semantics there or in a sibling helper, then route `BundledJournalEndpoint.isBundledServiceURL` through it. Do not duplicate parser logic in `SettingsView`.
 
 Topology-specific voting:
 

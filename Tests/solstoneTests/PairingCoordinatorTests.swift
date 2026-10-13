@@ -3,7 +3,7 @@
 
 import Crypto
 import Foundation
-import JournalRuntimeTestSupport
+import MacTestSupport
 import SolstoneCore
 import SPLTunnel
 import Testing

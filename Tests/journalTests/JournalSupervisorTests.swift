@@ -4,6 +4,7 @@
 import Foundation
 import JournalRuntime
 import JournalRuntimeTestSupport
+import MacTestSupport
 import SolstoneCore
 import Testing
 @testable import journal

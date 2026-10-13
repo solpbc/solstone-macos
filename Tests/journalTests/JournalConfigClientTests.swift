@@ -3,6 +3,7 @@
 
 import Foundation
 import JournalRuntimeTestSupport
+import MacTestSupport
 import Testing
 @testable import journal
 

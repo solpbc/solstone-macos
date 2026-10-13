@@ -5,6 +5,7 @@ import Foundation
 import JournalMarkKit
 import JournalRuntime
 import JournalRuntimeTestSupport
+import MacTestSupport
 import Testing
 @testable import journal
 

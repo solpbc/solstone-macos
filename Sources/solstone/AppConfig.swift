@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import SolstoneCore
 
 public enum ServiceMode: String, Codable, Equatable, Sendable, CaseIterable {
     case bundled

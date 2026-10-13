@@ -5,7 +5,7 @@
 
 import CryptoKit
 import Foundation
-import JournalRuntimeTestSupport
+import MacTestSupport
 import SolstoneCore
 import SQLite3
 import Testing

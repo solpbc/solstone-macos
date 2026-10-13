@@ -9,6 +9,15 @@ let package = Package(
     platforms: [
         .macOS(.v15)
     ],
+    // The shared Mac libraries the Journal app (in solstone-journal) consumes at an
+    // exact revision. The capture app and its helpers stay local to this package.
+    products: [
+        .library(name: "SolstoneCore", targets: ["SolstoneCore"]),
+        .library(name: "JournalMarkKit", targets: ["JournalMarkKit"]),
+        .library(name: "UpdateKit", targets: ["UpdateKit"]),
+        .library(name: "WatchdogKit", targets: ["WatchdogKit"]),
+        .library(name: "MacTestSupport", targets: ["MacTestSupport"]),
+    ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.1"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
@@ -20,9 +29,6 @@ let package = Package(
             path: "Sources/SolstoneCore",
             swiftSettings: [
                 .swiftLanguageMode(.v6)
-            ],
-            linkerSettings: [
-                .linkedFramework("ScreenCaptureKit")
             ]
         ),
         .target(
@@ -106,17 +112,27 @@ let package = Package(
                 .linkedLibrary("sqlite3")
             ]
         ),
-        .executableTarget(
-            name: "solstone-watchdog",
+        .target(
+            name: "WatchdogKit",
             dependencies: [
                 .target(name: "SolstoneCore")
             ],
-            path: "Sources/solstone-watchdog",
+            path: "Sources/WatchdogKit",
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ],
             linkerSettings: [
                 .linkedFramework("AppKit")
+            ]
+        ),
+        .executableTarget(
+            name: "solstone-watchdog",
+            dependencies: [
+                .target(name: "WatchdogKit")
+            ],
+            path: "Sources/solstone-watchdog",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
             ]
         ),
         .executableTarget(
@@ -160,6 +176,16 @@ let package = Package(
             publicHeadersPath: "include"
         ),
         .target(
+            name: "MacTestSupport",
+            dependencies: [
+                .target(name: "SolstoneCore")
+            ],
+            path: "Tests/MacTestSupport",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .target(
             name: "JournalRuntimeTestSupport",
             dependencies: [
                 .target(name: "JournalMarkKit"),
@@ -176,6 +202,7 @@ let package = Package(
             dependencies: [
                 .target(name: "JournalRuntime"),
                 .target(name: "JournalRuntimeTestSupport"),
+                .target(name: "MacTestSupport"),
                 .target(name: "SolstoneCore")
             ],
             path: "Tests/JournalRuntimeTests",
@@ -190,7 +217,7 @@ let package = Package(
             name: "JournalMarkKitTests",
             dependencies: [
                 .target(name: "JournalMarkKit"),
-                .target(name: "JournalRuntimeTestSupport"),
+                .target(name: "MacTestSupport"),
                 .target(name: "SolstoneCore")
             ],
             path: "Tests/JournalMarkKitTests",
@@ -223,7 +250,8 @@ let package = Package(
                 .target(name: "UpdateKit"),
                 .product(name: "SPLTunnel", package: "spl-swift"),
                 .target(name: "JournalRuntimeTestSupport"),
-                .target(name: "solstone-watchdog")
+                .target(name: "MacTestSupport"),
+                .target(name: "WatchdogKit")
             ],
             path: "Tests/solstoneTests",
             resources: [
@@ -241,6 +269,7 @@ let package = Package(
                 .target(name: "JournalMarkKit"),
                 .target(name: "JournalRuntime"),
                 .target(name: "JournalRuntimeTestSupport"),
+                .target(name: "MacTestSupport"),
                 .target(name: "SolstoneCore"),
                 .target(name: "UpdateKit")
             ],
