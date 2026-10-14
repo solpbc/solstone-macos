@@ -3203,7 +3203,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("pause intake while protected video is on screen", isOn: pauseProtectedVideoBinding)
                         .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideo)
-                    Text("pauses screen and audio intake while supported streaming video apps or websites are visible. a short note of the service and window title goes into your journal.")
+                    Text("pauses screen and audio intake while supported streaming video apps or websites are visible, so the video doesn't go black. a short note of the service and window title goes into your journal.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
