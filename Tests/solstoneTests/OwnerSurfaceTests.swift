@@ -142,17 +142,18 @@ struct OwnerSurfaceSourcesTests {
         #expect(browserRelativeTimeBucket(lastSeen: older, now: now, calendar: calendar) == .date(older))
     }
 
-    @Test func liveStoreCatalogTargetsChromeAndEdgeOnly() {
+    @Test func liveStoreCatalogTargetsChromeEdgeAndFirefox() {
         let expectedURL = URL(string: "https://chromewebstore.google.com/detail/solstone/eibbeeoifjoabddfmgeggnageolkcnim")!
         let catalog = BrowserStoreCatalog.live
         #expect(catalog.url(for: .chrome) == expectedURL)
         #expect(catalog.url(for: .edge) == expectedURL)
         #expect(catalog.url(for: .chrome) == catalog.url(for: .edge))
-        #expect(catalog.url(for: .firefox) == nil)
-        #expect(Set(catalog.urls.keys) == Set([.chrome, .edge]))
+        #expect(catalog.url(for: .firefox) == URL(string: "https://addons.mozilla.org/firefox/addon/solstone/")!)
+        #expect(catalog.url(for: .safari) == nil)
+        #expect(Set(catalog.urls.keys) == Set([.chrome, .edge, .firefox]))
 
         var openerCalled = false
-        let disabled = performBrowserStoreOpen(brand: .firefox, catalog: .live) { _, _ in
+        let disabled = performBrowserStoreOpen(brand: .safari, catalog: .live) { _, _ in
             openerCalled = true
             return true
         }
@@ -166,21 +167,21 @@ struct OwnerSurfaceSourcesTests {
             BrowserBrandRow(brand: .edge, connectedCount: 0, lastSeen: nil, registration: .unknown),
             BrowserBrandRow(brand: .firefox, connectedCount: 0, lastSeen: nil, registration: .unknown)
         ]
-        #expect(offeredBrowserStoreBrands(catalog: .live, rows: unseenRows) == Set([.chrome, .edge]))
+        #expect(offeredBrowserStoreBrands(catalog: .live, rows: unseenRows) == Set([.chrome, .edge, .firefox]))
 
         let chromeSeenRows = [
             BrowserBrandRow(brand: .chrome, connectedCount: 0, lastSeen: .justNow, registration: .unknown),
             BrowserBrandRow(brand: .edge, connectedCount: 0, lastSeen: nil, registration: .unknown),
             BrowserBrandRow(brand: .firefox, connectedCount: 0, lastSeen: nil, registration: .unknown)
         ]
-        #expect(offeredBrowserStoreBrands(catalog: .live, rows: chromeSeenRows) == Set([.edge]))
+        #expect(offeredBrowserStoreBrands(catalog: .live, rows: chromeSeenRows) == Set([.edge, .firefox]))
 
         let bothSeenFirefoxUnseenRows = [
             BrowserBrandRow(brand: .chrome, connectedCount: 0, lastSeen: .justNow, registration: .unknown),
             BrowserBrandRow(brand: .edge, connectedCount: 1, lastSeen: .justNow, registration: .unknown),
             BrowserBrandRow(brand: .firefox, connectedCount: 0, lastSeen: nil, registration: .unknown)
         ]
-        #expect(offeredBrowserStoreBrands(catalog: .live, rows: bothSeenFirefoxUnseenRows) == Set())
+        #expect(offeredBrowserStoreBrands(catalog: .live, rows: bothSeenFirefoxUnseenRows) == Set([.firefox]))
 
         let allSeenRows = [
             BrowserBrandRow(brand: .chrome, connectedCount: 0, lastSeen: .justNow, registration: .unknown),

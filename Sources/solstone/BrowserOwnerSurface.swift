@@ -75,7 +75,8 @@ public struct BrowserStoreCatalog: Equatable, Sendable {
         let storeURL = URL(string: "https://chromewebstore.google.com/detail/solstone/eibbeeoifjoabddfmgeggnageolkcnim")!
         return BrowserStoreCatalog(urls: [
             .chrome: storeURL,
-            .edge: storeURL
+            .edge: storeURL,
+            .firefox: URL(string: "https://addons.mozilla.org/firefox/addon/solstone/")!
         ])
     }()
 
