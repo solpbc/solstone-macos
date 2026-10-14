@@ -26,11 +26,19 @@ protocol CaptureLifecycleDelegate: AnyObject {
     ) async -> RotationResult
     func lifecyclePauseCapture(reason: PauseReason, stopAudio: Bool) async -> URL?
     func lifecycleApplyResumeReason(_ reason: ResumeReason) -> ResumeResolution
-    func lifecyclePrepareResume(trigger: String) async throws
+    func lifecyclePrepareResume(trigger: String, writeProtectedVideoNote: Bool) async throws
     func lifecycleCommitResume(trigger: String)
     func lifecycleAbortPreparedResume(restore: Set<PauseReason>?, trigger: String) async
     func lifecycleTransitionToError(message: String, error: Error, trigger: String)
     func lifecycleProcessSegment(_ url: URL, useSleepActivity: Bool)
+    func lifecycleProtectedVideoOnScreen() -> Bool
+    func lifecycleHoldForProtectedVideo()
+}
+
+extension CaptureLifecycleDelegate {
+    func lifecyclePrepareResume(trigger: String) async throws {
+        try await lifecyclePrepareResume(trigger: trigger, writeProtectedVideoNote: false)
+    }
 }
 
 enum ResumeResolution: Sendable {
@@ -65,6 +73,8 @@ private final class LiveRecoveryTimerToken: RecoveryTimerToken {
 final class CaptureLifecycleManager {
     weak var delegate: (any CaptureLifecycleDelegate)?
     var ownerPauseIsHeld: @MainActor () -> Bool = { false }
+    var protectedVideoOnScreen: @MainActor () -> Bool = { false }
+    internal var isMachineAwake: Bool = true
 
     private var recoveryTimer: (any RecoveryTimerToken)?
     private static let retryDelays: [TimeInterval] = [5, 30, 60]
@@ -145,6 +155,10 @@ final class CaptureLifecycleManager {
     }
 
     internal var lastVetoReasonForTesting: VetoReason? {
+        executor.lastVetoReasonForTesting
+    }
+
+    internal var lastVetoReason: VetoReason? {
         executor.lastVetoReasonForTesting
     }
 
@@ -236,6 +250,16 @@ final class CaptureLifecycleManager {
         await executor.enqueue(intent, admission: admission)
     }
 
+    @discardableResult
+    func enqueueProtectedVideoPause() async -> TransitionOutcome {
+        await executor.enqueue(.pause(reason: .protectedVideo, stopAudio: true))
+    }
+
+    @discardableResult
+    func enqueueProtectedVideoCleared() async -> TransitionOutcome {
+        await executor.enqueue(.resume(reason: .protectedVideoCleared))
+    }
+
     func startRecoveryIfNeeded(error: Error) {
         guard !deferRecoveryForOwnerPause() else { return }
         if isPermissionError(error) {
@@ -274,6 +298,7 @@ final class CaptureLifecycleManager {
     }
 
     internal func handleWillSleep() async {
+        isMachineAwake = false
         let state = delegate?.lifecycleCurrentState
         let stateLabel = state?.label ?? "unknown"
         Logger.capture.info("[Event] willSleep (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
@@ -287,6 +312,7 @@ final class CaptureLifecycleManager {
     }
 
     internal func handleDidWake() async {
+        isMachineAwake = true
         let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
         Logger.capture.info("[Event] didWake (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
 
@@ -328,7 +354,7 @@ final class CaptureLifecycleManager {
         return locked
     }
 
-    private func isScreenLocked() -> Bool {
+    internal func isScreenLocked() -> Bool {
         isScreenLockedProvider()
     }
 
@@ -369,6 +395,12 @@ final class CaptureLifecycleManager {
             return
         }
 
+        if protectedVideoOnScreen() {
+            Logger.capture.info("[Recovery] Protected video is on screen, deferring recovery")
+            startRecoveryTimer()
+            return
+        }
+
         let attempt = retryCount + 1
         Logger.capture.info("[Recovery] Attempting recovery \(attempt, privacy: .public)/\(self.maxRetryCount, privacy: .public)")
 
@@ -383,6 +415,9 @@ final class CaptureLifecycleManager {
         case .dropped:
             stopRecoveryTimer()
             Logger.capture.info("[Recovery] Recovery resume dropped on attempt \(attempt, privacy: .public)")
+        case .heldForProtectedVideo:
+            Logger.capture.info("[Recovery] Recovery resume held for protected video, rescheduling")
+            startRecoveryTimer()
         case .threw(let failure):
             retryCount += 1
             Logger.capture.info("[Recovery] Attempt \(attempt, privacy: .public) failed: \(failure.message, privacy: .public)")

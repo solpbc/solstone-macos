@@ -9,12 +9,14 @@ enum PauseReason: Sendable, Hashable {
     case sleep
     case lock
     case user
+    case protectedVideo
 
     var trigger: String {
         switch self {
         case .sleep: "sleep"
         case .lock: "lock"
         case .user: "user"
+        case .protectedVideo: "protectedVideo"
         }
     }
 }
@@ -25,6 +27,7 @@ enum ResumeReason: Sendable, Equatable {
     case user
     case pauseDeadline
     case recovery
+    case protectedVideoCleared
 
     var trigger: String {
         switch self {
@@ -33,6 +36,7 @@ enum ResumeReason: Sendable, Equatable {
         case .user: "user"
         case .pauseDeadline: "pauseDeadline"
         case .recovery: "recovery"
+        case .protectedVideoCleared: "protectedVideoCleared"
         }
     }
 
@@ -44,6 +48,8 @@ enum ResumeReason: Sendable, Equatable {
             [.user]
         case .recovery:
             []
+        case .protectedVideoCleared:
+            [.protectedVideo]
         }
     }
 }
@@ -200,6 +206,7 @@ public enum TransitionOutcome: Sendable {
     case vetoed
     case threw(TransitionFailure)
     case dropped
+    case heldForProtectedVideo
 }
 
 enum VetoReason: Sendable, Equatable {
@@ -458,6 +465,11 @@ final class CaptureExecutor {
             return .dropped
         }
 
+        if delegate.lifecycleProtectedVideoOnScreen() {
+            Logger.capture.info("[Executor] start(\(reason.trigger, privacy: .public)) held for protected video")
+            return .heldForProtectedVideo
+        }
+
         if restartingFromError {
             await delegate.lifecycleResetForRestartFromError()
         }
@@ -606,7 +618,7 @@ final class CaptureExecutor {
                 Logger.capture.info("[Executor] drop resume(\(reason.trigger, privacy: .public)) because not suspended")
                 return .dropped
             }
-        case .user, .pauseDeadline:
+        case .user, .pauseDeadline, .protectedVideoCleared:
             guard state.isPaused else {
                 lastVetoReason = .stateChanged
                 Logger.capture.info("[Executor] drop resume(\(reason.trigger, privacy: .public)) on \(state.label, privacy: .public)")
@@ -622,6 +634,10 @@ final class CaptureExecutor {
 
         let restoreReasons: Set<PauseReason>?
         if reason == .recovery {
+            if delegate.lifecycleProtectedVideoOnScreen() {
+                Logger.capture.info("[Executor] recovery resume held for protected video")
+                return .heldForProtectedVideo
+            }
             restoreReasons = nil
         } else {
             switch delegate.lifecycleApplyResumeReason(reason) {
@@ -634,6 +650,11 @@ final class CaptureExecutor {
         }
 
         if reason != .recovery {
+            if delegate.lifecycleProtectedVideoOnScreen() {
+                Logger.capture.info("[Executor] resume(\(reason.trigger, privacy: .public)) held for protected video")
+                delegate.lifecycleHoldForProtectedVideo()
+                return .heldForProtectedVideo
+            }
             await preResumeSettle()
         }
 
@@ -644,7 +665,10 @@ final class CaptureExecutor {
         do {
             try await withTimeout(seconds: transitionTimeoutSeconds) { @MainActor [weak self] in
                 guard let self, let delegate = self.delegate else { return }
-                try await delegate.lifecyclePrepareResume(trigger: reason.trigger)
+                try await delegate.lifecyclePrepareResume(
+                    trigger: reason.trigger,
+                    writeProtectedVideoNote: reason != .recovery
+                )
             }
         } catch let error as TimeoutError {
             lastVetoReason = .timedOut
@@ -703,7 +727,7 @@ final class CaptureExecutor {
                 await shieldedAbort(reason.trigger, restore: restoreReasons)
                 return .vetoed
             }
-        case .user, .pauseDeadline:
+        case .user, .pauseDeadline, .protectedVideoCleared:
             guard delegate.lifecycleCurrentState.isPaused else {
                 lastVetoReason = .stateChanged
                 await shieldedAbort(reason.trigger, restore: restoreReasons)

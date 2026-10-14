@@ -4367,6 +4367,305 @@ struct SyncServiceTests {
         #expect(FileManager.default.fileExists(atPath: newFailed.appendingPathComponent("extra.txt").path))
     }
 
+    // MARK: - Protected Video Upload and Cleanup
+
+    @Test func uploadProtectedVideoSubmitsThreePartsWithJSONLMIME() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-pv-upload-3parts")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let audioURL = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let screenURL = seg.url.appendingPathComponent("120000_300_display_1_screen.mp4")
+        let noteURL = seg.url.appendingPathComponent("120000_300_protected_video.jsonl")
+
+        try Data("audio-bytes".utf8).write(to: audioURL)
+        try Data("screen-bytes".utf8).write(to: screenURL)
+        let noteContent = "{\"end_ts\":100,\"service\":\"netflix\",\"title\":\"Stranger Things\",\"ts\":10}\n"
+        try Data(noteContent.utf8).write(to: noteURL)
+
+        let audioSHA = try sha256(of: audioURL)
+        let screenSHA = try sha256(of: screenURL)
+        let noteSHA = try sha256(of: noteURL)
+
+        let descriptors: [(submitted: String, written: String, size: UInt64, sha256: String, disposition: String)] = [
+            ("120000_300_audio.m4a", "120000_300_audio.m4a", UInt64("audio-bytes".utf8.count), audioSHA, "written"),
+            ("120000_300_display_1_screen.mp4", "120000_300_display_1_screen.mp4", UInt64("screen-bytes".utf8.count), screenSHA, "written"),
+            ("120000_300_protected_video.jsonl", "120000_300_protected_video.jsonl", UInt64(noteContent.utf8.count), noteSHA, "written")
+        ]
+        let responseJSON = completeUploadResponseJSON(
+            status: "ok",
+            segment: "120000_300",
+            descriptors: descriptors
+        )
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: responseJSON)
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24888") })
+        await configure(service)
+        let progress = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(progress.containsUploadSucceeded)
+        #expect(progress.containsSyncComplete)
+
+        let uploads = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploads.count == 1)
+
+        let bodies = store.snapshotRequestBodyData().compactMap { $0 }
+        #expect(bodies.count == 1)
+        let bodyString = try #require(bodies.first.flatMap { String(data: $0, encoding: .utf8) })
+
+        #expect(bodyString.contains("Content-Disposition: form-data; name=\"files\"; filename=\"120000_300_display_1_screen.mp4\""))
+        #expect(bodyString.contains("Content-Type: video/mp4"))
+
+        #expect(bodyString.contains("Content-Disposition: form-data; name=\"files\"; filename=\"120000_300_audio.m4a\""))
+        #expect(bodyString.contains("Content-Type: audio/mp4"))
+
+        #expect(bodyString.contains("Content-Disposition: form-data; name=\"files\"; filename=\"120000_300_protected_video.jsonl\""))
+        #expect(bodyString.contains("Content-Type: application/jsonl"))
+
+        // Mode .acknowledged: the note was confirmed and is removed without quarantine
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(!FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed").path))
+    }
+
+    @Test func acknowledgmentNamingAllThreeProtectedVideoPassesIsValidAndSegmentNeedsUploadIsFalse() async throws {
+        let root = try makeTempDirectory("sync-pv-ack-valid")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let date = Date()
+        let day = dayString(for: date)
+        let audioURL = seg.url.appendingPathComponent("120000_300_audio.m4a")
+        let screenURL = seg.url.appendingPathComponent("120000_300_display_1_screen.mp4")
+        let noteURL = seg.url.appendingPathComponent("120000_300_protected_video.jsonl")
+
+        try Data("audio-bytes".utf8).write(to: audioURL)
+        try Data("screen".utf8).write(to: screenURL)
+        let noteContent = "{\"end_ts\":100,\"service\":\"apple_tv\",\"title\":\"Ted Lasso\",\"ts\":10}\n"
+        try Data(noteContent.utf8).write(to: noteURL)
+
+        let audioSHA = try sha256(of: audioURL)
+        let screenSHA = try sha256(of: screenURL)
+        let noteSHA = try sha256(of: noteURL)
+
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [
+                    IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: audioSHA, size: UInt64("audio-bytes".utf8.count)),
+                    IngestAcknowledgedFileProof(submitted: "120000_300_display_1_screen.mp4", sha256: screenSHA, size: UInt64("screen".utf8.count)),
+                    IngestAcknowledgedFileProof(submitted: "120000_300_protected_video.jsonl", sha256: noteSHA, size: UInt64(noteContent.utf8.count))
+                ],
+                meta: [:]
+            ),
+            removedMedia: []
+        )
+
+        #expect(ack.isValid == true)
+
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: seg.url, segment: "120000_300")
+        try IngestAcknowledgmentStore.write(ack, to: ackURL)
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .held })
+        await configure(service)
+
+        // With acknowledgment covering all 3 files, segmentNeedsUpload is false so pendingCaptures is 0
+        let backlog = await service.readDiagnosticBacklog()
+        #expect(backlog.pendingCaptures == 0)
+
+        // And sync with resolver .held does not attempt upload
+        store.reset()
+        await service.sync()
+        let uploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequests.isEmpty)
+    }
+
+    @Test func segmentRemovedWithProtectedVideoRemovesNoteWithoutQuarantining() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-pv-segment-removed")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let screenURL = seg.url.appendingPathComponent("120000_300_display_1_screen.mp4")
+        let noteURL = seg.url.appendingPathComponent("120000_300_protected_video.jsonl")
+        try Data("screen".utf8).write(to: screenURL)
+        try Data("{\"end_ts\":200,\"service\":\"netflix\",\"title\":\"Show\",\"ts\":100}\n".utf8).write(to: noteURL)
+
+        store.registerRoute(
+            path: IngestProtocolV3.uploadPath,
+            statusCode: 500,
+            body: "{\"status\":\"failed\",\"error\":\"Ingest request failed\",\"reason_code\":\"segment_removed\"}"
+        )
+
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24889") })
+        await configure(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        let failedDir = seg.url.deletingLastPathComponent().appendingPathComponent("120000_300.failed")
+        #expect(!FileManager.default.fileExists(atPath: failedDir.path))
+    }
+
+    @Test func remnantWithProtectedVideoNoteRemovesNoteWithoutQuarantining() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-pv-remnant-clean")
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let day = dayString(for: pastDate)
+        let dateFolder = dateFolderString(for: pastDate)
+        let dateDir = root.appendingPathComponent(dateFolder, isDirectory: true)
+        let segmentDir = dateDir.appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: segmentDir, withIntermediateDirectories: true)
+
+        let metaURL = segmentDir.appendingPathComponent("120000_300_meta.json")
+        try Data(#"{"key":"changed"}"#.utf8).write(to: metaURL)
+
+        let noteURL = segmentDir.appendingPathComponent("120000_300_protected_video.jsonl")
+        try Data("{\"end_ts\":50,\"service\":\"prime_video\",\"title\":\"Movie\",\"ts\":10}\n".utf8).write(to: noteURL)
+
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [
+                    IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: String(repeating: "a", count: 64), size: 10)
+                ],
+                meta: ["key": .string("value")]
+            ),
+            removedMedia: []
+        )
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentDir, segment: "120000_300")
+        try IngestAcknowledgmentStore.write(ack, to: ackURL)
+
+        let segmentDirFirstPass = MutexValue(true)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .held },
+            listDirectory: { url in
+                let files = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+                if url.lastPathComponent == segmentDir.lastPathComponent {
+                    let isFirst = segmentDirFirstPass.withLock { flag in
+                        let current = flag
+                        flag = false
+                        return current
+                    }
+                    if isFirst {
+                        return files.filter { !$0.lastPathComponent.hasSuffix("_protected_video.jsonl") }
+                    }
+                }
+                return files
+            }
+        )
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream { collector.append(event) }
+        }
+        await service.sync()
+        listen.cancel()
+
+        #expect(!FileManager.default.fileExists(atPath: segmentDir.path))
+        let failedDir = dateDir.appendingPathComponent("120000_300.failed")
+        #expect(!FileManager.default.fileExists(atPath: failedDir.path))
+        #expect(collector.segmentUnprovableCount == 0)
+    }
+
+    @Test func remnantWithProtectedVideoAndUncoveredScreenFails() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-pv-remnant-uncovered-screen")
+        let pastDate = Calendar.current.date(byAdding: .day, value: -2, to: Date())!
+        let day = dayString(for: pastDate)
+        let dateFolder = dateFolderString(for: pastDate)
+        let dateDir = root.appendingPathComponent(dateFolder, isDirectory: true)
+        let segmentDir = dateDir.appendingPathComponent("120000_300", isDirectory: true)
+        try FileManager.default.createDirectory(at: segmentDir, withIntermediateDirectories: true)
+
+        let metaURL = segmentDir.appendingPathComponent("120000_300_meta.json")
+        try Data(#"{"key":"changed"}"#.utf8).write(to: metaURL)
+
+        let screenURL = segmentDir.appendingPathComponent("120000_300_display_1_screen.mp4")
+        try Data("screen".utf8).write(to: screenURL)
+
+        let noteURL = segmentDir.appendingPathComponent("120000_300_protected_video.jsonl")
+        try Data("{\"end_ts\":50,\"service\":\"prime_video\",\"title\":\"Movie\",\"ts\":10}\n".utf8).write(to: noteURL)
+
+        let ack = IngestAcknowledgment(
+            journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA).value,
+            day: day,
+            submittedSegment: "120000_300",
+            storedSegmentKey: "120000_300",
+            status: .ok,
+            payload: IngestAcknowledgmentPayload(
+                files: [
+                    IngestAcknowledgedFileProof(submitted: "120000_300_audio.m4a", sha256: String(repeating: "a", count: 64), size: 10)
+                ],
+                meta: ["key": .string("value")]
+            ),
+            removedMedia: []
+        )
+        let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentDir, segment: "120000_300")
+        try IngestAcknowledgmentStore.write(ack, to: ackURL)
+
+        let screenDiscoverPass = MutexValue(true)
+        let service = makeService(
+            root: root,
+            resolver: HomeBaseURLResolver { .held },
+            listDirectory: { url in
+                let files = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+                let isDiscover = screenDiscoverPass.withLock { flag in
+                    let current = flag
+                    flag = false
+                    return current
+                }
+                if isDiscover && url.path == segmentDir.path {
+                    return files.filter { $0.lastPathComponent == "120000_300_meta.json" || $0.lastPathComponent.hasSuffix("_ingest_ack.json") }
+                }
+                return files
+            }
+        )
+        await configure(service)
+        await service.sync()
+
+        // Uncovered screen causes removeConfirmedSegment to return .failed; segment is preserved and stays on disk
+        #expect(FileManager.default.fileExists(atPath: segmentDir.path))
+        #expect(FileManager.default.fileExists(atPath: screenURL.path))
+    }
+
+    @Test func segmentWithoutProtectedVideoNoteKeepsCurrentUploadBehavior() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-no-pv-note")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24890") })
+        await configure(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(progress.containsUploadSucceeded)
+        #expect(progress.containsSyncComplete)
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+    }
+
     private func uploadResponseJSON(
         status: IngestProtocolV3.UploadStatus = .ok,
         submitted: String = "120000_300",

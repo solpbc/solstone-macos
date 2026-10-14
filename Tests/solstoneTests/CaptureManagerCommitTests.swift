@@ -232,6 +232,8 @@ struct CaptureManagerCommitTests {
                 Issue.record("expected start from error to commit, got vetoed")
             case .dropped:
                 Issue.record("expected start from error to commit, got dropped")
+            case .heldForProtectedVideo:
+                Issue.record("expected start from error to commit, got heldForProtectedVideo")
             case .committed:
                 break
             }

@@ -290,6 +290,13 @@ struct SolstoneCaptureApp: App {
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
     }
+
+    static func permissionsMissing(permittedSourcesEmpty: Bool, startDeferredForProtectedVideo: Bool) -> Bool {
+        capturePermissionsMissing(
+            permittedSourcesEmpty: permittedSourcesEmpty,
+            startDeferredForProtectedVideo: startDeferredForProtectedVideo
+        )
+    }
 }
 
 private struct SolstoneNormalStartup {
@@ -324,7 +331,7 @@ internal func statusAccessibilityLabel(
         UICopy.MENUBAR_A11Y_OBSERVING_SYNC_PAUSED
     case .offline:
         UICopy.MENUBAR_A11Y_OBSERVING_SAVED_LOCALLY
-    case .paused:
+    case .paused, .protectedVideo:
         UICopy.MENUBAR_A11Y_PAUSED
     case .observing:
         UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED
@@ -441,6 +448,10 @@ private struct MenubarBadgeView: View {
     }
 }
 
+internal func capturePermissionsMissing(permittedSourcesEmpty: Bool, startDeferredForProtectedVideo: Bool) -> Bool {
+    permittedSourcesEmpty && !startDeferredForProtectedVideo
+}
+
 @MainActor
 enum FirstLaunchRouting {
     static func route(
@@ -529,7 +540,10 @@ private struct StatusIcon: View {
     }
 
     private func permissionsMissing() -> Bool {
-        appState.capture.permittedSources.isEmpty
+        capturePermissionsMissing(
+            permittedSourcesEmpty: appState.capture.permittedSources.isEmpty,
+            startDeferredForProtectedVideo: appState.capture.isStartDeferredForProtectedVideo
+        )
     }
 
     @ViewBuilder

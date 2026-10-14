@@ -21,7 +21,8 @@ internal func classifyObservationRowState(
     browserIntakePaused: Bool = false,
     ownerPauseHeldIdle: Bool = false,
     browserOnlyIntake: Bool = false,
-    journalMarkHeld: Bool = false
+    journalMarkHeld: Bool = false,
+    protectedVideoHeld: Bool = false
 ) -> MenubarStatusRowState {
     let mediaActive = isRecording || isPaused
     let suppressPermissionGate = browserOnlyIntake && browserIntakePermitted && !mediaActive
@@ -38,12 +39,14 @@ internal func classifyObservationRowState(
         return .journalMigrationNeeded
     }
     if !isRecording && !isPaused {
+        if protectedVideoHeld { return .protectedVideo }
         if browserIntakePaused { return .paused }
         if ownerPauseHeldIdle { return .paused }
         if browserIntakePermitted { return .observing }
         return .stopped
     }
     if isPaused {
+        if protectedVideoHeld { return .protectedVideo }
         return .paused
     }
     if syncPaused {
@@ -273,6 +276,8 @@ extension AppState {
 #else
         let browserOnly = false
 #endif
+        let protectedVideoHeld = capture.captureManager.state.pausedReasons.contains(.protectedVideo)
+            || capture.isStartDeferredForProtectedVideo
         return classifyObservationRowState(
             permissionsNeedAttention: permissionsNeedAttention,
             errorMessage: errorMessage,
@@ -291,7 +296,8 @@ extension AppState {
             browserIntakePaused: browserRowPaused,
             ownerPauseHeldIdle: ownerPauseHeldIdle,
             browserOnlyIntake: browserOnly,
-            journalMarkHeld: needsJournalMarkConfirmation
+            journalMarkHeld: needsJournalMarkConfirmation,
+            protectedVideoHeld: protectedVideoHeld
         )
     }
 

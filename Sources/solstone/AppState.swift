@@ -282,7 +282,11 @@ public final class AppState {
 
     public var permissionsNeedAttention: Bool {
         initialPermissionCheckComplete && !isRecording && !isPaused &&
-            !config.selectedSources.isEmpty && availableSelectedSources.isEmpty
+            !config.selectedSources.isEmpty &&
+            capturePermissionsMissing(
+                permittedSourcesEmpty: availableSelectedSources.isEmpty,
+                startDeferredForProtectedVideo: capture.isStartDeferredForProtectedVideo
+            )
     }
 
     var ownerPauseHeldIdle: Bool {
@@ -588,6 +592,21 @@ public final class AppState {
             )
         }
 
+        if newConfig.pauseForProtectedVideo != oldConfig.pauseForProtectedVideo ||
+           newConfig.protectedVideoTitlePatterns != oldConfig.protectedVideoTitlePatterns ||
+           newConfig.selectedSources != oldConfig.selectedSources {
+            capture.captureManager.updateProtectedVideoSettings(
+                pause: newConfig.pauseForProtectedVideo,
+                patterns: newConfig.protectedVideoTitlePatterns
+            )
+            capture.captureManager.configuredSourcesIncludeScreen = { [weak self] in
+                self?.config.selectedSources.contains(.screen) ?? false
+            }
+            Task { @MainActor [weak self] in
+                await self?.capture.captureManager.checkProtectedVideo()
+            }
+        }
+
         do {
             try configSaver(newConfig)
         } catch {
@@ -614,6 +633,20 @@ public final class AppState {
             }
         }
 #endif
+    }
+
+    public func addProtectedVideoTitlePattern(_ pattern: String) {
+        var newConfig = config
+        if newConfig.addProtectedVideoTitlePattern(pattern) {
+            updateConfig(newConfig)
+        }
+    }
+
+    public func removeProtectedVideoTitlePattern(_ pattern: String) {
+        var newConfig = config
+        if newConfig.removeProtectedVideoTitlePattern(pattern) {
+            updateConfig(newConfig)
+        }
     }
 
     @ObservationIgnored internal var configSaver: (AppConfig) throws -> Void = { try $0.save() }
@@ -1487,8 +1520,14 @@ public final class AppState {
             excludePrivateBrowsingAccessibility: config.excludePrivateBrowsingAccessibility,
             microphoneGain: config.microphoneGain,
             verbose: false,
-            recoveryCoordinator: recoveryCoordinator
+            recoveryCoordinator: recoveryCoordinator,
+            pauseForProtectedVideo: config.pauseForProtectedVideo,
+            protectedVideoTitlePatterns: config.protectedVideoTitlePatterns,
+            protectedVideoTimerEnabled: true
         )
+        captureManager.configuredSourcesIncludeScreen = { [weak captureTarget] in
+            captureTarget?.state?.config.selectedSources.contains(.screen) ?? false
+        }
         self.silenceMusicHolder = silenceMusicHolder
         let capture = CaptureCoordinator(
             captureManager: captureManager,

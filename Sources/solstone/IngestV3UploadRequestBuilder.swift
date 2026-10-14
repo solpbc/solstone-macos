@@ -127,6 +127,8 @@ struct IngestV3UploadRequestBuilder {
             let mimeType: String
             if source == "browser" && filename == "browser_pages.jsonl" {
                 mimeType = "application/jsonl"
+            } else if filename.hasSuffix("_protected_video.jsonl") {
+                mimeType = "application/jsonl"
             } else if fileURL.pathExtension == "mp4" {
                 mimeType = "video/mp4"
             } else {

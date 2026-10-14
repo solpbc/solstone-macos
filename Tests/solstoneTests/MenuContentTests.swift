@@ -94,6 +94,7 @@ struct MenuContentTests {
             (.offline, "sol-ring-icon-offline-template"),
             (.error, "sol-ring-icon-error-template"),
             (.awaitingMarkConfirmation, "sol-ring-template"),
+            (.protectedVideo, "sol-ring-icon-paused-template"),
         ]
 
         #expect(cases.count == MenubarStatusRowState.allCases.count)
@@ -126,6 +127,7 @@ struct MenuContentTests {
             (.offline, .savedLocally),
             (.error, .error),
             (.awaitingMarkConfirmation, .awaitingMarkConfirmation),
+            (.protectedVideo, .protectedVideo),
         ]
 
         #expect(cases.count == MenubarStatusRowState.allCases.count)

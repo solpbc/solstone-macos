@@ -121,6 +121,7 @@ internal enum MenubarStatusRowState: CaseIterable {
     case syncPaused
     case offline
     case paused
+    case protectedVideo
     case observing
     case awaitingMarkConfirmation
 }
@@ -130,6 +131,7 @@ internal enum SettingsObservationAXState: CaseIterable {
     case observing
     case connecting
     case paused
+    case protectedVideo
     case notReaching
     case noJournal
     case attention
@@ -149,6 +151,8 @@ internal enum SettingsObservationAXState: CaseIterable {
             self = .connecting
         case .paused:
             self = .paused
+        case .protectedVideo:
+            self = .protectedVideo
         case .syncPaused:
             self = .notReaching
         case .localOnly:
@@ -693,7 +697,7 @@ extension MenubarStatusRowState {
             return .recording
         case .starting, .connectionWaiting:
             return .connecting
-        case .paused, .syncPaused, .localOnly:
+        case .paused, .protectedVideo, .syncPaused, .localOnly:
             return .paused
         case .journalMigrationNeeded, .permissions:
             return .attention
@@ -728,6 +732,8 @@ extension MenubarStatusRowState {
             return "offline"
         case .paused:
             return "paused"
+        case .protectedVideo:
+            return "protected_video"
         case .observing:
             return "on"
         case .awaitingMarkConfirmation:
@@ -747,6 +753,8 @@ extension SettingsObservationAXState {
             return "connecting"
         case .paused:
             return "paused"
+        case .protectedVideo:
+            return "protected_video"
         case .notReaching:
             return "on_not_reaching"
         case .noJournal:
@@ -772,6 +780,8 @@ extension SettingsObservationAXState {
             return UICopy.SETTINGS_OBSERVATION_CONNECTING
         case .paused:
             return UICopy.SETTINGS_OBSERVATION_PAUSED
+        case .protectedVideo:
+            return UICopy.SETTINGS_OBSERVATION_PROTECTED_VIDEO
         case .notReaching:
             return UICopy.SETTINGS_OBSERVATION_NOT_REACHING
         case .noJournal:

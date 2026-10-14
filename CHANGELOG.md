@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- the screen, system audio, and microphone pause together while protected video is on screen, and come back on their own.
+
 ## [2.0.33] - 2026-10-13
 
 ### Added

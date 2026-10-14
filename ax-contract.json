@@ -34,6 +34,16 @@
       {
         "key" : "title pattern",
         "runtime" : true,
+        "template" : "settings.privacy.protectedVideo.patterns.pattern.{value}"
+      },
+      {
+        "key" : "title pattern",
+        "runtime" : true,
+        "template" : "settings.privacy.protectedVideo.patterns.remove.{value}"
+      },
+      {
+        "key" : "title pattern",
+        "runtime" : true,
         "template" : "settings.privacy.titlePatterns.pattern.{value}"
       },
       {
@@ -182,6 +192,10 @@
       "settings.privacy.privateBrowsing.accessibility.reopen",
       "settings.privacy.privateBrowsing.accessibility.state",
       "settings.privacy.privateBrowsing.exclude",
+      "settings.privacy.protectedVideo.patterns.add",
+      "settings.privacy.protectedVideo.patterns.field",
+      "settings.privacy.protectedVideo.patterns.list",
+      "settings.privacy.protectedVideo.pause",
       "settings.privacy.titlePatterns.add",
       "settings.privacy.titlePatterns.field",
       "settings.privacy.titlePatterns.list",
@@ -675,6 +689,7 @@
       "sync_paused",
       "offline",
       "paused",
+      "protected_video",
       "on",
       "awaiting_mark_confirmation"
     ],
@@ -723,6 +738,7 @@
       "on",
       "connecting",
       "paused",
+      "protected_video",
       "on_not_reaching",
       "on_no_journal",
       "attention",

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import CoreAudio
+import Foundation
 import Testing
 import SolstoneCore
 @testable import solstone
@@ -223,5 +224,52 @@ struct AppConfigTests {
 
         config.isScreenCaptureEnabled = false
         #expect(config.selectedSources == [.microphone])
+    }
+
+    // MARK: - Protected Video Settings
+
+    @Test func protectedVideoSettingsDefaultWhenKeysMissing() throws {
+        let suiteName = "test.appconfig.defaults.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let config = AppConfig.load(from: defaults)
+        #expect(config.pauseForProtectedVideo == true)
+        #expect(config.protectedVideoTitlePatterns.isEmpty)
+    }
+
+    @Test func protectedVideoSettingsRoundTripPatterns() throws {
+        let suiteName = "test.appconfig.roundtrip.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let config = AppConfig(
+            pauseForProtectedVideo: false,
+            protectedVideoTitlePatterns: ["custom-service", "another-stream"]
+        )
+        try config.save(to: defaults)
+
+        let loaded = AppConfig.load(from: defaults)
+        #expect(loaded.pauseForProtectedVideo == false)
+        #expect(loaded.protectedVideoTitlePatterns == ["custom-service", "another-stream"])
+    }
+
+    @Test func addProtectedVideoTitlePatternRejectsBlankAndDoesNotStore() {
+        var config = AppConfig()
+        let result = config.addProtectedVideoTitlePattern("  ")
+        #expect(result == false)
+        #expect(config.protectedVideoTitlePatterns.isEmpty)
+    }
+
+    @Test func storedBlankPatternIsDroppedOnLoad() throws {
+        let suiteName = "test.appconfig.blank.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(["valid-pattern", "   ", "\t\n", "another-pattern"], forKey: "protectedVideoTitlePatterns")
+        defaults.set(true, forKey: "pauseForProtectedVideo")
+
+        let config = AppConfig.load(from: defaults)
+        #expect(config.protectedVideoTitlePatterns == ["valid-pattern", "another-pattern"])
     }
 }

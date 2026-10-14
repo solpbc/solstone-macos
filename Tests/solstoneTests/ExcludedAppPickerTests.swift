@@ -15,12 +15,14 @@ struct ExcludedAppPickerTests {
         windowID: CGWindowID?,
         ownerName: String,
         title: String = "",
-        layer: Int = 0
+        layer: Int = 0,
+        pid: pid_t = 0
     ) -> [String: Any] {
         var dict: [String: Any] = [
             kCGWindowOwnerName as String: ownerName,
             kCGWindowName as String: title,
-            kCGWindowLayer as String: layer
+            kCGWindowLayer as String: layer,
+            kCGWindowOwnerPID as String: Int(pid)
         ]
         if let windowID {
             dict[kCGWindowNumber as String] = windowID
@@ -32,20 +34,22 @@ struct ExcludedAppPickerTests {
 
     @Test func layer0RecordsExtractsOnlyNormalLayerWindows() {
         let rawWindows: [[String: Any]] = [
-            makeWindowDict(windowID: 101, ownerName: "TV", title: "Apple TV Show", layer: 0),
-            makeWindowDict(windowID: 102, ownerName: "Code", title: "ExcludedAppPicker.swift", layer: 0),
-            makeWindowDict(windowID: 103, ownerName: "Dock", title: "Dock", layer: 20),
-            makeWindowDict(windowID: 104, ownerName: "Overlay", title: "HUD", layer: -1),
-            makeWindowDict(windowID: nil, ownerName: "MissingNumber", title: "Ghost", layer: 0)
+            makeWindowDict(windowID: 101, ownerName: "TV", title: "Apple TV Show", layer: 0, pid: 1001),
+            makeWindowDict(windowID: 102, ownerName: "Code", title: "ExcludedAppPicker.swift", layer: 0, pid: 1002),
+            makeWindowDict(windowID: 103, ownerName: "Dock", title: "Dock", layer: 20, pid: 1003),
+            makeWindowDict(windowID: 104, ownerName: "Overlay", title: "HUD", layer: -1, pid: 1004),
+            makeWindowDict(windowID: nil, ownerName: "MissingNumber", title: "Ghost", layer: 0, pid: 1005)
         ]
 
         let records = OnScreenWindowList.layer0Records(from: rawWindows)
 
         #expect(records.count == 2)
         #expect(records[0].windowID == 101)
+        #expect(records[0].pid == 1001)
         #expect(records[0].ownerName == "TV")
         #expect(records[0].title == "Apple TV Show")
         #expect(records[1].windowID == 102)
+        #expect(records[1].pid == 1002)
         #expect(records[1].ownerName == "Code")
         #expect(records[1].title == "ExcludedAppPicker.swift")
     }

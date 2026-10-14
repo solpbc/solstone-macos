@@ -81,6 +81,13 @@ struct AXIDTests {
         #expect(AXID.Settings.Privacy.titlePatternRemove(firstPattern).hasPrefix("settings.privacy.titlePatterns.remove."))
         #expect(AXID.Settings.Privacy.titlePattern(firstPattern) != AXID.Settings.Privacy.titlePattern(secondPattern))
         #expect(AXID.Settings.Privacy.titlePatternRemove(firstPattern) != AXID.Settings.Privacy.titlePatternRemove(secondPattern))
+
+        let firstProtectedPattern = "Netflix"
+        let secondProtectedPattern = "*Disney*"
+        #expect(AXID.Settings.Privacy.protectedVideoPattern(firstProtectedPattern).hasPrefix("settings.privacy.protectedVideo.patterns.pattern."))
+        #expect(AXID.Settings.Privacy.protectedVideoPatternRemove(firstProtectedPattern).hasPrefix("settings.privacy.protectedVideo.patterns.remove."))
+        #expect(AXID.Settings.Privacy.protectedVideoPattern(firstProtectedPattern) != AXID.Settings.Privacy.protectedVideoPattern(secondProtectedPattern))
+        #expect(AXID.Settings.Privacy.protectedVideoPatternRemove(firstProtectedPattern) != AXID.Settings.Privacy.protectedVideoPatternRemove(secondProtectedPattern))
     }
 
     @Test func enumTokensAreExactAndMatchTokenGrammar() {

@@ -11,6 +11,10 @@ import os
 @_silgen_name("_AXUIElementGetWindow")
 private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
 
+protocol AccessibilityTitleReading: Sendable {
+    func titles(pid: pid_t) -> [CGWindowID: String]
+}
+
 /// Reads browser window titles through Accessibility, for the opt-in second level of the
 /// private-window setting. It reads one attribute, each window's title, of Safari, Chrome, Edge and
 /// Brave only, and the titles are used for the exclusion decision and nothing else: never logged,
@@ -19,7 +23,7 @@ private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePo
 /// Whether reads work is judged by doing one. `AXIsProcessTrusted()` was measured to stay stale in a
 /// running process in both directions on macOS 27 (still `true` after access was removed, still
 /// `false` after it was given), while real reads followed the switch within a second.
-struct AccessibilityTitleReader: Sendable {
+struct AccessibilityTitleReader: AccessibilityTitleReading, Sendable {
     enum Health: Equatable, Sendable {
         case working
         case notPermitted

@@ -262,6 +262,7 @@ public enum UICopy {
     public static let SETTINGS_OBSERVATION_OBSERVING = "on · reaching your journal"
     public static let SETTINGS_OBSERVATION_CONNECTING = "connecting"
     public static let SETTINGS_OBSERVATION_PAUSED = "paused"
+    public static let SETTINGS_OBSERVATION_PROTECTED_VIDEO = "paused for protected video"
     public static let SETTINGS_OBSERVATION_NOT_REACHING = "on · not reaching your journal"
     public static let SETTINGS_OBSERVATION_NO_JOURNAL = "on · no journal"
     public static let SETTINGS_OBSERVATION_ATTENTION = "needs your attention"

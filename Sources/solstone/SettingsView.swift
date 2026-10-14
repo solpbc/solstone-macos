@@ -191,6 +191,7 @@ struct SettingsView: View {
 
     // Privacy tab state
     @State private var newTitlePattern = ""
+    @State private var newProtectedVideoPattern = ""
     @State private var newExcludedApp = ""
     @FocusState private var privateWindowKeyboardFocused: Bool
     @AccessibilityFocusState private var privateWindowAccessibilityFocused: Bool
@@ -1244,10 +1245,12 @@ struct SettingsView: View {
                 // On macOS 26, SCShareableContent.current re-triggers the OS dialog every call
                 // when no TCC entry exists yet — i.e. while the user hasn't granted yet.
                 if CGPreflightScreenCaptureAccess() {
-                    if await PermissionChecker.checkScreenRecording() {
-                        screenRestartPending = true
-                        appState.capture.publishScreenRecordingPermission(.granted)
-                        return
+                    if !appState.capture.protectedVideoBlocksAutomaticScreenCaptureRead() {
+                        if await PermissionChecker.checkScreenRecording() {
+                            screenRestartPending = true
+                            appState.capture.publishScreenRecordingPermission(.granted)
+                            return
+                        }
                     }
                     // else: permission not yet granted
                 }
@@ -1281,7 +1284,12 @@ struct SettingsView: View {
     private func refreshSetupProbes() {
         Task { @MainActor in
             let permissionChecker = PermissionChecker()
-            let screenDiagnostic = await PermissionChecker.screenRecordingDiagnostic()
+            let screenDiagnostic: ScreenRecordingPermissionDiagnostic?
+            if appState.capture.protectedVideoBlocksAutomaticScreenCaptureRead() {
+                screenDiagnostic = nil
+            } else {
+                screenDiagnostic = await PermissionChecker.screenRecordingDiagnostic()
+            }
             setupProbeSnapshot = SetupProbeSnapshot(
                 solAppPlacement: solAppPlacementOutcome(),
                 journalAppInstalled: runningJournalController.installedURL() == nil ? .needsAttention : .ready,
@@ -3191,6 +3199,54 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
+            GroupBox("protected video") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("pause capture while protected video is on screen", isOn: pauseProtectedVideoBinding)
+                        .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideo)
+                    Text("pauses screen and audio capture while supported streaming video apps or websites are visible.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if appState.config.protectedVideoTitlePatterns.isEmpty {
+                        Text("no patterns added")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 20)
+                    } else {
+                        VStack(spacing: 4) {
+                            ForEach(Array(appState.config.protectedVideoTitlePatterns.enumerated()), id: \.offset) { index, pattern in
+                                HStack {
+                                    Text(pattern)
+                                    Spacer()
+                                    Button(action: { deleteProtectedVideoPattern(at: index) }) {
+                                        Image(systemName: "minus.circle")
+                                            .foregroundStyle(.red)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("remove pattern")
+                                    .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternRemove(pattern))
+                                }
+                                .padding(.vertical, 2)
+                                .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPattern(pattern))
+                                .accessibilityValue(pattern)
+                            }
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternsList)
+                    }
+
+                    HStack {
+                        TextField("netflix, hulu, etc.", text: $newProtectedVideoPattern)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { addProtectedVideoPattern() }
+                            .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternField)
+                        Button("add") { addProtectedVideoPattern() }
+                            .disabled(newProtectedVideoPattern.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternAdd)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
             GroupBox("private browsing") {
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("keep private windows out of your journal: Firefox set to English", isOn: excludePrivateBrowsingBinding)
@@ -3376,6 +3432,30 @@ struct SettingsView: View {
         appState.updateConfig(config)
     }
 
+    private var pauseProtectedVideoBinding: Binding<Bool> {
+        Binding(
+            get: { appState.config.pauseForProtectedVideo },
+            set: { newValue in
+                var config = appState.config
+                config.pauseForProtectedVideo = newValue
+                appState.updateConfig(config)
+            }
+        )
+    }
+
+    private func addProtectedVideoPattern() {
+        let pattern = newProtectedVideoPattern.trimmingCharacters(in: .whitespaces)
+        guard !pattern.isEmpty else { return }
+        appState.addProtectedVideoTitlePattern(pattern)
+        newProtectedVideoPattern = ""
+    }
+
+    private func deleteProtectedVideoPattern(at index: Int) {
+        guard index >= 0, index < appState.config.protectedVideoTitlePatterns.count else { return }
+        let pattern = appState.config.protectedVideoTitlePatterns[index]
+        appState.removeProtectedVideoTitlePattern(pattern)
+    }
+
     private func addExcludedApp(name: String? = nil) {
         let rawName = name ?? newExcludedApp
         let updated = ExcludedAppPicker.appending(rawName, to: appState.config.excludedApps)
@@ -3414,6 +3494,9 @@ struct SettingsView: View {
     }
 
     private var renderedObservationText: String {
+        if renderedObservationAXState == .protectedVideo {
+            return UICopy.SETTINGS_OBSERVATION_PROTECTED_VIDEO
+        }
         if appState.isRecording || appState.isPaused || appState.errorMessage == nil {
             return appState.captureSourcesStatusText
         }
@@ -3499,6 +3582,7 @@ struct SettingsView: View {
             lastHealthReason: appState.uploadCoordinator.lastHealthReason,
             isPairedIngestReady: appState.isPairedIngestReady,
             journalConnectionAXToken: appState.tunnelLifecycleOwner.connectionVerdict.axToken,
+            startDeferredForProtectedVideo: appState.capture.isStartDeferredForProtectedVideo,
             snapshot: appState.browserHostSnapshot.value
         )
 #else
@@ -3520,7 +3604,8 @@ struct SettingsView: View {
             setupVerdict: setupPresentation.verdict,
             lastHealthReason: appState.uploadCoordinator.lastHealthReason,
             isPairedIngestReady: appState.isPairedIngestReady,
-            journalConnectionAXToken: appState.tunnelLifecycleOwner.connectionVerdict.axToken
+            journalConnectionAXToken: appState.tunnelLifecycleOwner.connectionVerdict.axToken,
+            startDeferredForProtectedVideo: appState.capture.isStartDeferredForProtectedVideo
         )
 #endif
     }

@@ -7,11 +7,13 @@ import Foundation
 /// Information extracted from an on-screen window dictionary
 public struct OnScreenWindowRecord: Equatable, Sendable {
     public let windowID: CGWindowID
+    public let pid: pid_t
     public let ownerName: String
     public let title: String
 
-    public init(windowID: CGWindowID, ownerName: String, title: String) {
+    public init(windowID: CGWindowID, pid: pid_t, ownerName: String, title: String) {
         self.windowID = windowID
+        self.pid = pid
         self.ownerName = ownerName
         self.title = title
     }
@@ -34,9 +36,10 @@ public enum OnScreenWindowList {
             guard let windowID = window[kCGWindowNumber as String] as? CGWindowID else {
                 continue
             }
+            let pid = (window[kCGWindowOwnerPID as String] as? Int).map(pid_t.init) ?? 0
             let ownerName = window[kCGWindowOwnerName as String] as? String ?? ""
             let title = window[kCGWindowName as String] as? String ?? ""
-            records.append(OnScreenWindowRecord(windowID: windowID, ownerName: ownerName, title: title))
+            records.append(OnScreenWindowRecord(windowID: windowID, pid: pid, ownerName: ownerName, title: title))
         }
         return records
     }

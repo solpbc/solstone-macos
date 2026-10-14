@@ -146,7 +146,8 @@ public final class StorageManager: Sendable {
     /// - Returns: URL to the segment directory (with .incomplete suffix) and time prefix (HHMMSS)
     public func createSegmentDirectory(
         segmentStartTime: Date,
-        timeZone: TimeZone? = nil
+        timeZone: TimeZone? = nil,
+        takeNoteForWrite: ((Date) -> Data?)? = nil
     ) throws -> (url: URL, timePrefix: String) {
         let initialDateString: String
         let initialTimeString: String
@@ -229,6 +230,15 @@ public final class StorageManager: Sendable {
 
         try FileManager.default.createDirectory(at: dateDir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: segmentDir, withIntermediateDirectories: false)
+
+        if let takeNoteForWrite, let noteData = takeNoteForWrite(segmentStartTime), !noteData.isEmpty {
+            do {
+                let noteFileURL = segmentDir.appendingPathComponent("\(currentTimeString)_protected_video.jsonl")
+                try noteData.write(to: noteFileURL, options: .atomic)
+            } catch {
+                Logger.capture.debug("Failed to persist protected video note: \(error, privacy: .public)")
+            }
+        }
 
         if let zoneRecord {
             do {

@@ -180,6 +180,11 @@ enum AXID {
             static let privateBrowsingAccessibilityOpenSettings = "settings.privacy.privateBrowsing.accessibility.openSettings"
             static let privateBrowsingAccessibilityReopen = "settings.privacy.privateBrowsing.accessibility.reopen"
 
+            static let protectedVideo = "settings.privacy.protectedVideo.pause"
+            static let protectedVideoPatternsList = "settings.privacy.protectedVideo.patterns.list"
+            static let protectedVideoPatternField = "settings.privacy.protectedVideo.patterns.field"
+            static let protectedVideoPatternAdd = "settings.privacy.protectedVideo.patterns.add"
+
             static func excludedApp(_ value: String) -> String {
                 "settings.privacy.excludedApps.app.\(value)"
             }
@@ -194,6 +199,14 @@ enum AXID {
 
             static func titlePatternRemove(_ value: String) -> String {
                 "settings.privacy.titlePatterns.remove.\(value)"
+            }
+
+            static func protectedVideoPattern(_ value: String) -> String {
+                "settings.privacy.protectedVideo.patterns.pattern.\(value)"
+            }
+
+            static func protectedVideoPatternRemove(_ value: String) -> String {
+                "settings.privacy.protectedVideo.patterns.remove.\(value)"
             }
         }
 

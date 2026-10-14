@@ -29,6 +29,8 @@ public enum SettingsReloadSemantics {
         "isScreenCaptureEnabled": .live,
         "isMicrophoneCaptureEnabled": .live,
         "isBrowserIntakeEnabled": .live,
+        "pauseForProtectedVideo": .live,
+        "protectedVideoTitlePatterns": .live,
         // app-restart: screen recording grant requires host-process relaunch
         "screenRecordingGranted": .appRestart,
     ]

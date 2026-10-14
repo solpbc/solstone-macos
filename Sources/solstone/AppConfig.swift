@@ -75,7 +75,7 @@ public struct AppConfig: Sendable {
         "syncPaused", "debugSegments",
         "preserveSyncedSegments", "microphoneGain", "silenceMusic",
         "serviceMode", "journalPath",
-        "observerName"
+        "observerName", "pauseForProtectedVideo", "protectedVideoTitlePatterns"
     ]
 
     private enum Keys {
@@ -97,6 +97,8 @@ public struct AppConfig: Sendable {
         static let serviceMode = "serviceMode"
         static let journalPath = "journalPath"
         static let observerName = "observerName"
+        static let pauseForProtectedVideo = "pauseForProtectedVideo"
+        static let protectedVideoTitlePatterns = "protectedVideoTitlePatterns"
         static let didMigrateFromJSON = "didMigrateFromJSON"
         static let didReseedOptInMicrophones = "didReseedOptInMicrophones"
         static let reseededBluetoothMicrophoneUIDs = "reseededBluetoothMicrophoneUIDs"
@@ -177,6 +179,12 @@ public struct AppConfig: Sendable {
     /// Journal-assigned observer name returned during registration.
     public var observerName: String?
 
+    /// When true, pause capture while protected video is on screen. Default: true
+    public var pauseForProtectedVideo: Bool
+
+    /// User-defined window title patterns for protected video detection.
+    public var protectedVideoTitlePatterns: [String]
+
     /// Default exclusions written on first run
     public static let defaultExclusions: [AppEntry] = [
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
@@ -202,7 +210,9 @@ public struct AppConfig: Sendable {
         silenceMusic: Bool = true,
         serviceMode: ServiceMode? = nil,
         journalPath: String? = nil,
-        observerName: String? = nil
+        observerName: String? = nil,
+        pauseForProtectedVideo: Bool = true,
+        protectedVideoTitlePatterns: [String] = []
     ) {
         self.isScreenCaptureEnabled = isScreenCaptureEnabled
         self.isMicrophoneCaptureEnabled = isMicrophoneCaptureEnabled
@@ -222,6 +232,8 @@ public struct AppConfig: Sendable {
         self.serviceMode = serviceMode
         self.journalPath = journalPath
         self.observerName = observerName
+        self.pauseForProtectedVideo = pauseForProtectedVideo
+        self.protectedVideoTitlePatterns = protectedVideoTitlePatterns
     }
 
     // MARK: - Load/Save
@@ -229,8 +241,10 @@ public struct AppConfig: Sendable {
     /// Loads config from UserDefaults
     public static func load() -> AppConfig {
         CFPreferencesAppSynchronize(SolstoneIdentity.bundleIdentifier as CFString)
-        let defaults = UserDefaults.standard
+        return load(from: .standard)
+    }
 
+    internal static func load(from defaults: UserDefaults) -> AppConfig {
         // Load microphonePriority from JSON data
         var microphonePriority: [MicrophoneEntry] = []
         if let data = defaults.data(forKey: Keys.microphonePriority) {
@@ -257,6 +271,11 @@ public struct AppConfig: Sendable {
             serviceMode = nil
         }
 
+        let rawProtectedPatterns = defaults.stringArray(forKey: Keys.protectedVideoTitlePatterns) ?? []
+        let protectedPatterns = rawProtectedPatterns
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
         let config = AppConfig(
             isScreenCaptureEnabled: defaults.object(forKey: Keys.isScreenCaptureEnabled) as? Bool ?? true,
             isMicrophoneCaptureEnabled: defaults.object(forKey: Keys.isMicrophoneCaptureEnabled) as? Bool ?? true,
@@ -275,7 +294,9 @@ public struct AppConfig: Sendable {
             silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true,
             serviceMode: serviceMode,
             journalPath: defaults.string(forKey: Keys.journalPath),
-            observerName: defaults.string(forKey: Keys.observerName)
+            observerName: defaults.string(forKey: Keys.observerName),
+            pauseForProtectedVideo: defaults.object(forKey: Keys.pauseForProtectedVideo) as? Bool ?? true,
+            protectedVideoTitlePatterns: protectedPatterns
         )
         return config
     }
@@ -318,9 +339,7 @@ public struct AppConfig: Sendable {
     }
 
     /// Saves config to UserDefaults
-    public func save() throws {
-        let defaults = UserDefaults.standard
-
+    public func save(to defaults: UserDefaults = .standard) throws {
         defaults.set(isScreenCaptureEnabled, forKey: Keys.isScreenCaptureEnabled)
         defaults.set(isMicrophoneCaptureEnabled, forKey: Keys.isMicrophoneCaptureEnabled)
         defaults.set(isBrowserIntakeEnabled, forKey: Keys.isBrowserIntakeEnabled)
@@ -358,6 +377,8 @@ public struct AppConfig: Sendable {
         defaults.set(preserveSyncedSegments, forKey: Keys.preserveSyncedSegments)
         defaults.set(microphoneGain, forKey: Keys.microphoneGain)
         defaults.set(silenceMusic, forKey: Keys.silenceMusic)
+        defaults.set(pauseForProtectedVideo, forKey: Keys.pauseForProtectedVideo)
+        defaults.set(protectedVideoTitlePatterns, forKey: Keys.protectedVideoTitlePatterns)
     }
 
     // MARK: - Migration from JSON
@@ -393,6 +414,10 @@ public struct AppConfig: Sendable {
                 let data = try Data(contentsOf: path)
                 let legacyConfig = try JSONDecoder().decode(LegacyJSONConfig.self, from: data)
 
+                let legacyProtectedPatterns = (legacyConfig.protectedVideoTitlePatterns ?? [])
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+
                 let config = AppConfig(
                     microphonePriority: legacyConfig.microphonePriority ?? [],
                     excludedApps: legacyConfig.excludedApps ?? [],
@@ -403,7 +428,9 @@ public struct AppConfig: Sendable {
                     syncPaused: legacyConfig.syncPaused ?? false,
                     debugSegments: legacyConfig.debugSegments ?? false,
                     microphoneGain: legacyConfig.microphoneGain ?? 2.0,
-                    silenceMusic: legacyConfig.silenceMusic ?? true
+                    silenceMusic: legacyConfig.silenceMusic ?? true,
+                    pauseForProtectedVideo: legacyConfig.pauseForProtectedVideo ?? true,
+                    protectedVideoTitlePatterns: legacyProtectedPatterns
                 )
 
                 try config.save()
@@ -623,6 +650,26 @@ public struct AppConfig: Sendable {
         }
         return true
     }
+
+    // MARK: - Protected Video Methods
+
+    @discardableResult
+    public mutating func addProtectedVideoTitlePattern(_ pattern: String) -> Bool {
+        let trimmed = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if !protectedVideoTitlePatterns.contains(where: { $0.lowercased() == trimmed.lowercased() }) {
+            protectedVideoTitlePatterns.append(trimmed)
+            return true
+        }
+        return false
+    }
+
+    @discardableResult
+    public mutating func removeProtectedVideoTitlePattern(_ pattern: String) -> Bool {
+        let countBefore = protectedVideoTitlePatterns.count
+        protectedVideoTitlePatterns.removeAll { $0.lowercased() == pattern.lowercased() }
+        return protectedVideoTitlePatterns.count < countBefore
+    }
 }
 
 // MARK: - Legacy JSON Config for Migration
@@ -638,4 +685,6 @@ private struct LegacyJSONConfig: Codable {
     var debugSegments: Bool?
     var microphoneGain: Float?
     var silenceMusic: Bool?
+    var pauseForProtectedVideo: Bool?
+    var protectedVideoTitlePatterns: [String]?
 }

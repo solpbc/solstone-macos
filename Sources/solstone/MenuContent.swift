@@ -187,6 +187,11 @@ struct MenuContent: View {
                 .accessibilityValue(rowState.axToken)
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
+        case .protectedVideo:
+            Text(UICopy.SETTINGS_OBSERVATION_PROTECTED_VIDEO)
+                .accessibilityValue(rowState.axToken)
+                .accessibilityIdentifier(AXID.Menubar.statusRowState)
+
         case .observing:
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             if !appState.isRecording && !appState.isPaused {

@@ -88,7 +88,8 @@ extension StatusHealthSummary {
         setupVerdict: SetupGroupVerdict? = nil,
         lastHealthReason: ObserverHealthFailureReason? = nil,
         isPairedIngestReady: Bool = true,
-        journalConnectionAXToken: String? = nil
+        journalConnectionAXToken: String? = nil,
+        startDeferredForProtectedVideo: Bool = false
     ) -> StatusHealthSummary {
         // A migrated Mac can retain successful delivery and mark-confirmation records
         // after its device-bound pairing is gone. Absence leads every connection state.
@@ -122,7 +123,7 @@ extension StatusHealthSummary {
             )
         }
 
-        if !isRecording, !isPaused, selectedSources.intersection(permittedSources).isEmpty {
+        if !isRecording, !isPaused, !startDeferredForProtectedVideo, selectedSources.intersection(permittedSources).isEmpty {
             return .init(
                 severity: .attention,
                 title: UICopy.SOURCES_NONE_GRANTED,

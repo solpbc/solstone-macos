@@ -137,7 +137,7 @@ struct IngestAcknowledgment: Sendable, Equatable, Codable {
 
     static func isUploadMediaName(_ name: String, segment: String) -> Bool {
         IngestProtocolV3.isSafePathComponent(name)
-            && (name.hasSuffix("_screen.mp4") || name == "\(segment)_audio.m4a")
+            && (name.hasSuffix("_screen.mp4") || name == "\(segment)_audio.m4a" || name.hasSuffix("_protected_video.jsonl"))
     }
 
     var isValid: Bool {

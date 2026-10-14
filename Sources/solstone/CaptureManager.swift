@@ -68,7 +68,7 @@ public final class CaptureManager {
     ) -> any CaptureSegmentWriting
 
     /// Current state of the capture manager
-    enum State: Sendable {
+    enum State: Equatable, Sendable {
         case idle
         case recording
         case paused(reasons: Set<PauseReason>)
@@ -115,7 +115,8 @@ public final class CaptureManager {
     private let storageManager: StorageManager
     private var currentSegment: (any CaptureSegmentWriting)?
     #if DEBUG || SOLSTONE_TEST_SUPPORT
-    internal var beforeResumeNativeStartForTesting: (@MainActor () async -> Void)?
+    internal var beforeResumeNativeStartForTesting: (@MainActor () async throws -> Void)?
+    internal var afterSegmentDirectoryCreatedForTesting: (@MainActor () async throws -> Void)?
     #endif
     private var segmentTimer: Timer?
     private var segmentTimerRevision: UInt64 = 0
@@ -136,7 +137,7 @@ public final class CaptureManager {
     private let finalizer: any SegmentFinalizing
     private let rotationTimeoutSeconds: TimeInterval
     private let captureZoneSource: CaptureZoneSource
-    private let now: @Sendable () -> Date
+    private var now: @Sendable () -> Date
     // Test-only bypass for fake segment factories without ScreenCaptureKit display state; defaults false.
     private let allowsEmptyDisplayConfigurationForTesting: Bool
 
@@ -167,6 +168,21 @@ public final class CaptureManager {
 
     public private(set) var activeSources: CaptureSources = []
     private var sessionSources: CaptureSources = []
+    internal var sessionSourcesForTesting: CaptureSources { sessionSources }
+    internal var configuredSourcesIncludeScreen: (@MainActor () -> Bool)?
+    private let noteStore = ProtectedVideoNoteStore()
+    private var clearSince: Date?
+    private var resumeNotBefore: Date?
+    private var backoffStep: Int = 0
+    public private(set) var pauseForProtectedVideo: Bool
+    public private(set) var protectedVideoTitlePatterns: [String]
+    private var windowListProvider: @MainActor () -> [OnScreenWindowRecord]
+    private let ownPidProvider: @MainActor () -> pid_t
+    private let accessibilityTitlesReader: any AccessibilityTitleReading
+    private let workspaceNotificationCenter: NotificationCenter
+    private let protectedVideoTimerEnabled: Bool
+    nonisolated(unsafe) private var protectedVideoTimer: Timer?
+    nonisolated(unsafe) private var protectedVideoWorkspaceObservers: [NSObjectProtocol] = []
     private let microphoneDevices: @MainActor () -> [AudioInputDevice]
     /// UIDs of input devices another process is currently running input on.
     internal var inputInUseElsewhere: @MainActor () -> Set<String> = MicrophoneMonitor.inputDeviceUIDsInUseByOtherProcesses
@@ -199,7 +215,7 @@ public final class CaptureManager {
 
     // MARK: - Initialization
 
-    public convenience init(
+    internal convenience init(
         storageManager: StorageManager,
         silenceMusic: @escaping @Sendable () -> Bool = { true },
         excludedAppNames: [String] = [],
@@ -223,7 +239,19 @@ public final class CaptureManager {
         now: @escaping @Sendable () -> Date = Date.init,
         allowsEmptyDisplayConfigurationForTesting: Bool = false,
         microphoneDevices: @escaping @MainActor () -> [AudioInputDevice] = MicrophoneMonitor.listInputDevices,
-        shareableContentProvider: @escaping @MainActor () async throws -> SCShareableContent = { try await SCShareableContent.current }
+        shareableContentProvider: @escaping @MainActor () async throws -> SCShareableContent = { try await SCShareableContent.current },
+        pauseForProtectedVideo: Bool = true,
+        protectedVideoTitlePatterns: [String] = [],
+        protectedVideoTimerEnabled: Bool = false,
+        windowList: @escaping @MainActor () -> [OnScreenWindowRecord] = { OnScreenWindowList.layer0Records(from: OnScreenWindowList.copyOnScreenInfo()) },
+        ownPid: @escaping @MainActor () -> pid_t = { ProcessInfo.processInfo.processIdentifier },
+        accessibilityTitles: any AccessibilityTitleReading = AccessibilityTitleReader(),
+        workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        streamFactory: @escaping CaptureStreamFactory = defaultCaptureStreamFactory,
+        recoveryScheduler: @escaping RecoveryScheduler = CaptureLifecycleManager.liveRecoveryScheduler,
+        unlockResumeDelay: (@MainActor @Sendable () async throws -> Void)? = nil,
+        preResumeSettle: (@MainActor () async -> Void)? = nil,
+        transitionTimeoutSeconds: TimeInterval = 30
     ) {
         self.init(
             storageManager: storageManager,
@@ -243,9 +271,19 @@ public final class CaptureManager {
             allowsEmptyDisplayConfigurationForTesting: allowsEmptyDisplayConfigurationForTesting,
             microphoneDevices: microphoneDevices,
             shareableContentProvider: shareableContentProvider,
-            streamFactory: defaultCaptureStreamFactory,
-            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler,
-            isScreenLocked: CaptureLifecycleManager.defaultIsScreenLocked
+            streamFactory: streamFactory,
+            recoveryScheduler: recoveryScheduler,
+            isScreenLocked: CaptureLifecycleManager.defaultIsScreenLocked,
+            pauseForProtectedVideo: pauseForProtectedVideo,
+            protectedVideoTitlePatterns: protectedVideoTitlePatterns,
+            protectedVideoTimerEnabled: protectedVideoTimerEnabled,
+            windowList: windowList,
+            ownPid: ownPid,
+            accessibilityTitles: accessibilityTitles,
+            workspaceNotificationCenter: workspaceNotificationCenter,
+            unlockResumeDelay: unlockResumeDelay,
+            preResumeSettle: preResumeSettle,
+            transitionTimeoutSeconds: transitionTimeoutSeconds
         )
     }
 
@@ -278,7 +316,17 @@ public final class CaptureManager {
         recoveryScheduler: @escaping RecoveryScheduler,
         isScreenLocked: @escaping @MainActor () -> Bool = CaptureLifecycleManager.defaultIsScreenLocked,
         microphoneCaptureManager: MicrophoneCaptureManager? = nil,
-        systemAudioCaptureManager: SystemAudioCaptureManager? = nil
+        systemAudioCaptureManager: SystemAudioCaptureManager? = nil,
+        pauseForProtectedVideo: Bool = true,
+        protectedVideoTitlePatterns: [String] = [],
+        protectedVideoTimerEnabled: Bool = false,
+        windowList: @escaping @MainActor () -> [OnScreenWindowRecord] = { OnScreenWindowList.layer0Records(from: OnScreenWindowList.copyOnScreenInfo()) },
+        ownPid: @escaping @MainActor () -> pid_t = { ProcessInfo.processInfo.processIdentifier },
+        accessibilityTitles: any AccessibilityTitleReading = AccessibilityTitleReader(),
+        workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        unlockResumeDelay: (@MainActor @Sendable () async throws -> Void)? = nil,
+        preResumeSettle: (@MainActor () async -> Void)? = nil,
+        transitionTimeoutSeconds: TimeInterval = 30
     ) {
         self.storageManager = storageManager
         self.silenceMusic = silenceMusic
@@ -294,10 +342,32 @@ public final class CaptureManager {
         self.shareableContentProvider = shareableContentProvider
         self.micCaptureManager = microphoneCaptureManager ?? MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
         self.systemAudioCaptureManager = systemAudioCaptureManager ?? SystemAudioCaptureManager(streamFactory: streamFactory)
-        self.lifecycleManager = CaptureLifecycleManager(
-            recoveryScheduler: recoveryScheduler,
-            isScreenLocked: isScreenLocked
-        )
+        self.pauseForProtectedVideo = pauseForProtectedVideo
+        self.protectedVideoTitlePatterns = protectedVideoTitlePatterns
+        self.protectedVideoTimerEnabled = protectedVideoTimerEnabled
+        self.windowListProvider = windowList
+        self.ownPidProvider = ownPid
+        self.accessibilityTitlesReader = accessibilityTitles
+        self.workspaceNotificationCenter = workspaceNotificationCenter
+
+        if let unlockResumeDelay {
+            self.lifecycleManager = CaptureLifecycleManager(
+                recoveryScheduler: recoveryScheduler,
+                isScreenLocked: isScreenLocked,
+                unlockResumeDelay: unlockResumeDelay,
+                transitionTimeoutSeconds: transitionTimeoutSeconds,
+                preResumeSettle: preResumeSettle,
+                workspaceCenter: workspaceNotificationCenter
+            )
+        } else {
+            self.lifecycleManager = CaptureLifecycleManager(
+                recoveryScheduler: recoveryScheduler,
+                isScreenLocked: isScreenLocked,
+                transitionTimeoutSeconds: transitionTimeoutSeconds,
+                preResumeSettle: preResumeSettle,
+                workspaceCenter: workspaceNotificationCenter
+            )
+        }
         self.windowExclusionManager = WindowExclusionManager(
             excludedAppNames: excludedAppNames,
             excludePrivateBrowsing: excludePrivateBrowsing,
@@ -331,6 +401,9 @@ public final class CaptureManager {
             }
         )
         lifecycleManager.configure(delegate: self)
+        lifecycleManager.protectedVideoOnScreen = { [weak self] in
+            self?.lifecycleProtectedVideoOnScreen() ?? false
+        }
         self.systemAudioCaptureManager.onTerminalStop = { [weak self] in
             self?.handleTerminalStreamStop()
         }
@@ -348,6 +421,10 @@ public final class CaptureManager {
     deinit {
         defaultMicListener?.invalidate()
         NotificationCenter.default.removeObserver(self)
+        protectedVideoTimer?.invalidate()
+        for observer in protectedVideoWorkspaceObservers {
+            workspaceNotificationCenter.removeObserver(observer)
+        }
     }
 
     // MARK: - Public Methods
@@ -474,6 +551,190 @@ public final class CaptureManager {
         )
     }
 
+    public func updateProtectedVideoSettings(pause: Bool, patterns: [String]) {
+        self.pauseForProtectedVideo = pause
+        self.protectedVideoTitlePatterns = patterns
+    }
+
+    public func protectedVideoOnScreen(sourcesIncludeScreen: Bool) -> Bool {
+        guard pauseForProtectedVideo && sourcesIncludeScreen else { return false }
+        let windows = windowListProvider()
+        let pid = ownPidProvider()
+        return ProtectedVideoDetector.match(
+            windows: windows,
+            patterns: protectedVideoTitlePatterns,
+            enabled: pauseForProtectedVideo,
+            ownPid: pid
+        ) != nil
+    }
+
+    internal func checkProtectedVideo() async {
+        guard state.isRecording || state.isPaused else { return }
+
+        let windows = windowListProvider()
+        let pid = ownPidProvider()
+        let match = ProtectedVideoDetector.match(
+            windows: windows,
+            patterns: protectedVideoTitlePatterns,
+            enabled: pauseForProtectedVideo,
+            ownPid: pid
+        )
+        let predicate = (match != nil)
+        let hasProtectedVideoPauseReason = state.pausedReasons.contains(.protectedVideo)
+        let sessionIncludesScreen = sessionSources.contains(.screen)
+        let currentNow = now()
+
+        let decision = ProtectedVideoMonitorDecision.decide(
+            isRecording: state.isRecording,
+            isPaused: state.isPaused,
+            hasProtectedVideoPauseReason: hasProtectedVideoPauseReason,
+            sessionIncludesScreen: sessionIncludesScreen,
+            predicate: predicate,
+            toggleEnabled: pauseForProtectedVideo,
+            now: currentNow,
+            clearSince: clearSince,
+            resumeNotBefore: resumeNotBefore,
+            backoffStep: backoffStep
+        )
+
+        clearSince = decision.nextClearSince
+        resumeNotBefore = decision.nextResumeNotBefore
+        backoffStep = decision.nextBackoffStep
+
+        if let match, hasProtectedVideoPauseReason || decision.action == .pause {
+            noteStore.recordMatch(
+                match,
+                excludedAppNames: windowExclusionManager.excludedAppNames,
+                excludedTitlePatterns: windowExclusionManager.excludedTitlePatterns,
+                excludePrivateBrowsing: windowExclusionManager.excludePrivateBrowsing,
+                excludePrivateBrowsingAccessibility: windowExclusionManager.isReadingAccessibilityTitles,
+                accessibilityReader: accessibilityTitlesReader,
+                isScreenLocked: lifecycleManager.isScreenLocked(),
+                isMachineAwake: lifecycleManager.isMachineAwake,
+                at: currentNow
+            )
+        }
+
+        switch decision.action {
+        case .none:
+            break
+        case .pause:
+            await lifecycleManager.enqueueProtectedVideoPause()
+        case .resume:
+            noteStore.close()
+            let outcome = await lifecycleManager.enqueueProtectedVideoCleared()
+            switch outcome {
+            case .committed:
+                resumeNotBefore = nil
+                backoffStep = 0
+            case .vetoed:
+                if let lastVeto = lifecycleManager.lastVetoReason,
+                   lastVeto == .timedOut || lastVeto == .reset {
+                    let delay = ProtectedVideoMonitorDecision.backoffDelay(forStep: backoffStep)
+                    resumeNotBefore = now().addingTimeInterval(delay)
+                    backoffStep += 1
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    private func stopProtectedVideoTimer() {
+        protectedVideoTimer?.invalidate()
+        protectedVideoTimer = nil
+    }
+
+    private func startProtectedVideoTimer() {
+        guard protectedVideoTimer == nil else { return }
+        protectedVideoTimer = CaptureTimer.schedule(interval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.checkProtectedVideo()
+            }
+        }
+    }
+
+    private func startObservingProtectedVideoWorkspaceNotifications() {
+        guard protectedVideoWorkspaceObservers.isEmpty else { return }
+        let names: [NSNotification.Name] = [
+            NSWorkspace.didLaunchApplicationNotification,
+            NSWorkspace.didActivateApplicationNotification,
+            NSWorkspace.didDeactivateApplicationNotification,
+        ]
+        for name in names {
+            let obs = workspaceNotificationCenter.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    await self?.checkProtectedVideo()
+                }
+            }
+            protectedVideoWorkspaceObservers.append(obs)
+        }
+    }
+
+    private func stopObservingProtectedVideoWorkspaceNotifications() {
+        for obs in protectedVideoWorkspaceObservers {
+            workspaceNotificationCenter.removeObserver(obs)
+        }
+        protectedVideoWorkspaceObservers.removeAll()
+    }
+
+    private func armProtectedVideoMonitoring() {
+        guard protectedVideoTimerEnabled else { return }
+        startProtectedVideoTimer()
+        startObservingProtectedVideoWorkspaceNotifications()
+    }
+
+    private func disarmProtectedVideoMonitoring() {
+        stopProtectedVideoTimer()
+        stopObservingProtectedVideoWorkspaceNotifications()
+    }
+
+    private func dropProtectedVideoNotesIfNeeded() {
+        if noteStore.dropAll() {
+            Logger.capture.debug("[ProtectedVideo] dropped unwritten notes")
+        }
+    }
+
+    internal func setWindowListProviderForTesting(_ provider: @escaping @MainActor () -> [OnScreenWindowRecord]) {
+        self.windowListProvider = provider
+    }
+
+    internal func setNowForTesting(_ now: @escaping @Sendable () -> Date) {
+        self.now = now
+    }
+
+    internal func setProtectedVideoClearSinceForTesting(_ date: Date?) {
+        self.clearSince = date
+    }
+
+    internal func setProtectedVideoResumeNotBeforeForTesting(_ date: Date?) {
+        self.resumeNotBefore = date
+    }
+
+    internal func setProtectedVideoBackoffStepForTesting(_ step: Int) {
+        self.backoffStep = step
+    }
+
+    internal var noteStoreForTesting: ProtectedVideoNoteStore {
+        noteStore
+    }
+
+    internal var clearSinceForTesting: Date? {
+        clearSince
+    }
+
+    internal var resumeNotBeforeForTesting: Date? {
+        resumeNotBefore
+    }
+
+    internal var backoffStepForTesting: Int {
+        backoffStep
+    }
+
     // MARK: - Private Methods
 
     private func rebuildDisplaysAndFilters() async throws {
@@ -501,7 +762,7 @@ public final class CaptureManager {
     }
 
     /// Starts a new recording segment
-    private func startNewSegment() async throws {
+    private func startNewSegment(writeProtectedVideoNote: Bool = false) async throws {
         try Task.checkCancellation()
         guard !lifecycleManager.ownerPauseIsHeld() else { throw CancellationError() }
         if sessionSources.contains(.screen) {
@@ -513,8 +774,13 @@ public final class CaptureManager {
         // Create segment directory with current time (named HHMMSS.incomplete)
         let (segmentDir, timePrefix) = try storageManager.createSegmentDirectory(
             segmentStartTime: now(),
-            timeZone: captureZoneForNewSegment()
+            timeZone: captureZoneForNewSegment(),
+            takeNoteForWrite: writeProtectedVideoNote ? { [noteStore] date in noteStore.takeForWrite(segmentStart: date) } : nil
         )
+
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
+        try await afterSegmentDirectoryCreatedForTesting?()
+        #endif
 
         let availableMics = sessionSources.contains(.microphone) ? selectedMicrophonesForSegment() : []
 
@@ -802,6 +1068,8 @@ public final class CaptureManager {
     }
 
     private func transitionToError(_ message: String, error: Error, trigger: String) {
+        disarmProtectedVideoMonitoring()
+        dropProtectedVideoNotesIfNeeded()
         let oldState = state.label
         state = .error(message)
         Logger.capture.info("[State] \(oldState, privacy: .public) -> error (trigger: \(trigger, privacy: .public), error: \(message, privacy: .public))")
@@ -1016,6 +1284,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         enabledMicUIDs: Set<String>,
         shouldVetoCommit: @escaping @MainActor () -> Bool
     ) async throws -> StartResult {
+        dropProtectedVideoNotesIfNeeded()
         guard !lifecycleOwnerPauseIsHeld else { return .vetoedOwnerPause }
         guard !sources.isEmpty else {
             throw transitionFailure(for: CaptureError.notInitialized)
@@ -1078,12 +1347,14 @@ extension CaptureManager: CaptureLifecycleDelegate {
         Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(reason.trigger, privacy: .public))")
         onStateChanged?(state)
         startHeartbeat()
+        armProtectedVideoMonitoring()
 
         Logger.capture.info("Started recording session (\(self.activeSources.logDescription, privacy: .public)) with \(self.displays.count, privacy: .public) display(s)")
         return .committed
     }
 
     func lifecycleResetForRestartFromError() async {
+        disarmProtectedVideoMonitoring()
         Logger.capture.info("[Executor] resetting for restart from error")
         windowExclusionManager.stop()
         stopDefaultMicMonitoring()
@@ -1109,6 +1380,8 @@ extension CaptureManager: CaptureLifecycleDelegate {
     }
 
     func lifecycleStopCapture(reason: StopReason) async {
+        disarmProtectedVideoMonitoring()
+        dropProtectedVideoNotesIfNeeded()
         windowExclusionManager.stop()
 
         // Stop monitoring for microphone changes.
@@ -1251,6 +1524,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         state = .paused(reasons: newReasons)
         Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) reasons=[\(renderPauseReasons(newReasons), privacy: .public)] (trigger: \(reason.trigger, privacy: .public))")
         onStateChanged?(state)
+        armProtectedVideoMonitoring()
 
         return completedURL
     }
@@ -1270,7 +1544,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         return .stayedPaused
     }
 
-    func lifecyclePrepareResume(trigger: String) async throws {
+    func lifecyclePrepareResume(trigger: String, writeProtectedVideoNote: Bool = false) async throws {
         try Task.checkCancellation()
         // Resume, wake and unlock all re-arm every source immediately.
         audioRecovery.reset()
@@ -1283,10 +1557,10 @@ extension CaptureManager: CaptureLifecycleDelegate {
         }
 
         #if DEBUG || SOLSTONE_TEST_SUPPORT
-        await beforeResumeNativeStartForTesting?()
+        try await beforeResumeNativeStartForTesting?()
         #endif
         try Task.checkCancellation()
-        try await startNewSegment()
+        try await startNewSegment(writeProtectedVideoNote: writeProtectedVideoNote)
 
         if activeSources.contains(.microphone) {
             currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
@@ -1299,6 +1573,25 @@ extension CaptureManager: CaptureLifecycleDelegate {
         Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) (trigger: \(trigger, privacy: .public))")
         onStateChanged?(state)
         startHeartbeat()
+        armProtectedVideoMonitoring()
+    }
+
+    func lifecycleProtectedVideoOnScreen() -> Bool {
+        let sourcesIncludeScreen: Bool
+        if state.isRecording || state.isPaused {
+            sourcesIncludeScreen = sessionSources.contains(.screen)
+        } else {
+            sourcesIncludeScreen = configuredSourcesIncludeScreen?() ?? false
+        }
+        return protectedVideoOnScreen(sourcesIncludeScreen: sourcesIncludeScreen)
+    }
+
+    func lifecycleHoldForProtectedVideo() {
+        let oldState = state.label
+        state = .paused(reasons: [.protectedVideo])
+        Logger.capture.info("[State] \(oldState, privacy: .public) -> \(self.state.label, privacy: .public) reasons=[\(renderPauseReasons([.protectedVideo]), privacy: .public)] (trigger: protectedVideo)")
+        onStateChanged?(state)
+        armProtectedVideoMonitoring()
     }
 
     func lifecycleAbortPreparedResume(restore: Set<PauseReason>?, trigger: String) async {

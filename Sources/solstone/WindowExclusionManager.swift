@@ -94,6 +94,11 @@ final class WindowExclusionManager {
         !settings.excludedAppNames.isEmpty || settings.excludePrivateBrowsing || !settings.titlePatterns.isEmpty
     }
 
+    var excludedAppNames: Set<String> { settings.excludedAppNames }
+    var excludePrivateBrowsing: Bool { settings.excludePrivateBrowsing }
+    var excludedTitlePatterns: [String] { settings.titlePatterns }
+    var isReadingAccessibilityTitles: Bool { readsAccessibilityTitles }
+
     func updateExclusions(
         excludedAppNames: [String],
         excludePrivateBrowsing: Bool,

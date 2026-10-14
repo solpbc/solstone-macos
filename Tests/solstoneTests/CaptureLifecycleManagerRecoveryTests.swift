@@ -1145,8 +1145,10 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
     }
 
     var lifecycleOwnerPauseIsHeld: Bool { false }
+    var protectedVideoOnScreen = false
+    var onHoldForProtectedVideo: (() -> Void)?
 
-    func lifecyclePrepareResume(trigger: String) async throws {
+    func lifecyclePrepareResume(trigger: String, writeProtectedVideoNote: Bool) async throws {
         appendEvent(.resumeStarted(trigger))
         resumeTriggers.append(trigger)
         await waitForResumeRelease()
@@ -1159,6 +1161,14 @@ private final class FakeLifecycleDelegate: CaptureLifecycleDelegate {
         case .fail:
             throw SyntheticLifecycleRecoveryError()
         }
+    }
+
+    func lifecycleProtectedVideoOnScreen() -> Bool {
+        protectedVideoOnScreen
+    }
+
+    func lifecycleHoldForProtectedVideo() {
+        onHoldForProtectedVideo?()
     }
 
     func lifecycleCommitResume(trigger: String) {

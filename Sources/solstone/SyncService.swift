@@ -1430,6 +1430,7 @@ public actor SyncService {
             for entry in allEntries {
                 let name = entry.lastPathComponent
                 guard IngestAcknowledgment.isUploadMediaName(name, segment: segment) else { continue }
+                if case .remnant = mode, name.hasSuffix("_protected_video.jsonl") { continue }
                 let fileType: DiscoveredEntryKind
                 do {
                     fileType = try classifyEntry(entry)
@@ -1619,6 +1620,7 @@ public actor SyncService {
                 }
                 if name == "\(segment)_meta.json" ||
                    name == StorageManager.captureZoneFileName ||
+                   name.hasSuffix("_protected_video.jsonl") ||
                    safeUnreadableAudioNames.contains(name) ||
                    name == ".DS_Store" ||
                    Self.isStagingAckTmp(name: name, segment: segment) ||

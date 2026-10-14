@@ -994,7 +994,11 @@ private final class StartOperationHarness: CaptureLifecycleDelegate {
 
     var lifecycleOwnerPauseIsHeld: Bool { false }
 
-    func lifecyclePrepareResume(trigger: String) async throws {}
+    func lifecyclePrepareResume(trigger: String, writeProtectedVideoNote: Bool) async throws {}
+
+    func lifecycleProtectedVideoOnScreen() -> Bool { false }
+
+    func lifecycleHoldForProtectedVideo() {}
 
     func lifecycleCommitResume(trigger: String) {
         lifecycleCurrentState = .recording

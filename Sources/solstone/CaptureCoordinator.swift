@@ -51,6 +51,7 @@ public final class CaptureCoordinator {
     public internal(set) var initialPermissionCheckComplete = false
     public internal(set) var captureQueuedForJournalReadiness = false
     public internal(set) var audioReconciledCount: Int = 0
+    public internal(set) var isStartDeferredForProtectedVideo = false
 
     public var microphoneGranted: Bool {
         microphoneAuthorizationCause == .authorized
@@ -134,11 +135,20 @@ public final class CaptureCoordinator {
             let current = configProvider()
             return (disabled: current.disabled, enabled: current.enabled)
         }
+        self.captureManager.configuredSourcesIncludeScreen = { [configProvider] in
+            configProvider().sources.contains(.screen)
+        }
         self.captureManager.onTerminalStreamStop = { [weak self] in
             Task { @MainActor in
                 await self?.stopRecording(reason: .userStopped)
             }
         }
+    }
+
+    public func protectedVideoBlocksAutomaticScreenCaptureRead() -> Bool {
+        let config = configProvider()
+        guard config.sources.contains(.screen) else { return false }
+        return captureManager.protectedVideoOnScreen(sourcesIncludeScreen: true)
     }
 
     deinit {
@@ -236,6 +246,13 @@ public final class CaptureCoordinator {
         }
 
         let config = configProvider()
+        if config.sources.contains(.screen),
+           screenPermissionProvider.preflight(),
+           captureManager.protectedVideoOnScreen(sourcesIncludeScreen: true) {
+            isStartDeferredForProtectedVideo = true
+            return
+        }
+
         let admissionSet = config.sources.intersection(permittedSources)
         guard !admissionSet.isEmpty else {
             if config.sources.isEmpty {
@@ -261,9 +278,13 @@ public final class CaptureCoordinator {
         let outcome = await startOperation(reason, admissionSet, (disabled: config.disabled, enabled: config.enabled))
         switch outcome {
         case .committed:
+            isStartDeferredForProtectedVideo = false
             if captureManager.activeSources.contains(.screen) {
                 publishScreenRecordingPermission(.granted)
             }
+        case .heldForProtectedVideo:
+            isStartDeferredForProtectedVideo = true
+            return
         case .threw(let failure):
             if failure.isPermissionError {
                 classifiedLog.emit(
@@ -358,18 +379,23 @@ public final class CaptureCoordinator {
             // entry exists — i.e. while the user has been prompted but hasn't granted yet.
             // CGPreflightScreenCaptureAccess returns true only when a valid TCC entry exists.
             if screenPermissionProvider.preflight() {
-                let granted = configProvider().sources.contains(.screen)
-                    ? await screenPermissionProvider.checkScreenRecording()
-                    : true
-                if granted {
-                    publishScreenRecordingPermission(.granted)
+                if configProvider().sources.contains(.screen) && protectedVideoBlocksAutomaticScreenCaptureRead() {
+                    isStartDeferredForProtectedVideo = true
                 } else {
-                    // Preflight passed but ScreenCaptureKit failed — a changed CDHash can leave
-                    // the TCC record unusable. This recurring signal must precede unavailable.
-                    screenPermissionProvider.resetPromptedFlag()
-                    recorder.enqueue(.screenRecordingCDHashMismatch)
-                    logAdapter.screenRecordingCDHashMismatch()
-                    publishScreenRecordingPermission(.unavailable)
+                    isStartDeferredForProtectedVideo = false
+                    let granted = configProvider().sources.contains(.screen)
+                        ? await screenPermissionProvider.checkScreenRecording()
+                        : true
+                    if granted {
+                        publishScreenRecordingPermission(.granted)
+                    } else {
+                        // Preflight passed but ScreenCaptureKit failed — a changed CDHash can leave
+                        // the TCC record unusable. This recurring signal must precede unavailable.
+                        screenPermissionProvider.resetPromptedFlag()
+                        recorder.enqueue(.screenRecordingCDHashMismatch)
+                        logAdapter.screenRecordingCDHashMismatch()
+                        publishScreenRecordingPermission(.unavailable)
+                    }
                 }
             } else {
                 publishScreenRecordingPermission(.notGranted)
@@ -385,7 +411,7 @@ public final class CaptureCoordinator {
         let admissionSet = configProvider().sources.intersection(permittedSources)
 
         // Auto-start if admitted sources exist, not explicitly stopped, not user stopped, not paused, not already recording, and recovery is not scheduled
-        if !isUserStopped && !isExplicitlyStopped && !admissionSet.isEmpty && !isRecording && !isUserPaused && !pauseManager.isPaused && !captureManager.isRecoveryScheduled {
+        if !isUserStopped && !isExplicitlyStopped && !isStartDeferredForProtectedVideo && !admissionSet.isEmpty && !isRecording && !isUserPaused && !pauseManager.isPaused && !captureManager.isRecoveryScheduled {
             if isTerminating() {
                 recorder.enqueue(.permissionAutoStartSkipped)
                 logAdapter.permissionAutoStartSkipped()
