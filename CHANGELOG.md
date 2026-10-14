@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- the screen, system audio, and microphone pause together while protected video is on screen, and come back on their own.
+- the solstone app on your mac now steps aside while Netflix, Disney+ and other supported streaming video is on screen, so that video no longer goes black: screen, system audio and microphone intake pause together and resume on their own. a short note of the service and window title goes into your journal.
 
 ## [2.0.33] - 2026-10-13
 

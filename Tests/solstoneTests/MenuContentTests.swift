@@ -154,7 +154,7 @@ struct MenuContentTests {
 
     @Test func settingsObservationAXStateVocabularyDropsStarting() {
         let tokens = SettingsObservationAXState.allCases.map(\.axToken)
-        #expect(tokens.count == 10)
+        #expect(tokens.count == 11)
         #expect(!tokens.contains("starting"))
         #expect(SettingsObservationAXState(.starting).axToken == "connecting")
         #expect(SettingsObservationAXState(.connectionWaiting).axToken == "connecting")

@@ -3201,9 +3201,9 @@ struct SettingsView: View {
 
             GroupBox("protected video") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Toggle("pause capture while protected video is on screen", isOn: pauseProtectedVideoBinding)
+                    Toggle("pause intake while protected video is on screen", isOn: pauseProtectedVideoBinding)
                         .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideo)
-                    Text("pauses screen and audio capture while supported streaming video apps or websites are visible.")
+                    Text("pauses screen and audio intake while supported streaming video apps or websites are visible. a short note of the service and window title goes into your journal.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -3235,7 +3235,7 @@ struct SettingsView: View {
                     }
 
                     HStack {
-                        TextField("netflix, hulu, etc.", text: $newProtectedVideoPattern)
+                        TextField("mubi", text: $newProtectedVideoPattern)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit { addProtectedVideoPattern() }
                             .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternField)
