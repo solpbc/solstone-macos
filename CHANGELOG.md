@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.34] - 2026-10-13
+
 ### Added
 
 - the solstone app on your mac now steps aside while Netflix, Disney+ and other supported streaming video is on screen, so that video no longer goes black: screen, system audio and microphone intake pause together and resume on their own. a short note of the service and window title goes into your journal.
+- under sources in the solstone app's settings, "add to Firefox" now shows while Firefox isn't connected, and opens the solstone extension's page on Firefox Add-ons.
 
 ## [2.0.33] - 2026-10-13
 
