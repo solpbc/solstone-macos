@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- you can now remove a microphone that isn't connected from the microphone list in settings, instead of a connected one. before, removing a connected microphone didn't stick: it came back the next time settings opened, at its default setting. if a microphone you removed connects again, it's added back at its default setting.
+
 ## [2.0.34] - 2026-10-13
 
 ### Added

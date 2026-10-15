@@ -4633,19 +4633,20 @@ struct MicrophoneRow: View {
                 .accessibilityIdentifier(AXID.Settings.Microphones.deviceToggle(entry.uid))
             }
 
-            // Delete button (only for connected mics)
-            if entry.isConnected {
+            // Remove is offered only while a microphone is disconnected: a connected one is
+            // re-added by the next device sync, so removing it would not stick, and could bring
+            // back one that was off at its default. Turning it off is the control for that.
+            if !entry.isConnected {
+                Text("disconnected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Button(action: onDelete) {
                     Image(systemName: "minus.circle")
                         .foregroundStyle(.red)
                 }
                 .buttonStyle(.plain)
-                .help("remove from priority list")
+                .help("if it connects again, it comes back at its default setting. to keep it off, turn it off instead.")
                 .accessibilityIdentifier(AXID.Settings.Microphones.deviceRemove(entry.uid))
-            } else {
-                Text("disconnected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 2)
