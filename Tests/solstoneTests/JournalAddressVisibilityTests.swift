@@ -245,6 +245,7 @@ struct JournalAddressVisibilityTests {
         addresses tried: 192.168.1.20:7657
                          [fd00::1]:7657
         segments on this mac: unavailable
+                              set_aside_since_launch=0 · last_stage=none
         recent state codes: no recent state codes
         """))
 
