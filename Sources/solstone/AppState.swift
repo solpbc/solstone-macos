@@ -170,7 +170,10 @@ public final class AppState {
         set { capture.isPaused = newValue }
     }
 
+    /// Intake faults only. A failure of a settings action belongs beside that setting.
     public internal(set) var errorMessage: String?
+    public internal(set) var loginItemError: String?
+    public internal(set) var configSaveError: String?
     private(set) var segmentSetAside = SegmentSetAsideRecord.empty
 
     func recordSegmentSetAside(_ stage: String) {
@@ -470,15 +473,17 @@ public final class AppState {
             } else {
                 try loginService.unregisterWatchdog()
             }
+            loginItemError = nil
             refreshLoginItemStatus()
         } catch {
             Logger.general.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
-            errorMessage = UICopy.ERROR_LOGIN_ITEM
+            loginItemError = UICopy.ERROR_LOGIN_ITEM
             refreshLoginItemStatus()
         }
     }
 
     func migrateLoginItemToWatchdogIfNeeded() {
+        var loginItemMigrationFailed = false
         let watchdog = loginService.watchdogStatus
         let mainApp = loginService.mainAppStatus
 
@@ -490,10 +495,12 @@ public final class AppState {
                 } catch {
                     try? loginService.unregisterWatchdog()
                     Logger.general.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
-                    errorMessage = UICopy.ERROR_LOGIN_ITEM
+                    loginItemMigrationFailed = true
+                    loginItemError = UICopy.ERROR_LOGIN_ITEM
                 }
             }
             refreshLoginItemStatus()
+            if !loginItemMigrationFailed { loginItemError = nil }
             return
         }
 
@@ -502,14 +509,16 @@ public final class AppState {
                 try loginService.registerWatchdog()
             } catch {
                 Logger.general.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
-                errorMessage = UICopy.ERROR_LOGIN_ITEM
+                loginItemMigrationFailed = true
+                loginItemError = UICopy.ERROR_LOGIN_ITEM
                 refreshLoginItemStatus()
                 return
             }
 
             guard loginService.watchdogStatus == .enabled else {
                 Logger.general.error("Failed to update login item: watchdog agent did not become enabled")
-                errorMessage = UICopy.ERROR_LOGIN_ITEM
+                loginItemMigrationFailed = true
+                loginItemError = UICopy.ERROR_LOGIN_ITEM
                 refreshLoginItemStatus()
                 return
             }
@@ -519,19 +528,23 @@ public final class AppState {
             } catch {
                 try? loginService.unregisterWatchdog()
                 Logger.general.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
-                errorMessage = UICopy.ERROR_LOGIN_ITEM
+                loginItemMigrationFailed = true
+                loginItemError = UICopy.ERROR_LOGIN_ITEM
             }
             refreshLoginItemStatus()
+            if !loginItemMigrationFailed { loginItemError = nil }
             return
         }
 
         if mainApp == .notRegistered {
             refreshLoginItemStatus()
+            loginItemError = nil
             return
         }
 
         if watchdog == .notRegistered {
             refreshLoginItemStatus()
+            loginItemError = nil
             return
         }
 
@@ -541,13 +554,16 @@ public final class AppState {
                 Logger.general.info("First launch: enabled login item via watchdog agent")
             } catch {
                 Logger.general.error("Failed to update login item: \(error.localizedDescription, privacy: .public)")
-                errorMessage = UICopy.ERROR_LOGIN_ITEM
+                loginItemMigrationFailed = true
+                loginItemError = UICopy.ERROR_LOGIN_ITEM
             }
             refreshLoginItemStatus()
+            if !loginItemMigrationFailed { loginItemError = nil }
             return
         }
 
         refreshLoginItemStatus()
+        loginItemError = nil
     }
 
     internal func reconcileLoginItemRegistrationAfterUpdateIfNeeded() async {
@@ -615,6 +631,7 @@ public final class AppState {
 
         do {
             try configSaver(newConfig)
+            configSaveError = nil
         } catch {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             if browserIntakeChanged {
@@ -628,7 +645,7 @@ public final class AppState {
             }
 #endif
             Logger.general.error("Failed to save config: \(error.localizedDescription, privacy: .public)")
-            errorMessage = UICopy.ERROR_SAVE_CONFIG
+            configSaveError = UICopy.ERROR_SAVE_CONFIG
             return
         }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
@@ -1116,9 +1133,9 @@ public final class AppState {
         if configChanged {
             do {
                 try config.save()
+                configSaveError = nil
             } catch {
                 Logger.general.error("Failed to save config: \(error.localizedDescription, privacy: .public)")
-                errorMessage = UICopy.ERROR_SAVE_CONFIG
             }
         }
     }

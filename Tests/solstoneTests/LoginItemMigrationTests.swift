@@ -34,7 +34,33 @@ struct LoginItemMigrationTests {
 
         #expect(fake.calls == [.registerWatchdog])
         #expect(!state.isLoginItemEnabled)
-        #expect(state.errorMessage == UICopy.ERROR_LOGIN_ITEM)
+        #expect(state.loginItemError == UICopy.ERROR_LOGIN_ITEM)
+        #expect(state.errorMessage == nil)
+    }
+
+    @Test func toggleSuccessClearsPreviousLoginItemError() {
+        let fake = FakeLoginItemService(watchdogStatus: .notFound, mainAppStatus: .notFound)
+        fake.registerWatchdogError = FakeLoginItemError.requested
+        let state = AppState.forLoginItemTest(loginService: fake)
+
+        state.setLoginItemEnabled(true)
+
+        fake.registerWatchdogError = nil
+        state.setLoginItemEnabled(true)
+
+        #expect(state.loginItemError == nil)
+        #expect(state.errorMessage == nil)
+    }
+
+    @Test func toggleFailureDoesNotMarkObservationRowError() {
+        let fake = FakeLoginItemService(watchdogStatus: .notFound, mainAppStatus: .notFound)
+        fake.registerWatchdogError = FakeLoginItemError.requested
+        let state = AppState.forLoginItemTest(loginService: fake)
+
+        state.setLoginItemEnabled(true)
+
+        #expect(state.observationRowState != .error)
+        #expect(state.errorMessage == nil)
     }
 
     @Test func freshInstallRegistersWatchdogOnly() {
@@ -72,7 +98,8 @@ struct LoginItemMigrationTests {
         #expect(fake.watchdogStatus == .notFound)
         #expect(fake.mainAppStatus == .enabled)
         #expect(!fake.calls.contains(.unregisterMainApp))
-        #expect(state.errorMessage == UICopy.ERROR_LOGIN_ITEM)
+        #expect(state.loginItemError == UICopy.ERROR_LOGIN_ITEM)
+        #expect(state.errorMessage == nil)
         #expect(!state.isLoginItemEnabled)
     }
 
@@ -87,7 +114,8 @@ struct LoginItemMigrationTests {
         #expect(fake.watchdogStatus == .notRegistered)
         #expect(fake.mainAppStatus == .enabled)
         #expect(!(fake.watchdogStatus == .enabled && fake.mainAppStatus == .enabled))
-        #expect(state.errorMessage == UICopy.ERROR_LOGIN_ITEM)
+        #expect(state.loginItemError == UICopy.ERROR_LOGIN_ITEM)
+        #expect(state.errorMessage == nil)
         #expect(!state.isLoginItemEnabled)
     }
 
@@ -160,7 +188,8 @@ struct LoginItemMigrationTests {
         #expect(fake.watchdogStatus == .notRegistered)
         #expect(fake.mainAppStatus == .enabled)
         #expect(!(fake.watchdogStatus == .enabled && fake.mainAppStatus == .enabled))
-        #expect(state.errorMessage == UICopy.ERROR_LOGIN_ITEM)
+        #expect(state.loginItemError == UICopy.ERROR_LOGIN_ITEM)
+        #expect(state.errorMessage == nil)
         #expect(!state.isLoginItemEnabled)
     }
 

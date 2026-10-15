@@ -40,6 +40,7 @@ enum AXID {
     }
 
     enum Settings {
+        static let configSaveError = "settings.configSave.error"
 
         enum Sidebar {
             static func tab(_ tab: SettingsView.Tab) -> String {
@@ -87,6 +88,7 @@ enum AXID {
 
         enum Observer {
             static let startAtLogin = "settings.observer.general.startAtLogin"
+            static let startAtLoginError = "settings.observer.general.startAtLogin.error"
             static let notificationDeniedState = "settings.observer.notifications.denied.state"
             static let storageUsedState = "settings.observer.storage.used.state"
             static let cacheFolderOpen = "settings.observer.storage.cacheFolder.open"
