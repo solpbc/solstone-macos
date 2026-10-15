@@ -2,16 +2,16 @@
 
 solstone observer redistributes the following third-party software. license texts are reproduced verbatim from upstream.
 
-note: sparkle / swift-crypto resolved versions are recorded in the committed `Package.resolved`, so dependency builds are deterministic across hosts. dependency updates are deliberate commits that regenerate and commit `Package.resolved`.
+note: swift-crypto resolved versions are recorded in the committed `Package.resolved`. sparkle source, transport patch and framework identity are recorded in [vendor/sparkle](vendor/sparkle/README.md).
 
 ---
 
 ## Sparkle
 
 - project: sparkle-project/Sparkle
-- version: 2.9.1 (manifest floor)
+- version: 2.9.4 with a downstream download-origin restriction
 - license: see below
-- source: https://github.com/sparkle-project/Sparkle/tree/2.9.1
+- source: https://github.com/sparkle-project/Sparkle/tree/2.9.4
 
 Copyright (c) 2006-2013 Andy Matuschak.
 Copyright (c) 2009-2013 Elgato Systems GmbH.

@@ -1,0 +1,7 @@
+# Sparkle
+
+This directory carries Sparkle 2.9.4, source revision `b6496a74a087257ef5e6da1c5b29a447a60f5bd7`, with [a downstream transport patch](origin.patch). The framework checks the initial download address and every redirect before contact. It defaults to HTTPS `updates.solstone.app` on port 443. UpdateKit can select another HTTPS origin only through the existing explicit operator feed override. Its private policy header is removed before transmission; appcast contents cannot select that policy. Fresh and resumed update drivers carry the same policy, including release notes and delta fallback.
+
+The [build receipt](build.json) records upstream source, patch digest, Xcode/SDK and every framework member's digest or symlink target. From the repository root on a mac with full Xcode, run `python3 scripts/sparkle_dependency.py verify` to check it, or `python3 scripts/sparkle_dependency.py build` to rebuild from the pinned upstream source and patch. A rebuild replaces this directory's framework and receipt. Build outputs may differ between toolchains. The framework includes both architectures and the downloader/installer helpers; app packaging signs them through the existing process.
+
+Sparkle exposes no redirect-policy hook in this version. This downstream patch supplies the application's policy without changing update payloads, signature verification, progress or installation. Upstream licensing is reproduced in [the third-party notices](../../THIRD_PARTY_NOTICES.md#sparkle).

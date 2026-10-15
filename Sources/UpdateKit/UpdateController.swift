@@ -1118,7 +1118,13 @@ private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate 
     }
 
     func feedURLString(for updater: SPUUpdater) -> String? {
-        controller?.sparkleFeedURLOverride()
+        let explicitFeed = controller?.sparkleFeedURLOverride()
+        // The patched downloader consumes and strips this local policy before contact.
+        // Refresh it with the feed for each cycle; appcast contents cannot select it.
+        var headers = updater.httpHeaders ?? [:]
+        headers["X-Solstone-Update-Origin"] = explicitFeed
+        updater.httpHeaders = headers
+        return explicitFeed
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {

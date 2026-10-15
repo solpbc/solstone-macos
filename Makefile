@@ -48,7 +48,7 @@ BOTH_DMG_NAME          ?= $(shell python3 scripts/both_dmg.py name --inputs $(BO
 DMG_VOLNAME            ?= solstone
 DMG_APP                ?= solstone.app
 DMG_ICON               ?= solstone.app
-SPARKLE_ARTIFACT_DIR   ?= .build/artifacts/sparkle/Sparkle
+SPARKLE_ARTIFACT_DIR   ?= vendor/sparkle
 SPARKLE_FRAMEWORK      ?= $(SPARKLE_ARTIFACT_DIR)/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework
 ENTITLEMENTS_PLIST     := Sources/solstone/entitlements.plist
 # App-only entitlements (adds the DP-keychain keychain-access-groups). Profile-less
@@ -192,10 +192,10 @@ ax-contract:
 	AX_CONTRACT_REGEN=1 ./scripts/run-ci.sh -c release -Xswiftc -DSOLSTONE_TEST_SUPPORT --filter AXContractTests.contractMatchesCommittedFileOrRegenerates
 	AX_CONTRACT_REGEN=1 ./scripts/run-ci.sh --filter AXContractTests.contractMatchesCommittedFileOrRegenerates
 
-ci:
+ci: check-sparkle
 	@./scripts/run-ci.sh
 
-ci-release:
+ci-release: check-sparkle
 	@./scripts/run-ci.sh -c release -Xswiftc -DSOLSTONE_TEST_SUPPORT
 
 .PHONY: ci-release
@@ -647,7 +647,7 @@ both-verify:
 both-publish:
 	$(PUBLISH_PY) scripts/both_dmg.py publish --inputs $(BOTH_DIR)/inputs.json --receipt $(BOTH_DIR)/compose.json --verify $(BOTH_DIR)/verify.json --dmg "$(BOTH_DMG_NAME)"
 
-supply-chain-check:
+supply-chain-check: check-sparkle
 	@echo "── supply chain checklist ──"
 	@test -f THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing"; exit 1; }
 	@grep -qiE '^##[[:space:]]+Sparkle' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing Sparkle entry"; exit 1; }
@@ -1013,3 +1013,7 @@ github-release:
 
 .PHONY: publish-preflight publish-appcast publish-appcast-staging github-release \
         ja1r-gate-sync ja1r-gate-clean-tree verify-ja1r-gate-sol verify-ja1r-gate-paired
+
+.PHONY: check-sparkle
+check-sparkle:
+	python3 scripts/sparkle_dependency.py verify

@@ -81,3 +81,7 @@ scripts/**/__pycache__/
 
 # The combined image's inputs, downloads and receipts (scripts/both_dmg.py)
 .both/
+
+# The patched updater framework is pinned with its source and build receipt.
+!vendor/sparkle/
+!vendor/sparkle/**

@@ -1,0 +1,282 @@
+diff --git a/Downloader/SPUDownloader.m b/Downloader/SPUDownloader.m
+index 1160b4b2..89c3891f 100644
+--- a/Downloader/SPUDownloader.m
++++ b/Downloader/SPUDownloader.m
+@@ -24,11 +24,33 @@ typedef NS_ENUM(NSUInteger, SPUDownloadMode)
+ 
+ static NSString *SUDownloadingReason = @"Downloading update related file";
+ 
++// Set only from the application's explicit feed override, never appcast contents.
++static NSString *SUDownloadOriginHeader = @"X-Solstone-Update-Origin";
++
++static BOOL SUIsApprovedDownloadURL(NSURL *url, NSURL *origin)
++{
++    return url != nil && origin != nil
++        && [url.scheme.lowercaseString isEqualToString:@"https"]
++        && [origin.scheme.lowercaseString isEqualToString:@"https"]
++        && url.host.length > 0 && origin.host.length > 0
++        && [url.host.lowercaseString isEqualToString:origin.host.lowercaseString]
++        && (url.port == nil ? 443 : url.port.integerValue) == (origin.port == nil ? 443 : origin.port.integerValue)
++        && url.user == nil && url.password == nil
++        && origin.user == nil && origin.password == nil;
++}
++
++static NSError *SUDownloadOriginError(void)
++{
++    return [NSError errorWithDomain:SUSparkleErrorDomain code:SUDownloadError
++        userInfo:@{NSLocalizedDescriptionKey: @"the update download was blocked because its address is not allowed."}];
++}
++
+ @interface SPUDownloader () <NSURLSessionDownloadDelegate>
+ @end
+ 
+ @implementation SPUDownloader
+ {
++    NSURL *_approvedOrigin;
+     NSURLSessionTask *_sessionTask;
+     NSURLSession *_downloadSession;
+     NSString *_bundleIdentifier;
+@@ -62,6 +84,17 @@ static NSString *SUDownloadingReason = @"Downloading update related file";
+         return;
+     }
+     
++    NSString *explicitOrigin = [request valueForHTTPHeaderField:SUDownloadOriginHeader];
++    _approvedOrigin = explicitOrigin == nil ? [NSURL URLWithString:@"https://updates.solstone.app"] : [NSURL URLWithString:explicitOrigin];
++    NSMutableURLRequest *confinedRequest = [request mutableCopy];
++    [confinedRequest setValue:nil forHTTPHeaderField:SUDownloadOriginHeader];
++    request = confinedRequest;
++    if (!SUIsApprovedDownloadURL(request.URL, _approvedOrigin)) {
++        [_delegate downloaderDidFailWithError:SUDownloadOriginError()];
++        [self _cleanup];
++        return;
++    }
++
+     // Prevent any unwanted URL schemes (e.g. file://)
+     NSString *scheme = request.URL.scheme;
+     if (scheme == nil) {
+@@ -241,6 +274,19 @@ static bool SPUValidateStatusCodeAndFailIfInvalid(NSURLResponse * _Nullable resp
+     [self _cleanup];
+ }
+ 
++- (void)URLSession:(NSURLSession *)__unused session task:(NSURLSessionTask *)__unused task
++    willPerformHTTPRedirection:(NSHTTPURLResponse *)__unused response
++    newRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLRequest * _Nullable))completionHandler
++{
++    if (SUIsApprovedDownloadURL(request.URL, _approvedOrigin)) {
++        completionHandler(request);
++    } else {
++        completionHandler(nil);
++        [_delegate downloaderDidFailWithError:SUDownloadOriginError()];
++        [self _cleanup];
++    }
++}
++
+ - (void)URLSession:(NSURLSession *)__unused session downloadTask:(NSURLSessionDownloadTask *)downloadTask didFinishDownloadingToURL:(NSURL *)location
+ {
+     if (!SPUValidateStatusCodeAndFailIfInvalid(downloadTask.response, downloadTask.originalRequest.URL, _delegate)) {
+diff --git a/Sparkle/SPUAutomaticUpdateDriver.m b/Sparkle/SPUAutomaticUpdateDriver.m
+index bcb5fb0e..ca6a6681 100644
+--- a/Sparkle/SPUAutomaticUpdateDriver.m
++++ b/Sparkle/SPUAutomaticUpdateDriver.m
+@@ -66,13 +66,13 @@
+     [_coreDriver checkForUpdatesAtAppcastURL:appcastURL withUserAgent:userAgent httpHeaders:httpHeaders inBackground:YES requiresSilentInstall:YES];
+ }
+ 
+-- (void)resumeInstallingUpdate
++- (void)resumeInstallingUpdateWithHTTPHeaders:(NSDictionary * _Nullable)__unused httpHeaders
+ {
+     // Nothing really to do here.. this shouldn't be called.
+     SULog(SULogLevelError, @"Error: resumeInstallingUpdate: called on SPUAutomaticUpdateDriver");
+ }
+ 
+-- (void)resumeUpdate:(id<SPUResumableUpdate>)__unused resumableUpdate
++- (void)resumeUpdate:(id<SPUResumableUpdate>)__unused resumableUpdate httpHeaders:(NSDictionary * _Nullable)__unused httpHeaders
+ {
+     // Nothing really to do here.. this shouldn't be called.
+     SULog(SULogLevelError, @"Error: resumeDownloadedUpdate: called on SPUAutomaticUpdateDriver");
+diff --git a/Sparkle/SPUCoreBasedUpdateDriver.h b/Sparkle/SPUCoreBasedUpdateDriver.h
+index b608d23d..d5069e9c 100644
+--- a/Sparkle/SPUCoreBasedUpdateDriver.h
++++ b/Sparkle/SPUCoreBasedUpdateDriver.h
+@@ -56,9 +56,9 @@ SPU_OBJC_DIRECT_MEMBERS @interface SPUCoreBasedUpdateDriver : NSObject
+ 
+ - (void)checkForUpdatesAtAppcastURL:(NSURL *)appcastURL withUserAgent:(NSString *)userAgent httpHeaders:(NSDictionary * _Nullable)httpHeaders inBackground:(BOOL)background requiresSilentInstall:(BOOL)silentInstall;
+ 
+-- (void)resumeInstallingUpdate;
++- (void)resumeInstallingUpdateWithHTTPHeaders:(NSDictionary * _Nullable)httpHeaders;
+ 
+-- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate;
++- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate httpHeaders:(NSDictionary * _Nullable)httpHeaders;
+ 
+ - (void)downloadUpdateFromAppcastItem:(SUAppcastItem *)updateItem secondaryAppcastItem:(SUAppcastItem * _Nullable)secondaryUpdateItem inBackground:(BOOL)background;
+ 
+diff --git a/Sparkle/SPUCoreBasedUpdateDriver.m b/Sparkle/SPUCoreBasedUpdateDriver.m
+index 563a136a..c38085b6 100644
+--- a/Sparkle/SPUCoreBasedUpdateDriver.m
++++ b/Sparkle/SPUCoreBasedUpdateDriver.m
+@@ -88,16 +88,18 @@
+     [_basicDriver checkForUpdatesAtAppcastURL:appcastURL withUserAgent:userAgent httpHeaders:httpHeaders inBackground:background];
+ }
+ 
+-- (void)resumeInstallingUpdate
++- (void)resumeInstallingUpdateWithHTTPHeaders:(NSDictionary * _Nullable)httpHeaders
+ {
++    _httpHeaders = [httpHeaders copy];
+     _resumingInstallingUpdate = YES;
+     _silentInstall = NO;
+     
+     [_basicDriver resumeInstallingUpdate];
+ }
+ 
+-- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate
++- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate httpHeaders:(NSDictionary * _Nullable)httpHeaders
+ {
++    _httpHeaders = [httpHeaders copy];
+     _resumableUpdate = resumableUpdate;
+     _silentInstall = NO;
+     
+diff --git a/Sparkle/SPUProbingUpdateDriver.m b/Sparkle/SPUProbingUpdateDriver.m
+index f4990ba3..53f5a2d2 100644
+--- a/Sparkle/SPUProbingUpdateDriver.m
++++ b/Sparkle/SPUProbingUpdateDriver.m
+@@ -49,12 +49,12 @@
+     [_basicDriver checkForUpdatesAtAppcastURL:appcastURL withUserAgent:userAgent httpHeaders:httpHeaders inBackground:YES];
+ }
+ 
+-- (void)resumeInstallingUpdate
++- (void)resumeInstallingUpdateWithHTTPHeaders:(NSDictionary * _Nullable)httpHeaders
+ {
+     [_basicDriver resumeInstallingUpdate];
+ }
+ 
+-- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate
++- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate httpHeaders:(NSDictionary * _Nullable)httpHeaders
+ {
+     _resumableUpdate = resumableUpdate;
+     
+diff --git a/Sparkle/SPUScheduledUpdateDriver.m b/Sparkle/SPUScheduledUpdateDriver.m
+index 22027d2d..56a5b671 100644
+--- a/Sparkle/SPUScheduledUpdateDriver.m
++++ b/Sparkle/SPUScheduledUpdateDriver.m
+@@ -57,14 +57,14 @@
+     [_uiDriver checkForUpdatesAtAppcastURL:appcastURL withUserAgent:userAgent httpHeaders:httpHeaders inBackground:YES];
+ }
+ 
+-- (void)resumeInstallingUpdate
++- (void)resumeInstallingUpdateWithHTTPHeaders:(NSDictionary * _Nullable)httpHeaders
+ {
+-    [_uiDriver resumeInstallingUpdate];
++    [_uiDriver resumeInstallingUpdateWithHTTPHeaders:httpHeaders];
+ }
+ 
+-- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate
++- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate httpHeaders:(NSDictionary * _Nullable)httpHeaders
+ {
+-    [_uiDriver resumeUpdate:resumableUpdate];
++    [_uiDriver resumeUpdate:resumableUpdate httpHeaders:httpHeaders];
+ }
+ 
+ - (void)uiDriverDidShowUpdate
+diff --git a/Sparkle/SPUUIBasedUpdateDriver.h b/Sparkle/SPUUIBasedUpdateDriver.h
+index 0f7817f2..022398f9 100644
+--- a/Sparkle/SPUUIBasedUpdateDriver.h
++++ b/Sparkle/SPUUIBasedUpdateDriver.h
+@@ -37,9 +37,9 @@ SPU_OBJC_DIRECT_MEMBERS @interface SPUUIBasedUpdateDriver : NSObject
+ 
+ - (void)checkForUpdatesAtAppcastURL:(NSURL *)appcastURL withUserAgent:(NSString *)userAgent httpHeaders:(NSDictionary * _Nullable)httpHeaders inBackground:(BOOL)background;
+ 
+-- (void)resumeInstallingUpdate;
++- (void)resumeInstallingUpdateWithHTTPHeaders:(NSDictionary * _Nullable)httpHeaders;
+ 
+-- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate;
++- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate httpHeaders:(NSDictionary * _Nullable)httpHeaders;
+ 
+ - (void)abortUpdateWithError:(nullable NSError *)error showErrorToUser:(BOOL)showedUserProgress;
+ 
+diff --git a/Sparkle/SPUUIBasedUpdateDriver.m b/Sparkle/SPUUIBasedUpdateDriver.m
+index de06d046..419ee3ba 100644
+--- a/Sparkle/SPUUIBasedUpdateDriver.m
++++ b/Sparkle/SPUUIBasedUpdateDriver.m
+@@ -200,20 +200,22 @@
+     [_coreDriver checkForUpdatesAtAppcastURL:appcastURL withUserAgent:userAgent httpHeaders:httpHeaders inBackground:background requiresSilentInstall:NO];
+ }
+ 
+-- (void)resumeInstallingUpdate
++- (void)resumeInstallingUpdateWithHTTPHeaders:(NSDictionary * _Nullable)httpHeaders
+ {
++    _httpHeaders = [httpHeaders copy];
+     [self _clearSkippedUpdatesIfUserInitiated];
+     
+     _resumingInstallingUpdate = YES;
+-    [_coreDriver resumeInstallingUpdate];
++    [_coreDriver resumeInstallingUpdateWithHTTPHeaders:httpHeaders];
+ }
+ 
+-- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate
++- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate httpHeaders:(NSDictionary * _Nullable)httpHeaders
+ {
++    _httpHeaders = [httpHeaders copy];
+     [self _clearSkippedUpdatesIfUserInitiated];
+     
+     _resumingDownloadedInfoOrUpdate = YES;
+-    [_coreDriver resumeUpdate:resumableUpdate];
++    [_coreDriver resumeUpdate:resumableUpdate httpHeaders:httpHeaders];
+ }
+ 
+ - (void)basicDriverDidFinishLoadingAppcast
+diff --git a/Sparkle/SPUUpdateDriver.h b/Sparkle/SPUUpdateDriver.h
+index dd9872e9..2b56baf0 100644
+--- a/Sparkle/SPUUpdateDriver.h
++++ b/Sparkle/SPUUpdateDriver.h
+@@ -27,9 +27,9 @@ typedef void (^SPUUpdateDriverCompletion)(BOOL shouldShowUpdateImmediately, id<S
+ 
+ - (void)checkForUpdatesAtAppcastURL:(NSURL *)appcastURL withUserAgent:(NSString *)userAgent httpHeaders:(NSDictionary * _Nullable)httpHeaders;
+ 
+-- (void)resumeInstallingUpdate;
++- (void)resumeInstallingUpdateWithHTTPHeaders:(NSDictionary * _Nullable)httpHeaders;
+ 
+-- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate;
++- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate httpHeaders:(NSDictionary * _Nullable)httpHeaders;
+ 
+ @property (nonatomic, readonly) BOOL showingUpdate;
+ 
+diff --git a/Sparkle/SPUUpdater.m b/Sparkle/SPUUpdater.m
+index 416162da..ba1f0082 100644
+--- a/Sparkle/SPUUpdater.m
++++ b/Sparkle/SPUUpdater.m
+@@ -903,10 +903,10 @@ NSString *const SUUpdaterAppcastNotificationKey = @"SUUpdaterAppCastNotification
+     
+     if (installerInProgress) {
+         // Resume an update that has already begun installing in the background
+-        [_driver resumeInstallingUpdate];
++        [_driver resumeInstallingUpdateWithHTTPHeaders:_httpHeaders];
+     } else if (_resumableUpdate != nil) {
+         // Resume an update or info that has already been downloaded
+-        [_driver resumeUpdate:(id<SPUResumableUpdate> _Nonnull)_resumableUpdate];
++        [_driver resumeUpdate:(id<SPUResumableUpdate> _Nonnull)_resumableUpdate httpHeaders:_httpHeaders];
+     } else {
+         // Check that the parameterized feed URL is valid
+         NSURL *theFeedURL = [self parameterizedFeedURL];
+diff --git a/Sparkle/SPUUserInitiatedUpdateDriver.m b/Sparkle/SPUUserInitiatedUpdateDriver.m
+index caeb257b..6e3e9b37 100644
+--- a/Sparkle/SPUUserInitiatedUpdateDriver.m
++++ b/Sparkle/SPUUserInitiatedUpdateDriver.m
+@@ -76,14 +76,14 @@
+     [_uiDriver checkForUpdatesAtAppcastURL:appcastURL withUserAgent:userAgent httpHeaders:httpHeaders inBackground:NO];
+ }
+ 
+-- (void)resumeInstallingUpdate
++- (void)resumeInstallingUpdateWithHTTPHeaders:(NSDictionary * _Nullable)httpHeaders
+ {
+-    [_uiDriver resumeInstallingUpdate];
++    [_uiDriver resumeInstallingUpdateWithHTTPHeaders:httpHeaders];
+ }
+ 
+-- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate
++- (void)resumeUpdate:(id<SPUResumableUpdate>)resumableUpdate httpHeaders:(NSDictionary * _Nullable)httpHeaders
+ {
+-    [_uiDriver resumeUpdate:resumableUpdate];
++    [_uiDriver resumeUpdate:resumableUpdate httpHeaders:httpHeaders];
+ }
+ 
+ - (void)uiDriverDidShowUpdate

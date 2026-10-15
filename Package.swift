@@ -16,15 +16,16 @@ let package = Package(
         .library(name: "SolstoneCore", targets: ["SolstoneCore"]),
         .library(name: "JournalMarkKit", targets: ["JournalMarkKit"]),
         .library(name: "UpdateKit", targets: ["UpdateKit"]),
+        .library(name: "Sparkle", targets: ["Sparkle"]),
         .library(name: "WatchdogKit", targets: ["WatchdogKit"]),
         .library(name: "MacTestSupport", targets: ["MacTestSupport"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.1"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/solpbc/spl-swift.git", exact: "0.8.5")
     ],
     targets: [
+        .binaryTarget(name: "Sparkle", path: "vendor/sparkle/Sparkle.xcframework"),
         .target(
             name: "SolstoneCore",
             path: "Sources/SolstoneCore",
@@ -53,7 +54,7 @@ let package = Package(
             name: "UpdateKit",
             dependencies: [
                 .target(name: "SolstoneCore"),
-                .product(name: "Sparkle", package: "Sparkle")
+                .target(name: "Sparkle")
             ],
             path: "Sources/UpdateKit",
             swiftSettings: [
@@ -68,7 +69,7 @@ let package = Package(
                 .target(name: "UpdateKit"),
                 .product(name: "SPLTunnel", package: "spl-swift"),
                 .target(name: "ObjCHelpers"),
-                .product(name: "Sparkle", package: "Sparkle"),
+                .target(name: "Sparkle"),
                 .product(name: "Crypto", package: "swift-crypto")
             ],
             path: "Sources/solstone",
@@ -159,7 +160,7 @@ let package = Package(
             dependencies: [
                 .target(name: "UpdateKit"),
                 .target(name: "SolstoneCore"),
-                .product(name: "Sparkle", package: "Sparkle")
+                .target(name: "Sparkle")
             ],
             path: "Tests/UpdateKitTests",
             resources: [

@@ -11,6 +11,25 @@ struct SparkleDelegateIngestTests {
     private let statusKey = "solstone.updates.status"
     private let isolatedDefaults = IsolatedUserDefaults()
 
+    @Test func explicitFeedPolicyChangesWithTheOperatorOverrideAndIsCleared() throws {
+        clearDefaults()
+        defer { clearDefaults() }
+        let harness = try makeHarness()
+        let policy = "X-Solstone-Update-Origin"
+        harness.sparkleUpdater.httpHeaders = ["Keep-Header": "kept"]
+
+        for feed in ["https://staging.updates.solstone.app/feed.xml", "https://updates.solstone.app/alternate.xml"] {
+            isolatedDefaults.defaults.set(feed, forKey: "solstone.updates.feedURLOverride")
+            #expect(harness.delegate.feedURLString?(for: harness.sparkleUpdater) == feed)
+            #expect(harness.sparkleUpdater.httpHeaders?[policy] == feed)
+            #expect(harness.sparkleUpdater.httpHeaders?["Keep-Header"] == "kept")
+        }
+        isolatedDefaults.defaults.removeObject(forKey: "solstone.updates.feedURLOverride")
+        #expect(harness.delegate.feedURLString?(for: harness.sparkleUpdater) == nil)
+        #expect(harness.sparkleUpdater.httpHeaders?[policy] == nil)
+        #expect(harness.sparkleUpdater.httpHeaders?["Keep-Header"] == "kept")
+    }
+
     @Test func delegateFoundThenUserDriverFoundIsIdempotent() throws {
         clearDefaults()
         defer { clearDefaults() }
