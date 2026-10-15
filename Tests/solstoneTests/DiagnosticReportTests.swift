@@ -45,6 +45,7 @@ struct DiagnosticReportTests {
         journal intake address: /app/devices/ingest
         journal link: nothing turned away or ended early
         segments on this mac: unavailable
+                              set_aside_since_launch=0 · last_stage=none
         recent state codes: app.launch · first 1970-01-01T00:15:00.000Z · last 1970-01-01T00:15:50.000Z · repeat 3
         """)
         #expect(report.screenRecordingState == .granted)
@@ -205,6 +206,22 @@ struct DiagnosticReportTests {
         """)
     }
 
+    @Test func setAsideFieldsFollowTheRecord() {
+        let empty = buildDiagnosticReport(input())
+        #expect(empty.setAsideCount == 0)
+        #expect(empty.setAsideStage == "none")
+        #expect(empty.setAsideAgeSeconds == nil)
+
+        var record = SegmentSetAsideRecord.empty
+        let earlier = now.addingTimeInterval(-90)
+        record.note("duration", at: earlier)
+        record.note("metadata_seal", at: earlier)
+        let noted = buildDiagnosticReport(input(setAside: record))
+        #expect(noted.setAsideCount == 2)
+        #expect(noted.setAsideStage == "metadata_seal")
+        #expect(noted.setAsideAgeSeconds == 90)
+    }
+
     @Test func everyPeerResetReasonMapsToExactlyOneEvidenceCode() {
         #expect(diagnosticEvidenceCode(forPeerStreamReset: .streamLimitExceeded) == .tunnelStreamLimitRefused)
         for other in [ResetReason.protocolError, .flowControlError, .internalError, .cancel, .unspecified] {
@@ -235,7 +252,8 @@ struct DiagnosticReportTests {
         evidence: DiagnosticEvidenceRead = .available(DiagnosticEvidenceEnvelope(
             schemaVersion: DiagnosticEvidenceEnvelope.currentSchemaVersion,
             entries: []
-        ))
+        )),
+        setAside: SegmentSetAsideRecord = .empty
     ) -> DiagnosticReportInput {
         DiagnosticReportInput(
             appVersion: "1.2.3",
@@ -249,7 +267,8 @@ struct DiagnosticReportTests {
             evidence: evidence,
             ingestReason: "http_404",
             ingestRoute: IngestProtocolV3.uploadPath,
-            now: now
+            now: now,
+            setAside: setAside
         )
     }
 }

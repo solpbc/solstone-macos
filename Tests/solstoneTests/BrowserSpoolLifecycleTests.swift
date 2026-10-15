@@ -478,7 +478,9 @@ struct BrowserSpoolLifecycleTests {
             routeResolver: HomeBaseURLResolver { .url("http://127.0.0.1:49321") },
             syncPaused: { await isPaused() || pause.value },
             ioInjector: injector,
-            routeState: route
+            routeState: route,
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         return LifecycleFixture(root: root, projection: projection, clock: clock, route: route, injector: injector, transport: transport, pause: pause, owner: owner)
     }
@@ -1058,7 +1060,9 @@ struct BrowserSpoolLifecycleTests {
             clock: fixture.clock,
             transport: fixture.transport,
             routeResolver: HomeBaseURLResolver { .held },
-            ioInjector: fixture.injector
+            ioInjector: fixture.injector,
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         await restarted.start()
         #expect(restarted.store.storeIsFailed() == false)
@@ -1121,7 +1125,9 @@ struct BrowserSpoolLifecycleTests {
             clock: fixture.clock,
             transport: fixture.transport,
             routeResolver: HomeBaseURLResolver { .held },
-            ioInjector: fixture.injector
+            ioInjector: fixture.injector,
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         await recovered.start()
         let published = try #require(recovered.store.getPeriod(periodId: periodId))
@@ -1529,7 +1535,9 @@ struct BrowserSpoolLifecycleTests {
             clock: interrupted.clock,
             transport: recoveryTransport,
             routeResolver: HomeBaseURLResolver { .held },
-            ioInjector: interrupted.injector
+            ioInjector: interrupted.injector,
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         await recovered.start()
         #expect(recovered.store.getPeriod(periodId: interruptedPeriod) == nil || recovered.store.getPeriod(periodId: interruptedPeriod)?.cleanupDurable == true)
@@ -1572,7 +1580,9 @@ struct BrowserSpoolLifecycleTests {
             transport: transport,
             routeResolver: HomeBaseURLResolver { .url(destination) },
             ioInjector: fixture.injector,
-            routeState: route
+            routeState: route,
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         defer { replacement.stop() }
         let admissionBeforeStart = replacement.authority.isAdmissionOpen()
@@ -2021,7 +2031,9 @@ struct BrowserSpoolLifecycleTests {
             routeResolver: HomeBaseURLResolver { .url("http://127.0.0.1:49321") },
             syncPaused: { false },
             ioInjector: fixture.injector,
-            routeState: recoveredRoute
+            routeState: recoveredRoute,
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         let reopenedAck = try #require(recoveredOwner.store.storedDeliveryBinding(periodId: periodId)?.ack)
         #expect(reopenedAck.canonicalKey == "reassigned-alias-before-restart")

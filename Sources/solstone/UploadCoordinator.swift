@@ -493,6 +493,11 @@ public final class UploadCoordinator {
         return pairingCredentialStore?.ordinarySyncIsCurrent(context) ?? true
     }
 
+    func noteBrowserDelivery(captured: JournalConnectionFingerprint?) {
+        guard let captured else { return }
+        handleProvenDelivery(proof: captured)
+    }
+
     private func handleProvenDelivery(proof: JournalConnectionFingerprint) {
         let identity = journalIdentityProvider()
         if case .identified(let current) = identity, proof == current {

@@ -189,17 +189,15 @@ public actor RemixQueue {
         let quiescent = await waitForNativeQuiescence(job.audioOwnership)
         do { try job.audioDiagnostics?.handoff() }
         catch {
-            let quarantined = await preserveTerminalFailure(job, stage: "metadata_handoff", error: error,
-                message: "segment metadata could not be saved; segment preserved for recovery")
+            let quarantined = await preserveTerminalFailure(job, stage: SegmentSetAsideStage.metadataHandoff.rawValue, error: error)
             releaseInFlight = quiescent || quarantined
             return
         }
         guard quiescent else {
             // A readable fragment prefix is not a stable snapshot of a file
             // still owned by AVAssetWriter. Never remix, delete or promote it.
-            releaseInFlight = await preserveTerminalFailure(job, stage: "native_ownership",
-                error: NSError(domain: "SolstoneAudioWriter", code: 2),
-                message: "audio finalization is incomplete; segment preserved for recovery")
+            releaseInFlight = await preserveTerminalFailure(job, stage: SegmentSetAsideStage.nativeOwnership.rawValue,
+                error: NSError(domain: "SolstoneAudioWriter", code: 2))
             return
         }
 
@@ -228,15 +226,13 @@ public actor RemixQueue {
                 }
                 else { resolved = await resolveOrphanDuration(candidates: screenCandidates + audioCandidates) }
                 guard let resolved else {
-                    await preserveTerminalFailure(job, stage: "duration", error: NSError(domain: "SolstoneSegmentDuration", code: 1),
-                        message: "segment duration could not be measured; segment preserved for recovery",
+                    await preserveTerminalFailure(job, stage: SegmentSetAsideStage.duration.rawValue, error: NSError(domain: "SolstoneSegmentDuration", code: 1),
                         sourceFiles: audioSourceFiles(in: files, timePrefix: job.timePrefix))
                     return
                 }
                 actualDuration = resolved
             } catch {
-                await preserveTerminalFailure(job, stage: "listing", error: error,
-                    message: "segment files could not be read; segment preserved for recovery")
+                await preserveTerminalFailure(job, stage: SegmentSetAsideStage.listing.rawValue, error: error)
                 return
             }
         }
@@ -271,21 +267,18 @@ public actor RemixQueue {
                 discoveryFailures += sourceIDs.map { .failure(sourceID: $0, stage: "reader", error: nil) }
             } catch let error as TimeoutError {
                 Logger.storage.error("Background remix timed out for \(job.segmentDirectory.lastPathComponent, privacy: .public); marking segment failed")
-                await preserveFailedRemix(job, segmentKey: segmentKey, inputs: job.audioInputs, stage: "remix_timeout", error: error,
-                    message: "audio remix timed out; segment preserved for recovery")
+                await preserveFailedRemix(job, segmentKey: segmentKey, inputs: job.audioInputs, stage: SegmentSetAsideStage.remixTimeout.rawValue, error: error)
                 return
             } catch {
                 Logger.storage.error("Background remix failed for \(job.segmentDirectory.lastPathComponent, privacy: .public): \(error, privacy: .public)")
-                await preserveFailedRemix(job, segmentKey: segmentKey, inputs: job.audioInputs, stage: "remix", error: error,
-                    message: "audio remix failed; segment preserved for recovery")
+                await preserveFailedRemix(job, segmentKey: segmentKey, inputs: job.audioInputs, stage: SegmentSetAsideStage.remix.rawValue, error: error)
                 return
             }
         } else {
             let files: [URL]
             do { files = try directoryLister(job.segmentDirectory) }
             catch {
-                await preserveTerminalFailure(job, stage: "listing", error: error,
-                    message: "segment files could not be read; segment preserved for recovery")
+                await preserveTerminalFailure(job, stage: SegmentSetAsideStage.listing.rawValue, error: error)
                 return
             }
             let timePrefixAudioURL = job.segmentDirectory.appendingPathComponent("\(job.timePrefix)_audio.m4a")
@@ -320,8 +313,7 @@ public actor RemixQueue {
                         discoveryFailures += sourceIDs.map { .failure(sourceID: $0, stage: "reader", error: nil) }
                     } catch {
                         Logger.storage.error("reconstruction remix failed for \(job.timePrefix, privacy: .public), marking segment failed: \(error, privacy: .public)")
-                        await preserveFailedRemix(job, segmentKey: segmentKey, inputs: inputs, stage: "reconstruction", error: error,
-                            message: "audio reconciliation failed; segment preserved for recovery")
+                        await preserveFailedRemix(job, segmentKey: segmentKey, inputs: inputs, stage: SegmentSetAsideStage.reconstruction.rawValue, error: error)
                         return
                     }
                 case .unreadable:
@@ -349,8 +341,11 @@ public actor RemixQueue {
                                       unreadableSourceIDs: unreadableSourceIDs, remixSources: results)
         } catch {
             Logger.storage.error("Segment metadata could not be saved; preserving audio sources: \(error, privacy: .public)")
+            let name = job.segmentDirectory.lastPathComponent
+            let stage = SegmentSetAsideStage.metadataWrite.rawValue
+            Logger.storage.error("Segment \(name, privacy: .public) set aside on this Mac at stage \(stage, privacy: .public)")
             await markIncompleteSegmentAsFailed(job.segmentDirectory)
-            await onSegmentComplete?(job.segmentDirectory, .failed("segment metadata could not be saved; segment preserved for recovery"))
+            await onSegmentComplete?(job.segmentDirectory, .failed(stage))
             return
         }
         // Cleanup is authorized only after output completion and durable outcomes.
@@ -384,8 +379,11 @@ public actor RemixQueue {
             }
         } catch {
             Logger.storage.error("Failed to rename segment files: \(error, privacy: .public)")
+            let name = job.segmentDirectory.lastPathComponent
+            let stage = SegmentSetAsideStage.fileRename.rawValue
+            Logger.storage.error("Segment \(name, privacy: .public) set aside on this Mac at stage \(stage, privacy: .public)")
             await markIncompleteSegmentAsFailed(job.segmentDirectory)
-            await onSegmentComplete?(job.segmentDirectory, .failed("segment files could not be finalized; segment preserved for recovery"))
+            await onSegmentComplete?(job.segmentDirectory, .failed(stage))
             return
         }
 
@@ -401,8 +399,11 @@ public actor RemixQueue {
             await onSegmentComplete?(finalDirectory, reconciliation)
         } catch {
             Logger.storage.warning("Failed to rename segment directory: \(error, privacy: .public)")
+            let name = job.segmentDirectory.lastPathComponent
+            let stage = SegmentSetAsideStage.directoryRename.rawValue
+            Logger.storage.error("Segment \(name, privacy: .public) set aside on this Mac at stage \(stage, privacy: .public)")
             await markIncompleteSegmentAsFailed(job.segmentDirectory)
-            await onSegmentComplete?(job.segmentDirectory, .failed("segment files could not be finalized; segment preserved for recovery"))
+            await onSegmentComplete?(job.segmentDirectory, .failed(stage))
         }
     }
 
@@ -474,7 +475,7 @@ public actor RemixQueue {
     }
 
     @discardableResult
-    private func preserveTerminalFailure(_ job: RemixJob, stage: String, error: Error, message: String,
+    private func preserveTerminalFailure(_ job: RemixJob, stage: String, error: Error,
                                          sourceFiles: [URL] = []) async -> Bool {
         let native = error as NSError
         let failure = AudioRecordingFailure(stage: stage, domain: String(native.domain.prefix(128)), code: native.code)
@@ -486,12 +487,14 @@ public actor RemixQueue {
                 remixSources: [], terminalFailure: failure, failedSourceIDs: sourceIDs)
         } catch { Logger.storage.error("Could not persist terminal segment failure; keeping all source files: \(error, privacy: .public)") }
         let quarantined = await markIncompleteSegmentAsFailed(job.segmentDirectory)
-        await onSegmentComplete?(job.segmentDirectory, .failed(message))
+        let name = job.segmentDirectory.lastPathComponent
+        Logger.storage.error("Segment \(name, privacy: .public) set aside on this Mac at stage \(stage, privacy: .public)")
+        await onSegmentComplete?(job.segmentDirectory, .failed(stage))
         return quarantined
     }
 
     private func preserveFailedRemix(_ job: RemixJob, segmentKey: String, inputs: [AudioRemixerInput],
-                                     stage: String, error: Error, message: String) async {
+                                     stage: String, error: Error) async {
         let outcomes = inputs.map { AudioSourceRemixResult.failure(sourceID: $0.timingInfo.trackType.sourceID,
             stage: stage, error: error, state: "failed") }
         do {
@@ -499,7 +502,9 @@ public actor RemixQueue {
                 segmentKey: segmentKey, micMetadataJSON: job.micMetadataJSON, unreadableSourceIDs: nil, remixSources: outcomes)
         } catch { Logger.storage.error("Could not persist terminal remix failure; keeping all audio sources") }
         await markIncompleteSegmentAsFailed(job.segmentDirectory)
-        await onSegmentComplete?(job.segmentDirectory, .failed(message))
+        let name = job.segmentDirectory.lastPathComponent
+        Logger.storage.error("Segment \(name, privacy: .public) set aside on this Mac at stage \(stage, privacy: .public)")
+        await onSegmentComplete?(job.segmentDirectory, .failed(stage))
     }
 
     private func writeMetadataIfNeeded(segmentDirectory: URL, timePrefix: String, segmentKey: String,

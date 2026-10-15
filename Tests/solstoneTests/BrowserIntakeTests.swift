@@ -803,7 +803,9 @@ struct BrowserIntakeAdmissionTests {
             spoolRoot: tempRoot,
             projection: projection,
             credentialSnapshot: BrowserCredentialSnapshot(identityToken: "token-1"),
-            routeResolver: HomeBaseURLResolver { .held }
+            routeResolver: HomeBaseURLResolver { .held },
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         await owner.start()
         let store = owner.store
@@ -836,7 +838,9 @@ struct BrowserIntakeAdmissionTests {
             credentialSnapshot: BrowserCredentialSnapshot(identityToken: "reload-same"),
             transport: ScriptedBrowserTransport(),
             routeResolver: HomeBaseURLResolver { .url("http://127.0.0.1:49330") },
-            routeState: BrowserIntakeRouteState()
+            routeState: BrowserIntakeRouteState(),
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         defer { owner.stop() }
         await owner.start()
@@ -875,7 +879,9 @@ struct BrowserIntakeAdmissionTests {
             credentialSnapshot: BrowserCredentialSnapshot(identityToken: "mark-held-pairing-a"),
             transport: transport,
             routeResolver: HomeBaseURLResolver { resolution.value },
-            routeState: routeState
+            routeState: routeState,
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         defer { owner.stop() }
         await owner.start()
@@ -1041,7 +1047,7 @@ struct BrowserIntakeAdmissionTests {
             transportIncarnation: 1, credentialIsCurrent: { true }))
         let transport = ScriptedBrowserTransport()
         transport.uploadFailure = UploadError.serverError(IngestServerError(statusCode: 409, reasonCode: "segment_removed", bodyStatus: nil))
-        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, routeState: routeState)
+        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, journalFingerprint: { nil }, reportProvenDelivery: { _ in }, routeState: routeState)
 
         let stored = try #require(store.getPeriod(periodId: pid))
         let wrongBinding = BrowserIngestAck(
@@ -1513,7 +1519,7 @@ struct BrowserIntakeAdmissionTests {
         _ = route.update(BrowserIntakeRouteCapability(serverURL: "http://127.0.0.1",
             identityDigest: try #require(store.getActiveIdentityToken()), pairingGeneration: 1,
             transportIncarnation: 1, credentialIsCurrent: { true }))
-        let planner = BrowserUploadPlanner(store: candidate, gate: BrowserUploadGate(store: candidate), client: transport, routeState: route)
+        let planner = BrowserUploadPlanner(store: candidate, gate: BrowserUploadGate(store: candidate), client: transport, journalFingerprint: { nil }, reportProvenDelivery: { _ in }, routeState: route)
         await planner.planAndUpload()
         #expect(transport.prepareCount == 0)
         #expect(candidate.storeIsFailed())
@@ -1593,7 +1599,7 @@ struct BrowserIntakeAdmissionTests {
         routeState.update(routeA)
         let transport = ScriptedBrowserTransport()
         transport.succeed = true
-        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, serverURLProvider: { "http://127.0.0.1" }, routeState: routeState)
+        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, journalFingerprint: { nil }, reportProvenDelivery: { _ in }, serverURLProvider: { "http://127.0.0.1" }, routeState: routeState)
         await planner.planAndUpload()
         #expect(transport.prepareCount == 1)
         let captured = try #require(try store.storedDeliveryBinding(periodId: periodID))
@@ -1659,7 +1665,7 @@ struct BrowserIntakeAdmissionTests {
         let transport = ScriptedBrowserTransport()
         transport.dayListing = IngestProtocolV3.SegmentsDay(total: 0, items: [])
         transport.succeed = true
-        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, serverURLProvider: { "http://127.0.0.1" }, routeState: routeState)
+        let planner = BrowserUploadPlanner(store: store, gate: gate, client: transport, journalFingerprint: { nil }, reportProvenDelivery: { _ in }, serverURLProvider: { "http://127.0.0.1" }, routeState: routeState)
 
         await planner.planAndUpload()
         #expect(transport.prepareCount == 1)
@@ -1753,6 +1759,7 @@ struct BrowserIntakeAdmissionTests {
         let listingReads = BrowserTestInjectedSize()
         currentTransport.onDayRead = { listingReads.value += 1 }
         let planner = BrowserUploadPlanner(store: store, gate: BrowserUploadGate(store: store), client: currentTransport,
+            journalFingerprint: { nil }, reportProvenDelivery: { _ in },
             serverURLProvider: { routeB.serverURL }, routeState: routeState)
         await planner.planAndUpload()
         #expect(currentTransport.prepareCount == 1)
@@ -1999,6 +2006,7 @@ struct BrowserIntakeAdmissionTests {
             identityDigest: try #require(store.getActiveIdentityToken()), pairingGeneration: 1,
             transportIncarnation: 1, credentialIsCurrent: { true }))
         let planner = BrowserUploadPlanner(store: store, gate: BrowserUploadGate(store: store), client: transport,
+            journalFingerprint: { nil }, reportProvenDelivery: { _ in },
             serverURLProvider: { "http://127.0.0.1:49323" }, nowMs: { BrowserAgeStamp.wallMilliseconds(clock.now) }, routeState: routeState)
         await planner.planAndUpload()
         for id in periods {
@@ -2206,6 +2214,164 @@ struct BrowserIntakeAdmissionTests {
         try store.setSQLitePageLimitForValidation(4096)
         #expect(try authority.accept(bytes: snapshot(generation: generation, id: 999, now: store.getFloorMs()), direction: "extension_to_host")["result"] as? String == "accepted")
     }
+
+    @Test @MainActor func provenBrowserDeliveryNotesOnlyAReleasedIdentifiedFingerprint() async throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let fingerprint = canonicalDeliveryFingerprint("browser-a")
+        let other = canonicalDeliveryFingerprint("browser-b")
+
+        func expectFound(_ store: InMemoryLastJournalDeliveryStore, _ proof: JournalConnectionFingerprint) {
+            #expect(store.read() == .found(LastJournalDeliveryPayload(date: now, fingerprint: proof.value)))
+        }
+        func expectAbsent(_ store: InMemoryLastJournalDeliveryStore) {
+            #expect(store.read() == .absent)
+        }
+
+        let ok = try await runBrowserDelivery(now: now, identity: { .identified(fingerprint) }, fingerprint: { fingerprint }) { transport, planner, _, _ in
+            transport.succeed = true
+            transport.successStatus = .ok
+            await planner.planAndUpload()
+        }
+        defer { try? FileManager.default.removeItem(at: ok.root) }
+        expectFound(ok.delivery, fingerprint)
+
+        let listed = try await runBrowserDelivery(now: now, identity: { .identified(fingerprint) }, fingerprint: { fingerprint }) { transport, planner, intake, delivery in
+            transport.succeed = true
+            await planner.planAndUpload()
+            #expect(delivery.read() == .absent)
+            let period = try #require(intake.store.getAllFinalizedPeriods().first)
+            let proof = try #require(try intake.store.storedDeliveryBinding(periodId: period.periodId)?.ack)
+            transport.dayListing = IngestProtocolV3.SegmentsDay(total: 1, items: [
+                IngestProtocolV3.SegmentsItem(
+                    key: try #require(proof.canonicalKey),
+                    files: [IngestProtocolV3.ReadFile(name: "browser_pages.jsonl", size: proof.size, sha256: proof.sha256, status: .present)],
+                    originalKey: proof.requestedSegment,
+                    segment: proof.requestedSegment,
+                    stream: "browser-stream"
+                )
+            ])
+            await planner.planAndUpload()
+        }
+        defer { try? FileManager.default.removeItem(at: listed.root) }
+        expectFound(listed.delivery, fingerprint)
+
+        let failedUpload = try await runBrowserDelivery(now: now, identity: { .identified(fingerprint) }, fingerprint: { fingerprint }) { transport, planner, _, _ in
+            transport.succeed = false
+            await planner.planAndUpload()
+        }
+        defer { try? FileManager.default.removeItem(at: failedUpload.root) }
+        expectAbsent(failedUpload.delivery)
+
+        let removed = try await runBrowserDelivery(now: now, identity: { .identified(fingerprint) }, fingerprint: { fingerprint }) { transport, planner, _, _ in
+            transport.succeed = false
+            transport.uploadFailure = UploadError.serverError(IngestServerError(statusCode: 409, reasonCode: "segment_removed", bodyStatus: nil))
+            await planner.planAndUpload()
+        }
+        defer { try? FileManager.default.removeItem(at: removed.root) }
+        expectAbsent(removed.delivery)
+
+        let replaced = try await runBrowserDelivery(now: now, identity: { .identified(fingerprint) }, fingerprint: { fingerprint }) { transport, planner, _, _ in
+            transport.succeed = true
+            transport.successStatus = .ok
+            planner.setCarriedPairingAdmissionCommit { _, _ in false }
+            await planner.planAndUpload()
+        }
+        defer { try? FileManager.default.removeItem(at: replaced.root) }
+        expectAbsent(replaced.delivery)
+
+        let identity = LockedValue<JournalIdentityRead>()
+        identity.set(.identified(fingerprint))
+        let changed = try await runBrowserDelivery(now: now, identity: { identity.current ?? .absent }, fingerprint: { fingerprint }) { transport, planner, _, _ in
+            transport.succeed = true
+            transport.successStatus = .ok
+            transport.onUpload = { identity.set(.identified(other)) }
+            await planner.planAndUpload()
+        }
+        defer { try? FileManager.default.removeItem(at: changed.root) }
+        expectAbsent(changed.delivery)
+
+        let unidentified = try await runBrowserDelivery(now: now, identity: { .identified(fingerprint) }, fingerprint: { nil }) { transport, planner, _, _ in
+            transport.succeed = true
+            transport.successStatus = .ok
+            await planner.planAndUpload()
+        }
+        defer { try? FileManager.default.removeItem(at: unidentified.root) }
+        expectAbsent(unidentified.delivery)
+    }
+
+    private struct BrowserDeliveryRun {
+        let root: URL
+        let delivery: InMemoryLastJournalDeliveryStore
+    }
+
+    private struct BrowserDeliveryIntake {
+        let store: BrowserIntakeStore
+    }
+
+    @MainActor
+    private func runBrowserDelivery(
+        now: Date,
+        identity: @escaping @MainActor () -> JournalIdentityRead,
+        fingerprint: @escaping @Sendable () async -> JournalConnectionFingerprint?,
+        body: (ScriptedBrowserTransport, BrowserUploadPlanner, BrowserDeliveryIntake, InMemoryLastJournalDeliveryStore) async throws -> Void
+    ) async throws -> BrowserDeliveryRun {
+        let tempRoot = try createTempRoot()
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let intake = try BrowserIntakeStore(rootURL: tempRoot.appendingPathComponent("spool"), projection: projection)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let authority = BrowserIntakeAuthority(
+            store: intake,
+            projection: projection,
+            wallClock: { clock.now },
+            timeZone: TimeZone(identifier: "UTC")!
+        )
+        let generation = try authority.testConnectionGeneration(identityToken: "tok")
+        let snap: [String: Any] = [
+            "type": "batch",
+            "destination_generation": generation,
+            "inst": "inst-1",
+            "batch_id": "22222222222222222222222222222222",
+            "queued_at_ms": 1_700_000_000_000 as UInt64,
+            "records": [["t": "segment_start", "ts": 1_700_000_000_000 as UInt64, "ctx": "ctx-1", "blocks": [["id": "b1", "text": "delivered"]]]]
+        ]
+        let reply = try authority.accept(bytes: try JSONSerialization.data(withJSONObject: snap), direction: "extension_to_host")
+        let periodID = try #require(reply["period_id"] as? String)
+        try intake.finalizePeriod(periodId: periodID, reason: "seal", civilDate: clock.now, timeZone: TimeZone(identifier: "UTC")!)
+        let gate = BrowserUploadGate(store: intake)
+        let routeState = BrowserIntakeRouteState()
+        _ = routeState.update(BrowserIntakeRouteCapability(
+            serverURL: "http://127.0.0.1",
+            identityDigest: try #require(intake.getActiveIdentityToken()),
+            pairingGeneration: 1,
+            transportIncarnation: 1,
+            credentialIsCurrent: { true }
+        ))
+        let storageRoot = try makeTempDirectory("browser-proven-delivery")
+        let delivery = InMemoryLastJournalDeliveryStore()
+        let coordinator = UploadCoordinator(
+            forSnapshot: StorageManager(baseDirectory: storageRoot),
+            config: AppConfig(),
+            lastDeliveryStore: delivery,
+            journalIdentityProvider: identity
+        )
+        coordinator.nowProvider = { now }
+        let transport = ScriptedBrowserTransport()
+        let planner = BrowserUploadPlanner(
+            store: intake,
+            gate: gate,
+            client: transport,
+            journalFingerprint: fingerprint,
+            reportProvenDelivery: { captured in
+                await MainActor.run {
+                    coordinator.noteBrowserDelivery(captured: captured)
+                }
+            },
+            routeState: routeState
+        )
+        try await body(transport, planner, BrowserDeliveryIntake(store: intake), delivery)
+        try? FileManager.default.removeItem(at: storageRoot)
+        return BrowserDeliveryRun(root: tempRoot, delivery: delivery)
+    }
 }
 
 private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked Sendable {
@@ -2215,6 +2381,7 @@ private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked
     var onUpload: (@Sendable () -> Void)?
     var prepareCount = 0
     var succeed = false
+    var successStatus: IngestProtocolV3.UploadStatus = .collision
     var uploadFailure: Error?
     private(set) var uploadedByteCount = 0
     private let lock = NSLock()
@@ -2273,8 +2440,8 @@ private final class ScriptedBrowserTransport: BrowserUploadTransport, @unchecked
             return .failure(uploadFailure ?? UploadError.invalidRequest)
         }
         let response = IngestProtocolV3.UploadResponse(
-            status: .collision,
-            storedSegmentKey: "120001_1",
+            status: successStatus,
+            storedSegmentKey: successStatus == .ok ? prepared.submittedSegment : "120001_1",
             segmentOriginal: prepared.submittedSegment,
             fileDescriptors: [IngestProtocolV3.UploadFileDescriptor(
                 submitted: part.submitted,

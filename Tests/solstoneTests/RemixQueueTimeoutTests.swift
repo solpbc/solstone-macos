@@ -1858,6 +1858,65 @@ struct RemixQueueTimeoutTests {
         #expect(try segmentDirectories(in: root).filter { $0.hasPrefix("120000_") }.isEmpty)
         #expect(completionCount.count == 1)
     }
+
+    @Test func reconciliationSeamRecordsSetAsideWithoutWritingTheLiveError() async {
+        await MainActor.run {
+            var record = SegmentSetAsideRecord.empty
+            var liveErrorCalls = 0
+            var syncCalls = 0
+            var increments: [Int] = []
+
+            applySegmentReconciliation(
+                .failed(SegmentSetAsideStage.listing.rawValue),
+                setLiveError: { _ in liveErrorCalls += 1 },
+                recordSetAside: { record.note($0, at: Date()) },
+                triggerSync: { syncCalls += 1 },
+                incrementReconciled: { increments.append($0) }
+            )
+            #expect(liveErrorCalls == 0)
+            #expect(record.count == 1)
+            #expect(record.stageToken == SegmentSetAsideStage.listing.rawValue)
+            #expect(syncCalls == 0)
+            #expect(increments.isEmpty)
+
+            let noted = record
+            applySegmentReconciliation(
+                .recovered(4),
+                setLiveError: { _ in liveErrorCalls += 1 },
+                recordSetAside: { record.note($0, at: Date()) },
+                triggerSync: { syncCalls += 1 },
+                incrementReconciled: { increments.append($0) }
+            )
+            #expect(increments == [4])
+            #expect(syncCalls == 1)
+            #expect(liveErrorCalls == 0)
+            #expect(record == noted)
+
+            applySegmentReconciliation(
+                .normal,
+                setLiveError: { _ in liveErrorCalls += 1 },
+                recordSetAside: { record.note($0, at: Date()) },
+                triggerSync: { syncCalls += 1 },
+                incrementReconciled: { increments.append($0) }
+            )
+            #expect(syncCalls == 2)
+            #expect(increments == [4])
+            #expect(liveErrorCalls == 0)
+            #expect(record == noted)
+
+            applySegmentReconciliation(
+                .audioLoss(7),
+                setLiveError: { _ in liveErrorCalls += 1 },
+                recordSetAside: { record.note($0, at: Date()) },
+                triggerSync: { syncCalls += 1 },
+                incrementReconciled: { increments.append($0) }
+            )
+            #expect(syncCalls == 3)
+            #expect(increments == [4])
+            #expect(liveErrorCalls == 0)
+            #expect(record == noted)
+        }
+    }
 }
 
 final class RecordingRemixer: AudioRemixing, @unchecked Sendable {

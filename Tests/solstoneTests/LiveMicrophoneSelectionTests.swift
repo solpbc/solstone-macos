@@ -274,6 +274,7 @@ private final class ConsentSegment: CaptureSegmentWriting {
     private(set) var events: [String] = []
     var onTerminalStop: (@MainActor () -> Void)?
     var onCaptureIssue: (@MainActor (String) -> Void)?
+    var onSegmentSetAside: (@MainActor (String) -> Void)?
     init(_ directory: URL, gate: OneShotContinuationGate? = nil, entered: LatchedEvent? = nil) {
         outputDirectory = directory; self.gate = gate; self.entered = entered
     }

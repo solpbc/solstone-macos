@@ -49,7 +49,9 @@ struct BrowserPairingPersistenceTests {
             spoolRoot: root,
             projection: projection,
             credentialSnapshot: BrowserCredentialSnapshot(identityToken: nil),
-            routeResolver: HomeBaseURLResolver { .held }
+            routeResolver: HomeBaseURLResolver { .held },
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         defer { owner.stop(); try? FileManager.default.removeItem(at: root) }
         owner.bindCredentials(credentials)

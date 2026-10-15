@@ -251,6 +251,8 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
     let startGate: OneShotContinuationGate?
     let captureIssueOnStart: String?
     var onCaptureIssue: (@MainActor (String) -> Void)?
+    var onSegmentSetAside: (@MainActor (String) -> Void)?
+    let setAsideOnFinish: String?
     let finishGate: OneShotContinuationGate?
     let startCount = LockedCounter()
     let finishCaptureCount = LockedCounter()
@@ -275,7 +277,8 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         startsPersistentSystemAudio: PersistentAudioStart = .no,
         startGate: OneShotContinuationGate? = nil,
         finishGate: OneShotContinuationGate? = nil,
-        captureIssueOnStart: String? = nil
+        captureIssueOnStart: String? = nil,
+        setAsideOnFinish: String? = nil
     ) {
         self.outputDirectory = outputDirectory
         self.finishBehaviors = LockedArray(finishBehaviors)
@@ -284,6 +287,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         self.startGate = startGate
         self.finishGate = finishGate
         self.captureIssueOnStart = captureIssueOnStart
+        self.setAsideOnFinish = setAsideOnFinish
     }
 
     func start(
@@ -329,6 +333,9 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
             try? await Task.sleep(for: duration)
             return Self.normalResult(directory: directory ?? outputDirectory)
         case .normal(let directory):
+            if let stage = setAsideOnFinish {
+                onSegmentSetAside?(stage)
+            }
             return Self.normalResult(directory: directory ?? outputDirectory)
         }
     }

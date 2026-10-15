@@ -4273,7 +4273,8 @@ struct SettingsView: View {
                 dialableRelayHost: appState.tunnelLifecycleOwner.dialableRelayHost,
                 triedAddresses: appState.tunnelLifecycleOwner.triedAddresses,
                 connectedThrough: appState.tunnelLifecycleOwner.connectedThrough
-            )
+            ),
+            setAside: appState.segmentSetAside
         )
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         reportInput.browserRows = buildBrowserDiagnosticRows(

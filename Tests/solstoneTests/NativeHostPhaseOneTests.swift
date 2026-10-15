@@ -502,7 +502,9 @@ struct NativeHostSpoolCompositionTests {
                 routeResolver: HomeBaseURLResolver { .url("http://127.0.0.1:5015") },
                 syncPaused: { true },
                 ioInjector: injector,
-                routeState: route
+                routeState: route,
+                journalFingerprint: { nil },
+                reportProvenDelivery: { _ in }
             )
         }
         let owner = try makeOwner()
@@ -571,7 +573,9 @@ struct NativeHostSpoolCompositionTests {
             routeResolver: HomeBaseURLResolver { .url("http://127.0.0.1:5015") },
             syncPaused: { true },
             ioInjector: injector,
-            routeState: BrowserIntakeRouteState()
+            routeState: BrowserIntakeRouteState(),
+            journalFingerprint: { nil },
+            reportProvenDelivery: { _ in }
         )
         await owner.start()
         defer { owner.stop() }

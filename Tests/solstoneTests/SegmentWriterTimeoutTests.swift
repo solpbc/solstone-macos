@@ -131,6 +131,31 @@ struct SegmentWriterTimeoutTests {
         }
     }
 
+    @Test func metadataSealSetsTheSegmentAsideWithoutAnAudioIssue() async throws {
+        let root = try makeTempDirectory("segment-metadata-seal")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("120000.incomplete", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let mics = MicrophoneCaptureManager()
+        mics.updateSelection([])
+        let writer = makeWriter(dir: dir, capturer: FakeScreenshotCapturer(), audioManager: FakeAudioManager())
+        try await writer.start(sources: .microphone, displayInfos: [], mics: [], micCaptureManager: mics)
+        try Data("[]".utf8).write(to: dir.appendingPathComponent("120000_meta.json"))
+
+        let stages = LockedArray<String>([])
+        let issues = LockedArray<String>([])
+        writer.onSegmentSetAside = { stages.append($0) }
+        writer.onCaptureIssue = { issues.append($0) }
+        let result = await writer.finishCapture()
+
+        #expect(result == nil)
+        #expect(stages.all == [SegmentSetAsideStage.metadataSeal.rawValue])
+        #expect(issues.all.isEmpty)
+        let failed = root.appendingPathComponent("120000.failed", isDirectory: true)
+        #expect(!FileManager.default.fileExists(atPath: dir.path))
+        #expect(FileManager.default.fileExists(atPath: failed.path))
+    }
+
     private func makeWriter(
         dir: URL,
         capturer: FakeScreenshotCapturer,

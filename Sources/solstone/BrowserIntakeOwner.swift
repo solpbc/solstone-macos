@@ -215,7 +215,9 @@ public actor BrowserIntakeOwner {
         routeResolver: HomeBaseURLResolver,
         syncPaused: @escaping @Sendable () async -> Bool = { false },
         ioInjector: BrowserIntakeIOInjector = BrowserIntakeIOInjector(),
-        routeState: BrowserIntakeRouteState = BrowserIntakeRouteState()
+        routeState: BrowserIntakeRouteState = BrowserIntakeRouteState(),
+        journalFingerprint: @escaping @Sendable () async -> JournalConnectionFingerprint?,
+        reportProvenDelivery: @escaping @Sendable (JournalConnectionFingerprint?) async -> Void
     ) throws -> BrowserIntakeOwner {
         let store = try BrowserIntakeStore(rootURL: spoolRoot, projection: projection, ioInjector: ioInjector, ageClock: { clock.ageStamp() })
         let authority = BrowserIntakeAuthority(
@@ -230,6 +232,8 @@ public actor BrowserIntakeOwner {
             store: store,
             gate: gate,
             client: transport,
+            journalFingerprint: journalFingerprint,
+            reportProvenDelivery: reportProvenDelivery,
             serverURLProvider: {
                 guard case .url(let url) = await routeResolver.resolve() else { return nil }
                 return url

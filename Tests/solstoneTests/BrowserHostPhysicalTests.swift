@@ -329,7 +329,7 @@ private final class PhysicalListenerFixture {
         owner = try BrowserIntakeOwner.start(spoolRoot: root.appendingPathComponent("spool"), projection: projection,
             credentialSnapshot: BrowserCredentialSnapshot(identityToken: "physical-test-identity"),
             transport: PhysicalTransport(), routeResolver: HomeBaseURLResolver { .url("http://127.0.0.1:1") }, syncPaused: { true },
-            routeState: routeState)
+            routeState: routeState, journalFingerprint: { nil }, reportProvenDelivery: { _ in })
         snapshot = await MainActor.run { BrowserHostSnapshot() }
         listener = BrowserHostListener(limits: BrowserHostLimits(projection: projection), snapshot: snapshot,
             updateGate: BrowserHostUpdateGate(checkForUpdates: {}), sleeper: sleeper, uptime: uptime,

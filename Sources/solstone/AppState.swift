@@ -171,6 +171,12 @@ public final class AppState {
     }
 
     public internal(set) var errorMessage: String?
+    private(set) var segmentSetAside = SegmentSetAsideRecord.empty
+
+    func recordSegmentSetAside(_ stage: String) {
+        segmentSetAside.note(stage, at: Date())
+    }
+
     public internal(set) var audioReconciledCount: Int {
         get { capture.audioReconciledCount }
         set { capture.audioReconciledCount = newValue }
@@ -1547,6 +1553,9 @@ public final class AppState {
             bannerSink: { [captureTarget] message in
                 captureTarget.state?.errorMessage = message
             },
+            setAsideSink: { [captureTarget] stage in
+                captureTarget.state?.recordSegmentSetAside(stage)
+            },
             recorder: recorder,
             screenPermissionProvider: screenPermissionProvider,
             logAdapter: logAdapter
@@ -1593,17 +1602,13 @@ public final class AppState {
                 await RemixQueue.shared.setOnSegmentComplete { [weak self] _, reconciliation in
                     await MainActor.run {
                         guard let self else { return }
-                        switch reconciliation {
-                        case .normal:
-                            self.uploadCoordinator.triggerSync()
-                        case .recovered:
-                            self.audioReconciledCount += 1
-                            self.uploadCoordinator.triggerSync()
-                        case .audioLoss:
-                            self.uploadCoordinator.triggerSync()
-                        case .failed(let message):
-                            self.errorMessage = message
-                        }
+                        applySegmentReconciliation(
+                            reconciliation,
+                            setLiveError: { self.errorMessage = $0 },
+                            recordSetAside: { self.recordSegmentSetAside($0) },
+                            triggerSync: { self.uploadCoordinator.triggerSync() },
+                            incrementReconciled: { self.audioReconciledCount += $0 }
+                        )
                     }
                 }
             }
@@ -1855,6 +1860,9 @@ public final class AppState {
             },
             bannerSink: { [captureTarget] message in
                 captureTarget.state?.errorMessage = message
+            },
+            setAsideSink: { [captureTarget] stage in
+                captureTarget.state?.recordSegmentSetAside(stage)
             },
             startOperation: captureStartOperation,
             recorder: recorder,
@@ -2343,7 +2351,18 @@ public final class AppState {
                     credentialSnapshot: BrowserCredentialSnapshot(identityToken: pairing.map { PairingCredentialStore.identityToken(for: $0) }),
                     routeResolver: routeResolver,
                     syncPaused: { [bridge] in await MainActor.run { bridge.state?.config.syncPaused ?? false } },
-                    routeState: routeState
+                    routeState: routeState,
+                    journalFingerprint: { [bridge] in
+                        await MainActor.run {
+                            guard case .identified(let fingerprint) = bridge.state?.currentJournalIdentity() else { return nil }
+                            return fingerprint
+                        }
+                    },
+                    reportProvenDelivery: { [bridge] captured in
+                        await MainActor.run {
+                            bridge.state?.uploadCoordinator.noteBrowserDelivery(captured: captured)
+                        }
+                    }
                 )
             } catch {
                 Logger.storage.error("Browser intake left off: spool unavailable")

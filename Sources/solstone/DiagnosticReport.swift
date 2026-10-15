@@ -45,6 +45,9 @@ internal struct DiagnosticReport: Equatable, Sendable {
     let lastJournalContactTimestamp: Date?
     /// When this report was read. The copied text leads with it, so two copies can be told apart.
     var checkedAt: Date? = nil
+    var setAsideCount: Int = 0
+    var setAsideStage: String = "none"
+    var setAsideAgeSeconds: Int? = nil
 
     var text: String {
         let header = checkedAt.map { ["\(UICopy.SETTINGS_DIAGNOSTICS_CHECKED_AT): \(diagnosticUTCString($0))"] } ?? []
@@ -76,6 +79,7 @@ internal struct DiagnosticReportInput: Equatable, Sendable {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     var browserRows: [BrowserDiagnosticRow]? = nil
 #endif
+    var setAside: SegmentSetAsideRecord = .empty
 }
 
 /// What the app holds and has done to reach the journal. Addresses, the relay's
@@ -150,6 +154,13 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
             value: connectedThrough.text
         ))
     }
+    let setAsideCount = input.setAside.count
+    let setAsideStage = input.setAside.stageToken
+    let setAsideAgeSeconds = input.setAside.ageSeconds(at: input.now)
+    var setAsideLine = "set_aside_since_launch=\(setAsideCount) · last_stage=\(setAsideStage)"
+    if let setAsideAgeSeconds {
+        setAsideLine += " · last_set_aside_age_s=\(setAsideAgeSeconds)"
+    }
     let baseRows = [
         DiagnosticReportRow(
             id: .appVersion,
@@ -206,7 +217,7 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
         DiagnosticReportRow(
             id: .localCaptures,
             label: "segments on this mac",
-            value: diagnosticBacklogValue(input.backlog, now: input.now)
+            value: diagnosticBacklogValue(input.backlog, now: input.now) + "\n" + setAsideLine
         ),
         DiagnosticReportRow(
             id: .recentStateCodes,
@@ -253,7 +264,10 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
         lastDeliveryTimestamp: input.lastDelivery.deliveredAt,
         lastJournalContactState: input.lastJournalContact.diagnosticAXState,
         lastJournalContactTimestamp: input.lastJournalContact.connectedAt,
-        checkedAt: input.now
+        checkedAt: input.now,
+        setAsideCount: setAsideCount,
+        setAsideStage: setAsideStage,
+        setAsideAgeSeconds: setAsideAgeSeconds
     )
 }
 

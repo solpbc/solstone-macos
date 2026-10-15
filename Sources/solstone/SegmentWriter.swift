@@ -134,6 +134,7 @@ public final class SegmentWriter {
 
     public var onTerminalStop: (@MainActor () -> Void)?
     public var onCaptureIssue: (@MainActor (String) -> Void)?
+    public var onSegmentSetAside: (@MainActor (String) -> Void)?
 
     private var screenshotCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
     private var audioManager: (any SegmentAudioManaging)?
@@ -633,8 +634,8 @@ public final class SegmentWriter {
         for (id, statistics) in audioManager?.audioStatistics() ?? [:] { audioDiagnostics?.statistics(id, statistics) }
         do { try audioDiagnostics?.seal() }
         catch {
-            Logger.capture.error("Segment audio metadata could not be saved; preserving failed segment")
-            onCaptureIssue?("segment metadata could not be saved; segment preserved for recovery")
+            Logger.capture.error("Segment \(self.outputDirectory.lastPathComponent, privacy: .public) audio metadata could not be saved and was set aside on this Mac at stage \(SegmentSetAsideStage.metadataSeal.rawValue, privacy: .public)")
+            onSegmentSetAside?(SegmentSetAsideStage.metadataSeal.rawValue)
             await markIncompleteSegmentAsFailed(outputDirectory)
             return nil
         }

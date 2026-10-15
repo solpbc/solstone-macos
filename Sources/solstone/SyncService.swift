@@ -406,13 +406,16 @@ public actor SyncService {
                             includingPropertiesForKeys: nil,
                             options: []
                         )) ?? []
-                        let isAllBookkeeping = entries.allSatisfy { url in
+                        let isSidecarOnly = entries.allSatisfy { url in
                             let name = url.lastPathComponent
                             return name == ".DS_Store" ||
                                    Self.isStagingAckTmp(name: name, segment: segment) ||
-                                   Self.isRemixerTemp(name: name)
+                                   Self.isRemixerTemp(name: name) ||
+                                   name == "\(segment)_meta.json" ||
+                                   name == StorageManager.captureZoneFileName
                         }
-                        if isAllBookkeeping {
+                        if isSidecarOnly {
+                            Logger.upload.info("Segment \(segment, privacy: .public) had no upload media and only sidecars")
                             let removal = await removeConfirmedSegment(
                                 segmentURL: segmentURL,
                                 day: day,

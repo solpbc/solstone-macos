@@ -82,6 +82,7 @@ public final class CaptureCoordinator {
     /// Lets the app add newly connected microphones to its list before capture reconciles.
     var onMicrophonesChanged: (@MainActor () -> Void)?
     private let bannerSink: BannerSink
+    private let setAsideSink: @MainActor (String) -> Void
     private let startOperation: StartOperation
     private let recorder: DiagnosticEvidenceRecorder
     private let screenPermissionProvider: ScreenRecordingPermissionProvider
@@ -103,6 +104,7 @@ public final class CaptureCoordinator {
         isTerminating: @escaping IsTerminatingProvider,
         configProvider: @escaping CaptureConfigProvider,
         bannerSink: @escaping BannerSink,
+        setAsideSink: @escaping @MainActor (String) -> Void = { _ in },
         startOperation: StartOperation? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
@@ -116,6 +118,7 @@ public final class CaptureCoordinator {
         self.isTerminating = isTerminating
         self.configProvider = configProvider
         self.bannerSink = bannerSink
+        self.setAsideSink = setAsideSink
         self.recorder = recorder
         self.screenPermissionProvider = screenPermissionProvider
         self.permissionPollScheduler = permissionPollScheduler
@@ -159,6 +162,7 @@ public final class CaptureCoordinator {
 
     public func activate() {
         captureManager.onAudioCaptureIssue = { [weak self] message in self?.bannerSink(message) }
+        captureManager.onSegmentSetAside = setAsideSink
         captureManager.onAudioHealthNote = { [weak self] note in self?.audioHealthNote = note }
         captureManager.onStateChanged = { [weak self] state in
             self?.handleCaptureStateChange(state)

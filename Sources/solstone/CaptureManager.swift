@@ -35,6 +35,7 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     func continueAudio(from handoff: AudioRotationHandoff)
     var onTerminalStop: (@MainActor () -> Void)? { get set }
     var onCaptureIssue: (@MainActor (String) -> Void)? { get set }
+    var onSegmentSetAside: (@MainActor (String) -> Void)? { get set }
 }
 
 public extension CaptureSegmentWriting {
@@ -195,6 +196,7 @@ public final class CaptureManager {
     /// Called when an underlying stream encounters a terminal stop (e.g. macOS Stop Sharing)
     public var onTerminalStreamStop: (@MainActor () -> Void)?
     public var onAudioCaptureIssue: (@MainActor (String?) -> Void)?
+    var onSegmentSetAside: (@MainActor (String) -> Void)?
     public private(set) var currentAudioCaptureIssue: String?
     /// Owner-facing audio health: which source isn't coming through, or dropped out and is back.
     /// Information, not an error: it never puts the menu into its error state.
@@ -839,6 +841,10 @@ public final class CaptureManager {
             if message == SegmentWriter.audioHealthChanged { self.refreshAudioHealth(); return }
             self.currentAudioCaptureIssue = message
             self.onAudioCaptureIssue?(message)
+        }
+        segment.onSegmentSetAside = { [weak self, weak segment] stage in
+            guard let self, let segment, self.currentSegment?.outputDirectory == segment.outputDirectory else { return }
+            self.onSegmentSetAside?(stage)
         }
         currentSegment = segment
 

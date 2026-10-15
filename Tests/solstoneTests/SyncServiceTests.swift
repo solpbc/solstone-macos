@@ -2070,6 +2070,7 @@ struct SyncServiceTests {
         let failingSeg = dateDir.appendingPathComponent("120500_300", isDirectory: true)
         try FileManager.default.createDirectory(at: emptySeg, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: emptySeg.appendingPathComponent("120000_300_meta.json"))
+        try Data("notes".utf8).write(to: emptySeg.appendingPathComponent("notes.txt"))
         try FileManager.default.createDirectory(at: failingSeg, withIntermediateDirectories: true)
 
         let service = makeService(
@@ -2946,6 +2947,77 @@ struct SyncServiceTests {
         #expect(!FileManager.default.fileExists(atPath: segmentDir.path))
         #expect(collector.segmentUnprovableCount == 0)
         #expect(store.snapshotRequests().isEmpty)
+    }
+
+    @Test func sidecarOnlySegmentWithoutAckIsRemovedAndNotQuarantined() async throws {
+        store.reset()
+        let nest = try makeCapturesNest("sync-sidecar-only")
+        let segment = "120000_300"
+        let segmentURL = try writeSegmentFiles(root: nest.root, day: "2026-09-14", segment: segment, files: [
+            "\(segment)_meta.json": Data("{}".utf8),
+            StorageManager.captureZoneFileName: Data("{}".utf8)
+        ])
+        let service = makeService(root: nest.root, resolver: HomeBaseURLResolver { .held })
+        await configure(service)
+        let preservedBefore = await service.discover().preservedFailureFolders
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream { collector.append(event) }
+        }
+        await service.sync()
+        listen.cancel()
+
+        let dayDir = segmentURL.deletingLastPathComponent()
+        #expect(!FileManager.default.fileExists(atPath: segmentURL.path))
+        #expect(!FileManager.default.fileExists(atPath: dayDir.appendingPathComponent("\(segment).failed").path))
+        #expect(!FileManager.default.fileExists(atPath: dayDir.appendingPathComponent("\(segment).2.failed").path))
+        #expect(await service.discover().preservedFailureFolders == preservedBefore)
+        #expect(!FileManager.default.fileExists(atPath: nest.parent.appendingPathComponent("preserved-segments").path))
+        #expect(collector.segmentUnprovableCount == 0)
+    }
+
+    @Test func sidecarOnlySegmentIsPreservedWhenKeepSyncedIsOn() async throws {
+        store.reset()
+        let nest = try makeCapturesNest("sync-sidecar-preserve")
+        let day = "2026-09-14"
+        let segment = "120000_300"
+        let segmentURL = try writeSegmentFiles(root: nest.root, day: day, segment: segment, files: [
+            "\(segment)_meta.json": Data("{}".utf8),
+            StorageManager.captureZoneFileName: Data("{}".utf8)
+        ])
+        let service = makeService(root: nest.root, resolver: HomeBaseURLResolver { .held })
+        await configurePreserving(service)
+        await service.sync()
+
+        let preserved = nest.parent.appendingPathComponent("preserved-segments/\(day)/\(segment)", isDirectory: true)
+        #expect(!FileManager.default.fileExists(atPath: segmentURL.path))
+        #expect(FileManager.default.fileExists(atPath: preserved.appendingPathComponent("\(segment)_meta.json").path))
+        #expect(FileManager.default.fileExists(atPath: preserved.appendingPathComponent(StorageManager.captureZoneFileName).path))
+    }
+
+    @Test func foreignSidecarPerSourceAudioStays() async throws {
+        let segment = "120000_300"
+        let meta = Data(#"{"unreadable_audio_sources":{"count":1,"source_ids":["source-x"]}}"#.utf8)
+        let audio = Data("audio".utf8)
+        try await expectForeignSidecarStays("sync-foreign-audio", segment: segment, files: [
+            "\(segment)_meta.json": meta,
+            StorageManager.captureZoneFileName: Data("{}".utf8),
+            "\(segment)_audio_source-x.m4a": audio
+        ])
+    }
+
+    @Test func foreignSidecarNotesStay() async throws {
+        let segment = "120000_300"
+        try await expectForeignSidecarStays("sync-foreign-notes", segment: segment, files: [
+            "\(segment)_meta.json": Data("{}".utf8),
+            "notes.txt": Data("notes".utf8)
+        ])
+    }
+
+    @Test func foreignSidecarMismatchedMetaStays() async throws {
+        try await expectForeignSidecarStays("sync-foreign-meta", segment: "120000_300", files: [
+            "999999_300_meta.json": Data("{}".utf8)
+        ])
     }
 
     @Test func unreadableMetadataMarksSegmentUnprovableAndSkipsUpload() async throws {
@@ -4852,7 +4924,48 @@ struct SyncServiceTests {
             .appendingPathComponent(segmentName, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: directory.appendingPathComponent("\(segmentName)_meta.json"))
+        try Data("notes".utf8).write(to: directory.appendingPathComponent("notes.txt"))
         return (directory, date)
+    }
+
+    private func makeCapturesNest(_ name: String) throws -> (parent: URL, root: URL) {
+        let parent = try makeTempDirectory(name)
+        let root = parent.appendingPathComponent("captures", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return (parent, root)
+    }
+
+    private func writeSegmentFiles(root: URL, day: String, segment: String, files: [String: Data]) throws -> URL {
+        let segmentURL = root
+            .appendingPathComponent(day, isDirectory: true)
+            .appendingPathComponent(segment, isDirectory: true)
+        try FileManager.default.createDirectory(at: segmentURL, withIntermediateDirectories: true)
+        for (name, bytes) in files {
+            try bytes.write(to: segmentURL.appendingPathComponent(name))
+        }
+        return segmentURL
+    }
+
+    private func directoryBytes(_ url: URL) throws -> [String: Data] {
+        let entries = try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil, options: [])
+        var bytes: [String: Data] = [:]
+        for entry in entries {
+            bytes[entry.lastPathComponent] = try Data(contentsOf: entry)
+        }
+        return bytes
+    }
+
+    private func expectForeignSidecarStays(_ name: String, segment: String, files: [String: Data]) async throws {
+        store.reset()
+        let nest = try makeCapturesNest(name)
+        let segmentURL = try writeSegmentFiles(root: nest.root, day: "2026-09-14", segment: segment, files: files)
+        let before = try directoryBytes(segmentURL)
+        let service = makeService(root: nest.root, resolver: HomeBaseURLResolver { .held })
+        await configure(service)
+        await service.sync()
+        #expect(FileManager.default.fileExists(atPath: segmentURL.path))
+        #expect(segmentURL.lastPathComponent == segment)
+        #expect(try directoryBytes(segmentURL) == before)
     }
 
     private func segmentsDayJSON(key: String, filename: String, sha: String, size: Int) -> String {

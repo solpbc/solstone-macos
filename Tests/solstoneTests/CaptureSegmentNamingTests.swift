@@ -38,6 +38,7 @@ struct CaptureSegmentNamingTests {
     private final class NamingCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         let outputDirectory: URL
         let timePrefix: String
+        var onSegmentSetAside: (@MainActor (String) -> Void)?
 
         init(outputDirectory: URL, timePrefix: String) {
             self.outputDirectory = outputDirectory
@@ -79,6 +80,7 @@ struct CaptureSegmentNamingTests {
     @MainActor
     private final class SeedCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         let outputDirectory: URL
+        var onSegmentSetAside: (@MainActor (String) -> Void)?
         init(outputDirectory: URL) { self.outputDirectory = outputDirectory }
         func start(
             sources: CaptureSources,

@@ -827,6 +827,44 @@ struct CaptureCoordinatorTests {
         #expect(status == .stopped)
     }
 
+    @Test func setAsideSinkReceivesTheStageWithoutTheBanner() throws {
+        var stages: [String] = []
+        var banners: [String?] = []
+        let (coordinator, root) = try makeCoordinator(
+            bannerSink: { banners.append($0) },
+            setAsideSink: { stages.append($0) }
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.activate()
+        coordinator.captureManager.onSegmentSetAside?("metadata_seal")
+        #expect(stages == ["metadata_seal"])
+        #expect(banners.isEmpty)
+    }
+
+    @Test func remixFailureAndSealNoteTheSameSetAsideRecord() throws {
+        let record = LockedValue<SegmentSetAsideRecord>()
+        record.set(.empty)
+        let note: @MainActor (String) -> Void = { stage in
+            var value = record.current ?? .empty
+            value.note(stage, at: Date())
+            record.set(value)
+        }
+        applySegmentReconciliation(
+            .failed(SegmentSetAsideStage.duration.rawValue),
+            setLiveError: { _ in },
+            recordSetAside: note,
+            triggerSync: {},
+            incrementReconciled: { _ in }
+        )
+        let (coordinator, root) = try makeCoordinator(setAsideSink: note)
+        defer { try? FileManager.default.removeItem(at: root) }
+        coordinator.activate()
+        coordinator.captureManager.onSegmentSetAside?(SegmentSetAsideStage.metadataSeal.rawValue)
+        let noted = try #require(record.current)
+        #expect(noted.count == 2)
+        #expect(noted.stageToken == SegmentSetAsideStage.metadataSeal.rawValue)
+    }
+
     private func makeCoordinator(
         pauseManager: PauseManager = PauseManager(),
         isTerminating: @escaping CaptureCoordinator.IsTerminatingProvider = { false },
@@ -834,6 +872,7 @@ struct CaptureCoordinatorTests {
             (sources: .all, disabled: Set<String>(), enabled: Set<String>())
         },
         bannerSink: @escaping CaptureCoordinator.BannerSink = { _ in },
+        setAsideSink: @escaping @MainActor (String) -> Void = { _ in },
         startOperation: CaptureCoordinator.StartOperation? = nil,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
         permissionPollScheduler: PermissionPollScheduler? = nil,
@@ -861,6 +900,7 @@ struct CaptureCoordinatorTests {
             isTerminating: isTerminating,
             configProvider: configProvider,
             bannerSink: bannerSink,
+            setAsideSink: setAsideSink,
             startOperation: startOperation,
             screenPermissionProvider: screenPermissionProvider,
             permissionPollScheduler: permissionPollScheduler ?? PermissionPollTestScheduler().scheduler,

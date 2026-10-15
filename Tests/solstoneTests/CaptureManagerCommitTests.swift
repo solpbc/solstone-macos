@@ -245,6 +245,38 @@ struct CaptureManagerCommitTests {
         #expect(manager.state.isRecording)
     }
 
+    @Test func setAsideOnFinishForwardsWithoutChangingTheAudioIssue() async throws {
+        let root = try makeTempDirectory("capture-set-aside-forward")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in
+                FakeCaptureSegment(
+                    outputDirectory: directory,
+                    setAsideOnFinish: SegmentSetAsideStage.metadataSeal.rawValue
+                )
+            },
+            finalizer: FakeFinalizer(),
+            allowsEmptyDisplayConfigurationForTesting: true
+        )
+        var audioIssueCalls = 0
+        manager.onAudioCaptureIssue = { _ in audioIssueCalls += 1 }
+        let stages = LockedArray<String>([])
+        manager.onSegmentSetAside = { stages.append($0) }
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
+        guard case .committed = await executor.enqueue(.start(reason: .user, sources: [.screen], disabledMicUIDs: [], enabledMicUIDs: [])) else {
+            Issue.record("expected start")
+            return
+        }
+        let issueCallsAfterStart = audioIssueCalls
+        #expect(manager.currentAudioCaptureIssue == nil)
+        _ = await manager.currentSegmentForTesting?.finishCapture()
+        #expect(stages.all == [SegmentSetAsideStage.metadataSeal.rawValue])
+        #expect(audioIssueCalls == issueCallsAfterStart)
+        #expect(manager.currentAudioCaptureIssue == nil)
+        _ = await executor.enqueue(.stop(reason: .user))
+    }
+
     private func makeManager(finalizer: FakeFinalizer) throws -> (CaptureManager, URL) {
         let root = try makeTempDirectory("capture-manager-commit")
         let manager = CaptureManager(

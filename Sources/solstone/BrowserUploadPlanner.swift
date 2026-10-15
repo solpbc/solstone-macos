@@ -74,11 +74,14 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
         let client: any BrowserUploadTransport
         let serverURL: String
         let destinationGeneration: String?
+        let journalFingerprint: JournalConnectionFingerprint?
     }
 
     private let store: BrowserIntakeStore
     private let gate: BrowserUploadGate
     private let client: any BrowserUploadTransport
+    private let journalFingerprint: @Sendable () async -> JournalConnectionFingerprint?
+    private let reportProvenDelivery: @Sendable (JournalConnectionFingerprint?) async -> Void
     private let serverURLProvider: @Sendable () async -> String?
     private let syncPausedProvider: @Sendable () async -> Bool
     private let nowMs: @Sendable () -> UInt64
@@ -92,6 +95,8 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
         store: BrowserIntakeStore,
         gate: BrowserUploadGate,
         client: any BrowserUploadTransport,
+        journalFingerprint: @escaping @Sendable () async -> JournalConnectionFingerprint?,
+        reportProvenDelivery: @escaping @Sendable (JournalConnectionFingerprint?) async -> Void,
         serverURLProvider: @escaping @Sendable () async -> String? = { "http://127.0.0.1" },
         syncPausedProvider: @escaping @Sendable () async -> Bool = { false },
         nowMs: @escaping @Sendable () -> UInt64 = { UInt64(Date().timeIntervalSince1970 * 1000) },
@@ -100,6 +105,8 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
         self.store = store
         self.gate = gate
         self.client = client
+        self.journalFingerprint = journalFingerprint
+        self.reportProvenDelivery = reportProvenDelivery
         self.serverURLProvider = serverURLProvider
         self.syncPausedProvider = syncPausedProvider
         self.nowMs = nowMs
@@ -128,12 +135,14 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
         guard let serverURL = await serverURLProvider(), let permit = gate.currentPermit(),
               let route = routeState.snapshot(for: permit),
               BrowserOpaqueString.equals(route.serverURL, serverURL) else { return }
+        let capturedFingerprint = await journalFingerprint()
         let capture = DeliveryCapture(
             permit: permit,
             route: route,
             client: client,
             serverURL: serverURL,
-            destinationGeneration: store.getDestinationGeneration()
+            destinationGeneration: store.getDestinationGeneration(),
+            journalFingerprint: capturedFingerprint
         )
         for period in store.getAllFinalizedPeriods() {
             guard !Task.isCancelled, isCarriedPairingAdmissionOpen(), await !syncPausedProvider() else { continue }
@@ -235,6 +244,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                         return true
                     }
                     guard released else { return }
+                    await reportProvenDelivery(capture.journalFingerprint)
                     recordDeliveryFailure(nil, period: period, capture: capture, lease: lease)
                     return
                 }
@@ -325,6 +335,7 @@ public final class BrowserUploadPlanner: @unchecked Sendable {
                     Logger.upload.notice("Browser custody release skipped for period \(period.periodId, privacy: .public): route replaced or admission closed; receipt kept")
                     return
                 }
+                await reportProvenDelivery(capture.journalFingerprint)
                 recordDeliveryFailure(nil, period: period, capture: capture, lease: lease)
             case .failure(let error):
                 if case .segmentScoped(.segmentRemoved) = classifyUpload(error), lease.isValid(),
