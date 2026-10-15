@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - you can now remove a microphone that isn't connected from the microphone list in settings, instead of a connected one. before, removing a connected microphone didn't stick: it came back the next time settings opened, at its default setting. if a microphone you removed connects again, it's added back at its default setting.
+- if your mac couldn't finish saving a segment, the menu bar and settings no longer show a red error about it. before, the error could stay for as long as you were paused, "try again" did nothing while paused, and the message said the segment was kept for recovery, though nothing would recover it. copy diagnostics in settings now counts these instead.
+- "last added to your journal" in settings now updates when a page from the solstone extension reaches your journal, too. before, it updated only for the solstone app on this mac.
 
 ## [2.0.34] - 2026-10-13
 
