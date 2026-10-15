@@ -396,9 +396,17 @@ struct SettingsView: View {
         } detail: {
             ScrollViewReader { proxy in
                 ScrollView {
-                    detailContent(scrollProxy: proxy)
-                        .padding(20)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    VStack(alignment: .leading, spacing: 12) {
+                        if let error = appState.configSaveError {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .accessibilityIdentifier(AXID.Settings.configSaveError)
+                        }
+                        detailContent(scrollProxy: proxy)
+                    }
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
                 .modifier(SettingsPaneScrollEdgeModifier())
             }
@@ -1313,12 +1321,20 @@ struct SettingsView: View {
     private var observerTab: some View {
         VStack(alignment: .leading, spacing: 20) {
             GroupBox("general") {
-                Toggle("start at login", isOn: Binding(
-                    get: { appState.isLoginItemEnabled },
-                    set: { appState.setLoginItemEnabled($0) }
-                ))
-                .accessibilityIdentifier(AXID.Settings.Observer.startAtLogin)
-                .padding(.vertical, 4)
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle("start at login", isOn: Binding(
+                        get: { appState.isLoginItemEnabled },
+                        set: { appState.setLoginItemEnabled($0) }
+                    ))
+                    .accessibilityIdentifier(AXID.Settings.Observer.startAtLogin)
+                    .padding(.vertical, 4)
+                    if let error = appState.loginItemError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier(AXID.Settings.Observer.startAtLoginError)
+                    }
+                }
             }
 
             GroupBox("notifications") {
