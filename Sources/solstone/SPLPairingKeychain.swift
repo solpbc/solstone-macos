@@ -7,7 +7,7 @@ import SPLTunnel
 
 enum SPLRuntime {
     static var clientInfo: SPLClientInfo {
-        SPLClientInfo(userAgent: "solstone-macos/\(AppVersion.short)")
+        SPLClientInfo(userAgent: "solstone-macos/\(AppVersion.short)", platform: .macos)
     }
 }
 

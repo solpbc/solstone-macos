@@ -1,13 +1,13 @@
 {
-  "originHash" : "b780174b23a56889b3c0935ed6beee0d1b87558c865d36a1f8a2a55fd5d9f33a",
+  "originHash" : "196833269202871456fea6cec2dee46b737ceba73b1f9b7cc51405e3ff283697",
   "pins" : [
     {
       "identity" : "spl-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/solpbc/spl-swift.git",
       "state" : {
-        "revision" : "d3b34c97794ed176904de6c8e23147920f04937d",
-        "version" : "0.8.5"
+        "revision" : "7d6f82a8a7cd0e144ac4575b1379b08c9dc6f80e",
+        "version" : "0.8.6"
       }
     },
     {
