@@ -561,6 +561,7 @@ extension StatusHealthSummary {
         isPairedIngestReady: Bool = true,
         journalConnectionAXToken: String? = nil,
         startDeferredForProtectedVideo: Bool = false,
+        screenFailure: ScreenFailureKind? = nil,
         snapshot: BrowserHostSnapshotValue
     ) -> StatusHealthSummary {
         let media = StatusHealthSummary.make(
@@ -582,11 +583,13 @@ extension StatusHealthSummary {
             lastHealthReason: lastHealthReason,
             isPairedIngestReady: isPairedIngestReady,
             journalConnectionAXToken: journalConnectionAXToken,
-            startDeferredForProtectedVideo: startDeferredForProtectedVideo
+            startDeferredForProtectedVideo: startDeferredForProtectedVideo,
+            screenFailure: screenFailure
         )
         if !hasPersistedPairing || isRecording || isPaused
             || media.axValue == "sources_unavailable"
             || media.axValue == "capture_error"
+            || media.axValue == AXID.Settings.Status.screenIntake
             || (ownerPauseHeldIdle && media.axValue == "paused") {
             return media
         }

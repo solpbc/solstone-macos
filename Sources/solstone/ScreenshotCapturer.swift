@@ -14,6 +14,8 @@ public final class ScreenshotCapturer {
     public let displayID: CGDirectDisplayID
     public var onHealthFailure: (() -> Void)?
     public var onTerminalStop: (@MainActor () -> Void)?
+    public var onScreenStopped: (@MainActor () -> Void)?
+    public var onFrameDelivered: (@MainActor () -> Void)?
 
     private let videoWriter: VideoWriter
     private let verbose: Bool
@@ -152,7 +154,8 @@ public final class ScreenshotCapturer {
             // Create stream output handler
             let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
                 Task { @MainActor in
-                    self?.handleFrame(pixelBuffer, isIdle: isIdle)
+                    guard let self, self.streamGeneration == gen, self.isRunning else { return }
+                    self.handleFrame(pixelBuffer, isIdle: isIdle)
                 }
             }
 
@@ -197,6 +200,7 @@ public final class ScreenshotCapturer {
     ///   - isIdle: True if SCStream reports the frame as idle (no content change)
     private func handleFrame(_ pixelBuffer: CVPixelBuffer, isIdle: Bool) {
         guard isRunning else { return }
+        onFrameDelivered?()
         healthCheckFrameCount += 1
 
         if !firstFrameLogged {
@@ -378,7 +382,8 @@ public final class ScreenshotCapturer {
 
                 let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
                     Task { @MainActor in
-                        self?.handleFrame(pixelBuffer, isIdle: isIdle)
+                        guard let self, self.streamGeneration == gen, self.isRunning else { return }
+                        self.handleFrame(pixelBuffer, isIdle: isIdle)
                     }
                 }
 
@@ -415,6 +420,8 @@ public final class ScreenshotCapturer {
             } catch {
                 if isPermissionError(error) {
                     stopHealthCheck()
+                    isRunning = false
+                    onScreenStopped?()
                     return
                 }
                 Logger.capture.error("ScreenshotCapturer: Failed restart attempt \(attempts, privacy: .public)/\(self.maxRestartAttempts, privacy: .public) for display \(self.displayID, privacy: .public): \(error, privacy: .public)")
@@ -425,6 +432,7 @@ public final class ScreenshotCapturer {
         onHealthFailure?()
         isRunning = false
         stopHealthCheck()
+        onScreenStopped?()
     }
 
     private func handleStreamError(_ error: Error) {
@@ -435,6 +443,8 @@ public final class ScreenshotCapturer {
         if isPermissionError(error) {
             Logger.capture.info("ScreenshotCapturer: Permission error, not restarting (requires user action in System Settings)")
             stopHealthCheck()
+            isRunning = false
+            onScreenStopped?()
             return
         } else if isUserStoppedStreamError(error) {
             Logger.capture.info("ScreenshotCapturer: Stream stopped by user (Stop Sharing)")

@@ -59,6 +59,8 @@ public struct SegmentCaptureResult: Sendable {
 @MainActor
 public protocol SegmentScreenshotCapturing: AnyObject, Sendable {
     var onTerminalStop: (@MainActor () -> Void)? { get set }
+    var onScreenStopped: (@MainActor () -> Void)? { get set }
+    var onFrameDelivered: (@MainActor () -> Void)? { get set }
     func start() async throws
     func stop() async
     func updateContentFilter(_ filter: SCContentFilter) async
@@ -67,6 +69,14 @@ public protocol SegmentScreenshotCapturing: AnyObject, Sendable {
 
 public extension SegmentScreenshotCapturing {
     var onTerminalStop: (@MainActor () -> Void)? {
+        get { nil }
+        set {}
+    }
+    var onScreenStopped: (@MainActor () -> Void)? {
+        get { nil }
+        set {}
+    }
+    var onFrameDelivered: (@MainActor () -> Void)? {
         get { nil }
         set {}
     }
@@ -135,6 +145,8 @@ public final class SegmentWriter {
     public var onTerminalStop: (@MainActor () -> Void)?
     public var onCaptureIssue: (@MainActor (String) -> Void)?
     public var onSegmentSetAside: (@MainActor (String) -> Void)?
+    public var onScreenFailure: (@MainActor (ScreenFailureKind) -> Void)?
+    public var onFrameDelivered: (@MainActor (CGDirectDisplayID) -> Void)?
 
     private var screenshotCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
     private var audioManager: (any SegmentAudioManaging)?
@@ -299,6 +311,8 @@ public final class SegmentWriter {
             self.audioManager = nil
         }
 
+        var screenFailureToReport: ScreenFailureKind?
+
         // Screen capture subsystem
         if sources.contains(.screen) {
             do {
@@ -326,28 +340,54 @@ public final class SegmentWriter {
                     Logger.capture.error("System audio failed to start; continuing screenshot capture")
                 }
 
+                var anyDisplayStarted = false
+                var displayStartFailed = false
                 for info in displayInfos {
-                    let videoURL = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
-                    let capturer = try screenshotCapturerFactory(
-                        info,
-                        videoURL,
-                        Self.frameRate,
-                        Self.segmentDuration,
-                        filters[info.displayID],
-                        verbose
-                    )
-                    capturer.onTerminalStop = { [weak self] in
-                        self?.onTerminalStop?()
+                    var returnedCapturer: (any SegmentScreenshotCapturing)?
+                    do {
+                        let videoURL = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
+                        let capturer = try screenshotCapturerFactory(
+                            info,
+                            videoURL,
+                            Self.frameRate,
+                            Self.segmentDuration,
+                            filters[info.displayID],
+                            verbose
+                        )
+                        returnedCapturer = capturer
+                        capturer.onTerminalStop = { [weak self] in
+                            self?.onTerminalStop?()
+                        }
+                        capturer.onScreenStopped = { [weak self] in
+                            self?.onScreenFailure?(.stopped)
+                        }
+                        capturer.onFrameDelivered = { [weak self] in
+                            self?.onFrameDelivered?(info.displayID)
+                        }
+                        try await capturer.start()
+                        constructedCapturers[info.displayID] = capturer
+                        anyDisplayStarted = true
+                    } catch {
+                        if let returnedCapturer {
+                            await returnedCapturer.stop()
+                        }
+                        displayStartFailed = true
+                        diagnostics.failure("screen_\(info.displayID)", stage: "start", error: error)
+                        Logger.capture.error("ScreenshotCapturer for display \(info.displayID) failed to start: \(error, privacy: .public)")
+                        let url = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
+                        try? FileManager.default.removeItem(at: url)
                     }
-                    constructedCapturers[info.displayID] = capturer
                 }
                 screenshotCapturers = constructedCapturers
 
-                // Start all screenshot capturers
-                for (_, capturer) in screenshotCapturers {
-                    try await capturer.start()
+                if anyDisplayStarted {
+                    successfulSources.insert(.screen)
+                    if displayStartFailed {
+                        screenFailureToReport = .couldNotStart
+                    }
+                } else {
+                    throw CaptureManager.CaptureError.noDisplaysAvailable
                 }
-                successfulSources.insert(.screen)
             } catch {
                 screenError = error
                 diagnostics.failure("system", stage: "screen_start", error: error)
@@ -358,7 +398,9 @@ public final class SegmentWriter {
                     await rollbackStart(manager: failedManager, capturers: constructedCapturers)
                 }
                 constructedCapturers.removeAll()
+                screenshotCapturers.removeAll()
                 manager = nil
+                var fellBackToMicrophone = false
                 if sources.contains(.microphone) && !(micCaptureManager?.microphonesForStartup(fallback: mics) ?? mics).isEmpty {
                     let microphoneManager = audioManagerFactory(outputDirectory, timePrefix, micCaptureManager, verbose)
                     microphoneManager.bindDiagnostics(diagnostics)
@@ -369,6 +411,7 @@ public final class SegmentWriter {
                     if let handoff { microphoneManager.bindRotationHandoff(handoff) }
                     manager = microphoneManager
                     self.audioManager = microphoneManager
+                    fellBackToMicrophone = true
                 }
                 for info in displayInfos {
                     let url = outputDirectory.appendingPathComponent("\(timePrefix)_display_\(info.displayID)_screen.mp4")
@@ -377,6 +420,10 @@ public final class SegmentWriter {
                 let systemURL = outputDirectory.appendingPathComponent("\(timePrefix)_audio_\(AudioTrackType.systemSourceID).m4a")
                 try? FileManager.default.removeItem(at: systemURL)
                 self.systemAudioCaptureManager = nil
+
+                if fellBackToMicrophone {
+                    screenFailureToReport = .couldNotStart
+                }
             }
         }
 
@@ -425,6 +472,10 @@ public final class SegmentWriter {
                 throw micError
             }
             throw SegmentError.failedToCreateAudioOutput
+        }
+
+        if let failure = screenFailureToReport {
+            onScreenFailure?(failure)
         }
 
         Logger.capture.info("Started segment (\(successfulSources.logDescription, privacy: .public)): \(self.outputDirectory.lastPathComponent, privacy: .public)")

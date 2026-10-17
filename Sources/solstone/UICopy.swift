@@ -144,6 +144,7 @@ public enum UICopy {
     public static let SOURCES_NONE = "both sources are off"
     public static let SOURCES_NONE_REASON = "nothing is going into your journal until you turn one back on."
 #endif
+    public static let SOURCES_SEGMENTS_EXPLAINER = "screens and audio you turn on here go into your journal in five-minute segments. until your journal confirms receipt, they wait on this mac. after that, the local copy is removed."
     public static let SOURCES_MICROPHONE = "microphone"
     public static let SOURCES_SCREEN = "screen and system audio"
     public static let SOURCES_OFF = "off"
@@ -390,4 +391,28 @@ public enum UICopy {
         count == 1 ? "1 thing needs attention" : "\(count) things need attention"
     }
 
+    // Keyboard shortcut
+    public static let SHORTCUT_SECTION_TITLE = "keyboard shortcut"
+    public static let SHORTCUT_SECTION_DESCRIPTION = "pause or resume from any app"
+    public static let SHORTCUT_OFF = "off"
+    public static let SHORTCUT_SET = "set shortcut"
+    public static let SHORTCUT_PRESS = "press a shortcut"
+    public static let SHORTCUT_CLEAR = "clear"
+    public static let SHORTCUT_CANCEL = "cancel"
+    public static let SHORTCUT_ERROR_CMD_OR_CTRL = "use command or control with another key."
+    public static let SHORTCUT_ERROR_CONFLICT = "this shortcut is used by macos. choose another."
+    public static let SHORTCUT_ERROR_UNAVAILABLE = "this shortcut is unavailable. choose another."
+    public static let SHORTCUT_MENU_RECOVERY = "shortcut unavailable. open settings to choose another."
+    public static let SHORTCUT_PERMISSION_NOTE = "no extra macos permission is needed."
+
+    // Screen failure
+    public static let SCREEN_INTAKE_STOPPED = "screen intake stopped. open settings."
+    public static let SCREEN_INTAKE_COULD_NOT_START = "screen intake could not start. open settings."
+
+    // Microphones empty state
+    public static let MICROPHONES_EMPTY_TITLE = "no microphones available"
+    public static let MICROPHONES_EMPTY_ACCESS_DESCRIPTION = "check microphone access in permissions."
+    public static let MICROPHONES_EMPTY_OPEN_PERMISSIONS = "open permissions"
+    public static let MICROPHONES_EMPTY_CONNECT_DESCRIPTION = "connect a microphone. for bluetooth, check that it is connected in system settings."
+    public static let MICROPHONES_EMPTY_OPEN_SOUND = "open sound settings"
 }

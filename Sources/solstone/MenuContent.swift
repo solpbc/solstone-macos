@@ -30,6 +30,18 @@ struct MenuContent: View {
             Text(note)
                 .accessibilityIdentifier(AXID.Menubar.audioHealthNote)
         }
+        if let failure = appState.capture.screenFailure {
+            Button(failure == .couldNotStart ? UICopy.SCREEN_INTAKE_COULD_NOT_START : UICopy.SCREEN_INTAKE_STOPPED) {
+                openSettings(tab: "sources")
+            }
+            .accessibilityIdentifier(AXID.Menubar.screenIntake)
+        }
+        if appState.shortcutController.isUnavailableOrConflict {
+            Button(UICopy.SHORTCUT_MENU_RECOVERY) {
+                openSettings(tab: "observer")
+            }
+            .accessibilityIdentifier(AXID.Menubar.shortcutUnavailable)
+        }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         Button(menubarBrowserRowTitle(snapshot: appState.browserHostSnapshot.value, now: Date())) {
             openSettings(tab: "sources")

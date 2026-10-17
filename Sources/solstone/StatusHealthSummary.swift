@@ -89,7 +89,8 @@ extension StatusHealthSummary {
         lastHealthReason: ObserverHealthFailureReason? = nil,
         isPairedIngestReady: Bool = true,
         journalConnectionAXToken: String? = nil,
-        startDeferredForProtectedVideo: Bool = false
+        startDeferredForProtectedVideo: Bool = false,
+        screenFailure: ScreenFailureKind? = nil
     ) -> StatusHealthSummary {
         // A migrated Mac can retain successful delivery and mark-confirmation records
         // after its device-bound pairing is gone. Absence leads every connection state.
@@ -152,6 +153,20 @@ extension StatusHealthSummary {
                 title: UICopy.STATUS_CAPTURE_ERROR_TITLE,
                 subtitle: errorMessage,
                 axValue: "capture_error"
+            )
+        }
+
+        if let screenFailure {
+            return .init(
+                severity: .attention,
+                title: screenFailure == .couldNotStart ? UICopy.SCREEN_INTAKE_COULD_NOT_START : UICopy.SCREEN_INTAKE_STOPPED,
+                subtitle: nil,
+                axValue: AXID.Settings.Status.screenIntake,
+                action: StatusHealthAction(
+                    label: UICopy.SOURCES_OPEN_ACTION,
+                    settingsTab: "sources",
+                    reasksJournalMark: false
+                )
             )
         }
 

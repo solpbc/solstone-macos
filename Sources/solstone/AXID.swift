@@ -27,6 +27,8 @@ enum AXID {
         static let aboutButton = "menubar.navigation.about"
         static let quitButton = "menubar.app.quit"
         static let browsers = "menubar.navigation.browsers"
+        static let shortcutUnavailable = "menubar.shortcut.unavailable"
+        static let screenIntake = "menubar.screen.intake"
     }
 
     enum Journal {
@@ -72,6 +74,7 @@ enum AXID {
             static let browserWaitingConfirm = "settings.sources.browsers.waiting.confirm"
             static let browserWaitingCancel = "settings.sources.browsers.waiting.cancel"
             static let browserWaitingFailure = "settings.sources.browsers.waiting.failure"
+            static let segments = "settings.sources.segments"
         }
 
         enum Permissions {
@@ -94,6 +97,12 @@ enum AXID {
             static let cacheFolderOpen = "settings.observer.storage.cacheFolder.open"
             static let preserveSyncedSegments = "settings.observer.storage.preserveSynced"
             static let preservedFolderOpen = "settings.observer.storage.preservedFolder.open"
+            static let shortcut = "settings.observer.general.shortcut"
+            static let shortcutSet = "settings.observer.general.shortcut.set"
+            static let shortcutClear = "settings.observer.general.shortcut.clear"
+            static let shortcutCancel = "settings.observer.general.shortcut.cancel"
+            static let shortcutStatus = "settings.observer.general.shortcut.status"
+            static let shortcutPermission = "settings.observer.general.shortcut.permission"
         }
 
         enum Service {
@@ -153,6 +162,9 @@ enum AXID {
             static let gainPicker = "settings.microphones.gain.picker"
             static let gainState = "settings.microphones.gain.state"
             static let silenceMusic = "settings.microphones.audioProcessing.silenceMusic"
+            static let empty = "settings.microphones.empty"
+            static let emptyPermissions = "settings.microphones.empty.permissions"
+            static let emptySound = "settings.microphones.empty.sound"
 
             static func device(_ uid: String) -> String {
                 "settings.microphones.priority.device.\(uid)"
@@ -215,6 +227,7 @@ enum AXID {
         enum Status {
             static let healthSummary = "settings.status.health.summary.state"
             static let healthSummaryAction = "settings.status.health.summary.action"
+            static let screenIntake = "settings.status.screen.intake"
             static let observingState = "settings.status.observing.state"
             static let nextSegmentSeconds = "settings.status.observing.nextSegment.state"
             static let tryAgain = "settings.status.tryAgain"

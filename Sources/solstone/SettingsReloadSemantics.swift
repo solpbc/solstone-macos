@@ -31,6 +31,7 @@ public enum SettingsReloadSemantics {
         "isBrowserIntakeEnabled": .live,
         "pauseForProtectedVideo": .live,
         "protectedVideoTitlePatterns": .live,
+        "pauseShortcut": .live,
         // app-restart: screen recording grant requires host-process relaunch
         "screenRecordingGranted": .appRestart,
     ]

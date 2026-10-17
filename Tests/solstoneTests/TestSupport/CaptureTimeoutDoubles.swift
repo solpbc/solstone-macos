@@ -153,8 +153,22 @@ final class FakeScreenshotCapturer: SegmentScreenshotCapturing, @unchecked Senda
     let stopCount = LockedCounter()
     let finishCount = LockedCounter()
 
+    var onTerminalStop: (@MainActor () -> Void)?
+    var onScreenStopped: (@MainActor () -> Void)?
+    var onFrameDelivered: (@MainActor () -> Void)?
+
     init(behavior: Behavior = .normal) {
         self.behavior = behavior
+    }
+
+    @MainActor
+    func emitFrame() {
+        onFrameDelivered?()
+    }
+
+    @MainActor
+    func emitStopped() {
+        onScreenStopped?()
     }
 
     func start() async throws {
@@ -252,6 +266,9 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
     let captureIssueOnStart: String?
     var onCaptureIssue: (@MainActor (String) -> Void)?
     var onSegmentSetAside: (@MainActor (String) -> Void)?
+    var onTerminalStop: (@MainActor () -> Void)?
+    var onScreenFailure: (@MainActor (ScreenFailureKind) -> Void)?
+    var onFrameDelivered: (@MainActor (CGDirectDisplayID) -> Void)?
     let setAsideOnFinish: String?
     let finishGate: OneShotContinuationGate?
     let startCount = LockedCounter()

@@ -36,6 +36,8 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     var onTerminalStop: (@MainActor () -> Void)? { get set }
     var onCaptureIssue: (@MainActor (String) -> Void)? { get set }
     var onSegmentSetAside: (@MainActor (String) -> Void)? { get set }
+    var onScreenFailure: (@MainActor (ScreenFailureKind) -> Void)? { get set }
+    var onFrameDelivered: (@MainActor (CGDirectDisplayID) -> Void)? { get set }
 }
 
 public extension CaptureSegmentWriting {
@@ -50,6 +52,14 @@ public extension CaptureSegmentWriting {
         set {}
     }
     var onTerminalStop: (@MainActor () -> Void)? {
+        get { nil }
+        set {}
+    }
+    var onScreenFailure: (@MainActor (ScreenFailureKind) -> Void)? {
+        get { nil }
+        set {}
+    }
+    var onFrameDelivered: (@MainActor (CGDirectDisplayID) -> Void)? {
         get { nil }
         set {}
     }
@@ -204,6 +214,36 @@ public final class CaptureManager {
         didSet { if currentAudioHealthNote != oldValue { onAudioHealthNote?(currentAudioHealthNote) } }
     }
     public var onAudioHealthNote: (@MainActor (String?) -> Void)?
+
+    public private(set) var currentScreenFailure: ScreenFailureKind?
+    public var onScreenFailureChanged: (@MainActor (ScreenFailureKind?) -> Void)?
+    private var requestedDisplayIDs: Set<CGDirectDisplayID> = []
+    private var framedSinceFailure: Set<CGDirectDisplayID> = []
+
+    public func clearScreenFailure() {
+        currentScreenFailure = nil
+        framedSinceFailure.removeAll()
+        requestedDisplayIDs.removeAll()
+        onScreenFailureChanged?(nil)
+    }
+
+    private func recordScreenFailure(_ kind: ScreenFailureKind) {
+        currentScreenFailure = kind
+        framedSinceFailure.removeAll()
+        onScreenFailureChanged?(kind)
+    }
+
+    private func recordFrame(displayID: CGDirectDisplayID) {
+        framedSinceFailure.insert(displayID)
+        checkScreenFailureRecovery()
+    }
+
+    private func checkScreenFailureRecovery() {
+        if currentScreenFailure != nil && !requestedDisplayIDs.isEmpty && requestedDisplayIDs.isSubset(of: framedSinceFailure) {
+            currentScreenFailure = nil
+            onScreenFailureChanged?(nil)
+        }
+    }
 
     public func handleTerminalStreamStop() {
         onTerminalStreamStop?()
@@ -733,6 +773,11 @@ public final class CaptureManager {
         resumeNotBefore
     }
 
+    internal func setRequestedDisplayIDsForTesting(_ ids: Set<CGDirectDisplayID>) {
+        self.requestedDisplayIDs = ids
+        checkScreenFailureRecovery()
+    }
+
     internal var backoffStepForTesting: Int {
         backoffStep
     }
@@ -846,10 +891,26 @@ public final class CaptureManager {
             guard let self, let segment, self.currentSegment?.outputDirectory == segment.outputDirectory else { return }
             self.onSegmentSetAside?(stage)
         }
+        segment.onScreenFailure = { [weak self, weak segment] failure in
+            guard let self, let segment, self.currentSegment?.outputDirectory == segment.outputDirectory else { return }
+            self.recordScreenFailure(failure)
+        }
+        segment.onFrameDelivered = { [weak self, weak segment] displayID in
+            guard let self, let segment, self.currentSegment?.outputDirectory == segment.outputDirectory else { return }
+            self.recordFrame(displayID: displayID)
+        }
         currentSegment = segment
 
         // Start recording - convert to DisplayInfo for sendable compliance
         let displayInfos = sessionSources.contains(.screen) ? displays.map { DisplayInfo(from: $0) } : []
+        if sessionSources.contains(.screen) {
+            requestedDisplayIDs = allowsEmptyDisplayConfigurationForTesting && displays.isEmpty
+                ? (requestedDisplayIDs.isEmpty ? [0] : requestedDisplayIDs)
+                : Set(displays.map(\.displayID))
+            checkScreenFailureRecovery()
+        } else {
+            clearScreenFailure()
+        }
         let audioFilter = sessionSources.contains(.screen) ? displays.first.flatMap { filtersByDisplayID[$0.displayID] } : nil
         if sessionSources.contains(.screen) && audioFilter == nil {
             let displayID = displays.first.map { String($0.displayID) } ?? "nil"
@@ -1069,6 +1130,7 @@ public final class CaptureManager {
     }
 
     internal func enterNoDisplayRecovery() async {
+        clearScreenFailure()
         _ = await finalizeActiveSegmentForTransition(stopAudio: true)
         transitionToError("all displays disconnected", error: CaptureError.noDisplaysAvailable, trigger: "no_displays")
     }
@@ -1164,6 +1226,7 @@ public final class CaptureManager {
             await enterNoDisplayRecovery()
         } catch {
             Logger.capture.warning("Failed to get updated display list: \(error, privacy: .public)")
+            recordScreenFailure(.stopped)
         }
     }
 

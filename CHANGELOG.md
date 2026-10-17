@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- choose a keyboard shortcut in settings to pause and resume from any app.
+- a screen that stops coming through now shows a warning in the menu.
+- microphone settings now help you check access and connections when no microphone is available.
+
 ## [2.0.36] - 2026-10-16
 
 ### Changed

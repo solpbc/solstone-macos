@@ -102,9 +102,22 @@ internal enum AttentionReason: Equatable, CaseIterable {
 internal struct MenubarPresentation: Equatable {
     let observation: MenubarStatusRowState
     let attention: AttentionReason?
+    let screenFailureNeedsAttention: Bool
+
+    init(
+        observation: MenubarStatusRowState,
+        attention: AttentionReason?,
+        screenFailureNeedsAttention: Bool = false
+    ) {
+        self.observation = observation
+        self.attention = attention
+        self.screenFailureNeedsAttention = screenFailureNeedsAttention
+    }
 
     var icon: MenubarIconState { observation.iconState }
-    var showsAttentionBadge: Bool { attention != nil || observation == .awaitingMarkConfirmation }
+    var showsAttentionBadge: Bool {
+        attention != nil || observation == .awaitingMarkConfirmation || screenFailureNeedsAttention
+    }
 
     var overlayState: MenubarIconOverlayState {
         showsAttentionBadge ? .attention : .none
@@ -116,7 +129,8 @@ internal func classifyMenubarPresentation(
     permissionsNeedAttention: Bool,
     journalNeedsAttention: Bool,
     durableUpdateStatus: DurableUpdateStatus,
-    privateWindowsNeedAttention: Bool = false
+    privateWindowsNeedAttention: Bool = false,
+    screenFailureNeedsAttention: Bool = false
 ) -> MenubarPresentation {
     MenubarPresentation(
         observation: observation,
@@ -125,7 +139,8 @@ internal func classifyMenubarPresentation(
             journalNeedsAttention: journalNeedsAttention,
             durableUpdateStatus: durableUpdateStatus,
             privateWindowsNeedAttention: privateWindowsNeedAttention
-        )
+        ),
+        screenFailureNeedsAttention: screenFailureNeedsAttention
     )
 }
 
@@ -308,7 +323,8 @@ extension AppState {
             journalNeedsAttention: serviceNeedsAttention,
             durableUpdateStatus: durableUpdateStatus,
             privateWindowsNeedAttention: privateWindowAccessibilityEnabled
-                && privateWindowAccessibilityMonitor.needsAttention
+                && privateWindowAccessibilityMonitor.needsAttention,
+            screenFailureNeedsAttention: capture.screenFailure != nil
         )
     }
 }

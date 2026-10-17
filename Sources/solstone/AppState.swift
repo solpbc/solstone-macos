@@ -54,6 +54,7 @@ public final class AppState {
 
     public let capture: CaptureCoordinator
     public let pauseManager: PauseManager
+    public let shortcutController: PauseShortcutController
     public let storageManager: StorageManager
     public let audioDeviceMonitor: AudioDeviceMonitor
     public var captureManager: CaptureManager { capture.captureManager }
@@ -168,6 +169,10 @@ public final class AppState {
     public internal(set) var isPaused: Bool {
         get { capture.isPaused }
         set { capture.isPaused = newValue }
+    }
+
+    public var screenFailure: ScreenFailureKind? {
+        capture.screenFailure
     }
 
     /// Intake faults only. A failure of a settings action belongs beside that setting.
@@ -424,6 +429,7 @@ public final class AppState {
         guard appQuitCoordinator.preparationGeneration == generation else { return }
         browserIntakeOwner?.stop()
 #endif
+        shortcutController.unregister()
         await stopRecording(reason: .quit)
         await drainRemixQueueForTermination()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
@@ -627,6 +633,14 @@ public final class AppState {
             Task { @MainActor [weak self] in
                 await self?.capture.captureManager.checkProtectedVideo()
             }
+        }
+
+        if newConfig.pauseShortcut != oldConfig.pauseShortcut {
+            shortcutController.apply(chord: newConfig.pauseShortcut)
+        }
+
+        if !newConfig.selectedSources.contains(.screen) {
+            capture.captureManager.clearScreenFailure()
         }
 
         do {
@@ -1098,6 +1112,7 @@ public final class AppState {
                 guard let self else { return }
                 self.refreshMicrophoneAuthorization()
                 await self.refreshNotificationAuthorizationStatus()
+                self.shortcutController.handleApplicationDidBecomeActive()
             }
         }
     }
@@ -1427,9 +1442,20 @@ public final class AppState {
         // Load configuration
         let config = AppConfig.loadOrCreateDefault()
         let pauseManager = PauseManager(defaults: .standard)
+        let captureTarget = AppStateBridgeTarget()
+        let shortcutController = PauseShortcutController(
+            registrar: CarbonPauseShortcutRegistrar(),
+            pausePort: pauseManager,
+            onPersistChord: { [weak captureTarget] chord in
+                guard let state = captureTarget?.state else { return }
+                var newConfig = state.config
+                newConfig.pauseShortcut = chord
+                state.updateConfig(newConfig)
+            }
+        )
+        self.shortcutController = shortcutController
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
-        let captureTarget = AppStateBridgeTarget()
         let homeBaseURLTarget = AppStateBridgeTarget()
         let fingerprintTarget = AppStateBridgeTarget()
         let recoveryCoordinator = IncompleteSegmentRecoveryCoordinator.shared
@@ -1612,6 +1638,7 @@ public final class AppState {
             logAdapter: logAdapter
         )
         captureTarget.state = self
+        shortcutController.apply(chord: config.pauseShortcut)
 
         if automaticObservationPipelineEnabled {
             // Single segment-completion nudge for rotation, recovery, stop/pause, sleep, and lock.
@@ -1669,6 +1696,7 @@ public final class AppState {
 
     deinit {
         MainActor.assumeIsolated {
+            shortcutController.unregister()
             privateWindowAccessibilityMonitor.stop()
             notificationRequestTask?.cancel()
             if let activationObserver {
@@ -1705,11 +1733,14 @@ public final class AppState {
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
         permissionPollScheduler: PermissionPollScheduler = .live(),
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
-        captureStartOperation: CaptureCoordinator.StartOperation? = nil
+        captureStartOperation: CaptureCoordinator.StartOperation? = nil,
+        shortcutState: PauseShortcutController.State = .off,
+        screenFailure: ScreenFailureKind? = nil,
+        emptyMicrophoneState: MicrophoneEmptyState? = nil
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
-        return AppState(
+        let state = AppState(
             snapshotConfig: config,
             notificationStatus: notificationStatus,
             isSnapshot: true,
@@ -1728,6 +1759,21 @@ public final class AppState {
             logAdapter: logAdapter,
             captureStartOperation: captureStartOperation
         )
+        state.shortcutController.seedSnapshotState(shortcutState)
+        if let screenFailure {
+            state.capture.setSnapshotScreenFailure(screenFailure)
+        }
+        if let emptyMicrophoneState {
+            switch emptyMicrophoneState {
+            case .access(let cause):
+                state.microphoneAuthorizationCause = cause
+            case .connect:
+                state.microphoneAuthorizationCause = .authorized
+            case .couldNotCheck:
+                state.microphoneAuthorizationCause = .unknown
+            }
+        }
+        return state
     }
 
     /// Creates an AppState for login item tests.
@@ -1810,9 +1856,20 @@ public final class AppState {
         captureStartOperation: CaptureCoordinator.StartOperation? = nil
     ) {
         let pauseManager = PauseManager()
+        let captureTarget = AppStateBridgeTarget()
+        let shortcutController = PauseShortcutController(
+            registrar: DormantPauseShortcutRegistrar(),
+            pausePort: pauseManager,
+            onPersistChord: { [weak captureTarget] chord in
+                guard let state = captureTarget?.state else { return }
+                var newConfig = state.config
+                newConfig.pauseShortcut = chord
+                state.updateConfig(newConfig)
+            }
+        )
+        self.shortcutController = shortcutController
         let storageManager = StorageManager()
         let audioDeviceMonitor = AppState.makeAudioDeviceMonitor()
-        let captureTarget = AppStateBridgeTarget()
         let fingerprintTarget = AppStateBridgeTarget()
         let snapshotResolver = HomeBaseURLResolver { [config] in
             guard let serverURL = config.serverURL else {
@@ -2042,6 +2099,10 @@ public final class AppState {
     /// needs the session rebuilt to take effect. That rebuild is ours to do — the owner flipped
     /// a switch, they did not ask to stop and restart their capture.
     public func applySelectedSourcesToRunningSession() async {
+        if !config.selectedSources.contains(.screen) {
+            capture.captureManager.clearScreenFailure()
+        }
+
         if pauseManager.isPaused && !isRecording {
             return
         }
@@ -2216,7 +2277,8 @@ public final class AppState {
 #else
         let browserIntakeChanged = false
 #endif
-        guard journalConnectionChanged || browserIntakeChanged else {
+        let shortcutChanged = fresh.pauseShortcut != config.pauseShortcut
+        guard journalConnectionChanged || browserIntakeChanged || shortcutChanged else {
             return
         }
 

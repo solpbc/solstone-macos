@@ -346,6 +346,14 @@ struct SnapshotTests {
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-error-wedge.png")
     }
 
+    @Test func menuScreenFailure() throws {
+        let state = AppState.forSnapshot(screenFailure: .couldNotStart)
+        markPermissionsReady(state)
+        state.isRecording = true
+        let updateController = makeSnapshotUpdateController()
+        try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-screen-failure.png")
+    }
+
     private let settingsSize = CGSize(width: 800, height: 560)
     private let emptinessThreshold = 0.95  // blank-pane regressions (5fd16e5) rendered ~99% near-white; healthy snapshots stay below ~85%
 
@@ -480,6 +488,38 @@ struct SnapshotTests {
             SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-observer-notifications-provisional.png"
+        )
+    }
+
+    @Test func settingsObserverShortcutOff() throws {
+        let state = AppState.forSnapshot(shortcutState: .off)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-observer-shortcut-off.png"
+        )
+    }
+
+    @Test func settingsObserverShortcutConfigured() throws {
+        let chord = try #require(PauseShortcutChord(keyCode: 0, carbonModifiers: PauseShortcutChord.cmdKey))
+        let state = AppState.forSnapshot(shortcutState: .active(chord))
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-observer-shortcut-configured.png"
+        )
+    }
+
+    @Test func settingsObserverShortcutConflict() throws {
+        let chord = try #require(PauseShortcutChord(keyCode: 0, carbonModifiers: PauseShortcutChord.cmdKey))
+        let state = AppState.forSnapshot(shortcutState: .conflict(chord))
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .observer, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "settings-observer-shortcut-conflict.png"
         )
     }
 
@@ -693,6 +733,26 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsMicrophonesEmptyAccess() throws {
+        let state = AppState.forSnapshot(emptyMicrophoneState: .access(.denied))
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .microphones),
+            size: settingsSize,
+            to: "settings-microphones-empty-access.png"
+        )
+    }
+
+    @Test func settingsMicrophonesEmptyNoDevice() throws {
+        let state = AppState.forSnapshot(emptyMicrophoneState: .connect)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .microphones),
+            size: settingsSize,
+            to: "settings-microphones-empty-no-device.png"
+        )
+    }
+
     @Test func settingsPrivacy() throws {
         let config = AppConfig(
             excludedApps: [
@@ -855,6 +915,18 @@ struct SnapshotTests {
             SettingsView(appState: state, updateController: updateController, selectedTab: .status, initialStorageUsedMB: 42),
             size: settingsSize,
             to: "settings-status-error.png"
+        )
+    }
+
+    @Test func statusCardScreenFailure() throws {
+        let state = AppState.forSnapshot(screenFailure: .couldNotStart)
+        markPermissionsReady(state)
+        state.isRecording = true
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .status, initialStorageUsedMB: 42),
+            size: settingsSize,
+            to: "status-card-screen-failure.png"
         )
     }
 

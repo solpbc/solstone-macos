@@ -185,6 +185,8 @@ struct SettingsView: View {
     @State private var logExportTask: Task<Void, Never>?
     @State private var logExportWriteFeedback: LogExportWriteFeedback?
 
+    @State private var microphoneEmptyState: MicrophoneEmptyState?
+
     // Permissions tab state
     @State private var screenRecordingPrompted = false
     @State private var screenRestartPending = false
@@ -531,7 +533,10 @@ struct SettingsView: View {
 #endif
                 }
         case .microphones:
-            microphoneTab.onAppear { appState.markSettingsTabVisited(.microphones) }
+            microphoneTab.onAppear {
+                appState.markSettingsTabVisited(.microphones)
+                refreshMicrophoneEmptyState()
+            }
         case .privacy:
             privacyTab(scrollProxy: scrollProxy).onAppear {
                 appState.markSettingsTabVisited(.privacy)
@@ -789,6 +794,11 @@ struct SettingsView: View {
             Text(UICopy.SOURCES_HELP)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+            Text(UICopy.SOURCES_SEGMENTS_EXPLAINER)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier(AXID.Settings.Sources.segments)
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
@@ -1334,6 +1344,10 @@ struct SettingsView: View {
                             .foregroundStyle(.red)
                             .accessibilityIdentifier(AXID.Settings.Observer.startAtLoginError)
                     }
+
+                    Divider()
+
+                    shortcutSettingsView
                 }
             }
 
@@ -1350,6 +1364,74 @@ struct SettingsView: View {
         .onAppear {
             appState.refreshNotificationAuthorizationStatusSoon()
         }
+    }
+
+    @ViewBuilder
+    private var shortcutSettingsView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(UICopy.SHORTCUT_SECTION_TITLE)
+                .font(.subheadline)
+                .fontWeight(.medium)
+            Text(UICopy.SHORTCUT_SECTION_DESCRIPTION)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 8) {
+                if appState.shortcutController.isCapturing {
+                    Button(UICopy.SHORTCUT_PRESS) {}
+                        .disabled(true)
+                        .accessibilityIdentifier(AXID.Settings.Observer.shortcutSet)
+                    Button(UICopy.SHORTCUT_CANCEL) {
+                        appState.shortcutController.cancelCapture()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Observer.shortcutCancel)
+                } else {
+                    if let chord = appState.shortcutController.state.chord {
+                        Button(chord.displayString) {
+                            appState.shortcutController.beginCapture()
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Observer.shortcutSet)
+                        Button(UICopy.SHORTCUT_CLEAR) {
+                            appState.shortcutController.clear()
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Observer.shortcutClear)
+                    } else {
+                        Button(UICopy.SHORTCUT_SET) {
+                            appState.shortcutController.beginCapture()
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Observer.shortcutSet)
+                        Text(UICopy.SHORTCUT_OFF)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+
+            if let err = appState.shortcutController.captureErrorMessage {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier(AXID.Settings.Observer.shortcutStatus)
+            } else if case .conflict = appState.shortcutController.state {
+                Text(UICopy.SHORTCUT_ERROR_CONFLICT)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier(AXID.Settings.Observer.shortcutStatus)
+            } else if case .unavailable = appState.shortcutController.state {
+                Text(UICopy.SHORTCUT_ERROR_UNAVAILABLE)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier(AXID.Settings.Observer.shortcutStatus)
+            }
+
+            Text(UICopy.SHORTCUT_PERMISSION_NOTE)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier(AXID.Settings.Observer.shortcutPermission)
+        }
+        .padding(.vertical, 4)
+        .accessibilityIdentifier(AXID.Settings.Observer.shortcut)
     }
 
     @ViewBuilder
@@ -2946,10 +3028,10 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
 
                     if microphoneDisplayEntries.isEmpty {
-                        Text("no microphones found yet")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 20)
+                        let emptyState = microphoneEmptyState ?? classifyMicrophoneEmptyState(
+                            authorizationCause: appState.microphoneAuthorizationCause
+                        )
+                        emptyMicrophoneView(emptyState)
                     } else {
                         List {
                             ForEach(microphoneDisplayEntries) { entry in
@@ -3011,6 +3093,53 @@ struct SettingsView: View {
 
             Spacer()
         }
+        .onAppear {
+            refreshMicrophoneEmptyState()
+        }
+    }
+
+    private func refreshMicrophoneEmptyState() {
+        microphoneEmptyState = reconcileAndClassifyMicrophoneEmptyState(
+            isPriorityListEmpty: { microphoneDisplayEntries.isEmpty },
+            deviceCount: appState.audioDeviceMonitor.availableDevices.count,
+            authorizationCause: appState.microphoneAuthorizationCause,
+            syncMicrophonePriorityList: { appState.syncMicrophonePriorityList() }
+        )
+    }
+
+    @ViewBuilder
+    private func emptyMicrophoneView(_ emptyState: MicrophoneEmptyState) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch emptyState {
+            case .access:
+                Text(UICopy.MICROPHONES_EMPTY_ACCESS_DESCRIPTION)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button(UICopy.MICROPHONES_EMPTY_OPEN_PERMISSIONS) {
+                    selectedTab = .permissions
+                    openMicrophoneSettings()
+                }
+                .accessibilityIdentifier(AXID.Settings.Microphones.emptyPermissions)
+            case .connect:
+                Text(UICopy.MICROPHONES_EMPTY_TITLE)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text(UICopy.MICROPHONES_EMPTY_CONNECT_DESCRIPTION)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button(UICopy.MICROPHONES_EMPTY_OPEN_SOUND) {
+                    NSWorkspace.shared.open(MicrophoneEmptyState.soundSettingsURL)
+                }
+                .accessibilityIdentifier(AXID.Settings.Microphones.emptySound)
+            case .couldNotCheck:
+                Text(UICopy.SETTINGS_SETUP_SHARED_COULD_NOT_CHECK)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 10)
+        .accessibilityIdentifier(AXID.Settings.Microphones.empty)
     }
 
     private func snapGain(_ value: Float) -> Float {
@@ -3599,6 +3728,7 @@ struct SettingsView: View {
             isPairedIngestReady: appState.isPairedIngestReady,
             journalConnectionAXToken: appState.tunnelLifecycleOwner.connectionVerdict.axToken,
             startDeferredForProtectedVideo: appState.capture.isStartDeferredForProtectedVideo,
+            screenFailure: appState.screenFailure,
             snapshot: appState.browserHostSnapshot.value
         )
 #else
@@ -3621,7 +3751,8 @@ struct SettingsView: View {
             lastHealthReason: appState.uploadCoordinator.lastHealthReason,
             isPairedIngestReady: appState.isPairedIngestReady,
             journalConnectionAXToken: appState.tunnelLifecycleOwner.connectionVerdict.axToken,
-            startDeferredForProtectedVideo: appState.capture.isStartDeferredForProtectedVideo
+            startDeferredForProtectedVideo: appState.capture.isStartDeferredForProtectedVideo,
+            screenFailure: appState.screenFailure
         )
 #endif
     }

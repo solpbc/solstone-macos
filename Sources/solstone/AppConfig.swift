@@ -75,7 +75,8 @@ public struct AppConfig: Sendable {
         "syncPaused", "debugSegments",
         "preserveSyncedSegments", "microphoneGain", "silenceMusic",
         "serviceMode", "journalPath",
-        "observerName", "pauseForProtectedVideo", "protectedVideoTitlePatterns"
+        "observerName", "pauseForProtectedVideo", "protectedVideoTitlePatterns",
+        "pauseShortcut"
     ]
 
     private enum Keys {
@@ -99,6 +100,7 @@ public struct AppConfig: Sendable {
         static let observerName = "observerName"
         static let pauseForProtectedVideo = "pauseForProtectedVideo"
         static let protectedVideoTitlePatterns = "protectedVideoTitlePatterns"
+        static let pauseShortcut = "pauseShortcut"
         static let didMigrateFromJSON = "didMigrateFromJSON"
         static let didReseedOptInMicrophones = "didReseedOptInMicrophones"
         static let reseededBluetoothMicrophoneUIDs = "reseededBluetoothMicrophoneUIDs"
@@ -185,6 +187,9 @@ public struct AppConfig: Sendable {
     /// User-defined window title patterns for protected video detection.
     public var protectedVideoTitlePatterns: [String]
 
+    /// Global shortcut to pause/resume recording. Nil means off.
+    public var pauseShortcut: PauseShortcutChord?
+
     /// Default exclusions written on first run
     public static let defaultExclusions: [AppEntry] = [
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
@@ -212,7 +217,8 @@ public struct AppConfig: Sendable {
         journalPath: String? = nil,
         observerName: String? = nil,
         pauseForProtectedVideo: Bool = true,
-        protectedVideoTitlePatterns: [String] = []
+        protectedVideoTitlePatterns: [String] = [],
+        pauseShortcut: PauseShortcutChord? = nil
     ) {
         self.isScreenCaptureEnabled = isScreenCaptureEnabled
         self.isMicrophoneCaptureEnabled = isMicrophoneCaptureEnabled
@@ -234,6 +240,7 @@ public struct AppConfig: Sendable {
         self.observerName = observerName
         self.pauseForProtectedVideo = pauseForProtectedVideo
         self.protectedVideoTitlePatterns = protectedVideoTitlePatterns
+        self.pauseShortcut = pauseShortcut
     }
 
     // MARK: - Load/Save
@@ -276,6 +283,13 @@ public struct AppConfig: Sendable {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
+        let pauseShortcut: PauseShortcutChord?
+        if let raw = defaults.string(forKey: Keys.pauseShortcut) {
+            pauseShortcut = PauseShortcutChord.decode(from: raw)
+        } else {
+            pauseShortcut = nil
+        }
+
         let config = AppConfig(
             isScreenCaptureEnabled: defaults.object(forKey: Keys.isScreenCaptureEnabled) as? Bool ?? true,
             isMicrophoneCaptureEnabled: defaults.object(forKey: Keys.isMicrophoneCaptureEnabled) as? Bool ?? true,
@@ -296,7 +310,8 @@ public struct AppConfig: Sendable {
             journalPath: defaults.string(forKey: Keys.journalPath),
             observerName: defaults.string(forKey: Keys.observerName),
             pauseForProtectedVideo: defaults.object(forKey: Keys.pauseForProtectedVideo) as? Bool ?? true,
-            protectedVideoTitlePatterns: protectedPatterns
+            protectedVideoTitlePatterns: protectedPatterns,
+            pauseShortcut: pauseShortcut
         )
         return config
     }
@@ -379,6 +394,11 @@ public struct AppConfig: Sendable {
         defaults.set(silenceMusic, forKey: Keys.silenceMusic)
         defaults.set(pauseForProtectedVideo, forKey: Keys.pauseForProtectedVideo)
         defaults.set(protectedVideoTitlePatterns, forKey: Keys.protectedVideoTitlePatterns)
+        if let pauseShortcut {
+            defaults.set(pauseShortcut.encodedString, forKey: Keys.pauseShortcut)
+        } else {
+            defaults.removeObject(forKey: Keys.pauseShortcut)
+        }
     }
 
     // MARK: - Migration from JSON

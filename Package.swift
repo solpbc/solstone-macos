@@ -93,6 +93,7 @@ let package = Package(
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("ServiceManagement"),
                 .linkedFramework("SoundAnalysis"),
+                .linkedFramework("Carbon"),
                 .linkedLibrary("sqlite3")
             ]
         ),

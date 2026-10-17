@@ -43,6 +43,10 @@ public final class CaptureCoordinator {
     public internal(set) var isExplicitlyStopped = false
     public internal(set) var isUserStopped = false
     public internal(set) var captureError: String?
+    public internal(set) var screenFailure: ScreenFailureKind?
+    internal func setSnapshotScreenFailure(_ failure: ScreenFailureKind?) {
+        screenFailure = failure
+    }
     /// Which audio source isn't coming through, or dropped out and is back. Shown as a plain line.
     public internal(set) var audioHealthNote: String?
     private var storedScreenRecordingGranted = false
@@ -164,6 +168,7 @@ public final class CaptureCoordinator {
         captureManager.onAudioCaptureIssue = { [weak self] message in self?.bannerSink(message) }
         captureManager.onSegmentSetAside = setAsideSink
         captureManager.onAudioHealthNote = { [weak self] note in self?.audioHealthNote = note }
+        captureManager.onScreenFailureChanged = { [weak self] failure in self?.screenFailure = failure }
         captureManager.onStateChanged = { [weak self] state in
             self?.handleCaptureStateChange(state)
         }
