@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.36] - 2026-10-16
+
+### Changed
+
+- when you pair, the solstone app now tells your journal this is a mac, so what this mac adds is kept under "macos". before, a newly paired mac's additions were kept under "device". a mac you've already paired keeps the name it has.
+
 ## [2.0.35] - 2026-10-15
 
 ### Fixed
