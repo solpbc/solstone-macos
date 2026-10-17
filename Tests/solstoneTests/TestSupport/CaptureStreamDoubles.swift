@@ -24,6 +24,9 @@ final class FakeCaptureStream: CaptureStreamControlling, @unchecked Sendable {
     private var stopGates: [OneShotContinuationGate]
     private var updateGates: [OneShotContinuationGate]
 
+    private var storedOutputs: [any SCStreamOutput] = []
+    var outputs: [any SCStreamOutput] { lock.withLock { storedOutputs } }
+
     init(
         startGates: [OneShotContinuationGate] = [],
         stopGates: [OneShotContinuationGate] = [],
@@ -47,6 +50,7 @@ final class FakeCaptureStream: CaptureStreamControlling, @unchecked Sendable {
         type: SCStreamOutputType,
         sampleHandlerQueue: DispatchQueue?
     ) throws {
+        lock.withLock { storedOutputs.append(output) }
         addStreamOutputCount.increment()
         if let addOutputError {
             throw addOutputError
@@ -101,6 +105,7 @@ final class FakeCaptureStreamFactory {
     private var queuedStreams: [FakeCaptureStream]
     private(set) var createdStreams: [FakeCaptureStream] = []
     private(set) var createdFilters: [SCContentFilter] = []
+    private(set) var createdDelegates: [solstone.StreamDelegate] = []
 
     init(_ streams: [FakeCaptureStream] = []) {
         self.queuedStreams = streams
@@ -111,8 +116,9 @@ final class FakeCaptureStreamFactory {
     }
 
     var factory: CaptureStreamFactory {
-        { filter, _, _ in
+        { filter, _, delegate in
             self.createdFilters.append(filter)
+            self.createdDelegates.append(delegate)
             let stream: FakeCaptureStream
             if self.queuedStreams.isEmpty {
                 stream = FakeCaptureStream()

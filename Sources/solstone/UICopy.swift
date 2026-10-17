@@ -406,7 +406,7 @@ public enum UICopy {
     public static let SHORTCUT_PERMISSION_NOTE = "no extra macos permission is needed."
 
     // Screen failure
-    public static let SCREEN_INTAKE_STOPPED = "a screen isn\u{2019}t coming through. open settings."
+    public static let SCREEN_INTAKE_STOPPED = "a screen isn't coming through. open settings."
     public static let SCREEN_INTAKE_COULD_NOT_START = "a screen could not start. open settings."
 
     // Microphones empty state

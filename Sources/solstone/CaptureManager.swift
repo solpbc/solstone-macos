@@ -219,11 +219,13 @@ public final class CaptureManager {
     public var onScreenFailureChanged: (@MainActor (ScreenFailureKind?) -> Void)?
     private var requestedDisplayIDs: Set<CGDirectDisplayID> = []
     private var framedSinceFailure: Set<CGDirectDisplayID> = []
+    private var isDisplayMembershipKnown: Bool = true
 
     public func clearScreenFailure() {
         currentScreenFailure = nil
         framedSinceFailure.removeAll()
         requestedDisplayIDs.removeAll()
+        isDisplayMembershipKnown = true
         onScreenFailureChanged?(nil)
     }
 
@@ -774,9 +776,22 @@ public final class CaptureManager {
     }
 
     internal func setRequestedDisplayIDsForTesting(_ ids: Set<CGDirectDisplayID>) {
+        self.isDisplayMembershipKnown = true
         self.requestedDisplayIDs = ids
         checkScreenFailureRecovery()
     }
+
+    internal func establishDisplayMembership(_ ids: Set<CGDirectDisplayID>) {
+        isDisplayMembershipKnown = true
+        requestedDisplayIDs = ids
+        framedSinceFailure.removeAll()
+    }
+
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+    internal func establishDisplayMembershipForTesting(_ ids: Set<CGDirectDisplayID>) {
+        establishDisplayMembership(ids)
+    }
+#endif
 
     internal var backoffStepForTesting: Int {
         backoffStep
@@ -904,9 +919,13 @@ public final class CaptureManager {
         // Start recording - convert to DisplayInfo for sendable compliance
         let displayInfos = sessionSources.contains(.screen) ? displays.map { DisplayInfo(from: $0) } : []
         if sessionSources.contains(.screen) {
-            requestedDisplayIDs = allowsEmptyDisplayConfigurationForTesting && displays.isEmpty
-                ? (requestedDisplayIDs.isEmpty ? [0] : requestedDisplayIDs)
-                : Set(displays.map(\.displayID))
+            if isDisplayMembershipKnown {
+                requestedDisplayIDs = allowsEmptyDisplayConfigurationForTesting && displays.isEmpty
+                    ? (requestedDisplayIDs.isEmpty ? [0] : requestedDisplayIDs)
+                    : Set(displays.map(\.displayID))
+            } else {
+                requestedDisplayIDs = []
+            }
             framedSinceFailure.removeAll()
             checkScreenFailureRecovery()
         } else {
@@ -1217,6 +1236,8 @@ public final class CaptureManager {
             try await rebuildDisplaysAndFilters()
             let newIDs = Set(displays.map { $0.displayID })
 
+            establishDisplayMembership(newIDs)
+
             if oldIDs != newIDs {
                 Logger.capture.info("Display set changed, rotating segment")
                 await enqueueTransition(.rotate(reason: .displayChange))
@@ -1227,6 +1248,8 @@ public final class CaptureManager {
             await enterNoDisplayRecovery()
         } catch {
             Logger.capture.warning("Failed to get updated display list: \(error, privacy: .public)")
+            isDisplayMembershipKnown = false
+            requestedDisplayIDs.removeAll()
             recordScreenFailure(.stopped)
         }
     }

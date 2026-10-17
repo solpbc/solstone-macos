@@ -154,14 +154,13 @@ public final class ScreenshotCapturer {
             // Create stream output handler
             let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
                 Task { @MainActor in
-                    guard let self, self.streamGeneration == gen, self.isRunning else { return }
-                    self.handleFrame(pixelBuffer, isIdle: isIdle)
+                    self?.handleFrameFromOutput(generation: gen, pixelBuffer: pixelBuffer, isIdle: isIdle)
                 }
             }
 
             let delegate = StreamDelegate { [weak self] error in
                 Task { @MainActor in
-                    self?.handleStreamError(error)
+                    self?.handleStreamErrorFromDelegate(generation: gen, error: error)
                 }
             }
 
@@ -192,6 +191,16 @@ public final class ScreenshotCapturer {
             isRunning = false
             throw error
         }
+    }
+
+    internal func handleFrameFromOutput(generation: Int, pixelBuffer: CVPixelBuffer, isIdle: Bool) {
+        guard streamGeneration == generation, isRunning else { return }
+        handleFrame(pixelBuffer, isIdle: isIdle)
+    }
+
+    internal func handleStreamErrorFromDelegate(generation: Int, error: Error) {
+        guard streamGeneration == generation, isRunning else { return }
+        handleStreamError(error)
     }
 
     /// Handles an incoming video frame from the stream
@@ -353,7 +362,8 @@ public final class ScreenshotCapturer {
             if verbose { Logger.capture.debug("ScreenshotCapturer: Restart requested for display \(self.displayID, privacy: .public) but stream is not running") }
             return
         }
-        let gen = streamGeneration
+        streamGeneration += 1
+        var gen = streamGeneration
 
         Logger.capture.info("ScreenshotCapturer: Restarting stream for display \(self.displayID, privacy: .public)")
 
@@ -363,6 +373,8 @@ public final class ScreenshotCapturer {
             appendRestartSuppressedTraceForTesting()
             return
         }
+
+        onScreenStopped?()
 
         var attempts = 0
         while attempts < maxRestartAttempts {
@@ -380,16 +392,22 @@ public final class ScreenshotCapturer {
                     return
                 }
 
+                if attempts > 1 {
+                    streamGeneration += 1
+                    gen = streamGeneration
+                }
+
+                let attemptGen = gen
+
                 let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
                     Task { @MainActor in
-                        guard let self, self.streamGeneration == gen, self.isRunning else { return }
-                        self.handleFrame(pixelBuffer, isIdle: isIdle)
+                        self?.handleFrameFromOutput(generation: attemptGen, pixelBuffer: pixelBuffer, isIdle: isIdle)
                     }
                 }
 
                 let delegate = StreamDelegate { [weak self] error in
                     Task { @MainActor in
-                        self?.handleStreamError(error)
+                        self?.handleStreamErrorFromDelegate(generation: attemptGen, error: error)
                     }
                 }
 
@@ -493,14 +511,18 @@ public final class ScreenshotCapturer {
         handleStreamError(error)
         await Task.yield()
     }
+
+    internal func _performHealthCheckForTesting() async {
+        await performHealthCheck()
+    }
 #endif
 }
 
 // MARK: - Video Stream Output
 
 /// Handles video frames from SCStream and forwards pixel buffers to a callback
-private final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
-    private let onFrame: (CVPixelBuffer, Bool) -> Void
+internal final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
+    internal let onFrame: (CVPixelBuffer, Bool) -> Void
 
     init(onFrame: @escaping (CVPixelBuffer, Bool) -> Void) {
         self.onFrame = onFrame

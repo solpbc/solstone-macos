@@ -3,6 +3,7 @@
 
 import CoreGraphics
 import CoreMedia
+import CoreVideo
 import Foundation
 @preconcurrency import ScreenCaptureKit
 import SolstoneCore
@@ -226,8 +227,9 @@ struct ScreenIntakeWarningTests {
         await capturer._restartStreamForTesting()
 
         #expect(healthFailureCalls == 1)
-        #expect(screenStoppedCalls == 1)
+        #expect(screenStoppedCalls == 2)
         #expect(!capturer._isRunningForTesting)
+        #expect(!capturer._isHealthCheckActiveForTesting)
     }
 
     @Test func permissionInHandleStreamErrorAndRestartStreamCallsOnScreenStoppedNotOnTerminalStop() async throws {
@@ -591,6 +593,429 @@ struct ScreenIntakeWarningTests {
 
         // Delivering display 1 on the replacement then clears it
         seg2.onFrameDelivered?(1)
+        #expect(manager.currentScreenFailure == nil)
+
+        _ = await executor.enqueue(.stop(reason: .user))
+    }
+
+    private func makeDummyPixelBuffer() -> CVPixelBuffer {
+        var pixelBuffer: CVPixelBuffer?
+        CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            16,
+            16,
+            kCVPixelFormatType_32BGRA,
+            nil,
+            &pixelBuffer
+        )
+        return pixelBuffer!
+    }
+
+    @Test func ordinaryStreamErrorReportsOnScreenStoppedBeforeStartCaptureReturnsAndDoesNotClearLatch() async throws {
+        let root = try makeTempDirectory("stream-error-warning")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let initialStream = FakeCaptureStream()
+        let parkGate = OneShotContinuationGate()
+        let stream2StartGate = OneShotContinuationGate()
+        let replacementStream = FakeCaptureStream(startGates: [stream2StartGate])
+        let factory = FakeCaptureStreamFactory([initialStream, replacementStream])
+
+        let capturer = try ScreenshotCapturer(
+            displayID: dummyDisplay1.displayID,
+            videoURL: root.appendingPathComponent("screen.mp4"),
+            width: 100,
+            height: 100,
+            frameRate: 1,
+            duration: nil,
+            contentFilter: SCContentFilter(),
+            verbose: false,
+            streamFactory: factory.factory
+        )
+
+        var screenStoppedCalls = 0
+        capturer._restartParkHookForTesting = {
+            parkGate.release()
+        }
+
+        try await capturer.start()
+        #expect(capturer._isRunningForTesting)
+        #expect(screenStoppedCalls == 0)
+
+        let createdSegments = LockedArray<FakeCaptureSegment>([])
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in
+                let segment = FakeCaptureSegment(outputDirectory: directory)
+                createdSegments.append(segment)
+                return segment
+            },
+            finalizer: FakeFinalizer(),
+            allowsEmptyDisplayConfigurationForTesting: true
+        )
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
+        _ = await executor.enqueue(.start(reason: .user, sources: [.screen], disabledMicUIDs: [], enabledMicUIDs: []))
+
+        let currentSeg = try #require(createdSegments.all.first)
+        capturer.onScreenStopped = {
+            screenStoppedCalls += 1
+            currentSeg.onScreenFailure?(.stopped)
+        }
+
+        let errorTask = Task { @MainActor in
+            await capturer._handleStreamErrorForTesting(NSError(domain: "test", code: 42))
+        }
+
+        await parkGate.wait()
+        #expect(screenStoppedCalls == 1)
+        #expect(manager.currentScreenFailure == .stopped)
+
+        stream2StartGate.release()
+        await replacementStream.startCount.waitUntilCount(1)
+        await errorTask.value
+
+        #expect(capturer._isRunningForTesting)
+        #expect(manager.currentScreenFailure == .stopped)
+
+        _ = await executor.enqueue(.stop(reason: .user))
+    }
+
+    @Test func emptyHealthCheckReportsOnlyWhenReachingThreshold() async throws {
+        let root = try makeTempDirectory("health-threshold-warning")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let initialStream = FakeCaptureStream()
+        let parkGate = OneShotContinuationGate()
+        let restartStartGate = OneShotContinuationGate()
+        let replacementStream = FakeCaptureStream(startGates: [restartStartGate])
+        let factory = FakeCaptureStreamFactory([initialStream, replacementStream])
+
+        let capturer = try ScreenshotCapturer(
+            displayID: dummyDisplay1.displayID,
+            videoURL: root.appendingPathComponent("screen.mp4"),
+            width: 100,
+            height: 100,
+            frameRate: 1,
+            duration: nil,
+            contentFilter: SCContentFilter(),
+            verbose: false,
+            streamFactory: factory.factory
+        )
+
+        var screenStoppedCalls = 0
+        capturer.onScreenStopped = { screenStoppedCalls += 1 }
+        capturer._restartParkHookForTesting = {
+            parkGate.release()
+        }
+
+        try await capturer.start()
+        #expect(capturer._isRunningForTesting)
+        #expect(screenStoppedCalls == 0)
+
+        // First health check: 0 frames, empty check count is 1 (< 2), no report
+        await capturer._performHealthCheckForTesting()
+        #expect(screenStoppedCalls == 0)
+
+        // Second health check reaches threshold (2 >= 2), initiates restart
+        let restartTask = Task { @MainActor in
+            await capturer._performHealthCheckForTesting()
+        }
+
+        await parkGate.wait()
+        #expect(screenStoppedCalls == 1)
+
+        restartStartGate.release()
+        await restartTask.value
+
+        #expect(capturer._isRunningForTesting)
+        #expect(screenStoppedCalls == 1)
+    }
+
+    @Test func stopSharingStillReportsOnlyOnTerminalStop() async throws {
+        let dir = try makeTempDirectory("screen-stop-sharing")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let userStoppedError = NSError(
+            domain: SCStreamErrorDomain,
+            code: SCStreamError.Code.userStopped.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "User clicked Stop Sharing"]
+        )
+
+        let stream = FakeCaptureStream()
+        let factory = FakeCaptureStreamFactory([stream])
+        let capturer = try ScreenshotCapturer(
+            displayID: dummyDisplay1.displayID,
+            videoURL: dir.appendingPathComponent("screen_stop_sharing.mp4"),
+            width: 100,
+            height: 100,
+            frameRate: 1,
+            duration: nil,
+            contentFilter: SCContentFilter(),
+            verbose: false,
+            streamFactory: factory.factory
+        )
+        try await capturer.start()
+
+        var screenStoppedCalls = 0
+        var terminalStopCalls = 0
+        capturer.onScreenStopped = { screenStoppedCalls += 1 }
+        capturer.onTerminalStop = { terminalStopCalls += 1 }
+
+        let delegate = try #require(factory.createdDelegates.first)
+        delegate.onError(userStoppedError)
+        for _ in 0..<50 {
+            if terminalStopCalls > 0 { break }
+            await Task.yield()
+        }
+
+        #expect(terminalStopCalls == 1)
+        #expect(screenStoppedCalls == 0)
+        #expect(!capturer._isRunningForTesting)
+    }
+
+    @Test func streamReplacementFencesReplacedCallbacksAndAdmitsInstalledFrames() async throws {
+        let dir = try makeTempDirectory("stream-replacement-fence")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let initialStream = FakeCaptureStream()
+        let replacementStream = FakeCaptureStream()
+        let factory = FakeCaptureStreamFactory([initialStream, replacementStream])
+
+        let capturer = try ScreenshotCapturer(
+            displayID: dummyDisplay1.displayID,
+            videoURL: dir.appendingPathComponent("screen.mp4"),
+            width: 100,
+            height: 100,
+            frameRate: 1,
+            duration: nil,
+            contentFilter: SCContentFilter(),
+            verbose: false,
+            streamFactory: factory.factory
+        )
+        capturer._restartParkHookForTesting = {}
+
+        var frameDeliveredCount = 0
+        var terminalStopCount = 0
+        capturer.onFrameDelivered = { frameDeliveredCount += 1 }
+        capturer.onTerminalStop = { terminalStopCount += 1 }
+
+        try await capturer.start()
+        #expect(capturer._isRunningForTesting)
+        #expect(factory.createdStreams.count == 1)
+
+        let initialOutput = try #require(initialStream.outputs.first as? VideoStreamOutput)
+        let initialDelegate = try #require(factory.createdDelegates.first)
+
+        await capturer._restartStreamForTesting()
+        #expect(capturer._isRunningForTesting)
+        #expect(factory.createdStreams.count == 2)
+
+        let installedStream = factory.createdStreams[1]
+        let installedOutput = try #require(installedStream.outputs.first as? VideoStreamOutput)
+
+        let pixelBuffer = makeDummyPixelBuffer()
+
+        // 1. Invoking replaced attempt's frame closure does not call onFrameDelivered
+        initialOutput.onFrame(pixelBuffer, true)
+        for _ in 0..<5 { await Task.yield() }
+        #expect(frameDeliveredCount == 0)
+
+        // 2. Invoking replaced attempt's error closure does not stop for user and does not create another stream
+        let userStoppedError = NSError(
+            domain: SCStreamErrorDomain,
+            code: SCStreamError.Code.userStopped.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "User stopped"]
+        )
+        initialDelegate.onError(userStoppedError)
+        for _ in 0..<5 { await Task.yield() }
+        #expect(terminalStopCount == 0)
+        #expect(capturer._isRunningForTesting)
+
+        let ordinaryError = NSError(domain: "test", code: 99)
+        initialDelegate.onError(ordinaryError)
+        for _ in 0..<5 { await Task.yield() }
+        #expect(factory.createdStreams.count == 2)
+
+        // 3. Invoking installed attempt's frame closure does call onFrameDelivered
+        installedOutput.onFrame(pixelBuffer, true)
+        for _ in 0..<50 {
+            if frameDeliveredCount == 1 { break }
+            await Task.yield()
+        }
+        #expect(frameDeliveredCount == 1)
+    }
+
+    @Test func failedRestartAttemptCallbacksDoNotSurviveSubsequentAttempt() async throws {
+        let dir = try makeTempDirectory("stream-failed-attempt-fence")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let initialStream = FakeCaptureStream()
+        let failedAttemptStream = FakeCaptureStream(startError: FakeCaptureError.startFailed)
+        let successfulAttemptStream = FakeCaptureStream()
+        let factory = FakeCaptureStreamFactory([initialStream, failedAttemptStream, successfulAttemptStream])
+
+        let capturer = try ScreenshotCapturer(
+            displayID: dummyDisplay1.displayID,
+            videoURL: dir.appendingPathComponent("screen.mp4"),
+            width: 100,
+            height: 100,
+            frameRate: 1,
+            duration: nil,
+            contentFilter: SCContentFilter(),
+            verbose: false,
+            streamFactory: factory.factory
+        )
+        capturer._restartParkHookForTesting = {}
+
+        var frameDeliveredCount = 0
+        var terminalStopCount = 0
+        capturer.onFrameDelivered = { frameDeliveredCount += 1 }
+        capturer.onTerminalStop = { terminalStopCount += 1 }
+
+        try await capturer.start()
+        #expect(capturer._isRunningForTesting)
+        #expect(factory.createdStreams.count == 1)
+
+        // Restart stream: attempt 1 fails startCapture, attempt 2 succeeds
+        await capturer._restartStreamForTesting()
+        #expect(capturer._isRunningForTesting)
+        #expect(factory.createdStreams.count == 3)
+
+        // Attempt 1 (failed attempt)
+        let failedStream = factory.createdStreams[1]
+        let failedOutput = try #require(failedStream.outputs.first as? VideoStreamOutput)
+        let failedDelegate = factory.createdDelegates[1]
+
+        // Attempt 2 (successful attempt)
+        let successfulStream = factory.createdStreams[2]
+        let successfulOutput = try #require(successfulStream.outputs.first as? VideoStreamOutput)
+
+        let pixelBuffer = makeDummyPixelBuffer()
+
+        // 1. Invoking failed attempt's frame closure does not call onFrameDelivered
+        failedOutput.onFrame(pixelBuffer, true)
+        for _ in 0..<5 { await Task.yield() }
+        #expect(frameDeliveredCount == 0)
+
+        // 2. Invoking failed attempt's user-stopped and ordinary error closures does not call onTerminalStop and does not create another stream
+        let userStoppedError = NSError(
+            domain: SCStreamErrorDomain,
+            code: SCStreamError.Code.userStopped.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "User stopped"]
+        )
+        failedDelegate.onError(userStoppedError)
+        for _ in 0..<5 { await Task.yield() }
+        #expect(terminalStopCount == 0)
+        #expect(capturer._isRunningForTesting)
+
+        let ordinaryError = NSError(domain: "test", code: 99)
+        failedDelegate.onError(ordinaryError)
+        for _ in 0..<5 { await Task.yield() }
+        #expect(factory.createdStreams.count == 3)
+
+        // 3. Successful attempt's idle frame does call onFrameDelivered
+        successfulOutput.onFrame(pixelBuffer, true)
+        for _ in 0..<50 {
+            if frameDeliveredCount == 1 { break }
+            await Task.yield()
+        }
+        #expect(frameDeliveredCount == 1)
+    }
+
+    @Test func healthyOldFramesAfterEnumerationFailureDoNotClearLatch() async throws {
+        let root = try makeTempDirectory("enum-failure-healthy-old-frames")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let createdSegments = LockedArray<FakeCaptureSegment>([])
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in
+                let segment = FakeCaptureSegment(outputDirectory: directory)
+                createdSegments.append(segment)
+                return segment
+            },
+            finalizer: FakeFinalizer(),
+            allowsEmptyDisplayConfigurationForTesting: true,
+            shareableContentProvider: {
+                throw FakeCaptureError.startFailed
+            }
+        )
+
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
+        _ = await executor.enqueue(.start(reason: .user, sources: [.screen], disabledMicUIDs: [], enabledMicUIDs: []))
+
+        let seg1 = try #require(createdSegments.all.first)
+        let oldPrimaryID: CGDirectDisplayID = 101
+        manager.setRequestedDisplayIDsForTesting([oldPrimaryID])
+
+        // Hit injected enumeration failure
+        await manager.handleDisplayChange()
+
+        // Latch is .stopped
+        #expect(manager.currentScreenFailure == .stopped)
+
+        // A frame from the old primary does not clear it
+        seg1.onFrameDelivered?(oldPrimaryID)
+        #expect(manager.currentScreenFailure == .stopped)
+
+        // An ordinary segment rotation does not make the old ids known again
+        _ = await executor.enqueue(.rotate(reason: .boundary))
+        let seg2 = try #require(createdSegments.all.last)
+        #expect(seg2.outputDirectory != seg1.outputDirectory)
+
+        // Frames for those old ids on the replacement segment do not clear it
+        seg2.onFrameDelivered?(oldPrimaryID)
+        #expect(manager.currentScreenFailure == .stopped)
+
+        _ = await executor.enqueue(.stop(reason: .user))
+    }
+
+    @Test func successfulMembershipRefreshKeepsLatchUntilAllNewIDsFramed() async throws {
+        let root = try makeTempDirectory("enum-failure-membership-refresh")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let createdSegments = LockedArray<FakeCaptureSegment>([])
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in
+                let segment = FakeCaptureSegment(outputDirectory: directory)
+                createdSegments.append(segment)
+                return segment
+            },
+            finalizer: FakeFinalizer(),
+            allowsEmptyDisplayConfigurationForTesting: true,
+            shareableContentProvider: {
+                throw FakeCaptureError.startFailed
+            }
+        )
+
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
+        _ = await executor.enqueue(.start(reason: .user, sources: [.screen], disabledMicUIDs: [], enabledMicUIDs: []))
+
+        let seg1 = try #require(createdSegments.all.first)
+        let oldPrimaryID: CGDirectDisplayID = 101
+        manager.setRequestedDisplayIDsForTesting([oldPrimaryID])
+
+        // Hit injected enumeration failure
+        await manager.handleDisplayChange()
+        #expect(manager.currentScreenFailure == .stopped)
+
+        // Frames delivered before establishment do not count
+        seg1.onFrameDelivered?(oldPrimaryID)
+        seg1.onFrameDelivered?(102)
+        #expect(manager.currentScreenFailure == .stopped)
+
+        // Establish refreshed set (two IDs, including 102 which old primary did not cover)
+        let refreshedIDs: Set<CGDirectDisplayID> = [oldPrimaryID, 102]
+        manager.establishDisplayMembershipForTesting(refreshedIDs)
+        #expect(manager.currentScreenFailure == .stopped)
+
+        // A frame for only the old id does not clear it
+        seg1.onFrameDelivered?(oldPrimaryID)
+        #expect(manager.currentScreenFailure == .stopped)
+
+        // Frames for every id in the refreshed set do
+        seg1.onFrameDelivered?(102)
         #expect(manager.currentScreenFailure == nil)
 
         _ = await executor.enqueue(.stop(reason: .user))
