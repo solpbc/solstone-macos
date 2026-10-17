@@ -35,7 +35,7 @@ These Make targets build a local test app. They do not build or bundle the journ
 - `make run`: Launch `solstone.app` and stream logs; run it after `make bundle-adhoc`.
 - `make build`: Compile a debug build without assembling an app bundle.
 - `make test`: Run the Swift tests.
-- `make ci`: Run the full project gate.
+- `make ci`: Run the full project gate. The [mac test plan](docs/test-plan.md) maps regression coverage and end-to-end qualification.
 - `make integration-native`: Run the on-demand integration tier: the app's real door, proxy and transport against a native journal runtime in an isolated home. It needs `SOLSTONE_NATIVE_RUNTIME_DIR` (a native runtime tree) and `SOLSTONE_JOURNAL_INTEGRATION_FIXTURE` (built by `make integration-fixture` in the journal repository's `platforms/macos`). Its first lines name what ran. Opt-in; not part of `make ci`.
 - `make icons`: Regenerate app assets when you change their SVG sources.
 - `make clean`: Remove build artifacts.
