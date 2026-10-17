@@ -1429,6 +1429,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier(AXID.Settings.Observer.shortcutPermission)
         }
         .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AXID.Settings.Observer.shortcut)
     }
 
@@ -3135,6 +3136,7 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 10)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AXID.Settings.Microphones.empty)
     }
 
