@@ -854,12 +854,11 @@ PUBLISH_PY := uv run --no-project --with 'pynacl>=1.6,<2' --with boto3 python3
 # ────────────────────────────────────────────────────────────────
 # ja1r linkage gate — production publishes are fail-closed on it.
 #
-# The gate, its rig sync and its offline verifier live in extro-tools
-# (tools/solstone-macos-gate), pinned to one revision in
-# scripts/ja1r-gate/extro-tools.rev. That file is the ONLY place the sha is
-# written; the sync never follows extro-tools main. The Journal app's package
-# (solstone-journal, platforms/macos) carries its own pin and calls the same
-# harness for the journal profile.
+# The linkage gate, rig sync and offline verifier are pinned to one revision.
+# The gate's revision file is the only source of that pin;
+# the sync never follows the harness repository's main branch.
+# The Journal app package (solstone-journal, platforms/macos) carries its
+# own pin and calls the same harness for the journal profile.
 #
 # Every lane reads both apps' AX contracts: ax-contract.json from this checkout
 # and journal-ax-contract.json from a Journal app checkout, named here as
