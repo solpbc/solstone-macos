@@ -37,7 +37,7 @@
       "font:600 12px/1 -apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif",
       "display:flex;align-items:center;gap:7px",
       "padding:6px 11px 6px 8px;border-radius:999px",
-      "background:rgba(26,26,26,0.92);color:#FAF3E4",
+      "background:rgba(26,26,26,0.92);color:#FCF3E4",
       "box-shadow:0 2px 10px rgba(0,0,0,0.35);user-select:none;cursor:default",
     ].join(";");
     pillEl = pill;

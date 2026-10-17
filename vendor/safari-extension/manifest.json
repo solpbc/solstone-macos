@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "solstone",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "on a site you add, the solstone extension takes in the page's address, text and rough layout, and all of it goes into your journal.",
   "incognito": "not_allowed",
   "permissions": [

@@ -186,11 +186,21 @@
     return effects.cmd({ cmd: "addGrantedOrigin", origin });
   }
 
+  // The sheet names the site by host; a caller may hand in a full origin for the grant.
+  function sheetHost(input) {
+    if (!/^https?:\/\//i.test(input)) return input;
+    try {
+      return new URL(input).host;
+    } catch (_e) {
+      return input;
+    }
+  }
+
   async function addSite(host, effects) {
     if (effects.status?.consentVersion !== 1 || effects.status?.addSiteEligible !== true) {
       return { ok: false, cancelled: true, ineligible: true };
     }
-    const confirmed = await effects.disclose(host);
+    const confirmed = await effects.disclose(sheetHost(host));
     if (!confirmed) return { ok: false, cancelled: true };
     return grantSite(host, effects);
   }
