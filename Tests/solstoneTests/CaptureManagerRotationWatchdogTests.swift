@@ -809,7 +809,8 @@ struct CaptureManagerRotationWatchdogTests {
             },
             finalizer: finalizer
         )
-        manager.seedRecordingForTesting(currentSegment: current)
+        // No microphone fallback: missing displays must fail before assignment.
+        manager.seedRecordingForTesting(currentSegment: current, sources: .screen)
 
         let outcome = await rotate(manager)
         guard case .threw(let failure) = outcome else {

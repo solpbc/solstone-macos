@@ -219,11 +219,13 @@ public final class CaptureManager {
     public var onScreenFailureChanged: (@MainActor (ScreenFailureKind?) -> Void)?
     private var requestedDisplayIDs: Set<CGDirectDisplayID> = []
     private var framedSinceFailure: Set<CGDirectDisplayID> = []
+    private var isDisplayMembershipKnown: Bool = true
 
     public func clearScreenFailure() {
         currentScreenFailure = nil
         framedSinceFailure.removeAll()
         requestedDisplayIDs.removeAll()
+        isDisplayMembershipKnown = true
         onScreenFailureChanged?(nil)
     }
 
@@ -627,7 +629,7 @@ public final class CaptureManager {
         )
         let predicate = (match != nil)
         let hasProtectedVideoPauseReason = state.pausedReasons.contains(.protectedVideo)
-        let sessionIncludesScreen = sessionSources.contains(.screen)
+        let sessionIncludesScreen = protectedVideoIncludesScreen
         let currentNow = now()
 
         let decision = ProtectedVideoMonitorDecision.decide(
@@ -778,9 +780,22 @@ public final class CaptureManager {
     }
 
     internal func setRequestedDisplayIDsForTesting(_ ids: Set<CGDirectDisplayID>) {
+        self.isDisplayMembershipKnown = true
         self.requestedDisplayIDs = ids
         checkScreenFailureRecovery()
     }
+
+    internal func establishDisplayMembership(_ ids: Set<CGDirectDisplayID>) {
+        isDisplayMembershipKnown = true
+        requestedDisplayIDs = ids
+        framedSinceFailure.removeAll()
+    }
+
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+    internal func establishDisplayMembershipForTesting(_ ids: Set<CGDirectDisplayID>) {
+        establishDisplayMembership(ids)
+    }
+#endif
 
     internal var backoffStepForTesting: Int {
         backoffStep
@@ -801,6 +816,7 @@ public final class CaptureManager {
                 (display.displayID, SCContentFilter(display: display, excludingApplications: [], exceptingWindows: []))
             }
         )
+        establishDisplayMembership(Set(newDisplays.map(\.displayID)))
     }
 
     private func captureZoneForNewSegment() -> TimeZone? {
@@ -817,7 +833,8 @@ public final class CaptureManager {
         try Task.checkCancellation()
         guard !lifecycleManager.ownerPauseIsHeld() else { throw CancellationError() }
         if sessionSources.contains(.screen) {
-            guard allowsEmptyDisplayConfigurationForTesting || (!displays.isEmpty && !filtersByDisplayID.isEmpty) else {
+            guard allowsEmptyDisplayConfigurationForTesting || (!displays.isEmpty && !filtersByDisplayID.isEmpty)
+                || sessionSources.contains(.microphone) else {
                 throw CaptureError.notInitialized
             }
         }
@@ -849,7 +866,8 @@ public final class CaptureManager {
         try Task.checkCancellation()
         guard !lifecycleManager.ownerPauseIsHeld() else { throw CancellationError() }
         if sessionSources.contains(.screen) {
-            guard allowsEmptyDisplayConfigurationForTesting || (!displays.isEmpty && !filtersByDisplayID.isEmpty) else {
+            guard allowsEmptyDisplayConfigurationForTesting || (!displays.isEmpty && !filtersByDisplayID.isEmpty)
+                || sessionSources.contains(.microphone) else {
                 throw CaptureError.notInitialized
             }
             if allowsEmptyDisplayConfigurationForTesting && displays.isEmpty && filtersByDisplayID.isEmpty {
@@ -908,9 +926,13 @@ public final class CaptureManager {
         // Start recording - convert to DisplayInfo for sendable compliance
         let displayInfos = sessionSources.contains(.screen) ? displays.map { DisplayInfo(from: $0) } : []
         if sessionSources.contains(.screen) {
-            requestedDisplayIDs = allowsEmptyDisplayConfigurationForTesting && displays.isEmpty
-                ? (requestedDisplayIDs.isEmpty ? [0] : requestedDisplayIDs)
-                : Set(displays.map(\.displayID))
+            if isDisplayMembershipKnown {
+                requestedDisplayIDs = allowsEmptyDisplayConfigurationForTesting && displays.isEmpty
+                    ? (requestedDisplayIDs.isEmpty ? [0] : requestedDisplayIDs)
+                    : Set(displays.map(\.displayID))
+            } else {
+                requestedDisplayIDs = []
+            }
             framedSinceFailure.removeAll()
             checkScreenFailureRecovery()
         } else {
@@ -1207,8 +1229,8 @@ public final class CaptureManager {
     }
 
     internal func handleDisplayChange() async {
-        guard state.isRecording, activeSources.contains(.screen) else {
-            if activeSources.contains(.screen) {
+        guard state.isRecording, sessionSources.contains(.screen) else {
+            if sessionSources.contains(.screen) {
                 await lifecycleManager.noteDisplayChange()
             }
             return
@@ -1219,6 +1241,7 @@ public final class CaptureManager {
         do {
             let oldIDs = Set(displays.map { $0.displayID })
             try await rebuildDisplaysAndFilters()
+            guard state.isRecording, sessionSources.contains(.screen), !Task.isCancelled else { return }
             let newIDs = Set(displays.map { $0.displayID })
 
             if oldIDs != newIDs {
@@ -1226,11 +1249,15 @@ public final class CaptureManager {
                 await enqueueTransition(.rotate(reason: .displayChange))
             }
         } catch CaptureError.noDisplaysAvailable {
+            guard sessionSources.contains(.screen), !Task.isCancelled else { return }
             let error = CaptureError.noDisplaysAvailable
             Logger.capture.error("No displays available after display change: \(error.localizedDescription, privacy: .public)")
             await enterNoDisplayRecovery()
         } catch {
+            guard sessionSources.contains(.screen), !Task.isCancelled else { return }
             Logger.capture.warning("Failed to get updated display list: \(error, privacy: .public)")
+            isDisplayMembershipKnown = false
+            requestedDisplayIDs.removeAll()
             recordScreenFailure(.stopped)
         }
     }
@@ -1388,8 +1415,12 @@ extension CaptureManager: CaptureLifecycleDelegate {
                 do {
                     try await rebuildDisplaysAndFilters()
                 } catch {
+                    isDisplayMembershipKnown = false
+                    requestedDisplayIDs.removeAll()
+                    displays.removeAll()
+                    filtersByDisplayID.removeAll()
+                    recordScreenFailure(.couldNotStart)
                     guard sources.contains(.microphone) else { throw error }
-                    sessionSources.remove(.screen)
                     Logger.capture.warning("Screen initialization failed; starting selected microphone: \(error, privacy: .public)")
                 }
             }
@@ -1408,9 +1439,9 @@ extension CaptureManager: CaptureLifecycleDelegate {
             return lifecycleOwnerPauseIsHeld ? .vetoedOwnerPause : .vetoedScreenLocked
         }
 
-        // Microphone intent survives intentional exclusion or temporary loss so
-        // a later selection/hotplug can start it within the observing session.
-        sessionSources = activeSources.union(sources.intersection(.microphone))
+        // Keep requested sources across temporary loss. Active sources describe
+        // this segment; a later refresh or device change can try the request again.
+        sessionSources = activeSources.union(sources)
         // Start monitoring for default microphone changes.
         if sessionSources.contains(.microphone) {
             startDefaultMicMonitoring()
@@ -1650,10 +1681,14 @@ extension CaptureManager: CaptureLifecycleDelegate {
         armProtectedVideoMonitoring()
     }
 
+    private var protectedVideoIncludesScreen: Bool {
+        state.isRecording ? activeSources.contains(.screen) : sessionSources.contains(.screen)
+    }
+
     func lifecycleProtectedVideoOnScreen() -> Bool {
         let sourcesIncludeScreen: Bool
         if state.isRecording || state.isPaused {
-            sourcesIncludeScreen = sessionSources.contains(.screen)
+            sourcesIncludeScreen = protectedVideoIncludesScreen
         } else {
             sourcesIncludeScreen = configuredSourcesIncludeScreen?() ?? false
         }

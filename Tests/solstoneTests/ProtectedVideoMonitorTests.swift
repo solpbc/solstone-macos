@@ -391,12 +391,13 @@ struct ProtectedVideoMonitorTests {
 
         #expect(manager.state == .recording)
 
-        // Both sources requested, provider throws, microphone continues, a matching window, checkProtectedVideo(), state stays recording, sessionSourcesForTesting does not contain .screen
+        // A failed requested screen stays requested, while only the microphone is
+        // active. Protected video must not pause that microphone-only capture.
         struct SyntheticScreenProviderError: Error {}
         let manager2 = CaptureManager(
             storageManager: StorageManager(baseDirectory: root),
             segmentFactory: { outputDirectory, _, _, _ in
-                FakeCaptureSegment(outputDirectory: outputDirectory)
+                FakeCaptureSegment(outputDirectory: outputDirectory, successfulSources: .microphone)
             },
             allowsEmptyDisplayConfigurationForTesting: false,
             shareableContentProvider: {
@@ -418,7 +419,8 @@ struct ProtectedVideoMonitorTests {
         )
         #expect(startResult == .committed)
         #expect(manager2.state == .recording)
-        #expect(!manager2.sessionSourcesForTesting.contains(.screen))
+        #expect(manager2.sessionSourcesForTesting.contains(.screen))
+        #expect(manager2.activeSources == .microphone)
 
         await manager2.checkProtectedVideo()
         #expect(manager2.state == .recording)

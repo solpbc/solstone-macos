@@ -479,13 +479,15 @@ struct IndependentCapturePipelineTests {
         let root = try makeTempDirectory("source-display-init-failure")
         defer { try? FileManager.default.removeItem(at: root) }
         let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root),
-            segmentFactory: { path, _, _, _ in FakeCaptureSegment(outputDirectory: path) },
+            segmentFactory: { path, _, _, _ in FakeCaptureSegment(outputDirectory: path, successfulSources: .microphone) },
             finalizer: FakeFinalizer(), microphoneDevices: { [] },
             shareableContentProvider: { throw CaptureManager.CaptureError.noDisplaysAvailable })
         let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
         let outcome = await executor.enqueue(.start(reason: .user, sources: .all, disabledMicUIDs: [], enabledMicUIDs: []))
         guard case .committed = outcome else { Issue.record("healthy selected mic fallback did not commit"); return }
         #expect(manager.activeSources == .microphone)
+        #expect(manager.sessionSourcesForTesting.contains(.screen))
+        #expect(manager.currentScreenFailure == .couldNotStart)
         _ = await executor.enqueue(.stop(reason: .user))
     }
 

@@ -261,6 +261,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
     let outputDirectory: URL
     let finishBehaviors: LockedArray<FinishCaptureBehavior>
     let startBehavior: FakeSegmentStartBehavior
+    let successfulSources: CaptureSources?
     let startsPersistentSystemAudio: PersistentAudioStart
     let startGate: OneShotContinuationGate?
     let captureIssueOnStart: String?
@@ -291,6 +292,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         outputDirectory: URL,
         finishBehaviors: [FinishCaptureBehavior] = [.normal(nil)],
         startBehavior: FakeSegmentStartBehavior = .normal,
+        successfulSources: CaptureSources? = nil,
         startsPersistentSystemAudio: PersistentAudioStart = .no,
         startGate: OneShotContinuationGate? = nil,
         finishGate: OneShotContinuationGate? = nil,
@@ -300,6 +302,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         self.outputDirectory = outputDirectory
         self.finishBehaviors = LockedArray(finishBehaviors)
         self.startBehavior = startBehavior
+        self.successfulSources = successfulSources
         self.startsPersistentSystemAudio = startsPersistentSystemAudio
         self.startGate = startGate
         self.finishGate = finishGate
@@ -333,7 +336,7 @@ final class FakeCaptureSegment: CaptureSegmentWriting, @unchecked Sendable {
         if case .throwPartway = startBehavior {
             throw FakeCaptureError.startFailed
         }
-        return sources
+        return successfulSources ?? sources
     }
 
     func finishCapture() async -> SegmentCaptureResult? {
