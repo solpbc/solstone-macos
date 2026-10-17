@@ -1280,6 +1280,8 @@ struct SettingsView: View {
                                     }
                                     HStack {
                                         Button(UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS) {
+                                            // Asking again puts solstone back in the list if its entry was removed there.
+                                            PermissionChecker().promptScreenRecording()
                                             NSWorkspace.shared.open(
                                                 URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
                                             )

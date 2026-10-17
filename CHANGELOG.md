@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the solstone extension in Safari now uses the updated orange and cream in its popup, settings and page indicator.
 - in settings, the permissions tab now shows whether screen and microphone intake is on, paused or off, with a small level that moves while microphone intake is on. you can pause everything from there, and each permission names where to find it in System Settings. before, a granted permission only said "all good".
 
+### Fixed
+
+- if you switch on screen recording for solstone in System Settings and choose "Later", the permissions tab now notices and offers to restart solstone. before, it kept saying "waiting for you to switch on solstone in System Settings…" until you reopened solstone yourself. while it waits, it also offers to open System Settings or reopen solstone.
+
 ## [2.0.36] - 2026-10-16
 
 ### Changed
