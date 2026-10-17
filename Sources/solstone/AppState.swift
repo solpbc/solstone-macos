@@ -302,6 +302,18 @@ public final class AppState {
         pauseManager.isPaused && !isRecording && !capture.isPaused
     }
 
+    var protectedVideoHeld: Bool {
+        capture.captureManager.state.pausedReasons.contains(.protectedVideo)
+            || capture.isStartDeferredForProtectedVideo
+    }
+
+    @ObservationIgnored var microphoneInputPeakReader: (() -> Float?)?
+
+    var microphoneInputPeak: Float? {
+        if let microphoneInputPeakReader { return microphoneInputPeakReader() }
+        return capture.captureManager.recentMicrophoneInputPeak()
+    }
+
     public var captureSourcesStatusText: String {
         if isRecording || isPaused {
             guard !captureManager.activeSources.isEmpty else { return UICopy.SOURCES_UNAVAILABLE }

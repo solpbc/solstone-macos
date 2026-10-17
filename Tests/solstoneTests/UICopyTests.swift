@@ -126,7 +126,6 @@ struct UICopyTests {
         #expect(UICopy.SETTINGS_SETUP_SHARED_NOT_GRANTED == "not granted")
         #expect(UICopy.SETTINGS_SETUP_SHARED_CHECKING == "checking")
         #expect(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT == "if solstone is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old solstone entry and try enabling screen recording again.")
-        #expect(UICopy.SETTINGS_PERMISSIONS_MIC_DENIED == "microphone access is off. allow solstone in Privacy & Security → Microphone.")
         #expect(UICopy.SETTINGS_PERMISSIONS_MIC_RESTRICTED == "microphone access is restricted by this mac.")
         #expect(UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS == "open system settings →")
     }

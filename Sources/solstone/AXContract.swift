@@ -65,8 +65,18 @@ enum AXContract {
         AXID.Settings.Permissions.screenRecordingRestartNow,
         AXID.Settings.Permissions.screenRecordingRestartPending,
         AXID.Settings.Permissions.screenRecordingResetHint,
+        AXID.Settings.Permissions.screenRecordingLiveState,
+        AXID.Settings.Permissions.screenRecordingPause,
+        AXID.Settings.Permissions.screenRecordingResume,
+        AXID.Settings.Permissions.screenRecordingOpenSources,
+        AXID.Settings.Permissions.screenRecordingCheckStatus,
         AXID.Settings.Permissions.microphoneState,
         AXID.Settings.Permissions.microphoneGrantAccess,
+        AXID.Settings.Permissions.microphoneLiveState,
+        AXID.Settings.Permissions.microphonePause,
+        AXID.Settings.Permissions.microphoneResume,
+        AXID.Settings.Permissions.microphoneOpenSources,
+        AXID.Settings.Permissions.microphoneCheckStatus,
         AXID.Settings.Permissions.systemSettingsOpen,
         AXID.Settings.Permissions.nextConnectJournal,
         AXID.Settings.Observer.startAtLogin,
@@ -360,7 +370,8 @@ enum AXContract {
             "FrequencyOption": FrequencyOption.allCases.map(\.rawValue),
             "UpdateStatus": UpdateStatus.axTokens,
             "ExcludedAppPickerAvailability": ExcludedAppPickerAvailability.allCases.map(\.axToken),
-            "PrivateWindowAccessibilityState": PrivateWindowAccessibilityState.allCases.map(\.axToken)
+            "PrivateWindowAccessibilityState": PrivateWindowAccessibilityState.allCases.map(\.axToken),
+            "PermissionSourceLiveAXState": PermissionSourceLiveAXState.allCases.map(\.axToken)
         ]
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         result["BrowserProfileAXState"] = BrowserProfileAXState.allCases.map(\.axToken)
@@ -383,7 +394,9 @@ enum AXContract {
             "settings.sidebar.tab.{tab}.state": .enum("SidebarBadgeState"),
             AXID.Settings.Permissions.screenRecordingState: .enum("AXPermissionState"),
             AXID.Settings.Permissions.screenRecordingRestartPending: .freeform,
+            AXID.Settings.Permissions.screenRecordingLiveState: .enum("PermissionSourceLiveAXState"),
             AXID.Settings.Permissions.microphoneState: .enum("AXPermissionState"),
+            AXID.Settings.Permissions.microphoneLiveState: .enum("PermissionSourceLiveAXState"),
             AXID.Settings.Observer.notificationDeniedState: .freeform,
             AXID.Settings.Observer.storageUsedState: .numeric,
             AXID.Settings.Privacy.excludedAppsPickerState: .enum("ExcludedAppPickerAvailability"),

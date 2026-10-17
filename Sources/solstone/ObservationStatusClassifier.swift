@@ -276,8 +276,6 @@ extension AppState {
 #else
         let browserOnly = false
 #endif
-        let protectedVideoHeld = capture.captureManager.state.pausedReasons.contains(.protectedVideo)
-            || capture.isStartDeferredForProtectedVideo
         return classifyObservationRowState(
             permissionsNeedAttention: permissionsNeedAttention,
             errorMessage: errorMessage,

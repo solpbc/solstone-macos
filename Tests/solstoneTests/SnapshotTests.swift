@@ -938,6 +938,86 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsPermissionsLiveOn() throws {
+        let state = AppState.forSnapshot()
+        markPermissionsReady(state)
+        state.capture.microphoneAuthorizationReader = { .authorized }
+        state.isRecording = true
+        state.captureManager.seedRecordingForTesting(
+            currentSegment: FakeCaptureSegment(outputDirectory: FileManager.default.temporaryDirectory),
+            sources: .all
+        )
+        state.microphoneInputPeakReader = { Float(pow(10.0, -18.0 / 20.0)) }
+        #expect(state.permissionSourceLiveState(for: .microphone) == .on)
+        #expect(state.permissionSourceLiveState(for: .screen) == .on)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .permissions),
+            size: settingsSize,
+            to: "settings-permissions-live-on.png"
+        )
+    }
+
+    @Test func settingsPermissionsLivePaused() throws {
+        let state = AppState.forSnapshot()
+        markPermissionsReady(state)
+        state.capture.microphoneAuthorizationReader = { .authorized }
+        state.captureManager.seedRecordingForTesting(
+            currentSegment: FakeCaptureSegment(outputDirectory: FileManager.default.temporaryDirectory),
+            sources: .all
+        )
+        state.capture.handleCaptureStateChange(.paused(reasons: [.user]))
+        state.pauseManager.pause(for: .minutes(15))
+        #expect(state.permissionSourceLiveState(for: .microphone) == .paused(.owner))
+        #expect(state.permissionSourceLiveState(for: .screen) == .paused(.owner))
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .permissions),
+            size: settingsSize,
+            to: "settings-permissions-live-paused.png"
+        )
+    }
+
+    @Test func settingsPermissionsLiveOff() throws {
+        let state = AppState.forSnapshot(config: AppConfig(isMicrophoneCaptureEnabled: false))
+        markPermissionsReady(state)
+        state.capture.microphoneAuthorizationReader = { .authorized }
+        state.isRecording = true
+        state.captureManager.seedRecordingForTesting(
+            currentSegment: FakeCaptureSegment(outputDirectory: FileManager.default.temporaryDirectory),
+            sources: .screen
+        )
+        #expect(state.permissionSourceLiveState(for: .microphone) == .off)
+        #expect(state.permissionSourceLiveState(for: .screen) == .on)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .permissions),
+            size: settingsSize,
+            to: "settings-permissions-live-off.png"
+        )
+    }
+
+    @Test func settingsPermissionsMicDenied() throws {
+        let state = AppState.forSnapshot()
+        state.initialPermissionCheckComplete = true
+        state.capture.publishScreenRecordingPermission(.granted)
+        state.isRecording = true
+        state.captureManager.seedRecordingForTesting(
+            currentSegment: FakeCaptureSegment(outputDirectory: FileManager.default.temporaryDirectory),
+            sources: .all
+        )
+        state.microphoneAuthorizationCause = .denied
+        state.capture.microphoneAuthorizationReader = { .denied }
+        #expect(state.permissionSourceLiveState(for: .screen) == .on)
+        #expect(state.microphoneGranted == false)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .permissions),
+            size: settingsSize,
+            to: "settings-permissions-mic-denied.png"
+        )
+    }
+
     @Test func settingsHelp() throws {
         let state = AppState.forSnapshot()
         let updateController = makeSnapshotUpdateController()

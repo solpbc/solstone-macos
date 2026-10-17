@@ -324,4 +324,21 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         }
         Logger.audio.info("Updated mic gain to \(newGain, privacy: .public)x on \(allCaptures.count, privacy: .public) capture(s)")
     }
+
+    internal func recentInputPeak() -> Float? {
+        lock.lock()
+        let allCaptures = Array(captures.values)
+        lock.unlock()
+
+        var maxPeak: Float?
+        for capture in allCaptures {
+            guard let peak = capture.recentPeak() else { continue }
+            if let current = maxPeak {
+                maxPeak = max(current, peak)
+            } else {
+                maxPeak = peak
+            }
+        }
+        return maxPeak
+    }
 }

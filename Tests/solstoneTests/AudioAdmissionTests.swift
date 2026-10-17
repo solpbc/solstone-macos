@@ -957,6 +957,57 @@ struct AudioAdmissionTests {
         admissionBudgetIsEmpty(writer.mediaBudget)
         await system.stop()
     }
+
+    @Test func recentPeakTrackedAndExpiredAndClearedOnStop() async throws {
+        let clock = LockedValue<Double>()
+        clock.set(1000)
+        let engine = AdmissionEngine()
+        let device = admissionDevice("peak-test")
+        let capture = ExternalMicCapture(
+            device: device,
+            gain: 1,
+            engineFactory: { engine },
+            resolveDeviceID: { _ in 1 },
+            monotonicNow: { clock.current! }
+        )
+        capture.setCallbacks(audio: { _, _ in }, error: nil)
+        try capture.start()
+        let host = mach_absolute_time()
+        engine.emit(try admissionPCM(frames: 4_800, frequency: 220), when: admissionWhen(host, frame: 0, rate: 48_000))
+        await capture.drain()
+        #expect(capture.recentPeak() != nil)
+
+        clock.set(clock.current! + 0.6)
+        #expect(capture.recentPeak() == nil)
+
+        engine.emit(try admissionPCM(frames: 4_800, frequency: 220), when: admissionWhen(host, frame: 4_800, rate: 48_000))
+        await capture.drain()
+        #expect(capture.recentPeak() != nil)
+
+        capture.stop()
+        #expect(capture.recentPeak() == nil)
+    }
+
+    @Test func recentPeakNilWhenQueuedBufferRefused() async throws {
+        let clock = LockedValue<Double>()
+        clock.set(1000)
+        let engine = AdmissionEngine()
+        let device = admissionDevice("peak-test-refused")
+        let capture = ExternalMicCapture(
+            device: device,
+            gain: 1,
+            engineFactory: { engine },
+            resolveDeviceID: { _ in 1 },
+            monotonicNow: { clock.current! }
+        )
+        capture.setQueuedCallbacks(audio: { _, _ in nil }, error: nil, rawError: nil, admissionGate: nil)
+        try capture.start()
+        let host = mach_absolute_time()
+        engine.emit(try admissionPCM(frames: 4_800, frequency: 220), when: admissionWhen(host, frame: 0, rate: 48_000))
+        await capture.drain()
+        #expect(capture.recentPeak() == nil)
+        capture.stop()
+    }
 }
 
 private final class AdmissionEngine: MicrophoneCaptureEngine, @unchecked Sendable {

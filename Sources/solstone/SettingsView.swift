@@ -1101,6 +1101,102 @@ struct SettingsView: View {
         appState.microphoneAuthorizationCause.permissionAXState
     }
 
+    @ViewBuilder
+    private func permissionSourceLiveRow(source: CaptureSources) -> some View {
+        let liveState = appState.permissionSourceLiveState(for: source)
+        let controls = appState.permissionSourceLiveControls(for: source)
+        let isScreen = source.contains(.screen)
+        let liveStateAXID = isScreen ? AXID.Settings.Permissions.screenRecordingLiveState : AXID.Settings.Permissions.microphoneLiveState
+        let pauseAXID = isScreen ? AXID.Settings.Permissions.screenRecordingPause : AXID.Settings.Permissions.microphonePause
+        let resumeAXID = isScreen ? AXID.Settings.Permissions.screenRecordingResume : AXID.Settings.Permissions.microphoneResume
+        let openSourcesAXID = isScreen ? AXID.Settings.Permissions.screenRecordingOpenSources : AXID.Settings.Permissions.microphoneOpenSources
+        let checkStatusAXID = isScreen ? AXID.Settings.Permissions.screenRecordingCheckStatus : AXID.Settings.Permissions.microphoneCheckStatus
+
+        AXStateCompanion(id: liveStateAXID, value: liveState.axState.axToken)
+
+        HStack(spacing: 6) {
+            if liveState == .on {
+                Image(systemName: "circle.fill")
+                    .foregroundStyle(.green)
+                Text(UICopy.SETTINGS_PERMISSIONS_LIVE_ON)
+            } else {
+                Image(systemName: "circle")
+                    .foregroundStyle(.secondary)
+                switch liveState {
+                case .on:
+                    EmptyView()
+                case .paused(.owner):
+                    let _ = appState.pauseManager.refreshTick
+                    Text(pausedHeaderText(timeRemaining: appState.pauseManager.formatTimeRemaining()))
+                case .paused(.protectedVideo):
+                    Text(UICopy.SETTINGS_OBSERVATION_PROTECTED_VIDEO)
+                case .off:
+                    Text(UICopy.SETTINGS_PERMISSIONS_LIVE_OFF)
+                case .notRunning:
+                    Text(UICopy.SETTINGS_PERMISSIONS_LIVE_NOT_RUNNING)
+                }
+            }
+
+            if !isScreen, liveState == .on {
+                TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+                    MicrophoneLevelMeter(peak: appState.microphoneInputPeak)
+                }
+            }
+
+            Spacer()
+
+            if controls.pause {
+                Menu("pause") {
+                    Button("15 minutes") {
+                        appState.pauseManager.pause(for: .minutes(15))
+                    }
+                    Button("30 minutes") {
+                        appState.pauseManager.pause(for: .minutes(30))
+                    }
+                    Button("1 hour") {
+                        appState.pauseManager.pause(for: .minutes(60))
+                    }
+                    Button("until I resume") {
+                        appState.pauseManager.pause(for: .indefinite)
+                    }
+                }
+                .accessibilityIdentifier(pauseAXID)
+            } else if controls.resume {
+                Button("resume") {
+                    appState.pauseManager.resume()
+                }
+                .accessibilityIdentifier(resumeAXID)
+            } else if controls.openSources {
+                Button(UICopy.SOURCES_OPEN_ACTION) {
+                    selectedTab = .sources
+                }
+                .accessibilityIdentifier(openSourcesAXID)
+            } else if controls.checkStatus {
+                Button(UICopy.SETTINGS_PERMISSIONS_CHECK_STATUS) {
+                    selectedTab = .status
+                }
+                .accessibilityIdentifier(checkStatusAXID)
+            }
+        }
+
+        switch liveState {
+        case .on:
+            Text(UICopy.SETTINGS_PERMISSIONS_LIVE_ON_HINT)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .paused:
+            Text(UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .off:
+            Text(UICopy.SETTINGS_PERMISSIONS_LIVE_OFF_HINT)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .notRunning:
+            EmptyView()
+        }
+    }
+
     private var permissionsTab: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text("the solstone app takes in what you share with it, and all of it goes into your journal.")
@@ -1130,12 +1226,7 @@ struct SettingsView: View {
                                 value: "pending"
                             )
                         } else {
-                            HStack(spacing: 6) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                                Text("all good")
-                                    .foregroundStyle(.secondary)
-                            }
+                            permissionSourceLiveRow(source: .screen)
                         }
                     } else {
                         Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_EXPLAINER)
@@ -1156,13 +1247,13 @@ struct SettingsView: View {
                                 HStack(spacing: 6) {
                                     ProgressView()
                                         .controlSize(.small)
-                                    Text("waiting for permission in system settings...")
+                                    Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_WAITING)
                                         .foregroundStyle(.secondary)
                                     Spacer()
                                 }
                             } else {
                                 Spacer()
-                                Button("enable screen recording →") {
+                                Button(UICopy.SETTINGS_PERMISSIONS_ENABLE_SCREEN_RECORDING) {
                                     Logger.setup.info("Button tapped: enable screen recording")
                                     PermissionChecker().promptScreenRecording()
                                     screenRecordingPrompted = true
@@ -1171,6 +1262,10 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_BREADCRUMB)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
@@ -1184,12 +1279,7 @@ struct SettingsView: View {
                         value: microphonePermissionAXState.axToken
                     )
                     if appState.microphoneGranted {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text("all good")
-                                .foregroundStyle(.secondary)
-                        }
+                        permissionSourceLiveRow(source: .microphone)
                     } else {
                         Text(UICopy.SETTINGS_PERMISSIONS_MIC_EXPLAINER)
                             .font(.body)
@@ -1204,7 +1294,7 @@ struct SettingsView: View {
                             case .restricted:
                                 microphoneSettingsButton(message: UICopy.SETTINGS_PERMISSIONS_MIC_RESTRICTED)
                             case .notDetermined:
-                                Button("enable microphone") {
+                                Button(UICopy.SETTINGS_PERMISSIONS_ENABLE_MICROPHONE) {
                                     Task {
                                         await PermissionChecker().requestMicrophone()
                                         appState.refreshMicrophoneAuthorization()
@@ -1216,6 +1306,10 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    Text(UICopy.SETTINGS_PERMISSIONS_MICROPHONE_BREADCRUMB)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
