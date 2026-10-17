@@ -1160,6 +1160,7 @@ struct SettingsView: View {
                         appState.pauseManager.pause(for: .indefinite)
                     }
                 }
+                .fixedSize()
                 .accessibilityIdentifier(pauseAXID)
             } else if controls.resume {
                 Button("resume") {
