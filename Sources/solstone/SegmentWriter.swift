@@ -342,6 +342,8 @@ public final class SegmentWriter {
 
                 var anyDisplayStarted = false
                 var displayStartFailed = false
+                var firstMissingFilterError: SegmentError?
+                var allFailuresAreMissingFilter = true
                 for info in displayInfos {
                     var returnedCapturer: (any SegmentScreenshotCapturing)?
                     do {
@@ -370,6 +372,13 @@ public final class SegmentWriter {
                     } catch {
                         if let returnedCapturer {
                             await returnedCapturer.stop()
+                            allFailuresAreMissingFilter = false
+                        } else if case SegmentError.missingContentFilter = error {
+                            if firstMissingFilterError == nil {
+                                firstMissingFilterError = error as? SegmentError
+                            }
+                        } else {
+                            allFailuresAreMissingFilter = false
                         }
                         displayStartFailed = true
                         diagnostics.failure("screen_\(info.displayID)", stage: "start", error: error)
@@ -386,6 +395,9 @@ public final class SegmentWriter {
                         screenFailureToReport = .couldNotStart
                     }
                 } else {
+                    if let firstMissingFilterError, allFailuresAreMissingFilter {
+                        throw firstMissingFilterError
+                    }
                     throw CaptureManager.CaptureError.noDisplaysAvailable
                 }
             } catch {

@@ -112,6 +112,89 @@ struct ScreenIntakeWarningTests {
         #expect(!terminalStopCalled)
     }
 
+    @Test func oneOfTwoDisplaysMissingFilterKeepsSiblingAndMicrophoneReportsCouldNotStart() async throws {
+        let dir = try makeTempDirectory("screen-warning-missing-filter-partial")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        var reportedFailure: ScreenFailureKind?
+        var terminalStopCalled = false
+        let siblingCapturer = FakeScreenshotCapturer(behavior: .normal)
+        let audioManager = FakeAudioManager(behavior: .normal)
+
+        let writer = SegmentWriter(
+            outputDirectory: dir,
+            timePrefix: "120000",
+            screenshotCapturerFactory: { info, _, _, _, _, _ in
+                if info.displayID == self.dummyDisplay1.displayID {
+                    throw SegmentWriter.SegmentError.missingContentFilter(displayID: info.displayID)
+                } else {
+                    return siblingCapturer
+                }
+            },
+            audioManagerFactory: { _, _, _, _ in audioManager }
+        )
+        writer.onScreenFailure = { failure in
+            reportedFailure = failure
+        }
+        writer.onTerminalStop = {
+            terminalStopCalled = true
+        }
+
+        let started = try await writer.start(
+            sources: [.screen, .microphone],
+            displayInfos: [dummyDisplay1, dummyDisplay2],
+            filters: [
+                dummyDisplay2.displayID: SCContentFilter()
+            ],
+            audioFilter: nil,
+            mics: [testMic]
+        )
+
+        #expect(started.contains(CaptureSources.screen))
+        #expect(started.contains(CaptureSources.microphone))
+        #expect(reportedFailure == .couldNotStart)
+        #expect(siblingCapturer.startCount.count == 1)
+        #expect(siblingCapturer.stopCount.count == 0)
+        #expect(!terminalStopCalled)
+    }
+
+    @Test func allDisplaysMissingFilterWithMicrophoneFallsBackAndReportsCouldNotStart() async throws {
+        let dir = try makeTempDirectory("screen-warning-missing-filter-fallback")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        var reportedFailure: ScreenFailureKind?
+        var terminalStopCalled = false
+        let audioManager = FakeAudioManager(behavior: .normal)
+
+        let writer = SegmentWriter(
+            outputDirectory: dir,
+            timePrefix: "120000",
+            screenshotCapturerFactory: { info, _, _, _, _, _ in
+                throw SegmentWriter.SegmentError.missingContentFilter(displayID: info.displayID)
+            },
+            audioManagerFactory: { _, _, _, _ in audioManager }
+        )
+        writer.onScreenFailure = { failure in
+            reportedFailure = failure
+        }
+        writer.onTerminalStop = {
+            terminalStopCalled = true
+        }
+
+        let started = try await writer.start(
+            sources: [.screen, .microphone],
+            displayInfos: [dummyDisplay1, dummyDisplay2],
+            filters: [:],
+            audioFilter: nil,
+            mics: [testMic]
+        )
+
+        #expect(started == CaptureSources.microphone)
+        #expect(reportedFailure == .couldNotStart)
+        #expect(!terminalStopCalled)
+        #expect(audioManager.addMicrophoneCount.count == 1)
+    }
+
     @Test func healthExhaustionCallsOnHealthFailureOnceAndOnScreenStopped() async throws {
         let dir = try makeTempDirectory("screen-exhaustion")
         defer { try? FileManager.default.removeItem(at: dir) }
