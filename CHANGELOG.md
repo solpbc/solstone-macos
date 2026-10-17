@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- in settings, the permissions tab now shows whether screen and microphone intake is on, paused or off, with a small level that moves while microphone intake is on. you can pause everything from there, and each permission names where to find it in System Settings. before, a granted permission only said "all good".
+
 ## [2.0.36] - 2026-10-16
 
 ### Changed

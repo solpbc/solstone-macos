@@ -1318,7 +1318,7 @@ struct SettingsView: View {
                 Text("you can review or revoke these anytime in")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("system settings") {
+                Button("System Settings") {
                     NSWorkspace.shared.open(
                         URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
                     )
