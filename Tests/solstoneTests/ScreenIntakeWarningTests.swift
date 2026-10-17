@@ -546,6 +546,56 @@ struct ScreenIntakeWarningTests {
         _ = await executor.enqueue(.stop(reason: .user))
     }
 
+    @Test func replacementSegmentRequiresFreshFramesFromEveryRequestedDisplay() async throws {
+        let root = try makeTempDirectory("screen-replacement-fresh-frames")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let createdSegments = LockedArray<FakeCaptureSegment>([])
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in
+                let segment = FakeCaptureSegment(outputDirectory: directory)
+                createdSegments.append(segment)
+                return segment
+            },
+            finalizer: FakeFinalizer(),
+            allowsEmptyDisplayConfigurationForTesting: true
+        )
+
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
+        _ = await executor.enqueue(.start(reason: .user, sources: [.screen], disabledMicUIDs: [], enabledMicUIDs: []))
+
+        let seg1 = try #require(createdSegments.all.first)
+        manager.setRequestedDisplayIDsForTesting([1, 2])
+
+        seg1.onScreenFailure?(.couldNotStart)
+        #expect(manager.currentScreenFailure == .couldNotStart)
+
+        // Deliver display 1 on that segment
+        seg1.onFrameDelivered?(1)
+        #expect(manager.currentScreenFailure == .couldNotStart)
+
+        // Rotate
+        _ = await executor.enqueue(.rotate(reason: .boundary))
+        let seg2 = try #require(createdSegments.all.last)
+        #expect(seg2.outputDirectory != seg1.outputDirectory)
+
+        // Deliver only display 2 on the replacement
+        seg2.onFrameDelivered?(2)
+        // The failure stays
+        #expect(manager.currentScreenFailure == .couldNotStart)
+
+        // A frame from the replaced segment after rotation does not clear it
+        seg1.onFrameDelivered?(1)
+        #expect(manager.currentScreenFailure == .couldNotStart)
+
+        // Delivering display 1 on the replacement then clears it
+        seg2.onFrameDelivered?(1)
+        #expect(manager.currentScreenFailure == nil)
+
+        _ = await executor.enqueue(.stop(reason: .user))
+    }
+
     @Test func accessibilityIdentifiersAreStaticAndValid() {
         #expect(AXID.Menubar.screenIntake == "menubar.screen.intake")
         #expect(AXID.Settings.Status.screenIntake == "settings.status.screen.intake")

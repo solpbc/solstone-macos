@@ -42,6 +42,7 @@ public final class PauseShortcutController {
 
     private var activeToken: PauseShortcutToken?
     private var hasToggledForCurrentPress = false
+    private var registrationGeneration: UInt64 = 0
 
     private var priorStateOnCaptureStart: State = .off
     private var localMonitor: Any?
@@ -84,6 +85,8 @@ public final class PauseShortcutController {
     }
 
     public func unregister() {
+        registrationGeneration &+= 1
+        hasToggledForCurrentPress = false
         if let token = activeToken {
             registrar.unregisterHotKey(token)
             activeToken = nil
@@ -171,12 +174,13 @@ public final class PauseShortcutController {
     }
 
     private func tryRegister(chord: PauseShortcutChord) {
+        let generation = registrationGeneration
         do {
             let token = try registrar.registerExclusiveHotKey(
                 keyCode: chord.keyCode,
                 carbonModifiers: chord.carbonModifiers,
-                onPressed: { [weak self] in self?.handleHotKeyPressed() },
-                onReleased: { [weak self] in self?.handleHotKeyReleased() }
+                onPressed: { [weak self] in self?.handleHotKeyPressed(generation: generation) },
+                onReleased: { [weak self] in self?.handleHotKeyReleased(generation: generation) }
             )
             activeToken = token
             state = .active(chord)
@@ -188,13 +192,23 @@ public final class PauseShortcutController {
     }
 
     public func handleHotKeyPressed() {
+        handleHotKeyPressed(generation: registrationGeneration)
+    }
+
+    public func handleHotKeyReleased() {
+        handleHotKeyReleased(generation: registrationGeneration)
+    }
+
+    internal func handleHotKeyPressed(generation: UInt64) {
+        guard generation == registrationGeneration else { return }
         guard !isCapturing else { return }
         guard !hasToggledForCurrentPress else { return }
         hasToggledForCurrentPress = true
         togglePause()
     }
 
-    public func handleHotKeyReleased() {
+    internal func handleHotKeyReleased(generation: UInt64) {
+        guard generation == registrationGeneration else { return }
         hasToggledForCurrentPress = false
     }
 
@@ -258,7 +272,7 @@ public final class PauseShortcutController {
         NSApp.keyWindow?.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
     }
 
-    private func handleCapturedKey(keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags) {
+    internal func handleCapturedKey(keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags) {
         if keyCode == 53 { // Escape
             cancelCapture()
             return
@@ -286,6 +300,6 @@ public final class PauseShortcutController {
         captureErrorMessage = nil
 
         onPersistChord(chord)
-        register(chord: chord)
+        apply(chord: chord)
     }
 }

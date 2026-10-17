@@ -3,6 +3,9 @@
 
 import AppKit
 import Foundation
+#if canImport(Carbon)
+import Carbon
+#endif
 import Testing
 @testable import solstone
 
@@ -43,6 +46,10 @@ private final class FakePauseShortcutRegistrar: PauseShortcutRegistrar {
         if shouldThrowRegister {
             struct RegError: Error {}
             throw RegError()
+        }
+        if registrations.contains(where: { $0.keyCode == keyCode && $0.carbonModifiers == carbonModifiers }) {
+            struct ExclusiveConflictError: Error {}
+            throw ExclusiveConflictError()
         }
         let token = PauseShortcutToken(id: nextTokenId)
         nextTokenId += 1
@@ -122,7 +129,7 @@ struct PauseShortcutTests {
         #expect(cleared.pauseShortcut == nil)
     }
 
-    @Test func invalidChordsRejected() {
+    @Test func invalidChordsRejected() throws {
         // Empty or malformed strings
         #expect(PauseShortcutChord(serialized: "") == nil)
         #expect(PauseShortcutChord(serialized: "35") == nil)
@@ -144,10 +151,13 @@ struct PauseShortcutTests {
         #expect(PauseShortcutChord(keyCode: 0, carbonModifiers: PauseShortcutChord.cmdKey | 0x8000) == nil)
 
         // Valid chord
-        let valid = PauseShortcutChord(keyCode: 0, carbonModifiers: PauseShortcutChord.cmdKey)
-        #expect(valid != nil)
-        #expect(valid?.serialized == "0,256")
-        #expect(valid?.displayString == "⌘A")
+        let valid = try #require(PauseShortcutChord(keyCode: 0, carbonModifiers: PauseShortcutChord.cmdKey))
+        #expect(valid.serialized == "0,256")
+        #expect(PauseShortcutChord.ansiKeyName(for: 0) == "A")
+        #expect(valid.displayString == "⌘\(PauseShortcutChord.keyName(for: 0))")
+
+        let specialChord = try #require(PauseShortcutChord(keyCode: 36, carbonModifiers: PauseShortcutChord.cmdKey))
+        #expect(specialChord.displayString == "⌘↩")
     }
 
     @Test @MainActor func enabledSymbolicHotkeyRejectedBeforeRegister() {
@@ -453,4 +463,131 @@ struct PauseShortcutTests {
         #expect(AXID.Settings.Observer.shortcutPermission == "settings.observer.general.shortcut.permission")
         #expect(AXID.Menubar.shortcutUnavailable == "menubar.shortcut.unavailable")
     }
+
+    @Test @MainActor func capturedKeyRegistrationAuthorityRegression() throws {
+        let registrar = FakePauseShortcutRegistrar()
+        let pausePort = FakePausePort()
+        var savedChord: PauseShortcutChord? = nil
+        var controller: PauseShortcutController!
+
+        controller = PauseShortcutController(
+            registrar: registrar,
+            pausePort: pausePort,
+            onPersistChord: { chord in
+                if chord != savedChord {
+                    savedChord = chord
+                    controller.apply(chord: chord)
+                }
+            }
+        )
+
+        // 1. beginCapture, then handleCapturedKey for key code 0 with .command
+        controller.beginCapture()
+        controller.handleCapturedKey(keyCode: 0, modifierFlags: [.command])
+        #expect(controller.state == .active(try #require(PauseShortcutChord(keyCode: 0, carbonModifiers: PauseShortcutChord.cmdKey))))
+        #expect(registrar.registrations.count == 1)
+
+        // 2. beginCapture again and capture the same chord
+        controller.beginCapture()
+        controller.handleCapturedKey(keyCode: 0, modifierFlags: [.command])
+        #expect(controller.state == .active(try #require(PauseShortcutChord(keyCode: 0, carbonModifiers: PauseShortcutChord.cmdKey))))
+        #expect(registrar.registrations.count == 1)
+
+        // 3. A second distinct valid chord captured the same way replaces the first with exactly one live registration
+        controller.beginCapture()
+        controller.handleCapturedKey(keyCode: 1, modifierFlags: [.command])
+        #expect(controller.state == .active(try #require(PauseShortcutChord(keyCode: 1, carbonModifiers: PauseShortcutChord.cmdKey))))
+        #expect(registrar.registrations.count == 1)
+    }
+
+    @Test @MainActor func removedBindingMustNotToggle() throws {
+        let registrar = FakePauseShortcutRegistrar()
+        let pausePort = FakePausePort()
+        let controller = PauseShortcutController(
+            registrar: registrar,
+            pausePort: pausePort,
+            onPersistChord: { _ in }
+        )
+
+        let chordA = try #require(PauseShortcutChord(keyCode: 0, carbonModifiers: PauseShortcutChord.cmdKey))
+        let chordB = try #require(PauseShortcutChord(keyCode: 1, carbonModifiers: PauseShortcutChord.cmdKey))
+
+        // Apply chord A, press via that closure once (pauseIndefinitelyCalls == 1), do not release
+        controller.apply(chord: chordA)
+        #expect(registrar.registrations.count == 1)
+        let oldOnPressed = registrar.registrations[0].onPressed
+
+        oldOnPressed()
+        #expect(pausePort.pauseIndefinitelyCalls == 1)
+        #expect(pausePort.resumeOwnerPauseCalls == 0)
+
+        // Apply chord B while that press is outstanding. The old closure must not change pause
+        controller.apply(chord: chordB)
+        #expect(registrar.registrations.count == 1)
+        let newOnPressed = registrar.registrations[0].onPressed
+
+        oldOnPressed()
+        #expect(pausePort.pauseIndefinitelyCalls == 1)
+        #expect(pausePort.resumeOwnerPauseCalls == 0)
+
+        // Chord B's onPressed must pause or resume exactly once
+        newOnPressed()
+        #expect(pausePort.resumeOwnerPauseCalls == 1)
+
+        // A direct second press of B before release must not toggle again
+        newOnPressed()
+        #expect(pausePort.resumeOwnerPauseCalls == 1)
+        #expect(pausePort.pauseIndefinitelyCalls == 1)
+    }
+
+#if canImport(Carbon)
+    @Test @MainActor func forcedEventHandlerUnavailableRejectsRegistration() throws {
+        let registrar = CarbonPauseShortcutRegistrar()
+        defer { registrar.unregisterAll() }
+        registrar._forceEventHandlerUnavailableForTesting = true
+
+        let pausePort = FakePausePort()
+        let controller = PauseShortcutController(
+            registrar: registrar,
+            pausePort: pausePort,
+            onPersistChord: { _ in }
+        )
+
+        let chord = try #require(PauseShortcutChord(keyCode: 0, carbonModifiers: PauseShortcutChord.cmdKey))
+        controller.apply(chord: chord)
+
+        #expect(controller.state == .unavailable(chord))
+    }
+
+    @Test @MainActor func processHotKeyEventFiltersSignature() throws {
+        let registrar = CarbonPauseShortcutRegistrar()
+        defer { registrar.unregisterAll() }
+
+        var pressed = false
+        var released = false
+        let token = try registrar.registerExclusiveHotKey(
+            keyCode: 0,
+            carbonModifiers: PauseShortcutChord.cmdKey,
+            onPressed: { pressed = true },
+            onReleased: { released = true }
+        )
+        defer { registrar.unregisterHotKey(token) }
+
+        let matchingID = EventHotKeyID(signature: CarbonPauseShortcutRegistrar.expectedHotKeySignature, id: token.id)
+        let matchingStatus = CarbonPauseShortcutRegistrar.processHotKeyEvent(
+            kind: UInt32(kEventHotKeyPressed),
+            hotKeyID: matchingID
+        )
+        #expect(matchingStatus == noErr)
+        #expect(pressed == true)
+
+        let foreignID = EventHotKeyID(signature: OSType(0x12345678), id: token.id)
+        let foreignStatus = CarbonPauseShortcutRegistrar.processHotKeyEvent(
+            kind: UInt32(kEventHotKeyReleased),
+            hotKeyID: foreignID
+        )
+        #expect(foreignStatus == OSStatus(eventNotHandledErr))
+        #expect(released == false)
+    }
+#endif
 }

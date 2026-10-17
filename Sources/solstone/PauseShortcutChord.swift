@@ -2,6 +2,9 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+#if canImport(Carbon)
+import Carbon
+#endif
 
 /// Value type representing a keyboard shortcut chord using Carbon key code and modifier bits.
 public struct PauseShortcutChord: Hashable, Sendable, Codable {
@@ -67,6 +70,43 @@ public struct PauseShortcutChord: Hashable, Sendable, Codable {
     }
 
     public static func keyName(for keyCode: UInt32) -> String {
+        if let symbol = nonCharacterSymbol(for: keyCode) {
+            return symbol
+        }
+        if let translated = translatedKeyName(for: keyCode), !translated.isEmpty {
+            return translated
+        }
+        return ansiKeyName(for: keyCode)
+    }
+
+    internal static func nonCharacterSymbol(for keyCode: UInt32) -> String? {
+        switch keyCode {
+        case 36: return "↩"
+        case 48: return "⇥"
+        case 49: return "Space"
+        case 51: return "⌫"
+        case 53: return "⎋"
+        case 96: return "F5"
+        case 97: return "F6"
+        case 98: return "F7"
+        case 99: return "F3"
+        case 100: return "F8"
+        case 101: return "F9"
+        case 103: return "F11"
+        case 109: return "F10"
+        case 111: return "F12"
+        case 118: return "F4"
+        case 120: return "F2"
+        case 122: return "F1"
+        case 123: return "←"
+        case 124: return "→"
+        case 125: return "↓"
+        case 126: return "↑"
+        default: return nil
+        }
+    }
+
+    internal static func ansiKeyName(for keyCode: UInt32) -> String {
         switch keyCode {
         case 0: return "A"
         case 1: return "S"
@@ -139,4 +179,47 @@ public struct PauseShortcutChord: Hashable, Sendable, Codable {
         default: return "Key\(keyCode)"
         }
     }
+
+#if canImport(Carbon)
+    private static func translatedKeyName(for keyCode: UInt32) -> String? {
+        guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue() else {
+            return nil
+        }
+        guard let ptr = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else {
+            return nil
+        }
+        let cfData = Unmanaged<CFData>.fromOpaque(ptr).takeUnretainedValue()
+        guard let layoutPtr = CFDataGetBytePtr(cfData) else {
+            return nil
+        }
+        let keyboardLayout = layoutPtr.withMemoryRebound(to: UCKeyboardLayout.self, capacity: 1) { $0 }
+
+        var deadKeyState: UInt32 = 0
+        var actualLength: Int = 0
+        var chars = [UniChar](repeating: 0, count: 4)
+
+        let status = UCKeyTranslate(
+            keyboardLayout,
+            UInt16(keyCode),
+            UInt16(kUCKeyActionDisplay),
+            0,
+            UInt32(LMGetKbdType()),
+            OptionBits(kUCKeyTranslateNoDeadKeysBit),
+            &deadKeyState,
+            chars.count,
+            &actualLength,
+            &chars
+        )
+        guard status == noErr, actualLength > 0 else { return nil }
+        let translated = String(utf16CodeUnits: chars, count: actualLength).uppercased()
+        if translated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return nil
+        }
+        return translated
+    }
+#else
+    private static func translatedKeyName(for keyCode: UInt32) -> String? {
+        nil
+    }
+#endif
 }

@@ -144,7 +144,7 @@ public enum UICopy {
     public static let SOURCES_NONE = "both sources are off"
     public static let SOURCES_NONE_REASON = "nothing is going into your journal until you turn one back on."
 #endif
-    public static let SOURCES_SEGMENTS_EXPLAINER = "screens and audio you turn on here go into your journal in five-minute segments. until your journal confirms receipt, they wait on this mac. after that, the local copy is removed."
+    public static let SOURCES_SEGMENTS_EXPLAINER = "screens and audio you turn on here go into your journal in five-minute segments. until your journal confirms receipt, they wait on this mac. by default, the confirmed local copy is removed."
     public static let SOURCES_MICROPHONE = "microphone"
     public static let SOURCES_SCREEN = "screen and system audio"
     public static let SOURCES_OFF = "off"
@@ -406,8 +406,8 @@ public enum UICopy {
     public static let SHORTCUT_PERMISSION_NOTE = "no extra macos permission is needed."
 
     // Screen failure
-    public static let SCREEN_INTAKE_STOPPED = "screen intake stopped. open settings."
-    public static let SCREEN_INTAKE_COULD_NOT_START = "screen intake could not start. open settings."
+    public static let SCREEN_INTAKE_STOPPED = "a screen isn\u{2019}t coming through. open settings."
+    public static let SCREEN_INTAKE_COULD_NOT_START = "a screen could not start. open settings."
 
     // Microphones empty state
     public static let MICROPHONES_EMPTY_TITLE = "no microphones available"

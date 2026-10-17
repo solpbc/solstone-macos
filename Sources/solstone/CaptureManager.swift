@@ -907,6 +907,7 @@ public final class CaptureManager {
             requestedDisplayIDs = allowsEmptyDisplayConfigurationForTesting && displays.isEmpty
                 ? (requestedDisplayIDs.isEmpty ? [0] : requestedDisplayIDs)
                 : Set(displays.map(\.displayID))
+            framedSinceFailure.removeAll()
             checkScreenFailureRecovery()
         } else {
             clearScreenFailure()

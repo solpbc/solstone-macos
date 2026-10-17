@@ -83,8 +83,9 @@ reading the resulting files can identify their source.
    limits in the result.
 6. **Pause shortcut.** Start with the shortcut off. Assign a chord, switch to
    another app, pause and resume, and check the menu icon and actual new media.
-   Holding the keys must toggle once. A system-reserved or already-registered
-   chord must show a conflict. Recording or cancelling a chord must not change
+   Holding the keys must toggle once. An enabled macOS symbolic hotkey must show
+   a conflict; a chord that cannot be registered is unavailable and must not
+   stay registered. Recording or cancelling a chord must not change
    pause. Relaunch preserves an owner-held pause. Resuming an owner hold must
    not override a lock, sleep or protected-video pause. Verify the registration
    path does not request Accessibility or Input Monitoring.

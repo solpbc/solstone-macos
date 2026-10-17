@@ -68,6 +68,10 @@ public final class CarbonPauseShortcutRegistrar: PauseShortcutRegistrar {
         let onReleased: @MainActor () -> Void
     }
 
+    public static let expectedHotKeySignature = OSType(0x534F4C53) // 'SOLS'
+
+    internal var _forceEventHandlerUnavailableForTesting: Bool = false
+
     private var nextTokenID: UInt32 = 1
     private var activeRegistrations: [UInt32: ActiveEntry] = [:]
     private nonisolated(unsafe) var eventHandlerRef: EventHandlerRef?
@@ -124,10 +128,15 @@ public final class CarbonPauseShortcutRegistrar: PauseShortcutRegistrar {
         onPressed: @escaping @MainActor () -> Void,
         onReleased: @escaping @MainActor () -> Void
     ) throws -> PauseShortcutToken {
+        guard eventHandlerRef != nil && !_forceEventHandlerUnavailableForTesting else {
+            Logger.general.error("Carbon event handler is not installed; rejecting registration")
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(eventNotHandledErr), userInfo: nil)
+        }
+
         let tokenID = nextTokenID
         nextTokenID &+= 1
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x534F4C53), id: tokenID) // 'SOLS'
+        let hotKeyID = EventHotKeyID(signature: Self.expectedHotKeySignature, id: tokenID) // 'SOLS'
         var hotKeyRef: EventHotKeyRef?
 
         let status = RegisterEventHotKey(
@@ -185,10 +194,9 @@ public final class CarbonPauseShortcutRegistrar: PauseShortcutRegistrar {
             )
             guard status == noErr else { return status }
 
-            MainActor.assumeIsolated {
-                CarbonPauseShortcutRegistrar.currentRegistrar?.handleEvent(kind: eventKind, id: hotKeyID.id)
+            return MainActor.assumeIsolated {
+                CarbonPauseShortcutRegistrar.processHotKeyEvent(kind: eventKind, hotKeyID: hotKeyID)
             }
-            return noErr
         }
 
         var eventHandler: EventHandlerRef?
@@ -205,6 +213,19 @@ public final class CarbonPauseShortcutRegistrar: PauseShortcutRegistrar {
         } else {
             Logger.general.error("Failed to install Carbon event handler: \(status)")
         }
+    }
+
+    @MainActor
+    @discardableResult
+    internal static func processHotKeyEvent(kind: UInt32, hotKeyID: EventHotKeyID) -> OSStatus {
+        guard hotKeyID.signature == expectedHotKeySignature else {
+            return OSStatus(eventNotHandledErr)
+        }
+        guard let registrar = currentRegistrar else {
+            return OSStatus(eventNotHandledErr)
+        }
+        registrar.handleEvent(kind: kind, id: hotKeyID.id)
+        return noErr
     }
 
     private func handleEvent(kind: UInt32, id: UInt32) {

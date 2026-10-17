@@ -185,8 +185,6 @@ struct SettingsView: View {
     @State private var logExportTask: Task<Void, Never>?
     @State private var logExportWriteFeedback: LogExportWriteFeedback?
 
-    @State private var microphoneEmptyState: MicrophoneEmptyState?
-
     // Permissions tab state
     @State private var screenRecordingPrompted = false
     @State private var screenRestartPending = false
@@ -3028,10 +3026,11 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
 
                     if microphoneDisplayEntries.isEmpty {
-                        let emptyState = microphoneEmptyState ?? classifyMicrophoneEmptyState(
-                            authorizationCause: appState.microphoneAuthorizationCause
+                        emptyMicrophoneView(
+                            classifyMicrophoneEmptyState(
+                                authorizationCause: appState.microphoneAuthorizationCause
+                            )
                         )
-                        emptyMicrophoneView(emptyState)
                     } else {
                         List {
                             ForEach(microphoneDisplayEntries) { entry in
@@ -3099,12 +3098,9 @@ struct SettingsView: View {
     }
 
     private func refreshMicrophoneEmptyState() {
-        microphoneEmptyState = reconcileAndClassifyMicrophoneEmptyState(
-            isPriorityListEmpty: { microphoneDisplayEntries.isEmpty },
-            deviceCount: appState.audioDeviceMonitor.availableDevices.count,
-            authorizationCause: appState.microphoneAuthorizationCause,
-            syncMicrophonePriorityList: { appState.syncMicrophonePriorityList() }
-        )
+        if microphoneDisplayEntries.isEmpty && appState.audioDeviceMonitor.availableDevices.count > 0 {
+            appState.syncMicrophonePriorityList()
+        }
     }
 
     @ViewBuilder
