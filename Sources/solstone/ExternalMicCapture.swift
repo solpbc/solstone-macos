@@ -93,6 +93,13 @@ public final class ExternalMicCapture: @unchecked Sendable {
     internal var secondsSinceLastTap: TimeInterval? {
         callbackLock.withLock { running ? max(0, monotonicNow() - lastTapArrival) : nil }
     }
+    internal func recentPeak() -> Float? {
+        let now = monotonicNow()
+        return peakLock.withLock { stored in
+            guard let stored, now - stored.at <= 0.5 else { return nil }
+            return stored.peak
+        }
+    }
     private let callbackLock = NSLock()
 
     private var engine: any MicrophoneCaptureEngine
@@ -125,6 +132,10 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private var processingEpoch: UInt64?
     private var processingFormat: AVAudioFormat?
     private var conversionDestination: Destinations?
+
+    private struct HandedOnPeak { var peak: Float; var at: TimeInterval }
+    // It is separate so recentPeak never takes callbackLock.
+    private let peakLock = OSAllocatedUnfairLock<HandedOnPeak?>(initialState: nil)
 
     private var isRunning: Bool {
         get { isCapturing }
@@ -199,6 +210,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             activeEngineObject = engine.configurationObject
             boundDeviceID = nil
         }
+        peakLock.withLock { $0 = nil }
         // Admitted old-engine PCM remains ahead of its boundary on writerQueue.
         // The processing epoch, rather than engine replacement, owns its tail.
         observeEngine()
@@ -270,6 +282,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
             NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: engine.configurationObject)
             teardownEngine()
             finishConversionStream()
+            // The conversion tail runs before the clear.
+            peakLock.withLock { $0 = nil }
         }
         if verbose { Logger.audio.debug("Stopped external mic capture: \(self.device.name, privacy: .public)") }
     }
@@ -549,6 +563,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private func deliverConverted(_ monoBuffer: AVAudioPCMBuffer, destination: Destinations) -> Bool {
         guard monoBuffer.frameLength > 0, let origin = conversionOrigin else { return false }
         // Apply gain to boost audio levels using vDSP (SIMD-accelerated)
+        var peak: Float = 0
         if let monoData = monoBuffer.floatChannelData {
             let monoFrameCount = Int(monoBuffer.frameLength)
             var gain = gainMultiplier
@@ -558,15 +573,22 @@ public final class ExternalMicCapture: @unchecked Sendable {
             var minVal: Float = -1.0
             var maxVal: Float = 1.0
             vDSP_vclip(monoData[0], 1, &minVal, &maxVal, monoData[0], 1, vDSP_Length(monoFrameCount))
+            vDSP_maxmgv(monoData[0], 1, &peak, vDSP_Length(monoFrameCount))
         }
+        let deliveredPeak = peak
 
         let presentationTime = CMTimeAdd(origin, CMTime(value: emittedFrames, timescale: 48_000))
         emittedFrames += Int64(monoBuffer.frameLength)
         if let queued = destination.queuedAudio {
             guard let receipt = queued(monoBuffer, presentationTime) else { return false }
+            peakLock.withLock { $0 = HandedOnPeak(peak: deliveredPeak, at: monotonicNow()) }
             deliveryLedger.register(receipt)
             return true
-        } else if let audio = destination.audio { audio(monoBuffer, presentationTime); return true }
+        } else if let audio = destination.audio {
+            audio(monoBuffer, presentationTime)
+            peakLock.withLock { $0 = HandedOnPeak(peak: deliveredPeak, at: monotonicNow()) }
+            return true
+        }
         return false
     }
 

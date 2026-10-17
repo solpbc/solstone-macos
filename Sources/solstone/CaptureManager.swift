@@ -573,6 +573,10 @@ public final class CaptureManager {
         micCaptureManager.updateGain(gain)
     }
 
+    internal func recentMicrophoneInputPeak() -> Float? {
+        micCaptureManager.recentInputPeak()
+    }
+
     /// Update window exclusion settings (takes effect immediately)
     /// - Parameters:
     ///   - excludedAppNames: App names to always exclude

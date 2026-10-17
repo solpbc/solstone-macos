@@ -122,6 +122,8 @@ struct AXIDTests {
         expectTokensMatchGrammar(FreshJournalAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(LocalJournalDiscoveryAXState.allCases.map(\.axToken))
         expectTokensMatchGrammar(JournalWindowAXState.allCases.map(\.axToken))
+        expectTokensMatchGrammar(PermissionSourceLiveAXState.allCases.map(\.axToken))
+        #expect(PermissionSourceLiveAXState.notRunning.axToken == "not_running")
     }
 
     @Test func menubarIconStateOwnsIconNames() {
