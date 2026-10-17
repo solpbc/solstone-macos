@@ -1098,11 +1098,15 @@ struct SettingsView: View {
 
     // MARK: - Permissions Tab
 
-    private var screenRecordingPermissionAXState: AXPermissionState {
+    private var screenRecordingWaiting: Bool {
+        (screenRecordingPrompted || appState.capture.screenRecordingHasPrompted()) && !appState.screenRecordingGranted
+    }
+
+    internal var screenRecordingPermissionAXState: AXPermissionState {
         if appState.screenRecordingGranted {
             return .granted
         }
-        return screenRecordingPrompted ? .waiting : .denied
+        return screenRecordingWaiting ? .waiting : .denied
     }
 
     private var microphonePermissionAXState: AXPermissionState {
@@ -1237,6 +1241,19 @@ struct SettingsView: View {
                         } else {
                             permissionSourceLiveRow(source: .screen)
                         }
+                    } else if appState.capture.screenRecordingNeedsRestart {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise.circle.fill")
+                                .foregroundStyle(SolstoneColors.solOrange)
+                            Text(UICopy.SOURCES_RESTART_READY)
+                            Spacer()
+                            Button(UICopy.SOURCES_RESTART) { relaunchApp() }
+                                .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingRestartNow)
+                        }
+                        AXStateCompanion(
+                            id: AXID.Settings.Permissions.screenRecordingRestartPending,
+                            value: "pending"
+                        )
                     } else {
                         Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_EXPLAINER)
                             .font(.body)
@@ -1252,13 +1269,26 @@ struct SettingsView: View {
                                 .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingResetHint)
                         }
                         HStack {
-                            if screenRecordingPrompted {
-                                HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_WAITING)
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
+                            if screenRecordingWaiting {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(spacing: 6) {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                        Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_WAITING)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                    }
+                                    HStack {
+                                        Button(UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS) {
+                                            NSWorkspace.shared.open(
+                                                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
+                                            )
+                                        }
+                                        .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingOpenSystemSettings)
+                                        Button(UICopy.SETTINGS_PERMISSIONS_SCREEN_REOPEN) { relaunchApp() }
+                                            .buttonStyle(.link)
+                                            .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingReopen)
+                                    }
                                 }
                             } else {
                                 Spacer()
@@ -1349,8 +1379,8 @@ struct SettingsView: View {
 
             Spacer()
         }
-        .task(id: screenRecordingPrompted) {
-            guard screenRecordingPrompted && !appState.screenRecordingGranted else { return }
+        .task(id: screenRecordingWaiting) {
+            guard screenRecordingWaiting else { return }
             while !Task.isCancelled {
                 // Gate on CGPreflightScreenCaptureAccess before calling SCShareableContent.
                 // On macOS 26, SCShareableContent.current re-triggers the OS dialog every call
@@ -1365,8 +1395,13 @@ struct SettingsView: View {
                     }
                     // else: permission not yet granted
                 }
+                await appState.capture.probeScreenRecordingGrantIfWaiting()
                 try? await Task.sleep(for: .seconds(1.5))
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            appState.capture.noteApplicationDidBecomeActive()
+            Task { await appState.capture.probeScreenRecordingGrantIfWaiting() }
         }
     }
 

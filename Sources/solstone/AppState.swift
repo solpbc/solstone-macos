@@ -1742,7 +1742,7 @@ public final class AppState {
         journalMarkConfirmationStore: (any JournalMarkConfirmationStoring)? = nil,
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
-        screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
+        screenPermissionProvider: ScreenRecordingPermissionProvider = .snapshot,
         permissionPollScheduler: PermissionPollScheduler = .live(),
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
         captureStartOperation: CaptureCoordinator.StartOperation? = nil,

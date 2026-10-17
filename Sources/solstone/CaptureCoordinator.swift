@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import AppKit
 import CoreGraphics
 import Foundation
 import Observation
@@ -49,6 +50,7 @@ public final class CaptureCoordinator {
     }
     /// Which audio source isn't coming through, or dropped out and is back. Shown as a plain line.
     public internal(set) var audioHealthNote: String?
+    internal var screenRecordingNeedsRestart = false
     private var storedScreenRecordingGranted = false
     public var screenRecordingGranted: Bool { storedScreenRecordingGranted }
     internal var microphoneAuthorizationCause: MicrophoneAuthorizationCause = .unknown
@@ -93,6 +95,14 @@ public final class CaptureCoordinator {
     private let permissionPollScheduler: PermissionPollScheduler
     private let logAdapter: DiagnosticEvidenceLoggingAdapter
     private let classifiedLog: any ClassifiedLogSinking
+    private let now: @MainActor () -> Date
+    private let screenProbeFastWindow: TimeInterval
+    private let screenProbeSlowInterval: TimeInterval
+    private var screenProbeEpoch: Date
+    private var screenProbeLastCounted: Date?
+    private var screenProbeTask: Task<ScreenCaptureProbeResult, Never>?
+    private var lastProbeLogSignature: String?
+    private var activationObserver: (any NSObjectProtocol)?
 
     private var permissionPollCancellation: PermissionPollScheduler.Cancellation?
     private var isCheckingPermissions = false
@@ -114,7 +124,10 @@ public final class CaptureCoordinator {
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
         permissionPollScheduler: PermissionPollScheduler = .live(),
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live,
-        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
+        classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general,
+        now: @escaping @MainActor () -> Date = Date.init,
+        screenProbeFastWindow: TimeInterval = 120,
+        screenProbeSlowInterval: TimeInterval = 15
     ) {
         self.captureManager = captureManager
         self.pauseManager = pauseManager
@@ -128,6 +141,13 @@ public final class CaptureCoordinator {
         self.permissionPollScheduler = permissionPollScheduler
         self.logAdapter = logAdapter
         self.classifiedLog = classifiedLog
+        self.now = now
+        self.screenProbeFastWindow = screenProbeFastWindow
+        self.screenProbeSlowInterval = screenProbeSlowInterval
+        self.screenProbeEpoch = now()
+        self.screenProbeLastCounted = nil
+        self.screenProbeTask = nil
+        self.lastProbeLogSignature = nil
         self.startOperation = startOperation ?? { [captureManager] reason, sources, config in
             await captureManager.enqueueTransition(
                 .start(
@@ -150,6 +170,15 @@ public final class CaptureCoordinator {
                 await self?.stopRecording(reason: .userStopped)
             }
         }
+        self.activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.noteApplicationDidBecomeActive()
+            }
+        }
     }
 
     public func protectedVideoBlocksAutomaticScreenCaptureRead() -> Bool {
@@ -161,6 +190,9 @@ public final class CaptureCoordinator {
     deinit {
         MainActor.assumeIsolated {
             permissionPollCancellation?()
+            if let activationObserver {
+                NotificationCenter.default.removeObserver(activationObserver)
+            }
         }
     }
 
@@ -507,5 +539,87 @@ public final class CaptureCoordinator {
         case .error:
             recorder.enqueue(.captureError)
         }
+    }
+
+    internal func noteApplicationDidBecomeActive() {
+        screenProbeEpoch = now()
+    }
+
+    internal func probeScreenRecordingGrantIfWaiting() async {
+        guard screenPermissionProvider.hasPrompted(),
+              !screenPermissionProvider.preflight(),
+              !screenRecordingNeedsRestart else {
+            return
+        }
+
+        let currentTime = now()
+        let inFastWindow = currentTime < screenProbeEpoch.addingTimeInterval(screenProbeFastWindow)
+        if !inFastWindow {
+            if let lastCounted = screenProbeLastCounted,
+               currentTime < lastCounted.addingTimeInterval(screenProbeSlowInterval) {
+                return
+            }
+        }
+
+        guard screenProbeTask == nil else { return }
+
+        let probeTask = Task { await screenPermissionProvider.probe() }
+        screenProbeTask = probeTask
+        let result = await withTaskCancellationHandler {
+            await probeTask.value
+        } onCancel: {
+            probeTask.cancel()
+        }
+        screenProbeTask = nil
+
+        guard !Task.isCancelled, result != .unavailable(.cancelled) else { return }
+
+        if result == .granted && !screenPermissionProvider.preflight() {
+            screenRecordingNeedsRestart = true
+        }
+
+        switch result {
+        case .denied:
+            screenProbeLastCounted = now()
+        case .unavailable(let reason):
+            if reason != .cancelled {
+                screenProbeLastCounted = now()
+            }
+        case .granted:
+            break
+        }
+
+        let signature: String
+        let publicFields: [String: String]
+        switch result {
+        case .granted:
+            signature = "granted"
+            publicFields = ["result": "granted"]
+        case .denied:
+            signature = "denied"
+            publicFields = ["result": "denied"]
+        case .unavailable(let reason):
+            signature = "unavailable-\(reason.rawValue)"
+            publicFields = ["result": "unavailable", "reason": reason.rawValue]
+        }
+
+        if signature != lastProbeLogSignature {
+            lastProbeLogSignature = signature
+            classifiedLog.emit(
+                ClassifiedLogEmission(
+                    level: .notice,
+                    classification: "screen-capture-probe",
+                    publicFields: publicFields
+                )
+            )
+        }
+    }
+
+    internal func screenRecordingHasPrompted() -> Bool {
+        screenPermissionProvider.hasPrompted()
+    }
+
+    internal func runInstalledScreenRecordingProbe() async -> ScreenCaptureProbeResult {
+        await screenPermissionProvider.probe()
     }
 }

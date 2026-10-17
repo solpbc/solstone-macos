@@ -370,6 +370,7 @@ public enum UICopy {
     public static let SETTINGS_PERMISSIONS_MICROPHONE_BREADCRUMB = "System Settings › Privacy & Security › Microphone"
     public static let SETTINGS_PERMISSIONS_SCREEN_RECORDING_BREADCRUMB = "System Settings › Privacy & Security › Screen & System Audio Recording"
     public static let SETTINGS_PERMISSIONS_SCREEN_WAITING = "waiting for you to switch on solstone in System Settings…"
+    public static let SETTINGS_PERMISSIONS_SCREEN_REOPEN = "already switched it on? reopen solstone"
     public static let SETTINGS_PERMISSIONS_ENABLE_SCREEN_RECORDING = "enable screen recording →"
     public static let SETTINGS_PERMISSIONS_ENABLE_MICROPHONE = "enable microphone"
     public static let SETTINGS_HELP_ICON_RECORDING = "on · reaching your journal"

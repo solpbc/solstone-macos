@@ -66,6 +66,8 @@ enum AXContract {
         AXID.Settings.Permissions.screenRecordingState,
         AXID.Settings.Permissions.screenRecordingEnable,
         AXID.Settings.Permissions.screenRecordingRestartNow,
+        AXID.Settings.Permissions.screenRecordingOpenSystemSettings,
+        AXID.Settings.Permissions.screenRecordingReopen,
         AXID.Settings.Permissions.screenRecordingRestartPending,
         AXID.Settings.Permissions.screenRecordingResetHint,
         AXID.Settings.Permissions.screenRecordingLiveState,

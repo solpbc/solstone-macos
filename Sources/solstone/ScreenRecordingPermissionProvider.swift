@@ -10,13 +10,28 @@ internal struct ScreenRecordingPermissionProvider {
     let preflight: @MainActor @Sendable () -> Bool
     let checkScreenRecording: @MainActor @Sendable () async -> Bool
     let resetPromptedFlag: @MainActor @Sendable () -> Void
+    var probe: @MainActor @Sendable () async -> ScreenCaptureProbeResult = {
+        .unavailable(.missingExecutable)
+    }
 
     static var live: Self {
         Self(
             hasPrompted: { PermissionChecker().hasPromptedScreenRecording },
             preflight: { CGPreflightScreenCaptureAccess() },
             checkScreenRecording: { await PermissionChecker.checkScreenRecording() },
-            resetPromptedFlag: { PermissionChecker.resetPromptedFlag() }
+            resetPromptedFlag: { PermissionChecker.resetPromptedFlag() },
+            probe: {
+                await executeLiveScreenCaptureProbe()
+            }
+        )
+    }
+
+    static var snapshot: Self {
+        Self(
+            hasPrompted: { false },
+            preflight: { false },
+            checkScreenRecording: { false },
+            resetPromptedFlag: {}
         )
     }
 }

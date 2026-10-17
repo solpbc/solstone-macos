@@ -970,6 +970,47 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsPermissionsScreenWaiting() throws {
+        let state = AppState.forSnapshot(
+            screenPermissionProvider: ScreenRecordingPermissionProvider(
+                hasPrompted: { true },
+                preflight: { false },
+                checkScreenRecording: { false },
+                resetPromptedFlag: {}
+            )
+        )
+        #expect(state.capture.screenRecordingHasPrompted())
+        #expect(!state.screenRecordingGranted)
+        #expect(!state.capture.screenRecordingNeedsRestart)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .permissions),
+            size: settingsSize,
+            to: "settings-permissions-screen-waiting.png"
+        )
+    }
+
+    @Test func settingsPermissionsScreenRestart() async throws {
+        let state = AppState.forSnapshot(
+            screenPermissionProvider: ScreenRecordingPermissionProvider(
+                hasPrompted: { true },
+                preflight: { false },
+                checkScreenRecording: { false },
+                resetPromptedFlag: {},
+                probe: { .granted }
+            )
+        )
+        await state.capture.probeScreenRecordingGrantIfWaiting()
+        #expect(state.capture.screenRecordingNeedsRestart)
+        #expect(!state.screenRecordingGranted)
+        let updateController = makeSnapshotUpdateController()
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .permissions),
+            size: settingsSize,
+            to: "settings-permissions-screen-restart.png"
+        )
+    }
+
     @Test func settingsPermissionsRecovery() throws {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true

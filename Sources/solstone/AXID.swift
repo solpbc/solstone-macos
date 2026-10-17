@@ -81,6 +81,8 @@ enum AXID {
             static let screenRecordingState = "settings.permissions.screenRecording.state"
             static let screenRecordingEnable = "settings.permissions.screenRecording.enable"
             static let screenRecordingRestartNow = "settings.permissions.screenRecording.restartNow"
+            static let screenRecordingOpenSystemSettings = "settings.permissions.screenRecording.openSystemSettings"
+            static let screenRecordingReopen = "settings.permissions.screenRecording.reopen"
             static let screenRecordingRestartPending = "settings.permissions.screenRecording.restartPending.state"
             static let screenRecordingResetHint = "settings.permissions.screenRecording.resetHint"
             static let screenRecordingLiveState = "settings.permissions.screenRecording.live.state"
