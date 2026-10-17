@@ -919,9 +919,17 @@ struct SnapshotTests {
     }
 
     @Test func statusCardScreenFailure() throws {
-        let state = AppState.forSnapshot(screenFailure: .couldNotStart)
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing(), screenFailure: .couldNotStart)
         markPermissionsReady(state)
         state.isRecording = true
+        let summary = StatusHealthSummary.make(
+            serviceMode: state.config.serviceMode, isRecording: state.isRecording,
+            isPaused: state.isPaused, held: false,
+            hasPersistedPairing: state.tunnelLifecycleOwner.hasPersistedPairing,
+            uploadStatus: .synced, pendingCount: 0, lastDeliveryOutcome: .delivered(Date()),
+            journalSlot: "test-home", now: Date(), screenFailure: state.screenFailure
+        )
+        #expect(summary.axValue == AXID.Settings.Status.screenIntake)
         let updateController = makeSnapshotUpdateController()
         try render(
             SettingsView(appState: state, updateController: updateController, selectedTab: .status, initialStorageUsedMB: 42),
