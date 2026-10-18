@@ -569,6 +569,7 @@ struct SettingsView: View {
     private func applyPendingSettingsTab() {
         if let pendingLink = appState.takePendingPairingLink(forSetup: false) {
             pairingLink = pendingLink
+            showPairingFlow = true
         }
         if let pending = appState.pendingSettingsTab {
             switch pending {

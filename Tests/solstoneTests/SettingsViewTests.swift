@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import JournalMarkKit
 import OSLog
 import SolstoneCore
 import SwiftUI
@@ -430,6 +431,150 @@ struct SettingsViewTests {
         #expect(supSucceeded)
         #expect(entFailedSettings.entitlementOpenFailed)
         #expect(!entFailedSettings.supportOpenFailed)
+    }
+
+    @Test @MainActor func acceptedOrdinaryPairingLinkRevealsPairField() {
+        let sample = "solstone://pair#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00"
+        let canonical = "https://go.solstone.app/p#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00"
+        let placeholder = UICopy.PAIRING_LINK_PLACEHOLDER
+        let updateController = UpdateController(
+            feedURL: nil,
+            publicKey: nil,
+            log: .setup,
+            errorDomain: "app.solstone.observer.updates",
+            defaults: .standard
+        ) { _, _ in nil }
+
+        struct Hosted {
+            let window: NSWindow
+            let hostingView: NSHostingView<SettingsView>
+        }
+
+        func makeView(app: AppState) -> SettingsView {
+            SettingsView(
+                appState: app,
+                updateController: updateController,
+                selectedTab: .service,
+                initialLocalDiscoveryCompleted: true,
+                initialShowPairingFlow: false,
+                freshFlow: FreshJournalFlow(dependencies: .inert()),
+                localIdentityFetch: { _ in .absent },
+                onDiskJournalDiscovery: { .none }
+            )
+        }
+
+        func pump(_ hostingView: NSView, window: NSWindow) {
+            hostingView.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+            if let rep = hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds) {
+                hostingView.cacheDisplay(in: hostingView.bounds, to: rep)
+            }
+        }
+
+        func host(app: AppState) -> Hosted {
+            let hostingView = NSHostingView(rootView: makeView(app: app))
+            hostingView.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+                styleMask: [.titled, .closable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.isReleasedWhenClosed = false
+            window.contentView = hostingView
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+            pump(hostingView, window: window)
+            return Hosted(window: window, hostingView: hostingView)
+        }
+
+        func textFields(in window: NSWindow) -> [NSTextField] {
+            var found: [NSTextField] = []
+            func walk(_ view: NSView) {
+                if let field = view as? NSTextField {
+                    found.append(field)
+                }
+                for subview in view.subviews {
+                    walk(subview)
+                }
+            }
+            if let content = window.contentView {
+                walk(content)
+            }
+            return found
+        }
+
+        func fieldSummary(_ fields: [NSTextField]) -> String {
+            fields.map { field in
+                "stringValue:\(field.stringValue.debugDescription) placeholder:\(String(describing: field.placeholderString))"
+            }.joined(separator: " | ")
+        }
+
+        func release(_ hosted: Hosted) {
+            hosted.window.isReleasedWhenClosed = false
+            hosted.window.contentView = nil
+            hosted.window.orderOut(nil)
+            hosted.window.close()
+        }
+
+        do {
+            let app = AppState.forSnapshot()
+            app.handleIngressURLString(sample)
+            let hosted = host(app: app)
+            defer { release(hosted) }
+            var fields = textFields(in: hosted.window)
+            if !fields.contains(where: { $0.stringValue == canonical }) {
+                pump(hosted.hostingView, window: hosted.window)
+                fields = textFields(in: hosted.window)
+            }
+            #expect(
+                fields.contains { $0.stringValue == canonical },
+                "cold text fields: \(fieldSummary(fields))"
+            )
+            #expect(
+                fields.contains { $0.placeholderString == placeholder && $0.stringValue == canonical },
+                "cold placeholder field: \(fieldSummary(fields))"
+            )
+            #expect(app.pendingPairingLink == nil)
+        }
+
+        do {
+            let app = AppState.forSnapshot()
+            let hosted = host(app: app)
+            defer { release(hosted) }
+            let fields = textFields(in: hosted.window)
+            #expect(
+                !fields.contains { $0.placeholderString == placeholder },
+                "no-ingress placeholder fields: \(fieldSummary(fields))"
+            )
+            #expect(
+                !fields.contains { $0.stringValue == canonical },
+                "no-ingress canonical fields: \(fieldSummary(fields))"
+            )
+        }
+
+        do {
+            let app = AppState.forSnapshot()
+            let hosted = host(app: app)
+            defer { release(hosted) }
+            app.handleIngressURLString(sample)
+            pump(hosted.hostingView, window: hosted.window)
+            var fields = textFields(in: hosted.window)
+            if !fields.contains(where: { $0.stringValue == canonical }) {
+                pump(hosted.hostingView, window: hosted.window)
+                fields = textFields(in: hosted.window)
+            }
+            #expect(
+                fields.contains { $0.stringValue == canonical },
+                "warm text fields: \(fieldSummary(fields))"
+            )
+            #expect(
+                fields.contains { $0.placeholderString == placeholder && $0.stringValue == canonical },
+                "warm placeholder field: \(fieldSummary(fields))"
+            )
+            #expect(app.pendingPairingLink == nil)
+        }
     }
 }
 
