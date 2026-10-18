@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- pairing links now open the pairing form with the link filled in. you choose when to connect.
+
 ## [2.0.37] - 2026-10-17
 
 ### Added
