@@ -104,9 +104,13 @@ struct PermissionChecker {
     }
 
     /// Shows the native microphone permission dialog. Returns when the user responds.
+    /// When the dialog closes, macOS hands focus to the previously active app (during
+    /// setup, the journal app), so bring this app's window back in front.
+    @MainActor
     func requestMicrophone() async {
         Logger.setup.info("[Permissions] requestMicrophone: calling AVCaptureDevice.requestAccess")
         _ = await AVCaptureDevice.requestAccess(for: .audio)
         Logger.setup.info("[Permissions] requestMicrophone: returned")
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

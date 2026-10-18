@@ -32,7 +32,13 @@ struct SetupView: View {
                     case .connection:
                         connectionStepView
                     }
-                    pairingLinkSection
+                    if SetupPairingLinkOffer.isVisible(
+                        phase: phase,
+                        isPeerSupportingSetup: model.isPeerSupportingSetup,
+                        hasPendingPairing: hasPendingPairing
+                    ) {
+                        pairingLinkSection
+                    }
                 }
             }
             .padding(24)
@@ -383,6 +389,13 @@ struct SetupView: View {
         }
     }
 
+    private var hasPendingPairing: Bool {
+        appState.pendingPairingLink != nil
+            || !pairingLinkInput.isEmpty
+            || model.ownerPairingError != nil
+            || appState.pendingPairingLinkError != nil
+    }
+
     private var pairingLinkSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("or pair to a journal on another device")
@@ -425,4 +438,14 @@ struct SetupView: View {
         pairingLinkInput = pending
     }
 
+}
+
+/// The native sequence starts from the journal app on this Mac, so after its
+/// first step there is no other journal to choose. Pairing elsewhere stays
+/// offered in the older setup, on the first step, and whenever a pairing link
+/// or its error is waiting to be seen.
+enum SetupPairingLinkOffer {
+    static func isVisible(phase: SetupPhase, isPeerSupportingSetup: Bool, hasPendingPairing: Bool) -> Bool {
+        !isPeerSupportingSetup || phase == .journal || hasPendingPairing
+    }
 }
