@@ -256,6 +256,7 @@ struct NativeHostRegistrationTests {
         let home = URL(fileURLWithPath: "/fake-home", isDirectory: true)
         let helper = home.appendingPathComponent("Apps/A \"quoted\" helper.app/Contents/MacOS/solstone-browser-host")
         let fs = NativeHostMemoryFileSystem(home: home, helper: helper)
+        fs.addBrowserProfiles()
         let registration = BrowserHostRegistration(contractRoot: nativeHostVendorRoot(), home: home, helperURL: helper, fileSystem: fs)
 
         let first = registration.repair(mode: .production)
@@ -282,11 +283,40 @@ struct NativeHostRegistrationTests {
         let home = URL(fileURLWithPath: "/fake-check-home", isDirectory: true)
         let helper = home.appendingPathComponent("Solstone.app/Contents/MacOS/solstone-browser-host")
         let fs = NativeHostMemoryFileSystem(home: home, helper: helper)
+        fs.addBrowserProfiles()
         let report = BrowserHostRegistration(contractRoot: nativeHostVendorRoot(), home: home, helperURL: helper, fileSystem: fs).check(mode: .production)
         #expect(report.outcomes.values.allSatisfy { $0.state == .changed && $0.reasonCode == "manifest_missing" })
         #expect(!report.outcomes.values.allSatisfy { $0.state == .ready })
         #expect(fs.writeCount == 0)
         #expect(fs.createCount == 0)
+    }
+
+    @Test func browsersThatHaveNotMadeTheirOwnProfileFolderAreNotCreatedForThem() throws {
+        let home = URL(fileURLWithPath: "/fake-fresh-home", isDirectory: true)
+        let helper = home.appendingPathComponent("Applications/Solstone.app/Contents/MacOS/solstone-browser-host")
+        let fs = NativeHostMemoryFileSystem(home: home, helper: helper)
+        let registration = BrowserHostRegistration(contractRoot: nativeHostVendorRoot(), home: home, helperURL: helper, fileSystem: fs)
+        let chromeRoot = home.appendingPathComponent("Library/Application Support/Google/Chrome", isDirectory: true)
+        let edgeRoot = home.appendingPathComponent("Library/Application Support/Microsoft Edge", isDirectory: true)
+
+        let fresh = registration.repair(mode: .production)
+        #expect(fresh.isComplete)
+        #expect(fresh.outcomes[.chrome]?.reasonCode == "browser_not_set_up")
+        #expect(fresh.outcomes[.edge]?.reasonCode == "browser_not_set_up")
+        #expect(fs.info(chromeRoot) == nil)
+        #expect(fs.info(edgeRoot) == nil)
+        let firefoxPath = try #require(fresh.outcomes[.firefox]?.path)
+        #expect(fs.info(URL(fileURLWithPath: firefoxPath))?.kind == .regular)
+
+        fs.addBrowserProfiles()
+        let later = registration.repair(mode: .production)
+        #expect(later.isComplete)
+        #expect(later.changedAny)
+        for brand in [BrowserBrand.chrome, .edge] {
+            let path = try #require(later.outcomes[brand]?.path)
+            #expect(later.outcomes[brand]?.reasonCode == nil)
+            #expect(fs.info(URL(fileURLWithPath: path))?.kind == .regular)
+        }
     }
 
     @Test func developmentRegistrationRequiresAnExplicitDevelopmentBuild() {
@@ -730,6 +760,13 @@ private final class NativeHostMemoryFileSystem: BrowserHostRegistrationFileSyste
 
     func addEntry(_ url: URL, kind: BrowserHostFileInfo.Kind, uid: uid_t) {
         lock.withLock { entries[url.standardizedFileURL.path] = BrowserHostFileInfo(kind: kind, uid: uid, mode: 0o700) }
+    }
+
+    func addBrowserProfiles() {
+        for path in ["Library", "Library/Application Support", "Library/Application Support/Google",
+                     "Library/Application Support/Google/Chrome", "Library/Application Support/Microsoft Edge"] {
+            addEntry(home.appendingPathComponent(path, isDirectory: true), kind: .directory, uid: geteuid())
+        }
     }
 
     func failCreating(_ url: URL) { lock.withLock { failedDirectories.insert(url.standardizedFileURL.path) } }

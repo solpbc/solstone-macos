@@ -159,6 +159,11 @@ public struct BrowserHostRegistration: Sendable {
                 let destination = registrationDirectory(for: brand).appendingPathComponent("\(host).json")
                 let directory = destination.deletingLastPathComponent()
 
+                if let profileRoot = browserOwnedProfileRoot(for: brand), fileSystem.info(profileRoot) == nil {
+                    outcomes[brand] = outcome(brand, .changed, destination.path, "browser_not_set_up")
+                    continue
+                }
+
                 if !repair, fileSystem.info(destination) == nil, !existingAncestorIsUnsafe(directory) {
                     outcomes[brand] = outcome(brand, .changed, destination.path, "manifest_missing")
                     continue
@@ -258,6 +263,19 @@ public struct BrowserHostRegistration: Sendable {
         case .safari: preconditionFailure("Safari has no native-messaging manifest")
         }
         return home.appendingPathComponent(suffix, isDirectory: true)
+    }
+
+    /// Chrome and Edge own their profile folders. Until the browser has created its own
+    /// folder for this user, creating it for them is refused by macOS and shows the owner
+    /// a notice that solstone tried to reach another app's data. Wait for the browser:
+    /// the next launch or repair registers it. Firefox reads a shared Mozilla folder that
+    /// no app owns, so it is created as before.
+    private func browserOwnedProfileRoot(for brand: BrowserBrand) -> URL? {
+        switch brand {
+        case .chrome: return home.appendingPathComponent("Library/Application Support/Google/Chrome", isDirectory: true)
+        case .edge: return home.appendingPathComponent("Library/Application Support/Microsoft Edge", isDirectory: true)
+        case .firefox, .safari: return nil
+        }
     }
 
     private func hostName(in contract: URL, mode: BrowserHostRegistrationMode) -> String? {
