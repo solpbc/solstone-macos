@@ -371,6 +371,7 @@ public final class AppState {
     public internal(set) var loginLaunchSuppressionExpires: Date = .distantPast
     public internal(set) var isTerminating: Bool = false {
         didSet {
+            if isTerminating { setupModel.stopSupportingTasks() }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             if isTerminating != oldValue { browserRepairValidity.invalidate() }
 #endif
@@ -1189,7 +1190,8 @@ public final class AppState {
         baseURL: String = ServiceMode.bundledServiceURL,
         expectedHandoffID: UUID,
         expectedInstanceID: String,
-        expectedCAFingerprint: String
+        expectedCAFingerprint: String,
+        operationIsCurrent: @escaping @MainActor () -> Bool = { !Task.isCancelled }
     ) async -> SupportingConnectionOutcome {
         let isAlreadyRecorded = self.isJournalMarkConfirmed && self.confirmedMark != nil &&
             self.currentDurablePairing?.instanceID == expectedInstanceID
@@ -1198,8 +1200,18 @@ public final class AppState {
             expectedCAFingerprint: expectedCAFingerprint,
             heldState: tunnelLifecycleOwner.sameMachineStoredPairingState,
             isMarkAlreadyRecorded: isAlreadyRecorded,
+            operationIsCurrent: { [weak self] in
+                operationIsCurrent() && self?.isTerminating == false
+            },
+            mayStartCeremony: { [weak self] in
+                guard let self, operationIsCurrent(), !self.isTerminating,
+                      self.setupModel.isPeerSupportingSetup,
+                      self.setupModel.continuation?.accepted?.handoffID == expectedHandoffID else { return false }
+                return self.tunnelLifecycleOwner.sameMachineStoredPairingState == .noneHeld &&
+                    self.currentDurablePairing == nil
+            },
             captureAdmission: { [weak self] in
-                guard let self else { return nil }
+                guard let self, operationIsCurrent() else { return nil }
                 return self.beginSupportingJournalMarkConfirmationAttempt(
                     expectedHandoffID: expectedHandoffID,
                     expectedInstanceID: expectedInstanceID,
@@ -1207,7 +1219,7 @@ public final class AppState {
                 )
             },
             confirmAdmission: { [weak self] admission in
-                guard let self else { return false }
+                guard let self, operationIsCurrent() else { return false }
                 guard let pairing = self.currentDurablePairing,
                       let revision = self.currentDurablePairingRevision,
                       revision == admission.revision,
@@ -1225,7 +1237,12 @@ public final class AppState {
             },
             verifyLink: { verifySameMachinePairLink($0) },
             submit: { [pairingCoordinator] exactPairLink in
-                await pairingCoordinator.submitPairingLink(exactPairLink)
+                await pairingCoordinator.submitSupportingPairingLink(
+                    exactPairLink, handoffID: expectedHandoffID,
+                    expectedInstanceID: expectedInstanceID,
+                    expectedCAFingerprint: expectedCAFingerprint,
+                    while: operationIsCurrent
+                )
                 return pairingCoordinator.state
             },
             durableInstanceID: { [weak self] in
@@ -1239,7 +1256,7 @@ public final class AppState {
                 return await self.supportingIdentityResolver(tunnelBase, expectedInstanceID)
             },
             record: { [weak self] mark, revision in
-                guard let self else { return false }
+                guard let self, operationIsCurrent() else { return false }
                 return self.recordSupportingJournalMark(
                     handoffID: expectedHandoffID,
                     mark: mark,
@@ -2379,6 +2396,7 @@ public final class AppState {
         let previousState = previousTunnelLifecycleState
         previousTunnelLifecycleState = newState
         journalHomeBaseChangeToken += 1
+        setupModel.handleDownloadRouteChanged()
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
 
         guard isConnected(newState), !isConnected(previousState) else { return }

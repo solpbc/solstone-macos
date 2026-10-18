@@ -49,6 +49,62 @@ struct SetupModelTests {
 
     private let sampleFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+    @Test(arguments: [true, false])
+    func step5AcceptanceAndDelayedJournalResolutionHaveOnePublicationOrder(acceptBeforeResolution: Bool) async throws {
+        let dir = try makeTempDir()
+        let bundle = try createMockBundle(capabilities: ["setup-sequence-v1"])
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? FileManager.default.removeItem(at: bundle.deletingLastPathComponent())
+        }
+        let gate = OneShotContinuationGate()
+        defer { gate.release() }
+        let entered = LockedCounter()
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .journal))
+        let mailbox = SetupMailboxStore(directory: dir)
+        let model = SetupModel(enabled: true, continuationStore: store, mailboxDirectory: dir,
+            freshFlow: FreshJournalFlow(dependencies: .inert(), resolveTrustedJournalOverride: {
+                entered.increment()
+                await gate.wait()
+                return bundle
+            }), resolveIdentity: { _, _ in .absent }, sleepDuration: .milliseconds(20))
+        defer { model.stopSupportingTasks(); model.stopJournalPolling() }
+        let state = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false), setupModel: model,
+            sameMachinePairStart: { _, _ in .failure(.init(kind: .transport)) },
+            triggerTunnelConnectedSync: { _ in }, journalURLOpener: { _ in false })
+        state.configSaver = { _ in Issue.record("handoff changed source preferences") }
+        let resolution = Task { await model.runJournalPhase() }
+        defer { resolution.cancel() }
+        try await waitUntil { entered.count == 1 }
+        if !acceptBeforeResolution {
+            gate.release()
+            try await waitUntil { if case .ready = mailbox.loadStep1() { return true }; return false }
+            #expect(try mailbox.readStep5Receipt() == nil)
+        }
+        let handoff = SetupHandoff(handoffID: UUID(), stepIndex: 5, journalRootPath: "/fixture/journal",
+            expectedInstanceID: "fixture-instance", expectedCAFingerprint: sampleFingerprint)
+        try mailbox.writeStep5(handoff)
+        model.ingestStep5IfNeeded()
+        #expect(model.phase == .microphone)
+        #expect(try mailbox.readStep5Receipt()?.handoffID == handoff.handoffID)
+        if acceptBeforeResolution { gate.release() }
+        await resolution.value
+        if acceptBeforeResolution {
+            #expect(mailbox.loadStep1() == .missing)
+            #expect(store.load()?.pendingOutboundStep1ID == nil)
+        } else {
+            guard case .ready(let published) = mailbox.loadStep1() else {
+                Issue.record("the already-published input must survive")
+                return
+            }
+            #expect(published.handoffID == store.load()?.pendingOutboundStep1ID)
+        }
+        #expect(!state.config.isScreenCaptureEnabled)
+        #expect(!state.config.isMicrophoneCaptureEnabled)
+    }
+
 
     @Test func disabledPreparationIgnoresProgressAndHandoffWithoutChangingEither() async throws {
         let dir = try makeTempDir()
@@ -626,17 +682,27 @@ struct SetupModelTests {
             unlockNotificationCenter: NotificationCenter()
         )
         let store = SetupContinuationStore(directory: dir)
-        try store.save(SetupContinuation(phase: .connection, accepted: SetupAcceptedStep5Snapshot(
+        try store.save(SetupContinuation(phase: .screen, accepted: SetupAcceptedStep5Snapshot(
             handoffID: UUID(), journalRootPath: "/fixture/journal",
             expectedInstanceID: retained.instanceID, expectedCAFingerprint: fingerprint
         ), mode: .supporting))
-        let model = SetupModel(enabled: true, mailboxDirectory: dir)
+        let downloadReads = LockedCounter()
+        let downloadValue = SetupDownloads(
+            speech: .init(state: .downloading, attemptID: "speech", bytesDone: 10, bytesTotal: 100, error: nil),
+            thinking: .init(state: .downloading, attemptID: "thinking", bytesDone: 20, bytesTotal: nil, error: nil)
+        )
+        let downloadProgress = SetupDownloadProgress(
+            read: { _ in downloadReads.increment(); return downloadValue },
+            sleep: { try await Task.sleep(for: .milliseconds(20)) }
+        )
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, downloadProgress: downloadProgress)
+        defer { model.stopSupportingTasks() }
         let fetched = LockedArray<String>([])
         let identityGate = OneShotContinuationGate()
         defer { identityGate.release(); transport.releasePendingConnect() }
         let pairStarts = LockedCounter()
         let state = AppState.forSnapshot(
-            config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
+            config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false, serverURL: "http://127.0.0.1:18321"),
             initialTunnelPairing: retained,
             setupModel: model, tunnelLifecycleOwner: owner,
             supportingIdentityResolver: { base, instance in
@@ -680,6 +746,12 @@ struct SetupModelTests {
             #expect(state.confirmedMark == .uiTestSample)
             #expect(state.currentDurablePairingRevision == PairingCredentialRevision(from: retained))
             #expect(fetched.all == Array(repeating: "http://127.0.0.1:18321", count: readinessDuringFetch ? 2 : 1))
+            #expect(model.phase == .screen)
+            try await waitUntil { model.downloadProgress.downloads == downloadValue }
+            #expect(downloadReads.count >= 1)
+            #expect(model.downloadProgress.downloads == downloadValue)
+            #expect(model.setPhase(.connection))
+            #expect(model.downloadProgress.downloads == downloadValue)
             #expect(pairStarts.count == 0)
             #expect(pairingStore.saveCount == 0)
             #expect(pairingStore.deleteCount == 0)

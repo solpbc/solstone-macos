@@ -505,17 +505,31 @@ public final class PairingCredentialStore: @unchecked Sendable {
     }
 
     func saveFreshPair(_ pairing: StoredPairing) throws {
+        try saveFreshPair(pairing, expectingAbsentGeneration: nil)
+    }
+
+    func saveFreshPairIfAbsent(_ pairing: StoredPairing, expectedGeneration: UInt64) throws {
+        try saveFreshPair(pairing, expectingAbsentGeneration: expectedGeneration)
+    }
+
+    private func saveFreshPair(_ pairing: StoredPairing, expectingAbsentGeneration: UInt64?) throws {
         #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         browserIdentityLock.lock()
         defer { browserIdentityLock.unlock() }
         #endif
         lock.lock()
         defer { lock.unlock() }
+        if let expected = expectingAbsentGeneration {
+            guard try load() == nil, storedPairingGeneration == expected,
+                  try carriedPairingRecord().invalidation == nil else {
+                throw PairingCredentialStoreError.staleGeneration
+            }
+        }
         var rawRecord = try store.loadCarriedPairingRecord()
         rawRecord.freshPairIntent = PairingCredentialRevision(from: pairing)
         try store.saveCarriedPairingRecord(rawRecord)
         do {
-            try save(pairing)
+            try save(pairing, expectedGeneration: expectingAbsentGeneration)
         } catch {
             migrationRecordCache = nil
             throw error

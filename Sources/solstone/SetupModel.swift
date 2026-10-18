@@ -15,6 +15,7 @@ final class SetupModel {
     let mailboxStore: SetupMailboxStore
     let freshFlow: FreshJournalFlow
     weak var appState: AppState?
+    let downloadProgress: SetupDownloadProgress
 
     private let resolveIdentityOverride: (@Sendable (String, String?) async -> JournalIdentityResolution)?
     private let sleepDuration: Duration
@@ -76,14 +77,7 @@ final class SetupModel {
                 } else {
                     stopJournalPolling()
                 }
-                if newPhase == .connection && isPeerSupportingSetup {
-                    startConnectionPhase()
-                } else if newPhase != .connection {
-                    currentConnectingHandoffID = nil
-                    connectionTask?.cancel()
-                    connectionTask = nil
-                    currentConnectionTaskID = nil
-                }
+                reconcileSupportingTasks()
                 return true
             } catch {
                 return false
@@ -97,10 +91,7 @@ final class SetupModel {
                 self.isPeerSupportingSetup = Self.isSupporting(continuation: cont)
                 self.phase = nil
                 stopJournalPolling()
-                currentConnectingHandoffID = nil
-                connectionTask?.cancel()
-                connectionTask = nil
-                currentConnectionTaskID = nil
+                stopSupportingTasks()
                 return true
             } catch {
                 return false
@@ -121,10 +112,7 @@ final class SetupModel {
             self.isPeerSupportingSetup = Self.isSupporting(continuation: cont)
             self.connectionStepState = .idle
             stopJournalPolling()
-            self.currentConnectingHandoffID = nil
-            connectionTask?.cancel()
-            connectionTask = nil
-            currentConnectionTaskID = nil
+            stopSupportingTasks()
             return true
         } catch {
             ownerPairingError = UICopy.SETUP_COULDNT_FINISH
@@ -141,6 +129,7 @@ final class SetupModel {
         sleepDuration: Duration = .seconds(2),
         requestMicrophone: @escaping @MainActor () async -> Void = { await PermissionChecker().requestMicrophone() },
         requestScreen: @escaping @MainActor () -> Void = { PermissionChecker().promptScreenRecording() },
+        downloadProgress: SetupDownloadProgress? = nil,
         appState: AppState? = nil
     ) {
         self.enabled = enabled
@@ -152,6 +141,7 @@ final class SetupModel {
         self.requestMicrophone = requestMicrophone
         self.requestScreen = requestScreen
         self.appState = appState
+        self.downloadProgress = downloadProgress ?? SetupDownloadProgress()
 
         let loaded = enabled ? continuationStore.load() : nil
         self.continuation = loaded
@@ -168,6 +158,7 @@ final class SetupModel {
         sleepDuration: Duration = .seconds(2),
         requestMicrophone: @escaping @MainActor () async -> Void = { await PermissionChecker().requestMicrophone() },
         requestScreen: @escaping @MainActor () -> Void = { PermissionChecker().promptScreenRecording() },
+        downloadProgress: SetupDownloadProgress? = nil,
         appState: AppState? = nil
     ) {
         let store = continuationStore ?? SetupContinuationStore(directory: mailboxDirectory)
@@ -182,6 +173,7 @@ final class SetupModel {
             sleepDuration: sleepDuration,
             requestMicrophone: requestMicrophone,
             requestScreen: requestScreen,
+            downloadProgress: downloadProgress,
             appState: appState
         )
     }
@@ -194,9 +186,8 @@ final class SetupModel {
         guard enabled else { return }
         if phase == .journal {
             startJournalPhase()
-        } else if phase == .connection && isPeerSupportingSetup {
-            startConnectionPhase()
         }
+        reconcileSupportingTasks()
     }
 
     func ingestStep5IfNeeded() {
@@ -298,6 +289,7 @@ final class SetupModel {
                 }
             }
         }
+        reconcileSupportingTasks()
     }
 
     private func requireAcknowledged(_ result: SetupCommitResult) throws {
@@ -392,14 +384,14 @@ final class SetupModel {
     }
 
     public func startConnectionPhase() {
-        guard phase == .connection else { return }
+        guard canRunSupportingConnection else { return }
         if isPeerSupportingSetup {
             performSupportingConnection(forceRestart: false)
         }
     }
 
     public func handleTunnelConnected() {
-        guard phase == .connection && isPeerSupportingSetup else { return }
+        guard canRunSupportingConnection else { return }
         if connectionTask != nil {
             // Let a first pairing finish; the edge can arrive during its own activation.
             retryAfterConnection = true
@@ -415,7 +407,7 @@ final class SetupModel {
     }
 
     public func performSupportingConnection(forceRestart: Bool = false) {
-        guard let appState else { return }
+        guard canRunSupportingConnection, let appState, !appState.isTerminating else { return }
         guard let accepted = continuation?.accepted,
               accepted.isValid else {
             connectionStepState = .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
@@ -425,6 +417,9 @@ final class SetupModel {
             return
         }
         connectionTask?.cancel()
+        if let old = currentConnectingHandoffID {
+            appState.pairingCoordinator.cancelSupportingPairing(handoffID: old)
+        }
         let taskID = UUID()
         currentConnectionTaskID = taskID
         currentConnectingHandoffID = accepted.handoffID
@@ -447,9 +442,15 @@ final class SetupModel {
             let outcome = await appState.verifySupportingConnectionFromHandoff(
                 expectedHandoffID: accepted.handoffID,
                 expectedInstanceID: accepted.expectedInstanceID,
-                expectedCAFingerprint: accepted.expectedCAFingerprint
+                expectedCAFingerprint: accepted.expectedCAFingerprint,
+                operationIsCurrent: { [weak self] in
+                    guard let self else { return false }
+                    return !Task.isCancelled && self.canRunSupportingConnection &&
+                        self.currentConnectionTaskID == taskID && self.continuation?.accepted == accepted
+                }
             )
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.currentConnectionTaskID == taskID,
+                  self.canRunSupportingConnection, self.continuation?.accepted == accepted else { return }
             switch outcome {
             case .recorded(let mark):
                 self.connectionStepState = .connected(mark)
@@ -466,6 +467,58 @@ final class SetupModel {
                 self.connectionStepState = .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
             }
         }
+    }
+
+    private var canRunSupportingConnection: Bool {
+        enabled && isPeerSupportingSetup &&
+            (phase == .microphone || phase == .screen || phase == .connection) &&
+            appState?.isTerminating != true
+    }
+
+    private func reconcileSupportingTasks() {
+        guard canRunSupportingConnection else { stopSupportingTasks(); return }
+        if currentConnectingHandoffID != continuation?.accepted?.handoffID {
+            startConnectionPhase()
+        }
+        downloadProgress.start { [weak self] in await self?.downloadAdmission() }
+    }
+
+    func stopSupportingTasks() {
+        if let handoffID = currentConnectingHandoffID {
+            appState?.pairingCoordinator.cancelSupportingPairing(handoffID: handoffID)
+        }
+        currentConnectingHandoffID = nil
+        connectionTask?.cancel()
+        connectionTask = nil
+        currentConnectionTaskID = nil
+        retryAfterConnection = false
+        downloadProgress.invalidate()
+    }
+
+    func handleDownloadRouteChanged() {
+        downloadProgress.invalidate()
+        reconcileSupportingTasks()
+    }
+
+    private func downloadAdmission() async -> SetupDownloadAdmission? {
+        guard canRunSupportingConnection, let accepted = continuation?.accepted,
+              let appState, appState.isJournalMarkConfirmed, appState.confirmedMark != nil,
+              let revision = appState.currentDurablePairingRevision,
+              let pairing = appState.currentDurablePairing,
+              pairing.instanceID == accepted.expectedInstanceID,
+              caChainContainsFingerprint(caChainPEM: pairing.caChainPEM,
+                                         expectedLowerHex: accepted.expectedCAFingerprint) else { return nil }
+        let generation = appState.journalHomeBaseChangeToken
+        let resolved = await appState.resolveHomeBase()
+        guard canRunSupportingConnection, continuation?.accepted == accepted,
+              appState.currentDurablePairingRevision == revision,
+              appState.isJournalMarkConfirmed, appState.confirmedMark != nil,
+              appState.journalHomeBaseChangeToken == generation,
+              !appState.tunnelLifecycleOwner.ordinaryRouteRevoked,
+              case .url(let base) = resolved,
+              base == tunnelIdentityBase(state: appState.tunnelLifecycleOwner.state) else { return nil }
+        return SetupDownloadAdmission(handoffID: accepted.handoffID, credential: revision,
+                                      routeGeneration: generation, baseURL: base)
     }
 
     public func continueFromOlderJournal() {

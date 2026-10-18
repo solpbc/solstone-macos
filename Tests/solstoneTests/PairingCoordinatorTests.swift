@@ -2594,7 +2594,7 @@ private struct PairingCoordinatorControlClient: CarriedPairingControlRequesting 
     }
 }
 
-private let otherCACertPEM = """
+let otherCACertPEM = """
 -----BEGIN CERTIFICATE-----
 MIIBezCCASGgAwIBAgIUUXhy5T/Oxx8wkpgCDLyi1q0iQFUwCgYIKoZIzj0EAwIw
 EzERMA8GA1UEAwwIb3RoZXJfY2EwHhcNMjYxMDAxMDIyNTM5WhcNMzYwOTI4MDIy

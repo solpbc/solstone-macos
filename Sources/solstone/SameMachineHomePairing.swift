@@ -320,6 +320,8 @@ func verifySupportingConnection(
     expectedCAFingerprint: String,
     heldState: SameMachineStoredPairingState,
     isMarkAlreadyRecorded: Bool,
+    operationIsCurrent: () -> Bool = { !Task.isCancelled },
+    mayStartCeremony: () -> Bool = { !Task.isCancelled },
     captureAdmission: () -> SupportingAdmission?,
     confirmAdmission: (SupportingAdmission) -> Bool,
     startPairing: () async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>,
@@ -329,9 +331,10 @@ func verifySupportingConnection(
     resolveIdentity: () async -> JournalIdentityResolution,
     record: (JournalMark, PairingCredentialRevision) async -> Bool
 ) async -> SupportingConnectionOutcome {
+    guard operationIsCurrent() else { return .notEligible }
     func executeFetchAndAdmission(admission: SupportingAdmission) async -> SupportingConnectionOutcome {
         let resolution = await resolveIdentity()
-        guard confirmAdmission(admission) else {
+        guard operationIsCurrent(), confirmAdmission(admission) else {
             return .durableInstanceMismatch
         }
         switch resolution {
@@ -365,11 +368,12 @@ func verifySupportingConnection(
         return await executeFetchAndAdmission(admission: admission)
     }
 
-    guard heldState == .noneHeld else {
+    guard heldState == .noneHeld, mayStartCeremony() else {
         return .notEligible
     }
 
     let startResult = await startPairing()
+    guard operationIsCurrent(), mayStartCeremony() else { return .notEligible }
     let response: SameMachinePairStartResponse
     switch startResult {
     case .success(let resp):
@@ -398,6 +402,7 @@ func verifySupportingConnection(
     }
 
     let flowState = await submit(response.pairLink)
+    guard operationIsCurrent() else { return .notEligible }
     switch flowState {
     case .paired, .alreadyConnected:
         break

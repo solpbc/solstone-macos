@@ -14,6 +14,7 @@ struct SetupView: View {
     @State private var pairingLinkInput: String = ""
 
     var body: some View {
+        VStack(spacing: 0) {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if let phase = model.phase {
@@ -36,6 +37,13 @@ struct SetupView: View {
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        if model.isPeerSupportingSetup && model.phase != .journal {
+            Divider()
+            SetupDownloadFooter(downloads: model.downloadProgress.downloads)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+        }
         }
     }
 

@@ -98,6 +98,8 @@ final class PairingCoordinator {
     private var freshPairMarkConfirmed = false
     @ObservationIgnored
     private var inFlightFreshPairEligibility: (revision: PairingCredentialRevision, attempt: String)?
+    @ObservationIgnored
+    private var supportingAttempt: (id: UUID, handoffID: UUID)?
 
     var tunnelState: TunnelLifecycleState {
         ownerState()
@@ -161,6 +163,96 @@ final class PairingCoordinator {
             }
         }
         return false
+    }
+
+    func cancelSupportingPairing(handoffID: UUID) {
+        guard supportingAttempt?.handoffID == handoffID else { return }
+        supportingAttempt = nil
+        if state == .pairing { state = .idle }
+    }
+
+    /// This fresh local handoff may not replace an owner's held credential.
+    func submitSupportingPairingLink(
+        _ rawLink: String,
+        handoffID: UUID,
+        expectedInstanceID: String,
+        expectedCAFingerprint: String,
+        while operationIsCurrent: @escaping @MainActor () -> Bool
+    ) async {
+        guard state != .pairing, operationIsCurrent(), !Task.isCancelled,
+              let credentialStore else { return }
+        let pairURL: PairURL
+        let generation: UInt64
+        do {
+            pairURL = try parsePairURL(rawLink)
+            guard try credentialStore.load() == nil,
+                  credentialStore.admission(for: nil) == .absent else { return }
+            generation = credentialStore.pairingGeneration
+        } catch {
+            state = .failed(.localSetup)
+            return
+        }
+        let id = UUID()
+        supportingAttempt = (id, handoffID)
+        state = .pairing
+        failedAddress = nil
+        func current() -> Bool {
+            supportingAttempt?.id == id && operationIsCurrent() && !Task.isCancelled
+        }
+        defer {
+            if supportingAttempt?.id == id {
+                supportingAttempt = nil
+                if state == .pairing { state = .idle }
+            }
+        }
+        let result: StoredPairing
+        do {
+            result = try await pair(pairURL, deviceLabel(), relayEndpoint())
+        } catch {
+            guard current() else { return }
+            state = .failed(Self.failure(for: error))
+            return
+        }
+        guard current() else { return }
+        guard result.instanceID == expectedInstanceID,
+              caChainContainsFingerprint(caChainPEM: result.caChainPEM,
+                                         expectedLowerHex: expectedCAFingerprint) else {
+            state = .failed(.instanceMismatch)
+            return
+        }
+        let revision = PairingCredentialRevision(from: result)
+        do {
+            // Keep admission and the conditional commit in one MainActor turn.
+            // Security calls are synchronous; this is not a wall-clock deadline.
+            try credentialStore.saveFreshPairIfAbsent(result, expectedGeneration: generation)
+            guard current(), let saved = try credentialStore.load(),
+                  PairingCredentialRevision(from: saved) == revision else { return }
+            let expectedRecord = try credentialStore.carriedPairingRecord()
+            var record = expectedRecord
+            record.freshPairObligation = revision
+            record.freshPairIntent = nil
+            record.freshPairEligibilityAttempt = nil
+            record.replacementOfferID = nil
+            record.replacementOfferShown = false
+            record.decision = nil
+            record.invalidation = nil
+            try credentialStore.saveCarriedPairingRecord(record, expected: expectedRecord, whilePairing: revision)
+        } catch {
+            guard current() else { return }
+            state = .saveFailed
+            return
+        }
+        guard current(), let saved = try? credentialStore.load(),
+              PairingCredentialRevision(from: saved) == revision else { return }
+        clearJournalMarkConfirmation()
+        clearLastSuccessfulJournalContact()
+        guard current(), let saved = try? credentialStore.load(),
+              PairingCredentialRevision(from: saved) == revision else { return }
+        await reactivate()
+        guard current(), let saved = try? credentialStore.load(),
+              PairingCredentialRevision(from: saved) == revision else { return }
+        state = .paired
+        _ = refreshPendingActions(markConfirmed: false)
     }
 
     func submitPairingLink(_ rawLink: String) async {

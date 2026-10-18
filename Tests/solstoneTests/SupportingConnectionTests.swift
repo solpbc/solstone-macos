@@ -3,6 +3,7 @@
 
 import Foundation
 import JournalMarkKit
+import MacTestSupport
 import SPLTunnel
 import Testing
 @testable import solstone
@@ -10,6 +11,42 @@ import Testing
 @Suite("Supporting connection verification")
 @MainActor
 struct SupportingConnectionTests {
+    @Test(arguments: ["mode", "retired", "credential", "cancel", "phase"])
+    func delayedPairStartRechecksBeforeCeremony(change: String) async throws {
+        let gate = OneShotContinuationGate()
+        defer { gate.release() }
+        let entered = LockedCounter()
+        var active = true
+        var noneHeld = true
+        var submitted = 0
+        let pending = Task {
+            await verifySupportingConnection(
+                expectedInstanceID: expectedInstance, expectedCAFingerprint: sampleFingerprint,
+                heldState: .noneHeld, isMarkAlreadyRecorded: false,
+                operationIsCurrent: { active && !Task.isCancelled },
+                mayStartCeremony: { noneHeld && !Task.isCancelled },
+                captureAdmission: { nil }, confirmAdmission: { _ in false },
+                startPairing: {
+                    entered.increment()
+                    await gate.wait()
+                    return .success(makePairStartResponse(pairLink: makeValidPairLink(fingerprint: sampleFingerprint), fingerprint: sampleFingerprint))
+                },
+                submit: { _ in submitted += 1; return .paired },
+                durableInstanceID: { nil }, resolveIdentity: { .absent }, record: { _, _ in false }
+            )
+        }
+        try await waitUntil { entered.count == 1 }
+        switch change {
+        case "mode", "retired": active = false
+        case "credential": noneHeld = false
+        case "cancel": pending.cancel()
+        default: break // A permission-phase transition preserves the active intent.
+        }
+        gate.release()
+        _ = await pending.value
+        #expect(submitted == (change == "phase" ? 1 : 0))
+    }
+
     private enum TestCrockford32 {
         static func encode(_ bytes: [UInt8]) -> String {
             let alphabet = Array("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
