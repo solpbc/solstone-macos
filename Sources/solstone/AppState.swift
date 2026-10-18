@@ -64,6 +64,7 @@ public final class AppState {
     internal let tunnelLifecycleOwner: TunnelLifecycleOwner
     internal let pairingCoordinator: PairingCoordinator
     internal let credentialStore: PairingCredentialStore?
+    internal let setupModel: SetupModel
     #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     @ObservationIgnored private var browserIntakeOwner: BrowserIntakeOwner?
     @ObservationIgnored private var browserHostListener: BrowserHostListener?
@@ -122,7 +123,7 @@ public final class AppState {
     #endif
     private let homeBaseURLResolver: HomeBaseURLResolver
     private let ingestBaseURLResolver: HomeBaseURLResolver
-    private let sameMachinePairStart: @MainActor @Sendable (
+    internal let sameMachinePairStart: @MainActor @Sendable (
         _ baseURL: String,
         _ deviceLabel: String
     ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>
@@ -217,7 +218,116 @@ public final class AppState {
 
     /// Set by SetupView to tell SettingsView which tab to open to
     public var pendingSettingsTab: String?
+    public var pendingPairingLink: String?
+    public var pendingPairingLinkError: String?
+
+    /// Only the currently visible pairing surface may consume an arriving link.
+    internal func takePendingPairingLink(forSetup: Bool) -> String? {
+        guard (setupModel.phase != nil) == forSetup else { return nil }
+        defer { pendingPairingLink = nil }
+        return pendingPairingLink
+    }
+
     internal var pendingPrivateWindowSettingsTarget: UUID?
+
+    public func handleIngressURL(_ url: URL) {
+        handleIngressURLString(url.absoluteString)
+    }
+
+    public func handleIngressURLString(_ raw: String) {
+        switch translatePairingLink(raw) {
+        case .success(let canonical):
+            pendingPairingLinkError = nil
+            let decision = decideIngressPairing(
+                flowState: pairingCoordinator.state,
+                heldState: tunnelLifecycleOwner.sameMachineStoredPairingState,
+                canonicalLink: canonical
+            )
+            switch decision {
+            case .store(let link):
+                pendingPairingLink = link
+                pendingSettingsTab = "journal"
+                NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+            case .leaveUntouched:
+                break
+            }
+        case .failure(let error):
+            pendingPairingLink = nil
+            pendingPairingLinkError = PairingCoordinator.invalidLinkReason(error)
+            pendingSettingsTab = "journal"
+            NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+        }
+    }
+
+    public func ingestStep5IfNeeded() {
+        setupModel.ingestStep5IfNeeded()
+    }
+
+    internal let previewEpochLock = OSAllocatedUnfairLock(initialState: UInt64(0))
+
+    public var previewEpoch: UInt64 {
+        previewEpochLock.withLock { $0 }
+    }
+
+    private func configureScreenPreviewInvalidation() {
+        capture.onPauseTriggered = { [weak self] in self?.clearLatestFrameIfNeeded() }
+        capture.captureManager.onScreenActiveSourcesChanged = { [weak self] _ in
+            self?.invalidatePreviewEpoch()
+        }
+        capture.captureManager.onProtectedVideoPauseChanged = { [weak self] _ in
+            self?.invalidatePreviewEpoch()
+        }
+        pauseManager.onPauseIntake = { [weak self] in
+            self?.invalidatePreviewEpoch()
+        }
+        pauseManager.onResumeIntake = { [weak self] in
+            self?.invalidatePreviewEpoch()
+        }
+        capture.captureManager.onScreenPreviewInvalidated = { [weak self] in
+            self?.invalidatePreviewEpoch()
+        }
+    }
+
+    internal func invalidatePreviewEpoch() {
+        previewEpochLock.withLock { $0 &+= 1 }
+        _latestFrame = nil
+    }
+
+    public var isLiveScreenPreviewEligible: Bool {
+        config.isScreenCaptureEnabled &&
+        screenRecordingGranted &&
+        capture.captureManager.activeSources.contains(.screen) &&
+        capture.captureManager.currentScreenFailure == nil &&
+        !pauseManager.isPaused &&
+        !protectedVideoHeld
+    }
+
+    public private(set) var latestFrame: CGImage? {
+        get {
+            // Register the frame dependency even before the non-observable capture manager
+            // commits its active sources, so the first delivered frame refreshes the view.
+            let frame = _latestFrame
+            guard isLiveScreenPreviewEligible else {
+                return nil
+            }
+            return frame
+        }
+        set {
+            _latestFrame = newValue
+        }
+    }
+    private var _latestFrame: CGImage?
+
+    internal func updateLatestFrame(_ image: CGImage, epoch: UInt64) {
+        guard epoch == previewEpoch, isLiveScreenPreviewEligible else { return }
+        _latestFrame = image
+    }
+
+    internal func clearLatestFrameIfNeeded() {
+        if !isLiveScreenPreviewEligible {
+            invalidatePreviewEpoch()
+        }
+    }
 
     internal var privateWindowAccessibilityEnabled: Bool {
         config.excludePrivateBrowsing && config.excludePrivateBrowsingAccessibility
@@ -598,6 +708,7 @@ public final class AppState {
         let browserIntakeChanged = oldConfig.isBrowserIntakeEnabled != newConfig.isBrowserIntakeEnabled
 #endif
         config = newConfig
+        clearLatestFrameIfNeeded()
         reconcilePrivateWindowAccessibility()
         uploadCoordinator.updateConfig(newConfig)
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
@@ -1066,6 +1177,150 @@ public final class AppState {
         }
     }
 
+    typealias SupportingIdentityResolver = @MainActor @Sendable (String, String) async -> JournalIdentityResolution
+    @ObservationIgnored
+    private var supportingIdentityResolver: SupportingIdentityResolver = { base, instance in
+        let fetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
+        return await fetcher.resolveIdentity(baseURL: base, expectedInstanceID: instance)
+    }
+
+    @MainActor
+    internal func verifySupportingConnectionFromHandoff(
+        baseURL: String = ServiceMode.bundledServiceURL,
+        expectedHandoffID: UUID,
+        expectedInstanceID: String,
+        expectedCAFingerprint: String
+    ) async -> SupportingConnectionOutcome {
+        let isAlreadyRecorded = self.isJournalMarkConfirmed && self.confirmedMark != nil &&
+            self.currentDurablePairing?.instanceID == expectedInstanceID
+        return await verifySupportingConnection(
+            expectedInstanceID: expectedInstanceID,
+            expectedCAFingerprint: expectedCAFingerprint,
+            heldState: tunnelLifecycleOwner.sameMachineStoredPairingState,
+            isMarkAlreadyRecorded: isAlreadyRecorded,
+            captureAdmission: { [weak self] in
+                guard let self else { return nil }
+                return self.beginSupportingJournalMarkConfirmationAttempt(
+                    expectedHandoffID: expectedHandoffID,
+                    expectedInstanceID: expectedInstanceID,
+                    expectedCAFingerprint: expectedCAFingerprint
+                )
+            },
+            confirmAdmission: { [weak self] admission in
+                guard let self else { return false }
+                guard let pairing = self.currentDurablePairing,
+                      let revision = self.currentDurablePairingRevision,
+                      revision == admission.revision,
+                      pairing.instanceID == admission.instanceID,
+                      admission.instanceID == expectedInstanceID else {
+                    return false
+                }
+                return caChainContainsFingerprint(
+                    caChainPEM: pairing.caChainPEM,
+                    expectedLowerHex: expectedCAFingerprint
+                )
+            },
+            startPairing: { [sameMachinePairStart] in
+                await sameMachinePairStart(baseURL, SPLPairingDefaults.deviceLabel)
+            },
+            verifyLink: { verifySameMachinePairLink($0) },
+            submit: { [pairingCoordinator] exactPairLink in
+                await pairingCoordinator.submitPairingLink(exactPairLink)
+                return pairingCoordinator.state
+            },
+            durableInstanceID: { [weak self] in
+                self?.currentDurablePairing?.instanceID
+            },
+            resolveIdentity: { [weak self] in
+                guard let self else { return .absent }
+                guard let tunnelBase = tunnelIdentityBase(state: self.tunnelLifecycleOwner.state) else {
+                    return .absent
+                }
+                return await self.supportingIdentityResolver(tunnelBase, expectedInstanceID)
+            },
+            record: { [weak self] mark, revision in
+                guard let self else { return false }
+                return self.recordSupportingJournalMark(
+                    handoffID: expectedHandoffID,
+                    mark: mark,
+                    expectedRevision: revision
+                )
+            }
+        )
+    }
+
+    internal func beginSupportingJournalMarkConfirmationAttempt(
+        expectedHandoffID: UUID,
+        expectedInstanceID: String,
+        expectedCAFingerprint: String
+    ) -> SupportingAdmission? {
+        guard setupModel.isPeerSupportingSetup else { return nil }
+        guard let accepted = setupModel.continuation?.accepted,
+              accepted.handoffID == expectedHandoffID,
+              accepted.expectedInstanceID == expectedInstanceID else { return nil }
+        guard case .connected = tunnelLifecycleOwner.state,
+              tunnelLifecycleOwner.localPort != nil,
+              !tunnelLifecycleOwner.ordinaryRouteRevoked,
+              let pairing = currentDurablePairing,
+              pairing.instanceID == expectedInstanceID,
+              let revision = currentDurablePairingRevision,
+              PairingCredentialRevision(from: pairing) == revision else { return nil }
+        guard caChainContainsFingerprint(caChainPEM: pairing.caChainPEM, expectedLowerHex: expectedCAFingerprint) else { return nil }
+        pendingMarkCredentialRevision = revision
+        return SupportingAdmission(revision: revision, instanceID: pairing.instanceID, caMatches: true)
+    }
+
+    internal func recordSupportingJournalMark(
+        handoffID: UUID,
+        mark: JournalMark,
+        expectedRevision: PairingCredentialRevision
+    ) -> Bool {
+        guard isCurrentJournalMarkAttempt(expectedRevision) else { return false }
+        guard setupModel.isPeerSupportingSetup else { return false }
+        guard let accepted = setupModel.continuation?.accepted, accepted.handoffID == handoffID else { return false }
+        guard let revision = currentDurablePairingRevision, revision == expectedRevision else { return false }
+        guard let pairing = currentDurablePairing, PairingCredentialRevision(from: pairing) == revision else { return false }
+        guard caChainContainsFingerprint(caChainPEM: pairing.caChainPEM, expectedLowerHex: accepted.expectedCAFingerprint) else { return false }
+        guard let journal = tunnelLifecycleOwner.cachedJournalMarkIdentity,
+              journalMarkConfirmationIdentity(for: pairing) == journal else { return false }
+        withMutation(keyPath: \.isJournalMarkConfirmed) {
+            confirmedMark = mark
+            journalMarkConfirmationStore.confirm(journal)
+            uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
+            _ = pairingCoordinator.refreshPendingActions(markConfirmed: true)
+            guard isPairedIngestReady else { return }
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            if let owner = browserIntakeOwner {
+                Task { await owner.scheduleDelivery() }
+            }
+#endif
+            guard automaticObservationPipelineEnabled else { return }
+            triggerTunnelConnectedSync(self)
+        }
+        pendingMarkCredentialRevision = nil
+        return true
+    }
+
+    @discardableResult
+    @MainActor
+    internal func submitPairingInput(_ rawLink: String) async -> PairingFlowState {
+        let trimmed = rawLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch translatePairingLink(trimmed) {
+        case .failure(let error):
+            pairingCoordinator.recordInvalidLink(reason: PairingCoordinator.invalidLinkReason(error))
+            return pairingCoordinator.state
+        case .success(let canonical):
+            if setupModel.phase != nil {
+                guard setupModel.switchToOwnerComparison() else {
+                    return pairingCoordinator.state
+                }
+            }
+            beginOwnerPairingAttempt()
+            await pairingCoordinator.submitPairingLink(canonical)
+            return pairingCoordinator.state
+        }
+    }
+
     /// The owner started a pairing of their own: re-link, confirm, or a pasted link. The mark
     /// question is owed again, and the automatic adoption steps aside for the rest of this launch.
     internal func beginOwnerPairingAttempt() {
@@ -1125,6 +1380,10 @@ public final class AppState {
                 self.refreshMicrophoneAuthorization()
                 await self.refreshNotificationAuthorizationStatus()
                 self.shortcutController.handleApplicationDidBecomeActive()
+                self.ingestStep5IfNeeded()
+                if self.setupModel.phase != nil {
+                    await self.setupModel.reconcileSourcePermissions()
+                }
             }
         }
     }
@@ -1295,6 +1554,7 @@ public final class AppState {
         mark: JournalMark? = nil,
         expectedRevision: PairingCredentialRevision? = nil
     ) -> Bool {
+        guard !setupModel.isPeerSupportingSetup else { return false }
         guard let revision = currentDurablePairingRevision,
               expectedRevision == nil || (!tunnelLifecycleOwner.ordinaryRouteRevoked
                 && Self.markAnswerRevisionMatches(
@@ -1337,7 +1597,7 @@ public final class AppState {
 
     @ObservationIgnored private var pendingMarkCredentialRevision: PairingCredentialRevision?
 
-    private var currentDurablePairingRevision: PairingCredentialRevision? {
+    internal var currentDurablePairingRevision: PairingCredentialRevision? {
         guard let pairing = currentDurablePairing else { return nil }
         if let credentialStore {
             let revision = PairingCredentialRevision(from: pairing)
@@ -1352,12 +1612,13 @@ public final class AppState {
         return PairingCredentialRevision(from: pairing)
     }
 
-    private var currentDurablePairing: StoredPairing? {
+    internal var currentDurablePairing: StoredPairing? {
         if let credentialStore { return try? credentialStore.load() }
         return tunnelLifecycleOwner.currentStoredPairing()
     }
 
     internal func beginJournalMarkConfirmationAttempt() -> PairingCredentialRevision? {
+        guard !setupModel.isPeerSupportingSetup else { return nil }
         guard case .connected = tunnelLifecycleOwner.state,
               tunnelLifecycleOwner.localPort != nil,
               !tunnelLifecycleOwner.ordinaryRouteRevoked,
@@ -1452,7 +1713,7 @@ public final class AppState {
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live
     ) {
         // Load configuration
-        let config = AppConfig.loadOrCreateDefault()
+        let config = AppConfig.loadOrCreateDefault(continuationDirectory: SetupContinuationStore.defaultDirectory)
         let pauseManager = PauseManager(defaults: .standard)
         let captureTarget = AppStateBridgeTarget()
         let shortcutController = PauseShortcutController(
@@ -1475,6 +1736,13 @@ public final class AppState {
         let journalMarkConfirmationStore = UserDefaultsJournalMarkConfirmationStore()
         self.journalMarkConfirmationStore = journalMarkConfirmationStore
         let lastDeliveryStore = UserDefaultsLastJournalDeliveryStore()
+        let setupModel = SetupModel(
+            continuationStore: SetupContinuationStore(),
+            mailboxStore: SetupMailboxStore(),
+            freshFlow: FreshJournalFlow(dependencies: .live()),
+            appState: nil
+        )
+        self.setupModel = setupModel
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager
@@ -1589,6 +1857,12 @@ public final class AppState {
         captureManager.configuredSourcesIncludeScreen = { [weak captureTarget] in
             captureTarget?.state?.config.selectedSources.contains(.screen) ?? false
         }
+        captureManager.currentPreviewEpoch = { [previewEpochLock] in
+            previewEpochLock.withLock { $0 }
+        }
+        captureManager.onLatestFrame = { [weak captureTarget] image, streamGen, epoch in
+            captureTarget?.state?.updateLatestFrame(image, epoch: epoch)
+        }
         self.silenceMusicHolder = silenceMusicHolder
         let capture = CaptureCoordinator(
             captureManager: captureManager,
@@ -1650,6 +1924,10 @@ public final class AppState {
             logAdapter: logAdapter
         )
         captureTarget.state = self
+        setupModel.attach(self)
+        if !isSnapshot {
+            setupModel.activate()
+        }
         shortcutController.apply(chord: config.pauseShortcut)
 
         if automaticObservationPipelineEnabled {
@@ -1678,6 +1956,7 @@ public final class AppState {
 
         // Sync microphone priority list with available devices, now and as they connect
         capture.onMicrophonesChanged = { [weak self] in self?.syncMicrophonePriorityList() }
+        configureScreenPreviewInvalidation()
         syncMicrophonePriorityList()
 
         if automaticObservationPipelineEnabled {
@@ -1727,6 +2006,9 @@ public final class AppState {
         notificationStatus: UNAuthorizationStatus = .authorized,
         notifier: (any UserNotifying)? = nil,
         initialTunnelPairing: StoredPairing? = nil,
+        setupModel: SetupModel? = nil,
+        tunnelLifecycleOwner: TunnelLifecycleOwner? = nil,
+        supportingIdentityResolver: SupportingIdentityResolver? = nil,
         sameMachinePairStart: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ deviceLabel: String
@@ -1758,6 +2040,9 @@ public final class AppState {
             isSnapshot: true,
             notifier: notifier ?? NoopUserNotifier(),
             initialTunnelPairing: initialTunnelPairing,
+            setupModel: setupModel,
+            tunnelLifecycleOwner: tunnelLifecycleOwner,
+            supportingIdentityResolver: supportingIdentityResolver,
             sameMachinePairStart: sameMachinePairStart,
             triggerTunnelConnectedSync: triggerTunnelConnectedSync,
             journalURLOpener: journalURLOpener,
@@ -1784,6 +2069,13 @@ public final class AppState {
             case .couldNotCheck:
                 state.microphoneAuthorizationCause = .unknown
             }
+        }
+        let snapshotEpochLock = state.previewEpochLock
+        state.captureManager.currentPreviewEpoch = { [snapshotEpochLock] in
+            snapshotEpochLock.withLock { $0 }
+        }
+        state.captureManager.onLatestFrame = { [weak state] image, _, epoch in
+            state?.updateLatestFrame(image, epoch: epoch)
         }
         return state
     }
@@ -1838,6 +2130,9 @@ public final class AppState {
         isSnapshot: Bool,
         notifier: any UserNotifying,
         initialTunnelPairing: StoredPairing? = nil,
+        setupModel providedSetupModel: SetupModel? = nil,
+        tunnelLifecycleOwner providedTunnelLifecycleOwner: TunnelLifecycleOwner? = nil,
+        supportingIdentityResolver: SupportingIdentityResolver? = nil,
         loginService: any LoginItemService = LiveLoginItemService(),
         placementDecision: AppPlacementDecision = AppPlacementGate.evaluate(),
         receiptStore: any LoginItemRegistrationReceiptStoring = UserDefaultsLoginItemRegistrationReceiptStore(),
@@ -1928,6 +2223,15 @@ public final class AppState {
         self.recoveryCoordinator = .shared
         let silenceMusicHolder = DebugSettingHolder(value: true)
         self.silenceMusicHolder = silenceMusicHolder
+        let snapshotSetupDir = URL(fileURLWithPath: "/var/tmp").appendingPathComponent("snapshot-setup-\(UUID().uuidString)")
+        let setupModel = providedSetupModel ?? SetupModel(
+            continuationStore: SetupContinuationStore(directory: snapshotSetupDir),
+            mailboxStore: SetupMailboxStore(directory: snapshotSetupDir),
+            freshFlow: FreshJournalFlow(dependencies: .inert()),
+            appState: nil
+        )
+        self.setupModel = setupModel
+        if let supportingIdentityResolver { self.supportingIdentityResolver = supportingIdentityResolver }
         let captureManager = CaptureManager(storageManager: storageManager)
         let capture = CaptureCoordinator(
             captureManager: captureManager,
@@ -1969,7 +2273,7 @@ public final class AppState {
         // memory-backed store seeded from the pairing this composition holds.
         let snapshotPairingStore: any PairingStoring = pairingStoring
             ?? InMemoryPairingStore(pairing: initialTunnelPairing)
-        let tunnelLifecycleOwner = TunnelLifecycleOwner.dormantForSnapshot(
+        let tunnelLifecycleOwner = providedTunnelLifecycleOwner ?? TunnelLifecycleOwner.dormantForSnapshot(
             keychainStore: snapshotPairingStore,
             loadPairing: tunnelPairingLoad
         )
@@ -2025,6 +2329,8 @@ public final class AppState {
         visitedSettingsTabs = Set(UserDefaults.standard.stringArray(forKey: visitedSettingsTabsDefaultsKey) ?? [])
         captureTarget.state = self
         fingerprintTarget.state = self
+        setupModel.attach(self)
+        configureScreenPreviewInvalidation()
         uploadCoordinator.refreshLastSuccessfulJournalContact()
         uploadCoordinator.refreshLastJournalDelivery()
 
@@ -2075,6 +2381,7 @@ public final class AppState {
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
 
         guard isConnected(newState), !isConnected(previousState) else { return }
+        setupModel.handleTunnelConnected()
         _ = pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         if let owner = browserIntakeOwner {
@@ -2181,6 +2488,15 @@ public final class AppState {
         NotificationCenter.default.post(name: .openJournalWindow, object: nil)
     }
 
+    public func openJournalWindowDirectly(_ destination: JournalWindowDestination = .root) {
+        nextJournalOpenIntentID += 1
+        journalOpenIntent = JournalOpenIntent(
+            id: nextJournalOpenIntentID,
+            destination: destination
+        )
+        NotificationCenter.default.post(name: .openJournalWindow, object: nil)
+    }
+
     private func openSameMacJournalInBrowser(_ destination: JournalWindowDestination) {
         let conveyBase = "http://127.0.0.1:5015/"
         let url: URL
@@ -2201,6 +2517,11 @@ public final class AppState {
             Logger.setup.error("open journal in browser failed: \(url.absoluteString, privacy: .public)")
             return
         }
+    }
+
+    @MainActor
+    internal func openBrowserURLDirectly(_ url: URL) -> Bool {
+        journalURLOpener(url)
     }
 
     func handleWindowWillClose(identifier: String?) {
@@ -2380,14 +2701,18 @@ public final class AppState {
         authority.setPaused(pauseManager.isPaused)
         Task { await owner.setIntakeEnabled(config.isBrowserIntakeEnabled) }
 
+        let previousPause = self.pauseManager.onPauseIntake
         self.pauseManager.onPauseIntake = { [weak self, weak authority, weak store] in
+            previousPause?()
             authority?.setPaused(true)
             store?.setPaused(true)
             if let listener = self?.browserHostListener {
                 Task { await listener.refreshSnapshot() }
             }
         }
+        let previousResume = self.pauseManager.onResumeIntake
         self.pauseManager.onResumeIntake = { [weak self, weak authority, weak store] in
+            previousResume?()
             authority?.setPaused(false)
             store?.setPaused(false)
             if let owner = self?.browserIntakeOwner {

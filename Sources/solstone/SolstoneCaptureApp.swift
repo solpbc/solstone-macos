@@ -84,10 +84,21 @@ struct AppKitTerminationSeam {
 /// Handles app termination to ensure pending remixes complete
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var pendingOpenedURLs: [URL] = []
     private var menuTrackingObserver: Any?
     private var notificationObservers: [Any] = []
     private var userNotificationDelegate: UserNotificationCenterDelegate?
     private var appKitTerminationSeam = AppKitTerminationSeam()
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let state = AppState.shared else {
+            pendingOpenedURLs.append(contentsOf: urls)
+            return
+        }
+        for url in urls {
+            state.handleIngressURL(url)
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppPlacementRepairCoordinator.shared.signalReadiness()
@@ -133,6 +144,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let state = AppState.shared {
+            for url in pendingOpenedURLs {
+                state.handleIngressURL(url)
+            }
+            pendingOpenedURLs.removeAll()
+
             state.migrateLoginItemToWatchdogIfNeeded()
             Task { @MainActor in
                 await state.reconcileLoginItemRegistrationAfterUpdateIfNeeded()
@@ -152,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             state.reevaluateActivationPolicy(debounced: false)
+            state.ingestStep5IfNeeded()
 #if DEBUG
             guard IngestV3LiveProbe.startTunnelLifecycleIfPermitted(
                 appState: state,
@@ -452,6 +469,18 @@ internal func capturePermissionsMissing(permittedSourcesEmpty: Bool, startDeferr
     permittedSourcesEmpty && !startDeferredForProtectedVideo
 }
 
+public enum LaunchSettingsRoute: Equatable, Sendable {
+    case setup
+    case established
+}
+
+public func launchSettingsRoute(setupPhase: SetupPhase?) -> LaunchSettingsRoute {
+    if setupPhase != nil {
+        return .setup
+    }
+    return .established
+}
+
 @MainActor
 enum FirstLaunchRouting {
     static func route(
@@ -496,26 +525,34 @@ private struct StatusIcon: View {
             .task {
                 guard !hasCheckedSetup else { return }
                 hasCheckedSetup = true
-                let config = appState.config
-                let openPermissions = { @MainActor in
+                let route = launchSettingsRoute(setupPhase: appState.setupModel.phase)
+                switch route {
+                case .setup:
                     openWindow(id: SolstoneSceneID.settings.rawValue)
-                    appState.pendingSettingsTab = "permissions"
                     appState.didOpenWindow(.settings)
                     NSApp.activate(ignoringOtherApps: true)
+                case .established:
+                    let config = appState.config
+                    let openPermissions = { @MainActor in
+                        openWindow(id: SolstoneSceneID.settings.rawValue)
+                        appState.pendingSettingsTab = "permissions"
+                        appState.didOpenWindow(.settings)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                    let openService = { @MainActor in
+                        openWindow(id: SolstoneSceneID.settings.rawValue)
+                        appState.pendingSettingsTab = "journal"
+                        appState.didOpenWindow(.settings)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                    await FirstLaunchRouting.route(
+                        config: config,
+                        waitForPermissionCheck: waitForInitialPermissionCheck,
+                        permissionsMissing: permissionsMissing,
+                        openPermissions: openPermissions,
+                        openService: openService
+                    )
                 }
-                let openService = { @MainActor in
-                    openWindow(id: SolstoneSceneID.settings.rawValue)
-                    appState.pendingSettingsTab = "journal"
-                    appState.didOpenWindow(.settings)
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                await FirstLaunchRouting.route(
-                    config: config,
-                    waitForPermissionCheck: waitForInitialPermissionCheck,
-                    permissionsMissing: permissionsMissing,
-                    openPermissions: openPermissions,
-                    openService: openService
-                )
             }
             .onReceive(NotificationCenter.default.publisher(for: .openSettingsWindow)) { _ in
                 routeOpenSettingsWindow(

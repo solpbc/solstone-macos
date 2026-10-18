@@ -7,6 +7,8 @@ import SolstoneCore
 @preconcurrency import ScreenCaptureKit
 import CoreMedia
 import CoreVideo
+import CoreGraphics
+import VideoToolbox
 
 /// Captures periodic screenshots for a single display using a persistent SCStream
 @MainActor
@@ -16,6 +18,8 @@ public final class ScreenshotCapturer {
     public var onTerminalStop: (@MainActor () -> Void)?
     public var onScreenStopped: (@MainActor () -> Void)?
     public var onFrameDelivered: (@MainActor () -> Void)?
+    public var currentPreviewEpoch: (@Sendable () -> UInt64)?
+    public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
 
     private let videoWriter: VideoWriter
     private let verbose: Bool
@@ -41,6 +45,7 @@ public final class ScreenshotCapturer {
     internal private(set) var _restartDecisionTraceForTesting: [String] = []
     internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
     internal var _streamGenerationForTesting: Int { streamGeneration }
+    internal var _submittedVideoFrameCountForTesting: Int { frameIndex }
     internal var _isRunningForTesting: Bool { isRunning }
     internal var _hasStreamForTesting: Bool { stream != nil }
     internal var _isHealthCheckActiveForTesting: Bool { healthCheckTimer != nil }
@@ -153,8 +158,9 @@ public final class ScreenshotCapturer {
         do {
             // Create stream output handler
             let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
+                let epoch = self?.currentPreviewEpoch?() ?? 0
                 Task { @MainActor in
-                    self?.handleFrameFromOutput(generation: gen, pixelBuffer: pixelBuffer, isIdle: isIdle)
+                    self?.handleFrameFromOutput(generation: gen, pixelBuffer: pixelBuffer, isIdle: isIdle, epoch: epoch)
                 }
             }
 
@@ -193,9 +199,9 @@ public final class ScreenshotCapturer {
         }
     }
 
-    internal func handleFrameFromOutput(generation: Int, pixelBuffer: CVPixelBuffer, isIdle: Bool) {
+    internal func handleFrameFromOutput(generation: Int, pixelBuffer: CVPixelBuffer, isIdle: Bool, epoch: UInt64) {
         guard streamGeneration == generation, isRunning else { return }
-        handleFrame(pixelBuffer, isIdle: isIdle)
+        handleFrame(pixelBuffer, isIdle: isIdle, epoch: epoch)
     }
 
     internal func handleStreamErrorFromDelegate(generation: Int, error: Error) {
@@ -207,7 +213,8 @@ public final class ScreenshotCapturer {
     /// - Parameters:
     ///   - pixelBuffer: The video frame pixel buffer
     ///   - isIdle: True if SCStream reports the frame as idle (no content change)
-    private func handleFrame(_ pixelBuffer: CVPixelBuffer, isIdle: Bool) {
+    ///   - epoch: The preview epoch sampled on the stream queue
+    private func handleFrame(_ pixelBuffer: CVPixelBuffer, isIdle: Bool, epoch: UInt64) {
         guard isRunning else { return }
         onFrameDelivered?()
         healthCheckFrameCount += 1
@@ -218,7 +225,15 @@ public final class ScreenshotCapturer {
             Logger.capture.info("ScreenshotCapturer: First frame received for display \(self.displayID, privacy: .public) after \(elapsed, privacy: .public)s")
         }
 
-        // SCStream tells us when content hasn't changed via frame status
+        // A preview may have been invalidated since the last changed frame (for example,
+        // while startup was still committing). A valid idle buffer can repopulate it;
+        // the receiver still enforces the current epoch, source and pause authority.
+        if let onLatestFrame, let image = downscalePixelBufferToCGImage(pixelBuffer, maxSide: 640) {
+            onLatestFrame(image, streamGeneration, epoch)
+        }
+
+        // SCStream tells us when content hasn't changed via frame status.
+        // Preview delivery must not turn duplicate frames into encoded video frames.
         if isIdle {
             skippedFrames += 1
             if verbose {
@@ -237,6 +252,43 @@ public final class ScreenshotCapturer {
         if verbose {
             Logger.capture.debug("ScreenshotCapturer: Display \(self.displayID, privacy: .public) frame #\(self.frameIndex, privacy: .public) at \(String(format: "%.3f", elapsed), privacy: .public)s")
         }
+    }
+
+    private func downscalePixelBufferToCGImage(_ pixelBuffer: CVPixelBuffer, maxSide: Int = 640) -> CGImage? {
+        var cgImage: CGImage?
+        let status = VTCreateCGImageFromCVPixelBuffer(pixelBuffer, options: nil, imageOut: &cgImage)
+        guard status == noErr, let originalImage = cgImage else { return nil }
+
+        let width = originalImage.width
+        let height = originalImage.height
+        guard width > 0, height > 0 else { return nil }
+        let longest = max(width, height)
+
+        if longest <= maxSide {
+            return originalImage
+        }
+
+        let scale = Double(maxSide) / Double(longest)
+        let targetWidth = max(1, Int(Double(width) * scale))
+        let targetHeight = max(1, Int(Double(height) * scale))
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        guard let context = CGContext(
+            data: nil,
+            width: targetWidth,
+            height: targetHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            return nil
+        }
+
+        context.interpolationQuality = .medium
+        context.draw(originalImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+        return context.makeImage()
     }
 
     /// Stops the capture stream
@@ -398,8 +450,9 @@ public final class ScreenshotCapturer {
                 let attemptGen = gen
 
                 let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
+                    let epoch = self?.currentPreviewEpoch?() ?? 0
                     Task { @MainActor in
-                        self?.handleFrameFromOutput(generation: attemptGen, pixelBuffer: pixelBuffer, isIdle: isIdle)
+                        self?.handleFrameFromOutput(generation: attemptGen, pixelBuffer: pixelBuffer, isIdle: isIdle, epoch: epoch)
                     }
                 }
 

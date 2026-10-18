@@ -305,6 +305,82 @@ struct AppConfigMigrationTests {
         #expect(loaded.isMicrophoneCaptureEnabled)
     }
 
+    @Test func loadOrCreateDefaultFreshBranchInitializesSourcesFalseAndPhaseJournal() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        let tempDir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let config = AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [tempDir.appendingPathComponent("nonexistent.json")],
+            continuationDirectory: tempDir
+        )
+
+        #expect(!config.isScreenCaptureEnabled)
+        #expect(!config.isMicrophoneCaptureEnabled)
+        #expect(UserDefaults.standard.bool(forKey: "didReseedCaptureSourcesOn"))
+        let store = SetupContinuationStore(directory: tempDir)
+        #expect(store.load()?.phase == .journal)
+    }
+
+    @Test func missingSourceKeysStillLoadTrue() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        UserDefaults.standard.set(true, forKey: "excludePrivateBrowsing")
+        let loaded = AppConfig.load()
+        #expect(loaded.isScreenCaptureEnabled)
+        #expect(loaded.isMicrophoneCaptureEnabled)
+    }
+
+    @Test func flagUnsetAndBothOffStillReseedsBothOn() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        var config = AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false)
+        try config.save()
+        UserDefaults.standard.removeObject(forKey: "didReseedCaptureSourcesOn")
+
+        var loaded = AppConfig.load()
+        #expect(!loaded.isScreenCaptureEnabled)
+        #expect(!loaded.isMicrophoneCaptureEnabled)
+
+        loaded.reseedCaptureSourcesOnIfNeeded()
+        #expect(loaded.isScreenCaptureEnabled)
+        #expect(loaded.isMicrophoneCaptureEnabled)
+        #expect(UserDefaults.standard.bool(forKey: "didReseedCaptureSourcesOn"))
+    }
+
+    @Test func flagUnsetAndOneSourceOnOnlySetsTheFlag() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        var config = AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: false)
+        try config.save()
+        UserDefaults.standard.removeObject(forKey: "didReseedCaptureSourcesOn")
+
+        var loaded = AppConfig.load()
+        loaded.reseedCaptureSourcesOnIfNeeded()
+        #expect(loaded.isScreenCaptureEnabled)
+        #expect(!loaded.isMicrophoneCaptureEnabled)
+        #expect(UserDefaults.standard.bool(forKey: "didReseedCaptureSourcesOn"))
+    }
+
+    @Test func flagAlreadyTrueAndBothOffStaysOff() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        var config = AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false)
+        try config.save()
+        UserDefaults.standard.set(true, forKey: "didReseedCaptureSourcesOn")
+
+        var loaded = AppConfig.load()
+        loaded.reseedCaptureSourcesOnIfNeeded()
+        #expect(!loaded.isScreenCaptureEnabled)
+        #expect(!loaded.isMicrophoneCaptureEnabled)
+    }
+
     private func clearServiceDefaults() {
         for key in ["serverURL", "serverKey", "serviceMode"] {
             UserDefaults.standard.removeObject(forKey: key)

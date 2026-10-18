@@ -61,6 +61,8 @@ public protocol SegmentScreenshotCapturing: AnyObject, Sendable {
     var onTerminalStop: (@MainActor () -> Void)? { get set }
     var onScreenStopped: (@MainActor () -> Void)? { get set }
     var onFrameDelivered: (@MainActor () -> Void)? { get set }
+    var currentPreviewEpoch: (@Sendable () -> UInt64)? { get set }
+    var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)? { get set }
     func start() async throws
     func stop() async
     func updateContentFilter(_ filter: SCContentFilter) async
@@ -77,6 +79,14 @@ public extension SegmentScreenshotCapturing {
         set {}
     }
     var onFrameDelivered: (@MainActor () -> Void)? {
+        get { nil }
+        set {}
+    }
+    var currentPreviewEpoch: (@Sendable () -> UInt64)? {
+        get { nil }
+        set {}
+    }
+    var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)? {
         get { nil }
         set {}
     }
@@ -147,6 +157,8 @@ public final class SegmentWriter {
     public var onSegmentSetAside: (@MainActor (String) -> Void)?
     public var onScreenFailure: (@MainActor (ScreenFailureKind) -> Void)?
     public var onFrameDelivered: (@MainActor (CGDirectDisplayID) -> Void)?
+    public var currentPreviewEpoch: (@Sendable () -> UInt64)?
+    public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
 
     private var screenshotCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
     private var audioManager: (any SegmentAudioManaging)?
@@ -365,6 +377,10 @@ public final class SegmentWriter {
                         }
                         capturer.onFrameDelivered = { [weak self] in
                             self?.onFrameDelivered?(info.displayID)
+                        }
+                        capturer.currentPreviewEpoch = currentPreviewEpoch
+                        capturer.onLatestFrame = { [weak self] image, streamGen, epoch in
+                            self?.onLatestFrame?(image, streamGen, epoch)
                         }
                         try await capturer.start()
                         constructedCapturers[info.displayID] = capturer

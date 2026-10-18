@@ -4,6 +4,7 @@ import os
 
 extension JournalMarkConfirmationDriver {
     func confirm(appState: AppState) {
+        guard !appState.setupModel.isPeerSupportingSetup else { return }
         guard case .valid(let mark) = phase,
               appState.recordJournalMarkConfirmed(
                 mark: mark,
@@ -14,6 +15,7 @@ extension JournalMarkConfirmationDriver {
 
     /// Continuing after a check that could not finish is the owner's answer too.
     func continueAnyway(appState: AppState) {
+        guard !appState.setupModel.isPeerSupportingSetup else { return }
         guard case .unverified = phase,
               appState.recordJournalMarkConfirmed(
                 expectedRevision: appState.currentJournalMarkAttemptRevision
@@ -27,6 +29,7 @@ extension JournalMarkConfirmationDriver {
         appState: AppState,
         fetcher: JournalIdentityFetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
     ) {
+        guard !appState.setupModel.isPeerSupportingSetup else { return }
         guard !isPresented,
               appState.needsJournalMarkConfirmation,
               let journal = appState.tunnelLifecycleOwner.cachedJournalMarkIdentity,
@@ -124,6 +127,7 @@ extension JournalMarkConfirmationDriver {
         appState: AppState,
         fetcher: JournalIdentityFetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
     ) {
+        guard !appState.setupModel.isPeerSupportingSetup else { return }
         // The automatic same-machine adoption re-uses this ceremony to take over a journal the
         // owner already had linked on this Mac. It runs automatically during launch, so leaving the mark
         // question in place means an owner who merely took an update is asked to make a security

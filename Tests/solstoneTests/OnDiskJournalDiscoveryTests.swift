@@ -91,7 +91,7 @@ struct OnDiskJournalDiscoveryTests {
     @Test func runningJournalPrecedenceSkipsOnDiskDiscovery() async {
         var onDiskCalls = 0
         let model = await discoverLocalJournalPanelModel(
-            fetchIdentity: { _ in .uiTestSample },
+            fetchIdentity: { _ in .mark(.uiTestSample, instanceID: "inst") },
             onDiskDiscovery: {
                 onDiskCalls += 1
                 return .found(path: "/journal")

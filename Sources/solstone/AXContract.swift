@@ -277,6 +277,19 @@ enum AXContract {
         UpdatesAXID.frequencyState,
         UpdatesAXID.automaticDownloads,
         UpdatesAXID.debugStatePicker,
+        AXID.Settings.Setup.phase,
+        AXID.Settings.Setup.Microphone.turnOn,
+        AXID.Settings.Setup.Microphone.notNow,
+        AXID.Settings.Setup.Microphone.continue,
+        AXID.Settings.Setup.Screen.turnOn,
+        AXID.Settings.Setup.Screen.notNow,
+        AXID.Settings.Setup.Screen.continue,
+        AXID.Settings.Setup.Screen.frame,
+        AXID.Settings.Setup.Connection.retry,
+        AXID.Settings.Setup.Connection.openJournal,
+        AXID.Settings.Setup.Connection.loginItem,
+        AXID.Settings.Setup.Journal.continue,
+        AXID.Settings.Setup.Journal.retry,
         AXID.About.logo,
         AXID.About.title,
         AXID.About.aboutState,
@@ -386,6 +399,8 @@ enum AXContract {
             "UpdateStatus": UpdateStatus.axTokens,
             "ExcludedAppPickerAvailability": ExcludedAppPickerAvailability.allCases.map(\.axToken),
             "PrivateWindowAccessibilityState": PrivateWindowAccessibilityState.allCases.map(\.axToken),
+            "SetupPhase": SetupPhase.allCases.map(\.rawValue),
+            "SetupScreenFrameAXState": SetupScreenFrameAXState.allCases.map(\.rawValue),
             "PermissionSourceLiveAXState": PermissionSourceLiveAXState.allCases.map(\.axToken)
         ]
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
@@ -401,6 +416,8 @@ enum AXContract {
 
     static var states: [String: StateBinding] {
         var result: [String: StateBinding] = [
+            AXID.Settings.Setup.phase: .enum("SetupPhase"),
+            AXID.Settings.Setup.Screen.frame: .enum("SetupScreenFrameAXState"),
             AXID.Menubar.statusIconState: .enum("MenubarIconState"),
             AXID.Menubar.statusIconOverlayState: .enum("MenubarIconOverlayState"),
             AXID.Menubar.statusRowState: .enum("MenubarStatusRowState"),
@@ -494,6 +511,7 @@ enum AXContract {
                 .map(stateKey(for:))
         )
         keys.insert(AXID.Settings.Help.logExportFailureReason)
+        keys.formUnion([AXID.Settings.Setup.phase, AXID.Settings.Setup.Screen.frame])
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         keys.formUnion([
             AXID.Settings.Sources.browserChrome, AXID.Settings.Sources.browserEdge,

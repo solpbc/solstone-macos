@@ -12,11 +12,13 @@ import SolstoneCore
 @MainActor
 struct JournalClientBehaviorTests {
     @Test func localDiscoveryReturnsForkWhenIdentityUncommittedOrAbsent() async {
-        let uncommitted = await discoverLocalJournal { _ in nil }
-        let absent = await discoverLocalJournal { _ in nil }
+        let uncommitted = await discoverLocalJournal { _ in .uncommitted(instanceID: "inst") }
+        let absent = await discoverLocalJournal { _ in .absent }
+        let failed = await discoverLocalJournal { _ in .failed(.networkError) }
 
-        #expect(uncommitted == .fork)
+        #expect(uncommitted == .uncommitted)
         #expect(absent == .fork)
+        #expect(failed == .fork)
     }
 
     @Test func localDiscoveryProbeRunsOnlyForUnconfiguredNonTunnelState() {
@@ -245,13 +247,13 @@ struct JournalClientBehaviorTests {
         )
         #expect(openedService)
 
-        let discovery = await discoverLocalJournal { _ in nil }
+        let discovery = await discoverLocalJournal { _ in .absent }
         #expect(discovery == .fork)
     }
 
     @Test func firstRunLocalFoundAndNothingFoundPathsResolveToExpectedForkStates() async {
-        let found = await discoverLocalJournal { _ in .uiTestSample }
-        let notFound = await discoverLocalJournal { _ in nil }
+        let found = await discoverLocalJournal { _ in .mark(.uiTestSample, instanceID: "inst") }
+        let notFound = await discoverLocalJournal { _ in .absent }
 
         #expect(found == .found(.uiTestSample))
         #expect(notFound == .fork)

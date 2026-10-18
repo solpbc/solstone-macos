@@ -100,4 +100,14 @@ struct FirstLaunchRoutingTests {
         #expect(permissionOpenCount == 0)
         #expect(serviceOpenCount == 2)
     }
+
+    @Test func launchSettingsRouteSelectsSetupWhenPhaseIsPresent() {
+        for phase in SetupPhase.allCases {
+            #expect(launchSettingsRoute(setupPhase: phase) == .setup)
+        }
+    }
+
+    @Test func launchSettingsRouteSelectsEstablishedWhenPhaseIsNil() {
+        #expect(launchSettingsRoute(setupPhase: nil) == .established)
+    }
 }

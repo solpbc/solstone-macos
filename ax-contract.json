@@ -273,6 +273,19 @@
       "settings.service.pairing.switchConfirm",
       "settings.service.pairing.unpair",
       "settings.service.prereq.permissions",
+      "settings.setup.connection.loginItem",
+      "settings.setup.connection.openJournal",
+      "settings.setup.connection.retry",
+      "settings.setup.journal.continue",
+      "settings.setup.journal.retry",
+      "settings.setup.microphone.continue",
+      "settings.setup.microphone.notNow",
+      "settings.setup.microphone.turnOn",
+      "settings.setup.phase",
+      "settings.setup.screen.continue",
+      "settings.setup.screen.frame",
+      "settings.setup.screen.notNow",
+      "settings.setup.screen.turnOn",
       "settings.sources.browserIntake.enabled",
       "settings.sources.browsers.chrome",
       "settings.sources.browsers.edge",
@@ -495,6 +508,14 @@
     "settings.service.pairing.flow.state" : {
       "kind" : "enum",
       "vocabulary" : "PairingFlowState"
+    },
+    "settings.setup.phase" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupPhase"
+    },
+    "settings.setup.screen.frame" : {
+      "kind" : "enum",
+      "vocabulary" : "SetupScreenFrameAXState"
     },
     "settings.sidebar.tab.{tab}.state" : {
       "kind" : "enum",
@@ -798,6 +819,16 @@
       "ready",
       "needs_attention",
       "some_unavailable"
+    ],
+    "SetupPhase" : [
+      "journal",
+      "microphone",
+      "screen",
+      "connection"
+    ],
+    "SetupScreenFrameAXState" : [
+      "live",
+      "off"
     ],
     "SidebarBadgeState" : [
       "done",

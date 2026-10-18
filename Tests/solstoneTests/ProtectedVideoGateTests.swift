@@ -479,4 +479,84 @@ struct ProtectedVideoGateTests {
         let settingsState = SettingsObservationAXState(rowState)
         #expect(settingsState.axToken == "protected_video")
     }
+
+    @Test @MainActor func freshConfigBothSourcesOffDoesNotAutoStartEvenWithGrants() async throws {
+        let root = try makeTempDirectory("autostart-fresh-off")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var config = AppConfig()
+        config.isScreenCaptureEnabled = false
+        config.isMicrophoneCaptureEnabled = false
+
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            allowsEmptyDisplayConfigurationForTesting: false
+        )
+
+        let coordinator = CaptureCoordinator(
+            captureManager: manager,
+            pauseManager: PauseManager(),
+            audioDeviceMonitor: AudioDeviceMonitor(startListening: false),
+            isTerminating: { false },
+            configProvider: { (sources: config.selectedSources, disabled: Set<String>(), enabled: Set<String>()) },
+            bannerSink: { _ in },
+            screenPermissionProvider: ScreenRecordingPermissionProvider(
+                hasPrompted: { true },
+                preflight: { true },
+                checkScreenRecording: { true },
+                resetPromptedFlag: {}
+            ),
+            permissionPollScheduler: PermissionPollTestScheduler().scheduler
+        )
+        coordinator.microphoneAuthorizationCause = .authorized
+
+        await coordinator.checkPermissionsAndAutoStart(startReason: .autoStart)
+
+        #expect(!coordinator.isRecording)
+        #expect(manager.state.isIdle)
+    }
+
+    @Test @MainActor func configSourcesOnWithGrantsDoesAutoStart() async throws {
+        let root = try makeTempDirectory("autostart-sources-on")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var config = AppConfig()
+        config.isScreenCaptureEnabled = true
+        config.isMicrophoneCaptureEnabled = true
+
+        let factoryCalls = LockedCounter()
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { outputDirectory, _, _, _ in
+                factoryCalls.increment()
+                return FakeCaptureSegment(outputDirectory: outputDirectory)
+            },
+            allowsEmptyDisplayConfigurationForTesting: true,
+            windowList: { [] },
+            unlockResumeDelay: {}
+        )
+
+        let coordinator = CaptureCoordinator(
+            captureManager: manager,
+            pauseManager: PauseManager(),
+            audioDeviceMonitor: AudioDeviceMonitor(startListening: false),
+            isTerminating: { false },
+            configProvider: { (sources: config.selectedSources, disabled: Set<String>(), enabled: Set<String>()) },
+            bannerSink: { _ in },
+            screenPermissionProvider: ScreenRecordingPermissionProvider(
+                hasPrompted: { true },
+                preflight: { true },
+                checkScreenRecording: { true },
+                resetPromptedFlag: {}
+            ),
+            permissionPollScheduler: PermissionPollTestScheduler().scheduler
+        )
+        coordinator.microphoneAuthorizationReader = { .authorized }
+        coordinator.activate()
+
+        await coordinator.checkPermissionsAndAutoStart(startReason: .autoStart)
+
+        #expect(coordinator.isRecording)
+        #expect(manager.state.isRecording)
+    }
 }

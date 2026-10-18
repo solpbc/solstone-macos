@@ -320,7 +320,8 @@ public struct AppConfig: Sendable {
     /// Also migrates from config.json if present
     public static func loadOrCreateDefault(
         legacyConfigPaths: [URL]? = nil,
-        log: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
+        log: any ClassifiedLogSinking = LoggerClassifiedLogSink.general,
+        continuationDirectory: URL? = nil
     ) -> AppConfig {
         let defaults = UserDefaults.standard
         let legacyConfigPaths = legacyConfigPaths ?? productionLegacyConfigPaths
@@ -346,9 +347,16 @@ public struct AppConfig: Sendable {
         }
 
         // Create default config
-        var defaultConfig = AppConfig()
+        var defaultConfig = AppConfig(
+            isScreenCaptureEnabled: false,
+            isMicrophoneCaptureEnabled: false
+        )
         defaultConfig.excludedApps = defaultExclusions
         try? defaultConfig.save()
+        defaults.set(true, forKey: Keys.didReseedCaptureSourcesOn)
+        if let continuationDirectory {
+            try? SetupContinuationStore(directory: continuationDirectory).save(SetupContinuation(phase: .journal))
+        }
         Logger.general.info("Created default config in UserDefaults")
         return defaultConfig
     }

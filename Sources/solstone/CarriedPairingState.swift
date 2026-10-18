@@ -54,6 +54,11 @@ struct PairingCredentialRevision: Codable, Sendable, Equatable {
     let fingerprint: String
     let revision: String
 
+    init(fingerprint: String, revision: String) {
+        self.fingerprint = fingerprint
+        self.revision = revision
+    }
+
     init(from pairing: StoredPairing) {
         fingerprint = pairing.fingerprint
         revision = SHA256Digest.hex(Data(PairingCredentialStore.identityToken(for: pairing).utf8))

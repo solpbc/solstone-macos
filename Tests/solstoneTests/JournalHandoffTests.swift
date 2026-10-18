@@ -706,7 +706,7 @@ struct JournalHandoffTests {
             world: world,
             fetchIdentity: { _ in
                 calls += 1
-                return calls == 1 ? nil : .uiTestSample
+                return calls == 1 ? .absent : .mark(.uiTestSample, instanceID: "inst")
             },
             sleep: { _ in }
         )
@@ -731,7 +731,7 @@ struct JournalHandoffTests {
             world: world,
             fetchIdentity: { _ in
                 calls += 1
-                return nil
+                return .absent
             },
             waitingPollInterval: .milliseconds(5)
         )
@@ -1048,7 +1048,7 @@ struct JournalHandoffTests {
 
     private func freshFlow(
         world: TestWorld,
-        fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalMark? = { _ in nil },
+        fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalIdentityResolution = { _ in .absent },
         waitingPollInterval: Duration = .milliseconds(1),
         sleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = { duration in
             try await Task.sleep(for: duration)

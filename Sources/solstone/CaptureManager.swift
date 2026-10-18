@@ -38,6 +38,8 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     var onSegmentSetAside: (@MainActor (String) -> Void)? { get set }
     var onScreenFailure: (@MainActor (ScreenFailureKind) -> Void)? { get set }
     var onFrameDelivered: (@MainActor (CGDirectDisplayID) -> Void)? { get set }
+    var currentPreviewEpoch: (@Sendable () -> UInt64)? { get set }
+    var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)? { get set }
 }
 
 public extension CaptureSegmentWriting {
@@ -60,6 +62,14 @@ public extension CaptureSegmentWriting {
         set {}
     }
     var onFrameDelivered: (@MainActor (CGDirectDisplayID) -> Void)? {
+        get { nil }
+        set {}
+    }
+    var currentPreviewEpoch: (@Sendable () -> UInt64)? {
+        get { nil }
+        set {}
+    }
+    var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)? {
         get { nil }
         set {}
     }
@@ -177,7 +187,14 @@ public final class CaptureManager {
     private var hasLiveMicrophoneSelection = false
     internal var microphoneSelectionProvider: (@MainActor () -> (disabled: Set<String>, enabled: Set<String>))?
 
-    public private(set) var activeSources: CaptureSources = []
+    public private(set) var activeSources: CaptureSources = [] {
+        didSet {
+            if oldValue.contains(.screen) != activeSources.contains(.screen) {
+                onScreenActiveSourcesChanged?(activeSources.contains(.screen))
+            }
+        }
+    }
+    public var onScreenActiveSourcesChanged: (@MainActor (Bool) -> Void)?
     private var sessionSources: CaptureSources = []
     internal var sessionSourcesForTesting: CaptureSources { sessionSources }
     internal var configuredSourcesIncludeScreen: (@MainActor () -> Bool)?
@@ -198,7 +215,14 @@ public final class CaptureManager {
     /// UIDs of input devices another process is currently running input on.
     internal var inputInUseElsewhere: @MainActor () -> Set<String> = MicrophoneMonitor.inputDeviceUIDsInUseByOtherProcesses
     private let shareableContentProvider: @MainActor () async throws -> SCShareableContent
-    private(set) var state: State = .idle
+    private(set) var state: State = .idle {
+        didSet {
+            if oldValue.pausedReasons.contains(.protectedVideo) != state.pausedReasons.contains(.protectedVideo) {
+                onProtectedVideoPauseChanged?(state.pausedReasons.contains(.protectedVideo))
+            }
+        }
+    }
+    public var onProtectedVideoPauseChanged: (@MainActor (Bool) -> Void)?
 
     /// Called when state changes
     var onStateChanged: ((State) -> Void)?
@@ -217,9 +241,13 @@ public final class CaptureManager {
 
     public private(set) var currentScreenFailure: ScreenFailureKind?
     public var onScreenFailureChanged: (@MainActor (ScreenFailureKind?) -> Void)?
+    public var currentPreviewEpoch: (@Sendable () -> UInt64)?
+    public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
     private var requestedDisplayIDs: Set<CGDirectDisplayID> = []
     private var framedSinceFailure: Set<CGDirectDisplayID> = []
     private var isDisplayMembershipKnown: Bool = true
+
+    public var onScreenPreviewInvalidated: (@MainActor () -> Void)?
 
     public func clearScreenFailure() {
         currentScreenFailure = nil
@@ -229,8 +257,9 @@ public final class CaptureManager {
         onScreenFailureChanged?(nil)
     }
 
-    private func recordScreenFailure(_ kind: ScreenFailureKind) {
+    internal func recordScreenFailure(_ kind: ScreenFailureKind) {
         currentScreenFailure = kind
+        onScreenPreviewInvalidated?()
         framedSinceFailure.removeAll()
         onScreenFailureChanged?(kind)
     }
@@ -920,6 +949,11 @@ public final class CaptureManager {
         segment.onFrameDelivered = { [weak self, weak segment] displayID in
             guard let self, let segment, self.currentSegment?.outputDirectory == segment.outputDirectory else { return }
             self.recordFrame(displayID: displayID)
+        }
+        segment.currentPreviewEpoch = currentPreviewEpoch
+        segment.onLatestFrame = { [weak self, weak segment] image, streamGen, epoch in
+            guard let self, let segment, self.currentSegment?.outputDirectory == segment.outputDirectory else { return }
+            self.onLatestFrame?(image, streamGen, epoch)
         }
         currentSegment = segment
 

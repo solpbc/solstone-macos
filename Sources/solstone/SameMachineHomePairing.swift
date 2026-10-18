@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import JournalMarkKit
 import SolstoneCore
 import SPLTunnel
 
@@ -228,4 +229,192 @@ func performSameMachineHomePairing(
     case .idle, .pairing, .switchConfirmPending, .switched, .saveFailed, .failed:
         return .failed(.ceremony(finalState))
     }
+}
+
+enum SetupVerificationFailure: Equatable, Sendable {
+    case pairStart(SameMachinePairStartFailureKind)
+    case linkRejection(SameMachinePairLinkRejection)
+    case fingerprintMismatch
+    case caPinMismatch
+    case ceremony(PairingFlowState)
+    case durableInstanceMismatch
+    case identityFailure(JournalIdentityFailure)
+    case identityAbsent
+    case recordFailed
+}
+
+enum SupportingConnectionOutcome: Equatable, Sendable {
+    case recorded(JournalMark)
+    case alreadyRecorded
+    case notEligible
+    case stillSettingUp(instanceID: String?)
+    case pairStartFailed(SameMachinePairStartFailureKind)
+    case linkRejected(SameMachinePairLinkRejection)
+    case fingerprintOrPinMismatch
+    case ceremonyFailed(PairingFlowState)
+    case durableInstanceMismatch
+    case fetchAbsent
+    case fetchFailed(JournalIdentityFailure)
+    case recordFailed
+}
+
+func decodeHexPrefix16(_ hex: String) -> [UInt8]? {
+    guard hex.count >= 32 else { return nil }
+    var bytes = [UInt8]()
+    bytes.reserveCapacity(16)
+    var index = hex.startIndex
+    for _ in 0..<16 {
+        let nextIndex = hex.index(index, offsetBy: 2)
+        guard let byte = UInt8(hex[index..<nextIndex], radix: 16) else { return nil }
+        bytes.append(byte)
+        index = nextIndex
+    }
+    return bytes
+}
+
+func caFingerprintMatches(
+    expectedLowerHex: String,
+    responseFingerprint: String,
+    pairURL: PairURL
+) -> Bool {
+    let expected = expectedLowerHex.lowercased()
+    guard expected.count == 64,
+          expected.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+        return false
+    }
+    guard responseFingerprint.lowercased() == expected else {
+        return false
+    }
+    guard pairURL.caPin.kind == .certificateSHA256 else {
+        return false
+    }
+    guard let prefix16 = decodeHexPrefix16(expected),
+          pairURL.caPin.prefixBytes == prefix16 else {
+        return false
+    }
+    return true
+}
+
+struct SupportingAdmission: Equatable, Sendable {
+    let revision: PairingCredentialRevision
+    let instanceID: String
+    let caMatches: Bool
+
+    init(revision: PairingCredentialRevision, instanceID: String, caMatches: Bool) {
+        self.revision = revision
+        self.instanceID = instanceID
+        self.caMatches = caMatches
+    }
+}
+
+func caChainContainsFingerprint(caChainPEM: String, expectedLowerHex: String) -> Bool {
+    guard let certs = try? CertChain.certificates(fromPEM: caChainPEM) else {
+        return false
+    }
+    return certs.contains { CertChain.sha256Fingerprint(of: $0) == expectedLowerHex }
+}
+
+@MainActor
+func verifySupportingConnection(
+    expectedInstanceID: String,
+    expectedCAFingerprint: String,
+    heldState: SameMachineStoredPairingState,
+    isMarkAlreadyRecorded: Bool,
+    captureAdmission: () -> SupportingAdmission?,
+    confirmAdmission: (SupportingAdmission) -> Bool,
+    startPairing: () async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>,
+    verifyLink: (String) -> Result<Void, SameMachinePairLinkRejection> = { verifySameMachinePairLink($0) },
+    submit: (String) async -> PairingFlowState,
+    durableInstanceID: () -> String?,
+    resolveIdentity: () async -> JournalIdentityResolution,
+    record: (JournalMark, PairingCredentialRevision) async -> Bool
+) async -> SupportingConnectionOutcome {
+    func executeFetchAndAdmission(admission: SupportingAdmission) async -> SupportingConnectionOutcome {
+        let resolution = await resolveIdentity()
+        guard confirmAdmission(admission) else {
+            return .durableInstanceMismatch
+        }
+        switch resolution {
+        case .mark(let mark, let instanceID):
+            guard instanceID == expectedInstanceID, durableInstanceID() == expectedInstanceID else {
+                return .durableInstanceMismatch
+            }
+            guard await record(mark, admission.revision) else {
+                return .recordFailed
+            }
+            return .recorded(mark)
+        case .uncommitted(let instanceID):
+            return .stillSettingUp(instanceID: instanceID)
+        case .absent:
+            return .fetchAbsent
+        case .failed(let failure):
+            return .fetchFailed(failure)
+        }
+    }
+
+    if durableInstanceID() == expectedInstanceID {
+        guard let admission = captureAdmission() else {
+            return .fetchAbsent
+        }
+        guard admission.instanceID == expectedInstanceID, admission.caMatches else {
+            return .fingerprintOrPinMismatch
+        }
+        if isMarkAlreadyRecorded {
+            return .alreadyRecorded
+        }
+        return await executeFetchAndAdmission(admission: admission)
+    }
+
+    guard heldState == .noneHeld else {
+        return .notEligible
+    }
+
+    let startResult = await startPairing()
+    let response: SameMachinePairStartResponse
+    switch startResult {
+    case .success(let resp):
+        response = resp
+    case .failure(let failure):
+        return .pairStartFailed(failure.kind)
+    }
+
+    switch verifyLink(response.pairLink) {
+    case .success:
+        break
+    case .failure(let rejection):
+        return .linkRejected(rejection)
+    }
+
+    guard let pairURL = try? PairURL(string: response.pairLink) else {
+        return .linkRejected(.unparsable)
+    }
+
+    guard caFingerprintMatches(
+        expectedLowerHex: expectedCAFingerprint,
+        responseFingerprint: response.caFingerprint,
+        pairURL: pairURL
+    ) else {
+        return .fingerprintOrPinMismatch
+    }
+
+    let flowState = await submit(response.pairLink)
+    switch flowState {
+    case .paired, .alreadyConnected:
+        break
+    default:
+        return .ceremonyFailed(flowState)
+    }
+
+    guard durableInstanceID() == expectedInstanceID else {
+        return .durableInstanceMismatch
+    }
+
+    guard let admission = captureAdmission() else {
+        return .fetchAbsent
+    }
+    guard admission.instanceID == expectedInstanceID, admission.caMatches else {
+        return .fingerprintOrPinMismatch
+    }
+
+    return await executeFetchAndAdmission(admission: admission)
 }

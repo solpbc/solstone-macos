@@ -1,0 +1,854 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 sol pbc
+
+import Foundation
+import JournalMarkKit
+import Observation
+import os
+import SolstoneCore
+
+@MainActor
+@Observable
+final class SetupModel {
+    let continuationStore: SetupContinuationStore
+    let mailboxStore: SetupMailboxStore
+    let freshFlow: FreshJournalFlow
+    weak var appState: AppState?
+
+    private let resolveIdentityOverride: (@Sendable (String, String?) async -> JournalIdentityResolution)?
+    private let sleepDuration: Duration
+    private let requestMicrophone: @MainActor () async -> Void
+    private let requestScreen: @MainActor () -> Void
+
+    private(set) var continuation: SetupContinuation?
+    private(set) var isPeerSupportingSetup: Bool = false
+    private(set) var acknowledgementError: String?
+    private(set) var finalOpenError: String?
+    private(set) var ownerPairingError: String?
+    private(set) var journalPollingText: String?
+    private(set) var journalPollingError: String?
+    var olderDiscoveredMark: JournalMark?
+
+    enum ConnectionStepState: Equatable {
+        case idle
+        case connecting
+        case failed(String)
+        case connected(JournalMark)
+    }
+    private(set) var connectionStepState: ConnectionStepState = .idle
+
+    public static func isSupporting(continuation: SetupContinuation?) -> Bool {
+        guard let continuation, continuation.phase != nil, !continuation.completed else { return false }
+        return continuation.mode == .supporting && continuation.accepted?.isValid == true
+    }
+
+    @ObservationIgnored
+    private var journalPollingTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var connectionTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var currentConnectionTaskID: UUID?
+    @ObservationIgnored
+    private var currentConnectingHandoffID: UUID?
+    @ObservationIgnored
+    private var retryAfterConnection = false
+    @ObservationIgnored
+    private var finalOpenInFlight = false
+    private(set) var journalOpenedPendingCompletion = false
+
+    private(set) var phase: SetupPhase?
+
+    @discardableResult
+    internal func setPhase(_ newPhase: SetupPhase?) -> Bool {
+        var cont = continuation ?? SetupContinuation()
+        if let newPhase {
+            cont.phase = newPhase
+            cont.completed = false
+            do {
+                try continuationStore.save(cont)
+                self.continuation = cont
+                self.isPeerSupportingSetup = Self.isSupporting(continuation: cont)
+                self.phase = newPhase
+                if newPhase == .journal {
+                    startJournalPhase()
+                } else {
+                    stopJournalPolling()
+                }
+                if newPhase == .connection && isPeerSupportingSetup {
+                    startConnectionPhase()
+                } else if newPhase != .connection {
+                    currentConnectingHandoffID = nil
+                    connectionTask?.cancel()
+                    connectionTask = nil
+                    currentConnectionTaskID = nil
+                }
+                return true
+            } catch {
+                return false
+            }
+        } else {
+            cont.phase = nil
+            cont.completed = true
+            do {
+                try continuationStore.save(cont)
+                self.continuation = cont
+                self.isPeerSupportingSetup = Self.isSupporting(continuation: cont)
+                self.phase = nil
+                stopJournalPolling()
+                currentConnectingHandoffID = nil
+                connectionTask?.cancel()
+                connectionTask = nil
+                currentConnectionTaskID = nil
+                return true
+            } catch {
+                return false
+            }
+        }
+    }
+
+    @discardableResult
+    public func switchToOwnerComparison() -> Bool {
+        ownerPairingError = nil
+        guard phase != nil else { return true }
+        guard var cont = continuation else { return false }
+        cont.mode = .ownerComparison
+        do {
+            try continuationStore.save(cont)
+            self.continuation = cont
+            self.isPeerSupportingSetup = Self.isSupporting(continuation: cont)
+            self.connectionStepState = .idle
+            stopJournalPolling()
+            self.currentConnectingHandoffID = nil
+            connectionTask?.cancel()
+            connectionTask = nil
+            currentConnectionTaskID = nil
+            return true
+        } catch {
+            ownerPairingError = UICopy.SETUP_COULDNT_FINISH
+            return false
+        }
+    }
+
+    public init(
+        continuationStore: SetupContinuationStore,
+        mailboxStore: SetupMailboxStore,
+        freshFlow: FreshJournalFlow,
+        resolveIdentity: (@Sendable (String, String?) async -> JournalIdentityResolution)? = nil,
+        sleepDuration: Duration = .seconds(2),
+        requestMicrophone: @escaping @MainActor () async -> Void = { await PermissionChecker().requestMicrophone() },
+        requestScreen: @escaping @MainActor () -> Void = { PermissionChecker().promptScreenRecording() },
+        appState: AppState? = nil
+    ) {
+        self.continuationStore = continuationStore
+        self.mailboxStore = mailboxStore
+        self.freshFlow = freshFlow
+        self.resolveIdentityOverride = resolveIdentity
+        self.sleepDuration = sleepDuration
+        self.requestMicrophone = requestMicrophone
+        self.requestScreen = requestScreen
+        self.appState = appState
+
+        let loaded = continuationStore.load()
+        self.continuation = loaded
+        self.phase = loaded?.phase
+        self.isPeerSupportingSetup = Self.isSupporting(continuation: loaded)
+    }
+
+    public convenience init(
+        continuationStore: SetupContinuationStore? = nil,
+        mailboxDirectory: URL,
+        freshFlow: FreshJournalFlow? = nil,
+        resolveIdentity: (@Sendable (String, String?) async -> JournalIdentityResolution)? = nil,
+        sleepDuration: Duration = .seconds(2),
+        requestMicrophone: @escaping @MainActor () async -> Void = { await PermissionChecker().requestMicrophone() },
+        requestScreen: @escaping @MainActor () -> Void = { PermissionChecker().promptScreenRecording() },
+        appState: AppState? = nil
+    ) {
+        let store = continuationStore ?? SetupContinuationStore(directory: mailboxDirectory)
+        let mailbox = SetupMailboxStore(directory: mailboxDirectory)
+        let flow = freshFlow ?? FreshJournalFlow(dependencies: .inert())
+        self.init(
+            continuationStore: store,
+            mailboxStore: mailbox,
+            freshFlow: flow,
+            resolveIdentity: resolveIdentity,
+            sleepDuration: sleepDuration,
+            requestMicrophone: requestMicrophone,
+            requestScreen: requestScreen,
+            appState: appState
+        )
+    }
+
+    public func attach(_ appState: AppState) {
+        self.appState = appState
+    }
+
+    public func activate() {
+        if phase == .journal {
+            startJournalPhase()
+        } else if phase == .connection && isPeerSupportingSetup {
+            startConnectionPhase()
+        }
+    }
+
+    func ingestStep5IfNeeded() {
+        let load = mailboxStore.loadStep5()
+        switch load {
+        case .missing:
+            if let snapshot = continuation?.accepted {
+                do {
+                    let result = try mailboxStore.commitStep5(
+                        loadedID: snapshot.handoffID,
+                        alreadyAccepted: true,
+                        pairingBlocksNewAcceptance: true,
+                        storeProgress: {}
+                    )
+                    try requireAcknowledged(result)
+                } catch {
+                    self.acknowledgementError = UICopy.SETUP_ACKNOWLEDGEMENT_FAILED
+                }
+            }
+        case .malformed:
+            break
+        case .ready(let handoff):
+            let held = appState?.tunnelLifecycleOwner.sameMachineStoredPairingState ?? .noneHeld
+            let currentSnapshot = continuation?.accepted
+            let alreadyAccepted = (currentSnapshot?.handoffID == handoff.handoffID)
+            let currentPhase = self.phase
+            let currentMode = continuation?.mode
+
+            let pairingBlocks = !alreadyAccepted && (held != .noneHeld)
+
+            let handoffID = handoff.handoffID
+            let rootPath = handoff.journalRootPath ?? ""
+            let instanceID = handoff.expectedInstanceID ?? ""
+            let fingerprint = handoff.expectedCAFingerprint ?? ""
+
+            do {
+                let result = try mailboxStore.commitStep5(
+                    loadedID: handoffID,
+                    alreadyAccepted: alreadyAccepted,
+                    pairingBlocksNewAcceptance: pairingBlocks,
+                    storeProgress: { [weak self] in
+                        guard let self else { throw SetupMailboxError.continuationInProgress }
+                        if currentMode == .ownerComparison {
+                            throw SetupMailboxError.continuationInProgress
+                        }
+                        if currentPhase == .microphone || currentPhase == .screen || currentPhase == .connection {
+                            if let snap = currentSnapshot, snap.handoffID == handoffID {
+                                // duplicate during later phase is fine
+                            } else {
+                                throw SetupMailboxError.continuationInProgress
+                            }
+                        }
+                        if let snap = currentSnapshot, snap.handoffID != handoffID {
+                            throw SetupMailboxError.continuationInProgress
+                        }
+                        guard alreadyAccepted || (currentPhase == .journal && held == .noneHeld && currentSnapshot == nil) else {
+                            throw SetupMailboxError.continuationInProgress
+                        }
+                        let snapshot = SetupAcceptedStep5Snapshot(
+                            handoffID: handoffID,
+                            journalRootPath: rootPath,
+                            expectedInstanceID: instanceID,
+                            expectedCAFingerprint: fingerprint
+                        )
+                        guard snapshot.isValid else {
+                            throw SetupMailboxError.malformedPayload
+                        }
+                        var cont = self.continuation ?? SetupContinuation()
+                        cont.accepted = snapshot
+                        cont.mode = .supporting
+                        if cont.phase == nil || cont.phase == .journal {
+                            cont.phase = .microphone
+                        }
+                        try self.continuationStore.save(cont)
+                    }
+                )
+
+                try requireAcknowledged(result)
+                if let loaded = self.continuationStore.load() {
+                    self.continuation = loaded
+                    self.isPeerSupportingSetup = Self.isSupporting(continuation: loaded)
+                    if self.phase == .journal && loaded.phase != .journal {
+                        self.phase = loaded.phase
+                        stopJournalPolling()
+                        NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+                    }
+                }
+            } catch {
+                self.acknowledgementError = UICopy.SETUP_ACKNOWLEDGEMENT_FAILED
+                if let loaded = self.continuationStore.load() {
+                    self.continuation = loaded
+                    self.isPeerSupportingSetup = Self.isSupporting(continuation: loaded)
+                    if self.phase == .journal && loaded.phase != .journal {
+                        self.phase = loaded.phase
+                        stopJournalPolling()
+                        NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+                    }
+                }
+            }
+        }
+    }
+
+    private func requireAcknowledged(_ result: SetupCommitResult) throws {
+        switch result {
+        case .accepted, .republished:
+            acknowledgementError = nil
+        case .lockTimeout:
+            throw SetupMailboxError.lockTimeout
+        case .noHandoff, .rejected:
+            throw SetupMailboxError.continuationInProgress
+        }
+    }
+
+    /// Refresh after the OS prompt and on activation after visiting System Settings.
+    /// A running session freezes its sources, so a newly granted source needs reconciliation.
+    public func reconcileSourcePermissions() async {
+        guard let appState else { return }
+        await appState.capture.checkPermissionsAndAutoStart()
+        // Turn-on clears the old stop before prompting. A newer Stop during either await wins.
+        if appState.capture.isExplicitlyStopped || appState.capture.isUserStopped { return }
+        await appState.applySelectedSourcesToRunningSession()
+    }
+
+    @discardableResult
+    public func turnOnMicrophone() -> Task<Void, Never> {
+        if let appState {
+            appState.capture.clearOwnerStop()
+            var config = appState.config
+            config.isMicrophoneCaptureEnabled = true
+            appState.updateConfig(config)
+        }
+        return Task {
+            await requestMicrophone()
+            await reconcileSourcePermissions()
+        }
+    }
+
+    @discardableResult
+    public func notNowMicrophone() -> Task<Void, Never> {
+        if let appState {
+            var config = appState.config
+            config.isMicrophoneCaptureEnabled = false
+            appState.updateConfig(config)
+        }
+        setPhase(.screen)
+        return Task { await reconcileSourcePermissions() }
+    }
+
+    public func continueFromMicrophone() {
+        setPhase(.screen)
+    }
+
+    @discardableResult
+    public func turnOnScreen() -> Task<Void, Never> {
+        if let appState {
+            appState.capture.clearOwnerStop()
+            var config = appState.config
+            config.isScreenCaptureEnabled = true
+            appState.updateConfig(config)
+        }
+        requestScreen()
+        return Task { await reconcileSourcePermissions() }
+    }
+
+    @discardableResult
+    public func notNowScreen() -> Task<Void, Never> {
+        if let appState {
+            var config = appState.config
+            config.isScreenCaptureEnabled = false
+            appState.updateConfig(config)
+        }
+        setPhase(.connection)
+        return Task { await reconcileSourcePermissions() }
+    }
+
+    public func continueFromScreen() {
+        setPhase(.connection)
+    }
+
+    public func prepareScreenRestart(requestRestart: () -> Void) {
+        guard setPhase(.screen) else { return }
+        if let appState {
+            var config = appState.config
+            config.isScreenCaptureEnabled = true
+            appState.updateConfig(config)
+        }
+        requestRestart()
+    }
+
+    public func startConnectionPhase() {
+        guard phase == .connection else { return }
+        if isPeerSupportingSetup {
+            performSupportingConnection(forceRestart: false)
+        }
+    }
+
+    public func handleTunnelConnected() {
+        guard phase == .connection && isPeerSupportingSetup else { return }
+        if connectionTask != nil {
+            // Let a first pairing finish; the edge can arrive during its own activation.
+            retryAfterConnection = true
+        } else {
+            startConnectionPhase()
+        }
+    }
+
+    public func retryConnection() {
+        if isPeerSupportingSetup {
+            performSupportingConnection(forceRestart: true)
+        }
+    }
+
+    public func performSupportingConnection(forceRestart: Bool = false) {
+        guard let appState else { return }
+        guard let accepted = continuation?.accepted,
+              accepted.isValid else {
+            connectionStepState = .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+            return
+        }
+        if !forceRestart && connectionTask != nil && currentConnectingHandoffID == accepted.handoffID {
+            return
+        }
+        connectionTask?.cancel()
+        let taskID = UUID()
+        currentConnectionTaskID = taskID
+        currentConnectingHandoffID = accepted.handoffID
+        connectionStepState = .connecting
+        retryAfterConnection = false
+
+        connectionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.currentConnectionTaskID == taskID {
+                    self.connectionTask = nil
+                    self.currentConnectionTaskID = nil
+                    let shouldRetry = self.retryAfterConnection
+                    self.retryAfterConnection = false
+                    if shouldRetry, case .failed = self.connectionStepState {
+                        self.startConnectionPhase()
+                    }
+                }
+            }
+            let outcome = await appState.verifySupportingConnectionFromHandoff(
+                expectedHandoffID: accepted.handoffID,
+                expectedInstanceID: accepted.expectedInstanceID,
+                expectedCAFingerprint: accepted.expectedCAFingerprint
+            )
+            guard !Task.isCancelled else { return }
+            switch outcome {
+            case .recorded(let mark):
+                self.connectionStepState = .connected(mark)
+            case .alreadyRecorded:
+                if let confirmed = appState.confirmedMark {
+                    self.connectionStepState = .connected(confirmed)
+                } else {
+                    self.connectionStepState = .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+                }
+            case .stillSettingUp:
+                self.connectionStepState = .failed(UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP)
+            case .notEligible, .pairStartFailed, .linkRejected, .fingerprintOrPinMismatch,
+                 .ceremonyFailed, .durableInstanceMismatch, .fetchAbsent, .fetchFailed, .recordFailed:
+                self.connectionStepState = .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+            }
+        }
+    }
+
+    public func continueFromOlderJournal() {
+        guard let appState else { return }
+        guard appState.isJournalMarkConfirmed,
+              appState.currentDurablePairingAdmissionIsReady else {
+            return
+        }
+        setPhase(.microphone)
+    }
+
+    private var canRunJournalPhase: Bool {
+        phase == .journal && continuation?.mode != .ownerComparison
+    }
+
+    public func startJournalPhase() {
+        guard canRunJournalPhase else { return }
+        journalPollingTask?.cancel()
+        journalPollingTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runJournalPhase()
+        }
+    }
+
+    public func stopJournalPolling() {
+        journalPollingTask?.cancel()
+        journalPollingTask = nil
+    }
+
+    public func retryJournalPhase() {
+        startJournalPhase()
+    }
+
+    private func resolveIdentity(baseURL: String, expectedInstanceID: String?) async -> JournalIdentityResolution {
+        if let override = resolveIdentityOverride {
+            return await override(baseURL, expectedInstanceID)
+        }
+        let fetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
+        return await fetcher.resolveIdentity(baseURL: baseURL, expectedInstanceID: expectedInstanceID)
+    }
+
+    internal func runJournalPhase() async {
+        guard canRunJournalPhase, !Task.isCancelled else { return }
+        journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
+        journalPollingError = nil
+
+        let journalURL: URL
+        do {
+            journalURL = try await freshFlow.resolveTrustedJournal()
+        } catch {
+            journalPollingText = nil
+            journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
+            return
+        }
+
+        guard canRunJournalPhase, !Task.isCancelled else { return }
+        guard let bundle = Bundle(url: journalURL) else {
+            journalPollingText = nil
+            journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
+            return
+        }
+
+        let capabilities = bundle.object(forInfoDictionaryKey: "SolstoneSetupCapabilities")
+        let isSupporting = journalSupportsSetupSequence(capabilities)
+
+        if isSupporting {
+            var cont = continuation ?? SetupContinuation(phase: .journal)
+            let outboundID: UUID
+            if let existing = cont.pendingOutboundStep1ID {
+                outboundID = existing
+            } else {
+                let newID = UUID()
+                cont.pendingOutboundStep1ID = newID
+                do {
+                    try continuationStore.save(cont)
+                    self.continuation = cont
+                } catch {
+                    journalPollingText = nil
+                    journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
+                    return
+                }
+                outboundID = newID
+            }
+
+            do {
+                try mailboxStore.writeStep1(handoffID: outboundID)
+            } catch {
+                journalPollingText = nil
+                journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
+                return
+            }
+
+            do {
+                try await freshFlow.launchTrustedJournal(at: journalURL)
+            } catch {
+                journalPollingText = nil
+                journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
+                return
+            }
+
+            journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
+            journalPollingError = nil
+
+            while !Task.isCancelled && canRunJournalPhase {
+                if let receipt = try? mailboxStore.readStep1Receipt() {
+                    if var currentCont = self.continuation, currentCont.pendingOutboundStep1ID == receipt.handoffID {
+                        currentCont.pendingOutboundStep1ID = nil
+                        if (try? continuationStore.save(currentCont)) != nil {
+                            self.continuation = currentCont
+                        }
+                    }
+                }
+
+                ingestStep5IfNeeded()
+                if phase != .journal {
+                    break
+                }
+
+                let resolution = await resolveIdentity(baseURL: ServiceMode.bundledServiceURL, expectedInstanceID: nil)
+                switch resolution {
+                case .uncommitted:
+                    journalPollingText = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
+                    journalPollingError = nil
+                case .absent:
+                    journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
+                    journalPollingError = nil
+                case .failed:
+                    journalPollingText = nil
+                    journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
+                case .mark:
+                    journalPollingText = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
+                    journalPollingError = nil
+                }
+
+                do {
+                    try await Task.sleep(for: sleepDuration)
+                } catch {
+                    break
+                }
+            }
+        } else {
+            do {
+                try await freshFlow.launchTrustedJournal(at: journalURL)
+            } catch {
+                journalPollingText = nil
+                journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
+                return
+            }
+
+            journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
+            journalPollingError = nil
+
+            while !Task.isCancelled && canRunJournalPhase {
+                let resolution = await resolveIdentity(baseURL: ServiceMode.bundledServiceURL, expectedInstanceID: nil)
+                switch resolution {
+                case .mark(let mark, _):
+                    olderDiscoveredMark = mark
+                    journalPollingText = nil
+                    journalPollingError = nil
+                    return
+                case .uncommitted:
+                    journalPollingText = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
+                    journalPollingError = nil
+                case .absent:
+                    journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
+                    journalPollingError = nil
+                case .failed:
+                    journalPollingText = nil
+                    journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
+                }
+
+                do {
+                    try await Task.sleep(for: sleepDuration)
+                } catch {
+                    break
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func executeSetupFinalOpenCore(
+        expectedInstanceID: String,
+        expectedMark: JournalMark? = nil,
+        isOlderPeer: Bool = false,
+        isRemotePeer: Bool = false,
+        openPairedJournal: () -> Bool = { false },
+        checkAdmission: () -> Bool,
+        fetchTunnelIdentity: () async -> JournalIdentityResolution,
+        fetchDirectIdentity: () async -> JournalIdentityResolution,
+        openURL: (URL) -> Bool,
+        persistFinish: () -> Bool
+    ) async -> Bool {
+        if journalOpenedPendingCompletion {
+            if persistFinish() {
+                journalOpenedPendingCompletion = false
+                return true
+            }
+            return false
+        }
+
+        if isOlderPeer && expectedMark == nil {
+            return false
+        }
+
+        guard checkAdmission() else {
+            return false
+        }
+
+        let tunnelRes = await fetchTunnelIdentity()
+        guard checkAdmission() else {
+            return false
+        }
+        guard case .mark(let tunnelMark, let tunnelInstanceID) = tunnelRes,
+              tunnelInstanceID == expectedInstanceID else {
+            return false
+        }
+        if isOlderPeer, let expectedMark, tunnelMark != expectedMark {
+            return false
+        }
+
+        if isRemotePeer {
+            guard checkAdmission(), openPairedJournal() else { return false }
+        } else {
+            let directRes = await fetchDirectIdentity()
+            guard checkAdmission() else { return false }
+            guard case .mark(let directMark, let directInstanceID) = directRes,
+                  directInstanceID == expectedInstanceID else { return false }
+            if isOlderPeer, let expectedMark {
+                guard directMark == expectedMark, tunnelMark == expectedMark else { return false }
+            } else {
+                guard directMark == tunnelMark else { return false }
+            }
+            guard checkAdmission(),
+                  let targetURL = URL(string: "http://127.0.0.1:5015/"),
+                  openURL(targetURL) else { return false }
+        }
+
+        journalOpenedPendingCompletion = true
+        if persistFinish() {
+            journalOpenedPendingCompletion = false
+            return true
+        } else {
+            return false
+        }
+    }
+
+    @MainActor
+    internal func executeSetupFinalOpen(
+        expectedInstanceID: String,
+        expectedMark: JournalMark? = nil,
+        isOlderPeer: Bool = false,
+        isRemotePeer: Bool = false,
+        openPairedJournal: () -> Bool = { false },
+        checkAdmission: () -> Bool,
+        fetchTunnelIdentity: () async -> JournalIdentityResolution,
+        fetchDirectIdentity: () async -> JournalIdentityResolution,
+        openURL: (URL) -> Bool,
+        persistFinish: () -> Bool
+    ) async -> Bool {
+        if finalOpenInFlight { return false }
+        finalOpenInFlight = true
+        defer { finalOpenInFlight = false }
+
+        return await executeSetupFinalOpenCore(
+            expectedInstanceID: expectedInstanceID,
+            expectedMark: expectedMark,
+            isOlderPeer: isOlderPeer,
+            isRemotePeer: isRemotePeer,
+            openPairedJournal: openPairedJournal,
+            checkAdmission: checkAdmission,
+            fetchTunnelIdentity: fetchTunnelIdentity,
+            fetchDirectIdentity: fetchDirectIdentity,
+            openURL: openURL,
+            persistFinish: persistFinish
+        )
+    }
+
+    public func performSetupFinalOpen() {
+        guard let appState else { return }
+        guard !finalOpenInFlight else { return }
+        finalOpenInFlight = true
+        finalOpenError = nil
+
+        if journalOpenedPendingCompletion {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.finalOpenInFlight = false }
+                if self.setPhase(nil) {
+                    self.journalOpenedPendingCompletion = false
+                    self.finalOpenError = nil
+                } else {
+                    self.finalOpenError = UICopy.SETUP_COULDNT_FINISH
+                }
+            }
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.finalOpenInFlight = false }
+            let expectedInstanceID: String
+            let expectedMark: JournalMark?
+            let snapshotRevision: PairingCredentialRevision
+
+            if self.isPeerSupportingSetup {
+                guard let snapshot = self.continuation?.accepted,
+                      let pairing = appState.currentDurablePairing,
+                      pairing.instanceID == snapshot.expectedInstanceID,
+                      caChainContainsFingerprint(caChainPEM: pairing.caChainPEM, expectedLowerHex: snapshot.expectedCAFingerprint),
+                      appState.isJournalMarkConfirmed,
+                      let mark = appState.confirmedMark,
+                      let rev = appState.currentDurablePairingRevision,
+                      appState.currentDurablePairingAdmissionIsReady else {
+                    self.finalOpenError = UICopy.SETUP_COULDNT_FINISH
+                    return
+                }
+                expectedInstanceID = snapshot.expectedInstanceID
+                expectedMark = mark
+                snapshotRevision = rev
+            } else {
+                guard appState.isJournalMarkConfirmed,
+                      let mark = appState.confirmedMark,
+                      let pairing = appState.currentDurablePairing,
+                      let rev = appState.currentDurablePairingRevision,
+                      appState.currentDurablePairingAdmissionIsReady else {
+                    self.finalOpenError = UICopy.SETUP_COULDNT_FINISH
+                    return
+                }
+                expectedInstanceID = pairing.instanceID
+                expectedMark = mark
+                snapshotRevision = rev
+            }
+
+            let isOlderPeer = !self.isPeerSupportingSetup
+
+            let success = await self.executeSetupFinalOpenCore(
+                expectedInstanceID: expectedInstanceID,
+                expectedMark: expectedMark,
+                isOlderPeer: isOlderPeer,
+                isRemotePeer: self.continuation?.mode == .ownerComparison,
+                openPairedJournal: { [weak appState] in
+                    guard let appState else { return false }
+                    appState.openJournalWindowDirectly()
+                    return appState.openSceneIds.contains(.journal)
+                },
+                checkAdmission: { [weak self, weak appState] in
+                    guard let self, let appState else { return false }
+                    guard case .connected = appState.tunnelLifecycleOwner.state else { return false }
+                    guard let pairing = appState.currentDurablePairing else { return false }
+                    guard pairing.instanceID == expectedInstanceID else { return false }
+                    guard appState.currentDurablePairingRevision == snapshotRevision else { return false }
+
+                    if self.isPeerSupportingSetup {
+                        guard let snapshot = self.continuation?.accepted else { return false }
+                        guard snapshot.expectedInstanceID == expectedInstanceID else { return false }
+                        return caChainContainsFingerprint(
+                            caChainPEM: pairing.caChainPEM,
+                            expectedLowerHex: snapshot.expectedCAFingerprint
+                        )
+                    } else {
+                        guard appState.isJournalMarkConfirmed,
+                              appState.confirmedMark == expectedMark,
+                              appState.currentDurablePairingAdmissionIsReady else {
+                            return false
+                        }
+                        return true
+                    }
+                },
+                fetchTunnelIdentity: { [weak appState] in
+                    guard let appState else { return .absent }
+                    guard let tunnelBase = tunnelIdentityBase(state: appState.tunnelLifecycleOwner.state) else {
+                        return .absent
+                    }
+                    let fetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
+                    return await fetcher.resolveIdentity(baseURL: tunnelBase, expectedInstanceID: expectedInstanceID)
+                },
+                fetchDirectIdentity: {
+                    let fetcher = JournalIdentityFetcher()
+                    return await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:5015", expectedInstanceID: expectedInstanceID)
+                },
+                openURL: { [weak appState] url in
+                    guard let appState else { return false }
+                    return appState.openBrowserURLDirectly(url)
+                },
+                persistFinish: { [weak self] in
+                    guard let self else { return false }
+                    return self.setPhase(nil)
+                }
+            )
+
+            if !success {
+                self.finalOpenError = UICopy.SETUP_COULDNT_FINISH
+            } else {
+                self.finalOpenError = nil
+            }
+        }
+    }
+}

@@ -228,7 +228,7 @@ struct SettingsView: View {
     @State var entitlementOpenFailed = false
     @State var supportOpenFailed = false
 
-    private let localIdentityFetch: @MainActor @Sendable (String) async -> JournalMark?
+    private let localIdentityFetch: @MainActor @Sendable (String) async -> JournalIdentityResolution
     private let onDiskJournalDiscovery: @MainActor @Sendable () async -> OnDiskJournalDiscovery
     private let sameMachinePairStart: @MainActor @Sendable (
         _ baseURL: String,
@@ -253,13 +253,10 @@ struct SettingsView: View {
         initialLocalDiscoveryCompleted: Bool = false,
         initialShowPairingFlow: Bool = false,
         journalHandoffOrchestrator: JournalHandoffOrchestrator = JournalHandoffOrchestrator(),
-        freshFlow: FreshJournalFlow = FreshJournalFlow(),
+        freshFlow: FreshJournalFlow = FreshJournalFlow(dependencies: .live()),
         onDiskJournalAdoptionFlow: OnDiskJournalAdoptionFlow = OnDiskJournalAdoptionFlow(),
-        localIdentityFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
-            switch await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL) {
-            case .mark(let mark): return mark
-            case .uncommitted, .unavailable: return nil
-            }
+        localIdentityFetch: @escaping @MainActor @Sendable (String) async -> JournalIdentityResolution = { baseURL in
+            await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).resolveIdentity(baseURL: baseURL)
         },
         onDiskJournalDiscovery: @escaping @MainActor @Sendable () async -> OnDiskJournalDiscovery = {
             await discoverOnDiskJournal()
@@ -344,8 +341,12 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: .constant(.all)) {
-            List(selection: $selectedTab) {
+        Group {
+            if appState.setupModel.phase != nil {
+                SetupView(model: appState.setupModel, appState: appState, journalMarkDriver: journalMarkDriver)
+            } else {
+                NavigationSplitView(columnVisibility: .constant(.all)) {
+                    List(selection: $selectedTab) {
                 sidebarPlainLabel("status", tab: .status, systemImage: "info.circle").tag(Tab.status)
 
                 Section {
@@ -411,6 +412,8 @@ struct SettingsView: View {
                 .modifier(SettingsPaneScrollEdgeModifier())
             }
         }
+        }
+        }
         .frame(minWidth: 720, minHeight: 500)
         .task {
             if storageUsedMB == nil {
@@ -427,7 +430,9 @@ struct SettingsView: View {
 #endif
             journalMarkRederiveEligible = appState.confirmedMark == nil && appState.tunnelLifecycleOwner.isTunnelManaged
             startJournalMarkRederiveIfNeeded()
-            journalMarkDriver.startIfUnconfirmed(appState: appState)
+            if !appState.setupModel.isPeerSupportingSetup {
+                journalMarkDriver.startIfUnconfirmed(appState: appState)
+            }
         }
         .onChange(of: appState.pairingCoordinator.state) { _, newValue in
             handlePairingStateChange(newValue)
@@ -442,7 +447,9 @@ struct SettingsView: View {
 #endif
         .onChange(of: appState.pairingCoordinator.tunnelState) { _, _ in
             startJournalMarkRederiveIfNeeded()
-            journalMarkDriver.startIfUnconfirmed(appState: appState)
+            if !appState.setupModel.isPeerSupportingSetup {
+                journalMarkDriver.startIfUnconfirmed(appState: appState)
+            }
         }
         .onChange(of: selectedTab) { _, newValue in
             if newValue != .privacy { appState.pendingPrivateWindowSettingsTarget = nil }
@@ -560,6 +567,9 @@ struct SettingsView: View {
     }
 
     private func applyPendingSettingsTab() {
+        if let pendingLink = appState.takePendingPairingLink(forSetup: false) {
+            pairingLink = pendingLink
+        }
         if let pending = appState.pendingSettingsTab {
             switch pending {
             case "observer", "general": selectedTab = .observer
@@ -635,7 +645,9 @@ struct SettingsView: View {
     }
 
     private func handlePairingStateChange(_ state: PairingFlowState) {
-        journalMarkDriver.startIfNeeded(for: state, appState: appState)
+        if !appState.setupModel.isPeerSupportingSetup {
+            journalMarkDriver.startIfNeeded(for: state, appState: appState)
+        }
         switch state {
         case .paired, .alreadyConnected, .switched:
             showPairingFlow = false
@@ -1115,99 +1127,12 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func permissionSourceLiveRow(source: CaptureSources) -> some View {
-        let liveState = appState.permissionSourceLiveState(for: source)
-        let controls = appState.permissionSourceLiveControls(for: source)
-        let isScreen = source.contains(.screen)
-        let liveStateAXID = isScreen ? AXID.Settings.Permissions.screenRecordingLiveState : AXID.Settings.Permissions.microphoneLiveState
-        let pauseAXID = isScreen ? AXID.Settings.Permissions.screenRecordingPause : AXID.Settings.Permissions.microphonePause
-        let resumeAXID = isScreen ? AXID.Settings.Permissions.screenRecordingResume : AXID.Settings.Permissions.microphoneResume
-        let openSourcesAXID = isScreen ? AXID.Settings.Permissions.screenRecordingOpenSources : AXID.Settings.Permissions.microphoneOpenSources
-        let checkStatusAXID = isScreen ? AXID.Settings.Permissions.screenRecordingCheckStatus : AXID.Settings.Permissions.microphoneCheckStatus
-
-        AXStateCompanion(id: liveStateAXID, value: liveState.axState.axToken)
-
-        HStack(spacing: 6) {
-            if liveState == .on {
-                Image(systemName: "circle.fill")
-                    .foregroundStyle(.green)
-                Text(UICopy.SETTINGS_PERMISSIONS_LIVE_ON)
-            } else {
-                Image(systemName: "circle")
-                    .foregroundStyle(.secondary)
-                switch liveState {
-                case .on:
-                    EmptyView()
-                case .paused(.owner):
-                    let _ = appState.pauseManager.refreshTick
-                    Text(pausedHeaderText(timeRemaining: appState.pauseManager.formatTimeRemaining()))
-                case .paused(.protectedVideo):
-                    Text(UICopy.SETTINGS_OBSERVATION_PROTECTED_VIDEO)
-                case .off:
-                    Text(UICopy.SETTINGS_PERMISSIONS_LIVE_OFF)
-                case .notRunning:
-                    Text(UICopy.SETTINGS_PERMISSIONS_LIVE_NOT_RUNNING)
-                }
-            }
-
-            if !isScreen, liveState == .on {
-                TimelineView(.periodic(from: .now, by: 0.1)) { _ in
-                    MicrophoneLevelMeter(peak: appState.microphoneInputPeak)
-                }
-            }
-
-            Spacer()
-
-            if controls.pause {
-                Menu("pause") {
-                    Button("15 minutes") {
-                        appState.pauseManager.pause(for: .minutes(15))
-                    }
-                    Button("30 minutes") {
-                        appState.pauseManager.pause(for: .minutes(30))
-                    }
-                    Button("1 hour") {
-                        appState.pauseManager.pause(for: .minutes(60))
-                    }
-                    Button("until I resume") {
-                        appState.pauseManager.pause(for: .indefinite)
-                    }
-                }
-                .fixedSize()
-                .accessibilityIdentifier(pauseAXID)
-            } else if controls.resume {
-                Button("resume") {
-                    appState.pauseManager.resume()
-                }
-                .accessibilityIdentifier(resumeAXID)
-            } else if controls.openSources {
-                Button(UICopy.SOURCES_OPEN_ACTION) {
-                    selectedTab = .sources
-                }
-                .accessibilityIdentifier(openSourcesAXID)
-            } else if controls.checkStatus {
-                Button(UICopy.SETTINGS_PERMISSIONS_CHECK_STATUS) {
-                    selectedTab = .status
-                }
-                .accessibilityIdentifier(checkStatusAXID)
-            }
-        }
-
-        switch liveState {
-        case .on:
-            Text(UICopy.SETTINGS_PERMISSIONS_LIVE_ON_HINT)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .paused:
-            Text(UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .off:
-            Text(UICopy.SETTINGS_PERMISSIONS_LIVE_OFF_HINT)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .notRunning:
-            EmptyView()
-        }
+        PermissionSourceLiveRowView(
+            source: source,
+            appState: appState,
+            onOpenSources: { selectedTab = .sources },
+            onCheckStatus: { selectedTab = .status }
+        )
     }
 
     private var permissionsTab: some View {
@@ -1996,6 +1921,20 @@ struct SettingsView: View {
 
                         localJournalPairButton
 
+                    case .uncommitted:
+                        Text(UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP)
+                            .font(.headline)
+                        JournalMarkView(mark: nil)
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.localJournalDiscoveryState,
+                            value: LocalJournalDiscoveryAXState.notFound.axToken
+                        )
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.localJournalDiscoveryPathState,
+                            value: ""
+                        )
+                        localJournalPairButton
+
                     case .none:
                         AXStateCompanion(
                             id: AXID.Settings.Service.localJournalDiscoveryState,
@@ -2052,6 +1991,9 @@ struct SettingsView: View {
         }
         if let localOnDiskDiscoveryPath {
             return .foundOnDisk(path: localOnDiskDiscoveryPath)
+        }
+        if localLinkNotice == UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP {
+            return .uncommitted
         }
         return .none
     }
@@ -2314,6 +2256,11 @@ struct SettingsView: View {
                     TextField(UICopy.PAIRING_LINK_PLACEHOLDER, text: $pairingLink)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier(AXID.Settings.Service.pairingLink)
+                    if let error = appState.pendingPairingLinkError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
 
                 HStack {
@@ -2844,16 +2791,15 @@ struct SettingsView: View {
     }
 
     private func submitPairingLink() {
+        appState.pendingPairingLinkError = nil
         pairingMismatch = false
         journalMarkRederiveEligible = false
         journalMarkRederiveStarted = false
         relinkNeedsPairingLink = false
         journalMarkDriver.resetForNewPairAttempt()
-        // The owner is pairing on purpose, so the mark question is owed again.
-        appState.beginOwnerPairingAttempt()
         appState.recordDiagnosticEvidence(.pairingLinkSubmitted)
         Task { @MainActor in
-            await appState.pairingCoordinator.submitPairingLink(pairingLink)
+            _ = await appState.submitPairingInput(pairingLink)
             if let code = pairingLinkEvidence(for: appState.pairingCoordinator.state) {
                 appState.recordDiagnosticEvidence(code)
             }
@@ -3033,6 +2979,10 @@ struct SettingsView: View {
             switch model {
             case .foundRunning(let mark):
                 localJournalMark = mark
+            case .uncommitted:
+                localLinkNotice = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
+                localJournalMark = nil
+                localOnDiskDiscoveryPath = nil
             case .foundOnDisk(let path):
                 let action = await onDiskJournalAdoptionFlow.resolveOfferAction()
                 guard !Task.isCancelled else { return }
@@ -3079,6 +3029,10 @@ struct SettingsView: View {
                 localJournalMark = mark
                 localOnDiskDiscoveryPath = nil
                 localOnDiskAdoptionAction = .install
+            case .uncommitted:
+                localLinkNotice = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
+                localJournalMark = nil
+                localOnDiskDiscoveryPath = nil
             case .foundOnDisk(let path):
                 let action = await onDiskJournalAdoptionFlow.resolveOfferAction()
                 guard !Task.isCancelled else { return }

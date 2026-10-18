@@ -44,6 +44,34 @@ enum AXID {
     enum Settings {
         static let configSaveError = "settings.configSave.error"
 
+        enum Setup {
+            static let phase = "settings.setup.phase"
+
+            enum Microphone {
+                static let turnOn = "settings.setup.microphone.turnOn"
+                static let notNow = "settings.setup.microphone.notNow"
+                static let `continue` = "settings.setup.microphone.continue"
+            }
+
+            enum Screen {
+                static let turnOn = "settings.setup.screen.turnOn"
+                static let notNow = "settings.setup.screen.notNow"
+                static let `continue` = "settings.setup.screen.continue"
+                static let frame = "settings.setup.screen.frame"
+            }
+
+            enum Connection {
+                static let retry = "settings.setup.connection.retry"
+                static let openJournal = "settings.setup.connection.openJournal"
+                static let loginItem = "settings.setup.connection.loginItem"
+            }
+
+            enum Journal {
+                static let `continue` = "settings.setup.journal.continue"
+                static let retry = "settings.setup.journal.retry"
+            }
+        }
+
         enum Sidebar {
             static func tab(_ tab: SettingsView.Tab) -> String {
                 "settings.sidebar.tab.\(tab.rawValue)"

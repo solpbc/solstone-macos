@@ -9,6 +9,11 @@
 import SwiftUI
 import SolstoneCore
 
+internal enum SetupScreenFrameAXState: String, CaseIterable {
+    case live
+    case off
+}
+
 internal enum AXPermissionState: CaseIterable, Equatable, Sendable {
     case granted
     case denied

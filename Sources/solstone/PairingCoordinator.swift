@@ -211,6 +211,10 @@ final class PairingCoordinator {
         }
     }
 
+    func recordInvalidLink(reason: String) {
+        state = .failed(.invalidLink(reason))
+    }
+
     func confirmSwitch() async {
         guard case .switchConfirmPending = state, let link = pendingSwitchLink else {
             return
@@ -484,7 +488,7 @@ final class PairingCoordinator {
             && (record.freshPairObligation == nil || (currentRevision != nil && record.freshPairObligation == currentRevision))
 
         guard markConfirmed,
-              let pairing,
+              pairing != nil,
               let currentRevision,
               record.freshPairObligation == currentRevision,
               record.replacementOfferID == nil,

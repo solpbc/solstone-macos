@@ -25,6 +25,44 @@ struct JournalIdentityFetcherTests {
         #expect(request.timeoutInterval == 2)
     }
 
+    @Test func identityRedirectSendsNoFollowUpRequest() async throws {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        let destination = URL(string: "http://127.0.0.1:7072/app/link/api/identity")!
+        JournalIdentityURLProtocol.store.enqueue(statusCode: 302, redirectURL: destination)
+        JournalIdentityURLProtocol.store.enqueue(body: Self.identityJSON(committed: true, mark: Self.markObject()))
+        let session = URLSession(configuration: journalIdentityURLProtocolConfiguration())
+        defer { session.invalidateAndCancel() }
+        let fetcher = JournalIdentityFetcher(session: session, prepareRequest: {
+            $0.setValue("test-capability", forHTTPHeaderField: "Cookie")
+        })
+
+        let result = await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071", expectedInstanceID: "instance-123")
+
+        // URLProtocol does not finish the original body after its redirect callback is refused.
+        // Either a returned 302 or the bounded task timeout must remain a failed identity read.
+        switch result {
+        case .failed(.httpStatus(302)), .failed(.timeout): break
+        default: Issue.record("redirect must not resolve identity: \(result)")
+        }
+        let requests = JournalIdentityURLProtocol.store.snapshotRequests()
+        #expect(requests.count == 1)
+        #expect(!requests.contains { $0.url == destination })
+    }
+
+    @Test func identityRejectsUnexpectedResponseURLBeforeDecoding() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        JournalIdentityURLProtocol.store.enqueue(
+            body: Self.identityJSON(committed: true, mark: Self.markObject()),
+            responseURL: URL(string: "http://127.0.0.1:7072/app/link/api/identity")!
+        )
+        let session = URLSession(configuration: journalIdentityURLProtocolConfiguration())
+        defer { session.invalidateAndCancel() }
+        let fetcher = JournalIdentityFetcher(session: session)
+        #expect(await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071") == .failed(.unexpectedResponseURL))
+    }
+
     @Test func fetchRefusesAnotherJournalsMarkWhenAnInstanceIsExpected() async {
         JournalIdentityURLProtocol.store.reset()
         defer { JournalIdentityURLProtocol.store.reset() }
@@ -114,6 +152,106 @@ struct JournalIdentityFetcherTests {
         #expect(read == .unavailable)
     }
 
+    @Test func resolveIdentityReturnsValidMarkAndInstanceID() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        JournalIdentityURLProtocol.store.enqueue(body: Self.identityJSON(committed: true, mark: Self.markObject()))
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+
+        let res = await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071", expectedInstanceID: "instance-123")
+        guard case .mark(let mark, let instanceID) = res else {
+            Issue.record("expected .mark, got \(res)")
+            return
+        }
+        #expect(mark.words == ["afoot", "unfixed"])
+        #expect(instanceID == "instance-123")
+    }
+
+    @Test func resolveIdentityReturnsUncommittedWithInstanceID() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        JournalIdentityURLProtocol.store.enqueue(body: Self.identityJSON(committed: false, mark: Self.markObject()))
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+
+        let res = await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071")
+        #expect(res == .uncommitted(instanceID: "instance-123"))
+    }
+
+    @Test func resolveIdentityReturnsUncommittedWithNilInstanceID() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        let body = String(data: try! JSONSerialization.data(withJSONObject: ["committed": false]), encoding: .utf8)!
+        JournalIdentityURLProtocol.store.enqueue(body: body)
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+
+        let res = await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071")
+        #expect(res == .uncommitted(instanceID: nil))
+    }
+
+    @Test func resolveIdentityRejectsMissingInstanceIDWhenCommitted() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        let body = String(data: try! JSONSerialization.data(withJSONObject: [
+            "committed": true,
+            "mark": Self.markObject()
+        ]), encoding: .utf8)!
+        JournalIdentityURLProtocol.store.enqueue(body: body)
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+
+        let res = await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071")
+        #expect(res == .failed(.missingInstanceID))
+    }
+
+    @Test func resolveIdentityRejectsInstanceMismatch() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        JournalIdentityURLProtocol.store.enqueue(body: Self.identityJSON(committed: true, mark: Self.markObject()))
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+
+        let res = await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071", expectedInstanceID: "other-instance")
+        #expect(res == .failed(.instanceMismatch))
+    }
+
+    @Test func resolveIdentityReturnsAbsentOnCannotConnect() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        JournalIdentityURLProtocol.store.enqueue(error: URLError(.cannotConnectToHost))
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+
+        let res = await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071")
+        #expect(res == .absent)
+    }
+
+    @Test func resolveIdentityReturnsFailedTimeout() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        JournalIdentityURLProtocol.store.enqueue(error: URLError(.timedOut))
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+
+        let res = await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071")
+        #expect(res == .failed(.timeout))
+    }
+
+    @Test func resolveIdentityReturnsFailedHttpStatus() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        JournalIdentityURLProtocol.store.enqueue(statusCode: 503, body: "error")
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+
+        let res = await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071")
+        #expect(res == .failed(.httpStatus(503)))
+    }
+
+    @Test func resolveIdentityReturnsFailedDecodeError() async {
+        JournalIdentityURLProtocol.store.reset()
+        defer { JournalIdentityURLProtocol.store.reset() }
+        JournalIdentityURLProtocol.store.enqueue(body: "not json")
+        let fetcher = JournalIdentityFetcher(session: URLSession(configuration: journalIdentityURLProtocolConfiguration()))
+
+        let res = await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:7071")
+        #expect(res == .failed(.decodeError))
+    }
+
     private static func identityJSON(committed: Bool, mark: Any) -> String {
         let data = try! JSONSerialization.data(withJSONObject: [
             "committed": committed,
@@ -147,6 +285,8 @@ private final class JournalIdentityURLProtocolStore: @unchecked Sendable {
         var statusCode: Int
         var data: Data
         var error: URLError?
+        var redirectURL: URL? = nil
+        var responseURL: URL? = nil
     }
 
     private let lock = NSLock()
@@ -160,9 +300,11 @@ private final class JournalIdentityURLProtocolStore: @unchecked Sendable {
         }
     }
 
-    func enqueue(statusCode: Int = 200, body: String = "", error: URLError? = nil) {
+    func enqueue(statusCode: Int = 200, body: String = "", error: URLError? = nil,
+                 redirectURL: URL? = nil, responseURL: URL? = nil) {
         lock.withLock {
-            responses.append(Response(statusCode: statusCode, data: Data(body.utf8), error: error))
+            responses.append(Response(statusCode: statusCode, data: Data(body.utf8), error: error,
+                                      redirectURL: redirectURL, responseURL: responseURL))
         }
     }
 
@@ -195,11 +337,17 @@ private final class JournalIdentityURLProtocol: URLProtocol {
         }
 
         let response = HTTPURLResponse(
-            url: request.url!,
+            url: next.responseURL ?? request.url!,
             statusCode: next.statusCode,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
         )!
+        if let target = next.redirectURL {
+            var followUp = request
+            followUp.url = target
+            client?.urlProtocol(self, wasRedirectedTo: followUp, redirectResponse: response)
+            return
+        }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         if !next.data.isEmpty {
             client?.urlProtocol(self, didLoad: next.data)

@@ -8,6 +8,7 @@ import SolstoneCore
 
 enum LocalJournalDiscoveryResult: Equatable {
     case found(JournalMark)
+    case uncommitted
     case fork
 }
 
@@ -19,6 +20,7 @@ enum OnDiskJournalDiscovery: Equatable {
 enum LocalJournalDiscoveryPanelModel: Equatable {
     case none
     case foundRunning(JournalMark)
+    case uncommitted
     case foundOnDisk(path: String)
 }
 
@@ -95,6 +97,8 @@ func reprobedLocalJournalPanelModel(
     switch probeResult {
     case .foundRunning:
         return probeResult
+    case .uncommitted:
+        return probeResult
     case .none:
         return current
     case .foundOnDisk:
@@ -107,23 +111,30 @@ func reprobedLocalJournalPanelModel(
 
 @MainActor
 func discoverLocalJournal(
-    fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalMark?
+    fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalIdentityResolution
 ) async -> LocalJournalDiscoveryResult {
-    if let mark = await fetchIdentity(ServiceMode.bundledServiceURL) {
+    let resolution = await fetchIdentity(ServiceMode.bundledServiceURL)
+    switch resolution {
+    case .mark(let mark, _):
         return .found(mark)
+    case .uncommitted:
+        return .uncommitted
+    case .absent, .failed:
+        return .fork
     }
-    return .fork
 }
 
 @MainActor
 func discoverLocalJournalPanelModel(
-    fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalMark?,
+    fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalIdentityResolution,
     onDiskDiscovery: @escaping @MainActor @Sendable () async -> OnDiskJournalDiscovery
 ) async -> LocalJournalDiscoveryPanelModel {
     let result = await discoverLocalJournal(fetchIdentity: fetchIdentity)
     switch result {
     case .found(let mark):
         return .foundRunning(mark)
+    case .uncommitted:
+        return .uncommitted
     case .fork:
         switch await onDiskDiscovery() {
         case .found(let path):

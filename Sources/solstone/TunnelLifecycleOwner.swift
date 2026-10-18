@@ -85,6 +85,20 @@ private final class RelayOutcomeTarget {
     weak var owner: TunnelLifecycleOwner?
 }
 
+func tunnelIdentityBase(localPort: Int?) -> String? {
+    guard let port = localPort, port > 0, port != 5015 else {
+        return nil
+    }
+    return "http://127.0.0.1:\(port)"
+}
+
+func tunnelIdentityBase(state: TunnelLifecycleState) -> String? {
+    guard case .connected(let localPort, _) = state else {
+        return nil
+    }
+    return tunnelIdentityBase(localPort: localPort)
+}
+
 @MainActor
 @Observable
 final class TunnelLifecycleOwner {

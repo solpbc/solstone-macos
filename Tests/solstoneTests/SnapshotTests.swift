@@ -8,6 +8,7 @@ import SwiftUI
 import Testing
 import UserNotifications
 import SolstoneCore
+import JournalMarkKit
 import UpdateKit
 @testable import solstone
 
@@ -618,7 +619,7 @@ struct SnapshotTests {
                 selectedTab: .service,
                 initialStorageUsedMB: 42,
                 initialLocalDiscoveryCompleted: false,
-                localIdentityFetch: { _ in nil }
+                localIdentityFetch: { _ in .absent }
             ),
             size: settingsSize,
             to: "settings-service-your-journal-unconfigured.png"
@@ -1057,6 +1058,130 @@ struct SnapshotTests {
             size: settingsSize,
             to: "settings-permissions-cdhash-recovery.png"
         )
+    }
+
+    @Test func onboardingInitialSteps() throws {
+        for phase in SetupPhase.allCases {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let store = SetupContinuationStore(directory: dir)
+            try store.save(SetupContinuation(phase: phase))
+            let model = SetupModel(mailboxDirectory: dir)
+            let state = AppState.forSnapshot(
+                config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
+                setupModel: model
+            )
+            for (name, appearance, width) in [
+                ("light", NSAppearance.Name.aqua, 560.0), ("dark", .darkAqua, 560.0),
+                ("narrow-light", .aqua, 420.0), ("narrow-dark", .darkAqua, 420.0)
+            ] {
+                try render(
+                    SetupView(model: model, appState: state, journalMarkDriver: JournalMarkConfirmationDriver())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light),
+                    size: CGSize(width: width, height: 620),
+                    to: "onboarding-\(phase.rawValue)-off-\(name).png",
+                    appearance: NSAppearance(named: appearance)
+                )
+            }
+        }
+    }
+
+    @Test func onboardingJournalStates() async throws {
+        for mode in ["acquisition-error", "older-mark", "remote-waiting", "connection-mark", "invalid-link"] {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let phase: SetupPhase = mode == "connection-mark" ? .connection : .journal
+            let store = SetupContinuationStore(directory: dir)
+            try store.save(SetupContinuation(phase: phase, mode: mode == "remote-waiting" ? .ownerComparison : nil))
+            let model = SetupModel(mailboxDirectory: dir)
+            let state = AppState.forSnapshot(
+                config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
+                setupModel: model
+            )
+            switch mode {
+            case "acquisition-error": await model.runJournalPhase()
+            case "older-mark": model.olderDiscoveredMark = .uiTestSample
+            case "connection-mark": state.setConfirmedMark(.uiTestSample)
+            case "invalid-link": state.pairingCoordinator.recordInvalidLink(reason: PairingCoordinator.invalidLinkReason(.missingFragment))
+            default: break
+            }
+            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                try render(
+                    SetupView(model: model, appState: state, journalMarkDriver: JournalMarkConfirmationDriver())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light),
+                    size: CGSize(width: 420, height: 620),
+                    to: "onboarding-\(mode)-\(name).png",
+                    appearance: NSAppearance(named: appearance)
+                )
+            }
+        }
+    }
+
+    @Test func onboardingSourceStates() async throws {
+        for phase in [SetupPhase.microphone, .screen] {
+            let modes = phase == .screen ? ["live", "paused", "denied", "restart"] : ["live", "paused", "denied"]
+            for mode in modes {
+                let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
+                defer { try? FileManager.default.removeItem(at: dir) }
+                let store = SetupContinuationStore(directory: dir)
+                try store.save(SetupContinuation(phase: phase))
+                let model = SetupModel(mailboxDirectory: dir)
+                let state = AppState.forSnapshot(
+                    config: AppConfig(isScreenCaptureEnabled: phase == .screen, isMicrophoneCaptureEnabled: true),
+                    setupModel: model
+                )
+                if mode == "restart" {
+                    state.capture.publishScreenRecordingPermission(.notGranted)
+                    state.capture.screenRecordingNeedsRestart = true
+                } else if mode == "denied" {
+                    state.capture.microphoneAuthorizationReader = { .denied }
+                    state.capture.refreshMicrophoneAuthorization()
+                    state.capture.publishScreenRecordingPermission(.notGranted)
+                } else {
+                    state.capture.microphoneAuthorizationReader = { .authorized }
+                    state.capture.refreshMicrophoneAuthorization()
+                    state.capture.publishScreenRecordingPermission(.granted)
+                    state.captureManager.seedRecordingForTesting(
+                        currentSegment: FakeCaptureSegment(outputDirectory: dir), sources: phase == .screen ? .all : .microphone
+                    )
+                    state.capture.handleCaptureStateChange(.recording)
+                    state.microphoneInputPeakReader = { 0.3 }
+                    if phase == .screen {
+                        let context = try #require(CGContext(data: nil, width: 320, height: 180, bitsPerComponent: 8,
+                            bytesPerRow: 1280, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+                        context.setFillColor(NSColor.windowBackgroundColor.cgColor)
+                        context.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+                        context.setFillColor(NSColor.systemOrange.cgColor)
+                        context.fill(CGRect(x: 32, y: 32, width: 120, height: 80))
+                        state.updateLatestFrame(try #require(context.makeImage()), epoch: state.previewEpoch)
+                    }
+                    if mode == "paused" {
+                        state.capture.handleCaptureStateChange(.paused(reasons: [.user]))
+                        state.pauseManager.pause(for: .indefinite)
+                        #expect(state.permissionSourceLiveState(for: phase == .screen ? .screen : .microphone) == .paused(.owner))
+                        #expect(state.latestFrame == nil)
+                    }
+                }
+                for (name, appearance, width) in [
+                    ("light", NSAppearance.Name.aqua, 560.0), ("dark", .darkAqua, 560.0),
+                    ("narrow-light", .aqua, 420.0), ("narrow-dark", .darkAqua, 420.0)
+                ] {
+                    try render(
+                        SetupView(model: model, appState: state, journalMarkDriver: JournalMarkConfirmationDriver())
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light),
+                        size: CGSize(width: width, height: 620),
+                        to: "onboarding-\(phase.rawValue)-\(mode)-\(name).png",
+                        appearance: NSAppearance(named: appearance)
+                    )
+                }
+            }
+        }
     }
 
     @Test func settingsPermissionsLiveOn() throws {

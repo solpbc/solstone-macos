@@ -55,11 +55,30 @@ extension FreshJournalState {
     }
 }
 
+@MainActor
+final class InertRunningJournalController: RunningJournalController {
+    var installed: URL? = nil
+    init(installed: URL? = nil) {
+        self.installed = installed
+    }
+    func installedURL() -> URL? { installed }
+    func runningPID() -> pid_t? { nil }
+    func terminateRunningJournal() -> Bool { false }
+    func launchJournal(at url: URL) throws {}
+    func launchJournalActivating(at url: URL) throws {}
+}
+
+@MainActor
+final class InertTrustVerifier: TrustVerifier {
+    func verifyJournalApp(at url: URL) async throws {}
+}
+
+@MainActor
 struct FreshJournalFlowDependencies {
-    var acquirer: JournalAppAcquirer
+    var acquirer: JournalAppAcquirer?
     var runningJournal: any RunningJournalController
     var trustVerifier: any TrustVerifier
-    var fetchIdentity: @MainActor @Sendable (String) async -> JournalMark?
+    var fetchIdentity: @MainActor @Sendable (String) async -> JournalIdentityResolution
     var waitingPollInterval: Duration
     var sleep: @MainActor @Sendable (Duration) async throws -> Void
 
@@ -72,16 +91,51 @@ struct FreshJournalFlowDependencies {
             runningJournal: runningJournal,
             trustVerifier: trustVerifier,
             fetchIdentity: { baseURL in
-                guard case .mark(let mark) = await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL) else {
-                    return nil
-                }
-                return mark
+                await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
+                    .resolveIdentity(baseURL: baseURL, expectedInstanceID: nil)
             },
             waitingPollInterval: .seconds(3),
             sleep: { duration in
                 try await Task.sleep(for: duration)
             }
         )
+    }
+
+    @MainActor
+    static func inert(
+        installedURL: URL? = nil,
+        runningJournal: any RunningJournalController = InertRunningJournalController(),
+        trustVerifier: any TrustVerifier = InertTrustVerifier(),
+        fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalIdentityResolution = { _ in .absent }
+    ) -> FreshJournalFlowDependencies {
+        let runner = (installedURL != nil && runningJournal is InertRunningJournalController)
+            ? InertRunningJournalController(installed: installedURL)
+            : runningJournal
+        return FreshJournalFlowDependencies(
+            acquirer: nil,
+            runningJournal: runner,
+            trustVerifier: trustVerifier,
+            fetchIdentity: fetchIdentity,
+            waitingPollInterval: .milliseconds(10),
+            sleep: { _ in }
+        )
+    }
+
+    @MainActor
+    init(
+        acquirer: JournalAppAcquirer? = nil,
+        runningJournal: any RunningJournalController,
+        trustVerifier: any TrustVerifier,
+        fetchIdentity: @escaping @MainActor @Sendable (String) async -> JournalIdentityResolution = { _ in .absent },
+        waitingPollInterval: Duration = .seconds(3),
+        sleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = { _ in }
+    ) {
+        self.acquirer = acquirer
+        self.runningJournal = runningJournal
+        self.trustVerifier = trustVerifier
+        self.fetchIdentity = fetchIdentity
+        self.waitingPollInterval = waitingPollInterval
+        self.sleep = sleep
     }
 }
 
@@ -97,9 +151,15 @@ final class FreshJournalFlow {
     private var waitingProbeTask: Task<Void, Never>?
     @ObservationIgnored
     private let dependencies: FreshJournalFlowDependencies
+    @ObservationIgnored
+    private let resolveTrustedJournalOverride: (@MainActor () async throws -> URL)?
 
-    init(dependencies: FreshJournalFlowDependencies = .live()) {
+    init(
+        dependencies: FreshJournalFlowDependencies,
+        resolveTrustedJournalOverride: (@MainActor () async throws -> URL)? = nil
+    ) {
         self.dependencies = dependencies
+        self.resolveTrustedJournalOverride = resolveTrustedJournalOverride
     }
 
     func start() {
@@ -150,24 +210,36 @@ final class FreshJournalFlow {
         waitingProbeTask = nil
     }
 
+    func resolveTrustedJournal() async throws -> URL {
+        if let resolveTrustedJournalOverride {
+            return try await resolveTrustedJournalOverride()
+        }
+        if let installed = dependencies.runningJournal.installedURL(),
+           (try? await dependencies.trustVerifier.verifyJournalApp(at: installed)) != nil {
+            return installed
+        } else {
+            guard let acquirer = dependencies.acquirer else {
+                throw JournalHandoffFailure.trustFailed("no acquirer available")
+            }
+            return try await acquirer.acquire { phase in
+                self.state = .acquiring(phase)
+            }
+        }
+    }
+
+    func launchTrustedJournal(at trustedURL: URL) async throws {
+        state = .launching
+        try dependencies.runningJournal.launchJournalActivating(at: trustedURL)
+        state = .waitingForJournal
+    }
+
     private func runStart() async {
         cancelWaitingProbe()
         discoveredJournalMark = nil
 
         do {
-            let trustedURL: URL
-            if let installed = dependencies.runningJournal.installedURL(),
-               (try? await dependencies.trustVerifier.verifyJournalApp(at: installed)) != nil {
-                trustedURL = installed
-            } else {
-                trustedURL = try await dependencies.acquirer.acquire { phase in
-                    self.state = .acquiring(phase)
-                }
-            }
-
-            state = .launching
-            try dependencies.runningJournal.launchJournalActivating(at: trustedURL)
-            state = .waitingForJournal
+            let trustedURL = try await resolveTrustedJournal()
+            try await launchTrustedJournal(at: trustedURL)
         } catch is CancellationError {
             state = .idle
         } catch let failure as JournalHandoffFailure {

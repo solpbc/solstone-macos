@@ -87,6 +87,8 @@ public final class CaptureCoordinator {
     private let configProvider: CaptureConfigProvider
     /// Lets the app add newly connected microphones to its list before capture reconciles.
     var onMicrophonesChanged: (@MainActor () -> Void)?
+    var onCaptureStateChanged: (@MainActor (CaptureManager.State) -> Void)?
+    var onPauseTriggered: (@MainActor () -> Void)?
     private let bannerSink: BannerSink
     private let setAsideSink: @MainActor (String) -> Void
     private let startOperation: StartOperation
@@ -219,6 +221,7 @@ public final class CaptureCoordinator {
         }
 
         pauseManager.onPause = { [weak self] in
+            self?.onPauseTriggered?()
             _ = await self?.captureManager.enqueueTransition(.pause(reason: .user, stopAudio: true))
         }
         pauseManager.onResume = { [weak self] cause in
@@ -238,6 +241,7 @@ public final class CaptureCoordinator {
 
     func handleCaptureStateChange(_ state: CaptureManager.State) {
         publishCaptureStateEvidence(for: state)
+        onCaptureStateChanged?(state)
 
         switch state {
         case .idle:
@@ -282,8 +286,7 @@ public final class CaptureCoordinator {
         }
 
         if reason == .user {
-            isExplicitlyStopped = false
-            isUserStopped = false
+            clearOwnerStop()
         }
 
         let config = configProvider()
@@ -371,6 +374,12 @@ public final class CaptureCoordinator {
     /// Turning a source back on is the owner asking for capture, so it clears an explicit
     /// stop even when nothing can start yet — otherwise granting the permission afterwards
     /// leaves the poll refusing to auto-start, with no owner-facing way back.
+    /// An explicit turn-on action authorizes the next start, including after a held pause.
+    internal func clearOwnerStop() {
+        isExplicitlyStopped = false
+        isUserStopped = false
+    }
+
     public func clearExplicitStop() {
         isExplicitlyStopped = false
     }
