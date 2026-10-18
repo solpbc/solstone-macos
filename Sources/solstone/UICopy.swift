@@ -151,6 +151,7 @@ public enum UICopy {
     public static let SETUP_OPEN_THE_JOURNAL_APP_TO_CONTINUE = "open the journal app to continue."
     public static let SETUP_COULDNT_REACH_YOUR_JOURNAL = "couldn't reach your journal. try again."
     public static let SETUP_COULDNT_FINISH = "couldn't finish setup. try again."
+    public static let SETUP_COULDNT_SAVE_PROGRESS = "couldn't save setup progress."
     public static let SETUP_TRY_AGAIN = "try again"
     public static let SETUP_MICROPHONE = "microphone"
     public static let SETUP_MICROPHONE_EXPLAINER = "the microphone stays off until you turn it on. what you turn on goes into your journal."

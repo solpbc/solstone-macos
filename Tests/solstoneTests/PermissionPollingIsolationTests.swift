@@ -18,10 +18,11 @@ struct PermissionPollingIsolationTests {
         let startup = SolstoneStartupComposition.makeNormalStartup(
             decision: .allowed(.developerBypass),
             automaticObservationPipelineEnabled: false,
+            loadConfiguration: { _ in AppConfig() },
             evidenceNow: { harness.clock.now },
             makeEvidenceStore: { _ in harness.store },
             makeRecorder: { _, _ in harness.recorder },
-            makeState: { recorder, _ in AppState.forSnapshot(recorder: recorder) },
+            makeState: { recorder, _, _, _ in AppState.forSnapshot(recorder: recorder) },
             registerSharedState: { registrations.append($0) },
             makeUpdateController: { _ in testUpdateController() },
             registerUpdateAnnouncement: { _ in },
@@ -53,6 +54,7 @@ struct PermissionPollingIsolationTests {
             decision: .repair(context),
             repairCoordinator: repairCoordinator,
             automaticObservationPipelineEnabled: false,
+            loadConfiguration: { _ in AppConfig() },
             registerSharedState: { _ in registrations += 1 },
             makeStartup: { _, _ in () }
         )
@@ -78,10 +80,11 @@ struct PermissionPollingIsolationTests {
         let startup = SolstoneStartupComposition.makeNormalStartup(
             decision: .allowed(.developerBypass),
             automaticObservationPipelineEnabled: true,
+            loadConfiguration: { _ in AppConfig() },
             evidenceNow: { harness.clock.now },
             makeEvidenceStore: { _ in harness.store },
             makeRecorder: { _, _ in harness.recorder },
-            makeState: { recorder, _ in
+            makeState: { recorder, _, _, _ in
                 var config = AppConfig()
                 config.isScreenCaptureEnabled = true
                 config.isMicrophoneCaptureEnabled = true
@@ -131,10 +134,11 @@ struct PermissionPollingIsolationTests {
         let startup = SolstoneStartupComposition.makeNormalStartup(
             decision: .allowed(.developerBypass),
             automaticObservationPipelineEnabled: false,
+            loadConfiguration: { _ in AppConfig() },
             evidenceNow: { harness.clock.now },
             makeEvidenceStore: { _ in harness.store },
             makeRecorder: { _, _ in harness.recorder },
-            makeState: { recorder, _ in
+            makeState: { recorder, _, _, _ in
                 var config = AppConfig()
                 config.isScreenCaptureEnabled = true
                 config.isMicrophoneCaptureEnabled = true
@@ -231,10 +235,11 @@ struct PermissionPollingIsolationTests {
         let startup = SolstoneStartupComposition.makeNormalStartup(
             decision: .allowed(.developerBypass),
             automaticObservationPipelineEnabled: true,
+            loadConfiguration: { _ in AppConfig() },
             evidenceNow: { harness.clock.now },
             makeEvidenceStore: { _ in harness.store },
             makeRecorder: { _, _ in harness.recorder },
-            makeState: { recorder, _ in
+            makeState: { recorder, _, _, _ in
                 AppState.forSnapshot(
                     recorder: recorder,
                     screenPermissionProvider: makeScreenPermissionProvider(prompted: false),
@@ -301,10 +306,11 @@ struct PermissionPollingIsolationTests {
         let startup = SolstoneStartupComposition.makeNormalStartup(
             decision: .allowed(.developerBypass),
             automaticObservationPipelineEnabled: true,
+            loadConfiguration: { _ in AppConfig() },
             evidenceNow: { clock.now },
             makeEvidenceStore: { _ in store },
             makeRecorder: { _, _ in recorder },
-            makeState: { evidenceRecorder, _ in
+            makeState: { evidenceRecorder, _, _, _ in
                 var config = AppConfig()
                 config.isScreenCaptureEnabled = true
                 config.isMicrophoneCaptureEnabled = true

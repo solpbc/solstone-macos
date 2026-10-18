@@ -322,8 +322,9 @@ public struct AppConfig: Sendable {
         legacyConfigPaths: [URL]? = nil,
         log: any ClassifiedLogSinking = LoggerClassifiedLogSink.general,
         continuationDirectory: URL? = nil,
-        nativeSetupEnabled: Bool = false
-    ) -> AppConfig {
+        nativeSetupEnabled: Bool = false,
+        continuationStore: SetupContinuationStore? = nil
+    ) throws -> AppConfig {
         let defaults = UserDefaults.standard
         let legacyConfigPaths = legacyConfigPaths ?? productionLegacyConfigPaths
         var config: AppConfig?
@@ -347,17 +348,23 @@ public struct AppConfig: Sendable {
             return load()
         }
 
-        // Create default config
+        if nativeSetupEnabled {
+            let store = continuationStore ?? SetupContinuationStore(
+                directory: continuationDirectory ?? SetupContinuationStore.defaultDirectory
+            )
+            if try store.loadChecked() == nil {
+                try store.save(SetupContinuation(phase: .journal))
+            }
+        }
+
+        // Create default config only after native setup can resume.
         var defaultConfig = AppConfig(
             isScreenCaptureEnabled: !nativeSetupEnabled,
             isMicrophoneCaptureEnabled: !nativeSetupEnabled
         )
         defaultConfig.excludedApps = defaultExclusions
-        try? defaultConfig.save()
+        try defaultConfig.save()
         defaults.set(true, forKey: Keys.didReseedCaptureSourcesOn)
-        if nativeSetupEnabled, let continuationDirectory {
-            try? SetupContinuationStore(directory: continuationDirectory).save(SetupContinuation(phase: .journal))
-        }
         Logger.general.info("Created default config in UserDefaults")
         return defaultConfig
     }

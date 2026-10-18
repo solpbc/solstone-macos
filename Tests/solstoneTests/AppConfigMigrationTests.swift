@@ -112,7 +112,7 @@ struct AppConfigMigrationTests {
         }
         """.utf8).write(to: configURL)
 
-        let migrated = AppConfig.loadOrCreateDefault(legacyConfigPaths: [configURL])
+        let migrated = try AppConfig.loadOrCreateDefault(legacyConfigPaths: [configURL])
 
         #expect(migrated.serverURL == "https://example.com")
         #expect(migrated.serverKey == "key")
@@ -152,7 +152,7 @@ struct AppConfigMigrationTests {
         """.utf8).write(to: configURL)
         let log = RecordingClassifiedLogSink()
 
-        _ = AppConfig.loadOrCreateDefault(legacyConfigPaths: [configURL], log: log)
+        _ = try AppConfig.loadOrCreateDefault(legacyConfigPaths: [configURL], log: log)
 
         let emission = try #require(log.emissions.first)
         let concatenated = emission.classification + emission.publicFields.values.joined() + emission.publicFields.keys.joined()
@@ -312,7 +312,7 @@ struct AppConfigMigrationTests {
         let tempDir = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        let config = AppConfig.loadOrCreateDefault(
+        let config = try AppConfig.loadOrCreateDefault(
             legacyConfigPaths: [tempDir.appendingPathComponent("nonexistent.json")],
             continuationDirectory: tempDir,
             nativeSetupEnabled: true
@@ -330,7 +330,7 @@ struct AppConfigMigrationTests {
         defer { clearConfigDefaults() }
         let dir = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let config = AppConfig.loadOrCreateDefault(
+        let config = try AppConfig.loadOrCreateDefault(
             legacyConfigPaths: [dir.appendingPathComponent("absent.json")],
             continuationDirectory: dir
         )
@@ -349,7 +349,7 @@ struct AppConfigMigrationTests {
         let store = SetupContinuationStore(directory: dir)
         try store.save(SetupContinuation(phase: .screen))
         let progress = try Data(contentsOf: store.fileURL)
-        let config = AppConfig.loadOrCreateDefault(
+        let config = try AppConfig.loadOrCreateDefault(
             legacyConfigPaths: [dir.appendingPathComponent("absent.json")],
             continuationDirectory: dir,
             nativeSetupEnabled: nativeSetupEnabled
@@ -357,6 +357,135 @@ struct AppConfigMigrationTests {
         #expect(!config.isScreenCaptureEnabled)
         #expect(config.isMicrophoneCaptureEnabled)
         #expect(try Data(contentsOf: store.fileURL) == progress)
+    }
+
+    @Test func failedNativeProgressWriteLeavesFreshInitializationRetryable() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let blocked = SetupContinuationStore(directory: dir, replace: { _, _ in
+            throw CocoaError(.fileWriteNoPermission)
+        })
+        #expect(throws: CocoaError.self) {
+            try AppConfig.loadOrCreateDefault(
+                legacyConfigPaths: [], nativeSetupEnabled: true, continuationStore: blocked
+            )
+        }
+        #expect(UserDefaults.standard.object(forKey: "excludePrivateBrowsing") == nil)
+        #expect(UserDefaults.standard.object(forKey: "didReseedCaptureSourcesOn") == nil)
+        #expect(try blocked.loadChecked() == nil)
+
+        let config = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [], nativeSetupEnabled: true,
+            continuationStore: SetupContinuationStore(directory: dir)
+        )
+        #expect(!config.isScreenCaptureEnabled)
+        #expect(!config.isMicrophoneCaptureEnabled)
+        #expect(try blocked.loadChecked()?.phase == .journal)
+        #expect(UserDefaults.standard.object(forKey: "excludePrivateBrowsing") != nil)
+        #expect(UserDefaults.standard.bool(forKey: "didReseedCaptureSourcesOn"))
+    }
+
+    @Test func interruptedFreshInitializationPreservesExistingProgress() throws {
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        defer { clearConfigDefaults() }
+        let store = SetupContinuationStore(directory: dir)
+        for record in [
+            SetupContinuation(phase: .journal),
+            SetupContinuation(phase: .screen),
+            SetupContinuation(completed: true),
+        ] {
+            clearConfigDefaults()
+            try store.save(record)
+            let before = try Data(contentsOf: store.fileURL)
+            let refusingReplacement = SetupContinuationStore(directory: dir, replace: { _, _ in
+                throw CocoaError(.fileWriteNoPermission)
+            })
+            let config = try AppConfig.loadOrCreateDefault(
+                legacyConfigPaths: [], nativeSetupEnabled: true,
+                continuationStore: refusingReplacement
+            )
+            #expect(!config.isScreenCaptureEnabled)
+            #expect(!config.isMicrophoneCaptureEnabled)
+            #expect(try Data(contentsOf: store.fileURL) == before)
+        }
+    }
+
+    @Test func corruptNativeProgressIsPreservedAndBlocksFreshPreferences() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        let corrupt = Data("incomplete progress".utf8)
+        try corrupt.write(to: store.fileURL)
+        #expect(throws: DecodingError.self) {
+            try AppConfig.loadOrCreateDefault(
+                legacyConfigPaths: [], nativeSetupEnabled: true, continuationStore: store
+            )
+        }
+        #expect(try Data(contentsOf: store.fileURL) == corrupt)
+        #expect(UserDefaults.standard.object(forKey: "excludePrivateBrowsing") == nil)
+        #expect(UserDefaults.standard.object(forKey: "didReseedCaptureSourcesOn") == nil)
+    }
+
+    @Test func unreadableNativeProgressDoesNotBecomeAbsentProgress() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        try FileManager.default.createDirectory(at: store.fileURL, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) {
+            try AppConfig.loadOrCreateDefault(
+                legacyConfigPaths: [], nativeSetupEnabled: true, continuationStore: store
+            )
+        }
+        #expect(UserDefaults.standard.object(forKey: "excludePrivateBrowsing") == nil)
+        #expect(UserDefaults.standard.object(forKey: "didReseedCaptureSourcesOn") == nil)
+        #expect((try store.fileURL.resourceValues(forKeys: [.isDirectoryKey])).isDirectory == true)
+    }
+
+    @Test func existingAndDisabledOwnersNeverConsultNativeProgress() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        let corrupt = Data("unreadable as progress".utf8)
+        try corrupt.write(to: store.fileURL)
+        let legacy = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [], nativeSetupEnabled: false, continuationStore: store
+        )
+        #expect(legacy.isScreenCaptureEnabled)
+        #expect(legacy.isMicrophoneCaptureEnabled)
+        try AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: true).save()
+        let existing = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [], nativeSetupEnabled: true, continuationStore: store
+        )
+        #expect(!existing.isScreenCaptureEnabled)
+        #expect(existing.isMicrophoneCaptureEnabled)
+        #expect(try Data(contentsOf: store.fileURL) == corrupt)
+    }
+
+    @Test func nativeQualificationDoesNotBootstrapAMigratedOwner() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let configURL = dir.appendingPathComponent("config.json")
+        try Data("{\"serverURL\":\"https://journal.example.test\",\"serverKey\":\"fixture\"}".utf8).write(to: configURL)
+        let blocked = SetupContinuationStore(directory: dir, replace: { _, _ in
+            throw CocoaError(.fileWriteNoPermission)
+        })
+        let migrated = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [configURL], nativeSetupEnabled: true, continuationStore: blocked
+        )
+        #expect(migrated.serverURL == "https://journal.example.test")
+        #expect(try blocked.loadChecked() == nil)
+        #expect(FileManager.default.fileExists(atPath: configURL.appendingPathExtension("migrated").path))
     }
 
     @Test func missingSourceKeysStillLoadTrue() throws {

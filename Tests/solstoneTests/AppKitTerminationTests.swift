@@ -11,15 +11,15 @@ import Testing
 @Suite("AppKit termination", .serialized)
 @MainActor
 struct AppKitTerminationTests {
-    @Test func nilCoordinatorReturnsLaterAndRepliesTrue() {
+    @Test func nilCoordinatorTerminatesImmediatelyWithoutReply() {
         var replies: [Bool] = []
         let seam = AppKitTerminationSeam(
             coordinatorLookup: { nil },
             reply: { replies.append($0) }
         )
 
-        #expect(seam.applicationShouldTerminate() == .terminateLater)
-        #expect(replies == [true])
+        #expect(seam.applicationShouldTerminate() == .terminateNow)
+        #expect(replies.isEmpty)
     }
 
     @Test func unpreparedTerminationRecordsAttemptAndRepliesTrue() async throws {
@@ -123,10 +123,11 @@ struct AppKitTerminationTests {
         guard let state = SolstoneStartupComposition.makeNormalStartup(
             decision: .allowed(.developerBypass),
             automaticObservationPipelineEnabled: false,
+            loadConfiguration: { _ in AppConfig() },
             evidenceNow: { harness.clock.now },
             makeEvidenceStore: { _ in harness.store },
             makeRecorder: { _, _ in harness.recorder },
-            makeState: { recorder, _ in
+            makeState: { recorder, _, _, _ in
                 AppState.forSnapshot(
                     config: config,
                     lastDeliveryStore: delivery,
@@ -209,10 +210,11 @@ struct AppKitTerminationTests {
         guard let state = SolstoneStartupComposition.makeNormalStartup(
             decision: .allowed(.developerBypass),
             automaticObservationPipelineEnabled: false,
+            loadConfiguration: { _ in AppConfig() },
             evidenceNow: { storeNow },
             makeEvidenceStore: { _ in store },
             makeRecorder: { _, _ in recorder },
-            makeState: { evidenceRecorder, _ in AppState.forSnapshot(recorder: evidenceRecorder) },
+            makeState: { evidenceRecorder, _, _, _ in AppState.forSnapshot(recorder: evidenceRecorder) },
             registerSharedState: { _ in },
             makeUpdateController: { _ in testUpdateController() },
             registerUpdateAnnouncement: { _ in },

@@ -56,6 +56,7 @@ struct DiagnosticEvidenceNormalCompositionTests {
             decision: .repair(context),
             repairCoordinator: repairCoordinator,
             automaticObservationPipelineEnabled: false,
+            loadConfiguration: { _ in AppConfig() },
             evidenceNow: { harness.clock.now },
             makeEvidenceStore: { _ in harness.store },
             makeRecorder: { _, _ in harness.recorder },
@@ -84,10 +85,11 @@ struct DiagnosticEvidenceNormalCompositionTests {
         let startup = SolstoneStartupComposition.makeNormalStartup(
             decision: .allowed(.developerBypass),
             automaticObservationPipelineEnabled: false,
+            loadConfiguration: { _ in AppConfig() },
             evidenceNow: { harness.clock.now },
             makeEvidenceStore: { _ in harness.store },
             makeRecorder: { _, _ in harness.recorder },
-            makeState: { recorder, _ in
+            makeState: { recorder, _, _, _ in
                 AppState.forSnapshot(
                     config: AppConfig(
                         isScreenCaptureEnabled: defaults.bool(forKey: "isScreenCaptureEnabled"),

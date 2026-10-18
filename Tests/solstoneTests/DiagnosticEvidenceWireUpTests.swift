@@ -16,7 +16,7 @@ struct DiagnosticEvidenceWireUpTests {
         #expect(wireUpContains(composition, "SolstoneStartupPlanner.planStartup("))
         #expect(wireUpContains(composition, "let store = makeEvidenceStore(evidenceNow)"))
         #expect(wireUpContains(composition, "let recorder = makeRecorder(store, evidenceNow)"))
-        #expect(wireUpContains(composition, "let appState = makeState(recorder, automaticObservationPipelineEnabled)"))
+        #expect(wireUpContains(composition, "let appState = makeState(recorder, automaticObservationPipelineEnabled, config, nativeSetupEnabled)"))
         #expect(wireUpContains(composition, "registerSharedState: @escaping @MainActor (AppState) -> Void = { AppState.shared = $0 }"))
         #expect(wireUpContains(composition, "registerSharedState(appState)"))
         #expect(wireUpContains(composition, "recorder.enqueue(.appLaunch)"))
@@ -37,8 +37,10 @@ struct DiagnosticEvidenceWireUpTests {
         #expect(wireUpContains(app, "SolstoneStartupComposition.makeNormalStartup("))
         #expect(!app.contains("makeState:"))
         #expect(wireUpContains(composition, """
-            makeState: @escaping @MainActor (DiagnosticEvidenceRecorder, Bool) -> AppState = { recorder, pipelineEnabled in
+            makeState: @escaping @MainActor (DiagnosticEvidenceRecorder, Bool, AppConfig, Bool) -> AppState = { recorder, pipelineEnabled, config, setupEnabled in
                 AppState(
+                    config: config,
+                    nativeSetupEnabled: setupEnabled,
                     automaticObservationPipelineEnabled: pipelineEnabled,
                     recorder: recorder
                 )
@@ -67,7 +69,7 @@ struct DiagnosticEvidenceWireUpTests {
 
     @Test func productionPauseManagerUsesStandardDefaultsAndSnapshotDoesNot() throws {
         let appState = try readWireUpSource("Sources/solstone/AppState.swift")
-        let productionAnchor = "    init(\n        notifier: any UserNotifying = UNUserNotificationCenterNotifier(),"
+        let productionAnchor = "    init(\n        config: AppConfig,\n        nativeSetupEnabled: Bool,\n        notifier: any UserNotifying = UNUserNotificationCenterNotifier(),"
         let snapshotAnchor = "    private init(\n        snapshotConfig config: AppConfig,"
         let productionStart = try #require(appState.range(of: productionAnchor))
         let snapshotStart = try #require(appState.range(of: snapshotAnchor))
@@ -136,7 +138,6 @@ struct DiagnosticEvidenceWireUpTests {
 
         #expect(wireUpContains(app, "private var appKitTerminationSeam = AppKitTerminationSeam()"))
         #expect(wireUpContains(app, "appKitTerminationSeam.applicationShouldTerminate()"))
-        #expect(!app.contains("terminateNow"))
         #expect(wireUpContains(app, "AppState.shared?.appQuitCoordinator"))
         #expect(wireUpContains(app, "NSApp.reply(toApplicationShouldTerminate: $0)"))
         #expect(wireUpContains(appState, "private let recorder: DiagnosticEvidenceRecorder"))

@@ -1701,6 +1701,8 @@ public final class AppState {
     }
 
     init(
+        config: AppConfig,
+        nativeSetupEnabled: Bool,
         notifier: any UserNotifying = UNUserNotificationCenterNotifier(),
         loginService: any LoginItemService = LiveLoginItemService(),
         automaticObservationPipelineEnabled: Bool = true,
@@ -1712,12 +1714,6 @@ public final class AppState {
         screenPermissionProvider: ScreenRecordingPermissionProvider = .live,
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live
     ) {
-        // Load configuration
-        let nativeSetupEnabled = journalSupportsSetupSequence(Bundle.main.object(forInfoDictionaryKey: "SolstoneSetupCapabilities"))
-        let config = AppConfig.loadOrCreateDefault(
-            continuationDirectory: SetupContinuationStore.defaultDirectory,
-            nativeSetupEnabled: nativeSetupEnabled
-        )
         let pauseManager = PauseManager(defaults: .standard)
         let captureTarget = AppStateBridgeTarget()
         let shortcutController = PauseShortcutController(

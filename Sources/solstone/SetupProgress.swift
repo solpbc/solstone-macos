@@ -93,12 +93,16 @@ public struct SetupContinuationStore: Sendable {
     }
 
     public func load() -> SetupContinuation? {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        guard let data = try? Data(contentsOf: fileURL),
-              let record = try? JSONDecoder().decode(SetupContinuation.self, from: data) else {
+        try? loadChecked()
+    }
+
+    public func loadChecked() throws -> SetupContinuation? {
+        do {
+            let data = try Data(contentsOf: fileURL)
+            return try JSONDecoder().decode(SetupContinuation.self, from: data)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return nil
         }
-        return record
     }
 
     public func save(_ record: SetupContinuation) throws {

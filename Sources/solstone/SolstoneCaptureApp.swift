@@ -73,8 +73,7 @@ struct AppKitTerminationSeam {
 
     func applicationShouldTerminate() -> NSApplication.TerminateReply {
         guard let coordinator = coordinatorLookup() else {
-            reply(true)
-            return .terminateLater
+            return .terminateNow
         }
         coordinator.requestAppKitTermination(reply: reply)
         return .terminateLater
