@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- with the latest journal app on this mac, setup now continues through both apps before opening your journal in the browser. you can turn on the microphone, then screen and computer sound, with a live check before continuing.
+
+### Changed
+
 - pairing links now open the pairing form with the link filled in. you choose when to connect.
 
 ## [2.0.37] - 2026-10-17
