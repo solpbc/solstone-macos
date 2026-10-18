@@ -85,10 +85,7 @@ struct NativeIntegrationDoorTests {
         // Journal app's first run does, over the same HTTP client.
         #expect(ready.doorState == "withheld", "fresh journal should withhold the door, saw \(ready.doorState)")
         let initClient = JournalInitClient(baseURL: conveyBase)
-        _ = try await initClient.getMark()
-        let locked = try await initClient.lockMark()
-        #expect(locked.locked)
-        let finalized = try await initClient.finalize()
+        let finalized = try await establishNativeJournalSession(client: initClient)
         #expect(finalized.success)
         let doorBound = await NativeJournalFixture.waitUntil(timeout: .seconds(20)) {
             NativeJournalFixture.loopbackPortAccepts(directPort)

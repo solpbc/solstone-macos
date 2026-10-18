@@ -18,6 +18,7 @@ struct JournalInitClientTests {
 
         #expect(response.mark.words == ["afoot", "unfixed"])
         #expect(response.locked == false)
+        #expect(response.proposalID == nil)
         #expect(request.url?.absoluteString == "http://127.0.0.1:5015/init/mark")
         #expect(request.httpMethod == "GET")
         #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
@@ -60,6 +61,69 @@ struct JournalInitClientTests {
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(bodyObject.isEmpty)
+    }
+
+    @Test func lockSendsExactlyTheDisplayedProposalAsJSON() async throws {
+        let store = ObserverURLProtocolStore()
+        let proposalID = "shown-\"proposal\\identity"
+        store.enqueue(body: Self.json([
+            "mark": Self.markObject(), "locked": false, "proposal_id": proposalID,
+        ]))
+        store.enqueue(body: Self.markResponse(locked: true))
+        let client = Self.client(store: store)
+
+        let displayed = try await client.getMark()
+        #expect(displayed.proposalID == proposalID)
+        let locked = try await client.lockMark(proposalID: try #require(displayed.proposalID))
+        let requests = store.snapshotRequests()
+        let body = try #require(store.requestBodies.last ?? nil)
+        let object = try #require(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: String])
+
+        #expect(locked.locked)
+        #expect(requests.count == 2)
+        #expect(requests.last?.url?.path == "/init/mark/lock")
+        #expect(requests.last?.httpMethod == "POST")
+        #expect(requests.last?.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(object == ["proposal_id": proposalID])
+    }
+
+    @Test func emptyProposalIsRefusedBeforeRequest() async throws {
+        let store = ObserverURLProtocolStore()
+        let client = Self.client(store: store)
+        do {
+            _ = try await client.lockMark(proposalID: "")
+            Issue.record("expected invalidProposalID")
+        } catch let error as JournalInitClientError {
+            #expect(error == .invalidProposalID)
+        }
+        #expect(store.snapshotRequests().isEmpty)
+    }
+
+    @Test func malformedProposalIsNotCoercedOrTreatedAsLegacy() async throws {
+        let store = ObserverURLProtocolStore()
+        store.enqueue(body: Self.json([
+            "mark": Self.markObject(), "locked": false, "proposal_id": 42,
+        ]))
+        let client = Self.client(store: store)
+        do {
+            _ = try await client.getMark()
+            Issue.record("expected proposal decoding failure")
+        } catch is DecodingError {
+            #expect(store.snapshotRequests().count == 1)
+        }
+    }
+
+    @Test func staleProposalThrowsWithoutRefetchOrLegacyFallback() async throws {
+        let store = ObserverURLProtocolStore()
+        store.enqueue(statusCode: 409, body: #"{"error":"stale","reason_code":"proposal_conflict","detail":"changed"}"#)
+        let client = Self.client(store: store)
+        do {
+            _ = try await client.lockMark(proposalID: "displayed-proposal")
+            Issue.record("expected stale proposal refusal")
+        } catch let error as JournalInitClientError {
+            #expect(error == .serverError(409))
+        }
+        #expect(store.snapshotRequests().map { $0.url?.path } == ["/init/mark/lock"])
     }
 
     @Test func probeSetupCompleteMapsRedirectDisabledStatuses() async throws {

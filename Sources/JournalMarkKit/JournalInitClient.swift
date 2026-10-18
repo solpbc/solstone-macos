@@ -6,6 +6,7 @@ import Foundation
 public enum JournalInitClientError: Error, Equatable {
     case invalidURL
     case invalidResponse
+    case invalidProposalID
     case serverError(Int)
     case invalidOperationForState(detail: String)
     case identityNotLocked(detail: String)
@@ -14,15 +15,18 @@ public enum JournalInitClientError: Error, Equatable {
 public struct JournalInitMarkResponse: Decodable, Sendable, Equatable {
     public let mark: JournalMark
     public let locked: Bool
+    public let proposalID: String?
 
-    public init(mark: JournalMark, locked: Bool) {
+    public init(mark: JournalMark, locked: Bool, proposalID: String? = nil) {
         self.mark = mark
         self.locked = locked
+        self.proposalID = proposalID
     }
 
     private enum CodingKeys: String, CodingKey {
         case mark
         case locked
+        case proposalID = "proposal_id"
     }
 
     public init(from decoder: Decoder) throws {
@@ -33,6 +37,7 @@ public struct JournalInitMarkResponse: Decodable, Sendable, Equatable {
         }
         mark = validMark
         locked = try container.decode(Bool.self, forKey: .locked)
+        proposalID = try container.decodeIfPresent(String.self, forKey: .proposalID)
     }
 }
 
@@ -88,6 +93,13 @@ public struct JournalInitClient: Sendable {
         try await sendMarkRequest(path: "/init/mark/lock", method: "POST")
     }
 
+    public func lockMark(proposalID: String) async throws -> JournalInitMarkResponse {
+        guard !proposalID.isEmpty else {
+            throw JournalInitClientError.invalidProposalID
+        }
+        return try await sendMarkRequest(path: "/init/mark/lock", method: "POST", proposalID: proposalID)
+    }
+
     public func finalize(body: JournalInitFinalizeRequest = JournalInitFinalizeRequest()) async throws -> JournalInitFinalizeResponse {
         var request = try buildRequest(path: "/init/finalize", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -129,8 +141,12 @@ public struct JournalInitClient: Sendable {
         return request
     }
 
-    private func sendMarkRequest(path: String, method: String) async throws -> JournalInitMarkResponse {
-        let request = try buildRequest(path: path, method: method)
+    private func sendMarkRequest(path: String, method: String, proposalID: String? = nil) async throws -> JournalInitMarkResponse {
+        var request = try buildRequest(path: path, method: method)
+        if let proposalID {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(["proposal_id": proposalID])
+        }
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
         return try JSONDecoder().decode(JournalInitMarkResponse.self, from: data)
