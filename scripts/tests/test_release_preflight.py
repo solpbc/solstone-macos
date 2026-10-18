@@ -32,7 +32,7 @@ class ReleasePreflightTests(unittest.TestCase):
 
     def test_ignores_names_in_unrelated_process_arguments(self):
         result = self.preflight(
-            "123 /opt/homebrew/bin/grok --scope mention codesign notarytool tmux-run sign-and\n"
+            "123 /opt/homebrew/bin/grok --scope mention codesign notarytool sign-and\n"
             "scope continues: make release-dmg and wheel-macos are instructions\n"
             "124 make release-preflight\n")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -41,7 +41,7 @@ class ReleasePreflightTests(unittest.TestCase):
     def test_refuses_actual_signing_or_runner_programs(self):
         for command in ("/usr/bin/codesign --sign identity artifact",
                         "/usr/bin/xcrun notarytool submit artifact",
-                        "/bin/bash /opt/homebrew/bin/tmux-run hopper job",
+                        "/bin/bash /usr/local/bin/wheel-macos artifact",
                         "/usr/bin/python3 /tmp/sign-and-notarize.py artifact",
                         "/tmp/wheel-macos artifact"):
             with self.subTest(command=command):
