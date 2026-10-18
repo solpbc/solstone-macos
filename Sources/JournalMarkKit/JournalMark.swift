@@ -71,7 +71,7 @@ public nonisolated struct JournalMark: Codable, Equatable, Sendable {
     private static func isValidHexColor(_ hex: String) -> Bool {
         guard hex.count == 7, hex.first == "#" else { return false }
         return hex.dropFirst().allSatisfy { character in
-            character.isNumber || ("a"..."f").contains(character.lowercased())
+            "0123456789abcdefABCDEF".contains(character)
         }
     }
 }

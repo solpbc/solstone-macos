@@ -41,6 +41,12 @@ struct JournalMarkTests {
         #expect(Self.decodeAndValidate(Self.sampleData(icon1Color: "#f59e0")) == nil)
     }
 
+    @Test(arguments: ["#١٢٣٤٥٦", "#１２３４５６", "#⁰¹²³⁴⁵"])
+    func validateRejectsNonAsciiColorDigits(color: String) {
+        #expect(Self.decodeAndValidate(Self.sampleData(icon1Color: color)) == nil)
+        #expect(Self.decodeAndValidate(Self.sampleData(icon1Color: "#A1b2C3")) != nil)
+    }
+
     @Test func validateRejectsRotNinety() {
         #expect(Self.decodeAndValidate(Self.sampleData(icon2Rot: 90)) == nil)
     }
