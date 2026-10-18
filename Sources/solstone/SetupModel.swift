@@ -10,6 +10,7 @@ import SolstoneCore
 @MainActor
 @Observable
 final class SetupModel {
+    let enabled: Bool
     let continuationStore: SetupContinuationStore
     let mailboxStore: SetupMailboxStore
     let freshFlow: FreshJournalFlow
@@ -60,6 +61,7 @@ final class SetupModel {
 
     @discardableResult
     internal func setPhase(_ newPhase: SetupPhase?) -> Bool {
+        guard enabled else { return false }
         var cont = continuation ?? SetupContinuation()
         if let newPhase {
             cont.phase = newPhase
@@ -108,6 +110,7 @@ final class SetupModel {
 
     @discardableResult
     public func switchToOwnerComparison() -> Bool {
+        guard enabled else { return false }
         ownerPairingError = nil
         guard phase != nil else { return true }
         guard var cont = continuation else { return false }
@@ -130,6 +133,7 @@ final class SetupModel {
     }
 
     public init(
+        enabled: Bool = false,
         continuationStore: SetupContinuationStore,
         mailboxStore: SetupMailboxStore,
         freshFlow: FreshJournalFlow,
@@ -139,6 +143,7 @@ final class SetupModel {
         requestScreen: @escaping @MainActor () -> Void = { PermissionChecker().promptScreenRecording() },
         appState: AppState? = nil
     ) {
+        self.enabled = enabled
         self.continuationStore = continuationStore
         self.mailboxStore = mailboxStore
         self.freshFlow = freshFlow
@@ -148,13 +153,14 @@ final class SetupModel {
         self.requestScreen = requestScreen
         self.appState = appState
 
-        let loaded = continuationStore.load()
+        let loaded = enabled ? continuationStore.load() : nil
         self.continuation = loaded
         self.phase = loaded?.phase
         self.isPeerSupportingSetup = Self.isSupporting(continuation: loaded)
     }
 
     public convenience init(
+        enabled: Bool = false,
         continuationStore: SetupContinuationStore? = nil,
         mailboxDirectory: URL,
         freshFlow: FreshJournalFlow? = nil,
@@ -168,6 +174,7 @@ final class SetupModel {
         let mailbox = SetupMailboxStore(directory: mailboxDirectory)
         let flow = freshFlow ?? FreshJournalFlow(dependencies: .inert())
         self.init(
+            enabled: enabled,
             continuationStore: store,
             mailboxStore: mailbox,
             freshFlow: flow,
@@ -184,6 +191,7 @@ final class SetupModel {
     }
 
     public func activate() {
+        guard enabled else { return }
         if phase == .journal {
             startJournalPhase()
         } else if phase == .connection && isPeerSupportingSetup {
@@ -192,6 +200,7 @@ final class SetupModel {
     }
 
     func ingestStep5IfNeeded() {
+        guard enabled else { return }
         let load = mailboxStore.loadStep5()
         switch load {
         case .missing:
@@ -305,7 +314,7 @@ final class SetupModel {
     /// Refresh after the OS prompt and on activation after visiting System Settings.
     /// A running session freezes its sources, so a newly granted source needs reconciliation.
     public func reconcileSourcePermissions() async {
-        guard let appState else { return }
+        guard enabled, let appState else { return }
         await appState.capture.checkPermissionsAndAutoStart()
         // Turn-on clears the old stop before prompting. A newer Stop during either await wins.
         if appState.capture.isExplicitlyStopped || appState.capture.isUserStopped { return }
@@ -314,6 +323,7 @@ final class SetupModel {
 
     @discardableResult
     public func turnOnMicrophone() -> Task<Void, Never> {
+        guard enabled else { return Task {} }
         if let appState {
             appState.capture.clearOwnerStop()
             var config = appState.config
@@ -328,6 +338,7 @@ final class SetupModel {
 
     @discardableResult
     public func notNowMicrophone() -> Task<Void, Never> {
+        guard enabled else { return Task {} }
         if let appState {
             var config = appState.config
             config.isMicrophoneCaptureEnabled = false
@@ -343,6 +354,7 @@ final class SetupModel {
 
     @discardableResult
     public func turnOnScreen() -> Task<Void, Never> {
+        guard enabled else { return Task {} }
         if let appState {
             appState.capture.clearOwnerStop()
             var config = appState.config
@@ -355,6 +367,7 @@ final class SetupModel {
 
     @discardableResult
     public func notNowScreen() -> Task<Void, Never> {
+        guard enabled else { return Task {} }
         if let appState {
             var config = appState.config
             config.isScreenCaptureEnabled = false
@@ -732,6 +745,7 @@ final class SetupModel {
     }
 
     public func performSetupFinalOpen() {
+        guard enabled else { return }
         guard let appState else { return }
         guard !finalOpenInFlight else { return }
         finalOpenInFlight = true

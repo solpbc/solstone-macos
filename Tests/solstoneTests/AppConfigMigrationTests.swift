@@ -314,7 +314,8 @@ struct AppConfigMigrationTests {
 
         let config = AppConfig.loadOrCreateDefault(
             legacyConfigPaths: [tempDir.appendingPathComponent("nonexistent.json")],
-            continuationDirectory: tempDir
+            continuationDirectory: tempDir,
+            nativeSetupEnabled: true
         )
 
         #expect(!config.isScreenCaptureEnabled)
@@ -322,6 +323,40 @@ struct AppConfigMigrationTests {
         #expect(UserDefaults.standard.bool(forKey: "didReseedCaptureSourcesOn"))
         let store = SetupContinuationStore(directory: tempDir)
         #expect(store.load()?.phase == .journal)
+    }
+
+    @Test func unqualifiedFreshInstallRetainsLegacyDefaultsWithoutCreatingSetupProgress() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let config = AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [dir.appendingPathComponent("absent.json")],
+            continuationDirectory: dir
+        )
+        #expect(config.isScreenCaptureEnabled)
+        #expect(config.isMicrophoneCaptureEnabled)
+        #expect(!FileManager.default.fileExists(atPath: SetupContinuationStore(directory: dir).fileURL.path))
+    }
+
+    @Test(arguments: [false, true])
+    func setupQualificationPreservesExistingOwnerSelections(nativeSetupEnabled: Bool) throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: true).save()
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .screen))
+        let progress = try Data(contentsOf: store.fileURL)
+        let config = AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [dir.appendingPathComponent("absent.json")],
+            continuationDirectory: dir,
+            nativeSetupEnabled: nativeSetupEnabled
+        )
+        #expect(!config.isScreenCaptureEnabled)
+        #expect(config.isMicrophoneCaptureEnabled)
+        #expect(try Data(contentsOf: store.fileURL) == progress)
     }
 
     @Test func missingSourceKeysStillLoadTrue() throws {

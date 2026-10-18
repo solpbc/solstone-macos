@@ -1713,7 +1713,11 @@ public final class AppState {
         logAdapter: DiagnosticEvidenceLoggingAdapter = .live
     ) {
         // Load configuration
-        let config = AppConfig.loadOrCreateDefault(continuationDirectory: SetupContinuationStore.defaultDirectory)
+        let nativeSetupEnabled = journalSupportsSetupSequence(Bundle.main.object(forInfoDictionaryKey: "SolstoneSetupCapabilities"))
+        let config = AppConfig.loadOrCreateDefault(
+            continuationDirectory: SetupContinuationStore.defaultDirectory,
+            nativeSetupEnabled: nativeSetupEnabled
+        )
         let pauseManager = PauseManager(defaults: .standard)
         let captureTarget = AppStateBridgeTarget()
         let shortcutController = PauseShortcutController(
@@ -1737,6 +1741,7 @@ public final class AppState {
         self.journalMarkConfirmationStore = journalMarkConfirmationStore
         let lastDeliveryStore = UserDefaultsLastJournalDeliveryStore()
         let setupModel = SetupModel(
+            enabled: nativeSetupEnabled,
             continuationStore: SetupContinuationStore(),
             mailboxStore: SetupMailboxStore(),
             freshFlow: FreshJournalFlow(dependencies: .live()),

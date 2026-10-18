@@ -15,8 +15,24 @@ struct SolstoneURLIngressTests {
         "https://go.solstone.app/p#\(sampleFragment)"
     }
 
-    @Test func onlyVisibleSurfaceConsumesColdAndWarmLinksWithoutPairing() throws {
+    private func makeSetupState() throws -> AppState {
+        let dir = URL(fileURLWithPath: "/var/tmp").appendingPathComponent("setup-ingress-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return AppState.forSnapshot(setupModel: SetupModel(enabled: true, mailboxDirectory: dir))
+    }
+
+    @Test func unqualifiedAppPrefillsOrdinaryPairFieldWithoutPairing() {
         let state = AppState.forSnapshot()
+        #expect(state.setupModel.phase == nil)
+        state.handleIngressURLString("solstone://pair#\(sampleFragment)")
+        #expect(state.takePendingPairingLink(forSetup: true) == nil)
+        #expect(state.takePendingPairingLink(forSetup: false) == canonicalSample)
+        #expect(state.pairingCoordinator.state == .idle)
+        #expect(state.currentDurablePairing == nil)
+    }
+
+    @Test func onlyVisibleSurfaceConsumesColdAndWarmLinksWithoutPairing() throws {
+        let state = try makeSetupState()
         let dir = state.setupModel.continuationStore.directory
         defer { try? FileManager.default.removeItem(at: dir) }
         #expect(state.setupModel.setPhase(.microphone))
@@ -37,7 +53,7 @@ struct SolstoneURLIngressTests {
     }
 
     @Test func ownerModeSaveFailurePreventsSubmissionAndKeepsSupportingContinuation() async throws {
-        let state = AppState.forSnapshot()
+        let state = try makeSetupState()
         let model = state.setupModel
         let store = model.continuationStore
         defer { try? FileManager.default.removeItem(at: store.directory) }

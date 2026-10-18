@@ -49,6 +49,56 @@ struct SetupModelTests {
 
     private let sampleFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+
+    @Test func disabledPreparationIgnoresProgressAndHandoffWithoutChangingEither() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .screen))
+        let mailbox = SetupMailboxStore(directory: dir)
+        let handoff = SetupHandoff(handoffID: UUID(), stepIndex: 5, journalRootPath: "/fixture/journal",
+            expectedInstanceID: "fixture-instance", expectedCAFingerprint: sampleFingerprint)
+        try mailbox.writeStep5(handoff)
+        let progressBefore = try Data(contentsOf: store.fileURL)
+        var prompts = 0
+        var restarts = 0
+        let state = AppState.forSnapshot(config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: true))
+        state.configSaver = { _ in Issue.record("disabled setup changed owner configuration") }
+        let model = SetupModel(
+            enabled: false,
+            continuationStore: store,
+            mailboxStore: mailbox,
+            freshFlow: FreshJournalFlow(dependencies: .inert()),
+            requestMicrophone: { prompts += 1 },
+            requestScreen: { prompts += 1 },
+            appState: state
+        )
+        #expect(model.phase == nil)
+        #expect(model.continuation == nil)
+        #expect(!model.isPeerSupportingSetup)
+        model.activate()
+        model.ingestStep5IfNeeded()
+        #expect(!model.setPhase(.microphone))
+        #expect(!model.switchToOwnerComparison())
+        await model.turnOnMicrophone().value
+        await model.turnOnScreen().value
+        await model.notNowMicrophone().value
+        await model.notNowScreen().value
+        model.prepareScreenRestart { restarts += 1 }
+        model.performSetupFinalOpen()
+        #expect(prompts == 0)
+        #expect(restarts == 0)
+        #expect(!state.config.isScreenCaptureEnabled)
+        #expect(state.config.isMicrophoneCaptureEnabled)
+        #expect(model.phase == nil)
+        #expect(model.continuation == nil)
+        #expect(!model.isPeerSupportingSetup)
+        #expect(model.acknowledgementError == nil)
+        #expect(try Data(contentsOf: store.fileURL) == progressBefore)
+        #expect(mailbox.loadStep5() == .ready(handoff))
+        #expect(try mailbox.readStep5Receipt() == nil)
+    }
+
     @Test func setupSourceActionsRebuildRunningSourcesAfterGrantAndPreservePause() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -78,6 +128,7 @@ struct SetupModelTests {
         var microphonePrompts = 0
         var screenPrompts = 0
         let model = SetupModel(
+            enabled: true,
             mailboxDirectory: dir,
             requestMicrophone: { microphonePrompts += 1 },
             requestScreen: { screenPrompts += 1 }, appState: state
@@ -144,6 +195,7 @@ struct SetupModelTests {
         state.configSaver = { _ in }
         state.capture.microphoneAuthorizationReader = { .authorized }
         let model = SetupModel(
+            enabled: true,
             mailboxDirectory: dir,
             requestMicrophone: { prompts.increment(); await gate.wait() },
             requestScreen: {}, appState: state
@@ -192,7 +244,7 @@ struct SetupModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = SetupContinuationStore(directory: dir)
         try store.save(SetupContinuation(phase: .journal))
-        let model = SetupModel(mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
         let mailbox = model.mailboxStore
         let handoffID = UUID()
         try mailbox.writeStep5(SetupHandoff(handoffID: handoffID, stepIndex: 5, journalRootPath: "/fixture/journal",
@@ -243,7 +295,7 @@ struct SetupModelTests {
         )
         let store = SetupContinuationStore(directory: dir)
         try store.save(SetupContinuation(phase: .journal))
-        let model = SetupModel(mailboxDirectory: dir, freshFlow: flow)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, freshFlow: flow)
         let pending = Task { await model.runJournalPhase() }
         try await waitUntil { acquisitionStarts.count == 1 }
         #expect(model.switchToOwnerComparison())
@@ -251,7 +303,7 @@ struct SetupModelTests {
         await pending.value
         #expect(controller.launchCount == 0)
         #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("journal-setup-handoff.json").path))
-        let restored = SetupModel(mailboxDirectory: dir, freshFlow: flow)
+        let restored = SetupModel(enabled: true, mailboxDirectory: dir, freshFlow: flow)
         #expect(restored.phase == .journal)
         #expect(restored.continuation?.mode == .ownerComparison)
         restored.activate()
@@ -280,6 +332,7 @@ struct SetupModelTests {
         )
 
         let model = SetupModel(
+            enabled: true,
             mailboxDirectory: dir,
             freshFlow: freshFlow,
             resolveIdentity: { _, _ in resolutionLock.withLock { $0 } },
@@ -318,6 +371,7 @@ struct SetupModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let model = SetupModel(
+            enabled: true,
             mailboxDirectory: dir,
             sleepDuration: .seconds(10)
         )
@@ -348,6 +402,7 @@ struct SetupModelTests {
             )
         )
         let model = SetupModel(
+            enabled: true,
             mailboxDirectory: dir,
             freshFlow: freshFlow,
             resolveIdentity: { _, _ in .absent },
@@ -369,6 +424,7 @@ struct SetupModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let model = SetupModel(
+            enabled: true,
             mailboxDirectory: dir
         )
 
@@ -398,6 +454,7 @@ struct SetupModelTests {
         let appState = AppState.forSnapshot(initialTunnelPairing: pairing())
 
         let model = SetupModel(
+            enabled: true,
             mailboxDirectory: dir,
             appState: appState
         )
@@ -441,7 +498,7 @@ struct SetupModelTests {
             isMicrophoneCaptureEnabled: false
         ))
 
-        let model = SetupModel(mailboxDirectory: dir, appState: appState)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, appState: appState)
         _ = model.setPhase(.connection)
 
         // Unverified call does not clear phase and does not open
@@ -479,7 +536,7 @@ struct SetupModelTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let appState = AppState.forSnapshot()
 
-        let model = SetupModel(mailboxDirectory: dir, appState: appState)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, appState: appState)
         _ = model.setPhase(.microphone)
 
         model.notNowMicrophone()
@@ -497,7 +554,7 @@ struct SetupModelTests {
         let store = SetupContinuationStore(directory: dir)
         let appState = AppState.forSnapshot(config: AppConfig(isScreenCaptureEnabled: false))
 
-        let model = SetupModel(continuationStore: store, mailboxDirectory: dir, appState: appState)
+        let model = SetupModel(enabled: true, continuationStore: store, mailboxDirectory: dir, appState: appState)
         _ = model.setPhase(.microphone)
 
         var phaseAtRestart: SetupPhase?
@@ -513,8 +570,10 @@ struct SetupModelTests {
         #expect(store.load()?.phase == .screen)
     }
 
-    @Test func pauseStaysPausedAcrossStepChange() {
-        let appState = AppState.forSnapshot()
+    @Test func pauseStaysPausedAcrossStepChange() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let appState = AppState.forSnapshot(setupModel: SetupModel(enabled: true, mailboxDirectory: dir))
         appState.pauseManager.pause(for: .minutes(5))
         #expect(appState.pauseManager.isPaused)
 
@@ -571,7 +630,7 @@ struct SetupModelTests {
             handoffID: UUID(), journalRootPath: "/fixture/journal",
             expectedInstanceID: retained.instanceID, expectedCAFingerprint: fingerprint
         ), mode: .supporting))
-        let model = SetupModel(mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
         let fetched = LockedArray<String>([])
         let identityGate = OneShotContinuationGate()
         defer { identityGate.release(); transport.releasePendingConnect() }
@@ -631,7 +690,7 @@ struct SetupModelTests {
             let completedSnapshot = try #require(model.continuation?.accepted)
             #expect(model.setPhase(nil))
             #expect(!model.isPeerSupportingSetup)
-            let completedModel = SetupModel(mailboxDirectory: dir)
+            let completedModel = SetupModel(enabled: true, mailboxDirectory: dir)
             #expect(completedModel.phase == nil)
             #expect(completedModel.continuation?.completed == true)
             #expect(completedModel.continuation?.accepted == completedSnapshot)
@@ -728,6 +787,7 @@ struct SetupModelTests {
         )
 
         let modelExact = SetupModel(
+            enabled: true,
             mailboxDirectory: dir,
             freshFlow: freshFlowExact,
             resolveIdentity: { _, _ in .absent },
@@ -755,6 +815,7 @@ struct SetupModelTests {
         )
 
         let modelSuperset = SetupModel(
+            enabled: true,
             mailboxDirectory: dir,
             freshFlow: freshFlowSuperset,
             resolveIdentity: { _, _ in .absent },
@@ -783,6 +844,7 @@ struct SetupModelTests {
             }
         )
         let modelAcq = SetupModel(
+            enabled: true,
             mailboxDirectory: dir,
             freshFlow: flowAcqThrow
         )
@@ -800,6 +862,7 @@ struct SetupModelTests {
             resolveTrustedJournalOverride: { exactBundle }
         )
         let modelLaunch = SetupModel(
+            enabled: true,
             mailboxDirectory: dir,
             freshFlow: flowLaunchThrow
         )
@@ -816,7 +879,7 @@ struct SetupModelTests {
         let cont = SetupContinuation(phase: .microphone)
         try store.save(cont)
 
-        let model = SetupModel(continuationStore: store, mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, continuationStore: store, mailboxDirectory: dir)
         #expect(model.phase == SetupPhase.microphone)
 
         var observedPhases: [SetupPhase?] = []
@@ -832,7 +895,7 @@ struct SetupModelTests {
         // Failing store
         struct SaveError: Error {}
         let failingStore = SetupContinuationStore(directory: dir, replace: { _, _ in throw SaveError() })
-        let failingModel = SetupModel(continuationStore: failingStore, mailboxDirectory: dir)
+        let failingModel = SetupModel(enabled: true, continuationStore: failingStore, mailboxDirectory: dir)
         #expect(failingModel.phase == SetupPhase.screen)
         _ = failingModel.setPhase(.microphone)
         #expect(failingModel.phase == SetupPhase.screen)
@@ -842,7 +905,7 @@ struct SetupModelTests {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let appState = AppState.forSnapshot()
-        let model = SetupModel(mailboxDirectory: dir, appState: appState)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, appState: appState)
         _ = model.setPhase(.journal)
 
         let mark = JournalMark.uiTestSample
@@ -863,7 +926,7 @@ struct SetupModelTests {
     @Test func remoteFinalOpenRequiresIdentityAndObservedWindowButNeverLocalEndpoint() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let model = SetupModel(mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
         var opened = 0
         var allowOpen = false
         var allowSave = false
@@ -896,7 +959,7 @@ struct SetupModelTests {
     @Test func finalOpenSecondCallWhileFirstSuspendedReturnsFalse() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let model = SetupModel(mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
         _ = model.setPhase(.connection)
 
         let barrier = OSAllocatedUnfairLock(initialState: false)
@@ -938,7 +1001,7 @@ struct SetupModelTests {
     @Test func finalOpenAdmissionFailsAfterTunnelFetchStopsBeforeDirectFetch() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let model = SetupModel(mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
         _ = model.setPhase(.connection)
 
         var checkCount = 0
@@ -964,7 +1027,7 @@ struct SetupModelTests {
     @Test func finalOpenAdmissionFailsAfterDirectFetchStopsBeforeOpener() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let model = SetupModel(mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
         _ = model.setPhase(.connection)
 
         var checkCount = 0
@@ -990,7 +1053,7 @@ struct SetupModelTests {
     @Test func finalOpenDirectResultUncommittedOrDifferentMarkOrAbsentFails() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let model = SetupModel(mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
         _ = model.setPhase(.connection)
 
         let mark1 = JournalMark.uiTestSample
@@ -1036,7 +1099,7 @@ struct SetupModelTests {
     @Test func finalOpenOpenerReturnsFalseLeavesPhaseAndFlagFalse() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let model = SetupModel(mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
         _ = model.setPhase(.connection)
 
         let mark = JournalMark.uiTestSample
@@ -1055,7 +1118,7 @@ struct SetupModelTests {
     @Test func finalOpenSaveFailureLeavesFlagTrueAndRetriesSaveOnly() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let model = SetupModel(mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
         _ = model.setPhase(.connection)
 
         let mark = JournalMark.uiTestSample
@@ -1094,7 +1157,7 @@ struct SetupModelTests {
     @Test func finalOpenOlderPeerWithoutConfirmedMarkOrMismatchedMarksFails() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let model = SetupModel(mailboxDirectory: dir)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
         _ = model.setPhase(.connection)
 
         let mark = JournalMark.uiTestSample
@@ -1136,7 +1199,7 @@ struct SetupModelTests {
             return true
         })
 
-        _ = SetupModel(mailboxDirectory: dir, appState: appState)
+        _ = SetupModel(enabled: true, mailboxDirectory: dir, appState: appState)
         #expect(!openerCalled)
     }
 }

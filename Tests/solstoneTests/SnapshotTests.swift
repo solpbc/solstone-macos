@@ -1066,7 +1066,7 @@ struct SnapshotTests {
             defer { try? FileManager.default.removeItem(at: dir) }
             let store = SetupContinuationStore(directory: dir)
             try store.save(SetupContinuation(phase: phase))
-            let model = SetupModel(mailboxDirectory: dir)
+            let model = SetupModel(enabled: true, mailboxDirectory: dir)
             let state = AppState.forSnapshot(
                 config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
                 setupModel: model
@@ -1095,7 +1095,7 @@ struct SnapshotTests {
             let phase: SetupPhase = mode == "connection-mark" ? .connection : .journal
             let store = SetupContinuationStore(directory: dir)
             try store.save(SetupContinuation(phase: phase, mode: mode == "remote-waiting" ? .ownerComparison : nil))
-            let model = SetupModel(mailboxDirectory: dir)
+            let model = SetupModel(enabled: true, mailboxDirectory: dir)
             let state = AppState.forSnapshot(
                 config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
                 setupModel: model
@@ -1129,7 +1129,7 @@ struct SnapshotTests {
                 defer { try? FileManager.default.removeItem(at: dir) }
                 let store = SetupContinuationStore(directory: dir)
                 try store.save(SetupContinuation(phase: phase))
-                let model = SetupModel(mailboxDirectory: dir)
+                let model = SetupModel(enabled: true, mailboxDirectory: dir)
                 let state = AppState.forSnapshot(
                     config: AppConfig(isScreenCaptureEnabled: phase == .screen, isMicrophoneCaptureEnabled: true),
                     setupModel: model

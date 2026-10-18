@@ -33,10 +33,6 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>116</string>
-	<key>SolstoneSetupCapabilities</key>
-	<array>
-		<string>setup-sequence-v1</string>
-	</array>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
