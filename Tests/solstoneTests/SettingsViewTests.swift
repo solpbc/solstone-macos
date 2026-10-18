@@ -433,7 +433,7 @@ struct SettingsViewTests {
         #expect(!entFailedSettings.supportOpenFailed)
     }
 
-    @Test @MainActor func acceptedOrdinaryPairingLinkRevealsPairField() {
+    @Test @MainActor func acceptedOrdinaryPairingLinkRevealsPairField() throws {
         let sample = "solstone://pair#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00"
         let canonical = "https://go.solstone.app/p#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00"
         let placeholder = UICopy.PAIRING_LINK_PLACEHOLDER
@@ -455,6 +455,7 @@ struct SettingsViewTests {
                 appState: app,
                 updateController: updateController,
                 selectedTab: .service,
+                initialStorageUsedMB: 0,
                 initialLocalDiscoveryCompleted: true,
                 initialShowPairingFlow: false,
                 freshFlow: FreshJournalFlow(dependencies: .inert()),
@@ -556,8 +557,10 @@ struct SettingsViewTests {
 
         do {
             let app = AppState.forSnapshot()
+            app.pendingSettingsTab = "journal"
             let hosted = host(app: app)
             defer { release(hosted) }
+            try #require(app.pendingSettingsTab == nil)
             app.handleIngressURLString(sample)
             pump(hosted.hostingView, window: hosted.window)
             var fields = textFields(in: hosted.window)
