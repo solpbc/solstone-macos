@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.41] - 2026-10-19
+
 ### Changed
 
 - adding a mac to a journal you already have no longer downloads and opens a second journal app, and setup creates a journal on this mac only when you ask.
@@ -14,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - during setup, the solstone app comes to the front when the journal app hands setup to it or when you open a pairing link, and the window stays in front after the local-network question, so a system prompt closing doesn't leave another app over it.
-- on a mac account that can't add apps to Applications, setup now says the journal app couldn't be installed before it downloads anything, instead of saying it couldn't reach your journal.
+- on a mac account that can't add apps to Applications, setup now says, before it downloads anything, that the journal app couldn't be installed, instead of saying it couldn't reach your journal.
 - if the solstone app was newly paired and hadn't taken anything in yet, settings no longer shows "couldn't add this to your journal".
 
 ## [2.0.40] - 2026-10-18
