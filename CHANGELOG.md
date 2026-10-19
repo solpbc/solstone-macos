@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- after you pair with a pairing link, the last setup step's heading says you're connected to your journal, instead of still asking you to connect.
+
 ## [2.0.41] - 2026-10-19
 
 ### Changed
