@@ -43,6 +43,7 @@ struct JournalAppAcquirer {
     }
 
     func acquire(progress: @MainActor (AcquirePhase) -> Void) async throws -> URL {
+        try requireWritableApplicationsDirectory()
         progress(.fetchingAppcast)
         let selection = appcastFeedResolver()
         Logger.setup.notice("journal handoff feed: \(selection.feed.logDescription, privacy: .public)")
@@ -135,7 +136,7 @@ struct JournalAppAcquirer {
         }
     }
 
-    private func installJournalApp(from sourceURL: URL) async throws -> URL {
+    private func requireWritableApplicationsDirectory() throws {
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: applicationsURL.path, isDirectory: &isDirectory),
               isDirectory.boolValue
@@ -146,6 +147,10 @@ struct JournalAppAcquirer {
         guard fileManager.isWritableFile(atPath: applicationsURL.path) else {
             throw JournalHandoffFailure.applicationsDirectoryUnwritable
         }
+    }
+
+    private func installJournalApp(from sourceURL: URL) async throws -> URL {
+        try requireWritableApplicationsDirectory()
 
         try await quiesceRunningJournalBeforeInstall()
 

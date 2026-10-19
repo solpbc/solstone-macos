@@ -1137,6 +1137,10 @@ public actor SyncService {
         do {
             dateURLs = try listDirectory(storageManager.baseDirectory)
         } catch {
+            let nsError = error as NSError
+            if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoSuchFileError {
+                return DiscoverySnapshot(candidatesByDay: [:], failure: nil)
+            }
             recordFailure(error)
             return DiscoverySnapshot(candidatesByDay: [:], failure: firstFailure)
         }

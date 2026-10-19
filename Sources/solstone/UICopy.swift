@@ -151,6 +151,7 @@ public enum UICopy {
     public static let SETUP_JOURNAL_STILL_BEING_SET_UP = "your journal is still being set up."
     public static let SETUP_OPENING_YOUR_JOURNAL = "opening your journal…"
     public static let SETUP_OPEN_THE_JOURNAL_APP_TO_CONTINUE = "open the journal app to continue."
+    public static let SETUP_COULDNT_INSTALL_JOURNAL_APP = "couldn't install the journal app in /Applications."
     public static let SETUP_COULDNT_REACH_YOUR_JOURNAL = "couldn't reach your journal. try again."
     public static let SETUP_COULDNT_FINISH = "couldn't finish setup. try again."
     public static let SETUP_COULDNT_SAVE_PROGRESS = "couldn't save setup progress."

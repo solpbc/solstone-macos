@@ -354,9 +354,13 @@ struct SetupView: View {
     }
 
     private var connectionStepView: some View {
-        GroupBox("7") {
+        let heading = SetupConnectionStep.content(
+            isPeerSupporting: model.isPeerSupportingSetup,
+            state: model.connectionStepState
+        )
+        return GroupBox("7") {
             VStack(alignment: .leading, spacing: 12) {
-                Text(UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
+                Text(heading.headline)
                     .font(.headline)
 
                 if model.isPeerSupportingSetup {
@@ -379,7 +383,7 @@ struct SetupView: View {
                         .accessibilityIdentifier(AXID.Settings.Setup.Connection.retry)
                     case .connected(let mark):
                         JournalMarkView(mark: mark, isConfirmed: true)
-                        if case .connected = appState.pairingCoordinator.tunnelState {
+                        if heading.showsConnectedCaption {
                             Text(UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -558,6 +562,38 @@ enum SetupJournalStep {
         if hasStatus { return .activity }
         if !linkWaiting { return .create }
         return .omitted
+    }
+}
+
+struct SetupConnectionStepContent: Equatable {
+    let headline: String
+    let showsConnectedCaption: Bool
+}
+
+enum SetupConnectionStep {
+    static func content(
+        isPeerSupporting: Bool,
+        state: SetupModel.ConnectionStepState
+    ) -> SetupConnectionStepContent {
+        if isPeerSupporting {
+            switch state {
+            case .connected:
+                return SetupConnectionStepContent(
+                    headline: UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL,
+                    showsConnectedCaption: false
+                )
+            case .idle, .connecting, .failed:
+                return SetupConnectionStepContent(
+                    headline: UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL,
+                    showsConnectedCaption: false
+                )
+            }
+        } else {
+            return SetupConnectionStepContent(
+                headline: UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL,
+                showsConnectedCaption: false
+            )
+        }
     }
 }
 

@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- during setup, the solstone app comes to the front when the journal hands setup to it or when you open a pairing link, so a system prompt closing doesn't leave another app over it.
+- during setup, the solstone app comes to the front when the journal hands setup to it or when you open a pairing link, and the window stays in front after the local-network question, so a system prompt closing doesn't leave another app over it.
+- on a mac account that can't add apps to Applications, creating a journal now says the journal app couldn't be installed, before downloading it, instead of saying it couldn't reach your journal.
+- a newly connected app that hasn't captured anything yet no longer shows a sync error in settings.
 
 ## [2.0.40] - 2026-10-18
 

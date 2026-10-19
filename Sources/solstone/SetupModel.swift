@@ -56,6 +56,10 @@ final class SetupModel {
     @ObservationIgnored
     private var retryAfterConnection = false
     @ObservationIgnored
+    private var bringFrontAfterPairingDial = false
+    @ObservationIgnored
+    private var bringFrontAfterSupportingConnection = false
+    @ObservationIgnored
     private var finalOpenInFlight = false
     private(set) var journalOpenedPendingCompletion = false
 
@@ -280,6 +284,7 @@ final class SetupModel {
                         stopJournalPolling()
                         NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
                         bringSolstoneToFront()
+                        bringFrontAfterSupportingConnection = true
                     }
                 }
             } catch {
@@ -292,6 +297,7 @@ final class SetupModel {
                         stopJournalPolling()
                         NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
                         bringSolstoneToFront()
+                        bringFrontAfterSupportingConnection = true
                     }
                 }
             }
@@ -407,9 +413,37 @@ final class SetupModel {
         }
     }
 
+    internal func armBringFrontAfterPairingDial() {
+        bringFrontAfterPairingDial = true
+    }
+
+    internal func bringFrontIfPairingDialSettled(_ state: TunnelLifecycleState) {
+        guard bringFrontAfterPairingDial else { return }
+        switch state {
+        case .connected, .error:
+            bringFrontAfterPairingDial = false
+            bringSolstoneToFront()
+        case .connecting, .disconnected:
+            break
+        }
+    }
+
     public func retryConnection() {
         if isPeerSupportingSetup {
             performSupportingConnection(forceRestart: true)
+        }
+    }
+
+    private func publishConnectionStepState(_ newState: ConnectionStepState) {
+        self.connectionStepState = newState
+        if bringFrontAfterSupportingConnection {
+            switch newState {
+            case .connected, .failed:
+                bringFrontAfterSupportingConnection = false
+                bringSolstoneToFront()
+            case .connecting, .idle:
+                break
+            }
         }
     }
 
@@ -417,7 +451,7 @@ final class SetupModel {
         guard canRunSupportingConnection, let appState, !appState.isTerminating else { return }
         guard let accepted = continuation?.accepted,
               accepted.isValid else {
-            connectionStepState = .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+            publishConnectionStepState(.failed(UICopy.SETUP_COULDNT_VERIFY_MARK))
             return
         }
         if !forceRestart && connectionTask != nil && currentConnectingHandoffID == accepted.handoffID {
@@ -430,7 +464,7 @@ final class SetupModel {
         let taskID = UUID()
         currentConnectionTaskID = taskID
         currentConnectingHandoffID = accepted.handoffID
-        connectionStepState = .connecting
+        publishConnectionStepState(.connecting)
         retryAfterConnection = false
 
         connectionTask = Task { @MainActor [weak self] in
@@ -460,18 +494,18 @@ final class SetupModel {
                   self.canRunSupportingConnection, self.continuation?.accepted == accepted else { return }
             switch outcome {
             case .recorded(let mark):
-                self.connectionStepState = .connected(mark)
+                self.publishConnectionStepState(.connected(mark))
             case .alreadyRecorded:
                 if let confirmed = appState.confirmedMark {
-                    self.connectionStepState = .connected(confirmed)
+                    self.publishConnectionStepState(.connected(confirmed))
                 } else {
-                    self.connectionStepState = .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+                    self.publishConnectionStepState(.failed(UICopy.SETUP_COULDNT_VERIFY_MARK))
                 }
             case .stillSettingUp:
-                self.connectionStepState = .failed(UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP)
+                self.publishConnectionStepState(.failed(UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP))
             case .notEligible, .pairStartFailed, .linkRejected, .fingerprintOrPinMismatch,
                  .ceremonyFailed, .durableInstanceMismatch, .fetchAbsent, .fetchFailed, .recordFailed:
-                self.connectionStepState = .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+                self.publishConnectionStepState(.failed(UICopy.SETUP_COULDNT_VERIFY_MARK))
             }
         }
     }
@@ -622,6 +656,17 @@ final class SetupModel {
         let journalURL: URL
         do {
             journalURL = try await freshFlow.resolveTrustedJournal()
+        } catch let failure as JournalHandoffFailure {
+            journalPollingText = nil
+            switch failure {
+            case .applicationsDirectoryUnwritable:
+                journalPollingError = UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP
+            case .runningJournalWouldNotQuit:
+                journalPollingError = failure.ownerMessage
+            default:
+                journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
+            }
+            return
         } catch {
             journalPollingText = nil
             journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL

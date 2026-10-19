@@ -1336,7 +1336,12 @@ public final class AppState {
             }
             beginOwnerPairingAttempt()
             await pairingCoordinator.submitPairingLink(canonical)
-            return pairingCoordinator.state
+            let resultState = pairingCoordinator.state
+            if setupModel.phase != nil,
+               resultState == .paired || resultState == .switched || resultState == .alreadyConnected {
+                setupModel.armBringFrontAfterPairingDial()
+            }
+            return resultState
         }
     }
 
@@ -2044,7 +2049,10 @@ public final class AppState {
         lastContactStore: (any LastSuccessfulJournalContactStoring)? = nil,
         lastDeliveryStore: (any LastJournalDeliveryStoring)? = nil,
         journalMarkConfirmationStore: (any JournalMarkConfirmationStoring)? = nil,
+        pairingStoring: (any PairingStoring)? = nil,
+        pairingOperation: PairingCoordinator.PairOperation? = nil,
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
+        pairingSave: PairingCoordinator.SavePairing? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
         screenPermissionProvider: ScreenRecordingPermissionProvider = .snapshot,
         permissionPollScheduler: PermissionPollScheduler = .live(),
@@ -2066,12 +2074,15 @@ public final class AppState {
             tunnelLifecycleOwner: tunnelLifecycleOwner,
             supportingIdentityResolver: supportingIdentityResolver,
             sameMachinePairStart: sameMachinePairStart,
+            pairingStoring: pairingStoring,
             triggerTunnelConnectedSync: triggerTunnelConnectedSync,
             journalURLOpener: journalURLOpener,
             lastContactStore: lastContactStore,
             lastDeliveryStore: lastDeliveryStore,
             journalMarkConfirmationStore: journalMarkConfirmationStore,
+            pairingOperation: pairingOperation,
             pairingLoad: pairingLoad,
+            pairingSave: pairingSave,
             recorder: recorder,
             screenPermissionProvider: screenPermissionProvider,
             permissionPollScheduler: permissionPollScheduler,
@@ -2402,6 +2413,8 @@ public final class AppState {
         journalHomeBaseChangeToken += 1
         setupModel.handleDownloadRouteChanged()
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
+
+        setupModel.bringFrontIfPairingDialSettled(newState)
 
         guard isConnected(newState), !isConnected(previousState) else { return }
         setupModel.handleTunnelConnected()

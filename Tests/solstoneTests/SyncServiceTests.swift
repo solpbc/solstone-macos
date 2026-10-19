@@ -765,6 +765,39 @@ struct SyncServiceTests {
         #expect(!FileManager.default.fileExists(atPath: seg.url.path))
     }
 
+    @Test func missingCaptureRootIsEmptyDiscovery() async throws {
+        store.reset()
+        let temp = try makeTempDirectory("sync-missing-root")
+        let root = temp.appendingPathComponent("captures", isDirectory: true)
+
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24740") })
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream {
+                collector.append(event)
+            }
+        }
+        await service.sync()
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while ContinuousClock.now < deadline {
+            if collector.containsSyncComplete || collector.containsOffline { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        listen.cancel()
+
+        #expect(collector.containsOffline == false)
+        #expect(collector.offlineEvents.isEmpty)
+        #expect(!collector.offlineEvents.contains { $0.healthReason == .uploadFailed })
+        let uploadRequests = store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }
+        #expect(uploadRequests.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: root.path) == false)
+    }
+
     @Test func discoveryDateDirectoryListFailureWithNoDiscoverableSegmentFailsClosed() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-date-list-fail-empty")

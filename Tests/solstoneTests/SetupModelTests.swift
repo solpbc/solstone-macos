@@ -1037,6 +1037,53 @@ struct SetupModelTests {
         #expect(modelLaunch.journalPollingError == UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL)
     }
 
+    @Test func journalPhaseUnwritableApplicationsDirectorySurfacesInstallError() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let flow = FreshJournalFlow(
+            dependencies: FreshJournalFlowDependencies.inert(),
+            resolveTrustedJournalOverride: { throw JournalHandoffFailure.applicationsDirectoryUnwritable }
+        )
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, freshFlow: flow)
+        _ = model.setPhase(.journal)
+        model.stopJournalPolling()
+        await model.runJournalPhase()
+        #expect(model.phase == SetupPhase.journal)
+        #expect(model.journalPollingError == UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP)
+        #expect(model.journalPollingError != UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL)
+    }
+
+    @Test func journalPhaseRunningJournalWouldNotQuitSurfacesOwnerMessage() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let failure = JournalHandoffFailure.runningJournalWouldNotQuit
+        let flow = FreshJournalFlow(
+            dependencies: FreshJournalFlowDependencies.inert(),
+            resolveTrustedJournalOverride: { throw failure }
+        )
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, freshFlow: flow)
+        _ = model.setPhase(.journal)
+        model.stopJournalPolling()
+        await model.runJournalPhase()
+        #expect(model.phase == SetupPhase.journal)
+        #expect(model.journalPollingError == failure.ownerMessage)
+    }
+
+    @Test func journalPhaseApplicationsDirectoryUnavailableSurfacesGenericError() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let flow = FreshJournalFlow(
+            dependencies: FreshJournalFlowDependencies.inert(),
+            resolveTrustedJournalOverride: { throw JournalHandoffFailure.applicationsDirectoryUnavailable }
+        )
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, freshFlow: flow)
+        _ = model.setPhase(.journal)
+        model.stopJournalPolling()
+        await model.runJournalPhase()
+        #expect(model.phase == SetupPhase.journal)
+        #expect(model.journalPollingError == UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL)
+    }
+
     @Test func observationTrackingAndFailingDefaultsWriterLeavesStoredPhaseUnchanged() throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -1405,6 +1452,38 @@ struct SetupModelTests {
         #expect(model.journalPollingText == nil)
         #expect(model.journalPollingError == nil)
         #expect(model.phase == .journal)
+    }
+
+    private final class UnwritableFileManager: FileManager, @unchecked Sendable {
+        override func isWritableFile(atPath path: String) -> Bool {
+            false
+        }
+    }
+
+    @Test func acquirePreflightUnwritableApplicationsDirectoryFailsBeforeDownload() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let controller = TestRunningJournalController()
+        let appcastClient = CountingFailingAppcastClient()
+        let acquirer = JournalAppAcquirer(
+            appcastFeedResolver: { JournalHandoffFeedSelection(url: JournalHandoffConstants.appcastURL, feed: .production) },
+            appcastClient: appcastClient,
+            downloader: AssertingDownloader(),
+            mounter: AssertingMounter(),
+            trustVerifier: AssertingTrustVerifier(),
+            publicEDKeyBase64: "",
+            maxDMGBytes: 100,
+            applicationsURL: dir,
+            fileManager: UnwritableFileManager(),
+            runningJournal: controller,
+            runningTerminationTimeout: .seconds(1),
+            runningTerminationPollInterval: .milliseconds(10)
+        )
+
+        await #expect(throws: JournalHandoffFailure.applicationsDirectoryUnwritable) {
+            _ = try await acquirer.acquire { _ in }
+        }
+        #expect(appcastClient.calls == 0)
     }
 
     @Test func explicitJournalPhaseAcquiresAndRetriesOnFailure() async throws {
@@ -1915,5 +1994,195 @@ struct SetupModelTests {
         model.ingestStep5IfNeeded()
         #expect(model.phase == nil)
         #expect(counter.count == 0)
+    }
+
+    @Test func supportingHandoffBringsSolstoneToFrontWhenConnectionSettles() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .journal))
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: true,
+            continuationStore: store,
+            mailboxDirectory: dir,
+            requestMicrophone: {},
+            requestScreen: {},
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+        defer { model.stopSupportingTasks() }
+        let state = AppState.forSnapshot(
+            setupModel: model,
+            sameMachinePairStart: { _, _ in .failure(SameMachinePairStartFailure(kind: .transport)) },
+            triggerTunnelConnectedSync: { _ in },
+            journalURLOpener: { _ in false }
+        )
+        model.attach(state)
+
+        let handoffID = UUID()
+        try model.mailboxStore.writeStep5(SetupHandoff(
+            handoffID: handoffID,
+            stepIndex: 5,
+            journalRootPath: "/fixture/journal",
+            expectedInstanceID: "inst-1",
+            expectedCAFingerprint: sampleFingerprint
+        ))
+
+        model.ingestStep5IfNeeded()
+        #expect(model.phase == .microphone)
+        #expect(model.connectionStepState == .connecting)
+        #expect(counter.count == 1)
+
+        try await waitUntil {
+            model.connectionStepState == .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+        }
+        #expect(model.connectionStepState == .failed(UICopy.SETUP_COULDNT_VERIFY_MARK))
+        #expect(counter.count == 2)
+
+        model.retryConnection()
+        #expect(model.connectionStepState == .connecting)
+        #expect(counter.count == 2)
+        try await waitUntil {
+            model.connectionStepState == .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+        }
+        #expect(counter.count == 2)
+
+        model.handleTunnelConnected()
+        #expect(model.connectionStepState == .connecting)
+        #expect(counter.count == 2)
+        try await waitUntil {
+            model.connectionStepState == .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+        }
+        #expect(counter.count == 2)
+    }
+
+    @Test func switchToOwnerComparisonAloneDoesNotBringSolstoneToFront() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .journal))
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: true,
+            continuationStore: store,
+            mailboxDirectory: dir,
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+        #expect(model.switchToOwnerComparison())
+        #expect(counter.count == 0)
+        #expect(model.continuation?.mode == .ownerComparison)
+    }
+
+    @Test func failingPairingOperationLeavesSeamCountZeroOnSubmitAndLaterTunnelConnected() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .journal))
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: true,
+            continuationStore: store,
+            mailboxDirectory: dir,
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+        struct InjectedPairError: Error {}
+        let state = AppState.forSnapshot(
+            setupModel: model,
+            triggerTunnelConnectedSync: { _ in },
+            journalURLOpener: { _ in false },
+            pairingOperation: { _, _, _ in throw InjectedPairError() }
+        )
+        model.attach(state)
+
+        let link = "solstone://pair#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00"
+        let outcome = await state.submitPairingInput(link)
+        #expect(counter.count == 0)
+        if case .failed = outcome {
+            // expected
+        } else {
+            Issue.record("Expected .failed state")
+        }
+        #expect(state.pairingCoordinator.state == outcome)
+
+        state.handleTunnelLifecycleState(TunnelLifecycleState.connected(localPort: 1, via: TunnelConnectionRoute.lan))
+        #expect(counter.count == 0)
+    }
+
+    @Test func successfulPairingSubmitBringsSolstoneToFrontOnTunnelConnectedOnce() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .journal))
+        let pairingStore = InMemoryPairingStore()
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: true,
+            continuationStore: store,
+            mailboxDirectory: dir,
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+        let state = AppState.forSnapshot(
+            setupModel: model,
+            triggerTunnelConnectedSync: { _ in },
+            journalURLOpener: { _ in false },
+            pairingStoring: pairingStore,
+            pairingOperation: { _, _, _ in pairing() },
+            pairingSave: { try pairingStore.save($0) }
+        )
+        model.attach(state)
+
+        let link = "solstone://pair#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00"
+        let outcome = await state.submitPairingInput(link)
+        #expect(counter.count == 0)
+        #expect(outcome == PairingFlowState.paired)
+        #expect(state.pairingCoordinator.state == PairingFlowState.paired)
+        #expect(model.continuation?.mode == .ownerComparison)
+
+        state.handleTunnelLifecycleState(TunnelLifecycleState.connected(localPort: 1, via: TunnelConnectionRoute.lan))
+        #expect(counter.count == 1)
+
+        model.handleTunnelConnected()
+        #expect(counter.count == 1)
+
+        state.handleTunnelLifecycleState(TunnelLifecycleState.disconnected)
+        #expect(counter.count == 1)
+
+        state.handleTunnelLifecycleState(TunnelLifecycleState.connected(localPort: 1, via: TunnelConnectionRoute.lan))
+        #expect(counter.count == 1)
+    }
+
+    @Test func successfulPairingSubmitBringsSolstoneToFrontOnTunnelErrorOnce() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .journal))
+        let pairingStore = InMemoryPairingStore()
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: true,
+            continuationStore: store,
+            mailboxDirectory: dir,
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+        let state = AppState.forSnapshot(
+            setupModel: model,
+            triggerTunnelConnectedSync: { _ in },
+            journalURLOpener: { _ in false },
+            pairingStoring: pairingStore,
+            pairingOperation: { _, _, _ in pairing() },
+            pairingSave: { try pairingStore.save($0) }
+        )
+        model.attach(state)
+
+        let link = "solstone://pair#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00"
+        let outcome = await state.submitPairingInput(link)
+        #expect(counter.count == 0)
+        #expect(outcome == PairingFlowState.paired)
+
+        state.handleTunnelLifecycleState(TunnelLifecycleState.error(TunnelLifecycleError.notEntitled))
+        #expect(counter.count == 1)
+
+        state.handleTunnelLifecycleState(TunnelLifecycleState.connected(localPort: 1, via: TunnelConnectionRoute.lan))
+        #expect(counter.count == 1)
     }
 }

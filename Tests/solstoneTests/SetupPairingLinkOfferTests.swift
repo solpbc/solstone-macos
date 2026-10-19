@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import JournalMarkKit
 import Testing
 @testable import solstone
 
@@ -141,5 +142,42 @@ struct SetupPairingLinkOfferTests {
         )
         #expect(failureWins == .failure)
         #expect(failureWins != .activity)
+    }
+
+    @Test func connectionStepContentDecisions() {
+        let peerConnected = SetupConnectionStep.content(
+            isPeerSupporting: true,
+            state: .connected(JournalMark.uiTestSample)
+        )
+        #expect(peerConnected.headline == UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
+        #expect(peerConnected.showsConnectedCaption == false)
+
+        let peerConnecting = SetupConnectionStep.content(
+            isPeerSupporting: true,
+            state: .connecting
+        )
+        #expect(peerConnecting.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
+        #expect(peerConnecting.showsConnectedCaption == false)
+
+        let peerIdle = SetupConnectionStep.content(
+            isPeerSupporting: true,
+            state: .idle
+        )
+        #expect(peerIdle.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
+        #expect(peerIdle.showsConnectedCaption == false)
+
+        let peerFailed = SetupConnectionStep.content(
+            isPeerSupporting: true,
+            state: .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+        )
+        #expect(peerFailed.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
+        #expect(peerFailed.showsConnectedCaption == false)
+
+        let olderPeerConnected = SetupConnectionStep.content(
+            isPeerSupporting: false,
+            state: .connected(JournalMark.uiTestSample)
+        )
+        #expect(olderPeerConnected.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
+        #expect(olderPeerConnected.showsConnectedCaption == false)
     }
 }
