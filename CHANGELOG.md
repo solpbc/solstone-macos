@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.40] - 2026-10-18
+
 ### Added
 
 - with the latest journal app on this mac, setup now continues through both apps before opening your journal in the browser. you can turn on the microphone, then screen and computer sound, with a live check before continuing.
@@ -14,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - pairing links now open the pairing form with the link filled in. you choose when to connect.
+
+### Fixed
+
+- macOS no longer warns that solstone tried to access data from other apps each time solstone starts. before, solstone tried to make folders for Chrome and Edge even if you had never opened them, and macOS blocked it.
 
 ## [2.0.37] - 2026-10-17
 
