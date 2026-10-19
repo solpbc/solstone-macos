@@ -26,6 +26,17 @@ final class SetupModel {
     private(set) var continuation: SetupContinuation?
     private(set) var isPeerSupportingSetup: Bool = false
     private(set) var acknowledgementError: String?
+    private(set) var handoffRefusal: SetupHandoffRefusalReason?
+
+    var handoffRefusalMessage: String? {
+        switch handoffRefusal {
+        case .heldPairing: "the solstone app is already connected to a journal."
+        case .continuationInProgress: "the solstone app is already finishing another setup."
+        case nil: nil
+        }
+    }
+
+    func dismissHandoffRefusal() { handoffRefusal = nil }
     private(set) var finalOpenError: String?
     private(set) var ownerPairingError: String?
     private(set) var journalPollingText: String?
@@ -224,11 +235,34 @@ final class SetupModel {
         case .malformed:
             break
         case .ready(let handoff):
+            var checkedContinuation: SetupContinuation?
+            var continuationReadable = true
+            do {
+                checkedContinuation = try continuationStore.loadChecked()
+                if let snapshot = checkedContinuation?.accepted, !snapshot.isValid {
+                    throw SetupMailboxError.malformedPayload
+                }
+            } catch {
+                checkedContinuation = nil
+                continuationReadable = false
+            }
             let held = appState?.tunnelLifecycleOwner.sameMachineStoredPairingState ?? .noneHeld
-            let currentSnapshot = continuation?.accepted
+            let currentSnapshot = checkedContinuation?.accepted
             let alreadyAccepted = (currentSnapshot?.handoffID == handoff.handoffID)
             let currentPhase = self.phase
-            let currentMode = continuation?.mode
+            let currentMode = checkedContinuation?.mode
+
+            let admissionStateKnown = continuationReadable && held != .unavailable
+            let refusal: SetupHandoffRefusalReason?
+            if !alreadyAccepted && admissionStateKnown && (held == .pairedHome || held == .differentHomeHeld) {
+                refusal = .heldPairing
+            } else if !alreadyAccepted && admissionStateKnown, let record = checkedContinuation,
+                      !record.completed, let phase = record.phase,
+                      phase != .journal || record.mode == .ownerComparison || record.accepted != nil {
+                refusal = .continuationInProgress
+            } else {
+                refusal = nil
+            }
 
             let pairingBlocks = !alreadyAccepted && (held != .noneHeld)
 
@@ -242,8 +276,10 @@ final class SetupModel {
                     loadedID: handoffID,
                     alreadyAccepted: alreadyAccepted,
                     pairingBlocksNewAcceptance: pairingBlocks,
+                    refusalReason: refusal,
                     storeProgress: { [weak self] in
                         guard let self else { throw SetupMailboxError.continuationInProgress }
+                        guard admissionStateKnown else { throw SetupMailboxError.malformedPayload }
                         if currentMode == .ownerComparison {
                             throw SetupMailboxError.continuationInProgress
                         }
@@ -279,6 +315,14 @@ final class SetupModel {
                     }
                 )
 
+                if case .rejected = result,
+                   let response = try mailboxStore.readStep5Refusal(), response.handoffID == handoffID {
+                    handoffRefusal = response.reason
+                    acknowledgementError = nil
+                    NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+                    bringSolstoneToFront()
+                    return
+                }
                 try requireAcknowledged(result)
                 if let loaded = self.continuationStore.load() {
                     self.continuation = loaded

@@ -342,6 +342,16 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        settingsContent
+        .alert(appState.setupModel.handoffRefusalMessage ?? "", isPresented: Binding(
+            get: { appState.setupModel.handoffRefusal != nil },
+            set: { if !$0 { appState.setupModel.dismissHandoffRefusal() } }
+        )) {
+            Button("ok", role: .cancel) { appState.setupModel.dismissHandoffRefusal() }
+        }
+    }
+
+    private var settingsContent: some View {
         Group {
             if appState.setupModel.phase != nil {
                 SetupView(model: appState.setupModel, appState: appState, journalMarkDriver: journalMarkDriver)
@@ -416,6 +426,7 @@ struct SettingsView: View {
         }
         }
         .frame(minWidth: 720, minHeight: 500)
+
         .task {
             if storageUsedMB == nil {
                 let bytes = await appState.storageManager.calculateStorageUsed()

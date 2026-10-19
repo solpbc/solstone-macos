@@ -124,6 +124,36 @@ public struct SetupHandoffReceipt: Codable, Sendable, Equatable {
     }
 }
 
+public enum SetupHandoffRefusalReason: String, Codable, Sendable {
+    case heldPairing = "held_pairing"
+    case continuationInProgress = "continuation_in_progress"
+
+    var rejection: SetupHandoffRejection {
+        self == .heldPairing ? .heldPairing : .continuationInProgress
+    }
+}
+
+public struct SetupHandoffRefusal: Codable, Sendable, Equatable {
+    public static let schemaV1 = "solstone.setup-handoff-refused.v1"
+    public let schema: String
+    public let handoffID: UUID
+    public let stepIndex: Int
+    public let reason: SetupHandoffRefusalReason
+
+    public init(handoffID: UUID, reason: SetupHandoffRefusalReason) {
+        schema = Self.schemaV1
+        self.handoffID = handoffID
+        stepIndex = 5
+        self.reason = reason
+    }
+}
+
+private struct SetupRefusalHistory: Codable {
+    static let currentSchema = "solstone.setup-handoff-refusals.v1"
+    var schema = currentSchema
+    var reasons: [String: SetupHandoffRefusalReason] = [:]
+}
+
 public enum SetupStep1Load: Sendable, Equatable {
     case missing
     case malformed
@@ -155,6 +185,7 @@ public enum SetupCommitResult: Sendable, Equatable {
 public struct SetupMailboxStore: Sendable {
     public let directory: URL
     private let replace: @Sendable (Data, URL) throws -> Void
+    private let remove: @Sendable (URL) throws -> Void
 
     public static let defaultDirectory: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -164,14 +195,17 @@ public struct SetupMailboxStore: Sendable {
     public init(directory: URL = SetupMailboxStore.defaultDirectory) {
         self.directory = directory
         self.replace = { try setupAtomicReplace(data: $0, to: $1) }
+        self.remove = { try FileManager.default.removeItem(at: $0) }
     }
 
     public init(
         directory: URL,
-        replace: @escaping @Sendable (Data, URL) throws -> Void
+        replace: @escaping @Sendable (Data, URL) throws -> Void,
+        remove: @escaping @Sendable (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }
     ) {
         self.directory = directory
         self.replace = replace
+        self.remove = remove
     }
 
     private var outboundHandoffURL: URL {
@@ -308,10 +342,41 @@ public struct SetupMailboxStore: Sendable {
         return receipt
     }
 
+    private var refusalURL: URL { directory.appendingPathComponent("solstone-setup-handoff-refused.json") }
+    private var refusalHistoryURL: URL { directory.appendingPathComponent("solstone-setup-handoff-refusals.json") }
+
+    public func readStep5Refusal() throws -> SetupHandoffRefusal? {
+        guard let data = try? Data(contentsOf: refusalURL),
+              let refusal = try? JSONDecoder().decode(SetupHandoffRefusal.self, from: data),
+              refusal.schema == SetupHandoffRefusal.schemaV1, refusal.stepIndex == 5 else { return nil }
+        return refusal
+    }
+
+    private func refusalHistory() throws -> SetupRefusalHistory {
+        let data: Data
+        do { data = try Data(contentsOf: refusalHistoryURL) }
+        catch let error as CocoaError where error.code == .fileReadNoSuchFile { return SetupRefusalHistory() }
+        let history = try JSONDecoder().decode(SetupRefusalHistory.self, from: data)
+        guard history.schema == SetupRefusalHistory.currentSchema,
+              history.reasons.keys.allSatisfy({ UUID(uuidString: $0)?.uuidString.lowercased() == $0 }) else {
+            throw SetupMailboxError.malformedPayload
+        }
+        return history
+    }
+
+    private func publishRefusalUnderLock(_ refusal: SetupHandoffRefusal) throws -> SetupCommitResult {
+        try replace(JSONEncoder().encode(refusal), refusalURL)
+        if currentHandoffID(at: inboundHandoffURL) == refusal.handoffID {
+            try? remove(inboundHandoffURL)
+        }
+        return .rejected(refusal.reason.rejection)
+    }
+
     public func commitStep5(
         loadedID: UUID,
         alreadyAccepted: Bool,
         pairingBlocksNewAcceptance: Bool,
+        refusalReason: SetupHandoffRefusalReason? = nil,
         storeProgress: () throws -> Void
     ) throws -> SetupCommitResult {
         var result: SetupCommitResult = .lockTimeout
@@ -324,6 +389,7 @@ public struct SetupMailboxStore: Sendable {
                 loadedID: loadedID,
                 alreadyAccepted: alreadyAccepted,
                 refuseNewAcceptance: pairingBlocksNewAcceptance,
+                refusalReason: refusalReason,
                 storeProgress: storeProgress
             )
         }
@@ -338,6 +404,7 @@ public struct SetupMailboxStore: Sendable {
         loadedID: UUID,
         alreadyAccepted: Bool,
         refuseNewAcceptance: Bool,
+        refusalReason: SetupHandoffRefusalReason? = nil,
         storeProgress: () throws -> Void
     ) throws -> SetupCommitResult {
         guard FileManager.default.fileExists(atPath: payloadURL.path) else {
@@ -376,10 +443,6 @@ public struct SetupMailboxStore: Sendable {
             return .rejected(.superseded)
         }
 
-        if refuseNewAcceptance && !alreadyAccepted {
-            return .rejected(.heldPairing)
-        }
-
         if alreadyAccepted {
             try writeReceiptUnderLock(handoffID: loadedID, stepIndex: stepIndex, to: receiptURL)
             if currentHandoffID(at: payloadURL) == loadedID {
@@ -387,6 +450,22 @@ public struct SetupMailboxStore: Sendable {
             }
             return .republished
         }
+
+        if stepIndex == 5 {
+            var history = try refusalHistory()
+            let key = loadedID.uuidString.lowercased()
+            if let reason = history.reasons[key] {
+                return try publishRefusalUnderLock(SetupHandoffRefusal(handoffID: loadedID, reason: reason))
+            }
+            if let refusalReason {
+                history.reasons[key] = refusalReason
+                // The decision precedes the public response, so a crash cannot forget an observed refusal.
+                try replace(JSONEncoder().encode(history), refusalHistoryURL)
+                return try publishRefusalUnderLock(SetupHandoffRefusal(handoffID: loadedID, reason: refusalReason))
+            }
+        }
+
+        if refuseNewAcceptance { return .rejected(.heldPairing) }
 
         do {
             try storeProgress()

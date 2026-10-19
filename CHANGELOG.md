@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- starting a new journal while this app is already connected now explains how to continue without changing that connection.
 - after you pair with a pairing link, the last setup step's heading says you're connected to your journal, instead of still asking you to connect.
 - after your journal shows its mark on the journal app's icon, solstone no longer says the journal app is missing when you create or reconnect a journal on this mac.
 - when your mac account can't add apps to Applications, setup and settings now tell you how to install the journal app yourself, with a link to download it. settings no longer sends you to an administrator account.

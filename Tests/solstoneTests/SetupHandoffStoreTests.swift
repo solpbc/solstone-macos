@@ -18,6 +18,122 @@ struct SetupHandoffStoreTests {
 
     private let sampleFingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
+    private func writePending(_ id: UUID, in dir: URL) throws {
+        let handoff = SetupHandoff(handoffID: id, stepIndex: 5, journalRootPath: "/test/root",
+                                   expectedInstanceID: "test-home", expectedCAFingerprint: sampleFingerprint)
+        try JSONEncoder().encode(handoff).write(to: dir.appendingPathComponent("solstone-setup-handoff.json"))
+    }
+
+    @Test func terminalRefusalSurvivesNewResponsesAndChangedPairing() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = UUID()
+        let store = SetupMailboxStore(directory: dir)
+        for id in [first, UUID(), UUID()] {
+            try writePending(id, in: dir)
+            #expect(try store.commitStep5(loadedID: id, alreadyAccepted: false,
+                pairingBlocksNewAcceptance: true, refusalReason: .heldPairing,
+                storeProgress: { Issue.record("must preserve existing setup") }) == .rejected(.heldPairing))
+            #expect(try store.readStep5Refusal()?.handoffID == id)
+            #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("solstone-setup-handoff.json").path))
+            #expect(try store.readStep5Receipt() == nil)
+        }
+        try writePending(first, in: dir)
+        let rebuilt = SetupMailboxStore(directory: dir)
+        #expect(try rebuilt.commitStep5(loadedID: first, alreadyAccepted: false,
+            pairingBlocksNewAcceptance: false,
+            storeProgress: { Issue.record("a refused ID must never become accepted") }) == .rejected(.heldPairing))
+        #expect(try rebuilt.readStep5Refusal()?.handoffID == first)
+    }
+
+    @Test(arguments: ["solstone-setup-handoff-refusals.json", "solstone-setup-handoff-refused.json"])
+    func refusalWriteFailuresKeepDecisionOrdering(failingName: String) throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        try writePending(id, in: dir)
+        let store = SetupMailboxStore(directory: dir, replace: { data, url in
+            if url.lastPathComponent == failingName { throw CocoaError(.fileWriteUnknown) }
+            try data.write(to: url, options: .atomic)
+        })
+        #expect(throws: (any Error).self) {
+            try store.commitStep5(loadedID: id, alreadyAccepted: false,
+                pairingBlocksNewAcceptance: true, refusalReason: .heldPairing, storeProgress: {})
+        }
+        #expect(try store.readStep5Refusal() == nil)
+        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("solstone-setup-handoff.json").path))
+        let rebuilt = SetupMailboxStore(directory: dir)
+        let decisionWasPersisted = failingName == "solstone-setup-handoff-refused.json"
+        let result = try rebuilt.commitStep5(loadedID: id, alreadyAccepted: false,
+            pairingBlocksNewAcceptance: false, storeProgress: {})
+        #expect(result == (decisionWasPersisted ? .rejected(.heldPairing) : .accepted))
+    }
+
+    @Test func cleanupFailureStillLeavesTerminalDecision() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        try writePending(id, in: dir)
+        let store = SetupMailboxStore(directory: dir, replace: { try $0.write(to: $1, options: .atomic) },
+            remove: { _ in throw CocoaError(.fileWriteUnknown) })
+        #expect(try store.commitStep5(loadedID: id, alreadyAccepted: false,
+            pairingBlocksNewAcceptance: true, refusalReason: .continuationInProgress,
+            storeProgress: {}) == .rejected(.continuationInProgress))
+        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("solstone-setup-handoff.json").path))
+        #expect(try SetupMailboxStore(directory: dir).commitStep5(loadedID: id,
+            alreadyAccepted: false, pairingBlocksNewAcceptance: false,
+            storeProgress: { Issue.record("terminal decision lost after failed cleanup") }) == .rejected(.continuationInProgress))
+    }
+
+    @Test(arguments: ["broken", "{\"schema\":\"future\",\"reasons\":{}}"])
+    func invalidHistoryFailsClosedButTrustedAcceptanceCanRepublish(contents: String) throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = UUID()
+        try writePending(id, in: dir)
+        let history = dir.appendingPathComponent("solstone-setup-handoff-refusals.json")
+        try Data(contents.utf8).write(to: history)
+        let store = SetupMailboxStore(directory: dir)
+        #expect(throws: (any Error).self) {
+            try store.commitStep5(loadedID: id, alreadyAccepted: false,
+                pairingBlocksNewAcceptance: false, storeProgress: { Issue.record("history read failure must block acceptance") })
+        }
+        #expect(try Data(contentsOf: history) == Data(contents.utf8))
+        #expect(try store.readStep5Refusal() == nil)
+        #expect(try store.commitStep5(loadedID: id, alreadyAccepted: true,
+            pairingBlocksNewAcceptance: true, refusalReason: .heldPairing,
+            storeProgress: { Issue.record("already accepted") }) == .republished)
+        #expect(try store.readStep5Receipt()?.handoffID == id)
+    }
+
+    @Test func supersededRefusalCannotConsumeReplacement() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupMailboxStore(directory: dir)
+        let replacement = UUID()
+        try writePending(replacement, in: dir)
+        #expect(try store.commitStep5(loadedID: UUID(), alreadyAccepted: false,
+            pairingBlocksNewAcceptance: true, refusalReason: .heldPairing,
+            storeProgress: {}) == .rejected(.superseded))
+        #expect(try store.readStep5Refusal() == nil)
+        guard case .ready(let pending) = store.loadStep5() else { Issue.record("replacement was lost"); return }
+        #expect(pending.handoffID == replacement)
+    }
+
+    @Test(arguments: ["broken", "schema", "reason", "stepIndex"])
+    func unknownRefusalsAreNotOutcomes(field: String) throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupMailboxStore(directory: dir)
+        #expect(try store.readStep5Refusal() == nil)
+        let encoded = try JSONEncoder().encode(SetupHandoffRefusal(handoffID: UUID(), reason: .heldPairing))
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        if field == "stepIndex" { object[field] = 1 } else { object[field] = "unknown" }
+        let data = field == "broken" ? Data("broken".utf8) : try JSONSerialization.data(withJSONObject: object)
+        try data.write(to: dir.appendingPathComponent("solstone-setup-handoff-refused.json"))
+        #expect(try store.readStep5Refusal() == nil)
+    }
+
     @Test func step1RoundTrip() throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }

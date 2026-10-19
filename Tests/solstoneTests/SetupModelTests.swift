@@ -600,6 +600,8 @@ struct SetupModelTests {
 
         #expect(model.phase == nil)
         #expect(model.continuation?.accepted == nil)
+        #expect(try SetupMailboxStore(directory: dir).readStep5Refusal() == nil)
+        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("solstone-setup-handoff.json").path))
     }
 
     @Test func heldHomeRejectsNewID() throws {
@@ -631,6 +633,79 @@ struct SetupModelTests {
         #expect(model.phase == .journal)
         #expect(model.continuation?.accepted == nil)
         #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("solstone-setup-handoff-accepted.json").path))
+        #expect(try SetupMailboxStore(directory: dir).readStep5Refusal()?.handoffID == handoff.handoffID)
+        #expect(model.handoffRefusal == .heldPairing)
+        #expect(model.acknowledgementError == nil)
+        model.dismissHandoffRefusal()
+        #expect(model.handoffRefusal == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func competingAndUnreadableContinuationPreserveExistingState(corrupt: Bool) throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
+        _ = model.setPhase(.microphone)
+        let continuationURL = dir.appendingPathComponent("solstone-setup-continuation.json")
+        if corrupt { try Data("broken".utf8).write(to: continuationURL) }
+        let before = try Data(contentsOf: continuationURL)
+        let handoff = SetupHandoff(handoffID: UUID(), stepIndex: 5, journalRootPath: "/test/root",
+            expectedInstanceID: "new-home", expectedCAFingerprint: sampleFingerprint)
+        let payloadURL = dir.appendingPathComponent("solstone-setup-handoff.json")
+        try JSONEncoder().encode(handoff).write(to: payloadURL)
+        model.ingestStep5IfNeeded()
+        #expect(model.phase == .microphone)
+        #expect(try Data(contentsOf: continuationURL) == before)
+        let refusal = try SetupMailboxStore(directory: dir).readStep5Refusal()
+        #expect(refusal?.reason == (corrupt ? nil : .continuationInProgress))
+        #expect((model.acknowledgementError != nil) == corrupt)
+        #expect(FileManager.default.fileExists(atPath: payloadURL.path) == corrupt)
+    }
+
+    @Test func heldPairingAtNilPhaseOpensNoticeWithoutChangingContinuation() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing())
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, appState: state)
+        let requests = OSAllocatedUnfairLock(initialState: 0)
+        let observer = NotificationCenter.default.addObserver(forName: .openSettingsWindow, object: nil, queue: nil) { _ in
+            requests.withLock { $0 += 1 }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        let handoff = SetupHandoff(handoffID: UUID(), stepIndex: 5, journalRootPath: "/test/root",
+            expectedInstanceID: "new-home", expectedCAFingerprint: sampleFingerprint)
+        try JSONEncoder().encode(handoff).write(to: dir.appendingPathComponent("solstone-setup-handoff.json"))
+        model.ingestStep5IfNeeded()
+        #expect(model.phase == nil)
+        #expect(model.handoffRefusal == .heldPairing)
+        #expect(requests.withLock { $0 } > 0)
+        #expect(model.continuation?.accepted == nil)
+    }
+
+    @Test func unreadablePairingBlocksNewDecisionButCanRepublishRecordedRefusal() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let state = AppState.forSnapshot(pairingLoad: { throw CocoaError(.fileReadUnknown) })
+        #expect(state.tunnelLifecycleOwner.sameMachineStoredPairingState == .unavailable)
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, appState: state)
+        let id = UUID()
+        let handoff = SetupHandoff(handoffID: id, stepIndex: 5, journalRootPath: "/test/root",
+            expectedInstanceID: "new-home", expectedCAFingerprint: sampleFingerprint)
+        let payload = dir.appendingPathComponent("solstone-setup-handoff.json")
+        try JSONEncoder().encode(handoff).write(to: payload)
+        model.ingestStep5IfNeeded()
+        let store = SetupMailboxStore(directory: dir)
+        #expect(try store.readStep5Refusal() == nil)
+        #expect(model.acknowledgementError != nil)
+        #expect(FileManager.default.fileExists(atPath: payload.path))
+        _ = try store.commitStep5(loadedID: id, alreadyAccepted: false, pairingBlocksNewAcceptance: true,
+            refusalReason: .heldPairing, storeProgress: {})
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("solstone-setup-handoff-refused.json"))
+        try JSONEncoder().encode(handoff).write(to: payload)
+        model.ingestStep5IfNeeded()
+        #expect(try store.readStep5Refusal()?.handoffID == id)
+        #expect(model.handoffRefusal == .heldPairing)
+        #expect(model.acknowledgementError == nil)
     }
 
     @Test func adoptionFlagRemainsFalseAroundAppStateWrapper() async {
@@ -1909,7 +1984,7 @@ struct SetupModelTests {
         #expect(counter.count == 0)
     }
 
-    @Test func setPhaseAndIngestWhileAlreadyMicrophoneDoNotBringSolstoneToFront() throws {
+    @Test func competingStep5PreservesMicrophonePhaseAndBringsRefusalToFront() throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let counter = CallCounter()
@@ -1926,7 +2001,7 @@ struct SetupModelTests {
         #expect(model.phase == .microphone)
         #expect(counter.count == 0)
 
-        // Ingest while phase is already .microphone does not run it
+        // A competing handoff now brings its terminal refusal to the owner.
         let handoffID = UUID()
         try model.mailboxStore.writeStep5(SetupHandoff(
             handoffID: handoffID,
@@ -1937,7 +2012,9 @@ struct SetupModelTests {
         ))
         model.ingestStep5IfNeeded()
         #expect(model.phase == .microphone)
-        #expect(counter.count == 0)
+        #expect(counter.count == 1)
+        #expect(model.handoffRefusal == .continuationInProgress)
+        #expect(try model.mailboxStore.readStep5Refusal()?.handoffID == handoffID)
     }
 
     @Test func continueFromOlderJournalDoesNotBringSolstoneToFront() throws {
