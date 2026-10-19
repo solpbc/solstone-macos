@@ -186,4 +186,142 @@ struct SetupDownloadProgressTests {
         await old.value
         #expect(progress.downloads == value)
     }
+
+    private func job(_ state: SetupDownloadState, attempt: String? = nil, code: String? = nil) -> SetupDownloadJob {
+        SetupDownloadJob(state: state, attemptID: attempt, bytesDone: 0, bytesTotal: nil,
+                         error: code.map { .init(code: $0, detail: "fixture detail") })
+    }
+
+    private func downloads(speech: SetupDownloadJob? = nil, thinking: SetupDownloadJob) -> SetupDownloads {
+        SetupDownloads(speech: speech ?? job(.complete), thinking: thinking)
+    }
+
+    @Test func thinkingControlsFollowItsState() {
+        #expect(downloads(thinking: job(.downloading, attempt: "attempt-1")).thinkingAction == .cancelThinking(attemptID: "attempt-1"))
+        #expect(downloads(thinking: job(.downloading)).thinkingAction == nil)
+        #expect(downloads(thinking: job(.downloading, attempt: "")).thinkingAction == nil)
+        #expect(downloads(thinking: job(.error, code: "download_failed")).thinkingAction == .startThinking)
+        #expect(downloads(thinking: job(.cancelled, attempt: "attempt-1")).thinkingAction == .startThinking)
+        #expect(downloads(thinking: job(.complete)).thinkingAction == nil)
+        #expect(downloads(thinking: job(.idle)).thinkingAction == nil)
+    }
+
+    @Test func idleThinkingIsHiddenAndOtherStatesShow() {
+        #expect(!downloads(thinking: job(.idle)).showsThinking)
+        for state in [SetupDownloadState.downloading, .complete, .cancelled, .error] {
+            #expect(downloads(thinking: job(state)).showsThinking, "\(state)")
+        }
+    }
+
+    @Test func speechRetryOnlyAfterARetryableFailure() {
+        #expect(downloads(speech: job(.error, code: "download_failed"), thinking: job(.idle)).speechAction == .retrySpeech)
+        #expect(downloads(speech: job(.error), thinking: job(.idle)).speechAction == .retrySpeech)
+        #expect(downloads(speech: job(.error, code: "speech_package_unavailable"), thinking: job(.idle)).speechAction == nil)
+        for state in [SetupDownloadState.idle, .downloading, .complete, .cancelled] {
+            #expect(downloads(speech: job(state), thinking: job(.idle)).speechAction == nil, "\(state)")
+        }
+    }
+
+    @Test(arguments: [
+        (SetupDownloadAction.cancelThinking(attemptID: "attempt-7"),
+         ["action": "cancel_thinking_download", "attempt_id": "attempt-7"]),
+        (.startThinking, ["action": "start_thinking_download"]),
+        (.retrySpeech, ["action": "retry_speech_download"])
+    ])
+    func actionPostsToJournalAppsOwnListener(action: SetupDownloadAction, expected: [String: String]) async throws {
+        let store = ObserverURLProtocolStore()
+        store.registerRoute(matching: { _ in true }, statusCode: 503,
+                            body: #"{"error":"retry pending","reason_code":"speech_admission_pending","detail":"fixture"}"#)
+        let session = BoundedLoopbackClient.makeSession(configuration: observerURLProtocolConfiguration(store: store))
+        defer { session.invalidateAndCancel() }
+        await SetupActionClient(session: session).send(action)
+        let requests = store.snapshotRequests()
+        let request = try #require(requests.first)
+        #expect(requests.count == 1)
+        #expect(request.url?.absoluteString == "http://127.0.0.1:5015/init/api/action")
+        #expect(request.httpMethod == "POST")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+        #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+        let body = try #require(store.snapshotRequestBodyData().first ?? nil)
+        #expect(try JSONSerialization.jsonObject(with: body) as? [String: String] == expected)
+    }
+
+    private func actionHarness(
+        reads: [SetupDownloads]
+    ) -> (SetupDownloadProgress, LockedArray<SetupDownloadAction>, LockedCounter) {
+        let queue = LockedArray(reads)
+        let last = reads.last!
+        let readCount = LockedCounter()
+        let sent = LockedArray<SetupDownloadAction>([])
+        let progress = SetupDownloadProgress(
+            read: { _ in readCount.increment(); return queue.removeFirst(default: last) },
+            send: { sent.append($0) }
+        )
+        return (progress, sent, readCount)
+    }
+
+    @Test func actionWaitsForAMatchingDirectListenerThenRereads() async throws {
+        let shown = downloads(thinking: job(.downloading, attempt: "attempt-1"))
+        let (progress, sent, readCount) = actionHarness(reads: [shown, downloads(thinking: job(.cancelled, attempt: "attempt-1"))])
+        let context = admission(handoff: UUID())
+        let checks = LockedCounter()
+        await progress.refresh(admission: { context }, verifyDirect: { _ in checks.increment(); return true })
+        #expect(progress.actionsEnabled)
+        await progress.perform(.cancelThinking(attemptID: "attempt-1"), admission: { context },
+                               verifyDirect: { _ in checks.increment(); return true })
+        #expect(sent.all == [.cancelThinking(attemptID: "attempt-1")])
+        #expect(checks.count == 2)
+        #expect(readCount.count == 2)
+        #expect(progress.downloads?.thinkingAction == .startThinking)
+        #expect(progress.actionsEnabled)
+    }
+
+    @Test func staleCancelIsNeverSentForANewerAttempt() async throws {
+        let (progress, sent, _) = actionHarness(reads: [
+            downloads(thinking: job(.downloading, attempt: "attempt-1")),
+            downloads(thinking: job(.downloading, attempt: "attempt-2"))
+        ])
+        let context = admission(handoff: UUID())
+        await progress.refresh(admission: { context }, verifyDirect: { _ in true })
+        await progress.refresh(admission: { context }, verifyDirect: { _ in true })
+        await progress.perform(.cancelThinking(attemptID: "attempt-1"), admission: { context }, verifyDirect: { _ in true })
+        #expect(sent.all.isEmpty)
+        await progress.perform(.cancelThinking(attemptID: "attempt-2"), admission: { context }, verifyDirect: { _ in true })
+        #expect(sent.all == [.cancelThinking(attemptID: "attempt-2")])
+    }
+
+    @Test func mismatchedDirectListenerKeepsControlsDisabledAndSendsNothing() async throws {
+        let (progress, sent, _) = actionHarness(reads: [downloads(speech: job(.error, code: "download_failed"), thinking: job(.idle))])
+        let context = admission(handoff: UUID())
+        await progress.refresh(admission: { context }, verifyDirect: { _ in false })
+        #expect(!progress.actionsEnabled)
+        await progress.perform(.retrySpeech, admission: { context }, verifyDirect: { _ in true })
+        #expect(sent.all.isEmpty)
+
+        // A listener that stops matching between the read and the click is refused, too.
+        await progress.refresh(admission: { context }, verifyDirect: { _ in true })
+        #expect(progress.actionsEnabled)
+        await progress.perform(.retrySpeech, admission: { context }, verifyDirect: { _ in false })
+        #expect(sent.all.isEmpty)
+        #expect(!progress.actionsEnabled)
+    }
+
+    @Test func nothingToOfferMeansNoDirectCheck() async throws {
+        let (progress, _, _) = actionHarness(reads: [downloads(thinking: job(.idle))])
+        let checks = LockedCounter()
+        await progress.refresh(admission: { self.admission(handoff: UUID()) }, verifyDirect: { _ in checks.increment(); return true })
+        #expect(checks.count == 0)
+        #expect(!progress.actionsEnabled)
+    }
+
+    @Test func unavailableOnlyAfterAReadFails() async throws {
+        let progress = SetupDownloadProgress(read: { _ in throw SetupDownloadReadError.unavailable })
+        #expect(!progress.readFailed)
+        await progress.refresh { nil }
+        #expect(!progress.readFailed)
+        await progress.refresh { self.admission(handoff: UUID()) }
+        #expect(progress.readFailed)
+        progress.invalidate()
+        #expect(!progress.readFailed)
+    }
 }

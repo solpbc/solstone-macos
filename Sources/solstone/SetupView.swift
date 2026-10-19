@@ -48,7 +48,12 @@ struct SetupView: View {
             }
             if model.isPeerSupportingSetup && model.phase != .journal {
                 Divider()
-                SetupDownloadFooter(downloads: model.downloadProgress.downloads)
+                SetupDownloadFooter(
+                    downloads: model.downloadProgress.downloads,
+                    readFailed: model.downloadProgress.readFailed,
+                    actionsEnabled: model.downloadProgress.actionsEnabled,
+                    perform: { model.performDownloadAction($0) }
+                )
                     .padding(.horizontal, 24)
                     .padding(.vertical, 12)
             }

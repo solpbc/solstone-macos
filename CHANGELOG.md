@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - add app names, window titles, browser addresses and active or idle time to your journal with the optional activity source.
+- when the journal app hands setup to the solstone app, you can cancel the local thinking download or try it again from the download progress at the bottom of the window, and try speech recognition again if its download fails.
 
 ### Fixed
 

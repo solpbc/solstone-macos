@@ -525,7 +525,64 @@ final class SetupModel {
         if currentConnectingHandoffID != continuation?.accepted?.handoffID {
             startConnectionPhase()
         }
-        downloadProgress.start { [weak self] in await self?.downloadAdmission() }
+        downloadProgress.start(
+            admission: { [weak self] in await self?.downloadAdmission() },
+            verifyDirect: { [weak self] in await self?.directListenerMatches($0) ?? false }
+        )
+    }
+
+    func performDownloadAction(_ action: SetupDownloadAction) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.downloadProgress.perform(
+                action,
+                admission: { [weak self] in await self?.downloadAdmission() },
+                verifyDirect: { [weak self] in await self?.directListenerMatches($0) ?? false }
+            )
+        }
+    }
+
+    /// The same check the final open makes: the tunnel names the accepted journal,
+    /// then Journal.app's direct listener names the same committed identity.
+    private func directListenerMatches(_ context: SetupDownloadAdmission) async -> Bool {
+        guard let accepted = continuation?.accepted, accepted.handoffID == context.handoffID else { return false }
+        let expectedInstanceID = accepted.expectedInstanceID
+        return await Self.verifyJournalIdentity(
+            expectedInstanceID: expectedInstanceID,
+            includeDirect: true,
+            checkAdmission: { [weak self] in
+                self?.supportingIdentityAdmitted(expectedInstanceID: expectedInstanceID,
+                                                 revision: context.credential) ?? false
+            },
+            fetchTunnelIdentity: { [weak self] in
+                await self?.fetchTunnelIdentity(expectedInstanceID: expectedInstanceID) ?? .absent
+            },
+            fetchDirectIdentity: { await Self.fetchDirectIdentity(expectedInstanceID: expectedInstanceID) }
+        )
+    }
+
+    private func supportingIdentityAdmitted(expectedInstanceID: String, revision: PairingCredentialRevision) -> Bool {
+        guard let appState, case .connected = appState.tunnelLifecycleOwner.state,
+              let pairing = appState.currentDurablePairing,
+              pairing.instanceID == expectedInstanceID,
+              appState.currentDurablePairingRevision == revision,
+              let snapshot = continuation?.accepted,
+              snapshot.expectedInstanceID == expectedInstanceID else { return false }
+        return caChainContainsFingerprint(caChainPEM: pairing.caChainPEM,
+                                          expectedLowerHex: snapshot.expectedCAFingerprint)
+    }
+
+    private func fetchTunnelIdentity(expectedInstanceID: String) async -> JournalIdentityResolution {
+        guard let appState, let tunnelBase = tunnelIdentityBase(state: appState.tunnelLifecycleOwner.state) else {
+            return .absent
+        }
+        let fetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
+        return await fetcher.resolveIdentity(baseURL: tunnelBase, expectedInstanceID: expectedInstanceID)
+    }
+
+    private static func fetchDirectIdentity(expectedInstanceID: String) async -> JournalIdentityResolution {
+        await JournalIdentityFetcher().resolveIdentity(baseURL: "http://127.0.0.1:5015",
+                                                       expectedInstanceID: expectedInstanceID)
     }
 
     func stopSupportingTasks() {
@@ -820,6 +877,30 @@ final class SetupModel {
         }
     }
 
+    /// The tunnel's committed identity must name the expected journal; with `includeDirect`,
+    /// the direct listener's must match it. A destination-consistency check, not proof.
+    static func verifyJournalIdentity(
+        expectedInstanceID: String,
+        expectedMark: JournalMark? = nil,
+        includeDirect: Bool,
+        checkAdmission: () -> Bool,
+        fetchTunnelIdentity: () async -> JournalIdentityResolution,
+        fetchDirectIdentity: () async -> JournalIdentityResolution
+    ) async -> Bool {
+        let tunnelRes = await fetchTunnelIdentity()
+        guard checkAdmission() else { return false }
+        guard case .mark(let tunnelMark, let tunnelInstanceID) = tunnelRes,
+              tunnelInstanceID == expectedInstanceID else { return false }
+        if let expectedMark, tunnelMark != expectedMark { return false }
+        guard includeDirect else { return true }
+
+        let directRes = await fetchDirectIdentity()
+        guard checkAdmission() else { return false }
+        guard case .mark(let directMark, let directInstanceID) = directRes,
+              directInstanceID == expectedInstanceID else { return false }
+        return directMark == (expectedMark ?? tunnelMark)
+    }
+
     @MainActor
     private func executeSetupFinalOpenCore(
         expectedInstanceID: String,
@@ -849,30 +930,18 @@ final class SetupModel {
             return false
         }
 
-        let tunnelRes = await fetchTunnelIdentity()
-        guard checkAdmission() else {
-            return false
-        }
-        guard case .mark(let tunnelMark, let tunnelInstanceID) = tunnelRes,
-              tunnelInstanceID == expectedInstanceID else {
-            return false
-        }
-        if isOlderPeer, let expectedMark, tunnelMark != expectedMark {
-            return false
-        }
+        guard await Self.verifyJournalIdentity(
+            expectedInstanceID: expectedInstanceID,
+            expectedMark: isOlderPeer ? expectedMark : nil,
+            includeDirect: !isRemotePeer,
+            checkAdmission: checkAdmission,
+            fetchTunnelIdentity: fetchTunnelIdentity,
+            fetchDirectIdentity: fetchDirectIdentity
+        ) else { return false }
 
         if isRemotePeer {
             guard checkAdmission(), openPairedJournal() else { return false }
         } else {
-            let directRes = await fetchDirectIdentity()
-            guard checkAdmission() else { return false }
-            guard case .mark(let directMark, let directInstanceID) = directRes,
-                  directInstanceID == expectedInstanceID else { return false }
-            if isOlderPeer, let expectedMark {
-                guard directMark == expectedMark, tunnelMark == expectedMark else { return false }
-            } else {
-                guard directMark == tunnelMark else { return false }
-            }
             guard checkAdmission(),
                   let targetURL = URL(string: "http://127.0.0.1:5015/"),
                   openURL(targetURL) else { return false }
@@ -995,12 +1064,8 @@ final class SetupModel {
                     guard appState.currentDurablePairingRevision == snapshotRevision else { return false }
 
                     if self.isPeerSupportingSetup {
-                        guard let snapshot = self.continuation?.accepted else { return false }
-                        guard snapshot.expectedInstanceID == expectedInstanceID else { return false }
-                        return caChainContainsFingerprint(
-                            caChainPEM: pairing.caChainPEM,
-                            expectedLowerHex: snapshot.expectedCAFingerprint
-                        )
+                        return self.supportingIdentityAdmitted(expectedInstanceID: expectedInstanceID,
+                                                               revision: snapshotRevision)
                     } else {
                         guard appState.isJournalMarkConfirmed,
                               appState.confirmedMark == expectedMark,
@@ -1010,18 +1075,10 @@ final class SetupModel {
                         return true
                     }
                 },
-                fetchTunnelIdentity: { [weak appState] in
-                    guard let appState else { return .absent }
-                    guard let tunnelBase = tunnelIdentityBase(state: appState.tunnelLifecycleOwner.state) else {
-                        return .absent
-                    }
-                    let fetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
-                    return await fetcher.resolveIdentity(baseURL: tunnelBase, expectedInstanceID: expectedInstanceID)
+                fetchTunnelIdentity: { [weak self] in
+                    await self?.fetchTunnelIdentity(expectedInstanceID: expectedInstanceID) ?? .absent
                 },
-                fetchDirectIdentity: {
-                    let fetcher = JournalIdentityFetcher()
-                    return await fetcher.resolveIdentity(baseURL: "http://127.0.0.1:5015", expectedInstanceID: expectedInstanceID)
-                },
+                fetchDirectIdentity: { await Self.fetchDirectIdentity(expectedInstanceID: expectedInstanceID) },
                 openURL: { [weak appState] url in
                     guard let appState else { return false }
                     return appState.openBrowserURLDirectly(url)

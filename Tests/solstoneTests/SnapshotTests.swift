@@ -1193,6 +1193,62 @@ struct SnapshotTests {
         }
     }
 
+    @Test func onboardingDownloadFooterStates() async throws {
+        func job(_ state: SetupDownloadState, attempt: String? = nil, done: UInt64 = 0, total: UInt64? = nil,
+                 code: String? = nil) -> SetupDownloadJob {
+            SetupDownloadJob(state: state, attemptID: attempt, bytesDone: done, bytesTotal: total,
+                             error: code.map { .init(code: $0, detail: "fixture detail") })
+        }
+        let speechDone = job(.complete, done: 483_300_000, total: 483_300_000)
+        let thinkingActive = SetupDownloads(speech: speechDone,
+            thinking: job(.downloading, attempt: "attempt-1", done: 1_200_000_000, total: 3_430_000_000))
+        // (mode, read result, direct listener matches); a nil result is a failed read.
+        let cases: [(String, SetupDownloads?, Bool)] = [
+            ("thinking-downloading", thinkingActive, true),
+            ("thinking-downloading-unmatched", thinkingActive, false),
+            ("thinking-cancelled", SetupDownloads(speech: speechDone, thinking: job(.cancelled, attempt: "attempt-1")), true),
+            ("thinking-error", SetupDownloads(speech: speechDone, thinking: job(.error, attempt: "attempt-1", code: "download_failed")), true),
+            ("speech-error", SetupDownloads(speech: job(.error, attempt: "speech-1", code: "download_failed"), thinking: job(.idle)), true),
+            ("speech-package-unavailable", SetupDownloads(speech: job(.error, code: "speech_package_unavailable"), thinking: job(.idle)), true),
+            ("non-local-choice", SetupDownloads(speech: job(.downloading, attempt: "speech-1", done: 45_300_000, total: 483_300_000),
+                thinking: job(.idle)), true),
+            ("read-failed", nil, true)
+        ]
+        for (mode, downloads, matches) in cases {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let accepted = SetupAcceptedStep5Snapshot(handoffID: UUID(), journalRootPath: "/fixture/journal",
+                expectedInstanceID: "fixture-instance", expectedCAFingerprint: String(repeating: "a", count: 64))
+            try SetupContinuationStore(directory: dir).save(
+                SetupContinuation(phase: .microphone, accepted: accepted, mode: .supporting))
+            let progress = SetupDownloadProgress(read: { _ in
+                guard let downloads else { throw SetupDownloadReadError.unavailable }
+                return downloads
+            }, send: { _ in })
+            let model = SetupModel(enabled: true, mailboxDirectory: dir, downloadProgress: progress)
+            let state = AppState.forSnapshot(
+                config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
+                setupModel: model
+            )
+            let admission = SetupDownloadAdmission(handoffID: accepted.handoffID,
+                credential: .init(fingerprint: "fixture-fingerprint", revision: "revision-1"),
+                routeGeneration: 1, baseURL: "http://127.0.0.1:18321")
+            await progress.refresh(admission: { admission }, verifyDirect: { _ in matches })
+            #expect(model.isPeerSupportingSetup)
+            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                try render(
+                    SetupView(model: model, appState: state, journalMarkDriver: JournalMarkConfirmationDriver())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light),
+                    size: CGSize(width: 420, height: 620),
+                    to: "onboarding-download-footer-\(mode)-\(name).png",
+                    appearance: NSAppearance(named: appearance)
+                )
+            }
+        }
+    }
+
     @Test func settingsPermissionsLiveOn() throws {
         let state = AppState.forSnapshot()
         markPermissionsReady(state)

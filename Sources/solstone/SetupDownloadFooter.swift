@@ -5,13 +5,18 @@ import SwiftUI
 
 struct SetupDownloadFooter: View {
     let downloads: SetupDownloads?
+    var readFailed = false
+    var actionsEnabled = false
+    var perform: (SetupDownloadAction) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let downloads {
-                row(title: "speech recognition", job: downloads.speech)
-                row(title: "local thinking", job: downloads.thinking)
-            } else {
+                row(title: "speech recognition", job: downloads.speech, action: downloads.speechAction)
+                if downloads.showsThinking {
+                    row(title: "local thinking", job: downloads.thinking, action: downloads.thinkingAction)
+                }
+            } else if readFailed {
                 Text("download progress isn't available.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -20,27 +25,41 @@ struct SetupDownloadFooter: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func row(title: String, job: SetupDownloadJob) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(stateText(job.state))
-                    .foregroundStyle(.secondary)
-            }
-            .font(.caption)
-            if job.state == .downloading {
-                if let fraction = job.fraction {
-                    ProgressView(value: fraction).accessibilityLabel(title)
-                } else {
-                    ProgressView().controlSize(.small).accessibilityLabel(title)
+    private func row(title: String, job: SetupDownloadJob, action: SetupDownloadAction?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(title)
+                    Spacer()
+                    Text(stateText(job.state))
+                        .foregroundStyle(.secondary)
                 }
-                Text(byteText(job))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                .font(.caption)
+                if job.state == .downloading {
+                    if let fraction = job.fraction {
+                        ProgressView(value: fraction).accessibilityLabel(title)
+                    } else {
+                        ProgressView().controlSize(.small).accessibilityLabel(title)
+                    }
+                    Text(byteText(job))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            if let action {
+                Button(actionLabel(action)) { perform(action) }
+                    .controlSize(.small)
+                    .disabled(!actionsEnabled)
             }
         }
-        .accessibilityElement(children: .combine)
+    }
+
+    private func actionLabel(_ action: SetupDownloadAction) -> String {
+        switch action {
+        case .cancelThinking: "cancel"
+        case .startThinking, .retrySpeech: UICopy.SETUP_TRY_AGAIN
+        }
     }
 
     private func stateText(_ state: SetupDownloadState) -> String {
