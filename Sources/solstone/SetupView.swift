@@ -80,75 +80,113 @@ struct SetupView: View {
     // MARK: - Journal Step
 
     private var journalStepView: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                if model.continuation?.mode == .ownerComparison && appState.confirmedMark == nil {
-                    Text(UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL).font(.headline)
-                } else if model.isPeerSupportingSetup {
-                    Text(UICopy.SETUP_OPEN_THE_JOURNAL_APP_TO_CONTINUE)
-                        .font(.headline)
-                    if let text = model.journalPollingText {
+        let linkWaiting = !pairingLinkInput.isEmpty || appState.pendingPairingLink != nil
+        let statusCaption = SetupJournalStatus.caption(
+            flowState: model.freshFlow.state,
+            journalPollingText: model.journalPollingText
+        )
+        let content = SetupJournalStep.content(
+            isOwnerComparison: model.continuation?.mode == .ownerComparison && appState.confirmedMark == nil,
+            isPeerSupporting: model.isPeerSupportingSetup,
+            hasMark: (appState.confirmedMark ?? model.olderDiscoveredMark) != nil,
+            hasError: model.journalPollingError != nil,
+            hasStatus: statusCaption != nil,
+            linkWaiting: linkWaiting
+        )
+        return journalStepView(content: content, statusCaption: statusCaption)
+    }
+
+    @ViewBuilder
+    private func journalStepView(content: SetupJournalStepContent, statusCaption: String?) -> some View {
+        switch content {
+        case .omitted:
+            EmptyView()
+        case .ownerComparison:
+            journalStepBox {
+                Text(UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL).font(.headline)
+            }
+        case .peerSupporting:
+            journalStepBox {
+                Text(UICopy.SETUP_OPEN_THE_JOURNAL_APP_TO_CONTINUE)
+                    .font(.headline)
+                if let text = model.journalPollingText {
+                    Text(text)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let error = model.journalPollingError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Button(UICopy.SETUP_TRY_AGAIN) {
+                        model.retryJournalPhase()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
+                }
+            }
+        case .mark:
+            journalStepBox {
+                if let mark = appState.confirmedMark ?? model.olderDiscoveredMark {
+                    JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkConfirmed)
+                    if !appState.isJournalMarkConfirmed {
+                        Button("pair") {
+                            appState.beginOwnerPairingAttempt()
+                            journalMarkDriver.startIfUnconfirmed(appState: appState)
+                            Task {
+                                _ = await runOwnerSameMachineLink(
+                                    appState: appState,
+                                    journalMarkDriver: journalMarkDriver,
+                                    startPairing: appState.sameMachinePairStart
+                                )
+                            }
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
+                    }
+                    Button(UICopy.SETUP_CONTINUE) {
+                        model.continueFromOlderJournal()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Setup.Journal.continue)
+                }
+            }
+        case .failure:
+            journalStepBox {
+                if let error = model.journalPollingError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Button(UICopy.SETUP_TRY_AGAIN) {
+                        model.retryJournalPhase()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
+                }
+            }
+        case .activity:
+            journalStepBox {
+                if let text = statusCaption {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
                         Text(text)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    if let error = model.journalPollingError {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                        Button(UICopy.SETUP_TRY_AGAIN) {
-                            model.retryJournalPhase()
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
-                    }
-                } else {
-                    if let mark = appState.confirmedMark ?? model.olderDiscoveredMark {
-                        JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkConfirmed)
-                        if !appState.isJournalMarkConfirmed {
-                            Button("pair") {
-                                appState.beginOwnerPairingAttempt()
-                                journalMarkDriver.startIfUnconfirmed(appState: appState)
-                                Task {
-                                    _ = await runOwnerSameMachineLink(
-                                        appState: appState,
-                                        journalMarkDriver: journalMarkDriver,
-                                        startPairing: appState.sameMachinePairStart
-                                    )
-                                }
-                            }
-                            .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
-                        }
-                        Button(UICopy.SETUP_CONTINUE) {
-                            model.continueFromOlderJournal()
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Setup.Journal.continue)
-                    } else {
-                        if let error = model.journalPollingError {
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                            Button(UICopy.SETUP_TRY_AGAIN) {
-                                model.retryJournalPhase()
-                            }
-                            .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
-                        } else if let text = model.journalPollingText {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text(text)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else if pairingLinkInput.isEmpty && appState.pendingPairingLink == nil {
-                            Button(UICopy.CREATE_JOURNAL_ON_THIS_MAC) {
-                                model.retryJournalPhase()
-                            }
-                            .accessibilityIdentifier(AXID.Settings.Setup.Journal.create)
-                        } else {
-                            EmptyView()
-                        }
-                    }
                 }
+            }
+        case .create:
+            journalStepBox {
+                Text(UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL).font(.headline)
+                Button(UICopy.CREATE_JOURNAL_ON_THIS_MAC) {
+                    model.retryJournalPhase()
+                }
+                .accessibilityIdentifier(AXID.Settings.Setup.Journal.create)
+            }
+        }
+    }
+
+    private func journalStepBox<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                content()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 4)
@@ -490,6 +528,49 @@ enum SetupPairingLinkOffer {
             return true
         case .idle, .pairing, .switchConfirmPending, .saveFailed, .failed:
             return false
+        }
+    }
+}
+
+enum SetupJournalStepContent: Equatable {
+    case ownerComparison
+    case peerSupporting
+    case mark
+    case failure
+    case activity
+    case create
+    case omitted
+}
+
+enum SetupJournalStep {
+    static func content(
+        isOwnerComparison: Bool,
+        isPeerSupporting: Bool,
+        hasMark: Bool,
+        hasError: Bool,
+        hasStatus: Bool,
+        linkWaiting: Bool
+    ) -> SetupJournalStepContent {
+        if isOwnerComparison { return .ownerComparison }
+        if isPeerSupporting { return .peerSupporting }
+        if hasMark { return .mark }
+        if hasError { return .failure }
+        if hasStatus { return .activity }
+        if !linkWaiting { return .create }
+        return .omitted
+    }
+}
+
+enum SetupJournalStatus {
+    static func caption(flowState: FreshJournalState, journalPollingText: String?) -> String? {
+        switch flowState {
+        case .acquiring:
+            let message = flowState.ownerStatusMessage
+            return message.isEmpty ? nil : message
+        case .launching:
+            return UICopy.SETUP_OPENING_YOUR_JOURNAL
+        case .idle, .waitingForJournal, .failed:
+            return journalPollingText
         }
     }
 }

@@ -51,6 +51,23 @@ private final class CountingFailingAppcastClient: AppcastClient {
 }
 
 @MainActor
+private final class GatedAppcastClient: AppcastClient {
+    let gate: OneShotContinuationGate
+    let counter: LockedCounter
+
+    init(gate: OneShotContinuationGate, counter: LockedCounter = LockedCounter()) {
+        self.gate = gate
+        self.counter = counter
+    }
+
+    func fetchAppcast(from url: URL) async throws -> Data {
+        counter.increment()
+        await gate.wait()
+        throw JournalHandoffFailure.appcastUnavailable("fixture")
+    }
+}
+
+@MainActor
 private final class AssertingDownloader: DMGDownloader {
     func downloadDMG(from url: URL, expectedLength: Int64, maxBytes: Int64) async throws -> URL {
         Issue.record("downloader must not be called")
@@ -1432,6 +1449,59 @@ struct SetupModelTests {
         #expect(controller.launchCount == 0)
     }
 
+    @Test func explicitJournalPhaseAcquiringReflectsAcquirePhaseInStatus() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let controller = TestRunningJournalController()
+        let gate = OneShotContinuationGate()
+        let counter = LockedCounter()
+        let appcastClient = GatedAppcastClient(gate: gate, counter: counter)
+        let acquirer = JournalAppAcquirer(
+            appcastFeedResolver: { JournalHandoffFeedSelection(url: JournalHandoffConstants.appcastURL, feed: .production) },
+            appcastClient: appcastClient,
+            downloader: AssertingDownloader(),
+            mounter: AssertingMounter(),
+            trustVerifier: AssertingTrustVerifier(),
+            publicEDKeyBase64: "",
+            maxDMGBytes: 100,
+            applicationsURL: dir,
+            fileManager: .default,
+            runningJournal: controller,
+            runningTerminationTimeout: .seconds(1),
+            runningTerminationPollInterval: .milliseconds(10)
+        )
+        let flow = FreshJournalFlow(dependencies: FreshJournalFlowDependencies(
+            acquirer: acquirer,
+            runningJournal: controller,
+            trustVerifier: TestTrustVerifier()
+        ))
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, freshFlow: flow)
+        defer {
+            gate.release()
+            model.stopJournalPolling()
+        }
+
+        _ = model.setPhase(.journal)
+        model.stopJournalPolling()
+
+        let task = Task {
+            await model.runJournalPhase()
+        }
+
+        try await waitUntil { counter.count == 1 }
+
+        #expect(model.freshFlow.state == .acquiring(.fetchingAppcast))
+        #expect(
+            SetupJournalStatus.caption(
+                flowState: model.freshFlow.state,
+                journalPollingText: model.journalPollingText
+            ) == model.freshFlow.state.ownerStatusMessage
+        )
+
+        gate.release()
+        await task.value
+    }
+
     @Test func automaticJournalPhaseLaunchesTrustedInstalledBundleWithoutAcquiring() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -1465,6 +1535,71 @@ struct SetupModelTests {
         let step1File = dir.appendingPathComponent("journal-setup-handoff.json")
         try await waitUntil { controller.launchCount == 1 && FileManager.default.fileExists(atPath: step1File.path) }
         #expect(appcastClient.calls == 0)
+        model.stopJournalPolling()
+    }
+
+    @Test func automaticJournalPhaseLaunchReflectsOpeningYourJournalCaption() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bundle = try createMockBundle(capabilities: nil)
+        defer {
+            try? FileManager.default.removeItem(at: bundle.deletingLastPathComponent())
+        }
+
+        let controller = TestRunningJournalController()
+        controller.installed = bundle
+        let appcastClient = CountingFailingAppcastClient()
+        let acquirer = JournalAppAcquirer(
+            appcastFeedResolver: { JournalHandoffFeedSelection(url: JournalHandoffConstants.appcastURL, feed: .production) },
+            appcastClient: appcastClient,
+            downloader: AssertingDownloader(),
+            mounter: AssertingMounter(),
+            trustVerifier: AssertingTrustVerifier(),
+            publicEDKeyBase64: "",
+            maxDMGBytes: 100,
+            applicationsURL: dir,
+            fileManager: .default,
+            runningJournal: controller,
+            runningTerminationTimeout: .seconds(1),
+            runningTerminationPollInterval: .milliseconds(10)
+        )
+        let flow = FreshJournalFlow(dependencies: FreshJournalFlowDependencies(
+            acquirer: acquirer,
+            runningJournal: controller,
+            trustVerifier: TestTrustVerifier()
+        ))
+
+        let gate = OneShotContinuationGate()
+        let counter = LockedCounter()
+        defer {
+            gate.release()
+        }
+
+        let model = SetupModel(
+            enabled: true,
+            mailboxDirectory: dir,
+            freshFlow: flow,
+            resolveIdentity: { _, _ in
+                counter.increment()
+                await gate.wait()
+                return .absent
+            },
+            sleepDuration: .milliseconds(10)
+        )
+        defer { model.stopJournalPolling() }
+
+        _ = model.setPhase(.journal)
+
+        try await waitUntil { controller.launchCount == 1 && flow.state == .waitingForJournal }
+
+        let caption = SetupJournalStatus.caption(
+            flowState: model.freshFlow.state,
+            journalPollingText: model.journalPollingText
+        )
+        #expect(caption == UICopy.SETUP_OPENING_YOUR_JOURNAL)
+        #expect(appcastClient.calls == 0)
+
+        gate.release()
         model.stopJournalPolling()
     }
 
