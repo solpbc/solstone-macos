@@ -3,59 +3,47 @@
 
 import AppKit
 import JournalMarkKit
+import SetupChrome
 import SolstoneCore
 import SwiftUI
 
 struct SetupView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Bindable var model: SetupModel
     let appState: AppState
     let journalMarkDriver: JournalMarkConfirmationDriver
+    var sun: SunArcBackgroundView = SunArcBackgroundView()
 
     @State private var pairingLinkInput: String = ""
     @State private var setupWindowPairingSucceeded = false
+    @State private var connectChoiceRevealed = false
+
+    private var isRevealOpen: Bool {
+        connectChoiceRevealed
+            || !pairingLinkInput.isEmpty
+            || appState.pendingPairingLink != nil
+            || appState.pendingPairingLinkError != nil
+            || model.ownerPairingError != nil
+            || appState.pairingCoordinator.state != .idle
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if let phase = model.phase {
-                        AXStateCompanion(
-                            id: AXID.Settings.Setup.phase,
-                            value: phase.rawValue
-                        )
-                        switch phase {
-                        case .journal:
-                            journalStepView
-                        case .microphone:
-                            microphoneStepView
-                        case .screen:
-                            screenStepView
-                        case .connection:
-                            connectionStepView
-                        }
-                        if SetupPairingLinkOffer.isVisible(
-                            phase: phase,
-                            isPeerSupportingSetup: model.isPeerSupportingSetup,
-                            hasPendingPairing: hasPendingPairing,
-                            setupWindowPairingSucceeded: setupWindowPairingSucceeded
-                        ) {
-                            pairingLinkSection
-                        }
-                    }
-                }
-                .padding(24)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if model.isPeerSupportingSetup && model.phase != .journal {
-                Divider()
-                SetupDownloadFooter(
-                    downloads: model.downloadProgress.downloads,
-                    readFailed: model.downloadProgress.readFailed,
-                    actionsEnabled: model.downloadProgress.actionsEnabled,
-                    perform: { model.performDownloadAction($0) }
+        SetupWindow(appLabel: UICopy.SETUP_APP_LABEL, background: sun) {
+            if let phase = model.phase {
+                AXStateCompanion(
+                    id: AXID.Settings.Setup.phase,
+                    value: phase.rawValue
                 )
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
+                switch phase {
+                case .journal:
+                    journalStepView
+                case .microphone:
+                    microphoneStepView
+                case .screen:
+                    screenStepView
+                case .connection:
+                    connectionStepView
+                }
             }
         }
         .onAppear {
@@ -82,6 +70,64 @@ struct SetupView: View {
         }
     }
 
+    // MARK: - Footer Helper
+
+    @ViewBuilder
+    private func stepFooter(phase: SetupPhase, @ViewBuilder primary: () -> some View = { EmptyView() }) -> some View {
+        let progressVal = SetupStepProgress.value(phase: phase)
+        let dest = SetupBack.destination(from: phase)
+        let downloadRows = (model.isPeerSupportingSetup && phase != .journal)
+            ? SetupDownloadPresentation.rows(downloads: model.downloadProgress.downloads)
+            : []
+
+        SetupFooter(
+            back: {
+                if let dest {
+                    Button {
+                        model.setPhase(dest)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                            Text(UICopy.SETUP_BACK)
+                        }
+                    }
+                    .buttonStyle(SetupTextButtonStyle())
+                }
+            },
+            progress: {
+                if let progressVal {
+                    SetupProgress(
+                        index: progressVal.index,
+                        count: progressVal.count,
+                        label: UICopy.setupStepProgress(n: progressVal.index, m: progressVal.count)
+                    )
+                }
+            },
+            downloads: {
+                if !downloadRows.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(downloadRows.enumerated()), id: \.offset) { _, row in
+                            SetupDownloadRow(
+                                name: row.name,
+                                detail: row.detail,
+                                fraction: row.fraction,
+                                indeterminate: row.indeterminate,
+                                actionTitle: row.actionTitle,
+                                actionEnabled: model.downloadProgress.actionsEnabled,
+                                action: {
+                                    if let action = row.action {
+                                        model.performDownloadAction(action)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            primary: primary
+        )
+    }
+
     // MARK: - Journal Step
 
     private var journalStepView: some View {
@@ -103,248 +149,281 @@ struct SetupView: View {
 
     @ViewBuilder
     private func journalStepView(content: SetupJournalStepContent, statusCaption: String?) -> some View {
+        let showPairingBlock = SetupPairingLinkOffer.isVisible(
+            phase: .journal,
+            isPeerSupportingSetup: model.isPeerSupportingSetup,
+            hasPendingPairing: hasPendingPairing,
+            setupWindowPairingSucceeded: setupWindowPairingSucceeded
+        )
+
         switch content {
-        case .omitted:
-            EmptyView()
+        case .create:
+            SetupStep(
+                headline: UICopy.SETUP_WELCOME_HEADLINE,
+                explanations: [UICopy.SETUP_WELCOME_BODY_1, UICopy.SETUP_WELCOME_BODY_2]
+            ) {
+                SetupCard(heading: UICopy.SETUP_JOURNAL_CARD_HEADING) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(UICopy.SETUP_JOURNAL_CARD_BODY)
+                            .font(.system(size: 14))
+                            .lineSpacing(3)
+                            .foregroundStyle(SetupChromeColor.softInk(for: colorScheme))
+
+                        VStack(spacing: 10) {
+                            Button {
+                                model.retryJournalPhase()
+                            } label: {
+                                Text(UICopy.SETUP_CREATE_JOURNAL_CHOICE)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(SetupPrimaryButtonStyle())
+                            .accessibilityIdentifier(AXID.Settings.Setup.Journal.create)
+
+                            Button {
+                                connectChoiceRevealed = true
+                            } label: {
+                                Text(UICopy.SETUP_CONNECT_JOURNAL_CHOICE)
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(SetupSecondaryButtonStyle())
+                        }
+
+                        if isRevealOpen {
+                            Divider()
+                            pairingLinkBlock
+                        }
+                    }
+                }
+            } footer: {
+                SetupFooter()
+            }
+
         case .ownerComparison:
-            journalStepBox {
-                Text(UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL).font(.headline)
+            SetupStep(
+                headline: UICopy.SETUP_JOURNAL_CARD_HEADING,
+                explanations: []
+            ) {
+                SetupCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL).font(.headline)
+                        if showPairingBlock {
+                            Divider()
+                            pairingLinkBlock
+                        }
+                    }
+                }
+            } footer: {
+                SetupFooter()
             }
+
         case .peerSupporting:
-            journalStepBox {
-                Text(UICopy.SETUP_OPEN_THE_JOURNAL_APP_TO_CONTINUE)
-                    .font(.headline)
-                if let text = model.journalPollingText {
-                    Text(text)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if let error = model.journalPollingError {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                    if model.journalPollingOffersJournalAppDownload {
-                        JournalAppDownloadLink()
+            SetupStep(
+                headline: UICopy.SETUP_JOURNAL_CARD_HEADING,
+                explanations: []
+            ) {
+                SetupCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(UICopy.SETUP_OPEN_THE_JOURNAL_APP_TO_CONTINUE)
+                            .font(.headline)
+                        if let text = model.journalPollingText {
+                            Text(text)
+                                .font(.caption)
+                                .foregroundStyle(SetupChromeColor.softInk(for: colorScheme))
+                        }
+                        if showPairingBlock {
+                            Divider()
+                            pairingLinkBlock
+                        }
                     }
-                    Button(UICopy.SETUP_TRY_AGAIN) {
-                        model.retryJournalPhase()
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
                 }
+            } footer: {
+                SetupFooter()
             }
+
         case .mark:
-            journalStepBox {
-                if let mark = appState.confirmedMark ?? model.olderDiscoveredMark {
-                    JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkConfirmed)
-                    if !appState.isJournalMarkConfirmed {
-                        Button("pair") {
-                            appState.beginOwnerPairingAttempt()
-                            journalMarkDriver.startIfUnconfirmed(appState: appState)
-                            Task {
-                                _ = await runOwnerSameMachineLink(
-                                    appState: appState,
-                                    journalMarkDriver: journalMarkDriver,
-                                    startPairing: appState.sameMachinePairStart
-                                )
+            SetupStep(
+                headline: UICopy.SETUP_JOURNAL_CARD_HEADING,
+                explanations: []
+            ) {
+                SetupCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if let mark = appState.confirmedMark ?? model.olderDiscoveredMark {
+                            JournalMarkView(mark: mark, isConfirmed: appState.confirmedMark != nil)
+                            HStack {
+                                Button("pair") {
+                                    model.retryJournalPhase()
+                                }
+                                .buttonStyle(SetupSecondaryButtonStyle())
+                                .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
+
+                                Button(UICopy.SETUP_CONTINUE) {
+                                    model.continueFromOlderJournal()
+                                }
+                                .buttonStyle(SetupPrimaryButtonStyle())
+                                .accessibilityIdentifier(AXID.Settings.Setup.Journal.continue)
+                                .keyboardShortcut(.defaultAction)
                             }
                         }
-                        .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
-                    }
-                    Button(UICopy.SETUP_CONTINUE) {
-                        model.continueFromOlderJournal()
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Setup.Journal.continue)
-                }
-            }
-        case .failure:
-            journalStepBox {
-                if let error = model.journalPollingError {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                    if model.journalPollingOffersJournalAppDownload {
-                        JournalAppDownloadLink()
-                    }
-                    Button(UICopy.SETUP_TRY_AGAIN) {
-                        model.retryJournalPhase()
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
-                }
-            }
-        case .activity:
-            journalStepBox {
-                if let text = statusCaption {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(text)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if showPairingBlock {
+                            Divider()
+                            pairingLinkBlock
+                        }
                     }
                 }
+            } footer: {
+                SetupFooter()
             }
-        case .create:
-            journalStepBox {
-                Text(UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL).font(.headline)
-                Button(UICopy.CREATE_JOURNAL_ON_THIS_MAC) {
-                    model.retryJournalPhase()
-                }
-                .accessibilityIdentifier(AXID.Settings.Setup.Journal.create)
-            }
-        }
-    }
 
-    private func journalStepBox<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                content()
+        case .failure:
+            SetupStep(
+                headline: UICopy.SETUP_JOURNAL_CARD_HEADING,
+                explanations: []
+            ) {
+                SetupCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP)
+                            .font(.headline)
+                        if let error = model.journalPollingError {
+                            SetupErrorText(error)
+                        }
+                        JournalAppDownloadLink()
+                        Button(UICopy.SETUP_TRY_AGAIN) {
+                            model.retryJournalPhase()
+                        }
+                        .buttonStyle(SetupPrimaryButtonStyle())
+                        .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
+
+                        if showPairingBlock {
+                            Divider()
+                            pairingLinkBlock
+                        }
+                    }
+                }
+            } footer: {
+                SetupFooter()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
+
+        case .activity:
+            SetupStep(
+                headline: UICopy.SETUP_JOURNAL_CARD_HEADING,
+                explanations: []
+            ) {
+                SetupCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if let statusCaption {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(statusCaption)
+                                    .font(.caption)
+                                    .foregroundStyle(SetupChromeColor.softInk(for: colorScheme))
+                            }
+                        }
+                        if showPairingBlock {
+                            Divider()
+                            pairingLinkBlock
+                        }
+                    }
+                }
+            } footer: {
+                SetupFooter()
+            }
         }
     }
 
     // MARK: - Step 5 (Microphone)
 
     private var microphoneStepView: some View {
-        GroupBox("5") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(UICopy.SETUP_MICROPHONE)
-                    .font(.headline)
-                Text(UICopy.SETUP_MICROPHONE_EXPLAINER)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        let showPairingBlock = SetupPairingLinkOffer.isVisible(
+            phase: .microphone,
+            isPeerSupportingSetup: model.isPeerSupportingSetup,
+            hasPendingPairing: hasPendingPairing,
+            setupWindowPairingSucceeded: setupWindowPairingSucceeded
+        )
 
-                if appState.microphoneGranted || !appState.config.isMicrophoneCaptureEnabled {
-                    PermissionSourceLiveRowView(source: .microphone, appState: appState, showOffHint: false)
-                }
+        return SetupStep(
+            headline: UICopy.SETUP_MICROPHONE_HEADLINE,
+            explanations: [UICopy.SETUP_MICROPHONE_EXPLAINER]
+        ) {
+            SetupCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    SetupMicrophoneProofView(appState: appState, model: model)
 
-                if !appState.config.isMicrophoneCaptureEnabled {
-                    HStack {
-                        Button(UICopy.SETUP_TURN_ON_MICROPHONE) {
-                            model.turnOnMicrophone()
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Setup.Microphone.turnOn)
-
-                        Button(UICopy.SETUP_NOT_NOW) {
-                            model.notNowMicrophone()
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Setup.Microphone.notNow)
-                    }
-                } else {
-                    if !appState.microphoneGranted {
-                        MicrophonePermissionRepairView(
-                            cause: appState.microphoneAuthorizationCause,
-                            onRequestAccess: {
-                                model.turnOnMicrophone()
+                    if let error = model.acknowledgementError {
+                        HStack(spacing: 8) {
+                            SetupErrorText(error)
+                            Button(UICopy.SETUP_TRY_AGAIN) {
+                                model.ingestStep5IfNeeded()
                             }
-                        )
-                    }
-                    Button(UICopy.SETUP_CONTINUE) {
-                        model.continueFromMicrophone()
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Setup.Microphone.continue)
-                }
-
-                if let error = model.acknowledgementError {
-                    HStack {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                        Button(UICopy.SETUP_TRY_AGAIN) {
-                            model.ingestStep5IfNeeded()
+                            .buttonStyle(SetupTextButtonStyle())
                         }
+                    }
+
+                    if showPairingBlock {
+                        Divider()
+                        pairingLinkBlock
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
+        } footer: {
+            stepFooter(phase: .microphone) {
+                if appState.config.isMicrophoneCaptureEnabled {
+                    Button(UICopy.SETUP_CONTINUE) {
+                        model.continueFromMicrophone()
+                    }
+                    .buttonStyle(SetupPrimaryButtonStyle())
+                    .accessibilityIdentifier(AXID.Settings.Setup.Microphone.continue)
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
         }
     }
 
     // MARK: - Step 6 (Screen & Computer Sound)
 
     private var screenStepView: some View {
-        GroupBox("6") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(UICopy.SETUP_SCREEN_AND_COMPUTER_SOUND)
-                    .font(.headline)
-                Text(UICopy.SETUP_SCREEN_EXPLAINER)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        let showPairingBlock = SetupPairingLinkOffer.isVisible(
+            phase: .screen,
+            isPeerSupportingSetup: model.isPeerSupportingSetup,
+            hasPendingPairing: hasPendingPairing,
+            setupWindowPairingSucceeded: setupWindowPairingSucceeded
+        )
 
-                if appState.screenRecordingGranted || !appState.config.isScreenCaptureEnabled {
-                    PermissionSourceLiveRowView(source: .screen, appState: appState, showOffHint: false)
-                }
+        return SetupStep(
+            headline: UICopy.SETUP_SCREEN_HEADLINE,
+            explanations: [UICopy.SETUP_SCREEN_EXPLAINER]
+        ) {
+            SetupCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    SetupScreenProofView(appState: appState, model: model)
 
-                let hasLiveFrame = appState.latestFrame != nil
-                AXStateCompanion(
-                    id: AXID.Settings.Setup.Screen.frame,
-                    value: hasLiveFrame ? SetupScreenFrameAXState.live.rawValue : SetupScreenFrameAXState.off.rawValue
-                )
-
-                if let frame = appState.latestFrame {
-                    Image(frame, scale: 1.0, label: Text("screen"))
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxHeight: 180)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .accessibilityIdentifier(AXID.Settings.Setup.Screen.frame)
-                        .accessibilityValue(SetupScreenFrameAXState.live.rawValue)
-                } else {
-                    Text(UICopy.SETUP_SCREEN_SHOWS_HERE)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier(AXID.Settings.Setup.Screen.frame)
-                        .accessibilityValue(SetupScreenFrameAXState.off.rawValue)
-                }
-
-                if !appState.config.isScreenCaptureEnabled {
-                    HStack {
-                        Button(UICopy.SETUP_TURN_ON_SCREEN) {
-                            model.turnOnScreen()
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Setup.Screen.turnOn)
-
-                        Button(UICopy.SETUP_NOT_NOW) {
-                            model.notNowScreen()
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Setup.Screen.notNow)
-                    }
-                } else {
-                    if !appState.screenRecordingGranted {
-                        ScreenRecordingPermissionRepairView(
-                            isWaiting: appState.capture.screenRecordingNeedsRestart,
-                            showResetHint: false,
-                            onEnable: {
-                                model.turnOnScreen()
-                            },
-                            onRestart: {
-                                model.prepareScreenRestart(requestRestart: {
-                                    appState.appQuitCoordinator.requestSettingsRestart()
-                                })
+                    if let error = model.acknowledgementError {
+                        HStack(spacing: 8) {
+                            SetupErrorText(error)
+                            Button(UICopy.SETUP_TRY_AGAIN) {
+                                model.ingestStep5IfNeeded()
                             }
-                        )
-                    }
-                    Button(UICopy.SETUP_CONTINUE) {
-                        model.continueFromScreen()
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Setup.Screen.continue)
-                }
-
-                if let error = model.acknowledgementError {
-                    HStack {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                        Button(UICopy.SETUP_TRY_AGAIN) {
-                            model.ingestStep5IfNeeded()
+                            .buttonStyle(SetupTextButtonStyle())
                         }
+                    }
+
+                    if showPairingBlock {
+                        Divider()
+                        pairingLinkBlock
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
+        } footer: {
+            stepFooter(phase: .screen) {
+                if appState.config.isScreenCaptureEnabled {
+                    Button(UICopy.SETUP_CONTINUE) {
+                        model.continueFromScreen()
+                    }
+                    .buttonStyle(SetupPrimaryButtonStyle())
+                    .accessibilityIdentifier(AXID.Settings.Setup.Screen.continue)
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
         }
     }
 
@@ -374,106 +453,116 @@ struct SetupView: View {
             state: model.connectionStepState,
             tunnelConnected: tunnelConnected
         )
-        return GroupBox("7") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(heading.headline)
-                    .font(.headline)
+        let showPairingBlock = SetupPairingLinkOffer.isVisible(
+            phase: .connection,
+            isPeerSupportingSetup: model.isPeerSupportingSetup,
+            hasPendingPairing: hasPendingPairing,
+            setupWindowPairingSucceeded: setupWindowPairingSucceeded
+        )
+        let explanations: [String] = {
+            if heading.headline != UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL {
+                return [UICopy.SETUP_CONNECTED_EXPLANATION]
+            }
+            return []
+        }()
 
-                if model.isPeerSupportingSetup {
-                    switch model.connectionStepState {
-                    case .connecting, .idle:
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text(UICopy.SETUP_CONNECTING_TO_YOUR_JOURNAL)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    case .failed(let msg):
-                        Text(msg)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                        Button(UICopy.SETUP_TRY_AGAIN) {
-                            model.retryConnection()
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Setup.Connection.retry)
-                    case .connected(let mark):
-                        JournalMarkView(mark: mark, isConfirmed: true)
-                        if heading.showsConnectedCaption {
-                            Text(UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } else {
-                    if let mark = appState.confirmedMark {
-                        JournalMarkView(mark: mark, isConfirmed: true)
-                        if heading.showsConnectedCaption {
-                            Text(UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+        return SetupStep(
+            headline: heading.headline,
+            explanations: explanations
+        ) {
+            SetupCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    if model.isPeerSupportingSetup {
+                        switch model.connectionStepState {
+                        case .connecting, .idle:
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(UICopy.SETUP_CONNECTING_TO_YOUR_JOURNAL)
+                                    .font(.caption)
+                                    .foregroundStyle(SetupChromeColor.softInk(for: colorScheme))
+                            }
+                        case .failed(let msg):
+                            SetupErrorText(msg)
+                            Button(UICopy.SETUP_TRY_AGAIN) {
+                                model.retryConnection()
+                            }
+                            .buttonStyle(SetupPrimaryButtonStyle())
+                            .accessibilityIdentifier(AXID.Settings.Setup.Connection.retry)
+                        case .connected(let mark):
+                            JournalMarkView(mark: mark, isConfirmed: true)
                         }
                     } else {
-                        Button(UICopy.SETUP_TRY_AGAIN) {
-                            appState.beginOwnerPairingAttempt()
-                            journalMarkDriver.startIfUnconfirmed(appState: appState)
-                            Task {
-                                _ = await runOwnerSameMachineLink(
-                                    appState: appState,
-                                    journalMarkDriver: journalMarkDriver,
-                                    startPairing: appState.sameMachinePairStart
-                                )
+                        if let mark = appState.confirmedMark {
+                            JournalMarkView(mark: mark, isConfirmed: true)
+                        } else {
+                            Button(UICopy.SETUP_TRY_AGAIN) {
+                                appState.beginOwnerPairingAttempt()
+                                journalMarkDriver.startIfUnconfirmed(appState: appState)
+                                Task {
+                                    _ = await runOwnerSameMachineLink(
+                                        appState: appState,
+                                        journalMarkDriver: journalMarkDriver,
+                                        startPairing: appState.sameMachinePairStart
+                                    )
+                                }
                             }
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Setup.Connection.retry)
-                    }
-                }
-
-                Divider()
-
-                Toggle("start at login", isOn: Binding(
-                    get: { appState.isLoginItemEnabled },
-                    set: { appState.setLoginItemEnabled($0) }
-                ))
-                .accessibilityIdentifier(AXID.Settings.Setup.Connection.loginItem)
-
-                if let error = appState.loginItemError {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-
-                Button(UICopy.SETUP_OPEN_YOUR_JOURNAL) {
-                    model.performSetupFinalOpen()
-                }
-                .accessibilityIdentifier(AXID.Settings.Setup.Connection.openJournal)
-                .disabled(!isBranchVerified)
-                .keyboardShortcut(.defaultAction)
-
-                if let error = model.acknowledgementError {
-                    HStack {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                        Button(UICopy.SETUP_TRY_AGAIN) {
-                            model.ingestStep5IfNeeded()
+                            .buttonStyle(SetupPrimaryButtonStyle())
+                            .accessibilityIdentifier(AXID.Settings.Setup.Connection.retry)
                         }
                     }
-                }
 
-                if let error = model.finalOpenError {
-                    HStack {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                        Button(UICopy.SETUP_TRY_AGAIN) {
-                            model.performSetupFinalOpen()
+                    Divider()
+
+                    SetupToggle(
+                        isOn: Binding(
+                            get: { appState.isLoginItemEnabled },
+                            set: { appState.setLoginItemEnabled($0) }
+                        ),
+                        label: "start at login",
+                        accessibilityIdentifier: AXID.Settings.Setup.Connection.loginItem
+                    )
+
+                    if let error = appState.loginItemError {
+                        SetupErrorText(error)
+                    }
+
+                    if let error = model.acknowledgementError {
+                        HStack(spacing: 8) {
+                            SetupErrorText(error)
+                            Button(UICopy.SETUP_TRY_AGAIN) {
+                                model.ingestStep5IfNeeded()
+                            }
+                            .buttonStyle(SetupTextButtonStyle())
                         }
+                    }
+
+                    if let error = model.finalOpenError {
+                        HStack(spacing: 8) {
+                            SetupErrorText(error)
+                            Button(UICopy.SETUP_TRY_AGAIN) {
+                                model.performSetupFinalOpen()
+                            }
+                            .buttonStyle(SetupTextButtonStyle())
+                        }
+                    }
+
+                    if showPairingBlock {
+                        Divider()
+                        pairingLinkBlock
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
+        } footer: {
+            stepFooter(phase: .connection) {
+                Button(UICopy.SETUP_OPEN_YOUR_JOURNAL) {
+                    model.performSetupFinalOpen()
+                }
+                .buttonStyle(SetupPrimaryButtonStyle())
+                .accessibilityIdentifier(AXID.Settings.Setup.Connection.openJournal)
+                .disabled(!isBranchVerified)
+                .keyboardShortcut(.defaultAction)
+            }
         }
     }
 
@@ -484,12 +573,12 @@ struct SetupView: View {
             || appState.pendingPairingLinkError != nil
     }
 
-    private var pairingLinkSection: some View {
+    private var pairingLinkBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("or pair to a journal on another device")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
-            HStack {
+                .foregroundStyle(SetupChromeColor.softInk(for: colorScheme))
+            HStack(spacing: 8) {
                 TextField("paste pairing link", text: $pairingLinkInput)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier(AXID.Settings.Service.pairingLink)
@@ -498,23 +587,22 @@ struct SetupView: View {
                         _ = await appState.submitPairingInput(pairingLinkInput)
                     }
                 }
+                .buttonStyle(SetupSecondaryButtonStyle())
                 .accessibilityIdentifier(AXID.Settings.Service.pairingConnect)
                 .disabled(pairingLinkInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if let error = model.ownerPairingError ?? appState.pendingPairingLinkError {
-                Text(error).font(.caption).foregroundStyle(.red)
+                SetupErrorText(error)
             }
             switch appState.pairingCoordinator.state {
             case .failed(let failure):
-                Text(failure.message(address: appState.pairingCoordinator.failedAddress))
-                    .font(.caption).foregroundStyle(.red)
+                SetupErrorText(failure.message(address: appState.pairingCoordinator.failedAddress))
             case .saveFailed:
-                Text(UICopy.PAIRING_SAVE_FAILED).font(.caption).foregroundStyle(.red)
+                SetupErrorText(UICopy.PAIRING_SAVE_FAILED)
             default:
                 EmptyView()
             }
         }
-        .padding(.top, 12)
     }
 
     private func consumePendingPairingLink() {
@@ -522,7 +610,6 @@ struct SetupView: View {
         guard let pending = appState.takePendingPairingLink(forSetup: true) else { return }
         pairingLinkInput = pending
     }
-
 }
 
 /// The native sequence starts from the journal app on this Mac, so after its
@@ -559,7 +646,6 @@ enum SetupJournalStepContent: Equatable {
     case failure
     case activity
     case create
-    case omitted
 }
 
 enum SetupJournalStep {
@@ -571,13 +657,13 @@ enum SetupJournalStep {
         hasStatus: Bool,
         linkWaiting: Bool
     ) -> SetupJournalStepContent {
+        _ = linkWaiting
         if isOwnerComparison { return .ownerComparison }
         if isPeerSupporting { return .peerSupporting }
         if hasMark { return .mark }
         if hasError { return .failure }
         if hasStatus { return .activity }
-        if !linkWaiting { return .create }
-        return .omitted
+        return .create
     }
 }
 
@@ -594,9 +680,9 @@ enum SetupConnectionStep {
     ) -> SetupConnectionStepContent {
         if isPeerSupporting {
             switch state {
-            case .connected:
+            case .connected(let mark):
                 return SetupConnectionStepContent(
-                    headline: UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL,
+                    headline: UICopy.connectedTo(mark: mark.words.joined(separator: " · ")),
                     showsConnectedCaption: false
                 )
             case .idle, .connecting, .failed:

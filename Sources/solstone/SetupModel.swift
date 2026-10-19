@@ -39,8 +39,8 @@ final class SetupModel {
     func dismissHandoffRefusal() { handoffRefusal = nil }
     private(set) var finalOpenError: String?
     private(set) var ownerPairingError: String?
-    private(set) var journalPollingText: String?
-    private(set) var journalPollingError: String?
+    internal(set) var journalPollingText: String?
+    internal(set) var journalPollingError: String?
 
     var journalPollingOffersJournalAppDownload: Bool {
         journalPollingError == UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP
@@ -482,7 +482,7 @@ final class SetupModel {
         }
     }
 
-    private func publishConnectionStepState(_ newState: ConnectionStepState) {
+    internal func publishConnectionStepState(_ newState: ConnectionStepState) {
         self.connectionStepState = newState
         if bringFrontAfterSupportingConnection {
             switch newState {

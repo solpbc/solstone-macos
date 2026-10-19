@@ -173,6 +173,33 @@ public enum UICopy {
     public static let SETUP_OPEN_YOUR_JOURNAL = "open your journal"
     public static let SETUP_FINISH = "finish"
     public static let SETUP_CONNECTED_TO_YOUR_JOURNAL = "connected to your journal"
+    public static let SETUP_WINDOW_TITLE = "set up solstone"
+    public static let SETUP_APP_LABEL = "the solstone app"
+    public static let SETUP_WELCOME_HEADLINE = "welcome to solstone."
+    public static let SETUP_WELCOME_BODY_1 = "the solstone app takes in what you share with it, and all of it goes into your journal."
+    public static let SETUP_WELCOME_BODY_2 = "your journal is always private, only yours."
+    public static let SETUP_JOURNAL_CARD_HEADING = "your journal"
+    public static let SETUP_JOURNAL_CARD_BODY = "everything the solstone app takes in goes into your journal. your journal lives on a computer you choose."
+    public static let SETUP_CREATE_JOURNAL_CHOICE = "create your journal on this mac"
+    public static let SETUP_CONNECT_JOURNAL_CHOICE = "connect to a journal you already have"
+    public static let SETUP_MICROPHONE_HEADLINE = "share your conversations"
+    public static let SETUP_SCREEN_HEADLINE = "share your screen and computer sound"
+    public static let SETUP_MICROPHONE_STATUS_ON = "microphone on"
+    public static let SETUP_MICROPHONE_STATUS_PAUSED = "microphone paused"
+    public static let SETUP_MICROPHONE_STATUS_OFF = "microphone off"
+    public static let SETUP_SCREEN_STATUS_ON = "screen on"
+    public static let SETUP_SCREEN_STATUS_PAUSED = "screen paused"
+    public static let SETUP_SCREEN_STATUS_OFF = "screen off"
+    public static let SETUP_SCREEN_FRAME_CAPTION = "your screen, a moment ago"
+    public static func connectedTo(mark: String) -> String {
+        "connected to \(mark)"
+    }
+    public static let SETUP_CONNECTED_EXPLANATION = "the solstone app on this mac and your journal are connected. what you turn on goes into your journal."
+    public static let SETUP_BACK = "back"
+    public static func setupStepProgress(n: Int, m: Int) -> String {
+        "step \(n) of \(m)"
+    }
+
     public static let SOURCES_SEGMENTS_EXPLAINER = "screens and audio you turn on here go into your journal in five-minute segments. until your journal confirms receipt, they wait on this mac. by default, the confirmed local copy is removed."
     public static let SOURCES_MICROPHONE = "microphone"
     public static let SOURCES_SCREEN = "screen and system audio"

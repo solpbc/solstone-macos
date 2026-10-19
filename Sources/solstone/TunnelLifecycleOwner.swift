@@ -109,7 +109,7 @@ final class TunnelLifecycleOwner {
     private static let establishmentRetryDelays: [Duration] = [.seconds(1), .seconds(5), .seconds(10), .seconds(30)]
 
     let journalVersion = JournalVersionMetadata()
-    private(set) var state: TunnelLifecycleState = .disconnected {
+    internal(set) var state: TunnelLifecycleState = .disconnected {
         didSet {
             handleStateTransition(old: oldValue, new: state)
         }

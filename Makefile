@@ -804,9 +804,13 @@ icons: check-icons-deps
 		rsvg-convert -f pdf assets/sol-ring-mb-error.svg \
 			-o Sources/solstone/Resources/sol-ring-icon-error-template.pdf && \
 		echo "  ✓ sol-ring-icon-error-template.pdf" && \
+		mkdir -p Sources/SetupChrome/Resources && \
+		rsvg-convert -f pdf assets/lockup-solstone-horizontal.svg \
+			-o Sources/SetupChrome/Resources/lockup-solstone-horizontal.pdf && \
+		echo "  ✓ lockup-solstone-horizontal.pdf" && \
 	\
 	rm -rf $$TMPDIR && \
-	echo "Icons generated in Sources/solstone/Resources/"
+	echo "Icons generated in Sources/solstone/Resources/ and Sources/SetupChrome/Resources/"
 
 check-icons-deps:
 	@which rsvg-convert > /dev/null 2>&1 || \
@@ -819,7 +823,7 @@ check-icons-deps:
 # source. Wired into `make ci` via scripts/run-ci.sh so staleness fails the
 # routine gate instead of waiting for someone to notice.
 check-brand-assets-fresh: check-icons-deps
-	@./scripts/check-brand-assets-fresh.sh Sources/solstone/Resources
+	@./scripts/check-brand-assets-fresh.sh Sources/solstone/Resources Sources/SetupChrome/Resources
 
 # ────────────────────────────────────────────────────────────────
 # Publish targets — RELEASE HOST ONLY
