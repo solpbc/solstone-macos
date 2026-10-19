@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import plistlib
+import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
 
 BASE_URL = "https://updates.solstone.app"
+SPARKLE_NS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 
 APP_CONFIG: dict[str, dict[str, str]] = {
     "sol": {
@@ -188,6 +191,54 @@ def build_identity(
     )
 
 
+def highest_feed_build(appcast: bytes, source: str) -> int:
+    """Return the highest sparkle:version in an appcast, or 0 when it has no items."""
+    try:
+        root = ET.fromstring(appcast)
+    except ET.ParseError as exc:
+        die(f"{source}: invalid appcast XML: {exc}")
+    builds = [
+        parse_bundle_version(element.text, source)
+        for element in root.iter(f"{{{SPARKLE_NS}}}version")
+    ]
+    return max(builds, default=0)
+
+
+def fetch_feed(url: str) -> bytes | None:
+    """Fetch an appcast; None means the feed does not exist yet (HTTP 404)."""
+    try:
+        result = subprocess.run(
+            ["curl", "-sS", "-o", "-", "-w", "\n%{http_code}", url],
+            capture_output=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        die(f"{url}: unreadable: no response in 60 s")
+    if result.returncode != 0:
+        die(f"{url}: unreadable: {result.stderr.decode(errors='replace').strip()}")
+    body, _, status = result.stdout.rpartition(b"\n")
+    if status == b"200":
+        return body
+    if status == b"404":
+        return None
+    die(f"{url}: HTTP {status.decode(errors='replace')}")
+
+
+def check_build_unconsumed(app: str, build: int) -> None:
+    """Refuse a build that is not newer than every build either feed already holds.
+
+    A stopped or unpublished staging cut consumes its build number: the staging
+    feed refuses anything not newer, so Info.plist alone is not the baseline.
+    """
+    config = APP_CONFIG[app]
+    for prefix in (config["prod_prefix"], config["staging_prefix"]):
+        url = f"{BASE_URL}/{prefix}/appcast.xml"
+        appcast = fetch_feed(url)
+        highest = 0 if appcast is None else highest_feed_build(appcast, url)
+        if build <= highest:
+            die(f"BUILD={build} is not newer than build {highest} on {url}; choose {highest + 1} or higher")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print or verify release identity values.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -200,6 +251,10 @@ def main(argv: list[str] | None = None) -> int:
     identity_parser.add_argument("--build")
     identity_parser.add_argument("--staging", action="store_true")
     identity_parser.add_argument("--field", choices=IDENTITY_FIELDS)
+
+    check_parser = subparsers.add_parser("check-build")
+    check_parser.add_argument("--app", choices=sorted(APP_CONFIG), required=True)
+    check_parser.add_argument("--build", required=True)
 
     args = parser.parse_args(argv)
     if args.command == "identity":
@@ -220,6 +275,11 @@ def main(argv: list[str] | None = None) -> int:
             print(value)
         else:
             print(json.dumps(values, separators=(",", ":")))
+        return 0
+
+    if args.command == "check-build":
+        check_build_unconsumed(args.app, parse_bundle_version(args.build, "--build"))
+        print(f"BUILD={args.build} is newer than both {args.app} feeds")
         return 0
 
     raise AssertionError(args.command)

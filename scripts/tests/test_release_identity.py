@@ -139,5 +139,43 @@ class MakefileJournalIdentityContractTest(unittest.TestCase):
         self.assertNotIn('--volname "sol + journal"', text)
 
 
+def appcast(*builds):
+    items = "".join(
+        f"<item><sparkle:version>{build}</sparkle:version></item>" for build in builds
+    )
+    return (
+        '<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
+        f"<channel>{items}</channel></rss>"
+    ).encode()
+
+
+class CheckBuildUnconsumedTest(unittest.TestCase):
+    def check(self, feeds, build, app="sol"):
+        module = load_release_identity()
+        module.fetch_feed = lambda url: feeds[url.rsplit("/", 1)[0].rsplit("/", 1)[-1]]
+        module.check_build_unconsumed(app, build)
+
+    def test_staging_build_above_production_is_consumed(self):
+        feeds = {"solstone-macos": appcast(120, 117), "_staging": appcast(118, 123)}
+        with self.assertRaises(SystemExit):
+            self.check(feeds, 122)
+        with self.assertRaises(SystemExit):
+            self.check(feeds, 123)
+        self.check(feeds, 124)
+
+    def test_production_build_is_consumed(self):
+        feeds = {"journal-macos": appcast(97), "_staging": appcast(95)}
+        with self.assertRaises(SystemExit):
+            self.check(feeds, 97, app="journal")
+        self.check(feeds, 98, app="journal")
+
+    def test_missing_feed_holds_no_build(self):
+        self.check({"solstone-macos": None, "_staging": None}, 1)
+
+    def test_unreadable_feed_refuses(self):
+        with self.assertRaises(SystemExit):
+            self.check({"solstone-macos": b"<rss", "_staging": appcast(1)}, 5)
+
+
 if __name__ == "__main__":
     unittest.main()
