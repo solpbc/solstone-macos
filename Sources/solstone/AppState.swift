@@ -220,6 +220,7 @@ public final class AppState {
     public var pendingSettingsTab: String?
     public var pendingPairingLink: String?
     public var pendingPairingLinkError: String?
+    var bringSolstoneToFront: @MainActor () -> Void = {}
 
     /// Only the currently visible pairing surface may consume an arriving link.
     internal func takePendingPairingLink(forSetup: Bool) -> String? {
@@ -248,6 +249,7 @@ public final class AppState {
                 pendingPairingLink = link
                 pendingSettingsTab = "journal"
                 NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+                bringSolstoneToFront()
             case .leaveUntouched:
                 break
             }
@@ -1758,9 +1760,11 @@ public final class AppState {
             continuationStore: SetupContinuationStore(),
             mailboxStore: SetupMailboxStore(),
             freshFlow: FreshJournalFlow(dependencies: .live()),
+            bringSolstoneToFront: orderSolstoneSettingsWindowFront,
             appState: nil
         )
         self.setupModel = setupModel
+        self.bringSolstoneToFront = orderSolstoneSettingsWindowFront
 
         self.pauseManager = pauseManager
         self.storageManager = storageManager

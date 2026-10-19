@@ -7,6 +7,11 @@ import SPLTunnel
 import SolstoneCore
 @testable import solstone
 
+@MainActor
+private final class CallCounter: @unchecked Sendable {
+    var count = 0
+}
+
 @Suite("SolstoneURLIngressTests")
 @MainActor
 struct SolstoneURLIngressTests {
@@ -181,5 +186,57 @@ struct SolstoneURLIngressTests {
         #expect(state.pendingPairingLink == nil)
         #expect(state.pendingPairingLinkError == PairingCoordinator.invalidLinkReason(.wrongHost("wrong")))
         #expect(state.pairingCoordinator.state == PairingFlowState.idle)
+    }
+
+    @Test func handleIngressURLStringInSetupPhaseBringsSolstoneToFrontOnce() throws {
+        let state = try makeSetupState()
+        let dir = state.setupModel.continuationStore.directory
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(state.setupModel.setPhase(.microphone))
+        let counter = CallCounter()
+        state.bringSolstoneToFront = { counter.count += 1 }
+
+        state.handleIngressURLString("solstone://pair#\(sampleFragment)")
+        #expect(counter.count == 1)
+        #expect(state.pendingPairingLink == canonicalSample)
+        #expect(state.pendingSettingsTab == "journal")
+    }
+
+    @Test func handleIngressURLStringWhenPhaseNilBringsSolstoneToFrontPerCall() {
+        let state = AppState.forSnapshot()
+        #expect(state.setupModel.phase == nil)
+        let counter = CallCounter()
+        state.bringSolstoneToFront = { counter.count += 1 }
+
+        state.handleIngressURLString("solstone://pair#\(sampleFragment)")
+        #expect(counter.count == 1)
+        #expect(state.pendingPairingLink == canonicalSample)
+        #expect(state.pendingSettingsTab == "journal")
+
+        state.handleIngressURLString("solstone://pair#\(sampleFragment)")
+        #expect(counter.count == 2)
+        #expect(state.pendingPairingLink == canonicalSample)
+        #expect(state.pendingSettingsTab == "journal")
+    }
+
+    @Test func handleIngressURLStringInvalidURLDoesNotBringSolstoneToFront() {
+        let state = AppState.forSnapshot()
+        let counter = CallCounter()
+        state.bringSolstoneToFront = { counter.count += 1 }
+
+        state.handleIngressURLString("solstone://wrong#\(sampleFragment)")
+        #expect(counter.count == 0)
+        #expect(state.pendingPairingLink == nil)
+        #expect(state.pendingPairingLinkError == PairingCoordinator.invalidLinkReason(.wrongHost("wrong")))
+    }
+
+    @Test func handleIngressURLStringWithHeldStateDoesNotBringSolstoneToFront() {
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing())
+        let counter = CallCounter()
+        state.bringSolstoneToFront = { counter.count += 1 }
+
+        state.handleIngressURLString("solstone://pair#\(sampleFragment)")
+        #expect(counter.count == 0)
+        #expect(state.pendingPairingLink == nil)
     }
 }

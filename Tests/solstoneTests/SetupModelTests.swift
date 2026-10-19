@@ -103,6 +103,11 @@ private final class GatedCountingTrustVerifier: TrustVerifier {
     }
 }
 
+@MainActor
+private final class CallCounter: @unchecked Sendable {
+    var count = 0
+}
+
 @Suite("Setup model")
 @MainActor
 struct SetupModelTests {
@@ -1616,5 +1621,164 @@ struct SetupModelTests {
         #expect(controller.launchCount == 0)
         let step1File = dir.appendingPathComponent("journal-setup-handoff.json")
         #expect(!FileManager.default.fileExists(atPath: step1File.path))
+    }
+
+    @Test func ingestStep5MovesPhaseToMicrophoneAndBringsSolstoneToFrontOnce() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .journal))
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: true,
+            continuationStore: store,
+            mailboxDirectory: dir,
+            requestMicrophone: {},
+            requestScreen: {},
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+        let handoffID = UUID()
+        try model.mailboxStore.writeStep5(SetupHandoff(
+            handoffID: handoffID,
+            stepIndex: 5,
+            journalRootPath: "/fixture/journal",
+            expectedInstanceID: "inst-1",
+            expectedCAFingerprint: sampleFingerprint
+        ))
+        #expect(model.phase == .journal)
+        #expect(counter.count == 0)
+
+        model.ingestStep5IfNeeded()
+        #expect(model.phase == .microphone)
+        #expect(counter.count == 1)
+
+        // Second ingest of that same handoff does not run it again
+        model.ingestStep5IfNeeded()
+        #expect(model.phase == .microphone)
+        #expect(counter.count == 1)
+    }
+
+    @Test func ingestStep5RetainingJournalPhaseDoesNotBringSolstoneToFront() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .journal))
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: true,
+            continuationStore: store,
+            mailboxDirectory: dir,
+            requestMicrophone: {},
+            requestScreen: {},
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+        #expect(model.phase == .journal)
+
+        // No handoff written
+        model.ingestStep5IfNeeded()
+        #expect(model.phase == .journal)
+        #expect(counter.count == 0)
+    }
+
+    @Test func setPhaseAndIngestWhileAlreadyMicrophoneDoNotBringSolstoneToFront() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: true,
+            mailboxDirectory: dir,
+            requestMicrophone: {},
+            requestScreen: {},
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+
+        // setPhase(.microphone) does not run it
+        _ = model.setPhase(.microphone)
+        #expect(model.phase == .microphone)
+        #expect(counter.count == 0)
+
+        // Ingest while phase is already .microphone does not run it
+        let handoffID = UUID()
+        try model.mailboxStore.writeStep5(SetupHandoff(
+            handoffID: handoffID,
+            stepIndex: 5,
+            journalRootPath: "/fixture/journal",
+            expectedInstanceID: "inst-1",
+            expectedCAFingerprint: sampleFingerprint
+        ))
+        model.ingestStep5IfNeeded()
+        #expect(model.phase == .microphone)
+        #expect(counter.count == 0)
+    }
+
+    @Test func continueFromOlderJournalDoesNotBringSolstoneToFront() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: true,
+            mailboxDirectory: dir,
+            requestMicrophone: {},
+            requestScreen: {},
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+        _ = model.setPhase(.journal)
+        #expect(model.phase == .journal)
+
+        model.continueFromOlderJournal()
+        #expect(model.phase == .journal)
+        #expect(counter.count == 0)
+    }
+
+    @Test func microphonePhaseTransitionsDoNotBringSolstoneToFront() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: true,
+            mailboxDirectory: dir,
+            requestMicrophone: {},
+            requestScreen: {},
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+
+        _ = model.setPhase(.microphone)
+        #expect(model.phase == .microphone)
+        #expect(counter.count == 0)
+
+        model.continueFromMicrophone()
+        #expect(model.phase == .screen)
+        #expect(counter.count == 0)
+
+        _ = model.setPhase(.microphone)
+        #expect(model.phase == .microphone)
+        _ = model.notNowMicrophone()
+        #expect(model.phase == .screen)
+        #expect(counter.count == 0)
+    }
+
+    @Test func disabledSetupModelIngestDoesNotBringSolstoneToFront() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let counter = CallCounter()
+        let model = SetupModel(
+            enabled: false,
+            mailboxDirectory: dir,
+            requestMicrophone: {},
+            requestScreen: {},
+            bringSolstoneToFront: { counter.count += 1 }
+        )
+        let handoffID = UUID()
+        try model.mailboxStore.writeStep5(SetupHandoff(
+            handoffID: handoffID,
+            stepIndex: 5,
+            journalRootPath: "/fixture/journal",
+            expectedInstanceID: "inst-1",
+            expectedCAFingerprint: sampleFingerprint
+        ))
+
+        model.ingestStep5IfNeeded()
+        #expect(model.phase == nil)
+        #expect(counter.count == 0)
     }
 }

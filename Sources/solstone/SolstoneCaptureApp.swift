@@ -41,6 +41,16 @@ func routeOpenSettingsWindow(
 }
 
 @MainActor
+func orderSolstoneSettingsWindowFront() {
+    if let settingsWindow = NSApp.windows.first(where: {
+        $0.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
+    }) {
+        settingsWindow.makeKeyAndOrderFront(nil)
+    }
+    NSApp.activate(ignoringOtherApps: true)
+}
+
+@MainActor
 enum UpdateAnnouncementLaunchRegistry {
     private static var controller: UpdateController?
 

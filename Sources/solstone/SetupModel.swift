@@ -21,6 +21,7 @@ final class SetupModel {
     private let sleepDuration: Duration
     private let requestMicrophone: @MainActor () async -> Void
     private let requestScreen: @MainActor () -> Void
+    private let bringSolstoneToFront: @MainActor () -> Void
 
     private(set) var continuation: SetupContinuation?
     private(set) var isPeerSupportingSetup: Bool = false
@@ -129,6 +130,7 @@ final class SetupModel {
         sleepDuration: Duration = .seconds(2),
         requestMicrophone: @escaping @MainActor () async -> Void = { await PermissionChecker().requestMicrophone() },
         requestScreen: @escaping @MainActor () -> Void = { PermissionChecker().promptScreenRecording() },
+        bringSolstoneToFront: @escaping @MainActor () -> Void = {},
         downloadProgress: SetupDownloadProgress? = nil,
         appState: AppState? = nil
     ) {
@@ -140,6 +142,7 @@ final class SetupModel {
         self.sleepDuration = sleepDuration
         self.requestMicrophone = requestMicrophone
         self.requestScreen = requestScreen
+        self.bringSolstoneToFront = bringSolstoneToFront
         self.appState = appState
         self.downloadProgress = downloadProgress ?? SetupDownloadProgress()
 
@@ -158,6 +161,7 @@ final class SetupModel {
         sleepDuration: Duration = .seconds(2),
         requestMicrophone: @escaping @MainActor () async -> Void = { await PermissionChecker().requestMicrophone() },
         requestScreen: @escaping @MainActor () -> Void = { PermissionChecker().promptScreenRecording() },
+        bringSolstoneToFront: @escaping @MainActor () -> Void = {},
         downloadProgress: SetupDownloadProgress? = nil,
         appState: AppState? = nil
     ) {
@@ -173,6 +177,7 @@ final class SetupModel {
             sleepDuration: sleepDuration,
             requestMicrophone: requestMicrophone,
             requestScreen: requestScreen,
+            bringSolstoneToFront: bringSolstoneToFront,
             downloadProgress: downloadProgress,
             appState: appState
         )
@@ -274,6 +279,7 @@ final class SetupModel {
                         self.phase = loaded.phase
                         stopJournalPolling()
                         NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+                        bringSolstoneToFront()
                     }
                 }
             } catch {
@@ -285,6 +291,7 @@ final class SetupModel {
                         self.phase = loaded.phase
                         stopJournalPolling()
                         NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+                        bringSolstoneToFront()
                     }
                 }
             }
