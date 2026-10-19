@@ -1224,6 +1224,120 @@ struct SparkleDeferralTests {
         ) == .stagedReady)
     }
 
+    @Test func downloadedInstallThenReadyToInstallRepliesInstallWithoutAnotherPress() async throws {
+        let installed = try await installDownloadedUpdate()
+        var readyReply: SPUUserUpdateChoice?
+        installed.controller.readyToInstall { choice in
+            readyReply = choice
+        }
+
+        #expect(installed.controller.activity == .installing(version: "1.3.9"))
+
+        await yieldUntil {
+            readyReply == .install && !installed.controller.updatesPaneLiveness.installFinalizationInFlight
+        }
+
+        #expect(readyReply == .install)
+        #expect(!installed.controller.updatesPaneLiveness.installFinalizationInFlight)
+        #expect(installed.reply == .install)
+    }
+
+    @Test func readyToInstallWithoutPriorInstallChoiceWaits() async {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.3.9", releaseNotes: nil)
+        )
+        var readyReply: SPUUserUpdateChoice?
+        controller.readyToInstall { choice in
+            readyReply = choice
+        }
+
+        #expect(controller.activity == .readyToInstall(version: "1.3.9", releaseNotes: nil))
+        await Task.yield()
+        #expect(readyReply == nil)
+    }
+
+    @Test func clearingInstallChoiceBeforeReadyToInstallWaits() async throws {
+        enum Clear {
+            case dismiss
+            case cancel
+            case updaterError
+            case dismissInstallation
+        }
+
+        for clear in [Clear.dismiss, .cancel, .updaterError, .dismissInstallation] {
+            let installed = try await installDownloadedUpdate()
+            switch clear {
+            case .dismiss:
+                installed.controller.dismiss()
+            case .cancel:
+                installed.controller.cancel()
+            case .updaterError:
+                installed.controller.presentUpdaterError(NSError(domain: "test", code: 1))
+            case .dismissInstallation:
+                installed.controller.dismissUpdateInstallation()
+            }
+
+            var readyReply: SPUUserUpdateChoice?
+            installed.controller.readyToInstall { choice in
+                readyReply = choice
+            }
+
+            #expect(installed.reply == .install)
+            #expect(installed.controller.activity == .readyToInstall(version: "1.3.9", releaseNotes: nil))
+            await Task.yield()
+            #expect(readyReply == nil)
+            #expect(installed.reply == .install)
+            #expect(installed.controller.activity == .readyToInstall(version: "1.3.9", releaseNotes: nil))
+        }
+    }
+
+    @Test func readyToInstallForADifferentVersionDoesNotAutoInstall() async throws {
+        let installed = try await installDownloadedUpdate()
+        installed.controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: "1.4.0", releaseNotes: nil)
+        )
+        var readyReply: SPUUserUpdateChoice?
+        installed.controller.readyToInstall { choice in
+            readyReply = choice
+        }
+
+        #expect(installed.controller.activity == .readyToInstall(version: "1.4.0", releaseNotes: nil))
+        await Task.yield()
+        #expect(readyReply == nil)
+        #expect(installed.controller.activity == .readyToInstall(version: "1.4.0", releaseNotes: nil))
+    }
+
+    private func installDownloadedUpdate(
+        version: String = "1.3.9"
+    ) async throws -> (controller: UpdateController, reply: SPUUserUpdateChoice?) {
+        let signal = ExclusiveSignal()
+        let controller = makeController(exclusivity: signal)
+        controller.applyDebugFixture(
+            activity: .idle,
+            availableUpdate: AvailableUpdate(version: version, releaseNotes: nil)
+        )
+        var reply: SPUUserUpdateChoice?
+        controller.presentUpdateFound(
+            version: version,
+            releaseNotes: nil,
+            state: try userUpdateState(stage: .downloaded),
+            reply: { choice in
+                reply = choice
+            }
+        )
+        controller.install()
+        await yieldUntil {
+            reply == .install && !controller.updatesPaneLiveness.installFinalizationInFlight
+        }
+        #expect(reply == .install)
+        #expect(!controller.updatesPaneLiveness.installFinalizationInFlight)
+        return (controller, reply)
+    }
+
     private func makeController(
         exclusivity signal: ExclusiveSignal,
         sessionInProgress: UpdateController.SessionLivenessProvider? = nil,

@@ -80,6 +80,8 @@ public final class UpdateController {
     private var installFinalizationCommitted = false
     private var immediateStagedInstallHandler: (() -> Void)?
     private var pendingDownloadIntent = false
+    private var chosenInstallVersion: String?
+    private var suppressNextInstallChoiceRecord = false
 
     internal var onExclusivityReevaluated: ((Bool) -> Void)?
     #if DEBUG || SOLSTONE_TEST_SUPPORT
@@ -320,6 +322,7 @@ public final class UpdateController {
     }
 
     func cancel() {
+        clearInstallChoice()
         guard !installFinalizationInFlight else { return }
 
         pendingDownloadIntent = false
@@ -363,6 +366,7 @@ public final class UpdateController {
     }
 
     func dismiss() {
+        clearInstallChoice()
         guard !installFinalizationInFlight else { return }
 
         pendingDownloadIntent = false
@@ -445,6 +449,7 @@ public final class UpdateController {
     }
 
     func presentNoUpdateFound() {
+        clearInstallChoice()
         pendingDownloadIntent = false
         clearPendingInteractions()
         activity = .idle
@@ -452,6 +457,7 @@ public final class UpdateController {
     }
 
     func presentUpdaterError(_ error: Error) {
+        clearInstallChoice()
         recoverCommittedInstallFinalization()
         log.error("Sparkle error: \(String(describing: error), privacy: .public)")
         clearPendingInteractions()
@@ -524,10 +530,31 @@ public final class UpdateController {
 
     func readyToInstall(reply: @escaping (SPUUserUpdateChoice) -> Void) {
         stashChoiceReply(reply, requiresFinalization: true)
+        let version = availableUpdate?.version ?? ""
         activity = .readyToInstall(
-            version: availableUpdate?.version ?? "",
+            version: version,
             releaseNotes: availableUpdate?.releaseNotes
         )
+
+        guard let chosenInstallVersion,
+              !chosenInstallVersion.isEmpty,
+              let availableVersion = availableUpdate?.version,
+              !availableVersion.isEmpty,
+              chosenInstallVersion == availableVersion
+        else {
+            clearInstallChoice()
+            return
+        }
+
+        suppressNextInstallChoiceRecord = true
+        install()
+        if pendingChoiceReply == nil {
+            activity = .installing(version: version)
+        }
+        self.chosenInstallVersion = nil
+        if pendingChoiceReply != nil, deferredInstallIntent == nil {
+            suppressNextInstallChoiceRecord = false
+        }
     }
 
     func installingUpdate() {
@@ -536,6 +563,7 @@ public final class UpdateController {
     }
 
     func updateInstalledAndRelaunched() {
+        clearInstallChoice()
         installFinalizationCommitted = false
         clearPendingInteractions()
         deferredInstallIntent = nil
@@ -543,6 +571,7 @@ public final class UpdateController {
     }
 
     func dismissUpdateInstallation() {
+        clearInstallChoice()
         installFinalizationCommitted = false
         clearPendingInteractions()
         deferredInstallIntent = nil
@@ -765,6 +794,11 @@ public final class UpdateController {
         pendingCancellation = nil
     }
 
+    private func clearInstallChoice() {
+        chosenInstallVersion = nil
+        suppressNextInstallChoiceRecord = false
+    }
+
     private func clearPendingCancellation() {
         pendingCancellation = nil
     }
@@ -842,6 +876,13 @@ public final class UpdateController {
         _ reply: @escaping (SPUUserUpdateChoice) -> Void,
         requiresFinalization: Bool
     ) {
+        if suppressNextInstallChoiceRecord {
+            suppressNextInstallChoiceRecord = false
+        } else {
+            let version = currentUpdateVersionForIntent()
+            chosenInstallVersion = version.isEmpty ? nil : version
+        }
+
         guard requiresFinalization else {
             reply(.install)
             return
