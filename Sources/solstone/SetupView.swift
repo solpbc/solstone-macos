@@ -12,44 +12,68 @@ struct SetupView: View {
     let journalMarkDriver: JournalMarkConfirmationDriver
 
     @State private var pairingLinkInput: String = ""
+    @State private var setupWindowPairingSucceeded = false
 
     var body: some View {
         VStack(spacing: 0) {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if let phase = model.phase {
-                    AXStateCompanion(
-                        id: AXID.Settings.Setup.phase,
-                        value: phase.rawValue
-                    )
-                    switch phase {
-                    case .journal:
-                        journalStepView
-                    case .microphone:
-                        microphoneStepView
-                    case .screen:
-                        screenStepView
-                    case .connection:
-                        connectionStepView
-                    }
-                    if SetupPairingLinkOffer.isVisible(
-                        phase: phase,
-                        isPeerSupportingSetup: model.isPeerSupportingSetup,
-                        hasPendingPairing: hasPendingPairing
-                    ) {
-                        pairingLinkSection
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let phase = model.phase {
+                        AXStateCompanion(
+                            id: AXID.Settings.Setup.phase,
+                            value: phase.rawValue
+                        )
+                        switch phase {
+                        case .journal:
+                            journalStepView
+                        case .microphone:
+                            microphoneStepView
+                        case .screen:
+                            screenStepView
+                        case .connection:
+                            connectionStepView
+                        }
+                        if SetupPairingLinkOffer.isVisible(
+                            phase: phase,
+                            isPeerSupportingSetup: model.isPeerSupportingSetup,
+                            hasPendingPairing: hasPendingPairing,
+                            setupWindowPairingSucceeded: setupWindowPairingSucceeded
+                        ) {
+                            pairingLinkSection
+                        }
                     }
                 }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            if model.isPeerSupportingSetup && model.phase != .journal {
+                Divider()
+                SetupDownloadFooter(downloads: model.downloadProgress.downloads)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+            }
         }
-        if model.isPeerSupportingSetup && model.phase != .journal {
-            Divider()
-            SetupDownloadFooter(downloads: model.downloadProgress.downloads)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
+        .onAppear {
+            if appState.pendingPairingLink != nil {
+                consumePendingPairingLink()
+            }
         }
+        .onChange(of: appState.pendingPairingLink) { _, newValue in
+            if newValue != nil {
+                consumePendingPairingLink()
+            }
+        }
+        .onChange(of: pairingLinkInput) { oldValue, newValue in
+            model.setJournalPairingLinkHeld(!newValue.isEmpty || appState.pendingPairingLink != nil)
+            if !oldValue.isEmpty && newValue.isEmpty && appState.pendingPairingLink == nil && !setupWindowPairingSucceeded {
+                model.startJournalPhase()
+            }
+        }
+        .onChange(of: appState.pairingCoordinator.state) { _, newState in
+            if SetupPairingLinkOffer.clearsSetupLink(on: newState) {
+                setupWindowPairingSucceeded = true
+                pairingLinkInput = ""
+            }
         }
     }
 
@@ -99,15 +123,6 @@ struct SetupView: View {
                         }
                         .accessibilityIdentifier(AXID.Settings.Setup.Journal.continue)
                     } else {
-                        if model.journalPollingError == nil {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text(model.journalPollingText ?? UICopy.SETUP_OPENING_YOUR_JOURNAL)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
                         if let error = model.journalPollingError {
                             Text(error)
                                 .font(.caption)
@@ -116,6 +131,21 @@ struct SetupView: View {
                                 model.retryJournalPhase()
                             }
                             .accessibilityIdentifier(AXID.Settings.Setup.Journal.retry)
+                        } else if let text = model.journalPollingText {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(text)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if pairingLinkInput.isEmpty && appState.pendingPairingLink == nil {
+                            Button(UICopy.CREATE_JOURNAL_ON_THIS_MAC) {
+                                model.retryJournalPhase()
+                            }
+                            .accessibilityIdentifier(AXID.Settings.Setup.Journal.create)
+                        } else {
+                            EmptyView()
                         }
                     }
                 }
@@ -427,13 +457,10 @@ struct SetupView: View {
             }
         }
         .padding(.top, 12)
-        .onAppear { consumePendingPairingLink() }
-        .onChange(of: appState.pendingPairingLink) { _, newValue in
-            if newValue != nil { consumePendingPairingLink() }
-        }
     }
 
     private func consumePendingPairingLink() {
+        model.setJournalPairingLinkHeld(true)
         guard let pending = appState.takePendingPairingLink(forSetup: true) else { return }
         pairingLinkInput = pending
     }
@@ -442,10 +469,27 @@ struct SetupView: View {
 
 /// The native sequence starts from the journal app on this Mac, so after its
 /// first step there is no other journal to choose. Pairing elsewhere stays
-/// offered in the older setup, on the first step, and whenever a pairing link
-/// or its error is waiting to be seen.
+/// offered in the older setup on every step, on the first step of the native
+/// sequence, whenever a pairing link or its error is waiting to be seen, and
+/// is hidden on later steps after setup-window pairing succeeds.
 enum SetupPairingLinkOffer {
-    static func isVisible(phase: SetupPhase, isPeerSupportingSetup: Bool, hasPendingPairing: Bool) -> Bool {
-        !isPeerSupportingSetup || phase == .journal || hasPendingPairing
+    static func isVisible(
+        phase: SetupPhase,
+        isPeerSupportingSetup: Bool,
+        hasPendingPairing: Bool,
+        setupWindowPairingSucceeded: Bool
+    ) -> Bool {
+        if hasPendingPairing { return true }
+        if setupWindowPairingSucceeded && phase != .journal { return false }
+        return !isPeerSupportingSetup || phase == .journal
+    }
+
+    static func clearsSetupLink(on state: PairingFlowState) -> Bool {
+        switch state {
+        case .paired, .alreadyConnected, .switched:
+            return true
+        case .idle, .pairing, .switchConfirmPending, .saveFailed, .failed:
+            return false
+        }
     }
 }

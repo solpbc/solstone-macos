@@ -145,6 +145,8 @@ public enum UICopy {
     public static let SOURCES_NONE_REASON = "nothing is going into your journal until you turn one back on."
 #endif
 
+    public static let CREATE_JOURNAL_ON_THIS_MAC = "create your journal on this mac"
+
     // Native Setup
     public static let SETUP_JOURNAL_STILL_BEING_SET_UP = "your journal is still being set up."
     public static let SETUP_OPENING_YOUR_JOURNAL = "opening your journal…"

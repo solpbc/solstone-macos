@@ -69,6 +69,7 @@ enum AXID {
             enum Journal {
                 static let `continue` = "settings.setup.journal.continue"
                 static let retry = "settings.setup.journal.retry"
+                static let create = "settings.setup.journal.create"
             }
         }
 

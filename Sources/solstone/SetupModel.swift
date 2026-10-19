@@ -530,6 +530,21 @@ final class SetupModel {
         setPhase(.microphone)
     }
 
+    private var journalPairingLinkHeld = false
+
+    private var blocksOnPairingLink: Bool {
+        journalPairingLinkHeld || appState?.pendingPairingLink != nil
+    }
+
+    internal func setJournalPairingLinkHeld(_ held: Bool) {
+        journalPairingLinkHeld = held
+        if held {
+            stopJournalPolling()
+            journalPollingText = nil
+            journalPollingError = nil
+        }
+    }
+
     private var canRunJournalPhase: Bool {
         phase == .journal && continuation?.mode != .ownerComparison
     }
@@ -539,7 +554,29 @@ final class SetupModel {
         journalPollingTask?.cancel()
         journalPollingTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.runJournalPhase()
+            guard self.canRunJournalPhase, !Task.isCancelled else { return }
+            if self.blocksOnPairingLink {
+                self.journalPollingText = nil
+                self.journalPollingError = nil
+                return
+            }
+            // Automatic setup must not call resolveTrustedJournal when this is nil:
+            // that function's else branch acquires.
+            let trustedURL = await self.freshFlow.trustedInstalledJournalURL()
+            guard self.canRunJournalPhase, !Task.isCancelled else { return }
+            if self.blocksOnPairingLink {
+                self.journalPollingText = nil
+                self.journalPollingError = nil
+                return
+            }
+            guard let trustedURL else {
+                self.journalPollingText = nil
+                self.journalPollingError = nil
+                return
+            }
+            self.journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
+            self.journalPollingError = nil
+            await self.continueJournalPhase(journalURL: trustedURL)
         }
     }
 
@@ -549,7 +586,12 @@ final class SetupModel {
     }
 
     public func retryJournalPhase() {
-        startJournalPhase()
+        guard canRunJournalPhase else { return }
+        journalPollingTask?.cancel()
+        journalPollingTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runJournalPhase()
+        }
     }
 
     private func resolveIdentity(baseURL: String, expectedInstanceID: String?) async -> JournalIdentityResolution {
@@ -562,6 +604,11 @@ final class SetupModel {
 
     internal func runJournalPhase() async {
         guard canRunJournalPhase, !Task.isCancelled else { return }
+        if blocksOnPairingLink {
+            journalPollingText = nil
+            journalPollingError = nil
+            return
+        }
         journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
         journalPollingError = nil
 
@@ -575,6 +622,16 @@ final class SetupModel {
         }
 
         guard canRunJournalPhase, !Task.isCancelled else { return }
+        if blocksOnPairingLink {
+            journalPollingText = nil
+            journalPollingError = nil
+            return
+        }
+
+        await continueJournalPhase(journalURL: journalURL)
+    }
+
+    private func continueJournalPhase(journalURL: URL) async {
         guard let bundle = Bundle(url: journalURL) else {
             journalPollingText = nil
             journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
@@ -622,7 +679,7 @@ final class SetupModel {
             journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
             journalPollingError = nil
 
-            while !Task.isCancelled && canRunJournalPhase {
+            while !Task.isCancelled && canRunJournalPhase && !blocksOnPairingLink {
                 if let receipt = try? mailboxStore.readStep1Receipt() {
                     if var currentCont = self.continuation, currentCont.pendingOutboundStep1ID == receipt.handoffID {
                         currentCont.pendingOutboundStep1ID = nil
@@ -659,6 +716,10 @@ final class SetupModel {
                     break
                 }
             }
+            if blocksOnPairingLink {
+                journalPollingText = nil
+                journalPollingError = nil
+            }
         } else {
             do {
                 try await freshFlow.launchTrustedJournal(at: journalURL)
@@ -671,7 +732,7 @@ final class SetupModel {
             journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
             journalPollingError = nil
 
-            while !Task.isCancelled && canRunJournalPhase {
+            while !Task.isCancelled && canRunJournalPhase && !blocksOnPairingLink {
                 let resolution = await resolveIdentity(baseURL: ServiceMode.bundledServiceURL, expectedInstanceID: nil)
                 switch resolution {
                 case .mark(let mark, _):
@@ -695,6 +756,10 @@ final class SetupModel {
                 } catch {
                     break
                 }
+            }
+            if blocksOnPairingLink {
+                journalPollingText = nil
+                journalPollingError = nil
             }
         }
     }

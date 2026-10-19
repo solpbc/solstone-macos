@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- adding a Mac to a journal you already have no longer downloads and opens a second journal app. setup offers to create a journal on this Mac only when you ask, and a pairing link goes straight to connecting.
+
 ## [2.0.40] - 2026-10-18
 
 ### Added

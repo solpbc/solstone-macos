@@ -210,12 +210,19 @@ final class FreshJournalFlow {
         waitingProbeTask = nil
     }
 
+    func trustedInstalledJournalURL() async -> URL? {
+        if let installed = dependencies.runningJournal.installedURL(),
+           (try? await dependencies.trustVerifier.verifyJournalApp(at: installed)) != nil {
+            return installed
+        }
+        return nil
+    }
+
     func resolveTrustedJournal() async throws -> URL {
         if let resolveTrustedJournalOverride {
             return try await resolveTrustedJournalOverride()
         }
-        if let installed = dependencies.runningJournal.installedURL(),
-           (try? await dependencies.trustVerifier.verifyJournalApp(at: installed)) != nil {
+        if let installed = await trustedInstalledJournalURL() {
             return installed
         } else {
             guard let acquirer = dependencies.acquirer else {

@@ -1952,7 +1952,7 @@ struct SettingsView: View {
                         // journal-mark.md section 4.3 — the org-wide "no journal identity yet"
                         // treatment. Never an empty box, never hidden.
                         JournalMarkView(mark: nil)
-                        Button("create your journal on this mac") {
+                        Button(UICopy.CREATE_JOURNAL_ON_THIS_MAC) {
                             freshFlow.start()
                         }
                         .accessibilityIdentifier(AXID.Settings.Service.createJournalThisMac)

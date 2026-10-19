@@ -290,6 +290,7 @@ enum AXContract {
         AXID.Settings.Setup.Connection.loginItem,
         AXID.Settings.Setup.Journal.continue,
         AXID.Settings.Setup.Journal.retry,
+        AXID.Settings.Setup.Journal.create,
         AXID.About.logo,
         AXID.About.title,
         AXID.About.aboutState,

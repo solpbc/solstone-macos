@@ -277,6 +277,7 @@
       "settings.setup.connection.openJournal",
       "settings.setup.connection.retry",
       "settings.setup.journal.continue",
+      "settings.setup.journal.create",
       "settings.setup.journal.retry",
       "settings.setup.microphone.continue",
       "settings.setup.microphone.notNow",
