@@ -38,6 +38,15 @@ enum JournalHandoffStep: Equatable, Sendable {
 }
 
 extension JournalHandoffStep {
+    var offersJournalAppDownload: Bool {
+        switch self {
+        case .failed(let failure), .aborted(let failure):
+            return failure.offersJournalAppDownload
+        default:
+            return false
+        }
+    }
+
     var ownerStatusMessage: String {
         switch self {
         case .idle:
@@ -149,12 +158,18 @@ enum JournalHandoffFailure: Error, Equatable, Sendable {
         }
     }
 
+    /// A standard account can't write /Applications, so the owner installs the
+    /// journal app by hand and the retry picks it up by bundle id.
+    var offersJournalAppDownload: Bool {
+        self == .applicationsDirectoryUnwritable
+    }
+
     var ownerMessage: String {
         switch self {
         case .applicationsDirectoryUnavailable:
             return "couldn't find /Applications. solstone did not change your journal link."
         case .applicationsDirectoryUnwritable:
-            return "couldn't install the journal app in /Applications. open solstone from an administrator account and try again."
+            return UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP
         case .feedNotYetPublished:
             return "the journal app isn't available yet. solstone is keeping everything safe on this mac"
         case .runningJournalWouldNotQuit:

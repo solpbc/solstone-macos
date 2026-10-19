@@ -30,6 +30,10 @@ final class SetupModel {
     private(set) var ownerPairingError: String?
     private(set) var journalPollingText: String?
     private(set) var journalPollingError: String?
+
+    var journalPollingOffersJournalAppDownload: Bool {
+        journalPollingError == UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP
+    }
     var olderDiscoveredMark: JournalMark?
 
     enum ConnectionStepState: Equatable {

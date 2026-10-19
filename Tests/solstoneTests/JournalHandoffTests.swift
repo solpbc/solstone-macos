@@ -889,6 +889,22 @@ struct JournalHandoffTests {
         #expect(world.downloader.calls.isEmpty)
     }
 
+    @Test func unwritableApplicationsSharesSetupCopyAndOffersTheDownloadOnEveryPath() {
+        let failure = JournalHandoffFailure.applicationsDirectoryUnwritable
+
+        #expect(failure.ownerMessage == UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP)
+        #expect(FreshJournalState.failed(failure).ownerStatusMessage == UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP)
+        #expect(JournalHandoffStep.failed(failure).ownerStatusMessage == UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP)
+        #expect(FreshJournalState.failed(failure).offersJournalAppDownload)
+        #expect(JournalHandoffStep.failed(failure).offersJournalAppDownload)
+        #expect(JournalHandoffStep.aborted(failure).offersJournalAppDownload)
+
+        #expect(!FreshJournalState.failed(.feedNotYetPublished).offersJournalAppDownload)
+        #expect(!FreshJournalState.acquiring(.installingToApplications).offersJournalAppDownload)
+        #expect(!JournalHandoffStep.failed(.applicationsDirectoryUnavailable).offersJournalAppDownload)
+        #expect(!JournalHandoffStep.acquiring(.installingToApplications).offersJournalAppDownload)
+    }
+
     @Test func resumeDerivationUsesOnlyLiveProbeState() {
         let journalPath = "/tmp/journal"
 

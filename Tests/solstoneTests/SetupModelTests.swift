@@ -1048,6 +1048,7 @@ struct SetupModelTests {
         await modelLaunch.runJournalPhase()
         #expect(modelLaunch.phase == SetupPhase.journal)
         #expect(modelLaunch.journalPollingError == UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL)
+        #expect(!modelLaunch.journalPollingOffersJournalAppDownload)
     }
 
     @Test func journalPhaseUnwritableApplicationsDirectorySurfacesInstallError() async throws {
@@ -1064,6 +1065,7 @@ struct SetupModelTests {
         #expect(model.phase == SetupPhase.journal)
         #expect(model.journalPollingError == UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP)
         #expect(model.journalPollingError != UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL)
+        #expect(model.journalPollingOffersJournalAppDownload)
     }
 
     @Test func journalPhaseRunningJournalWouldNotQuitSurfacesOwnerMessage() async throws {

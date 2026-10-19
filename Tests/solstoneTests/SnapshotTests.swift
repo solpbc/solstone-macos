@@ -1089,19 +1089,28 @@ struct SnapshotTests {
     }
 
     @Test func onboardingJournalStates() async throws {
-        for mode in ["acquisition-error", "older-mark", "remote-waiting", "connection-mark", "invalid-link"] {
+        for mode in ["acquisition-error", "standard-account", "older-mark", "remote-waiting", "connection-mark", "invalid-link"] {
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
             defer { try? FileManager.default.removeItem(at: dir) }
             let phase: SetupPhase = mode == "connection-mark" ? .connection : .journal
             let store = SetupContinuationStore(directory: dir)
             try store.save(SetupContinuation(phase: phase, mode: mode == "remote-waiting" ? .ownerComparison : nil))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
+            let model = mode == "standard-account"
+                ? SetupModel(
+                    enabled: true,
+                    mailboxDirectory: dir,
+                    freshFlow: FreshJournalFlow(
+                        dependencies: FreshJournalFlowDependencies.inert(),
+                        resolveTrustedJournalOverride: { throw JournalHandoffFailure.applicationsDirectoryUnwritable }
+                    )
+                )
+                : SetupModel(enabled: true, mailboxDirectory: dir)
             let state = AppState.forSnapshot(
                 config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
                 setupModel: model
             )
             switch mode {
-            case "acquisition-error": await model.runJournalPhase()
+            case "acquisition-error", "standard-account": await model.runJournalPhase()
             case "older-mark": model.olderDiscoveredMark = .uiTestSample
             case "connection-mark": state.setConfirmedMark(.uiTestSample)
             case "invalid-link": state.pairingCoordinator.recordInvalidLink(reason: PairingCoordinator.invalidLinkReason(.missingFragment))

@@ -118,6 +118,9 @@ struct SetupView: View {
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.red)
+                    if model.journalPollingOffersJournalAppDownload {
+                        JournalAppDownloadLink()
+                    }
                     Button(UICopy.SETUP_TRY_AGAIN) {
                         model.retryJournalPhase()
                     }
@@ -154,6 +157,9 @@ struct SetupView: View {
                     Text(error)
                         .font(.caption)
                         .foregroundStyle(.red)
+                    if model.journalPollingOffersJournalAppDownload {
+                        JournalAppDownloadLink()
+                    }
                     Button(UICopy.SETUP_TRY_AGAIN) {
                         model.retryJournalPhase()
                     }

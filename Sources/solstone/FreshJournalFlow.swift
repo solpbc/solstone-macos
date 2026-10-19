@@ -30,6 +30,13 @@ extension FreshJournalState {
         }
     }
 
+    var offersJournalAppDownload: Bool {
+        if case .failed(let failure) = self {
+            return failure.offersJournalAppDownload
+        }
+        return false
+    }
+
     var isBusy: Bool {
         switch self {
         case .acquiring, .launching, .waitingForJournal:

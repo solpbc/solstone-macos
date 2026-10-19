@@ -43,6 +43,7 @@ enum AXID {
 
     enum Settings {
         static let configSaveError = "settings.configSave.error"
+        static let journalAppDownload = "settings.journalApp.download"
 
         enum Setup {
             static let phase = "settings.setup.phase"

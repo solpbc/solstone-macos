@@ -1972,6 +1972,9 @@ struct SettingsView: View {
                             Text(onDiskJournalAdoptionFlow.state.ownerStatusMessage)
                                 .font(.caption)
                                 .foregroundStyle(freshJournalStatusColor(for: onDiskJournalAdoptionFlow.state))
+                            if onDiskJournalAdoptionFlow.state.offersJournalAppDownload {
+                                JournalAppDownloadLink()
+                            }
                         }
 
                         localJournalPairButton
@@ -2016,6 +2019,9 @@ struct SettingsView: View {
                             Text(freshFlow.state.ownerStatusMessage)
                                 .font(.caption)
                                 .foregroundStyle(freshJournalStatusColor(for: freshFlow.state))
+                            if freshFlow.state.offersJournalAppDownload {
+                                JournalAppDownloadLink()
+                            }
                         }
 
                         localJournalPairButton
@@ -2077,6 +2083,9 @@ struct SettingsView: View {
                     Text(journalHandoffOrchestrator.step.ownerStatusMessage)
                         .font(.caption)
                         .foregroundStyle(journalHandoffStatusColor)
+                    if journalHandoffOrchestrator.step.offersJournalAppDownload {
+                        JournalAppDownloadLink()
+                    }
                 }
                 AXStateCompanion(
                     id: AXID.Settings.Service.journalHandoffState,
