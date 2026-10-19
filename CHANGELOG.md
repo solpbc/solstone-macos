@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - after you pair with a pairing link, the last setup step's heading says you're connected to your journal, instead of still asking you to connect.
+- after your journal shows its mark on the journal app's icon, solstone no longer says the journal app is missing when you create or reconnect a journal on this mac.
 
 ## [2.0.41] - 2026-10-19
 

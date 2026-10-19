@@ -37,7 +37,11 @@ private final class TestRunningJournalController: RunningJournalController {
 
 @MainActor
 private final class TestTrustVerifier: TrustVerifier {
-    func verifyJournalApp(at url: URL) async throws {}
+    var variants: [JournalAppTrustVariant] = []
+
+    func verifyJournalApp(at url: URL, variant: JournalAppTrustVariant) async throws {
+        variants.append(variant)
+    }
 }
 
 @MainActor
@@ -89,7 +93,10 @@ private final class AssertingMounter: DiskImageMounter {
 
 @MainActor
 private final class AssertingTrustVerifier: TrustVerifier {
-    func verifyJournalApp(at url: URL) async throws {
+    var variants: [JournalAppTrustVariant] = []
+
+    func verifyJournalApp(at url: URL, variant: JournalAppTrustVariant) async throws {
+        variants.append(variant)
         Issue.record("acquirer trust verifier must not be called")
         throw JournalHandoffFailure.trustFailed("fixture")
     }
@@ -98,8 +105,11 @@ private final class AssertingTrustVerifier: TrustVerifier {
 @MainActor
 private final class ThrowingCountingTrustVerifier: TrustVerifier {
     var calls = 0
-    func verifyJournalApp(at url: URL) async throws {
+    var variants: [JournalAppTrustVariant] = []
+
+    func verifyJournalApp(at url: URL, variant: JournalAppTrustVariant) async throws {
         calls += 1
+        variants.append(variant)
         struct VerifyError: Error {}
         throw VerifyError()
     }
@@ -114,7 +124,10 @@ private final class GatedCountingTrustVerifier: TrustVerifier {
         self.gate = gate
     }
 
-    func verifyJournalApp(at url: URL) async throws {
+    var variants: [JournalAppTrustVariant] = []
+
+    func verifyJournalApp(at url: URL, variant: JournalAppTrustVariant) async throws {
+        variants.append(variant)
         entered.increment()
         await gate.wait()
     }

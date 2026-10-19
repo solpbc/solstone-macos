@@ -263,9 +263,14 @@ protocol DiskImageMounter {
     func detach(_ image: MountedDiskImage) async
 }
 
+enum JournalAppTrustVariant: Equatable, Sendable {
+    case installed
+    case downloaded
+}
+
 @MainActor
 protocol TrustVerifier {
-    func verifyJournalApp(at url: URL) async throws
+    func verifyJournalApp(at url: URL, variant: JournalAppTrustVariant) async throws
 }
 
 @MainActor
@@ -523,7 +528,7 @@ final class JournalHandoffOrchestrator {
     func deriveResumeStep(appState: AppState) async -> JournalHandoffStep {
         let installedTrusted: Bool
         if let installed = dependencies.runningJournal.installedURL() {
-            installedTrusted = (try? await dependencies.trustVerifier.verifyJournalApp(at: installed)) != nil
+            installedTrusted = (try? await dependencies.trustVerifier.verifyJournalApp(at: installed, variant: .installed)) != nil
         } else {
             installedTrusted = false
         }
@@ -701,7 +706,7 @@ final class JournalHandoffOrchestrator {
         guard let installed = dependencies.runningJournal.installedURL() else {
             throw JournalHandoffFailure.trustFailed("journal app is not installed")
         }
-        try await dependencies.trustVerifier.verifyJournalApp(at: installed)
+        try await dependencies.trustVerifier.verifyJournalApp(at: installed, variant: .installed)
         return installed
     }
 
@@ -985,15 +990,28 @@ struct LiveDiskImageMounter: DiskImageMounter {
 }
 
 struct LiveTrustVerifier: TrustVerifier {
-    func verifyJournalApp(at url: URL) async throws {
+    var runProcess: @Sendable (String, [String]) async throws -> JournalHandoffProcessResult
+
+    init(runProcess: @escaping @Sendable (String, [String]) async throws -> JournalHandoffProcessResult = JournalHandoffProcessRunner.run) {
+        self.runProcess = runProcess
+    }
+
+    func verifyJournalApp(at url: URL, variant: JournalAppTrustVariant) async throws {
+        let verifyArguments: [String]
+        switch variant {
+        case .installed:
+            verifyArguments = ["--verify", "--deep", "--verbose=2", url.path]
+        case .downloaded:
+            verifyArguments = ["--verify", "--strict", "--deep", "--verbose=2", url.path]
+        }
         do {
-            try await JournalHandoffProcessRunner.run(
-                executable: "/usr/bin/codesign",
-                arguments: ["--verify", "--strict", "--deep", "--verbose=2", url.path]
+            try await runProcess(
+                "/usr/bin/codesign",
+                verifyArguments
             ).throwIfFailed("codesign verify")
-            let details = try await JournalHandoffProcessRunner.run(
-                executable: "/usr/bin/codesign",
-                arguments: ["-dvvv", url.path]
+            let details = try await runProcess(
+                "/usr/bin/codesign",
+                ["-dvvv", url.path]
             )
             guard details.terminationStatus == 0 else {
                 throw JournalHandoffFailure.trustFailed(details.combinedOutput)

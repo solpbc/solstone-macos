@@ -126,7 +126,7 @@ final class OnDiskJournalAdoptionFlow {
 
     private func installedDiscoveryCapableJournalURL() async -> URL? {
         guard let installed = dependencies.runningJournal.installedURL(),
-              (try? await dependencies.trustVerifier.verifyJournalApp(at: installed)) != nil,
+              (try? await dependencies.trustVerifier.verifyJournalApp(at: installed, variant: .installed)) != nil,
               isDiscoveryCapableBuild(at: installed)
         else {
             return nil

@@ -70,7 +70,7 @@ final class InertRunningJournalController: RunningJournalController {
 
 @MainActor
 final class InertTrustVerifier: TrustVerifier {
-    func verifyJournalApp(at url: URL) async throws {}
+    func verifyJournalApp(at url: URL, variant _: JournalAppTrustVariant) async throws {}
 }
 
 @MainActor
@@ -212,7 +212,7 @@ final class FreshJournalFlow {
 
     func trustedInstalledJournalURL() async -> URL? {
         if let installed = dependencies.runningJournal.installedURL(),
-           (try? await dependencies.trustVerifier.verifyJournalApp(at: installed)) != nil {
+           (try? await dependencies.trustVerifier.verifyJournalApp(at: installed, variant: .installed)) != nil {
             return installed
         }
         return nil

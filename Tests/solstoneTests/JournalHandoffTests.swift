@@ -408,7 +408,7 @@ struct JournalHandoffTests {
             flow.state == .waitingForJournal
         }
 
-        #expect(world.trustVerifier.calls == [world.installedJournalURL])
+        #expect(world.trustVerifier.calls == [(url: world.installedJournalURL, variant: .installed)])
         #expect(world.appcast.requestedURLs.isEmpty)
         #expect(world.downloader.calls.isEmpty)
         #expect(world.runningJournal.launches == 0)
@@ -431,6 +431,11 @@ struct JournalHandoffTests {
         #expect(world.runningJournal.launches == 0)
         #expect(world.runningJournal.activatingLaunches == 1)
         #expect(FileManager.default.fileExists(atPath: world.installedJournalURL.path))
+        #expect(world.trustVerifier.calls.count == 1)
+        let trustCall = try #require(world.trustVerifier.calls.first)
+        #expect(trustCall.variant == .downloaded)
+        #expect(trustCall.url.lastPathComponent == "journal.app")
+        #expect(trustCall.url != world.installedJournalURL)
     }
 
     @Test func freshFlowAbsentAppLeavesNoStagingLitter() async throws {
@@ -579,6 +584,28 @@ struct JournalHandoffTests {
         #expect(world.appcast.requestedURLs.isEmpty)
         #expect(world.downloader.calls.isEmpty)
         #expect(world.runningJournal.activatedURLs == [world.installedJournalURL])
+        #expect(world.trustVerifier.calls == [(url: world.installedJournalURL, variant: .installed)])
+    }
+
+    @Test func installedJournalResumeAndHandoffTrustInstalledAppWithoutDownload() async throws {
+        let world = installedWorld()
+        world.initProbe.replies = [.result(.incomplete), .result(.incomplete), .result(.complete)]
+        let orchestrator = JournalHandoffOrchestrator(dependencies: world.dependencies)
+
+        let derivedStep = await orchestrator.deriveResumeStep(appState: world.state)
+
+        #expect(derivedStep == .writingHandoff)
+        #expect(derivedStep != .acquiring(.fetchingAppcast))
+        #expect(world.trustVerifier.calls == [(url: world.installedJournalURL, variant: .installed)])
+
+        let result = await world.run()
+
+        #expect(result == .completed)
+        #expect(world.trustVerifier.calls.count == 3)
+        #expect(world.trustVerifier.calls.allSatisfy {
+            $0.url == world.installedJournalURL && $0.variant == .installed
+        })
+        #expect(world.appcast.requestedURLs.isEmpty)
     }
 
     @Test func onDiskAdoptionInstalledTrustedOldBuildAcquiresAndDoesNotLaunchOldBuild() async throws {
@@ -1287,13 +1314,21 @@ private final class FakeDiskImageMounter: DiskImageMounter {
     }
 }
 
+private func == (
+    lhs: [(url: URL, variant: JournalAppTrustVariant)],
+    rhs: [(url: URL, variant: JournalAppTrustVariant)]
+) -> Bool {
+    guard lhs.count == rhs.count else { return false }
+    return zip(lhs, rhs).allSatisfy { $0.url == $1.url && $0.variant == $1.variant }
+}
+
 @MainActor
 private final class FakeTrustVerifier: TrustVerifier {
-    var calls: [URL] = []
+    var calls: [(url: URL, variant: JournalAppTrustVariant)] = []
     var failure: JournalHandoffFailure?
 
-    func verifyJournalApp(at url: URL) async throws {
-        calls.append(url)
+    func verifyJournalApp(at url: URL, variant: JournalAppTrustVariant) async throws {
+        calls.append((url: url, variant: variant))
         if let failure {
             throw failure
         }

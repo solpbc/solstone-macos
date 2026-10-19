@@ -85,7 +85,7 @@ struct JournalAppAcquirer {
             let mounted = try await mounter.mount(dmgURL: dmgURL)
             do {
                 progress(.verifyingJournalAppTrust)
-                try await trustVerifier.verifyJournalApp(at: mounted.journalAppURL)
+                try await trustVerifier.verifyJournalApp(at: mounted.journalAppURL, variant: .downloaded)
 
                 progress(.installingToApplications)
                 let installedURL = try await installJournalApp(from: mounted.journalAppURL)
