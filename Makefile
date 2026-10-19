@@ -75,6 +75,7 @@ brand-sync:
 	@test -n "$(BRAND_DIR)" || { echo "brand: BRAND_DIR is required — point it at your solstone brand asset directory (BRAND_DIR=/path/to/brand make brand-sync)"; exit 1; }
 	@test -d "$(BRAND_DIR)" || { echo "brand: BRAND_DIR=$(BRAND_DIR) not found"; exit 1; }
 	cp "$(BRAND_DIR)/mark.svg" assets/mark.svg
+	cp "$(BRAND_DIR)/lockup-solstone-horizontal.svg" assets/lockup-solstone-horizontal.svg
 	# macOS app icon uses the macOS-convention squircle source (inset rounded-rect
 	# plate on a transparent canvas — macOS does NOT auto-mask icons). iOS keeps the
 	# full-bleed cream master in solstone-swift (iOS auto-masks). Do NOT point this
