@@ -147,37 +147,66 @@ struct SetupPairingLinkOfferTests {
     @Test func connectionStepContentDecisions() {
         let peerConnected = SetupConnectionStep.content(
             isPeerSupporting: true,
-            state: .connected(JournalMark.uiTestSample)
+            state: .connected(JournalMark.uiTestSample),
+            tunnelConnected: false
         )
         #expect(peerConnected.headline == UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
         #expect(peerConnected.showsConnectedCaption == false)
 
         let peerConnecting = SetupConnectionStep.content(
             isPeerSupporting: true,
-            state: .connecting
+            state: .connecting,
+            tunnelConnected: false
         )
         #expect(peerConnecting.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
         #expect(peerConnecting.showsConnectedCaption == false)
 
         let peerIdle = SetupConnectionStep.content(
             isPeerSupporting: true,
-            state: .idle
+            state: .idle,
+            tunnelConnected: false
         )
         #expect(peerIdle.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
         #expect(peerIdle.showsConnectedCaption == false)
 
         let peerFailed = SetupConnectionStep.content(
             isPeerSupporting: true,
-            state: .failed(UICopy.SETUP_COULDNT_VERIFY_MARK)
+            state: .failed(UICopy.SETUP_COULDNT_VERIFY_MARK),
+            tunnelConnected: false
         )
         #expect(peerFailed.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
         #expect(peerFailed.showsConnectedCaption == false)
 
         let olderPeerConnected = SetupConnectionStep.content(
             isPeerSupporting: false,
-            state: .connected(JournalMark.uiTestSample)
+            state: .connected(JournalMark.uiTestSample),
+            tunnelConnected: false
         )
         #expect(olderPeerConnected.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
         #expect(olderPeerConnected.showsConnectedCaption == false)
+
+        let ownerTunnelConnected = SetupConnectionStep.content(
+            isPeerSupporting: false,
+            state: .idle,
+            tunnelConnected: true
+        )
+        #expect(ownerTunnelConnected.headline == UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
+        #expect(ownerTunnelConnected.showsConnectedCaption == false)
+
+        let peerConnectedIgnoringTunnel = SetupConnectionStep.content(
+            isPeerSupporting: true,
+            state: .connected(JournalMark.uiTestSample),
+            tunnelConnected: true
+        )
+        #expect(peerConnectedIgnoringTunnel.headline == UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
+        #expect(peerConnectedIgnoringTunnel.showsConnectedCaption == false)
+
+        let peerIdleIgnoringTunnel = SetupConnectionStep.content(
+            isPeerSupporting: true,
+            state: .idle,
+            tunnelConnected: true
+        )
+        #expect(peerIdleIgnoringTunnel.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
+        #expect(peerIdleIgnoringTunnel.showsConnectedCaption == false)
     }
 }

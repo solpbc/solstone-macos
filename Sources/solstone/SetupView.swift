@@ -354,9 +354,14 @@ struct SetupView: View {
     }
 
     private var connectionStepView: some View {
+        let tunnelConnected: Bool = {
+            if case .connected = appState.pairingCoordinator.tunnelState { return true }
+            return false
+        }()
         let heading = SetupConnectionStep.content(
             isPeerSupporting: model.isPeerSupportingSetup,
-            state: model.connectionStepState
+            state: model.connectionStepState,
+            tunnelConnected: tunnelConnected
         )
         return GroupBox("7") {
             VStack(alignment: .leading, spacing: 12) {
@@ -392,7 +397,7 @@ struct SetupView: View {
                 } else {
                     if let mark = appState.confirmedMark {
                         JournalMarkView(mark: mark, isConfirmed: true)
-                        if case .connected = appState.pairingCoordinator.tunnelState {
+                        if heading.showsConnectedCaption {
                             Text(UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -573,7 +578,8 @@ struct SetupConnectionStepContent: Equatable {
 enum SetupConnectionStep {
     static func content(
         isPeerSupporting: Bool,
-        state: SetupModel.ConnectionStepState
+        state: SetupModel.ConnectionStepState,
+        tunnelConnected: Bool
     ) -> SetupConnectionStepContent {
         if isPeerSupporting {
             switch state {
@@ -588,6 +594,11 @@ enum SetupConnectionStep {
                     showsConnectedCaption: false
                 )
             }
+        } else if tunnelConnected {
+            return SetupConnectionStepContent(
+                headline: UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL,
+                showsConnectedCaption: false
+            )
         } else {
             return SetupConnectionStepContent(
                 headline: UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL,
