@@ -9,7 +9,7 @@ import os
 /// The window server's id for an Accessibility window. Not public API, and long stable: without it
 /// an Accessibility window can only be paired with a capture window by its frame.
 @_silgen_name("_AXUIElementGetWindow")
-private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
+func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
 
 protocol AccessibilityTitleReading: Sendable {
     func titles(pid: pid_t) -> [CGWindowID: String]

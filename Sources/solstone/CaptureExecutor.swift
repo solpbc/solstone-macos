@@ -71,6 +71,7 @@ public enum StopReason: Sendable, Equatable {
     case quit
     case update
     case userStopped
+    case sourcesChanged
 
     var trigger: String {
         switch self {
@@ -78,6 +79,7 @@ public enum StopReason: Sendable, Equatable {
         case .quit: "quit"
         case .update: "update"
         case .userStopped: "userStopped"
+        case .sourcesChanged: "sourcesChanged"
         }
     }
 }

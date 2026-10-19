@@ -56,6 +56,7 @@ public final class AppState {
     public let pauseManager: PauseManager
     public let shortcutController: PauseShortcutController
     public let storageManager: StorageManager
+    var activitySource: DesktopActivitySource?
     public let audioDeviceMonitor: AudioDeviceMonitor
     public var captureManager: CaptureManager { capture.captureManager }
     public private(set) var uploadCoordinator: UploadCoordinator!
@@ -433,6 +434,9 @@ public final class AppState {
     }
 
     public var captureSourcesStatusText: String {
+        if config.selectedSources.isEmpty, let activitySource, activitySource.enabled {
+            return activitySource.statusText
+        }
         if isRecording || isPaused {
             guard !captureManager.activeSources.isEmpty else { return UICopy.SOURCES_UNAVAILABLE }
             return UICopy.sourceStatus(captureManager.activeSources, isPaused: isPaused)
@@ -710,7 +714,9 @@ public final class AppState {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         let browserIntakeChanged = oldConfig.isBrowserIntakeEnabled != newConfig.isBrowserIntakeEnabled
 #endif
+        activitySource?.invalidate()
         config = newConfig
+        activitySource?.configure(newConfig)
         clearLatestFrameIfNeeded()
         reconcilePrivateWindowAccessibility()
         uploadCoordinator.updateConfig(newConfig)
@@ -1939,6 +1945,7 @@ public final class AppState {
         appQuitCoordinator = makeAppQuitCoordinator(
             setCommitted: { [weak self] committed in
                 self?.isTerminating = committed
+                if committed { self?.activitySource?.invalidate() }
             },
             terminate: {
                 terminateFromMainRunLoop()
@@ -1984,6 +1991,7 @@ public final class AppState {
         // Sync microphone priority list with available devices, now and as they connect
         capture.onMicrophonesChanged = { [weak self] in self?.syncMicrophonePriorityList() }
         configureScreenPreviewInvalidation()
+        configureDesktopActivity()
         syncMicrophonePriorityList()
 
         if automaticObservationPipelineEnabled {
@@ -2436,16 +2444,57 @@ public final class AppState {
         return false
     }
 
+    private func configureDesktopActivity() {
+        guard automaticObservationPipelineEnabled else { return }
+        let lifecycle = capture.captureManager.lifecycleManager
+        let source = DesktopActivitySource(
+            storage: storageManager,
+            eligibility: { [weak self, weak lifecycle] in
+                guard let self, let lifecycle else { return false }
+                return !self.isTerminating && !self.pauseManager.isPaused &&
+                    !self.capture.isExplicitlyStopped && !self.capture.isUserStopped &&
+                    lifecycle.isMachineAwake && !lifecycle.isActivityScreenLocked && lifecycle.isSessionActive
+            },
+            locked: { [weak self, weak lifecycle] in
+                guard let self, let lifecycle else { return false }
+                return !self.isTerminating && !self.pauseManager.isPaused &&
+                    !self.capture.isExplicitlyStopped && !self.capture.isUserStopped &&
+                    lifecycle.isMachineAwake && lifecycle.isActivityScreenLocked
+            },
+            onSealed: { [weak self] in self?.uploadCoordinator.triggerSync() }
+        )
+        activitySource = source
+        lifecycle.onIntakeEligibilityChanged = { [weak source] in source?.invalidate(); source?.sample() }
+        let previousPause = pauseManager.onPauseIntake
+        pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.invalidate() }
+        let previousResume = pauseManager.onResumeIntake
+        pauseManager.onResumeIntake = { [weak source] in previousResume?(); source?.invalidate(); source?.sample() }
+        source.start(config: config)
+    }
+
     public func startRecording(reason: StartReason = .user, preservingPausePolicy: Bool = false) async {
+        if reason == .user { capture.clearOwnerStop() }
+        activitySource?.sample()
         await capture.startRecording(reason: reason, preservingPausePolicy: preservingPausePolicy)
     }
 
     public func stopRecording(reason: StopReason = .user, preservingPausePolicy: Bool = false) async {
+        // Stop activity synchronously before the first media teardown suspension.
+        if reason == .user { capture.isExplicitlyStopped = true }
+        if reason == .userStopped { capture.isUserStopped = true }
+        activitySource?.invalidate()
         await capture.stopRecording(reason: reason, preservingPausePolicy: preservingPausePolicy)
     }
 
     public func toggleRecording() async {
-        await capture.toggleRecording()
+        if pauseManager.isPaused {
+            pauseManager.resume()
+        } else if activitySource?.enabled == true && activitySource?.paused == false {
+            await stopRecording(reason: .user)
+        } else {
+            await capture.toggleRecording()
+            activitySource?.sample()
+        }
     }
 
     /// Brings a running session in line with the owner's current source switches.
@@ -2480,7 +2529,7 @@ public final class AppState {
         let desired = availableSelectedSources
         guard desired != captureManager.activeSources else { return }
 
-        await stopRecording(reason: .user, preservingPausePolicy: wasPaused)
+        await capture.stopRecording(reason: .sourcesChanged, preservingPausePolicy: wasPaused)
 
         guard !desired.isEmpty else { return }
 
@@ -2634,7 +2683,7 @@ public final class AppState {
     private func handleExternalDefaultsChange() {
         let fresh = AppConfig.load()
 
-        // Only react to journal connection or browser-intake changes.
+        // React to connection, source-intake and shortcut changes.
         let journalConnectionChanged = fresh.serverURL != config.serverURL ||
             fresh.serverKey != config.serverKey ||
             fresh.observerName != config.observerName ||
@@ -2646,8 +2695,12 @@ public final class AppState {
 #else
         let browserIntakeChanged = false
 #endif
+        let activityChanged = fresh.isActivityEnabled != config.isActivityEnabled ||
+            fresh.activityTitlesEnabled != config.activityTitlesEnabled ||
+            fresh.activityURLsEnabled != config.activityURLsEnabled ||
+            fresh.activityAccessibilityEnabled != config.activityAccessibilityEnabled
         let shortcutChanged = fresh.pauseShortcut != config.pauseShortcut
-        guard journalConnectionChanged || browserIntakeChanged || shortcutChanged else {
+        guard journalConnectionChanged || browserIntakeChanged || activityChanged || shortcutChanged else {
             return
         }
 

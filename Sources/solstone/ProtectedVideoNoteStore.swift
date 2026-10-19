@@ -47,7 +47,7 @@ func protectedVideoObservationIncluded(
     // Firefox
     if match.ownerName == "Firefox" || match.ownerName == "Firefox Developer Edition" {
         let verdict = PrivateBrowser.firefoxVerdict(windowTitle: match.title)
-        return verdict == .ordinary
+        return verdict != .privateWindow
     }
 
     // Accessibility-supported browsers
@@ -79,12 +79,12 @@ func protectedVideoObservationIncluded(
             if let aTitle = titles[match.windowID], !aTitle.isEmpty {
                 verdict = browser.accessibilityVerdict(windowTitle: match.title, accessibilityTitle: aTitle)
             } else {
-                verdict = .privateWindow  // unreadable counts as private
+                verdict = .undecided
             }
             verdictCache[cacheKey] = verdict
         }
 
-        return verdict == .ordinary
+        return verdict != .privateWindow
     }
 
     // Comet, Arc, Dia, Chromium, and other browsers have no private rule

@@ -516,8 +516,8 @@ struct ProtectedVideoNoteTests {
         #expect(noteFile == nil)
     }
 
-    // 12. Chrome, private exclusion on, Accessibility option on, undecided verdict → that observation contributes no title. Same when the window id is absent from the reader's dictionary. Do not start the capture tick. Do not call the real Accessibility API.
-    @Test func chromeUndecidedOrAbsentAccessibilityContributesNoTitle() {
+    // 12. Chrome, private exclusion on, Accessibility option on, undecided verdict → the observation is included. Same when the window id is absent from the reader's dictionary. Do not start the capture tick. Do not call the real Accessibility API.
+    @Test func chromeUndecidedOrAbsentAccessibilityIncludesTitle() {
         let store = ProtectedVideoNoteStore()
         let fakeReader = FakeAccessibilityReader()
         let match = ProtectedVideoMatch(windowID: 101, pid: 200, ownerName: "Google Chrome", title: "Netflix", service: "Netflix")
@@ -532,7 +532,7 @@ struct ProtectedVideoNoteTests {
             excludePrivateBrowsingAccessibility: true,
             accessibilityReader: fakeReader
         )
-        #expect(included1 == false)
+        #expect(included1 == true)
 
         // 12b. Absent windowID from reader dictionary
         fakeReader.titlesByPid[200] = [:]
@@ -544,7 +544,7 @@ struct ProtectedVideoNoteTests {
             excludePrivateBrowsingAccessibility: true,
             accessibilityReader: fakeReader
         )
-        #expect(included2 == false)
+        #expect(included2 == true)
     }
 
     // 13. Ordinary window, then a private one with a different title, one interval → private title absent.

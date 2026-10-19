@@ -4388,6 +4388,43 @@ struct SyncServiceTests {
         #expect(store.snapshotRequests().isEmpty)
     }
 
+    @Test func desktopActivityHeldUnpairedAndSwitchingJournalCannotDeleteIt() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-desktop-activity")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let segment = try makeSegment(root: root, segmentName: "120000_300")
+        try FileManager.default.removeItem(at: segment.url.appendingPathComponent("120000_300_audio.m4a"))
+        let filename = "120000_300_batch_desktop_activity.jsonl"
+        let file = segment.url.appendingPathComponent(filename)
+        let bytes = Data("{\"v\":1,\"t\":\"desktop_activity\",\"kind\":\"activity\",\"ts\":1,\"end_ts\":2,\"method\":\"quartz\",\"state\":\"active\"}\n".utf8)
+        try bytes.write(to: file)
+        store.registerRoute(path: IngestProtocolV3.uploadPath, body: uploadResponseJSON(filename: filename, sha: try sha256(of: file), size: UInt64(bytes.count)))
+        let holder = MutexValue<SyncService?>(nil)
+        let switched = MutexValue(false)
+        let newPairing = pairingB
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24802") }, beforeRemovalStep: {
+            let change = switched.withLock { value in
+                if value { return false }; value = true; return true
+            }
+            if change, let service = holder.withLock({ $0 }) {
+                await service.configure(pairingIdentity: newPairing, journalFingerprint: tunnelJournalConnectionFingerprint(for: newPairing), syncPaused: false)
+            }
+        })
+        holder.withLock { $0 = service }
+        await service.configure(pairingIdentity: nil, journalFingerprint: nil, syncPaused: false)
+        await service.sync()
+        #expect(store.snapshotRequests().isEmpty)
+        #expect(try Data(contentsOf: file) == bytes)
+        await configure(service)
+        await service.sync()
+        #expect(try Data(contentsOf: file) == bytes)
+        let ack = IngestAcknowledgmentStore.read(from: IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segment.url, segment: "120000_300"))
+        #expect(ack?.journalFingerprint == tunnelJournalConnectionFingerprint(for: pairingA).value)
+        await service.sync()
+        #expect(store.snapshotRequests().filter { $0.url?.path == IngestProtocolV3.uploadPath }.count == 2)
+        #expect(!FileManager.default.fileExists(atPath: segment.url.path))
+    }
+
     @Test func journalSwitchMidRemovalReuploadsToTheLinkedJournal() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-switch-mid-removal")

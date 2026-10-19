@@ -70,6 +70,7 @@ public struct AppConfig: Sendable {
 
     public static let knownKeys: [String] = [
         "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled", "isBrowserIntakeEnabled",
+        "isActivityEnabled", "activityTitlesEnabled", "activityURLsEnabled", "activityAccessibilityEnabled",
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
         "excludePrivateBrowsing", "excludePrivateBrowsingAccessibility", "serverURL", "serverKey",
         "syncPaused", "debugSegments",
@@ -106,6 +107,11 @@ public struct AppConfig: Sendable {
         static let reseededBluetoothMicrophoneUIDs = "reseededBluetoothMicrophoneUIDs"
         static let didReseedCaptureSourcesOn = "didReseedCaptureSourcesOn"
     }
+
+    public var isActivityEnabled: Bool = false
+    public var activityTitlesEnabled: Bool = false
+    public var activityURLsEnabled: Bool = false
+    public var activityAccessibilityEnabled: Bool = false
 
     // MARK: - Properties
 
@@ -313,7 +319,12 @@ public struct AppConfig: Sendable {
             protectedVideoTitlePatterns: protectedPatterns,
             pauseShortcut: pauseShortcut
         )
-        return config
+        var activityConfig = config
+        activityConfig.isActivityEnabled = defaults.bool(forKey: "isActivityEnabled")
+        activityConfig.activityTitlesEnabled = defaults.bool(forKey: "activityTitlesEnabled")
+        activityConfig.activityURLsEnabled = defaults.bool(forKey: "activityURLsEnabled")
+        activityConfig.activityAccessibilityEnabled = defaults.bool(forKey: "activityAccessibilityEnabled")
+        return activityConfig
     }
 
     /// Loads config or creates with defaults if missing
@@ -371,6 +382,10 @@ public struct AppConfig: Sendable {
 
     /// Saves config to UserDefaults
     public func save(to defaults: UserDefaults = .standard) throws {
+        defaults.set(isActivityEnabled, forKey: "isActivityEnabled")
+        defaults.set(activityTitlesEnabled, forKey: "activityTitlesEnabled")
+        defaults.set(activityURLsEnabled, forKey: "activityURLsEnabled")
+        defaults.set(activityAccessibilityEnabled, forKey: "activityAccessibilityEnabled")
         defaults.set(isScreenCaptureEnabled, forKey: Keys.isScreenCaptureEnabled)
         defaults.set(isMicrophoneCaptureEnabled, forKey: Keys.isMicrophoneCaptureEnabled)
         defaults.set(isBrowserIntakeEnabled, forKey: Keys.isBrowserIntakeEnabled)

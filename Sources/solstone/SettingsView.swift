@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
+import ApplicationServices
 import JournalMarkKit
 @preconcurrency import ScreenCaptureKit
 import SwiftUI
@@ -824,6 +825,59 @@ struct SettingsView: View {
                     ))
                     .accessibilityIdentifier(AXID.Settings.Sources.screenCaptureEnabled)
 
+                    Toggle("activity", isOn: Binding(
+                        get: { appState.config.isActivityEnabled },
+                        set: { enabled in
+                            if enabled { appState.capture.clearOwnerStop() }
+                            var config = appState.config
+                            config.isActivityEnabled = enabled
+                            appState.updateConfig(config)
+                        }
+                    ))
+                    Text("add app names and active or idle time to your journal. you can also include window titles and browser addresses.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    if appState.config.isActivityEnabled {
+                        Toggle("window titles", isOn: Binding(
+                            get: { appState.config.activityTitlesEnabled },
+                            set: { value in
+                                var config = appState.config; config.activityTitlesEnabled = value
+                                appState.updateConfig(config)
+                            }
+                        ))
+                        Toggle("browser addresses", isOn: Binding(
+                            get: { appState.config.activityURLsEnabled },
+                            set: { value in
+                                var config = appState.config; config.activityURLsEnabled = value
+                                appState.updateConfig(config)
+                            }
+                        ))
+                        Text("addresses include the site and path, without query strings or fragments.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        Toggle("allow accessibility for activity", isOn: Binding(
+                            get: { appState.config.activityAccessibilityEnabled },
+                            set: { enabled in
+                                var config = appState.config; config.activityAccessibilityEnabled = enabled
+                                appState.updateConfig(config)
+                                if enabled {
+                                    _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+                                }
+                            }
+                        ))
+                        Text("when screen recording is unavailable, accessibility lets activity include window titles. browser addresses also use accessibility. only window titles and page addresses are used.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        Text("activity follows your pause and exclusions. it continues while screen and audio step aside for protected video. a title does not mean you watched or read it.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    if let activity = appState.activitySource {
+                        if activity.failed {
+                            Text("activity couldn't be saved. check free space on this mac.").foregroundStyle(.secondary)
+                        } else {
+                            Text(!activity.enabled ? "activity is off" : (activity.paused ? "activity is paused" : "activity is on"))
+                            if activity.titleUnavailable { Text("window titles are unavailable").foregroundStyle(.secondary) }
+                            if activity.urlUnavailable { Text("browser addresses are unavailable").foregroundStyle(.secondary) }
+                        }
+                    }
+
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
                     Toggle(isOn: Binding(
                         get: { appState.config.isBrowserIntakeEnabled },
@@ -855,7 +909,7 @@ struct SettingsView: View {
                     Text(appState.captureSourcesStatusText)
                         .accessibilityIdentifier(AXID.Settings.Sources.sourceStatus)
 #endif
-                    if appState.config.selectedSources.isEmpty {
+                    if appState.config.selectedSources.isEmpty && !appState.config.isActivityEnabled {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
                         if sourcesLead != .draining && !appState.config.isBrowserIntakeEnabled {
                             Text(UICopy.SOURCES_NONE_REASON).foregroundStyle(.secondary)
@@ -863,7 +917,7 @@ struct SettingsView: View {
 #else
                         Text(UICopy.SOURCES_NONE_REASON).foregroundStyle(.secondary)
 #endif
-                    } else if appState.availableSelectedSources.isEmpty {
+                    } else if !appState.config.selectedSources.isEmpty && appState.availableSelectedSources.isEmpty {
                         Text(UICopy.SOURCES_GRANT_OR_CHANGE).foregroundStyle(.secondary)
                         navRow(UICopy.SETTINGS_NEXT_GRANT_PERMISSIONS) {
                             selectedTab = .permissions

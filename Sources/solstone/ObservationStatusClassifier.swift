@@ -285,6 +285,14 @@ internal func observationRecoveryPresentation(
 
 extension AppState {
     internal var observationRowState: MenubarStatusRowState {
+        // Activity can observe while every media source is off. Its source-only icon
+        // must follow the same state as its visible menu and settings status.
+        if config.selectedSources.isEmpty, let activity = activitySource, activity.enabled {
+            // The source displays its storage failure itself; media's recovery action
+            // cannot repair that queue. No activity is collected while failed.
+            if activity.failed { return .stopped }
+            return activity.paused ? .paused : .observing
+        }
         let verdict = tunnelLifecycleOwner.connectionVerdict
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         let browserOnly = config.selectedSources.isEmpty && config.isBrowserIntakeEnabled

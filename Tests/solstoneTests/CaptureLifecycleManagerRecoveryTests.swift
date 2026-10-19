@@ -10,6 +10,30 @@ import Testing
 @MainActor
 @Suite("CaptureLifecycleManager recovery")
 struct CaptureLifecycleManagerRecoveryTests {
+    @Test func lockNotificationHoldsActivityAcrossSamplesBeforeProviderCatchesUp() async throws {
+        let delegate = FakeLifecycleDelegate(state: .idle)
+        let manager = makeManager(delegate: delegate, isScreenLocked: { false })
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("activity-lock-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = DesktopActivitySource(storage: StorageManager(baseDirectory: root.appendingPathComponent("captures")),
+            eligibility: { !manager.isActivityScreenLocked }, locked: { manager.isActivityScreenLocked },
+            foreground: { DesktopActivityApp(pid: 42, name: "Fixture", bundleID: "example.fixture") },
+            reader: { _, _, _ in DesktopActivityObservation(rows: [DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "Fixture")]) })
+        manager.onIntakeEligibilityChanged = { source.invalidate(); source.sample() }
+        var config = AppConfig(); config.isActivityEnabled = true
+        source.configure(config)
+        await source.sample()?.value
+        await manager.handleScreenLocked()
+        #expect(manager.isActivityScreenLocked)
+        #expect(!manager.isScreenLocked()) // Media recovery keeps its original provider semantics.
+        #expect(source.sample() == nil)
+        #expect(source.paused)
+        await manager.handleScreenUnlocked()
+        await source.sample()?.value
+        #expect(!source.paused)
+        source.stop()
+    }
+
     @Test func recoveryDelayUsesInitialBackoffThenFallback() {
         #expect(CaptureLifecycleManager.recoveryDelay(forRetryCount: 0) == 5)
         #expect(CaptureLifecycleManager.recoveryDelay(forRetryCount: 1) == 30)

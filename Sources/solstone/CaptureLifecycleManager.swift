@@ -75,6 +75,14 @@ final class CaptureLifecycleManager {
     var ownerPauseIsHeld: @MainActor () -> Bool = { false }
     var protectedVideoOnScreen: @MainActor () -> Bool = { false }
     internal var isMachineAwake: Bool = true
+    internal var isSessionActive = true
+    internal var onIntakeEligibilityChanged: (@MainActor () -> Void)?
+    private var intakeLockHeld = false
+    // The existing lock notifications close intake immediately, while media recovery
+    // retains its provider-based semantics. No additional lock observer is installed.
+    internal var isActivityScreenLocked: Bool { intakeLockHeld || isScreenLocked() }
+    nonisolated(unsafe) private var resignObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var activeObserver: NSObjectProtocol?
 
     private var recoveryTimer: (any RecoveryTimerToken)?
     private static let retryDelays: [TimeInterval] = [5, 30, 60]
@@ -167,6 +175,18 @@ final class CaptureLifecycleManager {
         self.delegate = delegate
         executor.delegate = delegate
 
+        resignObserver = workspaceCenter.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.isSessionActive = false
+                self?.onIntakeEligibilityChanged?()
+            }
+        }
+        activeObserver = workspaceCenter.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.isSessionActive = true
+                self?.onIntakeEligibilityChanged?()
+            }
+        }
         willSleepObserver = workspaceCenter.addObserver(
             forName: NSWorkspace.willSleepNotification,
             object: nil,
@@ -209,6 +229,8 @@ final class CaptureLifecycleManager {
     }
 
     deinit {
+        if let resignObserver { workspaceCenter.removeObserver(resignObserver) }
+        if let activeObserver { workspaceCenter.removeObserver(activeObserver) }
         if let observer = willSleepObserver {
             workspaceCenter.removeObserver(observer)
         }
@@ -299,6 +321,7 @@ final class CaptureLifecycleManager {
 
     internal func handleWillSleep() async {
         isMachineAwake = false
+        onIntakeEligibilityChanged?()
         let state = delegate?.lifecycleCurrentState
         let stateLabel = state?.label ?? "unknown"
         Logger.capture.info("[Event] willSleep (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
@@ -313,6 +336,7 @@ final class CaptureLifecycleManager {
 
     internal func handleDidWake() async {
         isMachineAwake = true
+        onIntakeEligibilityChanged?()
         let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
         Logger.capture.info("[Event] didWake (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
 
@@ -328,6 +352,8 @@ final class CaptureLifecycleManager {
     }
 
     internal func handleScreenLocked() async {
+        intakeLockHeld = true
+        onIntakeEligibilityChanged?()
         let state = delegate?.lifecycleCurrentState
         let stateLabel = state?.label ?? "unknown"
         Logger.capture.info("[Event] screenLocked (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
@@ -339,6 +365,8 @@ final class CaptureLifecycleManager {
     }
 
     internal func handleScreenUnlocked() async {
+        intakeLockHeld = false
+        onIntakeEligibilityChanged?()
         let stateLabel = delegate?.lifecycleCurrentState.label ?? "unknown"
         Logger.capture.info("[Event] screenUnlocked (state: \(stateLabel, privacy: .public), suspended: \(self.suspendedForRecovery, privacy: .public))")
 

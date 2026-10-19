@@ -14,8 +14,12 @@ struct MenuContent: View {
     var body: some View {
         // Status + pause/resume controls (single section — no internal divider)
         Section {
-            statusRow
-                .accessibilityValue(statusRowAXValue)
+            if appState.config.selectedSources.isEmpty, let activity = appState.activitySource, activity.enabled {
+                Text(activity.statusText)
+            } else {
+                statusRow
+                    .accessibilityValue(statusRowAXValue)
+            }
             if hasPauseResumeControl {
                 pauseResumeSection
             }
@@ -277,8 +281,9 @@ struct MenuContent: View {
     // MARK: - Pause Controls
 
     private var hasPauseControl: Bool {
+        if let activity = appState.activitySource, activity.enabled && !activity.paused && !activity.failed { return true }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        menuPauseControls(
+        return menuPauseControls(
             mediaRecording: appState.isRecording,
             mediaPaused: appState.isPaused,
             mediaUserPaused: appState.capture.isUserPaused,
@@ -286,13 +291,14 @@ struct MenuContent: View {
             browserCapturePermitted: appState.browserPauseEnabled
         ).pause
 #else
-        appState.isRecording && !appState.isPaused
+        return appState.isRecording && !appState.isPaused
 #endif
     }
 
     private var hasResumeControl: Bool {
+        if appState.config.isActivityEnabled && appState.pauseManager.isPaused { return true }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        menuPauseControls(
+        return menuPauseControls(
             mediaRecording: appState.isRecording,
             mediaPaused: appState.isPaused,
             mediaUserPaused: appState.capture.isUserPaused,
@@ -300,7 +306,7 @@ struct MenuContent: View {
             browserCapturePermitted: appState.browserPauseEnabled
         ).resume
 #else
-        appState.capture.isUserPaused || appState.ownerPauseHeldIdle
+        return appState.capture.isUserPaused || appState.ownerPauseHeldIdle
 #endif
     }
 
