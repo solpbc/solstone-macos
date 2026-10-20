@@ -66,15 +66,7 @@ public struct SetupWindow<Content: View>: View {
 
                     Spacer().frame(width: 12)
 
-                    Rectangle()
-                        .fill(SetupChromeColor.hairline(for: colorScheme))
-                        .frame(width: 1, height: 16)
-
-                    Spacer().frame(width: 12)
-
-                    Text(appLabel)
-                        .font(.system(size: 12))
-                        .foregroundStyle(SetupChromeColor.faintInk(for: colorScheme))
+                    SetupBandLabel(appLabel)
 
                     Spacer()
                 }
@@ -100,5 +92,33 @@ public struct SetupWindow<Content: View>: View {
                     .padding([.leading, .trailing, .bottom], 18)
             }
         }
+    }
+}
+
+/// The app's label in the top band: 12 pt faint ink on a chip of the sheet's own fill with
+/// the sheet's hairline, so the label never sits on the sun. The lockup stays on the ground.
+public struct SetupBandLabel: View {
+    @Environment(\.colorScheme) private var colorScheme
+    private let text: String
+
+    public init(_ text: String) {
+        self.text = text
+    }
+
+    public var body: some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(SetupChromeColor.faintInk(for: colorScheme))
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(SetupChromeColor.sheet(for: colorScheme))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(SetupChromeColor.hairline(for: colorScheme), lineWidth: 1)
+            )
     }
 }
