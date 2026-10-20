@@ -106,6 +106,7 @@ public struct AppConfig: Sendable {
         static let didReseedOptInMicrophones = "didReseedOptInMicrophones"
         static let reseededBluetoothMicrophoneUIDs = "reseededBluetoothMicrophoneUIDs"
         static let didReseedCaptureSourcesOn = "didReseedCaptureSourcesOn"
+        static let didAddPasswordManagerExclusions = "didAddPasswordManagerExclusions"
     }
 
     public var isActivityEnabled: Bool = false
@@ -201,6 +202,23 @@ public struct AppConfig: Sendable {
         AppEntry(bundleID: "com.1password.1password", name: "1Password"),
         AppEntry(bundleID: "com.agilebits.onepassword7", name: "1Password 7"),
         AppEntry(bundleID: "com.agilebits.onepassword-osx", name: "1Password (legacy)")
+    ] + passwordManagerExclusions
+
+    /// Password manager apps that joined the defaults after 1Password. A fresh install gets them
+    /// with `defaultExclusions`; an install set up before gets them once, from
+    /// `addPasswordManagerExclusionsIfNeeded()`. Each bundle identifier was read from the app or its
+    /// App Store record, and matches even where the name is localized. A password manager used inside
+    /// a browser is part of the browser and is not matched by these.
+    public static let passwordManagerExclusions: [AppEntry] = [
+        AppEntry(bundleID: "com.apple.Passwords", name: "Passwords"),
+        AppEntry(bundleID: "com.apple.Passwords.MenuBarExtra", name: "Passwords (menu bar)"),
+        AppEntry(bundleID: "com.bitwarden.desktop", name: "Bitwarden"),
+        AppEntry(bundleID: "com.dashlane.dashlanephonefinal", name: "Dashlane"),
+        AppEntry(bundleID: "com.lastpass.lastpassmacdesktop", name: "LastPass"),
+        AppEntry(bundleID: "org.keepassxc.keepassxc", name: "KeePassXC"),
+        AppEntry(bundleID: "com.keepersecurity.passwordmanager", name: "Keeper Password Manager"),
+        AppEntry(bundleID: "com.callpod.keepermac.lite", name: "Keeper (App Store)"),
+        AppEntry(bundleID: "me.proton.pass.electron", name: "Proton Pass")
     ]
 
     public init(
@@ -376,6 +394,7 @@ public struct AppConfig: Sendable {
         defaultConfig.excludedApps = defaultExclusions
         try defaultConfig.save()
         defaults.set(true, forKey: Keys.didReseedCaptureSourcesOn)
+        defaults.set(true, forKey: Keys.didAddPasswordManagerExclusions)
         Logger.general.info("Created default config in UserDefaults")
         return defaultConfig
     }
@@ -581,6 +600,33 @@ public struct AppConfig: Sendable {
         }
     }
 
+    /// One-shot: an install set up before the password manager apps joined the defaults gets them
+    /// once. Only `passwordManagerExclusions` missing from the list are added, so an app the owner
+    /// took out before (the 1Password entries were defaults from the start) stays out, and one the
+    /// owner takes out after this runs is never added back.
+    public mutating func addPasswordManagerExclusionsIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Keys.didAddPasswordManagerExclusions) else {
+            return
+        }
+
+        var updated = self
+        for entry in Self.passwordManagerExclusions where !updated.excludedApps.contains(where: {
+            $0.bundleID == entry.bundleID || $0.name.lowercased() == entry.name.lowercased()
+        }) {
+            updated.excludedApps.append(entry)
+        }
+
+        do {
+            try updated.save()
+            self = updated
+            // Closed only once saved, so a failed save tries again on the next launch.
+            defaults.set(true, forKey: Keys.didAddPasswordManagerExclusions)
+        } catch {
+            Logger.general.warning("Failed to add the password manager exclusions: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     /// One-shot migration that disables connected opt-in-only microphones previously saved as enabled.
     public mutating func reseedOptInOnlyMicrophonesIfNeeded(connectedOptInOnlyUIDs: Set<String>) {
         let defaults = UserDefaults.standard
@@ -665,9 +711,11 @@ public struct AppConfig: Sendable {
 
     // MARK: - App Exclusion Methods
 
-    /// Returns the names of excluded apps (for WindowExclusionManager)
+    /// The keys an excluded app is matched by: its name and its bundle identifier. The identifier
+    /// still matches when the name is localized or changes. An app added by name has a made-up
+    /// `user.excluded.` identifier, which matches nothing.
     public var excludedAppNames: [String] {
-        excludedApps.map { $0.name }
+        excludedApps.flatMap { [$0.name, $0.bundleID] }
     }
 
     /// Checks if an app is excluded

@@ -305,6 +305,32 @@ struct AppConfigMigrationTests {
         #expect(loaded.isMicrophoneCaptureEnabled)
     }
 
+    // An install set up before the password manager defaults gets them once, after the owner's
+    // own list. A 1Password entry the owner took out stays out, and so does one taken out later.
+    @Test func passwordManagerExclusionsReachAnExistingInstallOnce() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+
+        var config = AppConfig()
+        config.excludedApps = [
+            AppEntry(bundleID: "com.agilebits.onepassword7", name: "1Password 7"),
+            AppEntry(bundleID: "user.excluded.slack", name: "Slack")
+        ]
+        try config.save()
+
+        var loaded = AppConfig.load()
+        loaded.addPasswordManagerExclusionsIfNeeded()
+        #expect(loaded.excludedApps == config.excludedApps + AppConfig.passwordManagerExclusions)
+        #expect(!loaded.excludedApps.contains { $0.bundleID == "com.1password.1password" })
+        #expect(AppConfig.load().excludedApps == loaded.excludedApps)
+
+        var removed = AppConfig.load()
+        removed.excludedApps.removeAll { $0 == AppConfig.passwordManagerExclusions[0] }
+        try removed.save()
+        removed.addPasswordManagerExclusionsIfNeeded()
+        #expect(AppConfig.load().excludedApps == removed.excludedApps)
+    }
+
     @Test func loadOrCreateDefaultFreshBranchInitializesSourcesFalseAndPhaseJournal() throws {
         clearConfigDefaults()
         defer { clearConfigDefaults() }
@@ -321,6 +347,8 @@ struct AppConfigMigrationTests {
         #expect(!config.isScreenCaptureEnabled)
         #expect(!config.isMicrophoneCaptureEnabled)
         #expect(UserDefaults.standard.bool(forKey: "didReseedCaptureSourcesOn"))
+        #expect(UserDefaults.standard.bool(forKey: "didAddPasswordManagerExclusions"))
+        #expect(config.excludedApps == AppConfig.defaultExclusions)
         let store = SetupContinuationStore(directory: tempDir)
         #expect(store.load()?.phase == .journal)
     }
@@ -559,6 +587,7 @@ struct AppConfigMigrationTests {
             "didReseedOptInMicrophones",
             "reseededBluetoothMicrophoneUIDs",
             "didReseedCaptureSourcesOn",
+            "didAddPasswordManagerExclusions",
             "localRetentionMB"
         ] {
             UserDefaults.standard.removeObject(forKey: key)
