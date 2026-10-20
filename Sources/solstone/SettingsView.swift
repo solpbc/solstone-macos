@@ -343,6 +343,7 @@ struct SettingsView: View {
 
     var body: some View {
         settingsContent
+        .background(SetupSettingsWindowInstaller(setupShowing: appState.setupModel.phase != nil))
         .alert(appState.setupModel.handoffRefusalMessage ?? "", isPresented: Binding(
             get: { appState.setupModel.handoffRefusal != nil },
             set: { if !$0 { appState.setupModel.dismissHandoffRefusal() } }
@@ -425,7 +426,10 @@ struct SettingsView: View {
         }
         }
         }
-        .frame(minWidth: 720, minHeight: 500)
+        .frame(
+            minWidth: appState.setupModel.phase != nil ? 880 : 720,
+            minHeight: appState.setupModel.phase != nil ? 580 : 500
+        )
 
         .task {
             if storageUsedMB == nil {

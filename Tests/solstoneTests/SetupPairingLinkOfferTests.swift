@@ -150,7 +150,7 @@ struct SetupPairingLinkOfferTests {
             state: .connected(JournalMark.uiTestSample),
             tunnelConnected: false
         )
-        #expect(peerConnected.headline == UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
+        #expect(peerConnected.headline == UICopy.connectedTo(mark: JournalMark.uiTestSample.words.joined(separator: " · ")))
         #expect(peerConnected.showsConnectedCaption == false)
 
         let peerConnecting = SetupConnectionStep.content(
@@ -198,7 +198,7 @@ struct SetupPairingLinkOfferTests {
             state: .connected(JournalMark.uiTestSample),
             tunnelConnected: true
         )
-        #expect(peerConnectedIgnoringTunnel.headline == UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
+        #expect(peerConnectedIgnoringTunnel.headline == UICopy.connectedTo(mark: JournalMark.uiTestSample.words.joined(separator: " · ")))
         #expect(peerConnectedIgnoringTunnel.showsConnectedCaption == false)
 
         let peerIdleIgnoringTunnel = SetupConnectionStep.content(
@@ -208,5 +208,23 @@ struct SetupPairingLinkOfferTests {
         )
         #expect(peerIdleIgnoringTunnel.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
         #expect(peerIdleIgnoringTunnel.showsConnectedCaption == false)
+
+        #expect(UICopy.connectedTo(mark: "afoot · unfixed") == "connected to afoot · unfixed")
+
+        // The older (non-peer) branch names the mark when it has one, and falls back without one.
+        let ownerConnectedWithMark = SetupConnectionStep.content(
+            isPeerSupporting: false,
+            state: .idle,
+            tunnelConnected: true,
+            ownerMarkWords: ["afoot", "unfixed"]
+        )
+        #expect(ownerConnectedWithMark.headline == "connected to afoot · unfixed")
+        let ownerConnectedNoMark = SetupConnectionStep.content(
+            isPeerSupporting: false,
+            state: .idle,
+            tunnelConnected: true,
+            ownerMarkWords: nil
+        )
+        #expect(ownerConnectedNoMark.headline == UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
     }
 }

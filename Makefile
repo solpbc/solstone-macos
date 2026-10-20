@@ -364,6 +364,7 @@ bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
 	@cp -r .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone_solstone.bundle solstone.app/Contents/Resources/
 	@cp -r .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
+	@cp -r .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone_SetupChrome.bundle solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp \
@@ -387,6 +388,9 @@ bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 	@codesign --force --options runtime --timestamp \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		solstone.app/Contents/Resources/solstone_JournalMarkKit.bundle
+	@codesign --force --options runtime --timestamp \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/Resources/solstone_SetupChrome.bundle
 	@codesign --force --options runtime --timestamp \
 		--identifier app.solstone.observer.watchdog \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
@@ -447,6 +451,7 @@ bundle-adhoc: release-universal-adhoc
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
 	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
+	@cp -r .build/apple/Products/Release/solstone_SetupChrome.bundle solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp=none \
@@ -470,6 +475,9 @@ bundle-adhoc: release-universal-adhoc
 	@codesign --force --options runtime --timestamp=none \
 		--sign "$(ADHOC_SIGN_ID)" \
 		solstone.app/Contents/Resources/solstone_JournalMarkKit.bundle
+	@codesign --force --options runtime --timestamp=none \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/Resources/solstone_SetupChrome.bundle
 	@codesign --force --options runtime --timestamp=none \
 		--identifier app.solstone.observer.watchdog \
 		--sign "$(ADHOC_SIGN_ID)" \
@@ -804,9 +812,13 @@ icons: check-icons-deps
 		rsvg-convert -f pdf assets/sol-ring-mb-error.svg \
 			-o Sources/solstone/Resources/sol-ring-icon-error-template.pdf && \
 		echo "  ✓ sol-ring-icon-error-template.pdf" && \
+		mkdir -p Sources/SetupChrome/Resources && \
+		rsvg-convert -f pdf assets/lockup-solstone-horizontal.svg \
+			-o Sources/SetupChrome/Resources/lockup-solstone-horizontal.pdf && \
+		echo "  ✓ lockup-solstone-horizontal.pdf" && \
 	\
 	rm -rf $$TMPDIR && \
-	echo "Icons generated in Sources/solstone/Resources/"
+	echo "Icons generated in Sources/solstone/Resources/ and Sources/SetupChrome/Resources/"
 
 check-icons-deps:
 	@which rsvg-convert > /dev/null 2>&1 || \
@@ -819,7 +831,7 @@ check-icons-deps:
 # source. Wired into `make ci` via scripts/run-ci.sh so staleness fails the
 # routine gate instead of waiting for someone to notice.
 check-brand-assets-fresh: check-icons-deps
-	@./scripts/check-brand-assets-fresh.sh Sources/solstone/Resources
+	@./scripts/check-brand-assets-fresh.sh Sources/solstone/Resources Sources/SetupChrome/Resources
 
 # ────────────────────────────────────────────────────────────────
 # Publish targets — RELEASE HOST ONLY

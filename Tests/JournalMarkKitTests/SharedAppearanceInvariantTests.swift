@@ -14,7 +14,7 @@ struct SharedAppearanceInvariantTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        for dir in ["Sources/SolstoneCore", "Sources/JournalMarkKit"] {
+        for dir in ["Sources/SolstoneCore", "Sources/JournalMarkKit", "Sources/SetupChrome"] {
             let files = try #require(AppearanceSourceAssertions.swiftFiles(under: root.appendingPathComponent(dir)))
             #expect(!files.isEmpty, "no Swift sources under \(dir)")
             for file in files {
