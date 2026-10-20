@@ -107,7 +107,7 @@ struct ExclusionApp: Equatable, Sendable {
 }
 
 struct ExclusionSettings: Equatable, Sendable {
-    var excludedAppNames: Set<String>  // lowercased
+    var excludedAppNames: Set<String>  // lowercased names and bundle identifiers
     var excludePrivateBrowsing: Bool
     /// The opt-in second level, and only while Accessibility reads actually work.
     var accessibilityTitlesWorking: Bool
@@ -192,7 +192,8 @@ struct ExclusionPlanner {
 
         // 1. Excluded apps: every window, now and later.
         var excludedPIDs = Set<pid_t>()
-        for app in apps where settings.excludedAppNames.contains(app.name.lowercased()) {
+        for app in apps where settings.excludedAppNames.contains(app.name.lowercased())
+            || app.bundleIdentifier.map({ settings.excludedAppNames.contains($0.lowercased()) }) == true {
             excludedPIDs.insert(app.pid)
         }
         for w in windows where settings.excludedAppNames.contains(w.ownerName.lowercased()) {

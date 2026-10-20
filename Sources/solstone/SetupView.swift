@@ -416,7 +416,7 @@ struct SetupView: View {
 
         return SetupStep(
             headline: UICopy.SETUP_SCREEN_HEADLINE,
-            explanations: [UICopy.SETUP_SCREEN_EXPLAINER]
+            explanations: [UICopy.SETUP_SCREEN_EXPLAINER, UICopy.SETUP_SCREEN_STORAGE, UICopy.SETUP_SCREEN_LEFT_OUT]
         ) {
             SetupCard {
                 VStack(alignment: .leading, spacing: 14) {

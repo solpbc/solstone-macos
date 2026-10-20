@@ -1782,6 +1782,9 @@ public final class AppState {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = false
         self.automaticObservationPipelineEnabled = automaticObservationPipelineEnabled
+        // Before capture is built below, so the first frame already leaves these apps out.
+        var config = config
+        config.addPasswordManagerExclusionsIfNeeded()
         self.config = config
         self.sameMachinePairStart = { baseURL, deviceLabel in
             await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)

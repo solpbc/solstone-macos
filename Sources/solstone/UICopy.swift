@@ -164,6 +164,8 @@ public enum UICopy {
     public static let SETUP_CONTINUE = "continue"
     public static let SETUP_SCREEN_AND_COMPUTER_SOUND = "screen and computer sound"
     public static let SETUP_SCREEN_EXPLAINER = "your screen and its computer sound go into your journal. they stay off until you turn them on."
+    public static let SETUP_SCREEN_STORAGE = "what you share stays on this mac until it goes into your journal on your own devices. your journal is always private, only yours."
+    public static let SETUP_SCREEN_LEFT_OUT = "password manager apps like 1Password and Bitwarden are left out, but a password manager inside your browser isn't. you can pause any time."
     public static let SETUP_TURN_ON_SCREEN = "turn on screen and computer sound"
     public static let SETUP_SCREEN_SHOWS_HERE = "your screen shows here once it's on."
     public static let SETUP_CONNECT_TO_YOUR_JOURNAL = "connect to your journal"

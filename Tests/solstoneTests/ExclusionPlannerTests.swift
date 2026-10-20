@@ -54,6 +54,20 @@ struct ExclusionPlannerTests {
         #expect(plan.hiddenPIDs == [vault.pid])
     }
 
+    // A localized or renamed app still matches by its bundle identifier.
+    @Test func excludedAppIsKeptOutByBundleIdentifierUnderAnotherName() {
+        var planner = ExclusionPlanner()
+        let passwords = ExclusionApp(pid: 600, name: "Passw\u{00F6}rter", bundleIdentifier: "com.apple.Passwords")
+        let plan = planner.plan(
+            windows: [window(1, passwords, "")],
+            apps: [passwords, terminal],
+            settings: settings(apps: ["Passwords", "com.apple.Passwords"], privateBrowsing: false),
+            accessibilityTitles: [:],
+            now: t0
+        )
+        #expect(plan.hiddenPIDs == [passwords.pid])
+    }
+
     @Test func nothingIsKeptOutWithoutExclusions() {
         var planner = ExclusionPlanner()
         let plan = planner.plan(
