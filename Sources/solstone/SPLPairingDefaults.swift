@@ -16,4 +16,18 @@ public enum SPLPairingDefaults {
     public static var deviceLabel: String {
         ProcessInfo.processInfo.hostName
     }
+
+    /// `deviceLabel`, read on a background queue. The read reverse-resolves this Mac's
+    /// addresses, over mDNS on a local network; on a first run that lookup is what raises
+    /// macOS's local network prompt, and it does not return until the owner answers. On the
+    /// main thread it froze the app for as long as the prompt was up.
+    public static func deviceLabelOffMainThread(
+        _ read: @escaping @Sendable () -> String = { deviceLabel }
+    ) async -> String {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: read())
+            }
+        }
+    }
 }

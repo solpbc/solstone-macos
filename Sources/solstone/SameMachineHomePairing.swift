@@ -194,6 +194,7 @@ func performSameMachineHomePairing(
     verifyPairLink: @escaping @Sendable (String) -> Result<Void, SameMachinePairLinkRejection> = {
         verifySameMachinePairLink($0)
     },
+    readDeviceLabel: @escaping @Sendable () -> String = { SPLPairingDefaults.deviceLabel },
     submitPairingLink: @escaping @MainActor @Sendable (_ exactPairLink: String) async -> PairingFlowState
 ) async -> SameMachineHomePairingResult {
     switch existingPairing {
@@ -208,7 +209,8 @@ func performSameMachineHomePairing(
     }
 
     let response: SameMachinePairStartResponse
-    switch await startPairing(baseURL, SPLPairingDefaults.deviceLabel) {
+    let deviceLabel = await SPLPairingDefaults.deviceLabelOffMainThread(readDeviceLabel)
+    switch await startPairing(baseURL, deviceLabel) {
     case .success(let pairStartResponse):
         response = pairStartResponse
     case .failure(let failure):

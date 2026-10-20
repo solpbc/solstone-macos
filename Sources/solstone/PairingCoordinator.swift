@@ -207,7 +207,8 @@ final class PairingCoordinator {
         }
         let result: StoredPairing
         do {
-            result = try await pair(pairURL, deviceLabel(), relayEndpoint())
+            let label = await SPLPairingDefaults.deviceLabelOffMainThread(deviceLabel)
+            result = try await pair(pairURL, label, relayEndpoint())
         } catch {
             guard current() else { return }
             state = .failed(Self.failure(for: error))
@@ -1061,7 +1062,8 @@ final class PairingCoordinator {
     private func runCeremony(_ pairURL: PairURL) async -> StoredPairing? {
         state = .pairing
         do {
-            return try await pair(pairURL, deviceLabel(), relayEndpoint())
+            let label = await SPLPairingDefaults.deviceLabelOffMainThread(deviceLabel)
+            return try await pair(pairURL, label, relayEndpoint())
         } catch {
             classifiedLog.emit(
                 ClassifiedLogEmission(

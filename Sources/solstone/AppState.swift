@@ -1241,7 +1241,8 @@ public final class AppState {
                 )
             },
             startPairing: { [sameMachinePairStart] in
-                await sameMachinePairStart(baseURL, SPLPairingDefaults.deviceLabel)
+                let deviceLabel = await SPLPairingDefaults.deviceLabelOffMainThread()
+                return await sameMachinePairStart(baseURL, deviceLabel)
             },
             verifyLink: { verifySameMachinePairLink($0) },
             submit: { [pairingCoordinator] exactPairLink in
