@@ -7,16 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.42] - 2026-10-19
+
 ### Added
 - add app names, window titles, browser addresses and active or idle time to your journal with the optional activity source.
-- when the journal app hands setup to the solstone app, you can cancel the local thinking download or try it again from the download progress at the bottom of the window, and try speech recognition again if its download fails.
+- when the journal app hands setup to the solstone app, you can cancel the local thinking download or try it again from the download progress at the bottom of the window. if speech recognition's download fails, you can try it again there too.
 
 ### Changed
-- the setup steps now share the journal app's look, with progress dots and a step count, a back button and a larger microphone level.
+- the setup steps have a new look, with progress dots and a step count, a back button and a larger microphone level.
 
 ### Fixed
 
-- starting a new journal while this app is already connected now explains how to continue without changing that connection.
+- if you start a new journal while the solstone app is already connected to one, it now says so and keeps that connection.
 - after you pair with a pairing link, the last setup step's heading says you're connected to your journal, instead of still asking you to connect.
 - after your journal shows its mark on the journal app's icon, the solstone app no longer tries to install the journal app again when you create or reconnect a journal on this mac.
 - when your mac account can't add apps to Applications, setup and settings now tell you how to install the journal app yourself, with a link to download it. settings no longer sends you to an administrator account.
