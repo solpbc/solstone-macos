@@ -201,7 +201,8 @@ struct SetupView: View {
                     }
                 }
             } footer: {
-                SetupFooter()
+                // Unnumbered: no progress and no primary, so no footer bar at all.
+                EmptyView()
             }
 
         case .ownerComparison:
@@ -219,7 +220,8 @@ struct SetupView: View {
                     }
                 }
             } footer: {
-                SetupFooter()
+                // Unnumbered: no progress and no primary, so no footer bar at all.
+                EmptyView()
             }
 
         case .peerSupporting:
@@ -254,7 +256,8 @@ struct SetupView: View {
                     }
                 }
             } footer: {
-                SetupFooter()
+                // Unnumbered: no progress and no primary, so no footer bar at all.
+                EmptyView()
             }
 
         case .mark:
@@ -297,7 +300,8 @@ struct SetupView: View {
                     }
                 }
             } footer: {
-                SetupFooter()
+                // Unnumbered: no progress and no primary, so no footer bar at all.
+                EmptyView()
             }
 
         case .failure:
@@ -326,7 +330,8 @@ struct SetupView: View {
                     }
                 }
             } footer: {
-                SetupFooter()
+                // Unnumbered: no progress and no primary, so no footer bar at all.
+                EmptyView()
             }
 
         case .activity:
@@ -352,7 +357,8 @@ struct SetupView: View {
                     }
                 }
             } footer: {
-                SetupFooter()
+                // Unnumbered: no progress and no primary, so no footer bar at all.
+                EmptyView()
             }
         }
     }

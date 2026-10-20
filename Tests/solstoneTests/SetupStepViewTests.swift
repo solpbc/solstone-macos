@@ -565,4 +565,41 @@ struct SetupStepViewTests {
         #expect(SetupReturnKey.shortcut(pairingLinkWaiting: false) == .defaultAction)
         #expect(SetupReturnKey.shortcut(pairingLinkWaiting: true) == nil)
     }
+
+    // 10. The journal step is unnumbered, so it has no footer bar (the walk's D9): the band
+    // where a footer would sit is the sheet's own fill.
+    @Test func journalStepHasNoFooterBar() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        try store.save(SetupContinuation(phase: .journal))
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
+        model.journalPollingText = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
+        let app = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
+            setupModel: model
+        )
+        let size = CGSize(width: 880, height: 580)
+        let view = SetupView(
+            model: model,
+            appState: app,
+            journalMarkDriver: JournalMarkConfirmationDriver(),
+            sun: SunArcBackgroundView(fixedDate: Date(timeIntervalSince1970: 1_790_190_000), timeZone: TimeZone(identifier: "America/Denver")!)
+        )
+        .frame(width: size.width, height: size.height)
+        .environment(\.colorScheme, .light)
+        let host = NSHostingView(rootView: view)
+        host.appearance = NSAppearance(named: .aqua)
+        host.frame = NSRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        let rep = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: rep)
+        let scale = CGFloat(rep.pixelsHigh) / size.height
+        // 30 pt above the sheet's 18 pt bottom inset: inside the footer if there were one.
+        let y = rep.pixelsHigh - Int((18 + 30) * scale)
+        let color = try #require(rep.colorAt(x: rep.pixelsWide / 2, y: y)?.usingColorSpace(.sRGB))
+        let green = Int((color.greenComponent * 255).rounded())
+        // Sheet #FEFCF8 (green 252); the footer bar is #FCF3E4 (green 243).
+        #expect(green >= 249, "footer-coloured pixel under the journal step: green \(green)")
+    }
 }
