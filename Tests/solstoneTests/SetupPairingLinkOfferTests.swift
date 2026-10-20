@@ -99,7 +99,8 @@ struct SetupPairingLinkOfferTests {
             hasStatus: false,
             linkWaiting: true
         )
-        #expect(omitted == .create)
+        #expect(omitted == .omitted)
+        #expect(omitted != .create)
 
         let ownerComp = SetupJournalStep.content(
             isOwnerComparison: true,
@@ -149,7 +150,7 @@ struct SetupPairingLinkOfferTests {
             state: .connected(JournalMark.uiTestSample),
             tunnelConnected: false
         )
-        #expect(peerConnected.headline == UICopy.connectedTo(mark: JournalMark.uiTestSample.words.joined(separator: " · ")))
+        #expect(peerConnected.headline == UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
         #expect(peerConnected.showsConnectedCaption == false)
 
         let peerConnecting = SetupConnectionStep.content(
@@ -197,7 +198,7 @@ struct SetupPairingLinkOfferTests {
             state: .connected(JournalMark.uiTestSample),
             tunnelConnected: true
         )
-        #expect(peerConnectedIgnoringTunnel.headline == UICopy.connectedTo(mark: JournalMark.uiTestSample.words.joined(separator: " · ")))
+        #expect(peerConnectedIgnoringTunnel.headline == UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL)
         #expect(peerConnectedIgnoringTunnel.showsConnectedCaption == false)
 
         let peerIdleIgnoringTunnel = SetupConnectionStep.content(
@@ -207,7 +208,5 @@ struct SetupPairingLinkOfferTests {
         )
         #expect(peerIdleIgnoringTunnel.headline == UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL)
         #expect(peerIdleIgnoringTunnel.showsConnectedCaption == false)
-
-        #expect(UICopy.connectedTo(mark: "afoot · unfixed") == "connected to afoot · unfixed")
     }
 }

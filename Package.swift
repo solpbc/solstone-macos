@@ -9,13 +9,12 @@ let package = Package(
     platforms: [
         .macOS(.v15)
     ],
-    // The shared Mac libraries (including SetupChrome) the Journal app consumes at an exact revision of this
+    // The shared Mac libraries the Journal app consumes at an exact revision of this
     // repository (solstone-journal, platforms/macos). The capture app and its helpers
     // stay local to this package.
     products: [
         .library(name: "SolstoneCore", targets: ["SolstoneCore"]),
         .library(name: "JournalMarkKit", targets: ["JournalMarkKit"]),
-        .library(name: "SetupChrome", targets: ["SetupChrome"]),
         .library(name: "UpdateKit", targets: ["UpdateKit"]),
         .library(name: "Sparkle", targets: ["Sparkle"]),
         .library(name: "WatchdogKit", targets: ["WatchdogKit"]),
@@ -52,22 +51,6 @@ let package = Package(
             ]
         ),
         .target(
-            name: "SetupChrome",
-            dependencies: [
-                .target(name: "JournalMarkKit")
-            ],
-            path: "Sources/SetupChrome",
-            resources: [
-                .copy("Resources")
-            ],
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
-            ],
-            linkerSettings: [
-                .linkedFramework("AppKit")
-            ]
-        ),
-        .target(
             name: "UpdateKit",
             dependencies: [
                 .target(name: "SolstoneCore"),
@@ -83,7 +66,6 @@ let package = Package(
             dependencies: [
                 .target(name: "SolstoneCore"),
                 .target(name: "JournalMarkKit"),
-                .target(name: "SetupChrome"),
                 .target(name: "UpdateKit"),
                 .product(name: "SPLTunnel", package: "spl-swift"),
                 .target(name: "ObjCHelpers"),
@@ -195,7 +177,6 @@ let package = Package(
                 .target(name: "solstone"),
                 .target(name: "SolstoneCore"),
                 .target(name: "JournalMarkKit"),
-                .target(name: "SetupChrome"),
                 .target(name: "UpdateKit"),
                 .product(name: "SPLTunnel", package: "spl-swift"),
                 .target(name: "MacTestSupport"),
@@ -208,16 +189,6 @@ let package = Package(
             swiftSettings: [
                 .swiftLanguageMode(.v6),
                 .define("SOLSTONE_BROWSER_INTAKE_PREVIEW", .when(configuration: .debug))
-            ]
-        ),
-        .testTarget(
-            name: "SetupChromeTests",
-            dependencies: [
-                .target(name: "SetupChrome")
-            ],
-            path: "Tests/SetupChromeTests",
-            swiftSettings: [
-                .swiftLanguageMode(.v6)
             ]
         ),
     ]

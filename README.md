@@ -46,7 +46,7 @@ mac presents permission prompts for what you choose to share. The relevant setti
 
 ## Architecture
 
-This is one Swift Package Manager repository. `solstone` is the app executable and `solstone-watchdog` is its helper. The package also exports the mac libraries it shares with the journal app: `SolstoneCore`, `JournalMarkKit`, `SetupChrome`, `UpdateKit`, `WatchdogKit` and the test-only `MacTestSupport`. The journal app itself is built from [solstone-journal](https://github.com/solpbc/solstone-journal/tree/main/platforms/macos), which uses those libraries at an exact commit of this repository. A change to a shared library reaches the journal app when that pin moves. See [Package.swift](Package.swift) for the target graph.
+This is one Swift Package Manager repository. `solstone` is the app executable and `solstone-watchdog` is its helper. The package also exports the mac libraries it shares with the journal app: `SolstoneCore`, `JournalMarkKit`, `UpdateKit`, `WatchdogKit` and the test-only `MacTestSupport`. The journal app itself is built from [solstone-journal](https://github.com/solpbc/solstone-journal/tree/main/platforms/macos), which uses those libraries at an exact commit of this repository. A change to a shared library reaches the journal app when that pin moves. See [Package.swift](Package.swift) for the target graph.
 
 ## Local files
 

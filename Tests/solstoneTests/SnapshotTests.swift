@@ -9,7 +9,6 @@ import Testing
 import UserNotifications
 import SolstoneCore
 import JournalMarkKit
-import SetupChrome
 import UpdateKit
 @testable import solstone
 
@@ -1061,345 +1060,192 @@ struct SnapshotTests {
         )
     }
 
-    // MARK: - Onboarding Snapshots
-
-    private let onboardingSize = CGSize(width: 880, height: 580)
-    private let onboardingSun = SunArcBackgroundView(
-        fixedDate: Date(timeIntervalSince1970: 1_790_190_000),
-        timeZone: TimeZone(identifier: "America/Denver")!
-    )
-
-    private func renderOnboarding(model: SetupModel, state: AppState, to baseFilename: String) throws {
-        JournalMarkFont.register()
-        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-            try render(
-                SetupView(model: model, appState: state, journalMarkDriver: JournalMarkConfirmationDriver(), sun: onboardingSun)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light),
-                size: onboardingSize,
-                to: "onboarding-\(baseFilename)-\(name).png",
-                appearance: NSAppearance(named: appearance)
+    @Test func onboardingInitialSteps() throws {
+        for phase in SetupPhase.allCases {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let store = SetupContinuationStore(directory: dir)
+            try store.save(SetupContinuation(phase: phase))
+            let model = SetupModel(enabled: true, mailboxDirectory: dir)
+            let state = AppState.forSnapshot(
+                config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
+                setupModel: model
             )
+            for (name, appearance, width) in [
+                ("light", NSAppearance.Name.aqua, 560.0), ("dark", .darkAqua, 560.0),
+                ("narrow-light", .aqua, 420.0), ("narrow-dark", .darkAqua, 420.0)
+            ] {
+                try render(
+                    SetupView(model: model, appState: state, journalMarkDriver: JournalMarkConfirmationDriver())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light),
+                    size: CGSize(width: width, height: 620),
+                    to: "onboarding-\(phase.rawValue)-off-\(name).png",
+                    appearance: NSAppearance(named: appearance)
+                )
+            }
         }
     }
 
-    @Test func onboardingJournalStates() throws {
-        // 1. journal-create
-        do {
+    @Test func onboardingJournalStates() async throws {
+        for mode in ["acquisition-error", "standard-account", "older-mark", "remote-waiting", "connection-mark", "invalid-link"] {
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
             defer { try? FileManager.default.removeItem(at: dir) }
+            let phase: SetupPhase = mode == "connection-mark" ? .connection : .journal
             let store = SetupContinuationStore(directory: dir)
-            try store.save(SetupContinuation(phase: .journal))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
+            try store.save(SetupContinuation(phase: phase, mode: mode == "remote-waiting" ? .ownerComparison : nil))
+            let model = mode == "standard-account"
+                ? SetupModel(
+                    enabled: true,
+                    mailboxDirectory: dir,
+                    freshFlow: FreshJournalFlow(
+                        dependencies: FreshJournalFlowDependencies.inert(),
+                        resolveTrustedJournalOverride: { throw JournalHandoffFailure.applicationsDirectoryUnwritable }
+                    )
+                )
+                : SetupModel(enabled: true, mailboxDirectory: dir)
             let state = AppState.forSnapshot(
                 config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
-                setupModel: model
-            )
-            try renderOnboarding(model: model, state: state, to: "journal-create")
-        }
-
-        // 2. journal-create-revealed
-        do {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            try store.save(SetupContinuation(phase: .journal))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
-                setupModel: model
-            )
-            state.pendingPairingLink = "solstone://pair#0R0J6HB7H6NWVVR1VTPVXVYAZTXBW0938NKRKAYDXW00"
-            try renderOnboarding(model: model, state: state, to: "journal-create-revealed")
-        }
-
-        // 3. journal-activity
-        do {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            try store.save(SetupContinuation(phase: .journal))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            model.journalPollingText = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
-                setupModel: model
-            )
-            try renderOnboarding(model: model, state: state, to: "journal-activity")
-        }
-
-        // 4. journal-open-app
-        do {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            let accepted = SetupAcceptedStep5Snapshot(
-                handoffID: UUID(),
-                journalRootPath: "/fixture/journal",
-                expectedInstanceID: "fixture-instance",
-                expectedCAFingerprint: String(repeating: "a", count: 64)
-            )
-            try store.save(SetupContinuation(phase: .journal, accepted: accepted, mode: .supporting))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            model.activate()
-            #expect(model.isPeerSupportingSetup)
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
-                setupModel: model
-            )
-            try renderOnboarding(model: model, state: state, to: "journal-open-app")
-        }
-
-        // 5. journal-mark-pair
-        do {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            try store.save(SetupContinuation(phase: .journal))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            model.olderDiscoveredMark = .uiTestSample
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
-                setupModel: model
-            )
-            try renderOnboarding(model: model, state: state, to: "journal-mark-pair")
-        }
-
-        // 6. journal-failure
-        do {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            try store.save(SetupContinuation(phase: .journal))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            model.journalPollingError = UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
-                setupModel: model
-            )
-            try renderOnboarding(model: model, state: state, to: "journal-failure")
-        }
-    }
-
-    @Test func onboardingMicrophoneStates() throws {
-        for mode in ["off", "on", "paused", "not-running", "repair"] {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            try store.save(SetupContinuation(phase: .microphone))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            let isEnabled = mode != "off"
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: isEnabled),
                 setupModel: model
             )
             switch mode {
-            case "repair":
-                state.capture.microphoneAuthorizationReader = { .denied }
-                state.capture.refreshMicrophoneAuthorization()
-            case "not-running":
-                state.capture.microphoneAuthorizationReader = { .authorized }
-                state.capture.refreshMicrophoneAuthorization()
-            case "on":
-                state.capture.microphoneAuthorizationReader = { .authorized }
-                state.capture.refreshMicrophoneAuthorization()
-                state.captureManager.seedRecordingForTesting(
-                    currentSegment: FakeCaptureSegment(outputDirectory: dir),
-                    sources: .microphone
-                )
-                state.capture.handleCaptureStateChange(.recording)
-                state.microphoneInputPeakReader = { 0.3 }
-            case "paused":
-                state.capture.microphoneAuthorizationReader = { .authorized }
-                state.capture.refreshMicrophoneAuthorization()
-                state.captureManager.seedRecordingForTesting(
-                    currentSegment: FakeCaptureSegment(outputDirectory: dir),
-                    sources: .microphone
-                )
-                state.capture.handleCaptureStateChange(.paused(reasons: [.user]))
-                state.pauseManager.pause(for: .indefinite)
-            default: // off
-                state.capture.microphoneAuthorizationReader = { .authorized }
-                state.capture.refreshMicrophoneAuthorization()
+            case "acquisition-error", "standard-account": await model.runJournalPhase()
+            case "older-mark": model.olderDiscoveredMark = .uiTestSample
+            case "connection-mark": state.setConfirmedMark(.uiTestSample)
+            case "invalid-link": state.pairingCoordinator.recordInvalidLink(reason: PairingCoordinator.invalidLinkReason(.missingFragment))
+            default: break
             }
-            try renderOnboarding(model: model, state: state, to: "microphone-\(mode)")
-        }
-    }
-
-    @Test func onboardingScreenStates() throws {
-        for mode in ["off", "on", "paused", "repair"] {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            try store.save(SetupContinuation(phase: .screen))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            let isEnabled = mode != "off"
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: isEnabled, isMicrophoneCaptureEnabled: true),
-                setupModel: model
-            )
-            switch mode {
-            case "repair":
-                state.capture.publishScreenRecordingPermission(.notGranted)
-                state.capture.screenRecordingNeedsRestart = true
-            case "on":
-                state.capture.publishScreenRecordingPermission(.granted)
-                state.captureManager.seedRecordingForTesting(
-                    currentSegment: FakeCaptureSegment(outputDirectory: dir),
-                    sources: .all
+            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                try render(
+                    SetupView(model: model, appState: state, journalMarkDriver: JournalMarkConfirmationDriver())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light),
+                    size: CGSize(width: 420, height: 620),
+                    to: "onboarding-\(mode)-\(name).png",
+                    appearance: NSAppearance(named: appearance)
                 )
-                state.capture.handleCaptureStateChange(.recording)
-                let context = try #require(CGContext(data: nil, width: 320, height: 180, bitsPerComponent: 8,
-                    bytesPerRow: 1280, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
-                context.setFillColor(NSColor.windowBackgroundColor.cgColor)
-                context.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
-                context.setFillColor(NSColor.systemOrange.cgColor)
-                context.fill(CGRect(x: 32, y: 32, width: 120, height: 80))
-                state.updateLatestFrame(try #require(context.makeImage()), epoch: state.previewEpoch)
-            case "paused":
-                state.capture.publishScreenRecordingPermission(.granted)
-                state.captureManager.seedRecordingForTesting(
-                    currentSegment: FakeCaptureSegment(outputDirectory: dir),
-                    sources: .all
-                )
-                state.capture.handleCaptureStateChange(.paused(reasons: [.user]))
-                state.pauseManager.pause(for: .indefinite)
-            default: // off
-                state.capture.publishScreenRecordingPermission(.granted)
             }
-            try renderOnboarding(model: model, state: state, to: "screen-\(mode)")
         }
     }
 
-    @Test func onboardingConnectionStates() throws {
-        // 1. connection-connecting
-        do {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            let accepted = SetupAcceptedStep5Snapshot(
-                handoffID: UUID(),
-                journalRootPath: "/fixture/journal",
-                expectedInstanceID: "fixture-instance",
-                expectedCAFingerprint: String(repeating: "a", count: 64)
-            )
-            try store.save(SetupContinuation(phase: .connection, accepted: accepted, mode: .supporting))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            model.activate()
-            #expect(model.isPeerSupportingSetup)
-            model.publishConnectionStepState(.connecting)
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: true),
-                setupModel: model
-            )
-            try renderOnboarding(model: model, state: state, to: "connection-connecting")
-        }
-
-        // 2. connection-connected-mark
-        do {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            let accepted = SetupAcceptedStep5Snapshot(
-                handoffID: UUID(),
-                journalRootPath: "/fixture/journal",
-                expectedInstanceID: "fixture-instance",
-                expectedCAFingerprint: String(repeating: "a", count: 64)
-            )
-            try store.save(SetupContinuation(phase: .connection, accepted: accepted, mode: .supporting))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            model.activate()
-            #expect(model.isPeerSupportingSetup)
-            model.publishConnectionStepState(.connected(.uiTestSample))
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: true),
-                setupModel: model
-            )
-            try renderOnboarding(model: model, state: state, to: "connection-connected-mark")
-        }
-
-        // 3. connection-connected-nomark
-        do {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            try store.save(SetupContinuation(phase: .connection))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: true),
-                setupModel: model
-            )
-            state.tunnelLifecycleOwner.state = .connected(localPort: 54321, via: .lan)
-            try renderOnboarding(model: model, state: state, to: "connection-connected-nomark")
-        }
-
-        // 4. connection-failed
-        do {
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
-            defer { try? FileManager.default.removeItem(at: dir) }
-            let store = SetupContinuationStore(directory: dir)
-            let accepted = SetupAcceptedStep5Snapshot(
-                handoffID: UUID(),
-                journalRootPath: "/fixture/journal",
-                expectedInstanceID: "fixture-instance",
-                expectedCAFingerprint: String(repeating: "a", count: 64)
-            )
-            try store.save(SetupContinuation(phase: .connection, accepted: accepted, mode: .supporting))
-            let model = SetupModel(enabled: true, mailboxDirectory: dir)
-            model.activate()
-            #expect(model.isPeerSupportingSetup)
-            model.publishConnectionStepState(.failed(UICopy.SETUP_COULDNT_VERIFY_MARK))
-            let state = AppState.forSnapshot(
-                config: AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: true),
-                setupModel: model
-            )
-            try renderOnboarding(model: model, state: state, to: "connection-failed")
+    @Test func onboardingSourceStates() async throws {
+        for phase in [SetupPhase.microphone, .screen] {
+            let modes = phase == .screen ? ["live", "paused", "denied", "restart"] : ["live", "paused", "denied"]
+            for mode in modes {
+                let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
+                defer { try? FileManager.default.removeItem(at: dir) }
+                let store = SetupContinuationStore(directory: dir)
+                try store.save(SetupContinuation(phase: phase))
+                let model = SetupModel(enabled: true, mailboxDirectory: dir)
+                let state = AppState.forSnapshot(
+                    config: AppConfig(isScreenCaptureEnabled: phase == .screen, isMicrophoneCaptureEnabled: true),
+                    setupModel: model
+                )
+                if mode == "restart" {
+                    state.capture.publishScreenRecordingPermission(.notGranted)
+                    state.capture.screenRecordingNeedsRestart = true
+                } else if mode == "denied" {
+                    state.capture.microphoneAuthorizationReader = { .denied }
+                    state.capture.refreshMicrophoneAuthorization()
+                    state.capture.publishScreenRecordingPermission(.notGranted)
+                } else {
+                    state.capture.microphoneAuthorizationReader = { .authorized }
+                    state.capture.refreshMicrophoneAuthorization()
+                    state.capture.publishScreenRecordingPermission(.granted)
+                    state.captureManager.seedRecordingForTesting(
+                        currentSegment: FakeCaptureSegment(outputDirectory: dir), sources: phase == .screen ? .all : .microphone
+                    )
+                    state.capture.handleCaptureStateChange(.recording)
+                    state.microphoneInputPeakReader = { 0.3 }
+                    if phase == .screen {
+                        let context = try #require(CGContext(data: nil, width: 320, height: 180, bitsPerComponent: 8,
+                            bytesPerRow: 1280, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+                        context.setFillColor(NSColor.windowBackgroundColor.cgColor)
+                        context.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+                        context.setFillColor(NSColor.systemOrange.cgColor)
+                        context.fill(CGRect(x: 32, y: 32, width: 120, height: 80))
+                        state.updateLatestFrame(try #require(context.makeImage()), epoch: state.previewEpoch)
+                    }
+                    if mode == "paused" {
+                        state.capture.handleCaptureStateChange(.paused(reasons: [.user]))
+                        state.pauseManager.pause(for: .indefinite)
+                        #expect(state.permissionSourceLiveState(for: phase == .screen ? .screen : .microphone) == .paused(.owner))
+                        #expect(state.latestFrame == nil)
+                    }
+                }
+                for (name, appearance, width) in [
+                    ("light", NSAppearance.Name.aqua, 560.0), ("dark", .darkAqua, 560.0),
+                    ("narrow-light", .aqua, 420.0), ("narrow-dark", .darkAqua, 420.0)
+                ] {
+                    try render(
+                        SetupView(model: model, appState: state, journalMarkDriver: JournalMarkConfirmationDriver())
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                            .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light),
+                        size: CGSize(width: width, height: 620),
+                        to: "onboarding-\(phase.rawValue)-\(mode)-\(name).png",
+                        appearance: NSAppearance(named: appearance)
+                    )
+                }
+            }
         }
     }
 
-    @Test func onboardingFooterDownloadStates() async throws {
+    @Test func onboardingDownloadFooterStates() async throws {
         func job(_ state: SetupDownloadState, attempt: String? = nil, done: UInt64 = 0, total: UInt64? = nil,
                  code: String? = nil) -> SetupDownloadJob {
             SetupDownloadJob(state: state, attemptID: attempt, bytesDone: done, bytesTotal: total,
                              error: code.map { .init(code: $0, detail: "fixture detail") })
         }
         let speechDone = job(.complete, done: 483_300_000, total: 483_300_000)
-        let thinkingRunning = SetupDownloads(
-            speech: speechDone,
-            thinking: job(.downloading, attempt: "attempt-1", done: 1_200_000_000, total: 3_430_000_000)
-        )
-        let thinkingFailed = SetupDownloads(
-            speech: speechDone,
-            thinking: job(.error, attempt: "attempt-1", code: "download_failed")
-        )
-
-        for (mode, downloads) in [("running", thinkingRunning), ("failed", thinkingFailed)] {
+        let thinkingActive = SetupDownloads(speech: speechDone,
+            thinking: job(.downloading, attempt: "attempt-1", done: 1_200_000_000, total: 3_430_000_000))
+        // (mode, read result, direct listener matches); a nil result is a failed read.
+        let cases: [(String, SetupDownloads?, Bool)] = [
+            ("thinking-downloading", thinkingActive, true),
+            ("thinking-downloading-unmatched", thinkingActive, false),
+            ("thinking-cancelled", SetupDownloads(speech: speechDone, thinking: job(.cancelled, attempt: "attempt-1")), true),
+            ("thinking-error", SetupDownloads(speech: speechDone, thinking: job(.error, attempt: "attempt-1", code: "download_failed")), true),
+            ("speech-error", SetupDownloads(speech: job(.error, attempt: "speech-1", code: "download_failed"), thinking: job(.idle)), true),
+            ("speech-package-unavailable", SetupDownloads(speech: job(.error, code: "speech_package_unavailable"), thinking: job(.idle)), true),
+            ("non-local-choice", SetupDownloads(speech: job(.downloading, attempt: "speech-1", done: 45_300_000, total: 483_300_000),
+                thinking: job(.idle)), true),
+            ("read-failed", nil, true)
+        ]
+        for (mode, downloads, matches) in cases {
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("setup-render-\(UUID().uuidString)")
             defer { try? FileManager.default.removeItem(at: dir) }
-            let accepted = SetupAcceptedStep5Snapshot(
-                handoffID: UUID(),
-                journalRootPath: "/fixture/journal",
-                expectedInstanceID: "fixture-instance",
-                expectedCAFingerprint: String(repeating: "a", count: 64)
-            )
+            let accepted = SetupAcceptedStep5Snapshot(handoffID: UUID(), journalRootPath: "/fixture/journal",
+                expectedInstanceID: "fixture-instance", expectedCAFingerprint: String(repeating: "a", count: 64))
             try SetupContinuationStore(directory: dir).save(
-                SetupContinuation(phase: .microphone, accepted: accepted, mode: .supporting)
-            )
-            let progress = SetupDownloadProgress(read: { _ in downloads }, send: { _ in })
+                SetupContinuation(phase: .microphone, accepted: accepted, mode: .supporting))
+            let progress = SetupDownloadProgress(read: { _ in
+                guard let downloads else { throw SetupDownloadReadError.unavailable }
+                return downloads
+            }, send: { _ in })
             let model = SetupModel(enabled: true, mailboxDirectory: dir, downloadProgress: progress)
             let state = AppState.forSnapshot(
                 config: AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false),
                 setupModel: model
             )
-            let admission = SetupDownloadAdmission(
-                handoffID: accepted.handoffID,
+            let admission = SetupDownloadAdmission(handoffID: accepted.handoffID,
                 credential: .init(fingerprint: "fixture-fingerprint", revision: "revision-1"),
-                routeGeneration: 1,
-                baseURL: "http://127.0.0.1:18321"
-            )
-            await progress.refresh(admission: { admission }, verifyDirect: { _ in true })
+                routeGeneration: 1, baseURL: "http://127.0.0.1:18321")
+            await progress.refresh(admission: { admission }, verifyDirect: { _ in matches })
             #expect(model.isPeerSupportingSetup)
-            try renderOnboarding(model: model, state: state, to: "footer-download-\(mode)")
+            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                try render(
+                    SetupView(model: model, appState: state, journalMarkDriver: JournalMarkConfirmationDriver())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .environment(\.colorScheme, appearance == .darkAqua ? .dark : .light),
+                    size: CGSize(width: 420, height: 620),
+                    to: "onboarding-download-footer-\(mode)-\(name).png",
+                    appearance: NSAppearance(named: appearance)
+                )
+            }
         }
     }
 
