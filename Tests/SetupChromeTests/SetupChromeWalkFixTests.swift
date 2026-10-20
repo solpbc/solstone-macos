@@ -107,6 +107,25 @@ struct SetupChromeWalkFixTests {
         #expect(abs(beside - alone) <= 1, "sub-label wrapped the header: \(alone) alone, \(beside) with the sub-label")
     }
 
+    // D7: the download row keeps its name and bytes on one line.
+    @Test func aDownloadRowStaysOnOneLine() {
+        func height(detail: String) -> CGFloat {
+            NSHostingView(rootView: SetupDownloadRow(
+                name: "speech recognition",
+                detail: detail,
+                fraction: 0.0,
+                indeterminate: false,
+                actionTitle: nil,
+                actionEnabled: true,
+                action: {}
+            )).fittingSize.height
+        }
+        let short = height(detail: "1 MB")
+        for detail in ["243 bytes of 483.3 MB", "483.2 MB of 483.3 MB"] {
+            #expect(abs(height(detail: detail) - short) <= 1, "\(detail) wrapped the row")
+        }
+    }
+
     // The founder's 2026-10-20 ruling: the band label sits on a chip of the sheet's fill with the
     // sheet's hairline, in place of the bare rule beside it.
     @Test func theBandLabelSitsOnASheetChip() throws {
