@@ -345,6 +345,18 @@ struct JournalHandoffTests {
         #expect(handoff.provenance == JournalHandoffProvenance.bundledMigration)
     }
 
+    @Test func migrationWriterReadsAMissingObserverNameOffTheMainThread() async throws {
+        let world = installedWorld(observerName: nil)
+        world.dependencies.readHostName = { Thread.isMainThread ? "read on main" : "read off main" }
+        world.initProbe.replies = [.result(.incomplete), .result(.complete)]
+
+        let result = await world.run()
+        let handoff = try readHandoff(at: world.dependencies.handoffFileURL)
+
+        #expect(result == .completed)
+        #expect(handoff.observerName == "read off main")
+    }
+
     @Test func migrationWriterOverwritesDiscoveryProvenanceHandoff() async throws {
         let world = installedWorld()
         world.initProbe.replies = [.result(.incomplete), .result(.complete)]
@@ -542,6 +554,22 @@ struct JournalHandoffTests {
         #expect(handoff.provenance == JournalHandoffProvenance.observerDiscovery)
         #expect(world.appcast.requestedURLs == [JournalHandoffConstants.appcastURL])
         #expect(world.downloader.calls.count == 1)
+        #expect(world.runningJournal.activatingLaunches == 1)
+    }
+
+    @Test func onDiskAdoptionReadsAMissingObserverNameOffTheMainThread() async throws {
+        let world = signedWorld()
+        let flow = onDiskAdoptionFlow(world: world) {
+            Thread.isMainThread ? "read on main" : "read off main"
+        }
+
+        flow.start(discoveredPath: world.journalRoot.path, observerName: " ")
+        try await waitUntil("on-disk adoption waiting after acquire") {
+            flow.state == .waitingForJournal
+        }
+
+        let handoff = try readHandoff(at: world.dependencies.handoffFileURL)
+        #expect(handoff.observerName == "read off main")
         #expect(world.runningJournal.activatingLaunches == 1)
     }
 
@@ -749,6 +777,31 @@ struct JournalHandoffTests {
         await Task.yield()
 
         #expect(calls == 2)
+    }
+
+    @Test func freshFlowWaitingProbeKeepsPollingThroughAJournalInItsFirstRun() async throws {
+        let world = installedWorld()
+        var calls = 0
+        let flow = freshFlow(
+            world: world,
+            fetchIdentity: { _ in
+                calls += 1
+                return calls < 3 ? .failed(.httpStatus(302)) : .mark(.uiTestSample, instanceID: "inst")
+            },
+            sleep: { _ in }
+        )
+
+        flow.start()
+        try await waitUntil("fresh flow waiting before probe") {
+            flow.state == .waitingForJournal
+        }
+        flow.armWaitingProbe()
+        try await waitUntil("fresh flow discovered journal mark") {
+            flow.discoveredJournalMark == .uiTestSample
+        }
+        await Task.yield()
+
+        #expect(calls == 3)
     }
 
     @Test func freshFlowCancelWaitingProbeStopsProbing() async throws {
@@ -1082,9 +1135,15 @@ struct JournalHandoffTests {
 
     private func installedWorld(
         serviceMode: ServiceMode = .bundled,
-        journalPath: String? = "default"
+        journalPath: String? = "default",
+        observerName: String? = "observer-name"
     ) -> TestWorld {
-        let world = TestWorld(appcastData: appcast([]), serviceMode: serviceMode, journalPath: journalPath)
+        let world = TestWorld(
+            appcastData: appcast([]),
+            serviceMode: serviceMode,
+            journalPath: journalPath,
+            observerName: observerName
+        )
         world.runningJournal.installed = world.installedJournalURL
         return world
     }
@@ -1107,7 +1166,10 @@ struct JournalHandoffTests {
         ))
     }
 
-    private func onDiskAdoptionFlow(world: TestWorld) -> OnDiskJournalAdoptionFlow {
+    private func onDiskAdoptionFlow(
+        world: TestWorld,
+        readHostName: @escaping @Sendable () -> String = { "host-name" }
+    ) -> OnDiskJournalAdoptionFlow {
         OnDiskJournalAdoptionFlow(dependencies: OnDiskJournalAdoptionFlowDependencies(
             acquirer: world.dependencies.makeAcquirer(),
             runningJournal: world.runningJournal,
@@ -1115,7 +1177,8 @@ struct JournalHandoffTests {
             handoffFileURL: world.dependencies.handoffFileURL,
             fileManager: .default,
             now: { Date(timeIntervalSince1970: 1_234) },
-            discoveryCapableBuild: JournalHandoffConstants.discoveryCapableJournalBuild
+            discoveryCapableBuild: JournalHandoffConstants.discoveryCapableJournalBuild,
+            readHostName: readHostName
         ))
     }
 
@@ -1175,7 +1238,12 @@ private final class TestWorld {
         fetchRetryInterval: .milliseconds(1)
     )
 
-    init(appcastData: Data, serviceMode: ServiceMode = .bundled, journalPath: String? = "default") {
+    init(
+        appcastData: Data,
+        serviceMode: ServiceMode = .bundled,
+        journalPath: String? = "default",
+        observerName: String? = "observer-name"
+    ) {
         tempRoot = try! makeTempDirectory("journal-handoff")
         journalRoot = tempRoot.appendingPathComponent("journal-root", isDirectory: true)
         try! FileManager.default.createDirectory(at: journalRoot, withIntermediateDirectories: true)
@@ -1200,7 +1268,7 @@ private final class TestWorld {
             serverKey: "observer-key",
             serviceMode: serviceMode,
             journalPath: configuredJournalPath,
-            observerName: "observer-name"
+            observerName: observerName
         ))
 
         dependencies = JournalHandoffDependencies(

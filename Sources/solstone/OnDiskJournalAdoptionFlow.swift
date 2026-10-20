@@ -29,6 +29,9 @@ struct OnDiskJournalAdoptionFlowDependencies {
     var fileManager: FileManager
     var now: @Sendable () -> Date
     var discoveryCapableBuild: Int
+    /// The fallback observer name when none is passed. Read off the main thread:
+    /// see `SPLPairingDefaults.deviceLabelOffMainThread`.
+    var readHostName: @Sendable () -> String = { ProcessInfo.processInfo.hostName }
 
     @MainActor
     static func live(defaults: UserDefaults = .standard) -> OnDiskJournalAdoptionFlowDependencies {
@@ -112,7 +115,7 @@ final class OnDiskJournalAdoptionFlow {
             }
 
             state = .launching
-            try writeDiscoveryHandoff(discoveredPath: discoveredPath, observerName: observerName)
+            try await writeDiscoveryHandoff(discoveredPath: discoveredPath, observerName: observerName)
             try dependencies.runningJournal.launchJournalActivating(at: trustedURL)
             state = .waitingForJournal
         } catch is CancellationError {
@@ -187,11 +190,17 @@ final class OnDiskJournalAdoptionFlow {
         return nil
     }
 
-    private func writeDiscoveryHandoff(discoveredPath: String, observerName: String?) throws {
+    private func writeDiscoveryHandoff(discoveredPath: String, observerName: String?) async throws {
         let trimmedObserverName = observerName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedObserverName: String
+        if let trimmedObserverName, !trimmedObserverName.isEmpty {
+            resolvedObserverName = trimmedObserverName
+        } else {
+            resolvedObserverName = await SPLPairingDefaults.deviceLabelOffMainThread(dependencies.readHostName)
+        }
         let handoff = JournalHandoff(
             journalRootPath: discoveredPath,
-            observerName: trimmedObserverName?.isEmpty == false ? trimmedObserverName! : ProcessInfo.processInfo.hostName,
+            observerName: resolvedObserverName,
             provenance: JournalHandoffProvenance.observerDiscovery,
             timestamp: dependencies.now()
         )

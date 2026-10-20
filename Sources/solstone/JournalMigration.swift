@@ -347,6 +347,9 @@ struct JournalHandoffDependencies {
     var runningTerminationPollInterval: Duration
     var fileManager: FileManager
     var now: @Sendable () -> Date
+    /// The fallback observer name when the config has none. Read off the main thread:
+    /// see `SPLPairingDefaults.deviceLabelOffMainThread`.
+    var readHostName: @Sendable () -> String = { ProcessInfo.processInfo.hostName }
 
     @MainActor
     static func live(defaults: UserDefaults = .standard) -> JournalHandoffDependencies {
@@ -638,9 +641,15 @@ final class JournalHandoffOrchestrator {
         }
 
         let observerName = appState.config.observerName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedObserverName: String
+        if let observerName, !observerName.isEmpty {
+            resolvedObserverName = observerName
+        } else {
+            resolvedObserverName = await SPLPairingDefaults.deviceLabelOffMainThread(dependencies.readHostName)
+        }
         let handoff = JournalHandoff(
             journalRootPath: journalPath,
-            observerName: observerName?.isEmpty == false ? observerName! : ProcessInfo.processInfo.hostName,
+            observerName: resolvedObserverName,
             provenance: JournalHandoffConstants.provenance,
             timestamp: dependencies.now()
         )
