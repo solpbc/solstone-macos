@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the setup window's sun runs all the way up behind the window buttons, with no plain bar across the top.
 - press Return to continue on the microphone and screen setup steps.
 - while the journal app is still setting up your journal, the solstone app's setup window now waits for it instead of saying it couldn't reach your journal.
+- during setup, the solstone app no longer stops responding while your mac asks whether it can find devices on your local network.
 
 ## [2.0.42] - 2026-10-19
 
