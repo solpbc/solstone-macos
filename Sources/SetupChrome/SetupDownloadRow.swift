@@ -34,29 +34,41 @@ public struct SetupDownloadRow: View {
         self.action = action
     }
 
+    /// The design's row width. A wider row squeezes the footer's primary onto two lines.
+    static let width: CGFloat = 220
+
+    private var showsBar: Bool { fraction != nil || indeterminate }
+
     public var body: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
+                HStack(spacing: 0) {
+                    // The name never wraps or truncates; the detail gives way first.
                     Text(name)
                         .font(.system(size: 12))
                         .foregroundStyle(SetupChromeColor.softInk(for: colorScheme))
+                        .lineLimit(1)
+                        .fixedSize()
 
                     if let detail {
-                        Spacer()
+                        Spacer(minLength: 8)
+                        // A running download's bytes stay on one line, shortened in the middle
+                        // when the name leaves too little room; a failure's own text may take a
+                        // second line, as before.
                         Text(detail)
-                            .lineLimit(2)
+                            .lineLimit(showsBar ? 1 : 2)
+                            .truncationMode(showsBar ? .middle : .tail)
                             .font(.system(size: 12))
                             .foregroundStyle(SetupChromeColor.faintInk(for: colorScheme))
                     }
                 }
 
-                if fraction != nil || indeterminate {
+                if showsBar {
                     barView
-                        .frame(width: 220, height: 4)
+                        .frame(width: Self.width, height: 4)
                 }
             }
-            .frame(width: 220)
+            .frame(width: Self.width)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(Text([name, detail].compactMap { $0 }.joined(separator: ", ")))
 

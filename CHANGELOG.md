@@ -11,7 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apple Passwords, Bitwarden, Dashlane, LastPass, KeePassXC, Keeper and Proton Pass now join 1Password among the apps whose windows are kept out of your journal by default. if you set up before this version, they're added to your excluded apps once, and you can remove any of them in settings. a password manager you use inside your browser is part of the browser, so it isn't kept out.
 
 ### Changed
+
+- in setup, the app's name at the top of the window sits on its own small label, so it stays easy to read at any time of day.
 - the screen step in setup now says where what you share stays, and which apps are left out.
+
+### Fixed
+
+- the setup window's sun runs all the way up behind the window buttons, with no plain bar across the top.
+- press Return to continue on the microphone and screen setup steps.
 
 ## [2.0.42] - 2026-10-19
 
