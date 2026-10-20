@@ -399,6 +399,7 @@ struct SetupView: View {
                     }
                     .buttonStyle(SetupPrimaryButtonStyle())
                     .accessibilityIdentifier(AXID.Settings.Setup.Microphone.continue)
+                    .keyboardShortcut(SetupReturnKey.shortcut(pairingLinkWaiting: hasPendingPairing))
                 }
             }
         }
@@ -446,6 +447,7 @@ struct SetupView: View {
                     }
                     .buttonStyle(SetupPrimaryButtonStyle())
                     .accessibilityIdentifier(AXID.Settings.Setup.Screen.continue)
+                    .keyboardShortcut(SetupReturnKey.shortcut(pairingLinkWaiting: hasPendingPairing))
                 }
             }
         }
@@ -634,6 +636,14 @@ struct SetupView: View {
         model.setJournalPairingLinkHeld(true)
         guard let pending = appState.takePendingPairingLink(forSetup: true) else { return }
         pairingLinkInput = pending
+    }
+}
+
+/// Return activates a step's one footer primary, as it does on the journal app's steps, except
+/// while a pairing link is typed or waiting: then Return belongs to the link, never to continue.
+enum SetupReturnKey {
+    static func shortcut(pairingLinkWaiting: Bool) -> KeyboardShortcut? {
+        pairingLinkWaiting ? nil : .defaultAction
     }
 }
 

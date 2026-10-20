@@ -491,4 +491,78 @@ struct SetupStepViewTests {
         #expect(!disScreenNodes.contains(where: { $0.identifier == AXID.Settings.Setup.Screen.continue }))
         disScreenHost.window.close()
     }
+
+    // 9. Return on steps 5 and 6 (the 2026-10-20 walk's D5). Return reaches the step's footer
+    // continue exactly as a click does, in the peer and the older setup; with a pairing link
+    // typed it does not.
+    private func returnKeyDown(in window: NSWindow) -> NSEvent? {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "\r",
+            charactersIgnoringModifiers: "\r",
+            isARepeat: false,
+            keyCode: 36
+        )
+    }
+
+    private func pressReturn(on phase: SetupPhase, model: SetupModel, app: AppState) throws -> Bool {
+        _ = model.setPhase(phase)
+        let host = hostInWindow(SetupView(model: model, appState: app, journalMarkDriver: JournalMarkConfirmationDriver()))
+        defer { host.window.close() }
+        let event = try #require(returnKeyDown(in: host.window))
+        let handled = host.window.performKeyEquivalent(with: event)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        return handled
+    }
+
+    @Test func returnContinuesFromMicrophoneAndScreenInThePeerSetup() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = SetupContinuationStore(directory: dir)
+        let accepted = SetupAcceptedStep5Snapshot(
+            handoffID: UUID(),
+            journalRootPath: "/fixture/journal",
+            expectedInstanceID: "fixture-instance",
+            expectedCAFingerprint: String(repeating: "a", count: 64)
+        )
+        try store.save(SetupContinuation(phase: .microphone, accepted: accepted, mode: .supporting))
+        let model = SetupModel(enabled: true, mailboxDirectory: dir)
+        let app = AppState.forSnapshot(
+            config: AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: true),
+            setupModel: model
+        )
+        #expect(model.isPeerSupportingSetup)
+
+        #expect(try pressReturn(on: .microphone, model: model, app: app), "Return did nothing on step 5")
+        #expect(model.phase == .screen)
+        #expect(try pressReturn(on: .screen, model: model, app: app), "Return did nothing on step 6")
+        #expect(model.phase == .connection)
+    }
+
+    @Test func returnContinuesInTheOlderSetupUntilALinkIsTyped() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let app = AppState.forSnapshot(config: AppConfig(isScreenCaptureEnabled: true, isMicrophoneCaptureEnabled: true))
+        let model = SetupModel(enabled: true, mailboxDirectory: dir, appState: app)
+        model.activate()
+        #expect(!model.isPeerSupportingSetup)
+
+        #expect(try pressReturn(on: .microphone, model: model, app: app))
+        #expect(model.phase == .screen)
+
+        // A link waiting in the pairing field keeps Return for the link.
+        app.pendingPairingLinkError = "x"
+        #expect(try !pressReturn(on: .screen, model: model, app: app))
+        #expect(model.phase == .screen)
+    }
+
+    @Test func returnKeyYieldsToAWaitingPairingLink() {
+        #expect(SetupReturnKey.shortcut(pairingLinkWaiting: false) == .defaultAction)
+        #expect(SetupReturnKey.shortcut(pairingLinkWaiting: true) == nil)
+    }
 }
