@@ -119,6 +119,8 @@ func discoverLocalJournal(
         return .found(mark)
     case .uncommitted:
         return .uncommitted
+    case .failed(let failure) where SetupModel.journalIsStillInItsFirstRun(failure):
+        return .uncommitted
     case .absent, .failed:
         return .fork
     }

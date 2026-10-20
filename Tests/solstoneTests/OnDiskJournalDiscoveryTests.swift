@@ -101,6 +101,21 @@ struct OnDiskJournalDiscoveryTests {
         #expect(model == .foundRunning(.uiTestSample))
         #expect(onDiskCalls == 0)
     }
+
+    @MainActor
+    @Test func aJournalInItsFirstRunReadsAsStillBeingSetUpNotNoJournal() async {
+        var onDiskCalls = 0
+        let model = await discoverLocalJournalPanelModel(
+            fetchIdentity: { _ in .failed(.httpStatus(302)) },
+            onDiskDiscovery: {
+                onDiskCalls += 1
+                return .none
+            }
+        )
+
+        #expect(model == .uncommitted)
+        #expect(onDiskCalls == 0)
+    }
 }
 
 private struct FakeConfigReader: SolstoneUserConfigReading {

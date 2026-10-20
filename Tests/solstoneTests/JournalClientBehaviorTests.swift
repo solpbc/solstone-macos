@@ -21,6 +21,14 @@ struct JournalClientBehaviorTests {
         #expect(failed == .fork)
     }
 
+    @Test func localDiscoveryReadsAJournalInItsFirstRunAsStillBeingSetUp() async {
+        let firstRun = await discoverLocalJournal { _ in .failed(.httpStatus(302)) }
+        let serverError = await discoverLocalJournal { _ in .failed(.httpStatus(500)) }
+
+        #expect(firstRun == .uncommitted)
+        #expect(serverError == .fork)
+    }
+
     @Test func localDiscoveryProbeRunsOnlyForUnconfiguredNonTunnelState() {
         #expect(shouldProbeLocalJournal(
             isUploadConfigured: false,
