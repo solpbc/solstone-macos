@@ -63,6 +63,50 @@ struct SetupChromeWalkFixTests {
         }
     }
 
+    // D3: a thinking card takes a click anywhere on it, not only on its radio and text.
+    @Test func anOptionRowTakesClicksOnItsEmptySpace() {
+        final class Counter { var n = 0 }
+        let counter = Counter()
+        let size = NSSize(width: 420, height: 120)
+        let row = SetupOptionRow(
+            isSelected: false,
+            label: "your own model",
+            subLabel: nil,
+            description: "short.",
+            action: { counter.n += 1 }
+        )
+        .frame(width: size.width)
+        .frame(maxHeight: .infinity, alignment: .top)
+        let hosted = host(row, size: size)
+        defer { hosted.window.close() }
+
+        let rowHeight = hosted.view.fittingSize.height
+        // Right edge padding, middle of the row, far from any text (window coordinates).
+        click(hosted.window, at: NSPoint(x: size.width - 12, y: size.height - rowHeight / 2))
+        #expect(counter.n == 1, "a click in the card's empty right side did nothing")
+        // Left padding under the radio.
+        click(hosted.window, at: NSPoint(x: 6, y: size.height - rowHeight + 6))
+        #expect(counter.n == 2, "a click in the card's bottom-left padding did nothing")
+    }
+
+    // D4 (shared half): a label and sub-label that fit side by side stay on one line, so the
+    // thinking card is not taller than it needs to be.
+    @Test func anOptionRowKeepsLabelAndSubLabelOnOneLineWhenTheyFit() {
+        let width: CGFloat = 359 // the thinking card's row width at the 880 pt window
+        func height(subLabel: String?) -> CGFloat {
+            NSHostingView(rootView: SetupOptionRow(
+                isSelected: false,
+                label: "your own model",
+                subLabel: subLabel,
+                description: "your journal sends model requests to the provider or endpoint you choose.",
+                action: {}
+            ).frame(width: width)).fittingSize.height
+        }
+        let alone = height(subLabel: nil)
+        let beside = height(subLabel: "your key, or your own endpoint")
+        #expect(abs(beside - alone) <= 1, "sub-label wrapped the header: \(alone) alone, \(beside) with the sub-label")
+    }
+
     // The founder's 2026-10-20 ruling: the band label sits on a chip of the sheet's fill with the
     // sheet's hairline, in place of the bare rule beside it.
     @Test func theBandLabelSitsOnASheetChip() throws {

@@ -45,9 +45,12 @@ public struct SetupOptionRow: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
+                        // The label is offered its full width first, so a label and sub-label
+                        // that fit side by side stay on one line instead of both wrapping.
                         Text(label)
                             .font(.system(size: 14.5, weight: .semibold))
                             .foregroundStyle(SetupChromeColor.ink(for: colorScheme))
+                            .layoutPriority(1)
                         if let subLabel {
                             Text(subLabel)
                                 .font(.system(size: 12.5))
@@ -59,7 +62,9 @@ public struct SetupOptionRow: View {
                         .font(.system(size: 13.5))
                         .foregroundStyle(SetupChromeColor.softInk(for: colorScheme))
                 }
-                Spacer()
+                // The text takes the row's whole width (a trailing spacer split it, wrapping
+                // lines that fit).
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.vertical, 12)
             .padding(.horizontal, 14)
@@ -74,6 +79,9 @@ public struct SetupOptionRow: View {
                         lineWidth: 1
                     )
             )
+            // The whole card is one target: without a shape, a plain button only takes clicks
+            // on what it draws (the radio and the text), not its padding or the spacer.
+            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
     }
