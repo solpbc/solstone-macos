@@ -788,6 +788,14 @@ final class SetupModel {
         await continueJournalPhase(journalURL: journalURL)
     }
 
+    /// Until its first run is finished, the journal on this Mac answers every gated route,
+    /// the identity route included, with a 302 to its own setup page. That journal is up and
+    /// still being set up, not unreachable, so the journal step keeps waiting instead of
+    /// showing an error behind the journal app's window.
+    nonisolated static func journalIsStillInItsFirstRun(_ failure: JournalIdentityFailure) -> Bool {
+        failure == .httpStatus(302)
+    }
+
     private func continueJournalPhase(journalURL: URL) async {
         guard let bundle = Bundle(url: journalURL) else {
             journalPollingText = nil
@@ -859,6 +867,9 @@ final class SetupModel {
                 case .absent:
                     journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
                     journalPollingError = nil
+                case .failed(let failure) where Self.journalIsStillInItsFirstRun(failure):
+                    journalPollingText = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
+                    journalPollingError = nil
                 case .failed:
                     journalPollingText = nil
                     journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
@@ -902,6 +913,9 @@ final class SetupModel {
                     journalPollingError = nil
                 case .absent:
                     journalPollingText = UICopy.SETUP_OPENING_YOUR_JOURNAL
+                    journalPollingError = nil
+                case .failed(let failure) where Self.journalIsStillInItsFirstRun(failure):
+                    journalPollingText = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
                     journalPollingError = nil
                 case .failed:
                     journalPollingText = nil

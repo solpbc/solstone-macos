@@ -522,6 +522,53 @@ struct SetupModelTests {
         model.stopJournalPolling()
     }
 
+    /// A journal mid-first-run answers the identity route with a 302 to its setup page (its
+    /// session gate). Walked on minnie, 2026-10-20: the journal step read "couldn't reach your
+    /// journal" for the whole of Journal.app's setup and was still showing it under macOS's
+    /// local-network prompt after the hand-back. Both journal kinds; a real failure still shows.
+    @Test(arguments: [["setup-sequence-v1"], nil] as [[String]?])
+    func aJournalStillInItsFirstRunReadsAsBeingSetUpNotUnreachable(capabilities: [String]?) async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let bundle = try createMockBundle(capabilities: capabilities)
+        let controller = TestRunningJournalController()
+        controller.installed = bundle
+        let freshFlow = FreshJournalFlow(
+            dependencies: FreshJournalFlowDependencies(
+                runningJournal: controller,
+                trustVerifier: TestTrustVerifier()
+            )
+        )
+        let resolution = OSAllocatedUnfairLock(initialState: JournalIdentityResolution.failed(.httpStatus(302)))
+        let polls = LockedCounter()
+        let model = SetupModel(
+            enabled: true,
+            mailboxDirectory: dir,
+            freshFlow: freshFlow,
+            resolveIdentity: { _, _ in
+                polls.increment()
+                return resolution.withLock { $0 }
+            },
+            sleepDuration: .milliseconds(10)
+        )
+
+        _ = model.setPhase(.journal)
+        try await waitUntil { polls.count >= 3 }
+        #expect(model.journalPollingText == UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP)
+        #expect(model.journalPollingError == nil)
+
+        resolution.withLock { $0 = .failed(.httpStatus(500)) }
+        try await waitUntil { model.journalPollingError == UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL }
+        #expect(model.journalPollingText == nil)
+
+        resolution.withLock { $0 = .failed(.httpStatus(302)) }
+        try await waitUntil { model.journalPollingError == nil }
+        #expect(model.journalPollingText == UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP)
+
+        model.stopJournalPolling()
+    }
+
     @Test func step1ReceiptDoesNotMoveThePhase() throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
