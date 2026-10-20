@@ -45,6 +45,7 @@ public struct SetupDownloadRow: View {
                     if let detail {
                         Spacer()
                         Text(detail)
+                            .lineLimit(2)
                             .font(.system(size: 12))
                             .foregroundStyle(SetupChromeColor.faintInk(for: colorScheme))
                     }
@@ -62,6 +63,8 @@ public struct SetupDownloadRow: View {
             if let actionTitle {
                 Button(actionTitle, action: action)
                     .buttonStyle(SetupTextButtonStyle())
+                    .lineLimit(1)
+                    .fixedSize()
                     .disabled(!actionEnabled)
                     .accessibilityLabel(Text("\(name) \(actionTitle)"))
                     .modifier(OptionalAccessibilityIdentifier(identifier: actionIdentifier))
