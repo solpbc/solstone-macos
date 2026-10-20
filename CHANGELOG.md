@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - when the journal app hands setup to the solstone app, you can cancel the local thinking download or try it again from the download progress at the bottom of the window, and try speech recognition again if its download fails.
 
 ### Changed
-- the setup steps now share the journal app's look, with clearer progress, a back button and a larger microphone level.
+- the setup steps now share the journal app's look, with progress dots and a step count, a back button and a larger microphone level.
 
 ### Fixed
 
