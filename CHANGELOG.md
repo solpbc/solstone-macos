@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- in setup, the app's name at the top of the window sits on its own small label, so it stays easy to read at any time of day.
+
+### Fixed
+
+- the setup window's sun runs all the way up behind the window buttons, with no plain bar across the top.
+- press Return to continue on the microphone and screen setup steps.
+
 ## [2.0.42] - 2026-10-19
 
 ### Added
