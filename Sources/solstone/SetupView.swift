@@ -28,7 +28,7 @@ struct SetupView: View {
     }
 
     var body: some View {
-        SetupWindow(appLabel: UICopy.SETUP_APP_LABEL, background: sun) {
+        SetupWindow(appLabel: UICopy.SETUP_APP_LABEL, windowTitle: UICopy.SETUP_WINDOW_TITLE, background: sun) {
             if let phase = model.phase {
                 AXStateCompanion(
                     id: AXID.Settings.Setup.phase,

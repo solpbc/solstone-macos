@@ -602,4 +602,14 @@ struct SetupStepViewTests {
         // Sheet #FEFCF8 (green 252); the footer bar is #FCF3E4 (green 243).
         #expect(green >= 249, "footer-coloured pixel under the journal step: green \(green)")
     }
+
+    // The setup window names itself while it shows (window title `set up solstone`).
+    @Test func setupViewNamesItsWindow() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/solstone/SetupView.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        #expect(source.contains("SetupWindow(appLabel: UICopy.SETUP_APP_LABEL, windowTitle: UICopy.SETUP_WINDOW_TITLE"))
+        #expect(UICopy.SETUP_WINDOW_TITLE == "set up solstone")
+    }
 }

@@ -159,5 +159,9 @@ struct SetupChromeWalkFixTests {
     @Test func theSetupWindowKeepsItsTitleBarTransparent() throws {
         let window = try Self.source("SetupWindow.swift")
         #expect(window.contains(".toolbarBackgroundVisibility(.hidden, for: .windowToolbar)"))
+        // With SwiftUI owning the bar, the setup window also hides the on-screen title and
+        // names the window itself; without these macOS 27 drew the scene's title on the sun.
+        #expect(window.contains(".toolbar(removing: .title)"))
+        #expect(window.contains("content.navigationTitle(title)"))
     }
 }

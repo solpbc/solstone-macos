@@ -36,15 +36,20 @@ private let lockupImage: NSImage? = {
 public struct SetupWindow<Content: View>: View {
     @Environment(\.colorScheme) private var colorScheme
     private let appLabel: String
+    private let windowTitle: String?
     private let background: SunArcBackgroundView
     private let content: Content
 
+    /// `windowTitle` is the window's title while setup shows (it names the window in the Window
+    /// menu and app switchers, never on screen).
     public init(
         appLabel: String,
+        windowTitle: String? = nil,
         background: SunArcBackgroundView = SunArcBackgroundView(),
         @ViewBuilder content: () -> Content
     ) {
         self.appLabel = appLabel
+        self.windowTitle = windowTitle
         self.background = background
         self.content = content()
     }
@@ -96,8 +101,25 @@ public struct SetupWindow<Content: View>: View {
         // bar's transparency (its bar appearance bridge writes it back to opaque on scene
         // updates: activation, the Dock menu, ordering), so setting it on the NSWindow alone
         // does not hold. Declaring the window toolbar's background hidden makes SwiftUI keep it
-        // transparent for as long as the setup window is on screen.
+        // transparent for as long as the setup window is on screen. Once SwiftUI owns the bar
+        // it also writes the title and its visibility (macOS 27 writes the scene's title back
+        // on screen), so the setup window declares those too: no title on screen, and its own
+        // title for the Window menu and app switchers.
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .toolbar(removing: .title)
+        .modifier(SetupWindowTitle(title: windowTitle))
+    }
+}
+
+private struct SetupWindowTitle: ViewModifier {
+    let title: String?
+
+    func body(content: Content) -> some View {
+        if let title {
+            content.navigationTitle(title)
+        } else {
+            content
+        }
     }
 }
 
