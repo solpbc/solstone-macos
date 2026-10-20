@@ -8,15 +8,11 @@ import SwiftUI
 @MainActor
 private final class SetupWindowMemory {
     let styleMask: NSWindow.StyleMask
-    let titlebarAppearsTransparent: Bool
-    let titleVisibility: NSWindow.TitleVisibility
     let contentMinSize: NSSize
     var appliedInitialSetupSize: Bool = false
 
     init(window: NSWindow) {
         self.styleMask = window.styleMask
-        self.titlebarAppearsTransparent = window.titlebarAppearsTransparent
-        self.titleVisibility = window.titleVisibility
         self.contentMinSize = window.contentMinSize
     }
 }
@@ -53,8 +49,11 @@ enum SetupSettingsWindowConfigurator {
             window.title = "solstone settings"
             if let memory = objc_getAssociatedObject(window, &setupWindowMemoryKey) as? SetupWindowMemory {
                 window.styleMask = memory.styleMask
-                window.titlebarAppearsTransparent = memory.titlebarAppearsTransparent
-                window.titleVisibility = memory.titleVisibility
+                // Settings' own title bar: opaque, title shown. These are not read back from
+                // the window when setup first shows, because SwiftUI may already have hidden the
+                // title for the setup window by then, and Settings would keep it hidden.
+                window.titlebarAppearsTransparent = false
+                window.titleVisibility = .visible
                 memory.appliedInitialSetupSize = false
             }
             window.contentMinSize = NSSize(width: 720, height: 500)

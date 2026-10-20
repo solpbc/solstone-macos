@@ -46,4 +46,25 @@ struct SetupSettingsWindowConfiguratorTests {
         let settingsContentRect = window.contentRect(forFrameRect: window.frame)
         #expect(settingsContentRect.size == NSSize(width: 900, height: 700))
     }
+
+    // The 2026-10-20 re-walk: with SwiftUI owning the setup window's title bar, the title can
+    // already be hidden (and the bar transparent) when the configurator first sees the window.
+    // Settings must still come back with its title shown and an opaque bar.
+    @MainActor
+    @Test func settingsShowsItsTitleEvenIfSetupHidItFirst() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+
+        SetupSettingsWindowConfigurator.apply(setupShowing: true, to: window)
+        SetupSettingsWindowConfigurator.apply(setupShowing: false, to: window)
+        #expect(window.title == "solstone settings")
+        #expect(window.titleVisibility == .visible)
+        #expect(window.titlebarAppearsTransparent == false)
+    }
 }
