@@ -90,4 +90,11 @@ struct SetupChromeWalkFixTests {
         #expect(window.contains("SetupBandLabel(appLabel)"))
         #expect(!window.contains(".frame(width: 1, height: 16)"), "the bare vertical rule is still in the band")
     }
+
+    // D1: a SwiftUI window scene writes its title bar back to opaque on scene updates unless the
+    // window toolbar's background is declared hidden; the setup window declares it.
+    @Test func theSetupWindowKeepsItsTitleBarTransparent() throws {
+        let window = try Self.source("SetupWindow.swift")
+        #expect(window.contains(".toolbarBackgroundVisibility(.hidden, for: .windowToolbar)"))
+    }
 }

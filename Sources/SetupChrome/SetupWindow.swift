@@ -92,6 +92,12 @@ public struct SetupWindow<Content: View>: View {
                     .padding([.leading, .trailing, .bottom], 18)
             }
         }
+        // The sun runs up under the window controls. A SwiftUI window scene owns its title
+        // bar's transparency (its bar appearance bridge writes it back to opaque on scene
+        // updates: activation, the Dock menu, ordering), so setting it on the NSWindow alone
+        // does not hold. Declaring the window toolbar's background hidden makes SwiftUI keep it
+        // transparent for as long as the setup window is on screen.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
 }
 
