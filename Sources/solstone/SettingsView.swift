@@ -124,7 +124,7 @@ func shouldShowPairingRetry(for state: TunnelLifecycleState, failureCause: Journ
         }
     }
     switch state {
-    case .error(.keychainUnavailable), .error(.loopbackUnavailable), .error(.revoked):
+    case .error(.keychainUnavailable), .error(.loopbackUnavailable), .error(.revoked), .error(.refusalsExhausted):
         return true
     default:
         return false

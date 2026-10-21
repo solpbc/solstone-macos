@@ -19,6 +19,10 @@ enum TunnelLifecycleState: Sendable, Equatable {
 
 enum TunnelLifecycleError: Error, Sendable, Equatable {
     case revoked
+    /// The journal kept refusing this device until the tunnel stopped dialling
+    /// its credential. Presented like `.revoked`, but the pairing is kept: only
+    /// a new pairing ends the stop.
+    case refusalsExhausted
     case loopbackUnavailable
     case keychainUnavailable
     case notEntitled
@@ -637,6 +641,12 @@ final class TunnelLifecycleOwner {
     }
 
     public func retryRevokedPairingRetirement() async {
+        // A stop after repeated refusals keeps the pairing, so retry only looks
+        // again; the tunnel does not dial a stopped credential.
+        if state == .error(.refusalsExhausted) {
+            await reevaluatePairing()
+            return
+        }
         let (pGen, aGen) = credentialStore.currentGenerations()
         await retirePairingAndFailRevoked(expectedPairing: pGen, expectedAccess: aGen)
     }
@@ -1298,6 +1308,10 @@ final class TunnelLifecycleOwner {
                         retainedCandidate = nil
                         await retirePairingAndFailRevoked(expectedPairing: pGen, expectedAccess: aGen)
                         return .terminal
+                    case .refusalsExhausted:
+                        retainedCandidate = nil
+                        await failWithRefusalsExhausted()
+                        return .terminal
                     case .notEntitled:
                         retainedCandidate = nil
                         if case .connected(let localPort, _) = state, establishedLoopbackPort == localPort, transport != nil {
@@ -1513,9 +1527,14 @@ final class TunnelLifecycleOwner {
                 beginReactiveTokenRefresh()
             case .revoked:
                 await retirePairingAndFailRevoked(expectedPairing: pairingRevision, expectedAccess: currentRevision.accessMutationGeneration)
+            case .refusalsExhausted:
+                await failWithRefusalsExhausted()
             case .notEntitled:
                 await failWithNotEntitled()
             default:
+                // Includes a refusal still being counted, a journal that could not
+                // read its device list, and a peer that is not the paired journal:
+                // all keep the pairing and keep connecting.
                 stopProbe()
                 state = .connecting
                 health = .unknown
@@ -2003,6 +2022,16 @@ final class TunnelLifecycleOwner {
         health = .unknown
     }
 
+    /// Keeps the credential, unlike `.revoked`: the stop holds until a new
+    /// pairing replaces it, and anything waiting to be delivered stays queued.
+    private func failWithRefusalsExhausted() async {
+        let attempt = transportAttemptID
+        await disconnectCurrentTransport()
+        guard running, transportAttemptID == attempt else { return }
+        state = .error(.refusalsExhausted)
+        health = .unknown
+    }
+
     private func failWithNotEntitled() async {
         let attempt = transportAttemptID
         await disconnectCurrentTransport()
@@ -2143,7 +2172,7 @@ final class TunnelLifecycleOwner {
                     axToken: PairingConnectionAXState.notEntitled.axToken,
                     failureCause: .notEntitled
                 )
-            case .revoked:
+            case .revoked, .refusalsExhausted:
                 return JournalConnectionVerdict(
                     severity: .attention,
                     message: "pairing was revoked. pair again to reconnect.",

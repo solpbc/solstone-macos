@@ -141,7 +141,7 @@ final class SPLTunnelTransport: TunnelTransporting {
         policy: SessionPolicy = SPLTunnelTransport.sessionPolicy,
         onPeerStreamReset: PeerStreamResetObserver? = nil,
         makeSession: @escaping @Sendable (StoredPairing, SPLClientInfo, SessionPolicy) -> any TunnelReconnecting = {
-            TunnelSupervisor(pairing: $0, clientInfo: $1, policy: $2)
+            TunnelSupervisor(pairing: $0, clientInfo: $1, policy: $2, refusalStore: SPLPairingKeychain.refusalStore)
         }
     ) {
         self.clientInfo = clientInfo

@@ -920,7 +920,7 @@ final class ActualSupervisorRecorder: @unchecked Sendable {
                 pairing: pairing,
                 clientInfo: info,
                 policy: policy,
-                makeSession: { [children, weak self] p, i, pol in
+                makeSession: { [children, weak self] p, i, pol, _ in
                     let err: Error? = self?.lock.withLock {
                         (self?.sessionErrors.isEmpty == false) ? self?.sessionErrors.removeFirst() : nil
                     }

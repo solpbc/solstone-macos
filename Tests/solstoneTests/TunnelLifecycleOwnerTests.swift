@@ -257,6 +257,32 @@ struct TunnelLifecycleOwnerTests {
         expectDuration(sleeps[1], inMilliseconds: 3750...6250)
     }
 
+    /// Falsified by sending a counted refusal, a journal that could not read its
+    /// device list, or a peer that is not the paired journal down the revoked path:
+    /// each retries on the establishment backoff and keeps the pairing.
+    @Test(arguments: [SessionError.refused, .certificateUnknown, .unknownJournal])
+    func journalRefusalThatRetriesKeepsPairingAndConnects(failure: SessionError) async throws {
+        let sleeper = ManualSleeper()
+        let store = PairingStore(pairing: pairing())
+        let transport = FakeTunnelTransport(results: [
+            .failure(failure),
+            .success(.init(localPort: 31337, via: .relay)),
+        ])
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]), sleep: { try await sleeper.sleep($0) })
+
+        owner.start()
+        try await waitUntil { transport.connectAttempts == 1 }
+        try await waitUntil { await sleeper.sleepCount == 1 }
+        #expect(owner.state == .connecting)
+        #expect(owner.connectionVerdict.failureCause != .revoked)
+        await sleeper.advance()
+        try await waitUntil { owner.state == .connected(localPort: 31337, via: .relay) }
+        await owner.stop()
+
+        #expect(transport.connectAttempts == 2)
+        #expect(!store.deleted)
+    }
+
     @Test func coldStartOfflineStopCancelsEstablishmentRetry() async throws {
         let sleeper = ManualSleeper()
         let transport = FakeTunnelTransport(results: [
@@ -334,6 +360,76 @@ struct TunnelLifecycleOwnerTests {
         #expect(attemptsAtTerminal == 2)
         #expect(transport.connectAttempts == 2)
         #expect(await sleeper.establishmentSleepCount == 1)
+    }
+
+    /// Falsified by retiring the pairing when refusals run out (only a new pairing
+    /// ends that stop), by retrying a stopped credential, or by a retry button that
+    /// deletes the credential the way it does for a revoked one.
+    @Test func refusalsExhaustedDuringBootstrapStopsRetryAndKeepsPairing() async throws {
+        let sleeper = ManualSleeper()
+        let stored = pairing()
+        let store = PairingStore(pairing: stored)
+        let transport = FakeTunnelTransport(results: [
+            .failure(SessionError.unreachable),
+            .failure(SessionError.refusalsExhausted),
+        ])
+        let lookedAgain = FakeTunnelTransport(results: [.failure(SessionError.refusalsExhausted)])
+        let owner = makeOwner(
+            store: store,
+            factory: FakeTransportFactory([transport, lookedAgain]),
+            sleep: { try await sleeper.sleep($0) }
+        )
+
+        owner.start()
+        try await waitUntil { transport.connectAttempts == 1 }
+        try await waitUntil { await sleeper.sleepCount == 1 }
+        await sleeper.advance()
+        try await waitUntil { owner.state == .error(.refusalsExhausted) }
+        let attemptsAtTerminal = transport.connectAttempts
+        await sleeper.advance()
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(attemptsAtTerminal == 2)
+        #expect(transport.connectAttempts == 2)
+        #expect(!store.deleted)
+        #expect(store.currentPairing == stored)
+        #expect(owner.hasPersistedPairing)
+        let revokedVerdict = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.revoked),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+        #expect(owner.connectionVerdict == revokedVerdict)
+
+        await owner.retryRevokedPairingRetirement()
+        try await waitUntil { lookedAgain.connectAttempts == 1 }
+        try await waitUntil { owner.state == .error(.refusalsExhausted) }
+        await owner.stop()
+
+        #expect(!store.deleted)
+        #expect(store.currentPairing == stored)
+    }
+
+    /// Falsified by tearing down or retiring an installed route when the journal
+    /// refuses a reconnect with anything short of a stop.
+    @Test(arguments: [SessionError.refused, .certificateUnknown, .unknownJournal])
+    func installedTunnelRefusalThatRetriesKeepsPairing(failure: SessionError) async throws {
+        let store = PairingStore(pairing: pairing())
+        let transport = FakeTunnelTransport(connection: .init(localPort: 11111, via: .relay))
+        let owner = makeOwner(store: store, factory: FakeTransportFactory([transport]))
+        owner.start()
+        try await waitUntil { owner.state == .connected(localPort: 11111, via: .relay) }
+
+        transport.emit(.failed(failure))
+        try await waitUntil { owner.state == .connecting }
+        #expect(owner.connectionVerdict.failureCause != .revoked)
+        #expect(transport.disconnectCount == 0)
+        #expect(!store.deleted)
+        await owner.stop()
     }
 
     @Test func localListenerConstructionFailureRetriesOutsideSDKThenStopsAfterSuccess() async throws {
@@ -1537,6 +1633,7 @@ struct TunnelLifecycleOwnerTests {
         #expect(!shouldShowPairingRetry(for: .connecting))
         #expect(!shouldShowPairingRetry(for: .connected(localPort: 1, via: .relay)))
         #expect(shouldShowPairingRetry(for: .error(.revoked)))
+        #expect(shouldShowPairingRetry(for: .error(.refusalsExhausted)))
         #expect(!shouldShowPairingRetry(for: .error(.notEntitled)))
         #expect(shouldShowPairingRetry(for: .error(.loopbackUnavailable)))
         #expect(shouldShowPairingRetry(for: .connecting, failureCause: .keychainUnavailable))
@@ -1664,7 +1761,7 @@ struct TunnelLifecycleOwnerTests {
         await owner.stop()
     }
 
-    @Test(arguments: [SessionError.authRefreshRequired, .revoked, .notEntitled])
+    @Test(arguments: [SessionError.authRefreshRequired, .revoked, .refusalsExhausted, .notEntitled])
     func retainedTransportFailureSurvivesRelayCredentialUpdate(failure: SessionError) async throws {
         let current = pairing(deviceToken: "old-token")
         let store = PairingStore(pairing: current)
@@ -1702,6 +1799,7 @@ struct TunnelLifecycleOwnerTests {
         first.emit(.failed(failure))
         let expectedState: TunnelLifecycleState = switch failure {
         case .revoked: .error(.revoked)
+        case .refusalsExhausted: .error(.refusalsExhausted)
         case .notEntitled: .error(.notEntitled)
         default: .connected(localPort: 22222, via: .relay)
         }
@@ -2003,6 +2101,17 @@ struct TunnelLifecycleOwnerTests {
         #expect(revoked.severity == .attention)
         #expect(revoked.axToken == PairingConnectionAXState.revoked.axToken)
         #expect(revoked.failureCause == .revoked)
+
+        let refusalsExhausted = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: .error(.refusalsExhausted),
+            hasPersistedPairing: true,
+            isTunnelManaged: true,
+            supervisorAttemptState: .idle,
+            isProxyStarting: false,
+            establishedLoopbackPort: nil,
+            hasTransport: false
+        )
+        #expect(refusalsExhausted == revoked)
 
         let loopbackUnavail = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.loopbackUnavailable),

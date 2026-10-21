@@ -24,6 +24,13 @@ enum SPLPairingKeychain {
         accessibility: .afterFirstUnlockThisDeviceOnly
     )
 
+    /// Where the tunnel keeps each credential's handshake refusal count and stop.
+    /// It is built from the pairing's own policy, so any launch that can read the
+    /// pairing can also read the refusal record.
+    static var refusalStore: SPLKeychainRefusalStore {
+        SPLKeychainStore(policy: productionPolicy).refusalStore
+    }
+
     static let service = "app.solstone.observer.spl"
     static let account = "spl-pairing-bundle"
     static let recordService = "app.solstone.observer.spl.migration"

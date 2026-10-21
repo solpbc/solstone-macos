@@ -1285,9 +1285,11 @@ final class PairingCoordinator {
             return "pairing link fingerprint type is unsupported: \(hexByte(tag))"
         case .invalidRelayOrigin:
             return "pairing link relay origin is invalid"
-        case .invalidLength(let count):
+        case .truncated(_, let count), .lengthMismatch(_, let count):
             return "pairing link data length is invalid: \(count) bytes"
-        case .malformedOuterURL:
+        case .invalidCandidateCount:
+            return "pairing link contains invalid encoded data"
+        case .disallowedDirectAddress, .malformedOuterURL:
             return "pairing link is malformed"
         }
     }

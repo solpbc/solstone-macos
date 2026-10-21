@@ -1612,7 +1612,10 @@ struct PairingCoordinatorTests {
             (.unsupportedAddrType(0xff), "pairing link address type is unsupported: 0xff"),
             (.unsupportedCAFingerprintTag(0x02), "pairing link fingerprint type is unsupported: 0x02"),
             (.invalidRelayOrigin, "pairing link relay origin is invalid"),
-            (.invalidLength(12), "pairing link data length is invalid: 12 bytes"),
+            (.truncated(expected: 40, got: 12), "pairing link data length is invalid: 12 bytes"),
+            (.lengthMismatch(expected: 40, got: 41), "pairing link data length is invalid: 41 bytes"),
+            (.invalidCandidateCount(5), "pairing link contains invalid encoded data"),
+            (.disallowedDirectAddress("0.0.0.0"), "pairing link is malformed"),
             (.malformedOuterURL, "pairing link is malformed"),
         ]
 
