@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.43] - 2026-10-20
+
 ### Added
 - Apple Passwords, Bitwarden, Dashlane, LastPass, KeePassXC, Keeper and Proton Pass now join 1Password among the apps whose windows are kept out of your journal by default. if you set up before this version, they're added to your excluded apps once, and you can remove any of them in settings. a password manager you use inside your browser is part of the browser, so it isn't kept out.
 
@@ -18,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - the setup window's sun runs all the way up behind the window buttons, with no plain bar across the top.
-- press Return to continue on the microphone and screen setup steps.
+- Return now continues on the microphone and screen setup steps.
 - while the journal app is still setting up your journal, the solstone app's setup window now waits for it instead of saying it couldn't reach your journal.
 - during setup, the solstone app no longer stops responding while your mac asks whether it can find devices on your local network.
 - while the journal app is still setting up your journal, the solstone app's settings now says it's still being set up.
