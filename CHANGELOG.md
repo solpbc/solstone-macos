@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- the solstone app now acts on a refusal only after it has checked that it is talking to your journal, so something pretending to be your journal can no longer make it forget its pairing (a security fix).
+- if your journal keeps refusing this mac, the solstone app now stops trying to reach it until you pair again.
+
 ## [2.0.43] - 2026-10-20
 
 ### Added
