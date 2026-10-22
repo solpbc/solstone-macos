@@ -160,6 +160,7 @@ private final class LifecycleTransport: BrowserUploadTransport, @unchecked Senda
     private var dayListing = IngestProtocolV3.SegmentsDay(total: 0, items: [])
     private var storedSegmentKey: String?
     private var beforeResult: (@Sendable () -> Void)?
+    private var attemptStarted: (@Sendable () -> Void)?
     private var outcome: Outcome = .fail
     private var queuedOutcomes: [Outcome] = []
     private var holdFirstChunk = false
@@ -203,6 +204,8 @@ private final class LifecycleTransport: BrowserUploadTransport, @unchecked Senda
 
     func setBeforeResult(_ action: (@Sendable () -> Void)?) { lock.withLock { beforeResult = action } }
 
+    func setAttemptStarted(_ action: (@Sendable () -> Void)?) { lock.withLock { attemptStarted = action } }
+
     func suspendAfterFirstChunk() { lock.withLock { holdFirstChunk = true } }
 
     func getSegmentsDay(serverURL: String, day: String, source: String?) async throws -> IngestProtocolV3.SegmentsDay {
@@ -238,12 +241,14 @@ private final class LifecycleTransport: BrowserUploadTransport, @unchecked Senda
     }
 
     func uploadStaged(prepared: PreparedIngestV3Upload, lease: BrowserUploadLease) async -> UploadResult {
-        lock.withLock {
+        let started = lock.withLock { () -> (@Sendable () -> Void)? in
             attemptCount += 1
             activeUploads += 1
             maxConcurrentUploads = max(maxConcurrentUploads, activeUploads)
             if let hash = prepared.stagedParts.first?.sha256 { stagedHashes.append(hash) }
+            return attemptStarted
         }
+        started?()
         defer { lock.withLock { activeUploads -= 1 } }
         guard lease.isValid(), let stream = try? FileHandle(forReadingFrom: prepared.bodyURL) else {
             return .failure(URLError(.cancelled))
@@ -694,13 +699,19 @@ struct BrowserSpoolLifecycleTests {
         #expect(accepted["result"] as? String == "accepted")
         fixture.owner.authority.setPaused(false)
 
+        // This transport fails every upload. A delivery pass the owner started earlier
+        // can still be running when the boundary finalizes the period, so it uploads the
+        // period and the pass queued behind it retries the failed upload. Pause sync from
+        // inside the first upload so nothing after it can upload until the unpause below.
+        let pause = fixture.pause
+        transport.setAttemptStarted { pause.set(true) }
         fixture.clock.advance(seconds: 301)
         #expect(await transport.waitForAttempts(1))
+        transport.setAttemptStarted(nil)
         #expect(transport.sources.first == "browser")
         #expect(fixture.owner.store.getAllFinalizedPeriods().count == 1)
         #expect(fixture.owner.store.storeIsFailed() == false)
 
-        fixture.pause.set(true)
         await fixture.owner.scheduleDelivery()
         try await Task.sleep(for: .milliseconds(100))
         #expect(transport.attempts == 1)
