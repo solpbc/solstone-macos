@@ -168,9 +168,9 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     }
 
     public func authorizeChoice(for uid: String, choice: MicrophoneChoice?) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let capture = captures[uid] else { return false }
+        // Authorization reads device layout through HAL. A slow driver must not
+        // hold the selection/admission lock shared by healthy microphones.
+        guard let capture = lock.withLock({ captures[uid] }) else { return false }
         return capture.authorizeChoice(choice)
     }
 

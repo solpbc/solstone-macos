@@ -35,6 +35,9 @@ final class FakeMicrophoneInputUnit: MicrophoneInputUnit, @unchecked Sendable {
     var maximumFrames: UInt32 = 4096
     var maximumFramesByteSize: UInt32?
     var maximumFramesStatus: OSStatus = noErr
+    var actualRunning = true
+    var runningStatus: OSStatus = noErr
+    var runningByteSize = UInt32(MemoryLayout<UInt32>.size)
     var invokeCallbackOnStart = false
     var invokeCallbackOnStop = false
     var reenterOnRender = false
@@ -46,6 +49,12 @@ final class FakeMicrophoneInputUnit: MicrophoneInputUnit, @unchecked Sendable {
     var renderRefCon: UnsafeMutableRawPointer?
     var disposeCallCount: Int = 0
     var renderCallCount: Int = 0
+    var stopCallCount: Int = 0
+    var uninitializeCallCount: Int = 0
+    var setFormatCallCount: Int = 0
+    var markRenderedSamples = false
+    var onOpen: (@Sendable () -> Void)?
+    var onDispose: (@Sendable () -> Void)?
     var onRender: (@Sendable () -> Void)?
     var onStop: (@Sendable () -> Void)?
 
@@ -62,7 +71,7 @@ final class FakeMicrophoneInputUnit: MicrophoneInputUnit, @unchecked Sendable {
         self.streamFormat = asbd
     }
 
-    func open() -> OSStatus { openStatus }
+    func open() -> OSStatus { onOpen?(); return openStatus }
     func setInputEnabled(_ enabled: Bool) -> OSStatus { inputEnabledStatus }
     func setOutputEnabled(_ enabled: Bool) -> OSStatus { outputEnabledStatus }
     func setDeviceID(_ id: AudioDeviceID) -> OSStatus {
@@ -76,6 +85,7 @@ final class FakeMicrophoneInputUnit: MicrophoneInputUnit, @unchecked Sendable {
         (getStreamFormatStatus, streamFormat)
     }
     func setStreamFormat(_ asbd: AudioStreamBasicDescription) -> OSStatus {
+        setFormatCallCount += 1
         streamFormat = asbd
         return setStreamFormatStatus
     }
@@ -85,7 +95,7 @@ final class FakeMicrophoneInputUnit: MicrophoneInputUnit, @unchecked Sendable {
         return callbackStatus
     }
     func initialize() -> OSStatus { initStatus }
-    func uninitialize() -> OSStatus { uninitializeStatus }
+    func uninitialize() -> OSStatus { uninitializeCallCount += 1; return uninitializeStatus }
     func start() -> OSStatus {
         if invokeCallbackOnStart, let renderCallback, let renderRefCon {
             var flags: AudioUnitRenderActionFlags = []
@@ -97,6 +107,7 @@ final class FakeMicrophoneInputUnit: MicrophoneInputUnit, @unchecked Sendable {
         return startStatus
     }
     func stop() -> OSStatus {
+        stopCallCount += 1
         if invokeCallbackOnStop, let renderCallback, let renderRefCon {
             var flags: AudioUnitRenderActionFlags = []
             var time = AudioTimeStamp()
@@ -109,6 +120,7 @@ final class FakeMicrophoneInputUnit: MicrophoneInputUnit, @unchecked Sendable {
     }
     func dispose() -> OSStatus {
         lock.withLock { disposeCallCount += 1 }
+        onDispose?()
         return disposeStatus
     }
     func getClientStreamFormat() -> (status: OSStatus, format: AudioStreamBasicDescription, byteSize: UInt32) {
@@ -124,12 +136,21 @@ final class FakeMicrophoneInputUnit: MicrophoneInputUnit, @unchecked Sendable {
         let size = maximumFramesByteSize ?? UInt32(MemoryLayout<UInt32>.size)
         return (maximumFramesStatus, maximumFrames, size)
     }
+    func runningReadback() -> (status: OSStatus, running: Bool, byteSize: UInt32) {
+        (runningStatus, actualRunning, runningByteSize)
+    }
     func render(actionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
                 timeStamp: UnsafePointer<AudioTimeStamp>,
                 busNumber: UInt32,
                 frameCount: UInt32,
                 data: UnsafeMutablePointer<AudioBufferList>) -> OSStatus {
         lock.withLock { renderCallCount += 1 }
+        if markRenderedSamples {
+            for plane in UnsafeMutableAudioBufferListPointer(data) {
+                guard let samples = plane.mData?.assumingMemoryBound(to: Float.self) else { continue }
+                for frame in 0..<Int(frameCount) { samples[frame] = Float(renderCallCount) }
+            }
+        }
         if reenterOnRender, let renderCallback, let renderRefCon {
             reenterOnRender = false
             var flags: AudioUnitRenderActionFlags = []
@@ -887,6 +908,229 @@ struct MicrophoneInputCaptureTests {
         hookRelease.signal()
         #expect(stopDone.wait(timeout: .now() + 2) == .success)
         #expect(hookUnit.disposeCallCount == 1)
+    }
+
+    @Test func reusableBufferStaysLeasedThroughTheConsumersCopy() throws {
+        let unit = FakeMicrophoneInputUnit()
+        unit.markRenderedSamples = true
+        let engine = NativeMicrophoneCaptureEngine(unitFactory: { unit })
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let frames = IntBox()
+        let marker = StatusBox()
+        try engine.start(deviceID: 10, deviceName: "copy-window") { buffer, _ in
+            entered.signal()
+            _ = release.wait(timeout: .now() + 3)
+            frames.value = Int(buffer.frameLength)
+            marker.value = OSStatus(buffer.floatChannelData?[0][0] ?? -1)
+        }
+        defer { release.signal(); engine.stop() }
+        Thread.detachNewThread {
+            _ = invokeRender(unit, frames: 128)
+            finished.signal()
+        }
+        #expect(entered.wait(timeout: .now() + 2) == .success)
+        #expect(invokeRender(unit, frames: 32) != noErr)
+        #expect(unit.renderCallCount == 1)
+        release.signal()
+        #expect(finished.wait(timeout: .now() + 2) == .success)
+        #expect(frames.value == 128)
+        #expect(marker.value == 1)
+    }
+
+    @Test func uidReservationCoversFirstOpenAndParkedCleanup() throws {
+        let uid = "reserved-\(UUID().uuidString)"
+        let unit = FakeMicrophoneInputUnit()
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let done = DispatchSemaphore(value: 0)
+        unit.onOpen = {
+            entered.signal()
+            _ = release.wait(timeout: .now() + 3)
+        }
+        let engine = NativeMicrophoneCaptureEngine(unitFactory: { unit })
+        engine.setNativeOwnerKey(uid)
+        let result = StatusBox()
+        Thread.detachNewThread {
+            do { try engine.start(deviceID: 10, deviceName: "first") { _, _ in } }
+            catch { result.value = -1 }
+            done.signal()
+        }
+        defer { release.signal(); engine.stop() }
+        #expect(entered.wait(timeout: .now() + 2) == .success)
+        let builds = IntBox()
+        let nextUnit = FakeMicrophoneInputUnit()
+        let next = NativeMicrophoneCaptureEngine(unitFactory: { builds.value += 1; return nextUnit })
+        next.setNativeOwnerKey(uid)
+        #expect(throws: ExternalMicCapture.ExternalMicCaptureError.self) {
+            try next.start(deviceID: 10, deviceName: "overlap") { _, _ in }
+        }
+        #expect(builds.value == 0)
+        release.signal()
+        #expect(done.wait(timeout: .now() + 2) == .success)
+        #expect(result.value == noErr)
+        #expect(throws: ExternalMicCapture.ExternalMicCaptureError.self) {
+            try next.start(deviceID: 10, deviceName: "already-live") { _, _ in }
+        }
+        #expect(builds.value == 0)
+        unit.disposeStatus = -1
+        engine.stop()
+        #expect(microphoneNativeUnresolvedCount(uid) == 1)
+        unit.disposeStatus = noErr
+        unit.onDispose = {
+            entered.signal()
+            _ = release.wait(timeout: .now() + 3)
+        }
+        Thread.detachNewThread {
+            do { try next.start(deviceID: 10, deviceName: "reclaim") { _, _ in } }
+            catch { result.value = -2 }
+            done.signal()
+        }
+        #expect(entered.wait(timeout: .now() + 2) == .success)
+        let lastBuilds = IntBox()
+        let last = NativeMicrophoneCaptureEngine(unitFactory: { lastBuilds.value += 1; return FakeMicrophoneInputUnit() })
+        last.setNativeOwnerKey(uid)
+        #expect(throws: ExternalMicCapture.ExternalMicCaptureError.self) {
+            try last.start(deviceID: 10, deviceName: "reclaim-overlap") { _, _ in }
+        }
+        #expect(lastBuilds.value == 0)
+        release.signal()
+        #expect(done.wait(timeout: .now() + 2) == .success)
+        #expect(result.value == noErr)
+        #expect(builds.value == 1)
+        next.stop()
+        #expect(microphoneNativeUnresolvedCount(uid) == 0)
+    }
+
+    @Test func failedDisposalRetriesOnlyTheUnfinishedCleanupStep() throws {
+        let uid = "cleanup-\(UUID().uuidString)"
+        let unit = FakeMicrophoneInputUnit()
+        unit.disposeStatus = -1
+        let engine = NativeMicrophoneCaptureEngine(unitFactory: { unit })
+        engine.setNativeOwnerKey(uid)
+        try engine.start(deviceID: 10, deviceName: "cleanup") { _, _ in }
+        engine.stop()
+        #expect(unit.stopCallCount == 1)
+        #expect(unit.uninitializeCallCount == 1)
+        #expect(unit.disposeCallCount == 1)
+        unit.stopStatus = -50
+        unit.uninitializeStatus = -50
+        unit.disposeStatus = noErr
+        let replacement = NativeMicrophoneCaptureEngine(unitFactory: { FakeMicrophoneInputUnit() })
+        replacement.setNativeOwnerKey(uid)
+        try replacement.start(deviceID: 10, deviceName: "replacement") { _, _ in }
+        #expect(unit.stopCallCount == 1)
+        #expect(unit.uninitializeCallCount == 1)
+        #expect(unit.disposeCallCount == 2)
+        replacement.stop()
+        #expect(microphoneNativeUnresolvedCount(uid) == 0)
+    }
+
+    @Test func nativeAdmissionRejectsUnboundedFormatsBeforeClientSetup() throws {
+        for (rate, channels) in [(Double.infinity, UInt32(1)), (Double.nan, 1),
+                                 (0, 1), (192_001, 1), (48_000, 0), (48_000, 65), (48_000, UInt32.max)] {
+            let unit = FakeMicrophoneInputUnit(sampleRate: rate, channelCount: channels)
+            let engine = NativeMicrophoneCaptureEngine(unitFactory: { unit })
+            #expect(throws: ExternalMicCapture.ExternalMicCaptureError.self) {
+                try engine.start(deviceID: 10, deviceName: "invalid") { _, _ in }
+            }
+            #expect(unit.setFormatCallCount == 0)
+            #expect(unit.renderCallback == nil)
+            #expect(unit.disposeCallCount == 1)
+        }
+        // The largest accepted native buffer is 64 × 16384 × 4 = 4 MiB.
+        let bounded = FakeMicrophoneInputUnit(sampleRate: 16_000, channelCount: 64)
+        bounded.maximumFrames = 16_384
+        let engine = NativeMicrophoneCaptureEngine(unitFactory: { bounded })
+        try engine.start(deviceID: 10, deviceName: "bounded") { _, _ in }
+        engine.stop()
+        bounded.maximumFrames = 16_385
+        #expect(throws: ExternalMicCapture.ExternalMicCaptureError.self) {
+            try engine.start(deviceID: 10, deviceName: "over-capacity") { _, _ in }
+        }
+    }
+
+    @Test func runningReadbackControlsStartupAndRecoveryAdmission() throws {
+        let stopped = FakeMicrophoneInputUnit()
+        stopped.actualRunning = false
+        let denied = NativeMicrophoneCaptureEngine(unitFactory: { stopped })
+        #expect(throws: ExternalMicCapture.ExternalMicCaptureError.self) {
+            try denied.start(deviceID: 10, deviceName: "not-running") { _, _ in }
+        }
+        #expect(stopped.disposeCallCount == 1)
+        let unit = FakeMicrophoneInputUnit()
+        let engine = NativeMicrophoneCaptureEngine(unitFactory: { unit })
+        try engine.start(deviceID: 10, deviceName: "running") { _, _ in }
+        defer { engine.stop() }
+        #expect(!engine.requiresRecovery(resolvedDeviceID: 10))
+        unit.actualRunning = false
+        #expect(engine.requiresRecovery(resolvedDeviceID: 10))
+        unit.actualRunning = true
+        unit.runningByteSize = 1
+        #expect(engine.requiresRecovery(resolvedDeviceID: 10))
+    }
+
+    @Test func globalNativeOwnerCapacityRejectsBeforeConstructionAndReleasesSlots() throws {
+        var engines: [NativeMicrophoneCaptureEngine] = []
+        defer { for engine in engines { engine.stop() } }
+        // Other tests may deliberately retain an unresolved fake. Fill only the
+        // remaining capacity and require a rejected factory before the hard cap.
+        let builds = IntBox()
+        for _ in 0...microphoneNativeOwnerLimitForTesting {
+            let engine = NativeMicrophoneCaptureEngine(unitFactory: { builds.value += 1; return FakeMicrophoneInputUnit() })
+            do {
+                try engine.start(deviceID: 10, deviceName: "capacity") { _, _ in }
+                engines.append(engine)
+            } catch { break }
+        }
+        #expect(!engines.isEmpty)
+        #expect(engines.count <= microphoneNativeOwnerLimitForTesting)
+        #expect(builds.value == engines.count)
+        let removed = engines.popLast()
+        let freed = try #require(removed)
+        freed.stop()
+        let replacement = NativeMicrophoneCaptureEngine(unitFactory: { builds.value += 1; return FakeMicrophoneInputUnit() })
+        try replacement.start(deviceID: 10, deviceName: "freed-slot") { _, _ in }
+        #expect(builds.value == engines.count + 2)
+        replacement.stop()
+    }
+
+    @Test func choiceLayoutQueryDoesNotHoldTheSharedManagerLock() throws {
+        let device = AudioInputDevice(id: 10, name: "query", uid: "query-\(UUID().uuidString)",
+            manufacturer: nil, sampleRate: 48_000, transportType: .usb)
+        let block = IntBox()
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let authorized = DispatchSemaphore(value: 0)
+        let queried = DispatchSemaphore(value: 0)
+        let manager = MicrophoneCaptureManager(gain: 1, captureFactory: { device, gain, verbose in
+            ExternalMicCapture(device: device, gain: gain, verbose: verbose,
+                engineFactory: { NativeMicrophoneCaptureEngine(unitFactory: { FakeMicrophoneInputUnit() }) },
+                resolveDeviceID: { _ in device.id }, layoutReader: { _ in
+                    if block.value == 1 {
+                        entered.signal()
+                        _ = release.wait(timeout: .now() + 3)
+                    }
+                    return testOneChannelLayout
+                })
+        })
+        manager.updateSelection([device])
+        try manager.startCapture(for: device)
+        defer { release.signal(); manager.stopCapture(deviceUID: device.uid) }
+        block.value = 1
+        Thread.detachNewThread {
+            _ = manager.authorizeChoice(for: device.uid, choice: nil)
+            authorized.signal()
+        }
+        #expect(entered.wait(timeout: .now() + 2) == .success)
+        Thread.detachNewThread {
+            _ = manager.getCapture(for: device.uid)
+            queried.signal()
+        }
+        #expect(queried.wait(timeout: .now() + 0.5) == .success)
+        release.signal()
+        #expect(authorized.wait(timeout: .now() + 2) == .success)
     }
 
     @Test func choiceLifecycleKeepsAcceptedMediaAndDoesNotResurrectAClearedInput() async throws {

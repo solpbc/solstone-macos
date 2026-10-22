@@ -32,6 +32,7 @@ internal protocol MicrophoneInputUnit: AnyObject, Sendable {
     func getBoundDevice() -> (status: OSStatus, deviceID: AudioDeviceID, byteSize: UInt32)
     /// Supported render slice, with the size CoreAudio actually wrote.
     func maximumFramesPerSlice() -> (status: OSStatus, frames: UInt32, byteSize: UInt32)
+    func runningReadback() -> (status: OSStatus, running: Bool, byteSize: UInt32)
 }
 
 extension MicrophoneInputUnit {
@@ -48,6 +49,9 @@ extension MicrophoneInputUnit {
     }
     func maximumFramesPerSlice() -> (status: OSStatus, frames: UInt32, byteSize: UInt32) {
         (noErr, 4096, UInt32(MemoryLayout<UInt32>.size))
+    }
+    func runningReadback() -> (status: OSStatus, running: Bool, byteSize: UInt32) {
+        (noErr, true, UInt32(MemoryLayout<UInt32>.size))
     }
 }
 
@@ -202,6 +206,15 @@ internal final class DefaultMicrophoneInputUnit: MicrophoneInputUnit, @unchecked
                                           kAudioUnitScope_Global, 0, &frames, &size)
         return (status, frames, size)
     }
+
+    func runningReadback() -> (status: OSStatus, running: Bool, byteSize: UInt32) {
+        guard let unit else { return (kAudioUnitErr_Uninitialized, false, 0) }
+        var running: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioUnitGetProperty(unit, kAudioOutputUnitProperty_IsRunning,
+            kAudioUnitScope_Global, 0, &running, &size)
+        return (status, running != 0, size)
+    }
 }
 
 /// Native operations run only on ExternalMicCapture's serial engine queue.
@@ -337,14 +350,16 @@ private final class MicrophoneRenderContext: @unchecked Sendable {
             hook?()
             return status
         case let .ready(unit, buffer, onPCM, rate):
+            // Rendering and the consumer's copy share this one reusable buffer.
+            // Release its lease before the outer in-flight count, on every path.
+            defer { lock.withLock { state.bufferBusy = false } }
             let status = unit.render(actionFlags: flags, timeStamp: timeStamp, busNumber: 1,
                                      frameCount: frameCount, data: buffer.mutableAudioBufferList)
             let hook: (@Sendable () -> Void)? = lock.withLock {
-                state.bufferBusy = false
                 guard status != noErr else { return nil }
                 return noteFailureLocked()
             }
-            if status == noErr {
+            if status == noErr, lock.withLock({ state.deliveryOpen }) {
                 onPCM(buffer, AVAudioTime(audioTimeStamp: timeStamp, sampleRate: rate))
             }
             hook?()
@@ -398,46 +413,114 @@ private let microphoneRenderCallback: AURenderCallback = { inRefCon, ioActionFla
     return context.render(flags: ioActionFlags, timeStamp: inTimeStamp, frameCount: inNumberFrames)
 }
 
-private struct MicrophoneNativeHeld {
+private final class MicrophoneNativeHeld {
     let unit: any MicrophoneInputUnit
     let context: MicrophoneRenderContext
-    let initialized: Bool
-    let started: Bool
+    // Mutated only by the holder of the registry slot, outside the registry lock.
+    var initialized = false
+    var stopped = false
+    var uninitialized = false
+    var disposed = false
+
+    init(unit: any MicrophoneInputUnit, context: MicrophoneRenderContext) {
+        self.unit = unit
+        self.context = context
+    }
 }
 
-/// UID-scoped native owners that outlive an engine or capture instance.
-/// A failed stop, uninitialize, or dispose stays here until reclaim succeeds.
+/// One slot covers a UID from before construction until native disposal and
+/// callback quiescence. Failed cleanup never vacates the slot or evicts its owner.
 private final class MicrophoneNativeOwnerRegistry: @unchecked Sendable {
     static let shared = MicrophoneNativeOwnerRegistry()
-    private let lock = NSLock()
-    private var unresolved: [String: [MicrophoneNativeHeld]] = [:]
+    static let maximumOwners = 64
 
-    func park(_ key: String, _ held: MicrophoneNativeHeld) {
-        lock.withLock {
-            unresolved[key, default: []].append(held)
+    struct Reservation {
+        let key: String
+        let token: UUID
+    }
+    private enum Phase {
+        case active
+        case cleaning
+        case parked(MicrophoneNativeHeld)
+    }
+    private struct Slot {
+        let token: UUID
+        var phase: Phase
+    }
+    private let lock = NSLock()
+    private var slots: [String: Slot] = [:]
+
+    func reserve(_ key: String) -> Reservation? {
+        let attempt: (Reservation, MicrophoneNativeHeld?)? = lock.withLock {
+            if var slot = slots[key] {
+                guard case let .parked(held) = slot.phase else { return nil }
+                slot.phase = .cleaning
+                slots[key] = slot
+                return (Reservation(key: key, token: slot.token), held)
+            }
+            guard slots.count < Self.maximumOwners else { return nil }
+            let token = UUID()
+            slots[key] = Slot(token: token, phase: .active)
+            return (Reservation(key: key, token: token), nil)
         }
+        guard let (reservation, held) = attempt else { return nil }
+        guard let held else { return reservation }
+        let released = releaseNativeOwner(held)
+        lock.withLock {
+            guard slots[key]?.token == reservation.token else { return }
+            slots[key]?.phase = released ? .active : .parked(held)
+        }
+        return released ? reservation : nil
     }
 
-    func reclaim(_ key: String) -> Bool {
-        let held = lock.withLock { unresolved.removeValue(forKey: key) ?? [] }
-        guard !held.isEmpty else { return true }
-        var remaining: [MicrophoneNativeHeld] = []
-        for owner in held where !releaseNativeOwner(owner) {
-            remaining.append(owner)
+    func retire(_ reservation: Reservation, _ held: MicrophoneNativeHeld) -> Bool {
+        let claimed = lock.withLock { () -> Bool in
+            guard var slot = slots[reservation.key], slot.token == reservation.token,
+                  case .active = slot.phase else { return false }
+            slot.phase = .cleaning
+            slots[reservation.key] = slot
+            return true
         }
-        guard remaining.isEmpty else {
-            lock.withLock { unresolved[key, default: []].append(contentsOf: remaining) }
-            return false
+        guard claimed else { return false }
+        let released = releaseNativeOwner(held)
+        lock.withLock {
+            guard slots[reservation.key]?.token == reservation.token else { return }
+            if released {
+                slots.removeValue(forKey: reservation.key)
+            } else {
+                slots[reservation.key]?.phase = .parked(held)
+            }
         }
-        return true
+        return released
     }
 
     #if DEBUG || SOLSTONE_TEST_SUPPORT
     func unresolvedCount(_ key: String) -> Int {
-        lock.withLock { unresolved[key]?.count ?? 0 }
+        lock.withLock {
+            guard let slot = slots[key] else { return 0 }
+            if case .parked = slot.phase { return 1 }
+            return 0
+        }
     }
     func reset() {
-        lock.withLock { unresolved.removeAll() }
+        // Tests must release their fake failures. Never drop a native owner merely
+        // to reset a counter; the callback's retained refCon still belongs to it.
+        let keys = lock.withLock { Array(slots.keys) }
+        for key in keys {
+            let attempt: (Reservation, MicrophoneNativeHeld)? = lock.withLock {
+                guard var slot = slots[key], case let .parked(held) = slot.phase else { return nil }
+                slot.phase = .cleaning
+                slots[key] = slot
+                return (Reservation(key: key, token: slot.token), held)
+            }
+            guard let (reservation, held) = attempt else { continue }
+            let released = releaseNativeOwner(held)
+            lock.withLock {
+                guard slots[key]?.token == reservation.token else { return }
+                if released { slots.removeValue(forKey: key) }
+                else { slots[key]?.phase = .parked(held) }
+            }
+        }
     }
     #endif
 }
@@ -448,16 +531,21 @@ private func releaseNativeOwner(_ held: MicrophoneNativeHeld) -> Bool {
     let context = held.context
     context.closeDelivery()
     guard context.waitUntilIdle() else { return false }
-    if held.started || held.initialized {
-        let stopStatus = held.unit.stop()
+    if held.initialized && !held.stopped {
+        guard held.unit.stop() == noErr else { return false }
+        held.stopped = true
         guard context.waitUntilIdle() else { return false }
-        if held.started && stopStatus != noErr { return false }
     }
-    if held.initialized {
+    if held.initialized && !held.uninitialized {
         guard held.unit.uninitialize() == noErr else { return false }
+        held.uninitialized = true
         guard context.waitUntilIdle() else { return false }
     }
-    guard held.unit.dispose() == noErr else { return false }
+    if !held.disposed {
+        guard held.unit.dispose() == noErr else { return false }
+        held.disposed = true
+    }
+    guard context.waitUntilIdle() else { return false }
     context.balanceRetain()
     return true
 }
@@ -469,6 +557,9 @@ internal func microphoneNativeUnresolvedCount(_ key: String) -> Int {
 internal func microphoneNativeResetOwnersForTesting() {
     MicrophoneNativeOwnerRegistry.shared.reset()
 }
+internal var microphoneNativeOwnerLimitForTesting: Int {
+    MicrophoneNativeOwnerRegistry.maximumOwners
+}
 #endif
 
 internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @unchecked Sendable {
@@ -479,12 +570,13 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
     private var pendingFailureHook: (@Sendable () -> Void)?
     private var currentUnit: (any MicrophoneInputUnit)?
     private var currentContext: MicrophoneRenderContext?
-    private var unitInitialized = false
-    private var unitStarted = false
+    private var currentOwner: MicrophoneNativeHeld?
+    private var currentReservation: MicrophoneNativeOwnerRegistry.Reservation?
     private var admittedDevice: AudioDeviceID?
     private var admittedFormat: AVAudioFormat?
     private var isRunningState = false
     private let stateLock = NSLock()
+    private let lifecycleLock = NSLock()
 
     private var ownerKey: String { ownerKeyOverride ?? engineKey }
 
@@ -493,17 +585,15 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
     }
 
     deinit {
-        let held = stateLock.withLock { () -> MicrophoneNativeHeld? in
-            guard let unit = currentUnit, let context = currentContext else { return nil }
-            currentUnit = nil
-            currentContext = nil
-            return MicrophoneNativeHeld(unit: unit, context: context, initialized: unitInitialized, started: unitStarted)
-        }
-        if let held { MicrophoneNativeOwnerRegistry.shared.park(ownerKey, held) }
+        _ = retireCurrent()
     }
 
     func setNativeOwnerKey(_ key: String) {
-        stateLock.withLock { if !key.isEmpty { ownerKeyOverride = key } }
+        lifecycleLock.withLock {
+            stateLock.withLock {
+                if currentOwner == nil && !key.isEmpty { ownerKeyOverride = key }
+            }
+        }
     }
 
     func armFailureEpoch(_ epoch: UInt64) {
@@ -527,10 +617,13 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
     }
 
     func requiresRecovery(resolvedDeviceID: AudioDeviceID?) -> Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
         let snapshot = stateLock.withLock { (isRunningState, currentUnit, admittedDevice, admittedFormat) }
         guard snapshot.0, let unit = snapshot.1 else { return true }
         let bound = unit.getBoundDevice()
         let client = unit.getClientStreamFormat()
+        let running = unit.runningReadback()
         let readback = (bound.status == noErr && bound.byteSize == UInt32(MemoryLayout<AudioDeviceID>.size)) ? bound.deviceID : nil
         let formatMatches = client.status == noErr
             && client.byteSize == UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
@@ -538,7 +631,7 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
                 $0.sampleRate == client.format.mSampleRate && $0.channelCount == client.format.mChannelsPerFrame
             } ?? false
         return microphoneConfigurationRequiresRecovery(
-            isRunning: snapshot.0,
+            isRunning: running.status == noErr && running.byteSize == UInt32(MemoryLayout<UInt32>.size) && running.running,
             admitted: snapshot.2,
             readback: readback,
             resolved: resolvedDeviceID,
@@ -548,35 +641,35 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
 
     func start(deviceID: AudioDeviceID, deviceName: String,
                onPCM: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void) throws {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
         if currentUnit != nil {
             guard retireCurrent() else { throw ExternalMicCapture.ExternalMicCaptureError.failedToDisposeParkedUnit }
         }
-        guard MicrophoneNativeOwnerRegistry.shared.reclaim(ownerKey) else {
+        guard let reservation = MicrophoneNativeOwnerRegistry.shared.reserve(ownerKey) else {
             throw ExternalMicCapture.ExternalMicCaptureError.failedToDisposeParkedUnit
         }
 
         let unit = unitFactory()
         let context = MicrophoneRenderContext()
+        let owner = MicrophoneNativeHeld(unit: unit, context: context)
         let (epoch, hook) = stateLock.withLock { (armedEpoch, pendingFailureHook) }
         context.setOwnerEpoch(epoch)
         context.setFailureHook(hook)
-        var initialized = false
-        var started = false
         stateLock.withLock {
             currentUnit = unit
             currentContext = context
+            currentOwner = owner
+            currentReservation = reservation
         }
 
         func abandon(_ error: Error) throws -> Never {
-            let held = MicrophoneNativeHeld(unit: unit, context: context, initialized: initialized, started: started)
-            if !releaseNativeOwner(held) {
-                MicrophoneNativeOwnerRegistry.shared.park(ownerKey, held)
-            }
+            _ = MicrophoneNativeOwnerRegistry.shared.retire(reservation, owner)
             stateLock.withLock {
                 currentUnit = nil
                 currentContext = nil
-                unitInitialized = false
-                unitStarted = false
+                currentOwner = nil
+                currentReservation = nil
                 isRunningState = false
             }
             throw error
@@ -596,7 +689,7 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
             try abandon(ExternalMicCapture.ExternalMicCaptureError.deviceIDMismatch(expected: deviceID, actual: readID))
         }
         let (fmtStatus, hwASBD) = unit.getStreamFormat()
-        guard fmtStatus == noErr, hwASBD.mSampleRate > 0, hwASBD.mChannelsPerFrame > 0 else {
+        guard fmtStatus == noErr, nativeMicrophoneFormatIsSupported(hwASBD) else {
             try abandon(ExternalMicCapture.ExternalMicCaptureError.invalidFormat(deviceName))
         }
         let clientASBD = AudioStreamBasicDescription(
@@ -622,16 +715,18 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
         // Delivery stays closed through initialize and start. Both may invoke the callback.
         let initStatus = unit.initialize()
         guard initStatus == noErr else { try abandon(ExternalMicCapture.ExternalMicCaptureError.failedToInitializeUnit(initStatus)) }
-        initialized = true
-        stateLock.withLock { unitInitialized = true }
+        owner.initialized = true
         let startStatus = unit.start()
         guard startStatus == noErr else { try abandon(ExternalMicCapture.ExternalMicCaptureError.failedToStartUnit(startStatus)) }
-        started = true
-        stateLock.withLock { unitStarted = true }
 
         let bound = unit.getBoundDevice()
         guard bound.status == noErr, bound.byteSize == UInt32(MemoryLayout<AudioDeviceID>.size), bound.deviceID == deviceID else {
             try abandon(ExternalMicCapture.ExternalMicCaptureError.deviceIDMismatch(expected: deviceID, actual: bound.deviceID))
+        }
+        let running = unit.runningReadback()
+        guard running.status == noErr, running.byteSize == UInt32(MemoryLayout<UInt32>.size), running.running else {
+            try abandon(ExternalMicCapture.ExternalMicCaptureError.failedToStartUnit(
+                running.status == noErr ? kAudioUnitErr_Uninitialized : running.status))
         }
         let client = unit.getClientStreamFormat()
         guard client.status == noErr,
@@ -642,13 +737,24 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
         let slice = unit.maximumFramesPerSlice()
         guard slice.status == noErr,
               slice.byteSize == UInt32(MemoryLayout<UInt32>.size),
-              slice.frames > 0, slice.frames <= 16_384 else {
+              slice.frames > 0, slice.frames <= 16_384,
+              nativeMicrophoneBufferBytes(frames: slice.frames, format: client.format) != nil else {
             try abandon(ExternalMicCapture.ExternalMicCaptureError.invalidFormat(deviceName))
         }
-        guard let avFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                           sampleRate: client.format.mSampleRate,
-                                           channels: client.format.mChannelsPerFrame,
-                                           interleaved: false),
+        let format: AVAudioFormat?
+        if client.format.mChannelsPerFrame > 2 {
+            // The channel-count convenience initializer cannot infer arbitrary
+            // interface layouts. Preserve HAL's observable ordinal order.
+            if let layout = AVAudioChannelLayout(layoutTag:
+                kAudioChannelLayoutTag_DiscreteInOrder | client.format.mChannelsPerFrame) {
+                format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                    sampleRate: client.format.mSampleRate, interleaved: false, channelLayout: layout)
+            } else { format = nil }
+        } else {
+            format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                sampleRate: client.format.mSampleRate, channels: client.format.mChannelsPerFrame, interleaved: false)
+        }
+        guard let avFormat = format,
               let pcmBuffer = AVAudioPCMBuffer(pcmFormat: avFormat, frameCapacity: AVAudioFrameCount(slice.frames)) else {
             try abandon(ExternalMicCapture.ExternalMicCaptureError.failedToCreateFormat)
         }
@@ -661,40 +767,56 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
     }
 
     func stop() {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
         _ = retireCurrent()
     }
 
     private func retireCurrent() -> Bool {
-        let held = stateLock.withLock { () -> MicrophoneNativeHeld? in
-            guard let unit = currentUnit, let context = currentContext else { return nil }
+        let snapshot = stateLock.withLock { () -> (MicrophoneNativeHeld, MicrophoneNativeOwnerRegistry.Reservation)? in
+            guard let held = currentOwner, let reservation = currentReservation else { return nil }
             isRunningState = false
             admittedDevice = nil
             admittedFormat = nil
-            return MicrophoneNativeHeld(unit: unit, context: context, initialized: unitInitialized, started: unitStarted)
+            return (held, reservation)
         }
-        guard let held else { return true }
+        guard let (held, reservation) = snapshot else { return true }
         // Keep the context installed until release finishes so a callback during
         // stop can still record its failure against this owner.
-        let released = releaseNativeOwner(held)
+        let released = MicrophoneNativeOwnerRegistry.shared.retire(reservation, held)
         stateLock.withLock {
             currentUnit = nil
             currentContext = nil
-            unitInitialized = false
-            unitStarted = false
+            currentOwner = nil
+            currentReservation = nil
         }
-        if released { return true }
-        MicrophoneNativeOwnerRegistry.shared.park(ownerKey, held)
-        return false
+        return released
     }
 }
 
 private func clientFormatMatches(_ format: AudioStreamBasicDescription, expected: AudioStreamBasicDescription) -> Bool {
-    format.mSampleRate == expected.mSampleRate
+    nativeMicrophoneFormatIsSupported(format)
+        && format.mSampleRate == expected.mSampleRate
         && format.mFormatID == kAudioFormatLinearPCM
         && format.mChannelsPerFrame == expected.mChannelsPerFrame
         && format.mBitsPerChannel == 32
         && format.mBytesPerFrame == 4
+        && format.mBytesPerPacket == 4
         && format.mFramesPerPacket == 1
-        && (format.mFormatFlags & kAudioFormatFlagIsFloat) != 0
-        && (format.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+        && format.mFormatFlags == expected.mFormatFlags
+}
+
+/// Same rate/channel/backing policy as AudioPCMExtent. An advertised render
+/// capacity is not input duration, so it does not use the one-second input guard.
+private func nativeMicrophoneFormatIsSupported(_ format: AudioStreamBasicDescription) -> Bool {
+    format.mSampleRate.isFinite && (1...192_000).contains(format.mSampleRate)
+        && format.mChannelsPerFrame > 0 && format.mChannelsPerFrame <= 64
+}
+
+private func nativeMicrophoneBufferBytes(frames: UInt32, format: AudioStreamBasicDescription) -> Int? {
+    guard frames > 0, nativeMicrophoneFormatIsSupported(format) else { return nil }
+    let (samples, samplesOverflow) = Int(frames).multipliedReportingOverflow(by: Int(format.mChannelsPerFrame))
+    let (bytes, bytesOverflow) = samples.multipliedReportingOverflow(by: MemoryLayout<Float>.size)
+    guard !samplesOverflow, !bytesOverflow, bytes > 0, bytes <= AudioMediaBudget.bytesPerStage else { return nil }
+    return bytes
 }
