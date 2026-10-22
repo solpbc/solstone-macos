@@ -210,11 +210,13 @@ struct MicrophoneRecoveryTests {
     @Test(arguments: ["healthy", "stopped", "readback", "unreadable", "format", "resolved", "missing"])
     func configurationChangeStopsAndReportsButNeverRestartsItself(change: String) async throws {
         let lab = MicEngineLab(), id = LockedValue<AudioDeviceID>(); id.set(10)
+        let missing = LockedValue<Bool>(); missing.set(false)
         let capture = ExternalMicCapture(device: device(), engineFactory: { lab.make() },
-            resolveDeviceID: { _ in change == "missing" && lab.engines.count > 0 && !lab.engines[0].boundIDs.isEmpty ? nil : id.current },
+            resolveDeviceID: { _ in missing.current == true ? nil : id.current },
             layoutReader: { _ in testOneChannelLayout })
         let requests = recoveryRequests(capture)
         try capture.start()
+        if change == "missing" { missing.set(true) }
         let first = lab.engines[0]
         first.configure(isRunning: change != "stopped", readback: change == "unreadable" ? nil : (change == "readback" ? 20 : 10),
             formatUnchanged: change != "format")

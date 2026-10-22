@@ -17,6 +17,7 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     private let verbose: Bool
     private var gain: Float
     private var selectedDevices: [AudioInputDevice]?
+    private var admittedDeviceUIDs: Set<String>?
     private var selectionRevisions: [String: UInt64] = [:]
     private var savedChoices: [String: MicrophoneChoice] = [:]
     private var startingUIDs: Set<String> = []
@@ -35,15 +36,17 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     /// Publish current owner intent before starting or wiring any device.
     /// Only devices whose admission changes invalidate their old destinations.
     @discardableResult
-    public func updateSelection(_ devices: [AudioInputDevice]) -> [String] {
+    public func updateSelection(_ devices: [AudioInputDevice], admittedUIDs: Set<String>? = nil) -> [String] {
         lock.withLock {
-            let before = selectedDevices.map { Set($0.map(\.uid)) }
-            let after = Set(devices.map(\.uid))
-            let known = Set(captures.keys).union(before ?? []).union(after).union(selectionRevisions.keys)
+            let before = selectedDevices.map { Set($0.map(\.uid).filter { admittedDeviceUIDs?.contains($0) ?? true }) }
+            let selected = Set(devices.map(\.uid))
+            let after = selected.filter { admittedUIDs?.contains($0) ?? true }
+            let known = Set(captures.keys).union(before ?? []).union(selected).union(selectionRevisions.keys)
             for uid in known where (before?.contains(uid) ?? true) != after.contains(uid) {
                 selectionRevisions[uid, default: 0] &+= 1
             }
             selectedDevices = devices
+            admittedDeviceUIDs = admittedUIDs
             let revoked = captures.keys.filter { !after.contains($0) }
             for uid in revoked { captures[uid]?.setCallbacks(audio: nil, error: nil) }
             return revoked
@@ -51,19 +54,20 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     }
 
     public func microphonesForStartup(fallback: [AudioInputDevice]) -> [AudioInputDevice] {
-        lock.withLock { selectedDevices ?? fallback }
+        lock.withLock { (selectedDevices ?? fallback).filter { selectionAllows($0.uid) } }
     }
-    /// No microphone is selected right now, whether by the owner's choice or because
-    /// none is connected. Neither is a capture failure; the session waits for one.
+    /// No selected microphone is currently admitted. Owner exclusions, disconnection
+    /// and an interface awaiting a usable input choice wait without a capture failure.
     public var hasEmptySelection: Bool {
-        lock.withLock { selectedDevices?.isEmpty == true }
+        lock.withLock { selectedDevices?.allSatisfy { !selectionAllows($0.uid) } == true }
     }
     public var selectedDeviceUIDs: [String] { lock.withLock { selectedDevices?.map(\.uid) ?? [] } }
     public func allowsCapture(deviceUID: String) -> Bool {
         lock.withLock { selectionAllows(deviceUID) }
     }
     private func selectionAllows(_ uid: String) -> Bool {
-        selectedDevices?.contains { $0.uid == uid } ?? true
+        (selectedDevices?.contains { $0.uid == uid } ?? true)
+            && (admittedDeviceUIDs?.contains(uid) ?? true)
     }
     internal func mediaBudget(for uid: String) -> AudioMediaBudget {
         lock.withLock { mediaBudgetLocked(for: uid) }

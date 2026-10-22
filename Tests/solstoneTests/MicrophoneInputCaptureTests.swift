@@ -1237,6 +1237,46 @@ struct MicrophoneInputCaptureTests {
         #expect(unit.disposeCallCount == 1)
     }
 
+    @Test(arguments: [false, true]) @MainActor
+    func firstSegmentUsesSavedChoiceAndSkipsAnUnchosenInterface(hasSavedChoice: Bool) async throws {
+        let root = try makeTempDirectory("mic-first-segment")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suffix = UUID().uuidString
+        let interface = AudioInputDevice(id: 10, name: "interface", uid: "interface-\(suffix)",
+            manufacturer: nil, sampleRate: 48_000, transportType: .usb)
+        let sibling = AudioInputDevice(id: 11, name: "sibling", uid: "sibling-\(suffix)",
+            manufacturer: nil, sampleRate: 48_000, transportType: .usb)
+        let layout = micLayout(channels: 10)
+        guard case .available(let ten) = layout else { Issue.record("layout"); return }
+        let builds = LockedArray<String>([])
+        let native = MicrophoneCaptureManager(gain: 1, captureFactory: { device, gain, verbose in
+            builds.append(device.uid)
+            return ExternalMicCapture(device: device, gain: gain, verbose: verbose,
+                engineFactory: { NativeMicrophoneCaptureEngine(unitFactory: {
+                    FakeMicrophoneInputUnit(channelCount: device.id == 10 ? 10 : 1)
+                }) }, resolveDeviceID: { _ in device.id },
+                layoutReader: { _ in device.id == 10 ? layout : testOneChannelLayout })
+        })
+        defer { native.stopAll() }
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [interface, sibling] }, layoutReader: { $0 == 10 ? layout : testOneChannelLayout },
+            inputDevicesQuery: { [interface, sibling] }, streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: CaptureLifecycleManager.liveRecoveryScheduler,
+            microphoneCaptureManager: native, pauseForProtectedVideo: false)
+        let saved = hasSavedChoice ? MicrophoneChoice(ordinal: 6, fingerprint: ten.fingerprint) : nil
+        manager.microphoneChoiceProvider = { $0 == interface.uid ? saved : nil }
+        let started = await manager.enqueueTransition(.start(reason: .user, sources: .microphone,
+            disabledMicUIDs: [], enabledMicUIDs: [interface.uid, sibling.uid]))
+        guard case .committed = started else { Issue.record("first segment did not start"); return }
+        #expect(native.hasCapture(for: interface.uid) == hasSavedChoice)
+        #expect(native.hasCapture(for: sibling.uid))
+        #expect(builds.all.contains(interface.uid) == hasSavedChoice)
+        let segment = try #require(manager.currentSegmentForTesting)
+        #expect(Set(segment.activeMicrophoneUIDs()) == Set(hasSavedChoice ? [interface.uid, sibling.uid] : [sibling.uid]))
+        #expect(manager.currentAudioHealthNote == nil)
+        _ = await manager.enqueueTransition(.stop(reason: .user))
+    }
+
     @Test func choiceLifecycleKeepsAcceptedMediaAndDoesNotResurrectAClearedInput() async throws {
         defer { microphoneNativeResetOwnersForTesting() }
         let root = try makeTempDirectory("mic-choice-life")

@@ -644,7 +644,18 @@ public final class CaptureManager {
             MicrophoneSelection.shouldCapture($0, disabledMicUIDs: disabledMicUIDs, enabledMicUIDs: enabledMicUIDs,
                 inUseElsewhere: inUseElsewhere)
         }
-        let revoked = micCaptureManager.updateSelection(selected)
+        // The first segment starts captures before reconciliation. Seed persisted
+        // choices here so its first native attempt has the same policy as a retry.
+        if let microphoneChoiceProvider {
+            for device in selected {
+                micCaptureManager.setSavedChoice(for: device.uid, choice: microphoneChoiceProvider(device.uid))
+            }
+        }
+        let admittedUIDs = Set(selected.filter { device in
+            classifyMicrophone(device: device, choice: microphoneChoiceProvider?(device.uid),
+                layoutResult: layoutReader(device.id)) == .admitted
+        }.map(\.uid))
+        let revoked = micCaptureManager.updateSelection(selected, admittedUIDs: admittedUIDs)
         for uid in revoked {
             currentSegment?.deselectMicrophone(deviceUID: uid)
             micCaptureManager.stopCapture(deviceUID: uid)
