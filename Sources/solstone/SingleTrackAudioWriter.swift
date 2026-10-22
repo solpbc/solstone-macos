@@ -157,10 +157,6 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private var lastSilentBufferFormat: CMFormatDescription?
     private var lastSilentBufferSampleRate: Double = 48000
 
-    /// RMS threshold below which audio is considered silent (approx -60dB)
-    /// Very conservative to avoid cutting real audio
-    private static let silenceThreshold: Float = 0.001
-
     /// Maximum silence duration before forcing a flush (1 second worth of samples at 48kHz)
     private static let maxSilenceSamples: Int = 48000
 
@@ -588,7 +584,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             return false
         }
 
-        return rms < Self.silenceThreshold
+        // Only exact digital silence is batched, so the generated zeros replace zeros.
+        // Quiet sound is real audio and is written as captured: a -60 dB floor here
+        // once replaced faint speech with silence before transcription could hear it.
+        return rms == 0
     }
 
     /// Flush accumulated silence in bounded buffers without discarding its tail

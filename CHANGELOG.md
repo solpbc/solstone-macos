@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- very quiet sound, like a voice from across the room, now reaches your journal unchanged. before, the solstone app replaced it with silence.
 - a segment change keeps audio that was already accepted. if an interface's inputs change, it waits for a new choice instead of recording a different input.
 
 ## [2.0.44] - 2026-10-21
