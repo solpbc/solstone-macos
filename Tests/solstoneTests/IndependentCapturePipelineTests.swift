@@ -455,6 +455,38 @@ struct IndependentCapturePipelineTests {
         _ = await manager.enqueueTransition(.stop(reason: .user))
     }
 
+    @Test func layoutRetryAdmitsWhenTheDeviceListIsUnchanged() async throws {
+        let root = try makeTempDirectory("layout-retry")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let device = AudioInputDevice(id: 44, name: "Retry Mic", uid: "retry-mic",
+            manufacturer: nil, sampleRate: 48_000, transportType: .usb)
+        let layout = LockedValue<MicrophoneMonitor.MicrophoneLayoutResult>()
+        layout.set(.unavailable)
+        let ten = MicrophoneMonitor.MicrophoneLayout(
+            fingerprint: MicrophoneLayoutFingerprint(streams: [.init(startingChannel: 1, channelCount: 10)]),
+            channelCount: 10,
+            labels: Array(repeating: nil, count: 10)
+        )
+        let capture = MicrophoneCaptureManager()
+        let audio = PerSourceAudioManager(outputDirectory: root, timePrefix: "120000",
+            captureManager: capture, startMicrophoneCapture: { _ in })
+        let writer = SegmentWriter(outputDirectory: root, timePrefix: "120000",
+            audioManagerFactory: { _, _, _, _ in audio })
+        _ = try await writer.start(sources: .microphone, mics: [testMicrophone])
+        let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
+            microphoneDevices: { [device] }, layoutReader: { _ in layout.current ?? .unavailable })
+        manager.seedRecordingForTesting(currentSegment: writer, sources: .microphone)
+        manager.retryMicrophoneLayout(deviceUID: device.uid)
+        #expect(audio.activeMicrophoneUIDs().isEmpty)
+        layout.set(.available(ten))
+        manager.retryMicrophoneLayout(deviceUID: device.uid)
+        #expect(audio.activeMicrophoneUIDs().isEmpty)
+        layout.set(testOneChannelLayout)
+        manager.retryMicrophoneLayout(deviceUID: device.uid)
+        #expect(audio.activeMicrophoneUIDs() == [device.uid])
+        _ = await manager.enqueueTransition(.stop(reason: .user))
+    }
+
     @Test func failedMicrophoneStartupLeavesNoRegisteredWriterOrMetadata() async throws {
         let root = try makeTempDirectory("source-mic-registration")
         defer { try? FileManager.default.removeItem(at: root) }

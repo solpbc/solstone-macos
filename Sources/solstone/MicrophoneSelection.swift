@@ -32,6 +32,34 @@ public func classifyMicrophone(
     }
 }
 
+enum MicrophoneChoicePrompt: Equatable, Sendable {
+    /// More than two inputs, and no saved choice for this layout.
+    case pickInput
+    /// A saved choice does not match the layout that is readable now.
+    case inputsChanged
+}
+
+func microphoneChoicePrompt(choice: MicrophoneChoice?, layout: MicrophoneMonitor.MicrophoneLayout) -> MicrophoneChoicePrompt {
+    if let choice, choice.fingerprint != layout.fingerprint {
+        return .inputsChanged
+    }
+    return .pickInput
+}
+
+func microphoneChoiceCopy(choice: MicrophoneChoice?, layout: MicrophoneMonitor.MicrophoneLayout) -> String {
+    switch microphoneChoicePrompt(choice: choice, layout: layout) {
+    case .pickInput: UICopy.MICROPHONE_NEEDS_CHOICE
+    case .inputsChanged: UICopy.MICROPHONE_INPUTS_CHANGED
+    }
+}
+
+/// Needs-choice always presents the unselected placeholder. A stale ordinal must not look selected,
+/// or choosing that same row again never dispatches a new choice.
+func microphonePickerSelection(interfaceState: MicrophoneInterfaceState, choice: MicrophoneChoice?) -> Int {
+    if case .needsChoice = interfaceState { return -1 }
+    return choice?.ordinal ?? 0
+}
+
 enum MicrophoneSelection {
     /// `enabled` always captures and `disabled` never does. A Bluetooth microphone
     /// in neither set follows other apps: it is taken in only while another app has

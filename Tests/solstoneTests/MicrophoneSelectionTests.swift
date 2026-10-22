@@ -68,6 +68,32 @@ struct MicrophoneSelectionTests {
         #expect(!MicrophoneSelection.shouldCapture(phone, disabledMicUIDs: [], enabledMicUIDs: [], inUseElsewhere: ["phone"]))
     }
 
+    @Test func needsChoiceShowsNoOrdinalAndNamesLayoutDriftAtAnyChannelCount() {
+        let saved = MicrophoneLayoutFingerprint(streams: [.init(startingChannel: 1, channelCount: 10)])
+        let drifted = MicrophoneLayoutFingerprint(streams: [.init(startingChannel: 1, channelCount: 2)])
+        let same = MicrophoneMonitor.MicrophoneLayout(fingerprint: saved, channelCount: 10, labels: [])
+        let stereo = MicrophoneMonitor.MicrophoneLayout(fingerprint: drifted, channelCount: 2, labels: [])
+        let choice = MicrophoneChoice(ordinal: 7, fingerprint: saved)
+        let driftedState = classifyMicrophone(
+            device: makeDevice(uid: "iface", transportType: .usb),
+            choice: choice,
+            layoutResult: .available(stereo)
+        )
+        #expect(driftedState == .needsChoice(layout: stereo))
+        #expect(microphonePickerSelection(interfaceState: driftedState, choice: choice) == -1)
+        #expect(microphoneChoicePrompt(choice: choice, layout: stereo) == .inputsChanged)
+        #expect(microphoneChoicePrompt(choice: choice, layout: same) == .pickInput)
+        let fresh = classifyMicrophone(
+            device: makeDevice(uid: "iface", transportType: .usb),
+            choice: nil,
+            layoutResult: .available(same)
+        )
+        #expect(microphonePickerSelection(interfaceState: fresh, choice: choice) == -1)
+        #expect(microphoneChoicePrompt(choice: nil, layout: same) == .pickInput)
+        let admitted = MicrophoneInterfaceState.admitted
+        #expect(microphonePickerSelection(interfaceState: admitted, choice: choice) == 7)
+    }
+
     private func makeDevice(uid: String, name: String = "Test Mic", transportType: AudioTransportType) -> AudioInputDevice {
         AudioInputDevice(
             id: 1,

@@ -706,6 +706,13 @@ public final class AppState {
         refreshLoginItemStatus()
     }
 
+    /// Read this interface's inputs again and admit capture when the layout is now usable.
+    /// A failed layout query does not change the device list, so device-change handling never runs.
+    func retryMicrophoneLayout(uid: String) {
+        audioDeviceMonitor.retryPresentedLayout()
+        captureManager.retryMicrophoneLayout(deviceUID: uid)
+    }
+
     // MARK: - Configuration
 
     /// Update and save configuration

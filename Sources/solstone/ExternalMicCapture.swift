@@ -411,17 +411,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
         try engine.start(deviceID: currentID, deviceName: device.name) { [weak self] buffer, when in
             self?.handleAudioBuffer(buffer, when: MicrophoneBufferTime(when), monoFormat: monoFormat, engineEpoch: epoch)
         }
-        deviceListeners = [
-            HALPropertyListener(objectID: AudioObjectID(currentID), selector: kAudioDevicePropertyDeviceIsAlive) { [weak self] in
-                self?.triggerRecoveryCheck()
-            },
-            HALPropertyListener(objectID: AudioObjectID(currentID), selector: kAudioDevicePropertyStreamConfiguration, scope: kAudioDevicePropertyScopeInput) { [weak self] in
-                self?.triggerRecoveryCheck()
-            },
-            HALPropertyListener(objectID: AudioObjectID(currentID), selector: kAudioDevicePropertyNominalSampleRate) { [weak self] in
-                self?.triggerRecoveryCheck()
-            }
-        ]
+        deviceListeners = makeDeviceListeners(objectID: currentID)
         let committed = callbackLock.withLock { () -> Bool in
             guard captureRequested && requestedEpoch == request else { return false }
             running = true; boundDeviceID = currentID; lastTapArrival = monotonicNow()
@@ -455,17 +445,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             try engine.start(deviceID: deviceID, deviceName: deviceName) { [weak self] buffer, when in
                 self?.handleAudioBuffer(buffer, when: MicrophoneBufferTime(when), monoFormat: monoFormat, engineEpoch: epoch)
             }
-            deviceListeners = [
-                HALPropertyListener(objectID: AudioObjectID(deviceID), selector: kAudioDevicePropertyDeviceIsAlive) { [weak self] in
-                    self?.triggerRecoveryCheck()
-                },
-                HALPropertyListener(objectID: AudioObjectID(deviceID), selector: kAudioDevicePropertyStreamConfiguration, scope: kAudioDevicePropertyScopeInput) { [weak self] in
-                    self?.triggerRecoveryCheck()
-                },
-                HALPropertyListener(objectID: AudioObjectID(deviceID), selector: kAudioDevicePropertyNominalSampleRate) { [weak self] in
-                    self?.triggerRecoveryCheck()
-                }
-            ]
+            deviceListeners = makeDeviceListeners(objectID: deviceID)
             callbackLock.withLock {
                 running = true
                 boundDeviceID = deviceID
@@ -482,6 +462,59 @@ public final class ExternalMicCapture: @unchecked Sendable {
         guard engine.takeRenderFailure(matching: admittedEpoch) else { return }
         let errorCallback = callbackLock.withLock { _rawAdmissionError ?? _onCaptureError }
         errorCallback?(ExternalMicCaptureError.renderFailed)
+    }
+
+    private func makeDeviceListeners(objectID: AudioDeviceID) -> [HALPropertyListener] {
+        let id = AudioObjectID(objectID)
+        var listeners = [
+            HALPropertyListener(objectID: id, selector: kAudioDevicePropertyDeviceIsAlive) { [weak self] in
+                self?.triggerRecoveryCheck()
+            },
+            HALPropertyListener(objectID: id, selector: kAudioDevicePropertyStreamConfiguration, scope: kAudioDevicePropertyScopeInput) { [weak self] in
+                self?.triggerRecoveryCheck()
+            },
+            HALPropertyListener(objectID: id, selector: kAudioDevicePropertyNominalSampleRate) { [weak self] in
+                self?.triggerRecoveryCheck()
+            }
+        ]
+        // Member reorder keeps the same device id and stream configuration. Only the aggregate lists notify.
+        if device.transportType == .aggregate {
+            listeners.append(HALPropertyListener(objectID: id, selector: kAudioAggregateDevicePropertyFullSubDeviceList) { [weak self] in
+                self?.aggregateTopologyChanged()
+            })
+            listeners.append(HALPropertyListener(objectID: id, selector: kAudioAggregateDevicePropertyActiveSubDeviceList) { [weak self] in
+                self?.aggregateTopologyChanged()
+            })
+        }
+        return listeners
+    }
+
+    /// Stop admitting the old ordinal before the layout read. A matching layout admits again.
+    /// A changed layout stops this capture and does not ask recovery to restart it.
+    private func aggregateTopologyChanged() {
+        let request = callbackLock.withLock { () -> UInt64? in
+            guard captureRequested else { return nil }
+            recordingEnabled = false
+            admittedOrdinal = nil
+            policyGeneration &+= 1
+            converterEpoch &+= 1
+            return requestedEpoch
+        }
+        guard let request else { return }
+        writerQueue.async { [weak self] in
+            guard let self else { return }
+            self.clearConverterWithoutDraining()
+            guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request }) else { return }
+            if self.layoutRequiresNewChoice() {
+                self.teardownEngine()
+                self.revokeUnacceptedAudio()
+                self.callbackLock.withLock {
+                    if self.requestedEpoch == request { self.captureRequested = false }
+                }
+                return
+            }
+            _ = self.checkChoiceAdmission()
+        }
     }
 
     private func teardownEngine() {
@@ -747,6 +780,13 @@ public final class ExternalMicCapture: @unchecked Sendable {
     internal var _startAdmissionHookForTesting: (@Sendable () -> Void)?
     internal var _copyAdmissionForTesting: (@Sendable (Int) -> Bool)?
     internal var _willCopyPCMForTesting: (@Sendable () -> Void)?
+    internal var _recordingEnabledForTesting: Bool { callbackLock.withLock { recordingEnabled } }
+    internal var deviceListenerSelectorsForTesting: [AudioObjectPropertySelector] {
+        deviceListeners.map(\.selector)
+    }
+    internal func simulateDevicePropertyChangeForTesting(_ selector: AudioObjectPropertySelector) {
+        deviceListeners.first { $0.selector == selector }?.simulateChangeForTesting()
+    }
     internal var _conversionAdmissionForTesting: (@Sendable () -> Bool)?
     internal var _observationQueuedForTesting: (@Sendable () -> Void)?
     #endif

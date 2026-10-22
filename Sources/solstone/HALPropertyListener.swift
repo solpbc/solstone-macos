@@ -20,7 +20,7 @@ final class HALPropertyListener: @unchecked Sendable {
     private static let queue = DispatchQueue(label: "app.solstone.observer.hal-property-listener")
 
     private let objectID: AudioObjectID
-    private let selector: AudioObjectPropertySelector
+    let selector: AudioObjectPropertySelector
     private let scope: AudioObjectPropertyScope
     private let element: AudioObjectPropertyElement
     private let lock = OSAllocatedUnfairLock(initialState: State())

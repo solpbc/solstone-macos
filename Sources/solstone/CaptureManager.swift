@@ -602,6 +602,13 @@ public final class CaptureManager {
     }
 
     /// Layout drift keeps the saved choice and stops this capture without scheduling recovery.
+    /// The owner asked to read this interface's inputs again. Enumeration may be unchanged.
+    public func retryMicrophoneLayout(deviceUID: String) {
+        guard state.isRecording, sessionSources.contains(.microphone) else { return }
+        audioRecovery.reset([deviceUID])
+        reconcileMicrophoneSelection(restartUIDs: [deviceUID])
+    }
+
     public func stopMicrophoneUntilChoice(deviceUID: String) {
         micCaptureManager.revokeUnacceptedAudio(for: deviceUID)
         if micCaptureManager.getCapture(for: deviceUID) != nil {
