@@ -137,13 +137,15 @@ struct SystemAudioContinuityTests {
         try await manager.start(filter: SCContentFilter())
         manager.setCallback(onError: { _ in errors.increment() }) { _ in }
         observer.callbacks.last?()
-        try await settled { factory.createdStreams.count == 4 && !manager.isRunning }
+        // Stream construction precedes its asynchronous start failure and error
+        // callback. Wait for recovery to finish before testing the spent budget.
+        try await settled { factory.createdStreams.count == 4 && manager.needsRearm }
         // Health ticks and segment starts never renew an exhausted budget.
         for _ in 0..<10 { await manager._performHealthCheckForTesting(); try await manager.start(filter: SCContentFilter()) }
         #expect(factory.createdStreams.count == 4 && errors.count == 4)
         // Liveness admits one more bounded batch, then waits out its backoff.
         rearmIfDue(manager, recovery)
-        try await settled { factory.createdStreams.count == 7 && !manager.isRunning }
+        try await settled { factory.createdStreams.count == 7 && manager.needsRearm }
         now += 59; rearmIfDue(manager, recovery); try await Task.sleep(for: .milliseconds(20))
         #expect(factory.createdStreams.count == 7 && errors.count == 7)
         let next = LockedCounter(); manager.clearCallback(); manager.setCallback(onError: { _ in next.increment() }) { _ in }

@@ -623,6 +623,7 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
         guard snapshot.0, let unit = snapshot.1 else { return true }
         let bound = unit.getBoundDevice()
         let client = unit.getClientStreamFormat()
+        let hardware = unit.getStreamFormat()
         let running = unit.runningReadback()
         let readback = (bound.status == noErr && bound.byteSize == UInt32(MemoryLayout<AudioDeviceID>.size)) ? bound.deviceID : nil
         let formatMatches = client.status == noErr
@@ -630,12 +631,17 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
             && snapshot.3.map {
                 $0.sampleRate == client.format.mSampleRate && $0.channelCount == client.format.mChannelsPerFrame
             } ?? false
+        // AUHAL can keep its negotiated client format after the device's native
+        // format changes. That does not prove the transport is still delivering.
+        let hardwareMatches = hardware.status == noErr && snapshot.3.map {
+            $0.sampleRate == hardware.format.mSampleRate && $0.channelCount == hardware.format.mChannelsPerFrame
+        } ?? false
         return microphoneConfigurationRequiresRecovery(
             isRunning: running.status == noErr && running.byteSize == UInt32(MemoryLayout<UInt32>.size) && running.running,
             admitted: snapshot.2,
             readback: readback,
             resolved: resolvedDeviceID,
-            formatUnchanged: formatMatches
+            formatUnchanged: formatMatches && hardwareMatches
         )
     }
 
@@ -732,6 +738,12 @@ internal final class NativeMicrophoneCaptureEngine: MicrophoneCaptureEngine, @un
         guard client.status == noErr,
               client.byteSize == UInt32(MemoryLayout<AudioStreamBasicDescription>.size),
               clientFormatMatches(client.format, expected: clientASBD) else {
+            try abandon(ExternalMicCapture.ExternalMicCaptureError.invalidFormat(deviceName))
+        }
+        let hardware = unit.getStreamFormat()
+        guard hardware.status == noErr,
+              hardware.format.mSampleRate == hwASBD.mSampleRate,
+              hardware.format.mChannelsPerFrame == hwASBD.mChannelsPerFrame else {
             try abandon(ExternalMicCapture.ExternalMicCaptureError.invalidFormat(deviceName))
         }
         let slice = unit.maximumFramesPerSlice()

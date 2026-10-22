@@ -57,6 +57,7 @@ final class FakeMicrophoneInputUnit: MicrophoneInputUnit, @unchecked Sendable {
     var onDispose: (@Sendable () -> Void)?
     var onRender: (@Sendable () -> Void)?
     var onStop: (@Sendable () -> Void)?
+    var onStart: (@Sendable () -> Void)?
 
     init(sampleRate: Float64 = 48000, channelCount: UInt32 = 1) {
         var asbd = AudioStreamBasicDescription()
@@ -97,6 +98,7 @@ final class FakeMicrophoneInputUnit: MicrophoneInputUnit, @unchecked Sendable {
     func initialize() -> OSStatus { initStatus }
     func uninitialize() -> OSStatus { uninitializeCallCount += 1; return uninitializeStatus }
     func start() -> OSStatus {
+        onStart?()
         if invokeCallbackOnStart, let renderCallback, let renderRefCon {
             var flags: AudioUnitRenderActionFlags = []
             var time = AudioTimeStamp()
@@ -1069,6 +1071,36 @@ struct MicrophoneInputCaptureTests {
         unit.actualRunning = true
         unit.runningByteSize = 1
         #expect(engine.requiresRecovery(resolvedDeviceID: 10))
+    }
+
+    @Test func hardwareFormatDriftRequiresRecoveryEvenWhenClientFormatStaysNegotiated() throws {
+        let unit = FakeMicrophoneInputUnit(sampleRate: 44_100)
+        let engine = NativeMicrophoneCaptureEngine(unitFactory: { unit })
+        try engine.start(deviceID: 10, deviceName: "native-format") { _, _ in }
+        defer { engine.stop() }
+        unit.clientFormatOverride = unit.streamFormat
+        #expect(!engine.requiresRecovery(resolvedDeviceID: 10))
+        unit.streamFormat.mSampleRate = 48_000
+        #expect(engine.requiresRecovery(resolvedDeviceID: 10))
+        unit.streamFormat.mSampleRate = 44_100
+        unit.streamFormat.mChannelsPerFrame = 2
+        #expect(engine.requiresRecovery(resolvedDeviceID: 10))
+        unit.streamFormat.mChannelsPerFrame = 1
+        unit.getStreamFormatStatus = -50
+        #expect(engine.requiresRecovery(resolvedDeviceID: 10))
+    }
+
+    @Test func hardwareFormatDriftDuringStartDoesNotOpenDelivery() throws {
+        let unit = FakeMicrophoneInputUnit(sampleRate: 44_100)
+        unit.clientFormatOverride = unit.streamFormat
+        unit.onStart = { [weak unit] in unit?.streamFormat.mSampleRate = 48_000 }
+        let engine = NativeMicrophoneCaptureEngine(unitFactory: { unit })
+        #expect(throws: ExternalMicCapture.ExternalMicCaptureError.self) {
+            try engine.start(deviceID: 10, deviceName: "startup-format-drift") { _, _ in
+                Issue.record("delivery opened after hardware format drift")
+            }
+        }
+        #expect(unit.disposeCallCount == 1)
     }
 
     @Test func globalNativeOwnerCapacityRejectsBeforeConstructionAndReleasesSlots() throws {
