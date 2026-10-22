@@ -18,6 +18,8 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     private var gain: Float
     private var selectedDevices: [AudioInputDevice]?
     private var selectionRevisions: [String: UInt64] = [:]
+    private var savedChoices: [String: MicrophoneChoice] = [:]
+    private var startingUIDs: Set<String> = []
     private let captureFactory: @Sendable (AudioInputDevice, Float, Bool) -> ExternalMicCapture
     private var _onRecoveryNeeded: (@Sendable (String) -> Void)?
 
@@ -108,28 +110,46 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     /// - Parameter device: The audio input device to capture from
     /// - Parameter choice: The optional channel choice and layout fingerprint
     /// - Throws: If capture fails to start
+    public func setSavedChoice(for uid: String, choice: MicrophoneChoice?) {
+        lock.withLock {
+            if let choice { savedChoices[uid] = choice }
+            else { savedChoices.removeValue(forKey: uid) }
+        }
+    }
+
     public func startCapture(for device: AudioInputDevice, choice: MicrophoneChoice? = nil) throws {
         lock.lock()
         guard selectionAllows(device.uid) else { lock.unlock(); throw SelectionError.selectionChanged }
         let selectionRevision = selectionRevisions[device.uid, default: 0]
+        if let choice { savedChoices[device.uid] = choice }
+        let resolved = choice ?? savedChoices[device.uid]
 
-        // Already running - nothing to do
-        if captures[device.uid]?.isCapturing == true {
+        if startingUIDs.contains(device.uid) {
             lock.unlock()
+            throw SelectionError.selectionChanged
+        }
+
+        // Already running: re-authorize in place. The live writer sink stays.
+        if captures[device.uid]?.isCapturing == true {
+            let capture = captures[device.uid]
+            lock.unlock()
+            if let resolved { _ = capture?.authorizeChoice(resolved) }
             if verbose { Logger.audio.debug("Capture already running for \(device.name, privacy: .public)") }
             return
         }
+        startingUIDs.insert(device.uid)
         let failedCapture = captures.removeValue(forKey: device.uid)
         let captureGain = gain
         let mediaBudget = mediaBudgetLocked(for: device.uid)
         lock.unlock()
+        defer { lock.withLock { startingUIDs.remove(device.uid) } }
         failedCapture?.stop()
 
         // A fresh capture each time: AUHAL/engine starts clean on a fresh instance.
         let capture = captureFactory(device, captureGain, verbose)
         capture.useMediaBudget(mediaBudget)
-        if let choice {
-            capture.authorizeChoice(choice)
+        if let resolved {
+            _ = capture.authorizeChoice(resolved)
         }
         let uid = device.uid
         capture.onRecoveryNeeded = { [weak self] in self?.onRecoveryNeeded?(uid) }
@@ -216,7 +236,8 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
                     guard let self else { return nil }
                     return self.lock.withLock {
                         guard self.selectionAllows(deviceUID), self.selectionRevisions[deviceUID, default: 0] == revision else { return nil }
-                        return callback(buffer, time)
+                        guard let capture = self.captures[deviceUID] else { return nil }
+                        return capture.performIfPolicyCurrent { callback(buffer, time) }
                     }
                 }
             }, error: onError.map { onError in
@@ -258,7 +279,8 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
                 guard let self else { return nil }
                 return self.lock.withLock {
                     guard self.selectionAllows(uid), self.selectionRevisions[uid, default: 0] == revision else { return nil }
-                    return stream.receive(pcm: buffer, at: time)
+                    guard let capture = self.captures[uid] else { return nil }
+                    return capture.performIfPolicyCurrent { stream.receive(pcm: buffer, at: time) }
                 }
             }, admissionGate: { [weak self] operation in
                 guard let self else { return false }

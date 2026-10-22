@@ -57,7 +57,7 @@ Use `HALPropertyListener` as the single wrapper for `AudioObjectAddPropertyListe
 
 **Common targets:**
 - `kAudioHardwarePropertyDevices` on system object: device added/removed (`AudioDeviceMonitor`)
-- `kAudioHardwarePropertyDefaultInputDevice` on system object: default mic changed (`CaptureManager`)
+- `kAudioHardwarePropertyDefaultInputDevice` on system object: default input device. Persistent microphone capture does not listen to it.
 - `kAudioHardwarePropertyServiceRestarted` on system object: HAL restarted (`SystemAudioCaptureManager.liveRestartListenerFactory`)
 
 Listener registration, callback admission and invalidation retain their current owner/revision fences. A queued callback from an invalidated listener cannot rebuild a replacement recording session. Device selection uses UID; the native ID is resolved again before each bind.
@@ -82,7 +82,7 @@ Listener registration, callback admission and invalidation retain their current 
 
 ## 6. Device Pinning with AUHAL
 
-AUHAL (HAL Output Audio Unit) pins directly to hardware. Default input route switches do not touch pinned units. `AudioDeviceID` is ephemeral: `ExternalMicCapture.startCapture()` resolves the selected UID to a fresh ID via a fresh device enumeration before each native start or recovery attempt. If that UID is unavailable, report failure instead of binding an obsolete ID or a similarly named source. Interfaces with more than two inputs record only the specific channel chosen by the user, while mono and stereo interfaces downmix through the standard converter.
+AUHAL (HAL Output Audio Unit) pins directly to hardware. Pinning does not make capture immune to every route change: the selected device can still disappear, change format, or change its observable input layout, and those events need a fresh resolution. `AudioDeviceID` is ephemeral: `ExternalMicCapture.startCapture()` resolves the selected UID with a successful fresh lookup before each native start or recovery attempt. A cached device list is not proof the device is present. If that UID is unavailable, report failure instead of binding an obsolete ID or a similarly named source. Interfaces with more than two inputs record only the specific channel chosen by the user. Mono and stereo interfaces downmix through the standard converter unless a saved layout fingerprint no longer matches, in which case they wait for a new choice.
 
 **Setup order** (see `NativeMicrophoneCaptureEngine.start()`):
 
@@ -90,17 +90,17 @@ AUHAL (HAL Output Audio Unit) pins directly to hardware. Default input route swi
 2. `open()`: initializes the component instance
 3. Enable IO on bus 1 (input) and disable IO on bus 0 (output)
 4. **Pin** via `AudioUnitSetProperty(audioUnit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &deviceID, size)`: yes, "Output" in the name works for input devices
-5. **Readback check**: read `kAudioOutputUnitProperty_CurrentDevice` back to confirm CoreAudio bound the intended device
-6. Format negotiation: query hardware ASBD, set bus 1 client format to Float32 non-interleaved matching hardware rate and channel count
-7. Set render callback on bus 1 via `kAudioOutputUnitProperty_SetInputCallback`
-8. `initialize()`: prepares the unit for rendering
-9. `start()`: starts capturing audio
+5. **Readback check**: read `kAudioOutputUnitProperty_CurrentDevice` back and require the returned size to be an `AudioDeviceID`
+6. Format negotiation: query the hardware ASBD on input scope bus 1, then set the client format on output scope bus 1 to Float32 non-interleaved matching the hardware rate and channel count
+7. Register the input callback with `kAudioOutputUnitProperty_SetInputCallback` on **global scope, element 0**. The callback refcon is a retained context, not the engine. Render uses bus 1
+8. `initialize()` then `start()`, both with delivery still closed. Either may invoke the callback synchronously
+9. Read back the bound device and the **output-scope bus-1 client format** after start, including property sizes and the supported buffer slice. Open admission only after those match
 
 **Teardown order**:
-Always stop the unit before disposing: `unit.stop()` first, then `unit.dispose()`. Never retain more than one parked unit whose dispose failed (`maximumUndisposedInputUnits = 1`).
+Close delivery, wait until every callback path is idle, then `stop`, then `uninitialize`, then `dispose`. Keep the native handle and the callback context when any of those fails, including an early startup failure. A nil handle is success only after dispose has already succeeded. While a persistent UID still has an unresolved owner, do not allocate a replacement. If the idle wait expires, keep the owner rather than uninitializing a live render.
 
 **Selected-device listeners and config-change recovery**:
-Instead of listening to global default-device changes, `ExternalMicCapture` registers `HALPropertyListener` instances on the pinned device for `kAudioDevicePropertyDeviceIsAlive`, `kAudioDevicePropertyStreamConfiguration`, and `kAudioDevicePropertyNominalSampleRate`. Routing changes to system default input or output do not disrupt pinned captures. When a device property changes or the device is replaced in `handleDeviceChange`, the capture rebinds or re-resolves on the private `writerQueue`. Unaccepted audio and converter history are revoked across choice or layout drift without dropping writer destinations.
+`ExternalMicCapture` registers `HALPropertyListener` instances on the pinned device for `kAudioDevicePropertyDeviceIsAlive`, `kAudioDevicePropertyStreamConfiguration`, and `kAudioDevicePropertyNominalSampleRate`. It does not listen for system default input or output changes. A default-route change alone does not restart a healthy pinned capture, and it also does not promise that the selected device itself will keep working. Selected-device loss and that device's format change ask for a fresh engine. Layout drift, including a same-count member reorder or a multichannel interface that becomes stereo, revokes unaccepted audio and stops that capture without a capture-failure report and without rotating the segment. The writer for audio already accepted stays. Unaccepted audio and converter history do not cross a choice change.
 
 ## 7. Edge Cases
 

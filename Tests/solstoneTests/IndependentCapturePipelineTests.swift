@@ -441,7 +441,7 @@ struct IndependentCapturePipelineTests {
         _ = try await writer.start(sources: .microphone, mics: [testMicrophone])
         var available: [AudioInputDevice] = []
         let manager = CaptureManager(storageManager: StorageManager(baseDirectory: root), finalizer: FakeFinalizer(),
-            microphoneDevices: { available })
+            microphoneDevices: { available }, layoutReader: { _ in testOneChannelLayout })
         manager.seedRecordingForTesting(currentSegment: writer, sources: .microphone)
         await manager.handleDeviceChange(added: [], removed: [testMicrophone])
         #expect(manager.activeSources.isEmpty)

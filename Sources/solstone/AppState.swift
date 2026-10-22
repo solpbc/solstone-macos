@@ -733,10 +733,7 @@ public final class AppState {
 
         let modeSelectionChanged = (newConfig.disabledMicrophoneUIDs != oldDisabled ||
                                     newConfig.enabledMicrophoneUIDs != oldEnabled)
-        if modeSelectionChanged {
-            capture.captureManager.updateMicrophoneSelection(
-                disabled: newConfig.disabledMicrophoneUIDs, enabled: newConfig.enabledMicrophoneUIDs)
-        }
+        let priorityChanged = newConfig.microphonePriority != oldPriority
 
         // Update mic gain immediately if it changed
         if newConfig.microphoneGain != oldConfig.microphoneGain {
@@ -783,11 +780,14 @@ public final class AppState {
             try configSaver(newConfig)
             configSaveError = nil
         } catch {
-            if modeSelectionChanged {
+            config.microphonePriority = oldPriority
+            if modeSelectionChanged || priorityChanged {
+                for entry in oldPriority {
+                    capture.captureManager.stageMicrophoneChoice(deviceUID: entry.uid, choice: entry.choice)
+                }
                 capture.captureManager.updateMicrophoneSelection(
                     disabled: oldDisabled, enabled: oldEnabled)
             }
-            config.microphonePriority = oldPriority
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             if browserIntakeChanged {
                 config.isBrowserIntakeEnabled = oldConfig.isBrowserIntakeEnabled
@@ -804,8 +804,15 @@ public final class AppState {
             return
         }
 
-        // On success, re-read the live layout; authorize only if it still matches the saved fingerprint and ordinal.
-        // A layout that moved first does not start that interface.
+        // Persistence succeeded. Stage the saved choice before any start, then authorize
+        // only a live fingerprint match. A mismatch keeps the saved choice and does not record.
+        for entry in newConfig.microphonePriority {
+            capture.captureManager.stageMicrophoneChoice(deviceUID: entry.uid, choice: entry.choice)
+        }
+        if modeSelectionChanged {
+            capture.captureManager.updateMicrophoneSelection(
+                disabled: newConfig.disabledMicrophoneUIDs, enabled: newConfig.enabledMicrophoneUIDs)
+        }
         for entry in newConfig.microphonePriority {
             let oldChoice = oldPriority.first(where: { $0.uid == entry.uid })?.choice
             if entry.choice != oldChoice {
@@ -813,10 +820,10 @@ public final class AppState {
                     if let deviceID = MicrophoneMonitor.deviceIDForUID(entry.uid),
                        case .available(let liveLayout) = MicrophoneMonitor.readLayout(deviceID: deviceID),
                        liveLayout.fingerprint == choice.fingerprint,
-                       Int(choice.ordinal) < liveLayout.channelCount {
+                       (liveLayout.channelCount <= 2 || (choice.ordinal >= 0 && choice.ordinal < liveLayout.channelCount)) {
                         capture.captureManager.authorizeMicrophoneChoice(deviceUID: entry.uid, choice: choice)
                     } else {
-                        capture.captureManager.revokeMicrophoneChoice(deviceUID: entry.uid)
+                        capture.captureManager.stopMicrophoneUntilChoice(deviceUID: entry.uid)
                     }
                 } else {
                     capture.captureManager.revokeMicrophoneChoice(deviceUID: entry.uid)

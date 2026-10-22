@@ -238,6 +238,14 @@ public enum MicrophoneMonitor {
         case unavailable
     }
 
+    /// Full-list order plus active membership. Query failure on a known aggregate is `.unavailable`.
+    internal enum AggregateMembership: Equatable, Sendable {
+        case notAggregate
+        case unavailable
+        case members(full: [MicrophoneLayoutFingerprint.AggregateMemberSpan],
+                     active: [MicrophoneLayoutFingerprint.AggregateMemberSpan])
+    }
+
     public struct MicrophoneLayout: Equatable, Sendable {
         public let fingerprint: MicrophoneLayoutFingerprint
         public let channelCount: Int
@@ -256,7 +264,8 @@ public enum MicrophoneMonitor {
         queryStreams: ((AudioDeviceID) -> [AudioStreamID]?)? = nil,
         queryStreamSpan: ((AudioStreamID) -> (startingChannel: Int, channelCount: Int)?)? = nil,
         queryStreamConfigChannels: ((AudioDeviceID) -> Int?)? = nil,
-        queryAggregateMembers: ((AudioDeviceID) -> [MicrophoneLayoutFingerprint.AggregateMemberSpan]?)? = nil,
+        queryAggregateMembers: ((AudioDeviceID) -> AggregateMembership)? = nil,
+        queryMemberNested: ((String) -> Bool)? = nil,
         queryChannelLabel: ((AudioDeviceID, Int) -> String?)? = nil
     ) -> MicrophoneLayoutResult {
         let bufferListHeaderSize = MemoryLayout<AudioBufferList>.offset(of: \.mBuffers)!
@@ -383,75 +392,19 @@ public enum MicrophoneMonitor {
         }
         guard configChannels == totalStreamChannels else { return .unavailable }
 
-        // 5. Aggregate identity check
+        // 5. Aggregate identity: full-list order and active membership.
         let aggregateMembers: [MicrophoneLayoutFingerprint.AggregateMemberSpan]?
-        if let queryAggregateMembers {
-            aggregateMembers = queryAggregateMembers(deviceID)
-        } else {
-            var aggAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioAggregateDevicePropertyFullSubDeviceList,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var size: UInt32 = 0
-            let status = AudioObjectGetPropertyDataSize(deviceID, &aggAddress, 0, nil, &size)
-            if status == kAudioHardwareUnknownPropertyError || status == kAudioHardwareBadObjectError || status == kAudioHardwareBadPropertySizeError {
-                aggregateMembers = nil
-            } else if status == noErr, size > 0 {
-                var subdeviceList: Unmanaged<CFArray>?
-                var propSize = UInt32(MemoryLayout<Unmanaged<CFArray>?>.size)
-                let readStatus = AudioObjectGetPropertyData(deviceID, &aggAddress, 0, nil, &propSize, &subdeviceList)
-                guard readStatus == noErr, let cfArray = subdeviceList?.takeRetainedValue() else {
-                    return .unavailable
-                }
-                guard let allHALDevices = allHALDeviceIDs() else { return .unavailable }
-                let deviceByUID = Dictionary(allHALDevices.compactMap { id -> (String, AudioDeviceID)? in
-                    guard let uid = getDeviceUID(deviceID: id) else { return nil }
-                    return (uid, id)
-                }, uniquingKeysWith: { first, _ in first })
-
-                let count = CFArrayGetCount(cfArray)
-                var members: [MicrophoneLayoutFingerprint.AggregateMemberSpan] = []
-                for i in 0..<count {
-                    guard let ptr = CFArrayGetValueAtIndex(cfArray, i) else { return .unavailable }
-                    let cfObject = Unmanaged<AnyObject>.fromOpaque(ptr).takeUnretainedValue()
-                    guard CFGetTypeID(cfObject) == CFStringGetTypeID() else { return .unavailable }
-                    let subUID = cfObject as! String
-                    guard let subID = deviceByUID[subUID] else { return .unavailable }
-                    // Query subdevice stream configuration channel count
-                    var subAddr = AudioObjectPropertyAddress(
-                        mSelector: kAudioDevicePropertyStreamConfiguration,
-                        mScope: kAudioDevicePropertyScopeInput,
-                        mElement: kAudioObjectPropertyElementMain
-                    )
-                    var subSize: UInt32 = 0
-                    guard AudioObjectGetPropertyDataSize(subID, &subAddr, 0, nil, &subSize) == noErr else { return .unavailable }
-                    var subChannels = 0
-                    if Int(subSize) >= bufferListHeaderSize {
-                        let subCapacity = max(Int(subSize), MemoryLayout<AudioBufferList>.size)
-                        let subStorage = UnsafeMutableRawPointer.allocate(byteCount: subCapacity, alignment: MemoryLayout<AudioBufferList>.alignment)
-                        defer { subStorage.deallocate() }
-                        memset(subStorage, 0, subCapacity)
-                        var subReturned = UInt32(subCapacity)
-                        guard AudioObjectGetPropertyData(subID, &subAddr, 0, nil, &subReturned, subStorage) == noErr else {
-                            return .unavailable
-                        }
-                        guard Int(subReturned) >= bufferListHeaderSize else { return .unavailable }
-                        let subBufCount = Int(subStorage.load(as: UInt32.self))
-                        let (subBytes, subOv) = subBufCount.multipliedReportingOverflow(by: MemoryLayout<AudioBuffer>.stride)
-                        let (subReq, subAddOv) = bufferListHeaderSize.addingReportingOverflow(subBytes)
-                        guard !subOv, !subAddOv, subReq <= Int(subReturned) else { return .unavailable }
-                        for b in 0..<subBufCount {
-                            let buf = subStorage.load(fromByteOffset: bufferListHeaderSize + b * MemoryLayout<AudioBuffer>.stride, as: AudioBuffer.self)
-                            subChannels += Int(buf.mNumberChannels)
-                        }
-                    }
-                    members.append(MicrophoneLayoutFingerprint.AggregateMemberSpan(uid: subUID, inputChannelCount: subChannels))
-                }
-                aggregateMembers = members
-            } else {
-                return .unavailable
-            }
+        let activeMembers: [MicrophoneLayoutFingerprint.AggregateMemberSpan]?
+        let membership = queryAggregateMembers?(deviceID) ?? readAggregateMembership(deviceID: deviceID)
+        switch reconcileAggregate(membership, totalChannels: totalStreamChannels, memberIsNested: queryMemberNested) {
+        case .notAggregate:
+            aggregateMembers = nil
+            activeMembers = nil
+        case .unavailable:
+            return .unavailable
+        case .members(let full, let active):
+            aggregateMembers = full
+            activeMembers = active
         }
 
         // 6. Channel labels (1-based element number, 0-based ordinal)
@@ -476,7 +429,8 @@ public enum MicrophoneMonitor {
             }
         }
 
-        let fingerprint = MicrophoneLayoutFingerprint(streams: streamSpans, aggregateMembers: aggregateMembers)
+        let fingerprint = MicrophoneLayoutFingerprint(streams: streamSpans, aggregateMembers: aggregateMembers,
+                                                     activeMembers: activeMembers)
         return .available(MicrophoneLayout(fingerprint: fingerprint, channelCount: totalStreamChannels, labels: labels))
     }
 
@@ -676,5 +630,159 @@ public enum MicrophoneMonitor {
         default:
             return .unknown
         }
+    }
+
+    private static let maxAggregateMembers = 32
+
+    private static func reconcileAggregate(_ membership: AggregateMembership, totalChannels: Int,
+                                           memberIsNested: ((String) -> Bool)?) -> AggregateMembership {
+        guard case .members(let full, let active) = membership else { return membership }
+        guard !full.isEmpty, full.count <= maxAggregateMembers, active.count <= maxAggregateMembers else { return .unavailable }
+        var seen: Set<String> = []
+        var counts: [String: Int] = [:]
+        var sum = 0
+        for member in full {
+            guard member.inputChannelCount >= 0, seen.insert(member.uid).inserted else { return .unavailable }
+            if memberIsNested?(member.uid) == true { return .unavailable }
+            counts[member.uid] = member.inputChannelCount
+            sum += member.inputChannelCount
+        }
+        guard sum == totalChannels else { return .unavailable }
+        var activeSeen: Set<String> = []
+        for member in active {
+            guard activeSeen.insert(member.uid).inserted,
+                  counts[member.uid] == member.inputChannelCount else { return .unavailable }
+        }
+        return membership
+    }
+
+    /// A transport-aggregate whose full or active list cannot be read is unavailable.
+    /// An ordinary device whose aggregate property is absent stays an ordinary device.
+    private static func readAggregateMembership(deviceID: AudioDeviceID) -> AggregateMembership {
+        let knownAggregate = getDeviceTransportType(deviceID: deviceID) == .aggregate
+        guard let fullUIDs = readAggregateUIDList(deviceID: deviceID, knownAggregate: knownAggregate) else {
+            return knownAggregate ? .unavailable : .notAggregate
+        }
+        guard let deviceByUID = halDevicesByUID() else { return .unavailable }
+        var full: [MicrophoneLayoutFingerprint.AggregateMemberSpan] = []
+        for uid in fullUIDs {
+            guard let subID = deviceByUID[uid] else { return .unavailable }
+            if getDeviceTransportType(deviceID: subID) == .aggregate { return .unavailable }
+            guard let channels = inputChannelCount(deviceID: subID) else { return .unavailable }
+            full.append(MicrophoneLayoutFingerprint.AggregateMemberSpan(uid: uid, inputChannelCount: channels))
+        }
+        guard let activeIDs = readActiveAggregateMemberIDs(deviceID: deviceID) else { return .unavailable }
+        var active: [MicrophoneLayoutFingerprint.AggregateMemberSpan] = []
+        for subID in activeIDs {
+            guard let uid = getDeviceUID(deviceID: subID),
+                  let channels = full.first(where: { $0.uid == uid })?.inputChannelCount else { return .unavailable }
+            active.append(MicrophoneLayoutFingerprint.AggregateMemberSpan(uid: uid, inputChannelCount: channels))
+        }
+        return .members(full: full, active: active)
+    }
+
+    /// Nil when the property is absent, or when a device that is not a known aggregate cannot be read.
+    /// A known aggregate that fails the read returns an empty list. Reconciliation then rejects that
+    /// memberless result as unavailable, so a failed query does not become an ordinary device.
+    private static func readAggregateUIDList(deviceID: AudioDeviceID, knownAggregate: Bool) -> [String]? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioAggregateDevicePropertyFullSubDeviceList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        let sizeStatus = AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size)
+        if sizeStatus == kAudioHardwareUnknownPropertyError || sizeStatus == kAudioHardwareBadObjectError {
+            return nil
+        }
+        guard sizeStatus == noErr else { return knownAggregate ? [] : nil }
+        // An empty list is a successful read of no members. Callers that required an aggregate
+        // still fail reconciliation when the channel sum does not match. A zero-size success
+        // with a non-aggregate transport is not a member list.
+        guard size > 0 else { return knownAggregate ? [] : nil }
+        var subdeviceList: Unmanaged<CFArray>?
+        var propSize = UInt32(MemoryLayout<Unmanaged<CFArray>?>.size)
+        let readStatus = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &propSize, &subdeviceList)
+        guard readStatus == noErr, propSize == UInt32(MemoryLayout<Unmanaged<CFArray>?>.size),
+              let cfArray = subdeviceList?.takeRetainedValue() else {
+            return knownAggregate ? [] : nil
+        }
+        let count = CFArrayGetCount(cfArray)
+        guard count >= 0, count <= maxAggregateMembers else { return knownAggregate ? [] : nil }
+        var uids: [String] = []
+        uids.reserveCapacity(count)
+        for index in 0..<count {
+            guard let pointer = CFArrayGetValueAtIndex(cfArray, index),
+                  let uid = cfStringValue(pointer) else { return knownAggregate ? [] : nil }
+            uids.append(uid)
+        }
+        return uids
+    }
+
+    private static func readActiveAggregateMemberIDs(deviceID: AudioDeviceID) -> [AudioObjectID]? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioAggregateDevicePropertyActiveSubDeviceList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &size) == noErr else { return nil }
+        let element = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard size > 0, element > 0, size <= element * UInt32(maxAggregateMembers), size % element == 0 else {
+            return size == 0 ? [] : nil
+        }
+        let count = Int(size / element)
+        var ids = [AudioObjectID](repeating: 0, count: count)
+        var returned = size
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &returned, &ids) == noErr,
+              returned > 0, returned <= size, returned % element == 0 else { return nil }
+        return Array(ids.prefix(Int(returned / element)))
+    }
+
+    private static func cfStringValue(_ pointer: UnsafeRawPointer) -> String? {
+        let typeRef = Unmanaged<CFTypeRef>.fromOpaque(UnsafeMutableRawPointer(mutating: pointer)).takeUnretainedValue()
+        guard CFGetTypeID(typeRef) == CFStringGetTypeID() else { return nil }
+        return typeRef as? String
+    }
+
+    private static func halDevicesByUID() -> [String: AudioDeviceID]? {
+        guard let ids = allHALDeviceIDs() else { return nil }
+        var deviceByUID: [String: AudioDeviceID] = [:]
+        deviceByUID.reserveCapacity(ids.count)
+        for id in ids {
+            guard let uid = getDeviceUID(deviceID: id) else { continue }
+            if deviceByUID[uid] == nil { deviceByUID[uid] = id }
+        }
+        return deviceByUID
+    }
+
+    /// Nil when the input layout cannot be read. Zero is a readable input with no channels.
+    private static func inputChannelCount(deviceID: AudioDeviceID) -> Int? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var queriedSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &queriedSize) == noErr else { return nil }
+        let headerSize = MemoryLayout<AudioBufferList>.offset(of: \.mBuffers)!
+        guard Int(queriedSize) >= headerSize else { return nil }
+        let capacity = max(Int(queriedSize), MemoryLayout<AudioBufferList>.size)
+        let storage = UnsafeMutableRawPointer.allocate(byteCount: capacity, alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { storage.deallocate() }
+        memset(storage, 0, capacity)
+        var returned = UInt32(capacity)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &returned, storage) == noErr,
+              Int(returned) >= headerSize else { return nil }
+        let bufferCount = Int(storage.load(as: UInt32.self))
+        let (bufferBytes, overflow) = bufferCount.multipliedReportingOverflow(by: MemoryLayout<AudioBuffer>.stride)
+        let (required, addOverflow) = headerSize.addingReportingOverflow(bufferBytes)
+        guard !overflow, !addOverflow, required <= Int(returned), bufferCount <= maxAggregateMembers else { return nil }
+        var sum = 0
+        for index in 0..<bufferCount {
+            let buffer = storage.load(fromByteOffset: headerSize + index * MemoryLayout<AudioBuffer>.stride, as: AudioBuffer.self)
+            sum += Int(buffer.mNumberChannels)
+        }
+        return sum
     }
 }

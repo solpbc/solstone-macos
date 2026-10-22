@@ -36,10 +36,33 @@ public struct MicrophoneLayoutFingerprint: Codable, Equatable, Sendable {
 
     public let streams: [StreamSpan]
     public let aggregateMembers: [AggregateMemberSpan]?
+    /// Active aggregate members in HAL order. Nil for an ordinary device and for a
+    /// choice saved before active membership was part of the fingerprint.
+    public let activeMembers: [AggregateMemberSpan]?
 
-    public init(streams: [StreamSpan], aggregateMembers: [AggregateMemberSpan]? = nil) {
+    public init(streams: [StreamSpan], aggregateMembers: [AggregateMemberSpan]? = nil,
+                activeMembers: [AggregateMemberSpan]? = nil) {
         self.streams = streams
         self.aggregateMembers = aggregateMembers
+        self.activeMembers = activeMembers
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case streams, aggregateMembers, activeMembers
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        streams = try container.decode([StreamSpan].self, forKey: .streams)
+        aggregateMembers = try container.decodeIfPresent([AggregateMemberSpan].self, forKey: .aggregateMembers)
+        activeMembers = try container.decodeIfPresent([AggregateMemberSpan].self, forKey: .activeMembers)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(streams, forKey: .streams)
+        try container.encodeIfPresent(aggregateMembers, forKey: .aggregateMembers)
+        try container.encodeIfPresent(activeMembers, forKey: .activeMembers)
     }
 }
 

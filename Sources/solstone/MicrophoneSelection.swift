@@ -17,6 +17,10 @@ public func classifyMicrophone(
     case .unavailable:
         return .layoutUnavailable
     case .available(let layout):
+        // A saved fingerprint that no longer matches is not a stereo downmix, at any channel count.
+        if let choice, choice.fingerprint != layout.fingerprint {
+            return .needsChoice(layout: layout)
+        }
         if layout.channelCount <= 2 {
             return .admitted
         }

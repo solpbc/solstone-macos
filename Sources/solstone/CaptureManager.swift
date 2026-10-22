@@ -554,12 +554,10 @@ public final class CaptureManager {
                 continue
             }
             if let capture = micCaptureManager.getCapture(for: uid), capture.isCapturing {
-                if capture.currentDeviceID == freshDevice.id {
-                    continue
-                }
                 let choice = microphoneChoiceProvider?(uid)
                 let classification = classifyMicrophone(device: freshDevice, choice: choice, layoutResult: layoutReader(freshDevice.id))
                 if classification == .admitted {
+                    if capture.currentDeviceID == freshDevice.id { continue }
                     do {
                         try capture.rebind(deviceID: freshDevice.id, deviceName: freshDevice.name)
                     } catch {
@@ -567,7 +565,7 @@ public final class CaptureManager {
                         micCaptureManager.stopCapture(deviceUID: uid)
                     }
                 } else {
-                    // Layout drifted or needs choice: revokes and stops until a new choice; keep writer
+                    // Layout drifted or needs a choice. Stop this capture and keep the writer.
                     capture.revokeUnacceptedAudio()
                     micCaptureManager.stopCapture(deviceUID: uid)
                 }
@@ -590,14 +588,39 @@ public final class CaptureManager {
         reconcileMicrophoneSelection()
     }
 
+    public func stageMicrophoneChoice(deviceUID: String, choice: MicrophoneChoice?) {
+        micCaptureManager.setSavedChoice(for: deviceUID, choice: choice)
+    }
+
     public func authorizeMicrophoneChoice(deviceUID: String, choice: MicrophoneChoice) {
-        _ = micCaptureManager.authorizeChoice(for: deviceUID, choice: choice)
-        reconcileMicrophoneSelection()
+        micCaptureManager.setSavedChoice(for: deviceUID, choice: choice)
+        if micCaptureManager.getCapture(for: deviceUID)?.isCapturing == true {
+            _ = micCaptureManager.authorizeChoice(for: deviceUID, choice: choice)
+            return
+        }
+        reconcileMicrophoneSelection(restartUIDs: [deviceUID])
+    }
+
+    /// Layout drift keeps the saved choice and stops this capture without scheduling recovery.
+    public func stopMicrophoneUntilChoice(deviceUID: String) {
+        micCaptureManager.revokeUnacceptedAudio(for: deviceUID)
+        if micCaptureManager.getCapture(for: deviceUID) != nil {
+            micCaptureManager.stopCapture(deviceUID: deviceUID)
+        }
     }
 
     public func revokeMicrophoneChoice(deviceUID: String) {
+        micCaptureManager.setSavedChoice(for: deviceUID, choice: nil)
         micCaptureManager.revokeUnacceptedAudio(for: deviceUID)
-        reconcileMicrophoneSelection()
+        if let device = microphoneDevices().first(where: { $0.uid == deviceUID }),
+           classifyMicrophone(device: device, choice: nil, layoutResult: layoutReader(device.id)) == .admitted,
+           micCaptureManager.getCapture(for: deviceUID)?.isCapturing == true {
+            _ = micCaptureManager.authorizeChoice(for: deviceUID, choice: nil)
+            return
+        }
+        if micCaptureManager.getCapture(for: deviceUID) != nil {
+            micCaptureManager.stopCapture(deviceUID: deviceUID)
+        }
     }
 
     private func selectedMicrophonesForSegment() -> [AudioInputDevice] {
@@ -622,7 +645,8 @@ public final class CaptureManager {
         return selected
     }
 
-    private func reconcileMicrophoneSelection(duringStartup: Bool = false, restartFailed: Bool = false) {
+    private func reconcileMicrophoneSelection(duringStartup: Bool = false, restartFailed: Bool = false,
+                                              restartUIDs: Set<String> = []) {
         let selected = selectedMicrophonesForSegment()
         guard (state.isRecording || duringStartup), sessionSources.contains(.microphone),
               let segment = currentSegment else { return }
@@ -630,15 +654,21 @@ public final class CaptureManager {
         for uid in segment.activeMicrophoneUIDs() where !selectedUIDs.contains(uid) {
             segment.deselectMicrophone(deviceUID: uid)
         }
-        for device in selected where (!segment.hasMicrophone(deviceUID: device.uid) ||
-            (restartFailed && micCaptureManager.getCapture(for: device.uid)?.isCapturing != true)) &&
-            micCaptureManager.getCapture(for: device.uid)?.isRecoveringConfiguration != true {
+        for device in selected {
             let choice = microphoneChoiceProvider?(device.uid)
+            micCaptureManager.setSavedChoice(for: device.uid, choice: choice)
             let classification = classifyMicrophone(device: device, choice: choice, layoutResult: layoutReader(device.id))
-            guard classification == .admitted else { continue }
-            if let choice {
-                _ = micCaptureManager.authorizeChoice(for: device.uid, choice: choice)
+            let capturing = micCaptureManager.getCapture(for: device.uid)?.isCapturing == true
+            let recovering = micCaptureManager.getCapture(for: device.uid)?.isRecoveringConfiguration == true
+            if capturing {
+                if classification == .admitted {
+                    _ = micCaptureManager.authorizeChoice(for: device.uid, choice: choice)
+                }
+                continue
             }
+            guard classification == .admitted, !recovering else { continue }
+            let needsStart = !segment.hasMicrophone(deviceUID: device.uid) || restartFailed || restartUIDs.contains(device.uid)
+            guard needsStart else { continue }
             // Every start, first or repeated, goes through the backoff.
             guard audioRecovery.canAttempt(device.uid) else { continue }
             audioRecovery.noteAttempt(device.uid, kind: .microphone)
