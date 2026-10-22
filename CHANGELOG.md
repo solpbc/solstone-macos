@@ -9,11 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- a chosen microphone stays on that device when the mac changes its default input or output. an interface with more than two inputs records only the input you pick, and it waits until you pick one. thanks @dvanduzer.
+- a chosen microphone stays on that device when the mac changes its default input or output. an interface with more than two inputs uses only the input you pick, and it waits until you pick one. thanks @dvanduzer.
 
 ### Fixed
 
-- a segment change keeps audio that was already accepted. if an interface's inputs change, it waits for a new choice instead of recording a different input.
+- very quiet sound, like a voice from across the room, now reaches your journal unchanged. before, the solstone app replaced it with silence.
+- a segment change keeps audio that was already accepted. if an interface's inputs change, it waits for a new choice instead of using a different input.
 
 ## [2.0.44] - 2026-10-21
 

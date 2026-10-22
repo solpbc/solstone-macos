@@ -1133,6 +1133,110 @@ struct MicrophoneInputCaptureTests {
         #expect(authorized.wait(timeout: .now() + 2) == .success)
     }
 
+    @Test func explicitStereoChoiceWaitsForLayoutAdmissionAndRecordsOnlyThatInput() async throws {
+        let device = AudioInputDevice(id: 10, name: "stereo", uid: "stereo-\(UUID().uuidString)",
+            manufacturer: nil, sampleRate: 48_000, transportType: .usb)
+        let layoutResult = micLayout(channels: 2)
+        guard case .available(let layout) = layoutResult else { Issue.record("layout"); return }
+        let block = IntBox()
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let admitted = DispatchSemaphore(value: 0)
+        let capture = ExternalMicCapture(device: device, gain: 1,
+            resolveDeviceID: { _ in device.id }, layoutReader: { _ in
+                if block.value == 1 {
+                    entered.signal()
+                    _ = release.wait(timeout: .now() + 3)
+                }
+                return layoutResult
+            })
+        let choiceA = MicrophoneChoice(ordinal: 0, fingerprint: layout.fingerprint)
+        let choiceB = MicrophoneChoice(ordinal: 1, fingerprint: layout.fingerprint)
+        #expect(capture.authorizeChoice(choiceA))
+        let samples = SampleBox()
+        capture.onAudioBuffer = { buffer, _ in samples.append(buffer) }
+        let buffer = try markedBuffer(channels: 2, frames: 128, rate: 48_000) { channel, _ in
+            channel == 0 ? 0.9 : 0.0125
+        }
+        let mono = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32,
+            sampleRate: 48_000, channels: 1, interleaved: false))
+        capture._enqueueForTesting(buffer, targetFormat: mono)
+        await capture.drain()
+        #expect(samples.values.count == 128)
+        #expect(samples.values.allSatisfy { abs($0 - 0.9) < 0.0001 })
+        block.value = 1
+        Thread.detachNewThread {
+            _ = capture.authorizeChoice(choiceB)
+            admitted.signal()
+        }
+        defer { release.signal() }
+        let queryEntered = await waitForMicrophoneTestSemaphore(entered)
+        #expect(queryEntered)
+        capture._enqueueForTesting(buffer, targetFormat: mono)
+        await capture.drain()
+        #expect(samples.values.count == 128)
+        release.signal()
+        let choiceAdmitted = await waitForMicrophoneTestSemaphore(admitted)
+        #expect(choiceAdmitted)
+        block.value = 0
+        capture._enqueueForTesting(buffer, targetFormat: mono)
+        await capture.drain()
+        #expect(samples.values.count == 256)
+        #expect(samples.values.dropFirst(128).allSatisfy { abs($0 - 0.0125) < 0.0001 })
+        let invalid = MicrophoneChoice(ordinal: 2, fingerprint: layout.fingerprint)
+        #expect(classifyMicrophone(device: device, choice: invalid, layoutResult: layoutResult) == .needsChoice(layout: layout))
+        #expect(!capture.authorizeChoice(invalid))
+    }
+
+    @Test func failedLayoutReadRevokesAlreadyQueuedOldChoice() async throws {
+        let device = AudioInputDevice(id: 10, name: "unreadable", uid: "unreadable-\(UUID().uuidString)",
+            manufacturer: nil, sampleRate: 48_000, transportType: .usb)
+        let initial = micLayout(channels: 2)
+        guard case .available(let layout) = initial else { Issue.record("layout"); return }
+        let layouts = LayoutBox(initial)
+        let capture = ExternalMicCapture(device: device, gain: 1,
+            resolveDeviceID: { _ in device.id }, layoutReader: { _ in layouts.value })
+        let choice = MicrophoneChoice(ordinal: 0, fingerprint: layout.fingerprint)
+        #expect(capture.authorizeChoice(choice))
+        let samples = SampleBox()
+        capture.onAudioBuffer = { buffer, _ in samples.append(buffer) }
+        let buffer = try markedBuffer(channels: 2, frames: 128, rate: 48_000) { _, _ in 0.5 }
+        let mono = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32,
+            sampleRate: 48_000, channels: 1, interleaved: false))
+        capture._onWriterQueueForTesting {}
+        capture._suspendProcessingForTesting()
+        capture._enqueueForTesting(buffer, targetFormat: mono)
+        layouts.value = .unavailable
+        #expect(!capture.authorizeChoice(choice))
+        capture._resumeProcessingForTesting()
+        await capture.drain()
+        #expect(samples.values.isEmpty)
+        #expect(capture.mediaBudget.snapshot.stages[AudioMediaBudget.Stage.raw.rawValue].jobs == 0)
+    }
+
+    @Test func sameCountLayoutChangeDuringNativeStartupIsRejected() throws {
+        let device = AudioInputDevice(id: 10, name: "startup-layout", uid: "startup-layout-\(UUID().uuidString)",
+            manufacturer: nil, sampleRate: 48_000, transportType: .usb)
+        func result(_ uid: String) -> MicrophoneMonitor.MicrophoneLayoutResult {
+            .available(.init(fingerprint: .init(streams: [.init(startingChannel: 1, channelCount: 10)],
+                aggregateMembers: [.init(uid: uid, inputChannelCount: 10)]),
+                channelCount: 10, labels: Array(repeating: nil, count: 10)))
+        }
+        let first = result("first")
+        let changed = result("changed")
+        guard case .available(let layout) = first else { Issue.record("layout"); return }
+        let layouts = LayoutBox(first)
+        let unit = FakeMicrophoneInputUnit(channelCount: 10)
+        unit.onOpen = { layouts.value = changed }
+        let capture = ExternalMicCapture(device: device, gain: 1,
+            engineFactory: { NativeMicrophoneCaptureEngine(unitFactory: { unit }) },
+            resolveDeviceID: { _ in device.id }, layoutReader: { _ in layouts.value })
+        #expect(capture.authorizeChoice(.init(ordinal: 6, fingerprint: layout.fingerprint)))
+        #expect(throws: ExternalMicCapture.ExternalMicCaptureError.self) { try capture.start() }
+        #expect(!capture.isCapturing)
+        #expect(unit.disposeCallCount == 1)
+    }
+
     @Test func choiceLifecycleKeepsAcceptedMediaAndDoesNotResurrectAClearedInput() async throws {
         defer { microphoneNativeResetOwnersForTesting() }
         let root = try makeTempDirectory("mic-choice-life")
@@ -1368,6 +1472,89 @@ struct MicrophoneInputCaptureTests {
         #expect(!loss.isCapturing)
     }
 
+    @Test func aggregateListChangeStopsTheOldOrdinalBeforeAnotherBuffer() async throws {
+        defer { microphoneNativeResetOwnersForTesting() }
+        let full = [aggregateMember("sub-1", 2), aggregateMember("sub-2", 2)]
+        let reversed = [aggregateMember("sub-2", 2), aggregateMember("sub-1", 2)]
+        let original = micLayout(channels: 4, members: full, active: full)
+        let reordered = micLayout(channels: 4, members: reversed, active: reversed)
+        guard case .available(let originalLayout) = original else { Issue.record("layout"); return }
+        let live = LayoutBox(original)
+        let uid = "agg-listen-\(UUID().uuidString)"
+        let capture = ExternalMicCapture(
+            device: AudioInputDevice(id: 0x7FFF_FF10, name: "agg", uid: uid, manufacturer: nil, sampleRate: 48_000, transportType: .aggregate),
+            gain: 1,
+            engineFactory: { NativeMicrophoneCaptureEngine(unitFactory: { FakeMicrophoneInputUnit() }) },
+            resolveDeviceID: { _ in 0x7FFF_FF10 },
+            layoutReader: { _ in live.value }
+        )
+        defer { capture.stop() }
+        let recovery = IntBox()
+        let failures = IntBox()
+        capture.onRecoveryNeeded = { recovery.value += 1 }
+        capture.setCallbacks(audio: { _, _ in }, error: { error in
+            failures.value += 1
+            Issue.record("capture error \(String(describing: error))")
+        })
+        #expect(capture.authorizeChoice(MicrophoneChoice(ordinal: 0, fingerprint: originalLayout.fingerprint)))
+        try capture.start()
+        #expect(capture.deviceListenerSelectorsForTesting.contains(kAudioAggregateDevicePropertyFullSubDeviceList))
+        #expect(capture.deviceListenerSelectorsForTesting.contains(kAudioAggregateDevicePropertyActiveSubDeviceList))
+        let copies = IntBox()
+        capture._willCopyPCMForTesting = { copies.value += 1 }
+        let buffer = try markedBuffer(channels: 4, frames: 32, rate: 48_000) { channel, _ in channel == 0 ? 0.4 : 0.1 }
+        let mono = try #require(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false))
+        capture._enqueueForTesting(buffer, targetFormat: mono)
+        #expect(copies.value == 1)
+        try await withTimeout(seconds: 5) { await capture.drain() }
+        #expect(failures.value == 0)
+
+        capture._suspendProcessingForTesting()
+        capture.simulateDevicePropertyChangeForTesting(kAudioAggregateDevicePropertyActiveSubDeviceList)
+        try await withTimeout(seconds: 2) {
+            while capture._recordingEnabledForTesting { try await Task.sleep(for: .milliseconds(5)) }
+        }
+        capture._enqueueForTesting(buffer, targetFormat: mono)
+        #expect(copies.value == 1)
+        capture._resumeProcessingForTesting()
+        try await withTimeout(seconds: 5) { await capture.drain() }
+        capture._onWriterQueueForTesting {}
+        #expect(capture.isCapturing)
+        #expect(capture._recordingEnabledForTesting)
+        #expect(copies.value == 1)
+        #expect(recovery.value == 0)
+        #expect(failures.value == 0)
+
+        capture._suspendProcessingForTesting()
+        live.value = reordered
+        capture.simulateDevicePropertyChangeForTesting(kAudioAggregateDevicePropertyFullSubDeviceList)
+        try await withTimeout(seconds: 2) {
+            while capture._recordingEnabledForTesting { try await Task.sleep(for: .milliseconds(5)) }
+        }
+        capture._enqueueForTesting(buffer, targetFormat: mono)
+        #expect(copies.value == 1)
+        capture._resumeProcessingForTesting()
+        try await withTimeout(seconds: 5) { await capture.drain() }
+        capture._onWriterQueueForTesting {}
+        #expect(!capture.isCapturing)
+        #expect(recovery.value == 0)
+        #expect(failures.value == 0)
+        capture._enqueueForTesting(buffer, targetFormat: mono)
+        #expect(copies.value == 1)
+
+        let usb = ExternalMicCapture(
+            device: AudioInputDevice(id: 0x7FFF_FF11, name: "usb", uid: "usb-listen-\(UUID().uuidString)", manufacturer: nil, sampleRate: 48_000, transportType: .usb),
+            gain: 1,
+            engineFactory: { NativeMicrophoneCaptureEngine(unitFactory: { FakeMicrophoneInputUnit() }) },
+            resolveDeviceID: { _ in 0x7FFF_FF11 },
+            layoutReader: { _ in testOneChannelLayout }
+        )
+        defer { usb.stop() }
+        try usb.start()
+        #expect(!usb.deviceListenerSelectorsForTesting.contains(kAudioAggregateDevicePropertyFullSubDeviceList))
+        #expect(!usb.deviceListenerSelectorsForTesting.contains(kAudioAggregateDevicePropertyActiveSubDeviceList))
+    }
+
     @Test func budgetSaturationAndRevocationCopyNothingAndErrorCanReenter() throws {
         let uid = "budget-\(UUID().uuidString)"
         let device = AudioInputDevice(id: 1, name: "budget", uid: uid, manufacturer: nil, sampleRate: 48_000, transportType: .usb)
@@ -1456,6 +1643,14 @@ private final class CountBox: @unchecked Sendable {
 
 private final class ErrorBox: @unchecked Sendable {
     var errors: [Error] = []
+}
+
+private func waitForMicrophoneTestSemaphore(_ semaphore: DispatchSemaphore) async -> Bool {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global().async {
+            continuation.resume(returning: semaphore.wait(timeout: .now() + 2) == .success)
+        }
+    }
 }
 
 private final class StatusBox: @unchecked Sendable {

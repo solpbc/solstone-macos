@@ -9,6 +9,8 @@ import Foundation
 @Observable
 public final class AudioDeviceMonitor {
     public internal(set) var availableDevices: [AudioInputDevice] = []
+    /// Advances on an owner layout retry even when the device ids did not change.
+    public private(set) var layoutRefreshGeneration: UInt64 = 0
 
     @ObservationIgnored
     private var deviceListener: HALPropertyListener?
@@ -43,6 +45,12 @@ public final class AudioDeviceMonitor {
 
     public func refreshDevices() {
         applyDevices(MicrophoneMonitor.listInputDevices())
+    }
+
+    /// Re-read every presented layout. Device enumeration alone does not change when only the layout query failed.
+    public func retryPresentedLayout() {
+        layoutRefreshGeneration &+= 1
+        refreshDevices()
     }
 
     internal func applyDevices(_ newDevices: [AudioInputDevice]) {

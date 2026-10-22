@@ -26,7 +26,7 @@ All four declared in `Sources/SolstoneCapture/Info.plist`:
 | Key | Trigger |
 |-----|---------|
 | `NSScreenCaptureUsageDescription` | First `SCStream` capture request |
-| `NSMicrophoneUsageDescription` | First AUHAL input access |
+| `NSMicrophoneUsageDescription` | `AVCaptureDevice.requestAccess(for: .audio)` |
 | `NSSystemAudioRecordingUsageDescription` | System audio capture via SCStream |
 | `NSSpeechRecognitionUsageDescription` | `SoundAnalysis` request |
 
@@ -34,13 +34,13 @@ All four declared in `Sources/SolstoneCapture/Info.plist`:
 
 **Screen recording:** No `requestAccess()`. Prompts on first `SCShareableContent.current` or `SCStream.startCapture()`. Grant in System Settings > Privacy & Security > Screen Recording. May need app restart. `CGPreflightScreenCaptureAccess()` / `CGRequestScreenCaptureAccess()` exist but aren't used.
 
-**Microphone:** Prompts on first AUHAL input access. No restart needed.
+**Microphone:** `PermissionChecker.requestMicrophone()` explicitly calls `AVCaptureDevice.requestAccess(for: .audio)` to request access.
 
 **System audio / Speech recognition:** Prompted via framework calls. Plist keys required.
 
 ### Error handling
 
-Permission denied surfaces as framework errors (SCStream/AUHAL fails), caught in `CaptureManager.startRecording()`, set on `AppState.errorMessage`. No specific "permission denied" type — catch the framework error.
+`CaptureCoordinator` tracks authorization and intersects configured sources with `permittedSources` before startup. A denied microphone is excluded before native capture starts.
 
 **Revoked while running:** Stream silently produces black/empty frames. Health checks detect anomalies and surface state changes.
 

@@ -3184,6 +3184,7 @@ struct SettingsView: View {
     // MARK: - Microphone Tab
 
     private var microphoneDisplayEntries: [MicrophoneDisplayEntry] {
+        let _ = appState.audioDeviceMonitor.layoutRefreshGeneration
         let available = appState.audioDeviceMonitor.availableDevices
         let availableByUID = Dictionary(uniqueKeysWithValues: available.map { ($0.uid, $0) })
         let bluetoothUIDs = Set(available.filter { $0.transportType == .bluetooth }.map { $0.uid })
@@ -3408,7 +3409,7 @@ struct SettingsView: View {
     }
 
     private func retryMicrophoneLayout(uid: String) {
-        appState.audioDeviceMonitor.refreshDevices()
+        appState.retryMicrophoneLayout(uid: uid)
     }
 
     // MARK: - Privacy Tab
@@ -5029,9 +5030,9 @@ struct MicrophoneRow: View {
             if entry.isConnected && entry.mode != .off {
                 switch entry.interfaceState {
                 case .admitted:
-                    if let layout = entry.layout, layout.channelCount > 2 {
+                    if let layout = entry.layout, layout.channelCount > 2 || entry.choice != nil {
                         Picker("", selection: Binding(
-                            get: { Int(entry.choice?.ordinal ?? 0) },
+                            get: { microphonePickerSelection(interfaceState: entry.interfaceState, choice: entry.choice) },
                             set: { onSelectChoice(MicrophoneChoice(ordinal: $0, fingerprint: layout.fingerprint)) }
                         )) {
                             ForEach(0..<layout.channelCount, id: \.self) { i in
@@ -5045,18 +5046,18 @@ struct MicrophoneRow: View {
                     }
                 case .needsChoice(let layout):
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(UICopy.MICROPHONE_NEEDS_CHOICE)
+                        Text(microphoneChoiceCopy(choice: entry.choice, layout: layout))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Picker("", selection: Binding(
-                            get: { entry.choice.map { Int($0.ordinal) } ?? -1 },
+                            get: { microphonePickerSelection(interfaceState: entry.interfaceState, choice: entry.choice) },
                             set: {
                                 if $0 >= 0 {
                                     onSelectChoice(MicrophoneChoice(ordinal: $0, fingerprint: layout.fingerprint))
                                 }
                             }
                         )) {
-                            Text(UICopy.MICROPHONE_NEEDS_CHOICE).tag(-1)
+                            Text(microphoneChoiceCopy(choice: entry.choice, layout: layout)).tag(-1)
                             ForEach(0..<layout.channelCount, id: \.self) { i in
                                 let label = i < layout.labels.count ? layout.labels[i] : nil
                                 Text(UICopy.microphoneInputTitle(number: i + 1, label: label)).tag(i)
