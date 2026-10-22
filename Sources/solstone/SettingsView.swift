@@ -31,6 +31,7 @@ struct MicrophoneDisplayEntry: Identifiable {
         self.isDisabled = entry.isDisabled
         self.mode = entry.mode
         self.offersFollowing = isBluetooth || entry.followsOtherApps
+            || (!isConnected && AppConfig.knownBluetoothMicrophoneUIDs.contains(entry.uid))
     }
 }
 

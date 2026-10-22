@@ -82,10 +82,13 @@ private func physicalEOF(_ fd: Int32, timeout: UInt64 = 2_000) async throws -> B
     return false
 }
 
-private func physicalMessage(_ type: String, from fd: Int32, timeout: UInt64 = 2_000) async throws -> [String: Any] {
+private func physicalMessage(
+    _ type: String, from fd: Int32, timeout: UInt64 = 2_000,
+    matching predicate: ([String: Any]) -> Bool = { _ in true }
+) async throws -> [String: Any] {
     for _ in 0..<8 {
         let object = try physicalObject(try #require(await physicalRead(fd, timeout: timeout)))
-        if object["type"] as? String == type { return object }
+        if object["type"] as? String == type, predicate(object) { return object }
     }
     throw POSIXError(.EBADMSG)
 }
@@ -607,7 +610,11 @@ struct AboutSnapshotTests {
             )
             let routeAEpoch = await fixture.owner.aboutRouteEpoch()
             await fixture.owner.updateAboutSnapshot(known, factsAccepted: true, routeEpoch: routeAEpoch)
-            let installed = try await physicalMessage("state", from: fd)
+            // Startup/route status can still be queued. Establish the known-state
+            // precondition before arming the suspended-publication race below.
+            let installed = try await physicalMessage("state", from: fd) { message in
+                (message["about"] as? [String: Any])?["journal_line"] as? String == "journal 2.0.0"
+            }
             #expect((installed["about"] as? [String: Any])?["journal_line"] as? String == "journal 2.0.0")
 
             await suspension.arm()

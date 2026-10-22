@@ -237,6 +237,26 @@ struct AppConfigMigrationTests {
         #expect(older.mode == .off)
     }
 
+    @Test func disconnectedBluetoothMicrophoneKeepsFollowingChoiceAfterModeChangesAndReload() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        var config = AppConfig(microphonePriority: [
+            MicrophoneEntry(uid: "headset", name: "Headset", mode: .always),
+            MicrophoneEntry(uid: "usb", name: "USB", mode: .always)
+        ])
+        config.reseedBluetoothMicrophones(connectedBluetoothUIDs: ["headset"])
+        for mode in [MicrophoneEntry.Mode.always, .off] {
+            config.setMicrophoneMode(uid: "headset", mode: mode)
+            try config.save()
+            let reloaded = AppConfig.load()
+            let headset = try #require(reloaded.microphonePriority.first(where: { $0.uid == "headset" }))
+            #expect(headset.mode == mode)
+            #expect(MicrophoneDisplayEntry(from: headset, isConnected: false).offersFollowing)
+            let usb = try #require(reloaded.microphonePriority.first(where: { $0.uid == "usb" }))
+            #expect(!MicrophoneDisplayEntry(from: usb, isConnected: false).offersFollowing)
+        }
+    }
+
     // MARK: - Capture sources
 
     // 2.0.6 read an absent key as `false`, so every install that upgraded into it stopped

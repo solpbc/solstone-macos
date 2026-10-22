@@ -690,6 +690,12 @@ public struct AppConfig: Sendable {
         return changed
     }
 
+    /// The Bluetooth devices seen by the existing per-headset default migration.
+    /// Their transport remains known even while they are disconnected or off.
+    static var knownBluetoothMicrophoneUIDs: Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: Keys.reseededBluetoothMicrophoneUIDs) ?? [])
+    }
+
     /// Reorders microphones in the priority list
     public mutating func reorderMicrophones(fromOffsets: IndexSet, toOffset: Int) {
         let movingEntries = fromOffsets.map { microphonePriority[$0] }
