@@ -106,8 +106,9 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
     /// One attempt only: the recovery manager paces any retry, so a failing
     /// device never holds the caller.
     /// - Parameter device: The audio input device to capture from
+    /// - Parameter choice: The optional channel choice and layout fingerprint
     /// - Throws: If capture fails to start
-    public func startCapture(for device: AudioInputDevice) throws {
+    public func startCapture(for device: AudioInputDevice, choice: MicrophoneChoice? = nil) throws {
         lock.lock()
         guard selectionAllows(device.uid) else { lock.unlock(); throw SelectionError.selectionChanged }
         let selectionRevision = selectionRevisions[device.uid, default: 0]
@@ -124,9 +125,12 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         lock.unlock()
         failedCapture?.stop()
 
-        // A fresh capture each time: AVAudioEngine can't recover from a failed state.
+        // A fresh capture each time: AUHAL/engine starts clean on a fresh instance.
         let capture = captureFactory(device, captureGain, verbose)
         capture.useMediaBudget(mediaBudget)
+        if let choice {
+            capture.authorizeChoice(choice)
+        }
         let uid = device.uid
         capture.onRecoveryNeeded = { [weak self] in self?.onRecoveryNeeded?(uid) }
         try capture.start()
@@ -141,6 +145,19 @@ public final class MicrophoneCaptureManager: @unchecked Sendable {
         lock.unlock()
 
         Logger.audio.info("Started persistent capture for \(device.name, privacy: .public)")
+    }
+
+    public func authorizeChoice(for uid: String, choice: MicrophoneChoice?) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let capture = captures[uid] else { return false }
+        return capture.authorizeChoice(choice)
+    }
+
+    public func revokeUnacceptedAudio(for uid: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        captures[uid]?.revokeUnacceptedAudio()
     }
 
     /// Stop capture for a specific device (called when device disconnects)

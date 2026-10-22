@@ -219,6 +219,14 @@ enum AXID {
             static func deviceRemove(_ uid: String) -> String {
                 "settings.microphones.priority.remove.\(uid)"
             }
+
+            static func inputChoice(_ uid: String) -> String {
+                "settings.microphones.priority.input.\(uid)"
+            }
+
+            static func inputRetry(_ uid: String) -> String {
+                "settings.microphones.priority.inputRetry.\(uid)"
+            }
         }
 
         enum Privacy {

@@ -26,7 +26,7 @@ Packages: `SolstoneCapture` (executable), `SolstoneCaptureCore` (library). macOS
 
 | Class | Framework constraint | Locking |
 |-------|---------------------|---------|
-| `ExternalMicCapture` | AVAudioEngine tap on audio render thread | NSLock + DispatchQueue |
+| `ExternalMicCapture` | AUHAL input on audio render thread | NSLock + DispatchQueue |
 | `MicrophoneCaptureManager` | Manages captures across isolation boundaries | NSLock on captures dict |
 | `SystemAudioStreamOutput` | SCStreamOutput on arbitrary GCD queue | NSLock on counters |
 | `SingleTrackAudioWriter` | Written from audio callbacks off-main | Internal serialization |

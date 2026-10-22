@@ -2,6 +2,18 @@ import AVFoundation
 import CoreMedia
 import CoreVideo
 import Foundation
+@testable import solstone
+
+let testOneChannelFingerprint = MicrophoneLayoutFingerprint(
+    streams: [MicrophoneLayoutFingerprint.StreamSpan(startingChannel: 1, channelCount: 1)]
+)
+let testOneChannelLayout = MicrophoneMonitor.MicrophoneLayoutResult.available(
+    MicrophoneMonitor.MicrophoneLayout(
+        fingerprint: testOneChannelFingerprint,
+        channelCount: 1,
+        labels: [nil]
+    )
+)
 
 private enum MediaFixtureError: Error {
     case writerStartFailed(Error?)

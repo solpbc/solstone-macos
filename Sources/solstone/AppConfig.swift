@@ -12,6 +12,48 @@ public enum ServiceMode: String, Codable, Equatable, Sendable, CaseIterable {
     public static let bundledServiceURL = "http://localhost:5015"
 }
 
+/// Fingerprint of an audio interface layout: stream spans and aggregate subdevices
+public struct MicrophoneLayoutFingerprint: Codable, Equatable, Sendable {
+    public struct StreamSpan: Codable, Equatable, Sendable {
+        public let startingChannel: Int
+        public let channelCount: Int
+
+        public init(startingChannel: Int, channelCount: Int) {
+            self.startingChannel = startingChannel
+            self.channelCount = channelCount
+        }
+    }
+
+    public struct AggregateMemberSpan: Codable, Equatable, Sendable {
+        public let uid: String
+        public let inputChannelCount: Int
+
+        public init(uid: String, inputChannelCount: Int) {
+            self.uid = uid
+            self.inputChannelCount = inputChannelCount
+        }
+    }
+
+    public let streams: [StreamSpan]
+    public let aggregateMembers: [AggregateMemberSpan]?
+
+    public init(streams: [StreamSpan], aggregateMembers: [AggregateMemberSpan]? = nil) {
+        self.streams = streams
+        self.aggregateMembers = aggregateMembers
+    }
+}
+
+/// The owner's input selection: ordinal and matching layout fingerprint
+public struct MicrophoneChoice: Codable, Equatable, Sendable {
+    public let ordinal: Int
+    public let fingerprint: MicrophoneLayoutFingerprint
+
+    public init(ordinal: Int, fingerprint: MicrophoneLayoutFingerprint) {
+        self.ordinal = ordinal
+        self.fingerprint = fingerprint
+    }
+}
+
 /// Microphone entry for priority list
 public struct MicrophoneEntry: Codable, Equatable, Sendable {
     /// How the owner wants a microphone taken in.
@@ -23,16 +65,18 @@ public struct MicrophoneEntry: Codable, Equatable, Sendable {
     /// When off, still take the microphone in while another app has it open
     /// (the Bluetooth default: opening an idle headset input degrades its playback).
     public var followsOtherApps: Bool
+    public var choice: MicrophoneChoice?
 
-    public init(uid: String, name: String, isDisabled: Bool = false, followsOtherApps: Bool = false) {
+    public init(uid: String, name: String, isDisabled: Bool = false, followsOtherApps: Bool = false, choice: MicrophoneChoice? = nil) {
         self.uid = uid
         self.name = name
         self.isDisabled = isDisabled
         self.followsOtherApps = isDisabled && followsOtherApps
+        self.choice = choice
     }
 
-    public init(uid: String, name: String, mode: Mode) {
-        self.init(uid: uid, name: name, isDisabled: mode != .always, followsOtherApps: mode == .whenInUseElsewhere)
+    public init(uid: String, name: String, mode: Mode, choice: MicrophoneChoice? = nil) {
+        self.init(uid: uid, name: name, isDisabled: mode != .always, followsOtherApps: mode == .whenInUseElsewhere, choice: choice)
     }
 
     public var mode: Mode { !isDisabled ? .always : (followsOtherApps ? .whenInUseElsewhere : .off) }
@@ -45,10 +89,27 @@ public struct MicrophoneEntry: Codable, Equatable, Sendable {
         isDisabled = try container.decodeIfPresent(Bool.self, forKey: .isDisabled) ?? false
         let follows = try container.decodeIfPresent(Bool.self, forKey: .followsOtherApps) ?? false
         followsOtherApps = isDisabled && follows
+        if let decodedChoice = try? container.decodeIfPresent(MicrophoneChoice.self, forKey: .choice),
+           decodedChoice.ordinal >= 0 {
+            choice = decodedChoice
+        } else {
+            choice = nil
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(uid, forKey: .uid)
+        try container.encode(name, forKey: .name)
+        try container.encode(isDisabled, forKey: .isDisabled)
+        try container.encode(followsOtherApps, forKey: .followsOtherApps)
+        if let choice {
+            try container.encode(choice, forKey: .choice)
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case uid, name, isDisabled, followsOtherApps
+        case uid, name, isDisabled, followsOtherApps, choice
     }
 }
 
@@ -639,7 +700,7 @@ public struct AppConfig: Sendable {
             guard connectedOptInOnlyUIDs.contains(entry.uid), !entry.isDisabled else {
                 return entry
             }
-            return MicrophoneEntry(uid: entry.uid, name: entry.name, isDisabled: true)
+            return MicrophoneEntry(uid: entry.uid, name: entry.name, isDisabled: true, followsOtherApps: entry.followsOtherApps, choice: entry.choice)
         }
 
         do {
@@ -655,13 +716,21 @@ public struct AppConfig: Sendable {
     public mutating func toggleMicrophoneDisabled(uid: String) {
         guard let index = microphonePriority.firstIndex(where: { $0.uid == uid }) else { return }
         let entry = microphonePriority[index]
-        microphonePriority[index] = MicrophoneEntry(uid: entry.uid, name: entry.name, isDisabled: !entry.isDisabled)
+        microphonePriority[index] = MicrophoneEntry(uid: entry.uid, name: entry.name, isDisabled: !entry.isDisabled, followsOtherApps: entry.followsOtherApps, choice: entry.choice)
     }
 
     public mutating func setMicrophoneMode(uid: String, mode: MicrophoneEntry.Mode) {
         guard let index = microphonePriority.firstIndex(where: { $0.uid == uid }) else { return }
         let entry = microphonePriority[index]
-        microphonePriority[index] = MicrophoneEntry(uid: entry.uid, name: entry.name, mode: mode)
+        microphonePriority[index] = MicrophoneEntry(uid: entry.uid, name: entry.name, mode: mode, choice: entry.choice)
+    }
+
+    @discardableResult
+    public mutating func setMicrophoneChoice(uid: String, choice: MicrophoneChoice?) -> Bool {
+        guard let index = microphonePriority.firstIndex(where: { $0.uid == uid }) else { return false }
+        let entry = microphonePriority[index]
+        microphonePriority[index] = MicrophoneEntry(uid: entry.uid, name: entry.name, isDisabled: entry.isDisabled, followsOtherApps: entry.followsOtherApps, choice: choice)
+        return true
     }
 
     /// Once per headset, the first time it is seen connected: a Bluetooth microphone
@@ -677,7 +746,7 @@ public struct AppConfig: Sendable {
         reseeded.microphonePriority = reseeded.microphonePriority.map { entry in
             guard fresh.contains(entry.uid), entry.mode == .always else { return entry }
             changed = true
-            return MicrophoneEntry(uid: entry.uid, name: entry.name, mode: .whenInUseElsewhere)
+            return MicrophoneEntry(uid: entry.uid, name: entry.name, mode: .whenInUseElsewhere, choice: entry.choice)
         }
         do {
             if changed { try reseeded.save() }

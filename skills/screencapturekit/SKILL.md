@@ -75,12 +75,12 @@ Must pass `createIfNecessary: false`. Passing `true` creates empty attachments: 
 
 ## 5. Audio Capture via SCStream
 
-From `SystemAudioCaptureManager.startStream()`. System audio captured through SCStream, separate from mic capture (AVAudioEngine).
+From `SystemAudioCaptureManager.startStream()`. System audio captured through SCStream, separate from mic capture (AUHAL).
 
 Config: `sampleRate = 48_000`, `channelCount = 1`, `capturesAudio = true`, `captureMicrophone = false`, `width = 2`, `height = 2`, `queueDepth = 1`, `minimumFrameInterval = CMTime(value: 1, timescale: 1)`.
 
 - **width/height = 2**: Minimum valid video dimensions. Even audio-only SCStreams require valid video config. Zero or 1 fails silently.
-- **captureMicrophone = false**: All mic capture via `MicrophoneCaptureManager` (AVAudioEngine) for per-device gain control.
+- **captureMicrophone = false**: All mic capture via `MicrophoneCaptureManager` (AUHAL) for per-device gain control.
 - **48kHz**: Standardized across all sources for remix compatibility.
 - **queueDepth = 1**: Minimize buffered video frames we'll discard anyway.
 - **Output type `.audio` only**: Stream still produces video internally but frames are discarded by `SystemAudioStreamOutput`.

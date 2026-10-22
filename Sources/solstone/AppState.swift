@@ -711,6 +711,9 @@ public final class AppState {
     /// Update and save configuration
     public func updateConfig(_ newConfig: AppConfig) {
         let oldConfig = config
+        let oldPriority = oldConfig.microphonePriority
+        let oldDisabled = oldConfig.disabledMicrophoneUIDs
+        let oldEnabled = oldConfig.enabledMicrophoneUIDs
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         let browserIntakeChanged = oldConfig.isBrowserIntakeEnabled != newConfig.isBrowserIntakeEnabled
 #endif
@@ -728,8 +731,9 @@ public final class AppState {
 #endif
         silenceMusicHolder.value = newConfig.silenceMusic
 
-        if newConfig.disabledMicrophoneUIDs != oldConfig.disabledMicrophoneUIDs ||
-           newConfig.enabledMicrophoneUIDs != oldConfig.enabledMicrophoneUIDs {
+        let modeSelectionChanged = (newConfig.disabledMicrophoneUIDs != oldDisabled ||
+                                    newConfig.enabledMicrophoneUIDs != oldEnabled)
+        if modeSelectionChanged {
             capture.captureManager.updateMicrophoneSelection(
                 disabled: newConfig.disabledMicrophoneUIDs, enabled: newConfig.enabledMicrophoneUIDs)
         }
@@ -779,6 +783,11 @@ public final class AppState {
             try configSaver(newConfig)
             configSaveError = nil
         } catch {
+            if modeSelectionChanged {
+                capture.captureManager.updateMicrophoneSelection(
+                    disabled: oldDisabled, enabled: oldEnabled)
+            }
+            config.microphonePriority = oldPriority
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             if browserIntakeChanged {
                 config.isBrowserIntakeEnabled = oldConfig.isBrowserIntakeEnabled
@@ -793,6 +802,26 @@ public final class AppState {
             Logger.general.error("Failed to save config: \(error.localizedDescription, privacy: .public)")
             configSaveError = UICopy.ERROR_SAVE_CONFIG
             return
+        }
+
+        // On success, re-read the live layout; authorize only if it still matches the saved fingerprint and ordinal.
+        // A layout that moved first does not start that interface.
+        for entry in newConfig.microphonePriority {
+            let oldChoice = oldPriority.first(where: { $0.uid == entry.uid })?.choice
+            if entry.choice != oldChoice {
+                if let choice = entry.choice {
+                    if let deviceID = MicrophoneMonitor.deviceIDForUID(entry.uid),
+                       case .available(let liveLayout) = MicrophoneMonitor.readLayout(deviceID: deviceID),
+                       liveLayout.fingerprint == choice.fingerprint,
+                       Int(choice.ordinal) < liveLayout.channelCount {
+                        capture.captureManager.authorizeMicrophoneChoice(deviceUID: entry.uid, choice: choice)
+                    } else {
+                        capture.captureManager.revokeMicrophoneChoice(deviceUID: entry.uid)
+                    }
+                } else {
+                    capture.captureManager.revokeMicrophoneChoice(deviceUID: entry.uid)
+                }
+            }
         }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         if browserIntakeChanged, let owner = browserIntakeOwner {
@@ -1894,6 +1923,9 @@ public final class AppState {
         captureManager.configuredSourcesIncludeScreen = { [weak captureTarget] in
             captureTarget?.state?.config.selectedSources.contains(.screen) ?? false
         }
+        captureManager.microphoneChoiceProvider = { [weak captureTarget] uid in
+            captureTarget?.state?.config.microphonePriority.first(where: { $0.uid == uid })?.choice
+        }
         captureManager.currentPreviewEpoch = { [previewEpochLock] in
             previewEpochLock.withLock { $0 }
         }
@@ -2278,6 +2310,9 @@ public final class AppState {
         self.setupModel = setupModel
         if let supportingIdentityResolver { self.supportingIdentityResolver = supportingIdentityResolver }
         let captureManager = CaptureManager(storageManager: storageManager)
+        captureManager.microphoneChoiceProvider = { [weak captureTarget] uid in
+            captureTarget?.state?.config.microphonePriority.first(where: { $0.uid == uid })?.choice
+        }
         let capture = CaptureCoordinator(
             captureManager: captureManager,
             pauseManager: pauseManager,

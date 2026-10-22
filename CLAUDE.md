@@ -68,7 +68,7 @@ The journal app for mac is not in this repository. It is built from `solstone-jo
 - **SingleTrackAudioWriter** - Single-source M4A recording with timing metadata
 - **AudioRemixer** - Combines readable M4A sources into multi-track output; the finalizer disposes fully copied sources after saving their outcomes
 - **SystemAudioStreamOutput** - SCStreamOutput routing system audio to SingleTrackAudioWriter
-- **ExternalMicCapture** - AVAudioEngine capture for all microphones
+- **ExternalMicCapture** - AUHAL native capture for all microphones
 - **MicrophoneMonitor** - CoreAudio device enumeration
 - **WindowExclusionManager** - Keeps excluded apps, title-pattern windows and private browser windows out of capture from the first frame of every segment (`ExclusionPlanner` in `WindowExclusionPlan.swift` decides; `AccessibilityTitleReader` serves the opt-in Safari, Chrome, Edge and Brave check)
 

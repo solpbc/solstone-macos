@@ -59,6 +59,15 @@ public enum UICopy {
     public static let MICROPHONE_MODE_ALWAYS = "always"
     public static let MICROPHONE_MODE_OFF = "off"
     public static let MICROPHONE_MODE_HELP = "a bluetooth headset sounds worse while its microphone is open, so by default it only goes into your journal while another app, such as a call app, is already using it."
+    public static let MICROPHONE_NEEDS_CHOICE = "this interface has more than two inputs. pick one to record it."
+    public static let MICROPHONE_LAYOUT_UNAVAILABLE = "this interface's inputs can't be read."
+    public static let MICROPHONE_INPUT_RETRY = "try again"
+    public static func microphoneInputTitle(number: Int, label: String?) -> String {
+        if let label, !label.isEmpty {
+            return "input \(number), \(label)"
+        }
+        return "input \(number)"
+    }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     public static let SOURCES_HELP = "what you turn on here goes into your journal."
     public static let SOURCES_NONE = "every source is off"

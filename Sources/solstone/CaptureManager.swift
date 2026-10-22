@@ -162,7 +162,7 @@ public final class CaptureManager {
     // Test-only bypass for fake segment factories without ScreenCaptureKit display state; defaults false.
     private let allowsEmptyDisplayConfigurationForTesting: Bool
 
-    /// Persistent mic capture manager - keeps AVAudioEngine instances alive across segment rotations
+    /// Persistent mic capture manager - keeps native AUHAL captures alive across segment rotations
     /// This prevents audio playback interference during rotation
     private let micCaptureManager: MicrophoneCaptureManager
     /// The one place that decides when a stopped audio source is tried again.
@@ -175,17 +175,12 @@ public final class CaptureManager {
     /// Closure to check if music silencing is enabled
     private let silenceMusic: @Sendable () -> Bool
 
-    /// Current default microphone device ID (for change detection)
-    private var currentDefaultMicID: AudioDeviceID?
-
-    /// CoreAudio listener for default mic changes
-    private var defaultMicListener: HALPropertyListener?
-
     /// UIDs of microphones to exclude from recording (disabled mics)
     private var disabledMicUIDs: Set<String> = []
     private var enabledMicUIDs: Set<String> = []
     private var hasLiveMicrophoneSelection = false
     internal var microphoneSelectionProvider: (@MainActor () -> (disabled: Set<String>, enabled: Set<String>))?
+    internal var microphoneChoiceProvider: (@MainActor (String) -> MicrophoneChoice?)?
 
     public private(set) var activeSources: CaptureSources = [] {
         didSet {
@@ -212,6 +207,21 @@ public final class CaptureManager {
     nonisolated(unsafe) private var protectedVideoTimer: Timer?
     nonisolated(unsafe) private var protectedVideoWorkspaceObservers: [NSObjectProtocol] = []
     private let microphoneDevices: @MainActor () -> [AudioInputDevice]
+    nonisolated private static func defaultLayoutReader(_ deviceID: AudioDeviceID) -> MicrophoneMonitor.MicrophoneLayoutResult {
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
+        if deviceID == 0 {
+            return .available(MicrophoneMonitor.MicrophoneLayout(
+                fingerprint: MicrophoneLayoutFingerprint(streams: [MicrophoneLayoutFingerprint.StreamSpan(startingChannel: 1, channelCount: 1)]),
+                channelCount: 1,
+                labels: [nil]
+            ))
+        }
+        #endif
+        return MicrophoneMonitor.readLayout(deviceID: deviceID)
+    }
+
+    private let layoutReader: (AudioDeviceID) -> MicrophoneMonitor.MicrophoneLayoutResult
+    private let inputDevicesQuery: @MainActor () -> [AudioInputDevice]?
     /// UIDs of input devices another process is currently running input on.
     internal var inputInUseElsewhere: @MainActor () -> Set<String> = MicrophoneMonitor.inputDeviceUIDsInUseByOtherProcesses
     private let shareableContentProvider: @MainActor () async throws -> SCShareableContent
@@ -312,6 +322,8 @@ public final class CaptureManager {
         now: @escaping @Sendable () -> Date = Date.init,
         allowsEmptyDisplayConfigurationForTesting: Bool = false,
         microphoneDevices: @escaping @MainActor () -> [AudioInputDevice] = MicrophoneMonitor.listInputDevices,
+        layoutReader: @escaping (AudioDeviceID) -> MicrophoneMonitor.MicrophoneLayoutResult = CaptureManager.defaultLayoutReader,
+        inputDevicesQuery: @escaping @MainActor () -> [AudioInputDevice]? = { MicrophoneMonitor.queryInputDevices() },
         shareableContentProvider: @escaping @MainActor () async throws -> SCShareableContent = { try await SCShareableContent.current },
         pauseForProtectedVideo: Bool = true,
         protectedVideoTitlePatterns: [String] = [],
@@ -343,6 +355,8 @@ public final class CaptureManager {
             now: now,
             allowsEmptyDisplayConfigurationForTesting: allowsEmptyDisplayConfigurationForTesting,
             microphoneDevices: microphoneDevices,
+            layoutReader: layoutReader,
+            inputDevicesQuery: inputDevicesQuery,
             shareableContentProvider: shareableContentProvider,
             streamFactory: streamFactory,
             recoveryScheduler: recoveryScheduler,
@@ -384,6 +398,8 @@ public final class CaptureManager {
         now: @escaping @Sendable () -> Date = Date.init,
         allowsEmptyDisplayConfigurationForTesting: Bool = false,
         microphoneDevices: @escaping @MainActor () -> [AudioInputDevice] = MicrophoneMonitor.listInputDevices,
+        layoutReader: @escaping (AudioDeviceID) -> MicrophoneMonitor.MicrophoneLayoutResult = CaptureManager.defaultLayoutReader,
+        inputDevicesQuery: @escaping @MainActor () -> [AudioInputDevice]? = { MicrophoneMonitor.queryInputDevices() },
         shareableContentProvider: @escaping @MainActor () async throws -> SCShareableContent = { try await SCShareableContent.current },
         streamFactory: @escaping CaptureStreamFactory,
         recoveryScheduler: @escaping RecoveryScheduler,
@@ -412,6 +428,8 @@ public final class CaptureManager {
         self.now = now
         self.allowsEmptyDisplayConfigurationForTesting = allowsEmptyDisplayConfigurationForTesting
         self.microphoneDevices = microphoneDevices
+        self.layoutReader = layoutReader
+        self.inputDevicesQuery = inputDevicesQuery
         self.shareableContentProvider = shareableContentProvider
         self.micCaptureManager = microphoneCaptureManager ?? MicrophoneCaptureManager(gain: microphoneGain, verbose: verbose)
         self.systemAudioCaptureManager = systemAudioCaptureManager ?? SystemAudioCaptureManager(streamFactory: streamFactory)
@@ -492,7 +510,6 @@ public final class CaptureManager {
     }
 
     deinit {
-        defaultMicListener?.invalidate()
         NotificationCenter.default.removeObserver(self)
         protectedVideoTimer?.invalidate()
         for observer in protectedVideoWorkspaceObservers {
@@ -515,17 +532,50 @@ public final class CaptureManager {
     /// Adds/removes mics from current segment dynamically (no rotation needed)
     public func handleDeviceChange(added: [AudioInputDevice], removed: [AudioInputDevice]) async {
         guard state.isRecording, sessionSources.contains(.microphone) else { return }
+        let addedUIDs = Set(added.map(\.uid))
+        let removedUIDs = Set(removed.map(\.uid))
+        let replacedUIDs = addedUIDs.intersection(removedUIDs)
+        let trulyRemoved = removed.filter { !replacedUIDs.contains($0.uid) }
+
         // Physical loss remains a failure, unlike a deliberate selection change.
-        for device in removed {
+        for device in trulyRemoved {
             let capture = micCaptureManager.getCapture(for: device.uid)
             if capture?.isCapturing == true, let boundID = capture?.currentDeviceID,
                boundID != device.id,
-               microphoneDevices().contains(where: { $0.uid == device.uid && $0.id == boundID }) { continue }
+               inputDevicesQuery()?.contains(where: { $0.uid == device.uid && $0.id == boundID }) == true { continue }
             currentSegment?.removeMicrophone(deviceUID: device.uid)
             micCaptureManager.stopCapture(deviceUID: device.uid)
         }
+
+        // Replaced UIDs: re-resolve with fresh query, rebind running capture to the new ID, keep the writer.
+        for uid in replacedUIDs {
+            guard let freshDevices = inputDevicesQuery(),
+                  let freshDevice = freshDevices.first(where: { $0.uid == uid }) else {
+                continue
+            }
+            if let capture = micCaptureManager.getCapture(for: uid), capture.isCapturing {
+                if capture.currentDeviceID == freshDevice.id {
+                    continue
+                }
+                let choice = microphoneChoiceProvider?(uid)
+                let classification = classifyMicrophone(device: freshDevice, choice: choice, layoutResult: layoutReader(freshDevice.id))
+                if classification == .admitted {
+                    do {
+                        try capture.rebind(deviceID: freshDevice.id, deviceName: freshDevice.name)
+                    } catch {
+                        capture.revokeUnacceptedAudio()
+                        micCaptureManager.stopCapture(deviceUID: uid)
+                    }
+                } else {
+                    // Layout drifted or needs choice: revokes and stops until a new choice; keep writer
+                    capture.revokeUnacceptedAudio()
+                    micCaptureManager.stopCapture(deviceUID: uid)
+                }
+            }
+        }
+
         // A device that just arrived gets an immediate try, whatever its backoff.
-        audioRecovery.reset(Set(added.map(\.uid)))
+        audioRecovery.reset(addedUIDs)
         // Event payloads can be stale. Admission always uses current enumeration
         // and owner intent.
         reconcileMicrophoneSelection(restartFailed: true)
@@ -537,6 +587,16 @@ public final class CaptureManager {
         disabledMicUIDs = disabled
         enabledMicUIDs = enabled
         hasLiveMicrophoneSelection = true
+        reconcileMicrophoneSelection()
+    }
+
+    public func authorizeMicrophoneChoice(deviceUID: String, choice: MicrophoneChoice) {
+        _ = micCaptureManager.authorizeChoice(for: deviceUID, choice: choice)
+        reconcileMicrophoneSelection()
+    }
+
+    public func revokeMicrophoneChoice(deviceUID: String) {
+        micCaptureManager.revokeUnacceptedAudio(for: deviceUID)
         reconcileMicrophoneSelection()
     }
 
@@ -573,6 +633,12 @@ public final class CaptureManager {
         for device in selected where (!segment.hasMicrophone(deviceUID: device.uid) ||
             (restartFailed && micCaptureManager.getCapture(for: device.uid)?.isCapturing != true)) &&
             micCaptureManager.getCapture(for: device.uid)?.isRecoveringConfiguration != true {
+            let choice = microphoneChoiceProvider?(device.uid)
+            let classification = classifyMicrophone(device: device, choice: choice, layoutResult: layoutReader(device.id))
+            guard classification == .admitted else { continue }
+            if let choice {
+                _ = micCaptureManager.authorizeChoice(for: device.uid, choice: choice)
+            }
             // Every start, first or repeated, goes through the backoff.
             guard audioRecovery.canAttempt(device.uid) else { continue }
             audioRecovery.noteAttempt(device.uid, kind: .microphone)
@@ -1116,7 +1182,12 @@ public final class CaptureManager {
         var recovering: [String] = []
         if sessionSources.contains(.screen), systemAudioCaptureManager.hasUnresolvedInterruption { recovering.append(Self.systemAudioSourceID) }
         if sessionSources.contains(.microphone) {
-            recovering += micCaptureManager.selectedDeviceUIDs.filter { micCaptureManager.getCapture(for: $0)?.isCapturing != true }
+            recovering += micCaptureManager.selectedDeviceUIDs.filter { uid in
+                guard let device = microphoneDevices().first(where: { $0.uid == uid }) else { return false }
+                let choice = microphoneChoiceProvider?(uid)
+                guard classifyMicrophone(device: device, choice: choice, layoutResult: layoutReader(device.id)) == .admitted else { return false }
+                return micCaptureManager.getCapture(for: uid)?.isCapturing != true
+            }
         }
         let recovered = segment.sourcesWithLoss().filter { !recovering.contains($0) }
         let names = recovering.isEmpty && recovered.isEmpty ? [:]
@@ -1296,40 +1367,7 @@ public final class CaptureManager {
         }
     }
 
-    // MARK: - Default Microphone Monitoring
 
-    private func startDefaultMicMonitoring() {
-        currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
-
-        defaultMicListener = HALPropertyListener(
-            objectID: AudioObjectID(kAudioObjectSystemObject),
-            selector: kAudioHardwarePropertyDefaultInputDevice,
-            onChange: { [weak self] in
-                Task { await self?.handleDefaultMicChange() }
-            }
-        )
-        if verbose { Logger.capture.debug("Started monitoring default microphone changes") }
-    }
-
-    private func stopDefaultMicMonitoring() {
-        defaultMicListener?.invalidate()
-        defaultMicListener = nil
-    }
-
-    private func handleDefaultMicChange() async {
-        handleDefaultMicChange(currentID: MicrophoneMonitor.getDefaultInputDeviceID())
-    }
-
-    internal func handleDefaultMicChange(currentID newDefaultMicID: AudioDeviceID?) {
-        guard state.isRecording, sessionSources.contains(.microphone) else { return }
-
-        // Check if default mic actually changed
-        if newDefaultMicID != currentDefaultMicID {
-            Logger.capture.info("Default microphone changed (no rotation - mics handled dynamically)")
-            currentDefaultMicID = newDefaultMicID
-            reconcileMicrophoneSelection(restartFailed: true)
-        }
-    }
 
     // MARK: - Test Support
 
@@ -1476,10 +1514,6 @@ extension CaptureManager: CaptureLifecycleDelegate {
         // Keep requested sources across temporary loss. Active sources describe
         // this segment; a later refresh or device change can try the request again.
         sessionSources = activeSources.union(sources)
-        // Start monitoring for default microphone changes.
-        if sessionSources.contains(.microphone) {
-            startDefaultMicMonitoring()
-        }
 
         let oldState = state.label
         state = .recording
@@ -1496,7 +1530,6 @@ extension CaptureManager: CaptureLifecycleDelegate {
         disarmProtectedVideoMonitoring()
         Logger.capture.info("[Executor] resetting for restart from error")
         windowExclusionManager.stop()
-        stopDefaultMicMonitoring()
 
         stopSegmentRotation()
         stopHeartbeat()
@@ -1522,9 +1555,6 @@ extension CaptureManager: CaptureLifecycleDelegate {
         disarmProtectedVideoMonitoring()
         dropProtectedVideoNotesIfNeeded()
         windowExclusionManager.stop()
-
-        // Stop monitoring for microphone changes.
-        stopDefaultMicMonitoring()
 
         // Cancel timers.
         stopSegmentRotation()
@@ -1700,10 +1730,6 @@ extension CaptureManager: CaptureLifecycleDelegate {
         #endif
         try Task.checkCancellation()
         try await startNewSegment(writeProtectedVideoNote: writeProtectedVideoNote)
-
-        if activeSources.contains(.microphone) {
-            currentDefaultMicID = MicrophoneMonitor.getDefaultInputDeviceID()
-        }
     }
 
     func lifecycleCommitResume(trigger: String) {

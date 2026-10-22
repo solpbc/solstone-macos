@@ -227,11 +227,258 @@ public enum MicrophoneMonitor {
 
     /// Gets the device ID for a given UID
     public static func deviceIDForUID(_ uid: String) -> AudioDeviceID? {
-        let devices = listInputDevices()
+        guard let devices = queryInputDevices() else { return nil }
         return devices.first(where: { $0.uid == uid })?.id
     }
 
     // MARK: - Private Helpers
+
+    public enum MicrophoneLayoutResult: Equatable, Sendable {
+        case available(MicrophoneLayout)
+        case unavailable
+    }
+
+    public struct MicrophoneLayout: Equatable, Sendable {
+        public let fingerprint: MicrophoneLayoutFingerprint
+        public let channelCount: Int
+        public let labels: [String?]
+
+        public init(fingerprint: MicrophoneLayoutFingerprint, channelCount: Int, labels: [String?]) {
+            self.fingerprint = fingerprint
+            self.channelCount = channelCount
+            self.labels = labels
+        }
+    }
+
+    /// Pure reader for audio device input layout and channel labels.
+    internal static func readLayout(
+        deviceID: AudioDeviceID,
+        queryStreams: ((AudioDeviceID) -> [AudioStreamID]?)? = nil,
+        queryStreamSpan: ((AudioStreamID) -> (startingChannel: Int, channelCount: Int)?)? = nil,
+        queryStreamConfigChannels: ((AudioDeviceID) -> Int?)? = nil,
+        queryAggregateMembers: ((AudioDeviceID) -> [MicrophoneLayoutFingerprint.AggregateMemberSpan]?)? = nil,
+        queryChannelLabel: ((AudioDeviceID, Int) -> String?)? = nil
+    ) -> MicrophoneLayoutResult {
+        let bufferListHeaderSize = MemoryLayout<AudioBufferList>.offset(of: \.mBuffers)!
+
+        // 1. Read input streams
+        let streamIDs: [AudioStreamID]
+        if let queryStreams {
+            guard let ids = queryStreams(deviceID) else { return .unavailable }
+            streamIDs = ids
+        } else {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreams,
+                mScope: kAudioDevicePropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var dataSize: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr, dataSize > 0 else {
+                return .unavailable
+            }
+            let count = Int(dataSize) / MemoryLayout<AudioStreamID>.size
+            var ids = [AudioStreamID](repeating: 0, count: count)
+            guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &ids) == noErr else {
+                return .unavailable
+            }
+            streamIDs = ids
+        }
+        guard !streamIDs.isEmpty else { return .unavailable }
+
+        // 2. Read each stream span (startingChannel + channelCount)
+        var streamSpans: [MicrophoneLayoutFingerprint.StreamSpan] = []
+        for streamID in streamIDs {
+            let span: (startingChannel: Int, channelCount: Int)
+            if let queryStreamSpan {
+                guard let s = queryStreamSpan(streamID) else { return .unavailable }
+                span = s
+            } else {
+                var dirAddress = AudioObjectPropertyAddress(
+                    mSelector: kAudioStreamPropertyDirection,
+                    mScope: kAudioObjectPropertyScopeGlobal,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                var direction: UInt32 = 0
+                var dirSize = UInt32(MemoryLayout<UInt32>.size)
+                guard AudioObjectGetPropertyData(streamID, &dirAddress, 0, nil, &dirSize, &direction) == noErr,
+                      direction == 1 else { continue }
+
+                var chanAddress = AudioObjectPropertyAddress(
+                    mSelector: kAudioStreamPropertyStartingChannel,
+                    mScope: kAudioObjectPropertyScopeGlobal,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                var startChan: UInt32 = 0
+                var startSize = UInt32(MemoryLayout<UInt32>.size)
+                guard AudioObjectGetPropertyData(streamID, &chanAddress, 0, nil, &startSize, &startChan) == noErr else {
+                    return .unavailable
+                }
+
+                var formatAddress = AudioObjectPropertyAddress(
+                    mSelector: kAudioStreamPropertyVirtualFormat,
+                    mScope: kAudioObjectPropertyScopeGlobal,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                var asbd = AudioStreamBasicDescription()
+                var formatSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+                guard AudioObjectGetPropertyData(streamID, &formatAddress, 0, nil, &formatSize, &asbd) == noErr,
+                      asbd.mChannelsPerFrame > 0 else {
+                    return .unavailable
+                }
+                span = (startingChannel: Int(startChan), channelCount: Int(asbd.mChannelsPerFrame))
+            }
+            guard span.channelCount > 0, span.startingChannel > 0 else { return .unavailable }
+            streamSpans.append(MicrophoneLayoutFingerprint.StreamSpan(startingChannel: span.startingChannel, channelCount: span.channelCount))
+        }
+        guard !streamSpans.isEmpty else { return .unavailable }
+
+        // Sort stream spans by starting channel
+        streamSpans.sort { $0.startingChannel < $1.startingChannel }
+
+        // 3. Verify contiguous spans with no gaps and no overlap
+        guard streamSpans[0].startingChannel == 1 else { return .unavailable }
+        var expectedNextChannel = 1 + streamSpans[0].channelCount
+        for i in 1..<streamSpans.count {
+            guard streamSpans[i].startingChannel == expectedNextChannel else { return .unavailable }
+            expectedNextChannel += streamSpans[i].channelCount
+        }
+        let totalStreamChannels = expectedNextChannel - 1
+
+        // 4. Validate against device stream configuration
+        let configChannels: Int
+        if let queryStreamConfigChannels {
+            guard let count = queryStreamConfigChannels(deviceID) else { return .unavailable }
+            configChannels = count
+        } else {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreamConfiguration,
+                mScope: kAudioDevicePropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var queriedSize: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &queriedSize) == noErr,
+                  Int(queriedSize) >= MemoryLayout<AudioBufferList>.offset(of: \.mBuffers)! else {
+                return .unavailable
+            }
+            let capacity = max(Int(queriedSize), MemoryLayout<AudioBufferList>.size)
+            let storage = UnsafeMutableRawPointer.allocate(byteCount: capacity, alignment: MemoryLayout<AudioBufferList>.alignment)
+            defer { storage.deallocate() }
+            memset(storage, 0, capacity)
+            var returnedSize = UInt32(capacity)
+            guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &returnedSize, storage) == noErr else {
+                return .unavailable
+            }
+            let headerSize = bufferListHeaderSize
+            guard Int(returnedSize) >= headerSize else { return .unavailable }
+            let bufferCount = Int(storage.load(as: UInt32.self))
+            let (bufferBytes, overflow) = bufferCount.multipliedReportingOverflow(by: MemoryLayout<AudioBuffer>.stride)
+            let (requiredBytes, addOverflow) = headerSize.addingReportingOverflow(bufferBytes)
+            guard !overflow, !addOverflow, requiredBytes <= Int(returnedSize) else { return .unavailable }
+            var sum = 0
+            for i in 0..<bufferCount {
+                let buf = storage.load(fromByteOffset: headerSize + i * MemoryLayout<AudioBuffer>.stride, as: AudioBuffer.self)
+                sum += Int(buf.mNumberChannels)
+            }
+            configChannels = sum
+        }
+        guard configChannels == totalStreamChannels else { return .unavailable }
+
+        // 5. Aggregate identity check
+        let aggregateMembers: [MicrophoneLayoutFingerprint.AggregateMemberSpan]?
+        if let queryAggregateMembers {
+            aggregateMembers = queryAggregateMembers(deviceID)
+        } else {
+            var aggAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioAggregateDevicePropertyFullSubDeviceList,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var size: UInt32 = 0
+            let status = AudioObjectGetPropertyDataSize(deviceID, &aggAddress, 0, nil, &size)
+            if status == kAudioHardwareUnknownPropertyError || status == kAudioHardwareBadObjectError || status == kAudioHardwareBadPropertySizeError {
+                aggregateMembers = nil
+            } else if status == noErr, size > 0 {
+                var subdeviceList: Unmanaged<CFArray>?
+                var propSize = UInt32(MemoryLayout<Unmanaged<CFArray>?>.size)
+                let readStatus = AudioObjectGetPropertyData(deviceID, &aggAddress, 0, nil, &propSize, &subdeviceList)
+                guard readStatus == noErr, let cfArray = subdeviceList?.takeRetainedValue() else {
+                    return .unavailable
+                }
+                guard let allHALDevices = allHALDeviceIDs() else { return .unavailable }
+                let deviceByUID = Dictionary(allHALDevices.compactMap { id -> (String, AudioDeviceID)? in
+                    guard let uid = getDeviceUID(deviceID: id) else { return nil }
+                    return (uid, id)
+                }, uniquingKeysWith: { first, _ in first })
+
+                let count = CFArrayGetCount(cfArray)
+                var members: [MicrophoneLayoutFingerprint.AggregateMemberSpan] = []
+                for i in 0..<count {
+                    guard let ptr = CFArrayGetValueAtIndex(cfArray, i) else { return .unavailable }
+                    let cfObject = Unmanaged<AnyObject>.fromOpaque(ptr).takeUnretainedValue()
+                    guard CFGetTypeID(cfObject) == CFStringGetTypeID() else { return .unavailable }
+                    let subUID = cfObject as! String
+                    guard let subID = deviceByUID[subUID] else { return .unavailable }
+                    // Query subdevice stream configuration channel count
+                    var subAddr = AudioObjectPropertyAddress(
+                        mSelector: kAudioDevicePropertyStreamConfiguration,
+                        mScope: kAudioDevicePropertyScopeInput,
+                        mElement: kAudioObjectPropertyElementMain
+                    )
+                    var subSize: UInt32 = 0
+                    guard AudioObjectGetPropertyDataSize(subID, &subAddr, 0, nil, &subSize) == noErr else { return .unavailable }
+                    var subChannels = 0
+                    if Int(subSize) >= bufferListHeaderSize {
+                        let subCapacity = max(Int(subSize), MemoryLayout<AudioBufferList>.size)
+                        let subStorage = UnsafeMutableRawPointer.allocate(byteCount: subCapacity, alignment: MemoryLayout<AudioBufferList>.alignment)
+                        defer { subStorage.deallocate() }
+                        memset(subStorage, 0, subCapacity)
+                        var subReturned = UInt32(subCapacity)
+                        guard AudioObjectGetPropertyData(subID, &subAddr, 0, nil, &subReturned, subStorage) == noErr else {
+                            return .unavailable
+                        }
+                        guard Int(subReturned) >= bufferListHeaderSize else { return .unavailable }
+                        let subBufCount = Int(subStorage.load(as: UInt32.self))
+                        let (subBytes, subOv) = subBufCount.multipliedReportingOverflow(by: MemoryLayout<AudioBuffer>.stride)
+                        let (subReq, subAddOv) = bufferListHeaderSize.addingReportingOverflow(subBytes)
+                        guard !subOv, !subAddOv, subReq <= Int(subReturned) else { return .unavailable }
+                        for b in 0..<subBufCount {
+                            let buf = subStorage.load(fromByteOffset: bufferListHeaderSize + b * MemoryLayout<AudioBuffer>.stride, as: AudioBuffer.self)
+                            subChannels += Int(buf.mNumberChannels)
+                        }
+                    }
+                    members.append(MicrophoneLayoutFingerprint.AggregateMemberSpan(uid: subUID, inputChannelCount: subChannels))
+                }
+                aggregateMembers = members
+            } else {
+                return .unavailable
+            }
+        }
+
+        // 6. Channel labels (1-based element number, 0-based ordinal)
+        var labels: [String?] = []
+        for ordinal in 0..<totalStreamChannels {
+            if let queryChannelLabel {
+                labels.append(queryChannelLabel(deviceID, ordinal))
+            } else {
+                var labelAddress = AudioObjectPropertyAddress(
+                    mSelector: kAudioObjectPropertyElementName,
+                    mScope: kAudioDevicePropertyScopeInput,
+                    mElement: AudioObjectPropertyElement(ordinal + 1)
+                )
+                var nameCF: Unmanaged<CFString>?
+                var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+                let nameStatus = AudioObjectGetPropertyData(deviceID, &labelAddress, 0, nil, &nameSize, &nameCF)
+                if nameStatus == noErr, let name = nameCF?.takeRetainedValue() as String?, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    labels.append(name)
+                } else {
+                    labels.append(nil)
+                }
+            }
+        }
+
+        let fingerprint = MicrophoneLayoutFingerprint(streams: streamSpans, aggregateMembers: aggregateMembers)
+        return .available(MicrophoneLayout(fingerprint: fingerprint, channelCount: totalStreamChannels, labels: labels))
+    }
 
     /// HAL's stream configuration contains a variable-length AudioBufferList.
     /// Keep the allocated capacity separate from the bytes HAL actually returned.
@@ -309,6 +556,31 @@ public enum MicrophoneMonitor {
         guard status == noErr, let cfName = name?.takeRetainedValue() else { return nil }
 
         return cfName as String
+    }
+
+    private static func allHALDeviceIDs() -> [AudioDeviceID]? {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0, nil,
+            &dataSize
+        ) == noErr, dataSize > 0 else { return nil }
+        let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
+        var ids = [AudioDeviceID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            0, nil,
+            &dataSize,
+            &ids
+        ) == noErr else { return nil }
+        return ids
     }
 
     private static func getDeviceUID(deviceID: AudioDeviceID) -> String? {

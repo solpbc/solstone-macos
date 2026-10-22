@@ -49,7 +49,7 @@ struct ExternalMicCaptureTests {
         capture.stop()
     }
 
-    @Test func summedMonoRespectsInterleavedChannelStride() throws {
+    @Test func extractChosenChannelRespectsInterleavedChannelStride() throws {
         let layout = try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | 3))
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, interleaved: true, channelLayout: layout)
         let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4))
@@ -58,10 +58,11 @@ struct ExternalMicCaptureTests {
         for channel in 0..<3 {
             for frame in 0..<4 { channels[channel][frame * buffer.stride] = Float(channel + frame * 10) }
         }
-        let mono = try #require(ExternalMicCapture.summedMono(buffer))
+        let mono = try #require(ExternalMicCapture.extractChosenChannel(buffer, ordinal: 1))
         let values = try #require(mono.floatChannelData)[0]
-        for frame in 0..<4 { #expect(values[frame] == Float(3 + frame * 30)) }
+        for frame in 0..<4 { #expect(values[frame] == Float(1 + frame * 10)) }
     }
+
     @Test func stopTearsDownEngineBeforeRemovingTapWhenNeverStarted() {
         let device = AudioInputDevice(
             id: 0,
@@ -75,13 +76,13 @@ struct ExternalMicCaptureTests {
 
         capture.stop()
 
-        // Proves stop tears down even when never started, and stops before tap removal.
-        #expect(capture._teardownTraceForTesting == ["engine.stop", "removeTap"])
+        // Proves stop tears down even when never started.
+        #expect(capture._teardownTraceForTesting == ["engine.stop"])
     }
 
-    // A 10-input interface (Focusrite Scarlett 8i6 shape): the live mic can sit on any
-    // jack, so every input is summed into the mono track rather than pinning input 1.
-    @Test func summedMonoMixesEveryInputOfAMultichannelInterface() throws {
+    // A 10-input interface (Focusrite Scarlett 8i6 shape): the chosen input (ordinal 2)
+    // is isolated into the mono track without mixing other inputs.
+    @Test func extractChosenChannelIsolatesChosenInputOfAMultichannelInterface() throws {
         // CoreAudio reports >2-input interfaces with a discrete layout, never a named one.
         let layout = try #require(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | 10))
         let format = AVAudioFormat(
@@ -99,21 +100,26 @@ struct ExternalMicCaptureTests {
                 channels[channel][frame] = 0
             }
         }
-        // Mic on input 3, a second source on input 10; inputs 1, 2, 4-9 idle.
+        // Mic on input 3 (ordinal 2), a second source on input 10 (ordinal 9); inputs 1, 2, 4-9 idle.
         for frame in 0..<Int(frames) {
             channels[2][frame] = 0.25
             channels[9][frame] = Float(frame) * 0.1
         }
 
-        let mono = try #require(ExternalMicCapture.summedMono(buffer))
+        let mono = try #require(ExternalMicCapture.extractChosenChannel(buffer, ordinal: 2))
 
         #expect(mono.format.channelCount == 1)
         #expect(mono.format.sampleRate == 48_000)
         #expect(mono.frameLength == frames)
         let samples = try #require(mono.floatChannelData)
-        let expected: [Float] = [0.25, 0.35, 0.45, 0.55]
         for frame in 0..<Int(frames) {
-            #expect(abs(samples[0][frame] - expected[frame]) < 1e-6)
+            #expect(samples[0][frame] == 0.25)
+        }
+
+        let mono10 = try #require(ExternalMicCapture.extractChosenChannel(buffer, ordinal: 9))
+        let samples10 = try #require(mono10.floatChannelData)
+        for frame in 0..<Int(frames) {
+            #expect(abs(samples10[0][frame] - Float(frame) * 0.1) < 1e-6)
         }
     }
 }

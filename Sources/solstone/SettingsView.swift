@@ -22,8 +22,17 @@ struct MicrophoneDisplayEntry: Identifiable {
     let mode: MicrophoneEntry.Mode
     /// Bluetooth microphones can follow other apps instead of being always on or off.
     let offersFollowing: Bool
+    let interfaceState: MicrophoneInterfaceState
+    let layout: MicrophoneMonitor.MicrophoneLayout?
+    let choice: MicrophoneChoice?
 
-    init(from entry: MicrophoneEntry, isConnected: Bool, isBluetooth: Bool = false) {
+    init(
+        from entry: MicrophoneEntry,
+        isConnected: Bool,
+        isBluetooth: Bool = false,
+        interfaceState: MicrophoneInterfaceState = .admitted,
+        layout: MicrophoneMonitor.MicrophoneLayout? = nil
+    ) {
         self.id = entry.uid
         self.uid = entry.uid
         self.name = entry.name
@@ -32,6 +41,9 @@ struct MicrophoneDisplayEntry: Identifiable {
         self.mode = entry.mode
         self.offersFollowing = isBluetooth || entry.followsOtherApps
             || (!isConnected && AppConfig.knownBluetoothMicrophoneUIDs.contains(entry.uid))
+        self.interfaceState = interfaceState
+        self.layout = layout
+        self.choice = entry.choice
     }
 }
 
@@ -3173,13 +3185,31 @@ struct SettingsView: View {
 
     private var microphoneDisplayEntries: [MicrophoneDisplayEntry] {
         let available = appState.audioDeviceMonitor.availableDevices
-        let connectedUIDs = Set(available.map { $0.uid })
+        let availableByUID = Dictionary(uniqueKeysWithValues: available.map { ($0.uid, $0) })
         let bluetoothUIDs = Set(available.filter { $0.transportType == .bluetooth }.map { $0.uid })
         return appState.config.microphonePriority.map { entry in
-            MicrophoneDisplayEntry(
+            let device = availableByUID[entry.uid]
+            let isConnected = device != nil
+            let layoutResult = device.map { MicrophoneMonitor.readLayout(deviceID: $0.id) }
+            let interfaceState: MicrophoneInterfaceState
+            let layout: MicrophoneMonitor.MicrophoneLayout?
+            if let device, let layoutResult {
+                interfaceState = classifyMicrophone(device: device, choice: entry.choice, layoutResult: layoutResult)
+                if case .available(let l) = layoutResult {
+                    layout = l
+                } else {
+                    layout = nil
+                }
+            } else {
+                interfaceState = .admitted
+                layout = nil
+            }
+            return MicrophoneDisplayEntry(
                 from: entry,
-                isConnected: connectedUIDs.contains(entry.uid),
-                isBluetooth: bluetoothUIDs.contains(entry.uid)
+                isConnected: isConnected,
+                isBluetooth: bluetoothUIDs.contains(entry.uid),
+                interfaceState: interfaceState,
+                layout: layout
             )
         }
     }
@@ -3205,7 +3235,9 @@ struct SettingsView: View {
                                     entry: entry,
                                     onDelete: { deleteMicrophone(uid: entry.uid) },
                                     onToggleDisabled: { toggleMicrophoneDisabled(uid: entry.uid) },
-                                    onSelectMode: { setMicrophoneMode(uid: entry.uid, mode: $0) }
+                                    onSelectMode: { setMicrophoneMode(uid: entry.uid, mode: $0) },
+                                    onSelectChoice: { selectMicrophoneChoice(uid: entry.uid, choice: $0) },
+                                    onRetry: { retryMicrophoneLayout(uid: entry.uid) }
                                 )
                             }
                             .onMove { from, to in
@@ -3366,6 +3398,17 @@ struct SettingsView: View {
         var newConfig = appState.config
         newConfig.setMicrophoneMode(uid: uid, mode: mode)
         appState.updateConfig(newConfig)
+    }
+
+    private func selectMicrophoneChoice(uid: String, choice: MicrophoneChoice) {
+        var config = appState.config
+        if config.setMicrophoneChoice(uid: uid, choice: choice) {
+            appState.updateConfig(config)
+        }
+    }
+
+    private func retryMicrophoneLayout(uid: String) {
+        appState.audioDeviceMonitor.refreshDevices()
     }
 
     // MARK: - Privacy Tab
@@ -4895,70 +4938,147 @@ struct MicrophoneRow: View {
     let onDelete: () -> Void
     let onToggleDisabled: () -> Void
     var onSelectMode: (MicrophoneEntry.Mode) -> Void = { _ in }
+    var onSelectChoice: (MicrophoneChoice) -> Void = { _ in }
+    var onRetry: () -> Void = {}
 
     private var indicatorColor: Color {
         if !entry.isConnected {
             return .gray
         }
-        return entry.mode == .off ? .orange : .green
+        if entry.mode == .off {
+            return .orange
+        }
+        switch entry.interfaceState {
+        case .admitted:
+            return .green
+        case .needsChoice, .layoutUnavailable:
+            return .gray
+        }
     }
 
     private var axStateValue: String {
-        let connection = entry.isConnected ? "connected" : "disconnected"
         let enabled = entry.mode == .whenInUseElsewhere ? "following" : (entry.isDisabled ? "disabled" : "enabled")
-        return "\(connection)_\(enabled)"
+        guard entry.isConnected else { return "disconnected_\(enabled)" }
+        if entry.mode == .off {
+            return "connected_disabled"
+        }
+        switch entry.interfaceState {
+        case .admitted:
+            return "connected_\(enabled)"
+        case .needsChoice:
+            return "connected_needs_choice"
+        case .layoutUnavailable:
+            return "connected_layout_unavailable"
+        }
     }
 
     var body: some View {
-        HStack {
-            // Connection status indicator
-            Circle()
-                .fill(indicatorColor)
-                .frame(width: 8, height: 8)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                // Connection status indicator
+                Circle()
+                    .fill(indicatorColor)
+                    .frame(width: 8, height: 8)
 
-            // Microphone name
-            Text(entry.name)
-                .strikethrough(entry.mode == .off)
-                .foregroundStyle(entry.isConnected ? (entry.mode == .off ? .secondary : .primary) : .secondary)
+                // Microphone name
+                Text(entry.name)
+                    .strikethrough(entry.mode == .off)
+                    .foregroundStyle(entry.isConnected ? (entry.mode == .off ? .secondary : .primary) : .secondary)
 
-            Spacer()
+                Spacer()
 
-            if entry.offersFollowing {
-                Picker("", selection: Binding(get: { entry.mode }, set: { onSelectMode($0) })) {
-                    Text(UICopy.MICROPHONE_MODE_WHEN_IN_USE).tag(MicrophoneEntry.Mode.whenInUseElsewhere)
-                    Text(UICopy.MICROPHONE_MODE_ALWAYS).tag(MicrophoneEntry.Mode.always)
-                    Text(UICopy.MICROPHONE_MODE_OFF).tag(MicrophoneEntry.Mode.off)
+                if entry.offersFollowing {
+                    Picker("", selection: Binding(get: { entry.mode }, set: { onSelectMode($0) })) {
+                        Text(UICopy.MICROPHONE_MODE_WHEN_IN_USE).tag(MicrophoneEntry.Mode.whenInUseElsewhere)
+                        Text(UICopy.MICROPHONE_MODE_ALWAYS).tag(MicrophoneEntry.Mode.always)
+                        Text(UICopy.MICROPHONE_MODE_OFF).tag(MicrophoneEntry.Mode.off)
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help(UICopy.MICROPHONE_MODE_HELP)
+                    .accessibilityIdentifier(AXID.Settings.Microphones.deviceToggle(entry.uid))
+                } else {
+                    // Disable/Enable toggle
+                    Button(action: onToggleDisabled) {
+                        Image(systemName: entry.isDisabled ? "mic.slash" : "mic")
+                            .foregroundStyle(entry.isDisabled ? .orange : .green)
+                    }
+                    .buttonStyle(.plain)
+                    .help(entry.isDisabled ? "enable microphone" : "disable microphone")
+                    .accessibilityIdentifier(AXID.Settings.Microphones.deviceToggle(entry.uid))
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .fixedSize()
-                .help(UICopy.MICROPHONE_MODE_HELP)
-                .accessibilityIdentifier(AXID.Settings.Microphones.deviceToggle(entry.uid))
-            } else {
-                // Disable/Enable toggle
-                Button(action: onToggleDisabled) {
-                    Image(systemName: entry.isDisabled ? "mic.slash" : "mic")
-                        .foregroundStyle(entry.isDisabled ? .orange : .green)
+
+                // Remove is offered only while a microphone is disconnected: a connected one is
+                // re-added by the next device sync, so removing it would not stick, and could bring
+                // back one that was off at its default. Turning it off is the control for that.
+                if !entry.isConnected {
+                    Text("disconnected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button(action: onDelete) {
+                        Image(systemName: "minus.circle")
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.plain)
+                    .help("if it connects again, it comes back at its default setting. to keep it off, turn it off instead.")
+                    .accessibilityIdentifier(AXID.Settings.Microphones.deviceRemove(entry.uid))
                 }
-                .buttonStyle(.plain)
-                .help(entry.isDisabled ? "enable microphone" : "disable microphone")
-                .accessibilityIdentifier(AXID.Settings.Microphones.deviceToggle(entry.uid))
             }
 
-            // Remove is offered only while a microphone is disconnected: a connected one is
-            // re-added by the next device sync, so removing it would not stick, and could bring
-            // back one that was off at its default. Turning it off is the control for that.
-            if !entry.isConnected {
-                Text("disconnected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button(action: onDelete) {
-                    Image(systemName: "minus.circle")
-                        .foregroundStyle(.red)
+            if entry.isConnected && entry.mode != .off {
+                switch entry.interfaceState {
+                case .admitted:
+                    if let layout = entry.layout, layout.channelCount > 2 {
+                        Picker("", selection: Binding(
+                            get: { Int(entry.choice?.ordinal ?? 0) },
+                            set: { onSelectChoice(MicrophoneChoice(ordinal: $0, fingerprint: layout.fingerprint)) }
+                        )) {
+                            ForEach(0..<layout.channelCount, id: \.self) { i in
+                                let label = i < layout.labels.count ? layout.labels[i] : nil
+                                Text(UICopy.microphoneInputTitle(number: i + 1, label: label)).tag(i)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .accessibilityIdentifier(AXID.Settings.Microphones.inputChoice(entry.uid))
+                    }
+                case .needsChoice(let layout):
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(UICopy.MICROPHONE_NEEDS_CHOICE)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Picker("", selection: Binding(
+                            get: { entry.choice.map { Int($0.ordinal) } ?? -1 },
+                            set: {
+                                if $0 >= 0 {
+                                    onSelectChoice(MicrophoneChoice(ordinal: $0, fingerprint: layout.fingerprint))
+                                }
+                            }
+                        )) {
+                            Text(UICopy.MICROPHONE_NEEDS_CHOICE).tag(-1)
+                            ForEach(0..<layout.channelCount, id: \.self) { i in
+                                let label = i < layout.labels.count ? layout.labels[i] : nil
+                                Text(UICopy.microphoneInputTitle(number: i + 1, label: label)).tag(i)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .accessibilityIdentifier(AXID.Settings.Microphones.inputChoice(entry.uid))
+                    }
+                case .layoutUnavailable:
+                    HStack(spacing: 8) {
+                        Text(UICopy.MICROPHONE_LAYOUT_UNAVAILABLE)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button(action: onRetry) {
+                            Text(UICopy.MICROPHONE_INPUT_RETRY)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityIdentifier(AXID.Settings.Microphones.inputRetry(entry.uid))
+                    }
                 }
-                .buttonStyle(.plain)
-                .help("if it connects again, it comes back at its default setting. to keep it off, turn it off instead.")
-                .accessibilityIdentifier(AXID.Settings.Microphones.deviceRemove(entry.uid))
             }
         }
         .padding(.vertical, 2)

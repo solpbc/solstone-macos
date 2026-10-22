@@ -347,8 +347,8 @@ struct AudioAdmissionTests {
     @Test func nativeMicHoldKeepsConsentAndPhysicalStopPromptAndSiblingIndependent() async throws {
         let root = try makeTempDirectory("mic-native-admission"); defer { try? FileManager.default.removeItem(at: root) }
         let a = admissionDevice("a"), b = admissionDevice("b"), ea = AdmissionEngine(), eb = AdmissionEngine()
-        let ca = ExternalMicCapture(device: a, gain: 1, engineFactory: { ea }, resolveDeviceID: { _ in 1 })
-        let cb = ExternalMicCapture(device: b, gain: 1, engineFactory: { eb }, resolveDeviceID: { _ in 2 })
+        let ca = ExternalMicCapture(device: a, gain: 1, engineFactory: { ea }, resolveDeviceID: { _ in 1 }, layoutReader: { _ in testOneChannelLayout })
+        let cb = ExternalMicCapture(device: b, gain: 1, engineFactory: { eb }, resolveDeviceID: { _ in 2 }, layoutReader: { _ in testOneChannelLayout })
         let shared = MicrophoneCaptureManager(gain: 1, captureFactory: { device, _, _ in device.uid == "a" ? ca : cb })
         shared.updateSelection([a, b])
         let host = mach_absolute_time(), manager = PerSourceAudioManager(outputDirectory: root, timePrefix: "old", captureManager: shared)
@@ -366,7 +366,7 @@ struct AudioAdmissionTests {
         shared.updateSelection([b])
         manager.deselectMicrophone(deviceUID: "a")
         #expect(start.duration(to: clock.now) < .milliseconds(100))
-        #expect(ea.teardown == ["stop", "remove"])
+        #expect(ea.teardown == ["stop"])
         // Retired engine PCM, even after re-enable, cannot regain its old epoch.
         ea.emit(try admissionPCM(frames: 4_800, frequency: 880), when: admissionWhen(host, frame: 9_600, rate: 48_000))
         shared.updateSelection([a, b])
@@ -538,7 +538,16 @@ struct AudioAdmissionTests {
     @Test(arguments: [false, true])
     func rawCapacityRejectsByDurationAndBytesWithPromptEvidence(byteLimit: Bool) async throws {
         let root = try makeTempDirectory("raw-capacity"); defer { try? FileManager.default.removeItem(at: root) }
-        let device = admissionDevice("capacity"), shared = MicrophoneCaptureManager(), capture = ExternalMicCapture(device: admissionDevice("capacity"), gain: 1)
+        let fp16 = MicrophoneLayoutFingerprint(streams: [MicrophoneLayoutFingerprint.StreamSpan(startingChannel: 1, channelCount: 16)])
+        let layout16 = MicrophoneMonitor.MicrophoneLayoutResult.available(MicrophoneMonitor.MicrophoneLayout(fingerprint: fp16, channelCount: 16, labels: Array(repeating: nil, count: 16)))
+        let device = admissionDevice("capacity"), shared = MicrophoneCaptureManager(), capture = ExternalMicCapture(
+            device: admissionDevice("capacity"),
+            gain: 1,
+            engineFactory: { NativeMicrophoneCaptureEngine() },
+            resolveDeviceID: { _ in 1 },
+            layoutReader: { _ in layout16 }
+        )
+        _ = capture.authorizeChoice(ordinal: 0, fingerprint: fp16)
         shared._installForTesting(capture); shared.updateSelection([device])
         let host = mach_absolute_time(), writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("source.m4a"), trackType: .microphone(name: device.name, deviceUID: device.uid),
             segmentStartTime: admissionHostTime(host), mediaBudget: shared.mediaBudget(for: device.uid))
@@ -968,9 +977,11 @@ struct AudioAdmissionTests {
             gain: 1,
             engineFactory: { engine },
             resolveDeviceID: { _ in 1 },
+            layoutReader: { _ in testOneChannelLayout },
             monotonicNow: { clock.current! }
         )
-        capture.setCallbacks(audio: { _, _ in }, error: nil)
+        let errCb: ((Error) -> Void)? = nil
+        capture.setCallbacks(audio: { _, _ in }, error: errCb)
         try capture.start()
         let host = mach_absolute_time()
         engine.emit(try admissionPCM(frames: 4_800, frequency: 220), when: admissionWhen(host, frame: 0, rate: 48_000))
@@ -998,9 +1009,13 @@ struct AudioAdmissionTests {
             gain: 1,
             engineFactory: { engine },
             resolveDeviceID: { _ in 1 },
+            layoutReader: { _ in testOneChannelLayout },
             monotonicNow: { clock.current! }
         )
-        capture.setQueuedCallbacks(audio: { _, _ in nil }, error: nil, rawError: nil, admissionGate: nil)
+        let audioCb: ((AVAudioPCMBuffer, CMTime) -> AudioWriteReceipt?)? = { _, _ in nil }
+        let errCb: ((Error) -> Void)? = nil
+        let gateCb: (((() -> Void) -> Bool))? = nil
+        capture.setQueuedCallbacks(audio: audioCb, error: errCb, rawError: errCb, admissionGate: gateCb)
         try capture.start()
         let host = mach_absolute_time()
         engine.emit(try admissionPCM(frames: 4_800, frequency: 220), when: admissionWhen(host, frame: 0, rate: 48_000))
@@ -1011,7 +1026,6 @@ struct AudioAdmissionTests {
 }
 
 private final class AdmissionEngine: MicrophoneCaptureEngine, @unchecked Sendable {
-    let configurationObject: AnyObject = NSObject()
     private let lock = NSLock()
     private var callback: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
     private var trace: [String] = []
@@ -1020,7 +1034,6 @@ private final class AdmissionEngine: MicrophoneCaptureEngine, @unchecked Sendabl
         lock.withLock { callback = onPCM }
     }
     func stop() { lock.withLock { trace.append("stop") } }
-    func removeTap() throws { lock.withLock { trace.append("remove") } }
     func emit(_ buffer: AVAudioPCMBuffer, when: AVAudioTime) { lock.withLock { callback }?(buffer, when) }
 }
 

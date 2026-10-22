@@ -58,6 +58,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private var conversionFence: (generation: UInt64, fence: AudioCaptureDrainFence)?
     private var observationFence: (generation: UInt64, fence: AudioCaptureDrainFence)?
     private var destinationRevision: UInt64 = 0
+    private var converterEpoch: UInt64 = 0
     private struct Destinations: @unchecked Sendable {
         let audio: ((AVAudioPCMBuffer, CMTime) -> Void)?
         let error: ((Error) -> Void)?
@@ -105,7 +106,6 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private var engine: any MicrophoneCaptureEngine
     private let engineFactory: @Sendable () -> any MicrophoneCaptureEngine
     private let resolveDeviceID: @Sendable (String) -> AudioDeviceID?
-    private var activeEngineObject: AnyObject
     private var engineEpoch: UInt64 = 0
     private var requestedEpoch: UInt64 = 0
     private var recoveryAdmitted = false
@@ -120,12 +120,18 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private var attemptedStart = false
     private var boundDeviceID: AudioDeviceID?
     internal var currentDeviceID: AudioDeviceID? { callbackLock.withLock { boundDeviceID } }
+    private var deviceListeners: [HALPropertyListener] = []
+    private var admittedChoice: MicrophoneChoice?
+    public var currentAdmittedChoice: MicrophoneChoice? { callbackLock.withLock { admittedChoice } }
+    private var admittedOrdinal: Int?
+    private var admittedFingerprint: MicrophoneLayoutFingerprint?
     private let writerQueue = DispatchQueue(label: "app.solstone.extmic.writer", qos: .userInitiated)
     private let verbose: Bool
 
     /// Cached audio converter for format conversion (expensive to create)
     private var cachedConverter: AVAudioConverter?
     private var cachedSourceFormat: AVAudioFormat?
+    private var appliedConverterEpoch: UInt64 = 0
     private var bufferClock = MicrophoneBufferClock()
     private var conversionOrigin: CMTime?
     private var emittedFrames: Int64 = 0
@@ -165,6 +171,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
 
     /// Target sample rate for output (48kHz standard)
     private let targetSampleRate: Double = 48_000
+    private let layoutReader: @Sendable (AudioDeviceID) -> MicrophoneMonitor.MicrophoneLayoutResult
 
     /// Creates a new external mic capture
     /// - Parameters:
@@ -174,46 +181,137 @@ public final class ExternalMicCapture: @unchecked Sendable {
     public convenience init(device: AudioInputDevice, gain: Float = 2.0, verbose: Bool = false) {
         self.init(device: device, gain: gain, verbose: verbose,
             engineFactory: { NativeMicrophoneCaptureEngine() },
-            resolveDeviceID: { MicrophoneMonitor.deviceIDForUID($0) })
+            resolveDeviceID: { MicrophoneMonitor.deviceIDForUID($0) },
+            layoutReader: { MicrophoneMonitor.readLayout(deviceID: $0) })
     }
 
     internal init(device: AudioInputDevice, gain: Float = 2.0, verbose: Bool = false,
-                  engineFactory: @escaping @Sendable () -> any MicrophoneCaptureEngine,
+                  engineFactory: @escaping @Sendable () -> any MicrophoneCaptureEngine = { NativeMicrophoneCaptureEngine() },
                   resolveDeviceID: @escaping @Sendable (String) -> AudioDeviceID?,
+                  layoutReader: @escaping @Sendable (AudioDeviceID) -> MicrophoneMonitor.MicrophoneLayoutResult = { MicrophoneMonitor.readLayout(deviceID: $0) },
                   monotonicNow: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.device = device
         self.engineFactory = engineFactory
         self.resolveDeviceID = resolveDeviceID
+        self.layoutReader = layoutReader
         self.monotonicNow = monotonicNow
         let engine = engineFactory()
         self.engine = engine
-        self.activeEngineObject = engine.configurationObject
         self.storedGain = gain.isFinite ? max(1.0, min(8.0, gain)) : 1
         self.verbose = verbose
         self.nativeSampleRate = device.sampleRate
-        observeEngine()
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
+        (engine as? (any MicrophoneEngineRecoveryHookable))?.setRecoveryHook { [weak self] in
+            self?.triggerRecoveryCheck()
+        }
+        #endif
     }
 
-    deinit { NotificationCenter.default.removeObserver(self) }
-
-    private func observeEngine() {
-        NotificationCenter.default.addObserver(self, selector: #selector(handleConfigChange(_:)),
-            name: .AVAudioEngineConfigurationChange, object: engine.configurationObject)
+    deinit {
+        for listener in deviceListeners {
+            listener.invalidate()
+        }
     }
 
     private func replaceEngine() {
         dispatchPrecondition(condition: .onQueue(writerQueue))
-        NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: engine.configurationObject)
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
+        (engine as? (any MicrophoneEngineRecoveryHookable))?.setRecoveryHook(nil)
+        #endif
         engine = engineFactory()
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
+        (engine as? (any MicrophoneEngineRecoveryHookable))?.setRecoveryHook { [weak self] in
+            self?.triggerRecoveryCheck()
+        }
+        #endif
         callbackLock.withLock {
             engineEpoch &+= 1
-            activeEngineObject = engine.configurationObject
             boundDeviceID = nil
         }
         peakLock.withLock { $0 = nil }
-        // Admitted old-engine PCM remains ahead of its boundary on writerQueue.
-        // The processing epoch, rather than engine replacement, owns its tail.
-        observeEngine()
+    }
+
+    @discardableResult
+    public func authorizeChoice(_ choice: MicrophoneChoice?) -> Bool {
+        let changed = callbackLock.withLock { () -> Bool in
+            if admittedChoice != choice {
+                admittedChoice = choice
+                destinationRevision &+= 1
+                _queuedAudio = nil
+                converterEpoch &+= 1
+                return true
+            }
+            return false
+        }
+        if changed {
+            writerQueue.async { [weak self] in
+                self?.clearConverterWithoutDraining()
+            }
+        }
+        return checkChoiceAdmission()
+    }
+
+    @discardableResult
+    public func authorizeChoice(ordinal: Int, fingerprint: MicrophoneLayoutFingerprint) -> Bool {
+        authorizeChoice(MicrophoneChoice(ordinal: ordinal, fingerprint: fingerprint))
+    }
+
+    public func revokeUnacceptedAudio() {
+        callbackLock.withLock {
+            destinationRevision &+= 1
+            _queuedAudio = nil
+            converterEpoch &+= 1
+        }
+        writerQueue.async { [weak self] in
+            self?.clearConverterWithoutDraining()
+        }
+    }
+
+    private func clearConverterWithoutDraining() {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
+        appliedConverterEpoch = callbackLock.withLock { converterEpoch }
+        cachedConverter?.reset()
+        cachedConverter = nil
+        cachedSourceFormat = nil
+        conversionOrigin = nil
+        emittedFrames = 0
+        conversionDestination = nil
+        bufferClock.reset()
+        processingEpoch = nil
+        processingFormat = nil
+    }
+
+    private func checkChoiceAdmission() -> Bool {
+        guard let currentID = resolveDeviceID(device.uid) else { return false }
+        let result = layoutReader(currentID)
+        switch result {
+        case .unavailable:
+            callbackLock.withLock {
+                admittedOrdinal = nil
+                admittedFingerprint = nil
+            }
+            return false
+        case .available(let layout):
+            if layout.channelCount <= 2 {
+                callbackLock.withLock {
+                    admittedOrdinal = nil
+                    admittedFingerprint = layout.fingerprint
+                }
+                return true
+            }
+            return callbackLock.withLock {
+                guard let choice = admittedChoice,
+                      choice.fingerprint == layout.fingerprint,
+                      choice.ordinal >= 0, choice.ordinal < layout.channelCount else {
+                    admittedOrdinal = nil
+                    admittedFingerprint = nil
+                    return false
+                }
+                admittedOrdinal = choice.ordinal
+                admittedFingerprint = choice.fingerprint
+                return true
+            }
+        }
     }
 
     public func start() throws {
@@ -238,7 +336,13 @@ public final class ExternalMicCapture: @unchecked Sendable {
                     if requestedEpoch == request { captureRequested = false }
                 }
                 teardownEngine()
-                if !(error is CancellationError) { onCaptureError?(error) }
+                let isChoiceNotAdmitted: Bool = {
+                    if let micErr = error as? ExternalMicCaptureError, case .choiceNotAdmitted = micErr { return true }
+                    return false
+                }()
+                if !(error is CancellationError) && !isChoiceNotAdmitted {
+                    onCaptureError?(error)
+                }
                 throw error
             }
         }
@@ -248,12 +352,35 @@ public final class ExternalMicCapture: @unchecked Sendable {
         dispatchPrecondition(condition: .onQueue(writerQueue))
         guard callbackLock.withLock({ captureRequested && requestedEpoch == request }) else { throw CancellationError() }
         guard let currentID = resolveDeviceID(device.uid) else { throw ExternalMicCaptureError.deviceUnavailable(device.uid) }
+        guard checkChoiceAdmission() else {
+            callbackLock.withLock {
+                if requestedEpoch == request { captureRequested = false }
+            }
+            throw ExternalMicCaptureError.choiceNotAdmitted
+        }
         let epoch = callbackLock.withLock { engineEpoch }
         guard let monoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: targetSampleRate,
             channels: 1, interleaved: false) else { throw ExternalMicCaptureError.failedToCreateFormat }
+        let queue = self.writerQueue
+        engine.setRenderFailureHook { [weak self, queue] in
+            queue.async { [weak self] in
+                self?.flushRenderFailure(admittedEpoch: epoch)
+            }
+        }
         try engine.start(deviceID: currentID, deviceName: device.name) { [weak self] buffer, when in
             self?.handleAudioBuffer(buffer, when: MicrophoneBufferTime(when), monoFormat: monoFormat, engineEpoch: epoch)
         }
+        deviceListeners = [
+            HALPropertyListener(objectID: AudioObjectID(currentID), selector: kAudioDevicePropertyDeviceIsAlive) { [weak self] in
+                self?.triggerRecoveryCheck()
+            },
+            HALPropertyListener(objectID: AudioObjectID(currentID), selector: kAudioDevicePropertyStreamConfiguration, scope: kAudioDevicePropertyScopeInput) { [weak self] in
+                self?.triggerRecoveryCheck()
+            },
+            HALPropertyListener(objectID: AudioObjectID(currentID), selector: kAudioDevicePropertyNominalSampleRate) { [weak self] in
+                self?.triggerRecoveryCheck()
+            }
+        ]
         let committed = callbackLock.withLock { () -> Bool in
             guard captureRequested && requestedEpoch == request else { return false }
             running = true; boundDeviceID = currentID; lastTapArrival = monotonicNow()
@@ -263,15 +390,68 @@ public final class ExternalMicCapture: @unchecked Sendable {
         Logger.audio.info("Started external mic capture: \(self.device.name, privacy: .public), deviceID \(currentID, privacy: .public)")
     }
 
+    internal func rebind(deviceID: AudioDeviceID, deviceName: String) throws {
+        try writerQueue.sync {
+            guard isRunning else { return }
+            teardownEngine()
+            replaceEngine()
+            guard let monoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: targetSampleRate,
+                channels: 1, interleaved: false) else { throw ExternalMicCaptureError.failedToCreateFormat }
+            guard checkChoiceAdmission() else {
+                callbackLock.withLock {
+                    captureRequested = false
+                }
+                throw ExternalMicCaptureError.choiceNotAdmitted
+            }
+            let epoch = callbackLock.withLock { engineEpoch }
+            let queue = self.writerQueue
+            engine.setRenderFailureHook { [weak self, queue] in
+                queue.async { [weak self] in
+                    self?.flushRenderFailure(admittedEpoch: epoch)
+                }
+            }
+            try engine.start(deviceID: deviceID, deviceName: deviceName) { [weak self] buffer, when in
+                self?.handleAudioBuffer(buffer, when: MicrophoneBufferTime(when), monoFormat: monoFormat, engineEpoch: epoch)
+            }
+            deviceListeners = [
+                HALPropertyListener(objectID: AudioObjectID(deviceID), selector: kAudioDevicePropertyDeviceIsAlive) { [weak self] in
+                    self?.triggerRecoveryCheck()
+                },
+                HALPropertyListener(objectID: AudioObjectID(deviceID), selector: kAudioDevicePropertyStreamConfiguration, scope: kAudioDevicePropertyScopeInput) { [weak self] in
+                    self?.triggerRecoveryCheck()
+                },
+                HALPropertyListener(objectID: AudioObjectID(deviceID), selector: kAudioDevicePropertyNominalSampleRate) { [weak self] in
+                    self?.triggerRecoveryCheck()
+                }
+            ]
+            callbackLock.withLock {
+                running = true
+                boundDeviceID = deviceID
+                lastTapArrival = monotonicNow()
+            }
+        }
+    }
+
+    private func flushRenderFailure(admittedEpoch: UInt64) {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
+        guard engine.takeRenderFailure() else { return }
+        let errorCallback: ((Error) -> Void)? = callbackLock.withLock {
+            guard captureRequested && engineEpoch == admittedEpoch else { return nil }
+            return _rawAdmissionError ?? _onCaptureError
+        }
+        errorCallback?(ExternalMicCaptureError.renderFailed)
+    }
+
     private func teardownEngine() {
         dispatchPrecondition(condition: .onQueue(writerQueue))
+        for listener in deviceListeners {
+            listener.invalidate()
+        }
+        deviceListeners.removeAll()
+        engine.setRenderFailureHook(nil)
         engine.stop()
         #if DEBUG || SOLSTONE_TEST_SUPPORT
         _teardownTraceForTesting.append("engine.stop")
-        #endif
-        try? engine.removeTap()
-        #if DEBUG || SOLSTONE_TEST_SUPPORT
-        _teardownTraceForTesting.append("removeTap")
         #endif
         callbackLock.withLock { running = false }
     }
@@ -279,7 +459,6 @@ public final class ExternalMicCapture: @unchecked Sendable {
     public func stop() {
         callbackLock.withLock { captureRequested = false; requestedEpoch &+= 1 }
         writerQueue.sync {
-            NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: engine.configurationObject)
             teardownEngine()
             finishConversionStream()
             // The conversion tail runs before the clear.
@@ -288,29 +467,22 @@ public final class ExternalMicCapture: @unchecked Sendable {
         if verbose { Logger.audio.debug("Stopped external mic capture: \(self.device.name, privacy: .public)") }
     }
 
-    @objc private func handleConfigChange(_ notification: Notification) {
-        guard let origin = notification.object as AnyObject? else { return }
+    internal func triggerRecoveryCheck() {
         callbackLock.withLock {
-            guard captureRequested, origin === activeEngineObject, !recoveryAdmitted else { return }
+            guard captureRequested, !recoveryAdmitted else { return }
             recoveryAdmitted = true
             let request = requestedEpoch
-            let originID = ObjectIdentifier(origin)
             let admittedEngineEpoch = engineEpoch
             drainGeneration &+= 1
-            // Recovery admission and its observation barrier share this lock.
-            // A cached no-media drain must not overtake a newly queued recovery.
             writerQueue.async { [weak self] in
                 guard let self else { return }
                 defer { self.callbackLock.withLock { self.recoveryAdmitted = false } }
                 guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request &&
-                    admittedEngineEpoch == self.engineEpoch && originID == ObjectIdentifier(self.activeEngineObject) }) else { return }
+                    admittedEngineEpoch == self.engineEpoch }) else { return }
                 guard self.engine.requiresRecovery(resolvedDeviceID: self.resolveDeviceID(self.device.uid)) else { return }
-                // The engine can't continue on its old binding. Stop it and report;
-                // the recovery manager starts a fresh one, paced by its backoff.
                 self.teardownEngine()
                 let needsRecovery = self.callbackLock.withLock { () -> (@Sendable () -> Void)? in
                     guard self.captureRequested && self.requestedEpoch == request else { return nil }
-                    // Settled before reporting, so the restart it triggers is never skipped as in-flight.
                     self.captureRequested = false; self.recoveryAdmitted = false
                     return self._onRecoveryNeeded
                 }
@@ -331,6 +503,15 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private func handleAudioBuffer(_ buffer: AVAudioPCMBuffer, when: MicrophoneBufferTime,
                                    monoFormat: AVAudioFormat, engineEpoch admittedEpoch: UInt64? = nil) {
         let arrival = monotonicNow()
+        // Synchronous defensive copy before returning because engine reuses renderBuffer
+        guard let inputCopy = Self.copyPCMBuffer(buffer) else {
+            callbackLock.withLock {
+                let err = NSError(domain: "SolstoneAudioAdmission", code: 2)
+                (_rawAdmissionError ?? _onCaptureError)?(err)
+            }
+            return
+        }
+
         // Snapshot and queue admission share the detach lock. The subsequent
         // drain barrier therefore includes every admitted old-segment buffer.
         // Selection publication takes the selection lock before callbackLock.
@@ -346,8 +527,8 @@ public final class ExternalMicCapture: @unchecked Sendable {
                     queuedAudio: _queuedAudio, admissionGate: _admissionGate, rawError: _rawAdmissionError,
                     revision: destinationRevision, request: requestedEpoch)
                 guard destination.audio != nil || destination.queuedAudio != nil else { return }
-                guard buffer.frameLength > 0 else { return }
-                guard let extent = AudioPCMExtent(buffer),
+                guard inputCopy.frameLength > 0 else { return }
+                guard let extent = AudioPCMExtent(inputCopy),
                       let lease = budget.reserve(.raw, bytes: extent.bytes, equivalentFrames: extent.equivalentFrames) else {
                     rejected = (destination, NSError(domain: "SolstoneAudioAdmission", code: 1))
                     return
@@ -357,11 +538,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
                     lease.release(); rejected = (destination, NSError(domain: "SolstoneAudioAdmission", code: 2)); return
                 }
 #endif
-                guard let bufferCopy = Self.copyPCMBuffer(buffer) else {
-                    lease.release(); rejected = (destination, NSError(domain: "SolstoneAudioAdmission", code: 2))
-                    return
-                }
-                let work = AudioRawPCMWork(buffer: bufferCopy, lease: lease)
+                let work = AudioRawPCMWork(buffer: inputCopy, lease: lease)
                 mediaSinceBoundary = true
                 drainGeneration &+= 1
                 writerQueue.async { [weak self] in
@@ -486,7 +663,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
     internal var _converterForTesting: AVAudioConverter? { writerQueue.sync { cachedConverter } }
     internal var _captureRequestedForTesting: Bool { callbackLock.withLock { captureRequested } }
     internal var _requestedEpochForTesting: UInt64 { callbackLock.withLock { requestedEpoch } }
-    internal var _engineIdentityForTesting: ObjectIdentifier { callbackLock.withLock { ObjectIdentifier(activeEngineObject) } }
+    internal var _engineIdentityForTesting: ObjectIdentifier { callbackLock.withLock { ObjectIdentifier(engine) } }
     internal var _startAdmissionHookForTesting: (@Sendable () -> Void)?
     internal var _copyAdmissionForTesting: (@Sendable (Int) -> Bool)?
     internal var _conversionAdmissionForTesting: (@Sendable () -> Bool)?
@@ -497,6 +674,11 @@ public final class ExternalMicCapture: @unchecked Sendable {
     private func processAndSend(buffer: AVAudioPCMBuffer, when: MicrophoneBufferTime, monoFormat: AVAudioFormat,
                                 epoch: UInt64, destination: Destinations, budget: AudioMediaBudget,
                                 temporaryLease: inout AudioMediaLease?) {
+        if destination.queuedAudio != nil {
+            let isCurrent = callbackLock.withLock { destination.revision == destinationRevision }
+            guard isCurrent else { return }
+        }
+
         // Admitted buffers retain their destination after engine retirement.
         // Revocation is fenced separately by MicrophoneCaptureManager.
         if !receivedFirstBuffer {
@@ -578,13 +760,16 @@ public final class ExternalMicCapture: @unchecked Sendable {
         let deliveredPeak = peak
 
         let presentationTime = CMTimeAdd(origin, CMTime(value: emittedFrames, timescale: 48_000))
-        emittedFrames += Int64(monoBuffer.frameLength)
         if let queued = destination.queuedAudio {
+            let isCurrent = callbackLock.withLock { destination.revision == destinationRevision }
+            guard isCurrent else { return false }
+            emittedFrames += Int64(monoBuffer.frameLength)
             guard let receipt = queued(monoBuffer, presentationTime) else { return false }
             peakLock.withLock { $0 = HandedOnPeak(peak: deliveredPeak, at: monotonicNow()) }
             deliveryLedger.register(receipt)
             return true
         } else if let audio = destination.audio {
+            emittedFrames += Int64(monoBuffer.frameLength)
             audio(monoBuffer, presentationTime)
             peakLock.withLock { $0 = HandedOnPeak(peak: deliveredPeak, at: monotonicNow()) }
             return true
@@ -630,13 +815,27 @@ public final class ExternalMicCapture: @unchecked Sendable {
     /// Convert buffer to mono at target sample rate
     /// Uses cached AVAudioConverter for efficiency
     private func convertToMono(_ captured: AVAudioPCMBuffer, targetFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let liveEpoch = callbackLock.withLock { converterEpoch }
+        if appliedConverterEpoch != liveEpoch {
+            appliedConverterEpoch = liveEpoch
+            cachedConverter?.reset()
+            cachedConverter = nil
+            cachedSourceFormat = nil
+            conversionOrigin = nil
+            emittedFrames = 0
+            conversionDestination = nil
+            bufferClock.reset()
+            processingEpoch = nil
+            processingFormat = nil
+        }
         #if DEBUG || SOLSTONE_TEST_SUPPORT
         guard _conversionAdmissionForTesting?() != false else { return nil }
         #endif
         let buffer: AVAudioPCMBuffer
         if captured.format.channelCount > 2 {
-            guard let summed = Self.summedMono(captured) else { return nil }
-            buffer = summed
+            guard let ordinal = callbackLock.withLock({ admittedOrdinal }),
+                  let extracted = Self.extractChosenChannel(captured, ordinal: ordinal) else { return nil }
+            buffer = extracted
         } else {
             buffer = captured
         }
@@ -715,29 +914,60 @@ public final class ExternalMicCapture: @unchecked Sendable {
         return outputBuffer
     }
 
-    /// Sum every input of a discrete multichannel interface (>2 inputs) into one
-    /// mono buffer at the hardware sample rate. AVAudioConverter has no defined
-    /// mono downmix for these layouts and emits all-zero samples, so the mix is
-    /// done here. Inputs are summed, not averaged, so one live mic among idle
-    /// preamps keeps its level; processAndSend clamps after gain.
-    internal static func summedMono(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let source = buffer.floatChannelData,
-              let monoFormat = AVAudioFormat(
-                  commonFormat: .pcmFormatFloat32,
-                  sampleRate: buffer.format.sampleRate,
-                  channels: 1,
-                  interleaved: false
-              ),
-              let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
-              let destination = mono.floatChannelData
-        else { return nil }
+    /// Extract the chosen channel from a multi-channel buffer at exact amplitude.
+    /// Handles both planar (non-interleaved) and interleaved Float32 PCM.
+    public static func extractChosenChannel(_ buffer: AVAudioPCMBuffer, ordinal: Int) -> AVAudioPCMBuffer? {
+        guard buffer.format.commonFormat == .pcmFormatFloat32 else { return nil }
+        let channelCount = Int(buffer.format.channelCount)
+        guard ordinal >= 0, ordinal < channelCount else { return nil }
+        let frames = buffer.frameLength
+        guard frames > 0 else { return nil }
 
-        let frames = vDSP_Length(buffer.frameLength)
-        mono.frameLength = buffer.frameLength
-        vDSP_vclr(destination[0], 1, frames)
-        for channel in 0..<Int(buffer.format.channelCount) {
-            vDSP_vadd(destination[0], 1, source[channel], vDSP_Stride(buffer.stride), destination[0], 1, frames)
+        let abl = buffer.mutableAudioBufferList
+        let numBuffers = Int(abl.pointee.mNumberBuffers)
+        let bufListPtr = UnsafeMutableAudioBufferListPointer(abl)
+
+        if buffer.format.isInterleaved {
+            guard numBuffers == 1, bufListPtr[0].mNumberChannels == UInt32(channelCount) else { return nil }
+        } else {
+            guard numBuffers == channelCount else { return nil }
+            for b in bufListPtr {
+                guard b.mNumberChannels == 1 else { return nil }
+            }
         }
+
+        guard let monoFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: buffer.format.sampleRate,
+            channels: 1,
+            interleaved: false
+        ),
+        let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: frames),
+        let destination = mono.floatChannelData?[0] else {
+            return nil
+        }
+        mono.frameLength = frames
+
+        if buffer.format.isInterleaved {
+            guard let sourceData = buffer.floatChannelData?[0] else { return nil }
+            let stride = buffer.stride
+            guard stride >= channelCount else { return nil }
+            for frame in 0..<Int(frames) {
+                destination[frame] = sourceData[frame * stride + ordinal]
+            }
+        } else {
+            guard let channelPointers = buffer.floatChannelData else { return nil }
+            let sourceChannel = channelPointers[ordinal]
+            let stride = buffer.stride
+            if stride == 1 {
+                memcpy(destination, sourceChannel, Int(frames) * MemoryLayout<Float>.size)
+            } else {
+                for frame in 0..<Int(frames) {
+                    destination[frame] = sourceChannel[frame * stride]
+                }
+            }
+        }
+
         return mono
     }
 
@@ -771,6 +1001,12 @@ public final class ExternalMicCapture: @unchecked Sendable {
         case failedToCreateFormat
         case invalidFormat(String)
         case installTapFailed(String, String)
+        case failedToInitializeUnit(OSStatus)
+        case failedToStartUnit(OSStatus)
+        case failedToDisposeParkedUnit
+        case deviceIDMismatch(expected: AudioDeviceID, actual: AudioDeviceID)
+        case renderFailed
+        case choiceNotAdmitted
 
         public var errorDescription: String? {
             switch self {
@@ -786,6 +1022,18 @@ public final class ExternalMicCapture: @unchecked Sendable {
                 return "Device '\(deviceName)' has invalid audio format (not ready)"
             case let .installTapFailed(deviceName, reason):
                 return "Failed to install audio tap on '\(deviceName)': \(reason)"
+            case let .failedToInitializeUnit(status):
+                return "Failed to initialize audio unit: OSStatus \(status)"
+            case let .failedToStartUnit(status):
+                return "Failed to start audio unit: OSStatus \(status)"
+            case .failedToDisposeParkedUnit:
+                return "A previously undisposed audio unit is still pending disposal"
+            case let .deviceIDMismatch(expected, actual):
+                return "Device ID mismatch: expected \(expected), readback \(actual)"
+            case .renderFailed:
+                return "Audio unit render failed"
+            case .choiceNotAdmitted:
+                return "Microphone choice not admitted"
             }
         }
     }

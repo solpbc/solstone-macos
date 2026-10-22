@@ -2,7 +2,7 @@
 name: av-media-pipeline
 description: >
   AVFoundation media pipeline for H.264 video encoding, multi-track audio recording,
-  and intelligent audio remixing. Covers AVAssetWriter, AVAudioEngine, AudioRemixer,
+  and intelligent audio remixing. Covers AVAssetWriter, AUHAL, AudioRemixer,
   SoundAnalysis, and CMTime patterns. Use when working with video/audio recording,
   encoding, format conversion, or the remix pipeline.
 ---
@@ -17,29 +17,21 @@ description: >
 - **Fragment interval: 30s.** `movieFragmentInterval = CMTime(seconds: 30, preferredTimescale: 1)` requests fragmented MP4 output. Recoverability depends on completed fragments, codec/container behavior and the interruption. This setting alone does not establish a 30-second loss bound. See Apple’s [movieFragmentInterval](https://developer.apple.com/documentation/avfoundation/avassetwriter/moviefragmentinterval).
 - **Frame flow:** SCStream callback -> skip idle frames (`SCFrameStatus == .idle`) -> `VideoWriter.appendFrame(pixelBuffer, presentationTime:)` -> check `isReadyForMoreMediaData`, drop if not ready. PTS from `Date().timeIntervalSince(captureStartTime)` at timescale 600.
 
-## Persistent AVAudioEngine
+## Persistent Native Input
 
-`MicrophoneCaptureManager` keeps `ExternalMicCapture` instances (each wrapping `AVAudioEngine`) alive across segment rotations. Data and error destinations change together. Source: `Sources/solstone/ExternalMicCapture.swift`, `Sources/solstone/MicrophoneCaptureManager.swift`
+`MicrophoneCaptureManager` keeps `ExternalMicCapture` instances (each managing native AUHAL capture) alive across segment rotations. Data and error destinations change together. Source: `Sources/solstone/ExternalMicCapture.swift`, `Sources/solstone/MicrophoneCaptureManager.swift`
 
-**Why:** Repeated engine teardown/start can disturb playback. Persistent engines avoid that normal rotation churn; they do not guarantee uninterrupted capture during routing changes, detachment or recovery.
+**Why:** Repeated capture unit teardown/start can disturb hardware. Persistent native captures avoid that normal rotation churn; they do not guarantee uninterrupted capture during routing changes, detachment or recovery.
 
 **Callback swapping:** paired destinations and raw queue admission share `callbackLock`. `detachForBoundary()` captures the cutoff and queues converter EOS to the retained old destination. `setQueuedCallback(for:callback:onError:)` wires the next segment. The selection lock/revision authorizes writer admission and immediately revokes uncommitted old PCM/tails; re-enable cannot validate an obsolete destination. Ordinary `drain()` observes a fixed watermark through actual writer dispositions without EOS/reset. Segment finish waits for its conversion/EOS barrier and its own closed writer; an old same-UID writer does not gate a later segment’s finish.
 
 **Segment evidence:** `AudioCaptureRecorder` persists source intent, failures and independent bounded writer statistics to the time-prefix `_meta.json`. Received frames advance at revision-qualified writer admission; accepted frames advance only after native acceptance. Captured quiet frames remain captured input; generated gap zeros have separate counters. Rejection before writer admission leaves explicitly incomplete counters rather than inventing 48kHz input counts. Interrupted counters are lower bounds, not proof of silence. Known/incomplete/unknown flags and failures survive seal and bounded merges. Late completion can improve sealed evidence until recorder handoff, then cannot recreate the old path or rewrite promoted metadata. The native producer tests check [the schema](../../contracts/audio-capture-v1.schema.json) and [example](../../contracts/audio-capture-v1.example.json); the journal typed projection and durable reload retain the optional fields. Remix state is separate. `RemixQueue` quarantines unresolved native ownership and preserves admission/timeline/padding failure originals; readable media alone never grants deletion authority.
 
-**Hardware format detection: critical ordering:**
-1. Access `engine.inputNode` (triggers initialization)
-2. `setInputDevice()`: pin via `AudioUnitSetProperty` with `kAudioOutputUnitProperty_CurrentDevice`
-3. `engine.prepare()` (acquires hardware)
-4. Read `inputNode.inputFormat(forBus: 0)`: actual hardware format
-5. Install tap with hardware format
-6. `engine.start()`
+**Device pinning and format negotiation:**
+AUHAL captures pin each unit directly to the hardware device via `AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &deviceID, size)`. Readback confirms the bound ID. Client format on bus 1 is set to Float32 non-interleaved matching the hardware rate and channel count. If the interface has more than 2 channels, `extractChosenChannel` extracts only the chosen ordinal before resampling; $\le 2$ channels downmixes through `AVAudioConverter`.
 
-**Never use `outputFormat(forBus: 0)`**: returns cached/default values, causes crash on format mismatch.
-
-**Device pinning:** Without it, AVAudioEngine follows system default. AirPods connect -> all unpinned engines silently switch. Pin via `AudioUnitSetProperty` on `engine.inputNode.audioUnit`.
-
-**Config change:** `handleConfigChange()` admits one active engine/request recovery batch under `callbackLock` before queueing. Queue serialization alone cannot coalesce notification admission. Each bounded attempt stops before removing the tap, creates a fresh engine and resolves the selected UID before binding. Exhaustion parks that request. Conversion owns its format/engine epoch and drains old tails to their retained destination; current selection revision still controls admission. See [AVAudioEngineConfigurationChange](https://developer.apple.com/documentation/avfaudio/avaudioengineconfigurationchange).
+**Config change and recovery:**
+Selected-device property listeners trigger recovery checks on format/alive/sample-rate changes. Bounded attempts re-resolve the device UID and rebind on the private queue. Unaccepted queued audio and converter history are revoked across choice or layout drift without dropping writer destinations.
 
 **Gain:** the `storedGain` getter/setter use `callbackLock`. A Float’s machine access does not provide Swift synchronization. The converted output uses one locked gain snapshot, then `vDSP_vsmul` and `vDSP_vclip`. Range 1.0–8.0; nonfinite updates become 1.
 
