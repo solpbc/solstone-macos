@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- very quiet sound, like a voice from across the room, now reaches your journal unchanged. before, the solstone app replaced it with silence.
+
 ## [2.0.44] - 2026-10-21
 
 ### Fixed

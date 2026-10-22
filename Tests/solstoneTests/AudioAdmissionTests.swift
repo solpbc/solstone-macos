@@ -250,6 +250,26 @@ struct AudioAdmissionTests {
         await system.stop()
     }
 
+    @Test func quietSoundIsWrittenAsCapturedAndOnlyDigitalSilenceIsBatched() async throws {
+        let root = try makeTempDirectory("quiet-sound"); defer { try? FileManager.default.removeItem(at: root) }
+        let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("source.m4a"),
+            trackType: .systemAudio, segmentStartTime: .zero)
+        let generated = LockedArray<(Int, Double)>([])
+        writer._silentBufferAdmissionForTesting = { count, time in generated.append((count, time.seconds)); return true }
+        let frames = 4_096, quiet = 6
+        for index in 0..<(quiet * 2) {
+            // Peak 0.0005 is about -69 dBFS RMS: faint, but real sound. Then exact zeros.
+            let pcm = try admissionPCM(frames: frames, frequency: 440, amplitude: index < quiet ? 0.0005 : 0)
+            let time = CMTime(seconds: Double(index * frames) / 48_000, preferredTimescale: 1_000_000_000)
+            _ = try #require(writer.enqueuePCMBuffer(pcm, presentationTime: time))
+        }
+        _ = await writer.finish()
+        let zerosStart = Double(quiet * frames) / 48_000
+        #expect(!generated.all.isEmpty) // control: digital silence is still batched
+        #expect(generated.all.allSatisfy { $0.1 >= zerosStart - 1 / 48_000 })
+        #expect(writer.statisticsSnapshot.droppedFrames == 0)
+    }
+
     @Test func subsecondSilenceObservationWaitsForNativeAcceptanceWithoutEOS() async throws {
         let root = try makeTempDirectory("quiet-admission"); defer { try? FileManager.default.removeItem(at: root) }
         let device = admissionDevice("quiet"), capture = ExternalMicCapture(device: admissionDevice("quiet"), gain: 1)
@@ -1046,7 +1066,8 @@ private func admissionHostTime(_ host: UInt64) -> CMTime {
 private func admissionWhen(_ host: UInt64, frame: Int64, rate: Double) -> AVAudioTime {
     AVAudioTime(hostTime: host + AVAudioTime.hostTime(forSeconds: Double(frame) / rate), sampleTime: frame, atRate: rate)
 }
-private func admissionPCM(frames: Int, frequency: Double, rate: Double = 48_000, channels: AVAudioChannelCount = 1) throws -> AVAudioPCMBuffer {
+private func admissionPCM(frames: Int, frequency: Double, rate: Double = 48_000, channels: AVAudioChannelCount = 1,
+                          amplitude: Double = 0.2) throws -> AVAudioPCMBuffer {
     let format: AVAudioFormat
     if channels <= 2 { format = try #require(AVAudioFormat(standardFormatWithSampleRate: rate, channels: channels)) }
     else {
@@ -1056,7 +1077,7 @@ private func admissionPCM(frames: Int, frequency: Double, rate: Double = 48_000,
     let pcm = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)))
     pcm.frameLength = AVAudioFrameCount(frames)
     for channel in 0..<Int(channels) {
-        for frame in 0..<frames { pcm.floatChannelData![channel][frame] = Float(0.2 * sin(2 * .pi * frequency * Double(frame) / rate)) }
+        for frame in 0..<frames { pcm.floatChannelData![channel][frame] = Float(amplitude * sin(2 * .pi * frequency * Double(frame) / rate)) }
     }
     return pcm
 }
