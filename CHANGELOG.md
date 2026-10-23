@@ -7,14 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.45] - 2026-10-22
+
 ### Changed
 
-- a chosen microphone stays on that device when the mac changes its default input or output. an interface with more than two inputs uses only the input you pick, and it waits until you pick one. thanks @dvanduzer.
+- changing the mac's default input or output, like putting on a headset, no longer interrupts a chosen microphone for a moment. on an interface with more than two inputs, only the input you pick goes into your journal, and nothing from it does until you pick one in settings. thanks @dvanduzer.
 
 ### Fixed
 
 - very quiet sound, like a voice from across the room, now reaches your journal unchanged. before, the solstone app replaced it with silence.
-- a segment change keeps audio that was already accepted. if an interface's inputs change, it waits for a new choice instead of using a different input.
 
 ## [2.0.44] - 2026-10-21
 
