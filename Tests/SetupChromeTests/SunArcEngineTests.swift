@@ -124,6 +124,9 @@ struct SunArcEngineTests {
         let a = SunArcBackgroundView.minutesSinceMidnight(Date(timeIntervalSince1970: 1_726_750_020)) // arbitrary instant (00s)
         let b = SunArcBackgroundView.minutesSinceMidnight(Date(timeIntervalSince1970: 1_726_750_050)) // +30s, same minute (30s)
         #expect(a == b)
+        let preciseA = SunArcBackgroundView.preciseMinutesSinceMidnight(Date(timeIntervalSince1970: 1_726_750_020))
+        let preciseB = SunArcBackgroundView.preciseMinutesSinceMidnight(Date(timeIntervalSince1970: 1_726_750_050))
+        #expect(abs(preciseB - preciseA - 0.5) < 0.000001)
     }
 }
 
