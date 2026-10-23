@@ -48,8 +48,8 @@ public struct SunArcBackgroundView: View {
                         frame: NightFrame(t: f.time.t, night: f.time.night, weight: f.twilight.w,
                             glows: [f.halo,f.twilightGlow].compactMap{$0}.map{NightGlow(x:$0.center.x,y:$0.center.y,radius:$0.radius,alpha:$0.alpha)}),
                         rise: solar.riseMinutes, set: solar.setMinutes,
-                        minute: Self.minutesSinceMidnight(date,timeZone:timeZone),
-                        dark: appearance == .dark, watch: false, visible: visible, sampledMinute: fixedDate.map{Self.minutesSinceMidnight($0,timeZone:timeZone)}, sampledAt: date)
+                        minute: Self.preciseMinutesSinceMidnight(date,timeZone:timeZone),
+                        dark: appearance == .dark, watch: false, visible: visible, sampledMinute: fixedDate.map{Self.preciseMinutesSinceMidnight($0,timeZone:timeZone)}, sampledAt: date)
                     Canvas { ctx,size in
                         Self.draw(in: &ctx,size:size,date:date,appearance:appearance,timeZone:timeZone,sunOnly:true)
                     }
@@ -61,6 +61,11 @@ public struct SunArcBackgroundView: View {
     }
 
     static func minutesSinceMidnight(_ date: Date, timeZone: TimeZone = .autoupdatingCurrent) -> Double {
+        floor(preciseMinutesSinceMidnight(date, timeZone: timeZone))
+    }
+
+    // Meteors need the fractional clock; the solar position stays minute-quantized.
+    static func preciseMinutesSinceMidnight(_ date: Date, timeZone: TimeZone = .autoupdatingCurrent) -> Double {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         let comps = calendar.dateComponents([.hour, .minute, .second, .nanosecond], from: date)
