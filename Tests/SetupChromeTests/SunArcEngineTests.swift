@@ -83,8 +83,8 @@ struct SunArcEngineTests {
     @Test func theSixGroundsAreTheSpecsTable() {
         // § 6 / tokens.md: sunarc.ground-light-* and sunarc.ground-dark-*.
         #expect(SunArcAppearance.light.grounds.day == "#FEFCF8")
-        #expect(SunArcAppearance.light.grounds.night == "#E9DECC")
-        #expect(SunArcAppearance.light.grounds.trueDark == "#D7C9B0")
+        #expect(SunArcAppearance.light.grounds.night == "#AEA393")
+        #expect(SunArcAppearance.light.grounds.trueDark == "#8C806E")
         #expect(SunArcAppearance.dark.grounds.day == "#392E26")
         #expect(SunArcAppearance.dark.grounds.night == "#2E241C")
         #expect(SunArcAppearance.dark.grounds.trueDark == "#281E17")
@@ -340,13 +340,13 @@ struct SunArcBothAppearancesTests {
         Row(minutes: 780, appearance: .dark, ground: "#392E26", sunAlpha: 0.200, w: 0, phase: .day, glow: nil),
         Row(minutes: 1136, appearance: .light, ground: "#FEFCF7", sunAlpha: 0.1444, w: 0.7344, phase: .day, glow: (601.86, 1019.65, 0.6977, "#FFE296")),
         Row(minutes: 1136, appearance: .dark, ground: "#392E26", sunAlpha: 0.0525, w: 0.7344, phase: .day, glow: (601.86, 1019.65, 0.4553, "#F9BA36")),
-        Row(minutes: 1181, appearance: .light, ground: "#E9DECC", sunAlpha: 0, w: 0.9937, phase: .evening, glow: (620.44, 1086.72, 0.9440, "#FFE294")),
+        Row(minutes: 1181, appearance: .light, ground: "#AEA393", sunAlpha: 0, w: 0.9937, phase: .evening, glow: (620.44, 1086.72, 0.9440, "#FFE294")),
         Row(minutes: 1181, appearance: .dark, ground: "#2E241C", sunAlpha: 0, w: 0.9937, phase: .evening, glow: (620.44, 1086.72, 0.6161, "#F8B836")),
-        Row(minutes: 1320, appearance: .light, ground: "#DFD2BC", sunAlpha: 0, w: 0.4341, phase: .evening, glow: (642.28, 1176.83, 0.4124, "#FFDC7F")),
+        Row(minutes: 1320, appearance: .light, ground: "#9B8F7E", sunAlpha: 0, w: 0.4341, phase: .evening, glow: (642.28, 1176.83, 0.4124, "#FFDC7F")),
         Row(minutes: 1320, appearance: .dark, ground: "#2B2119", sunAlpha: 0, w: 0.4341, phase: .evening, glow: (642.28, 1176.83, 0.2692, "#F1A739")),
-        Row(minutes: 60, appearance: .light, ground: "#D7C9B0", sunAlpha: 0, w: 0, phase: .trueDark, glow: nil),
+        Row(minutes: 60, appearance: .light, ground: "#8C806E", sunAlpha: 0, w: 0, phase: .trueDark, glow: nil),
         Row(minutes: 60, appearance: .dark, ground: "#281E17", sunAlpha: 0, w: 0, phase: .trueDark, glow: nil),
-        Row(minutes: 330, appearance: .light, ground: "#E8DDCA", sunAlpha: 0, w: 0.9381, phase: .beforeDawn, glow: (-249.94, -244.96, 0.8912, "#FFE08F")),
+        Row(minutes: 330, appearance: .light, ground: "#ACA191", sunAlpha: 0, w: 0.9381, phase: .beforeDawn, glow: (-249.94, -244.96, 0.8912, "#FFE08F")),
         Row(minutes: 330, appearance: .dark, ground: "#2E241C", sunAlpha: 0, w: 0.9381, phase: .beforeDawn, glow: (-249.94, -244.96, 0.5816, "#F6B437")),
     ]
 
