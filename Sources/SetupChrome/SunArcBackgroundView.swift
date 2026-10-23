@@ -20,6 +20,8 @@ import SwiftUI
 /// observer.
 public struct SunArcBackgroundView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @State private var nightCache = NightSkyCache()
+    @State private var visible = true
 
     /// Test seams for the snapshot matrix: a fixed instant and zone. Production passes neither
     /// and draws the `TimelineView`'s own minute in the system's autoupdating zone.
@@ -33,19 +35,36 @@ public struct SunArcBackgroundView: View {
 
     public var body: some View {
         let appearance: SunArcAppearance = colorScheme == .dark ? .dark : .light
-        TimelineView(.everyMinute) { context in
-            Canvas { ctx, size in
-                Self.draw(in: &ctx, size: size, date: fixedDate ?? context.date, appearance: appearance, timeZone: timeZone)
+        TimelineView(NightMinuteSchedule(visible: visible)) { context in
+            GeometryReader { proxy in
+                let date = fixedDate ?? context.date
+                let solar = SunArcSolar.pair(for: date, timeZone: timeZone)
+                let f = Self.frame(size: proxy.size, date: date, appearance: appearance, timeZone: timeZone)
+                ZStack {
+                    Canvas { ctx, size in
+                        Self.draw(in: &ctx, size: size, date: date, appearance: appearance, timeZone: timeZone, sunOnly: false)
+                    }
+                    NightSkyView(cache: nightCache, size: proxy.size,
+                        frame: NightFrame(t: f.time.t, night: f.time.night, weight: f.twilight.w,
+                            glows: [f.halo,f.twilightGlow].compactMap{$0}.map{NightGlow(x:$0.center.x,y:$0.center.y,radius:$0.radius,alpha:$0.alpha)}),
+                        rise: solar.riseMinutes, set: solar.setMinutes,
+                        minute: Self.minutesSinceMidnight(date,timeZone:timeZone),
+                        dark: appearance == .dark, watch: false, visible: visible, sampledMinute: fixedDate.map{Self.minutesSinceMidnight($0,timeZone:timeZone)}, sampledAt: date)
+                    Canvas { ctx,size in
+                        Self.draw(in: &ctx,size:size,date:date,appearance:appearance,timeZone:timeZone,sunOnly:true)
+                    }
+                }
             }
         }
+        .background(NightWindowVisibility(visible: $visible))
         .allowsHitTesting(false)
     }
 
     static func minutesSinceMidnight(_ date: Date, timeZone: TimeZone = .autoupdatingCurrent) -> Double {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
-        let comps = calendar.dateComponents([.hour, .minute], from: date)
-        return Double((comps.hour ?? 0) * 60 + (comps.minute ?? 0))
+        let comps = calendar.dateComponents([.hour, .minute, .second, .nanosecond], from: date)
+        return Double((comps.hour ?? 0) * 60 + (comps.minute ?? 0)) + Double(comps.second ?? 0)/60 + Double(comps.nanosecond ?? 0)/60_000_000_000
     }
 
     static func frame(size: CGSize, date: Date, appearance: SunArcAppearance, timeZone: TimeZone = .autoupdatingCurrent) -> SunArcFrame {
@@ -59,10 +78,11 @@ public struct SunArcBackgroundView: View {
         )
     }
 
-    static func draw(in ctx: inout GraphicsContext, size: CGSize, date: Date, appearance: SunArcAppearance, timeZone: TimeZone = .autoupdatingCurrent) {
+    static func draw(in ctx: inout GraphicsContext, size: CGSize, date: Date, appearance: SunArcAppearance, timeZone: TimeZone = .autoupdatingCurrent, sunOnly: Bool? = nil) {
         guard size.width > 0, size.height > 0 else { return }
         let frame = frame(size: size, date: date, appearance: appearance, timeZone: timeZone)
 
+        if sunOnly != true {
         // ground — behind everything (§6)
         ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(sunArcHex: frame.groundHex)))
 
@@ -81,6 +101,8 @@ public struct SunArcBackgroundView: View {
             )
         }
 
+        }
+        if sunOnly == false {return}
         // the sun — one graphic (§8), never redrawn: the mark, scaled and translated (§10)
         guard frame.sunVisible, frame.sunOpacity > 0.001 else { return }
         ctx.drawLayer { layer in

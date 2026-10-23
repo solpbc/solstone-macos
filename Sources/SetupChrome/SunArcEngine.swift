@@ -337,7 +337,7 @@ public enum SunArcAppearance: String, Sendable, CaseIterable {
     /// → dawn) and true dark. `SUNARC.BOTH.grounds` in the reference.
     public var grounds: (day: String, night: String, trueDark: String) {
         switch self {
-        case .light: return ("#FEFCF8", "#E9DECC", "#D7C9B0")
+        case .light: return ("#FEFCF8", "#AEA393", "#8C806E")
         case .dark: return ("#392E26", "#2E241C", "#281E17")
         }
     }
