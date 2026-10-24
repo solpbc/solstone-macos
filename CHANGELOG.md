@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.46] - 2026-10-24
+
 ### Added
 
-- the night background now has gold stars, a brief meteor shower and an aurora.
+- the setup window's night sky now has gold stars, a brief meteor shower and an aurora.
 
 
 ## [2.0.45] - 2026-10-22
