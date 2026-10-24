@@ -2504,14 +2504,12 @@ public final class AppState {
             storage: storageManager,
             eligibility: { [weak self, weak lifecycle] in
                 guard let self, let lifecycle else { return false }
-                return !self.isTerminating && !self.pauseManager.isPaused &&
-                    !self.capture.isExplicitlyStopped && !self.capture.isUserStopped &&
+                return !self.isTerminating && !self.activityHeldByOwner &&
                     lifecycle.isMachineAwake && !lifecycle.isActivityScreenLocked && lifecycle.isSessionActive
             },
             locked: { [weak self, weak lifecycle] in
                 guard let self, let lifecycle else { return false }
-                return !self.isTerminating && !self.pauseManager.isPaused &&
-                    !self.capture.isExplicitlyStopped && !self.capture.isUserStopped &&
+                return !self.isTerminating && !self.activityHeldByOwner &&
                     lifecycle.isMachineAwake && lifecycle.isActivityScreenLocked
             },
             onSealed: { [weak self] in self?.uploadCoordinator.triggerSync() }
@@ -2519,10 +2517,19 @@ public final class AppState {
         activitySource = source
         lifecycle.onIntakeEligibilityChanged = { [weak source] in source?.invalidate(); source?.sample() }
         let previousPause = pauseManager.onPauseIntake
-        pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.invalidate() }
+        // Kept on through pause, activity closes its interval at the pause and goes on at once.
+        pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.invalidate(); source?.sample() }
         let previousResume = pauseManager.onResumeIntake
         pauseManager.onResumeIntake = { [weak source] in previousResume?(); source?.invalidate(); source?.sample() }
         source.start(config: config)
+    }
+
+    /// Pause and stop hold activity the way they hold audio, unless the owner keeps it on through pause.
+    private var activityHeldByOwner: Bool {
+        config.activityHeld(
+            paused: pauseManager.isPaused,
+            stopped: capture.isExplicitlyStopped || capture.isUserStopped
+        )
     }
 
     public func startRecording(reason: StartReason = .user, preservingPausePolicy: Bool = false) async {
@@ -2542,7 +2549,8 @@ public final class AppState {
     public func toggleRecording() async {
         if pauseManager.isPaused {
             pauseManager.resume()
-        } else if activitySource?.enabled == true && activitySource?.paused == false {
+        } else if activitySource?.enabled == true && activitySource?.paused == false &&
+                    !config.activityContinuesThroughPause {
             await stopRecording(reason: .user)
         } else {
             await capture.toggleRecording()
@@ -2751,7 +2759,8 @@ public final class AppState {
         let activityChanged = fresh.isActivityEnabled != config.isActivityEnabled ||
             fresh.activityTitlesEnabled != config.activityTitlesEnabled ||
             fresh.activityURLsEnabled != config.activityURLsEnabled ||
-            fresh.activityAccessibilityEnabled != config.activityAccessibilityEnabled
+            fresh.activityAccessibilityEnabled != config.activityAccessibilityEnabled ||
+            fresh.activityContinuesThroughPause != config.activityContinuesThroughPause
         let shortcutChanged = fresh.pauseShortcut != config.pauseShortcut
         guard journalConnectionChanged || browserIntakeChanged || activityChanged || shortcutChanged else {
             return

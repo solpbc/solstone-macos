@@ -25,19 +25,125 @@ struct DesktopActivityTests {
         }.sorted { $0.ts < $1.ts }
     }
 
-    @Test func defaultOffAndSeparateConsentPersist() throws {
+    private func suite() throws -> (UserDefaults, String) {
         let name = "desktop-activity-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
+        return (try #require(UserDefaults(suiteName: name)), name)
+    }
+
+    private static let activityKeys = ["isActivityEnabled", "activityTitlesEnabled", "activityURLsEnabled", "activityContinuesThroughPause"]
+
+    @Test func activityTitlesAndAddressesDefaultOnAndOnlyOwnerChoicesAreSaved() throws {
+        let (defaults, name) = try suite()
         defer { defaults.removePersistentDomain(forName: name) }
         let original = AppConfig.load(from: defaults)
-        #expect(!original.isActivityEnabled && !original.activityTitlesEnabled && !original.activityURLsEnabled && !original.activityAccessibilityEnabled)
-        var config = original
-        config.isActivityEnabled = true; config.activityTitlesEnabled = true
-        config.activityURLsEnabled = true; config.excludePrivateBrowsingAccessibility = true
+        #expect(original.isActivityEnabled && original.activityTitlesEnabled && original.activityURLsEnabled)
+        #expect(!original.activityContinuesThroughPause && !original.activityAccessibilityEnabled)
+        let settings = DesktopActivitySettings(original)
+        #expect(settings.enabled && settings.titles && settings.urls && !settings.accessibility)
+
+        // Saving a config nobody changed writes none of these, so a missing key keeps the code default.
+        try original.save(to: defaults)
+        #expect(Self.activityKeys.allSatisfy { defaults.object(forKey: $0) == nil })
+
+        var config = AppConfig.load(from: defaults)
+        config.activityTitlesEnabled = false
+        config.activityContinuesThroughPause = true
         try config.save(to: defaults)
+        #expect(defaults.object(forKey: "activityTitlesEnabled") as? Bool == false)
+        #expect(defaults.object(forKey: "activityContinuesThroughPause") as? Bool == true)
+        #expect(defaults.object(forKey: "isActivityEnabled") == nil && defaults.object(forKey: "activityURLsEnabled") == nil)
         let restored = AppConfig.load(from: defaults)
-        #expect(restored.isActivityEnabled && restored.activityTitlesEnabled && restored.activityURLsEnabled)
-        #expect(!restored.activityAccessibilityEnabled)
+        #expect(!restored.activityTitlesEnabled && restored.activityURLsEnabled)
+        #expect(restored.isActivityEnabled && restored.activityContinuesThroughPause)
+    }
+
+    @Test func savedActivityValuesFromEarlierBuildsAreDiscardedOnce() throws {
+        let (defaults, name) = try suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        // What an earlier build saved on first run, plus owner settings that must survive.
+        for key in ["isActivityEnabled", "activityTitlesEnabled", "activityURLsEnabled"] { defaults.set(false, forKey: key) }
+        defaults.set(true, forKey: "activityAccessibilityEnabled")
+        defaults.set(false, forKey: "isMicrophoneCaptureEnabled")
+        defaults.set(["fixture"], forKey: "excludedTitlePatterns")
+
+        AppConfig.adoptActivityFollowsScreenIfNeeded(defaults)
+        var migrated = AppConfig.load(from: defaults)
+        #expect(migrated.isActivityEnabled && migrated.activityTitlesEnabled && migrated.activityURLsEnabled)
+        #expect(migrated.activityAccessibilityEnabled)
+        #expect(!migrated.isMicrophoneCaptureEnabled && migrated.excludedTitlePatterns == ["fixture"])
+
+        // An owner's off after the migration stays off, however often the app starts again.
+        migrated.isActivityEnabled = false
+        migrated.activityURLsEnabled = false
+        try migrated.save(to: defaults)
+        AppConfig.adoptActivityFollowsScreenIfNeeded(defaults)
+        AppConfig.adoptActivityFollowsScreenIfNeeded(defaults)
+        let later = AppConfig.load(from: defaults)
+        #expect(!later.isActivityEnabled && !later.activityURLsEnabled && later.activityTitlesEnabled)
+    }
+
+    @Test func activityFollowsScreenAndPauseUnlessTurnedOffOrKeptOn() {
+        func runs(_ config: AppConfig, paused: Bool = false, stopped: Bool = false) -> Bool {
+            config.isActivitySourceOn && !config.activityHeld(paused: paused, stopped: stopped)
+        }
+        let following = AppConfig()
+        #expect(runs(following))
+        #expect(!runs(following, paused: true) && !runs(following, stopped: true))
+        #expect(!runs(AppConfig(isScreenCaptureEnabled: false)))
+
+        var off = AppConfig(); off.isActivityEnabled = false
+        var offKeptOn = off; offKeptOn.activityContinuesThroughPause = true
+        for config in [off, offKeptOn] {
+            #expect(!runs(config) && !runs(config, paused: true) && !runs(config, stopped: true))
+        }
+
+        var keptOn = AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false)
+        keptOn.activityContinuesThroughPause = true
+        #expect(runs(keptOn) && runs(keptOn, paused: true) && runs(keptOn, stopped: true))
+    }
+
+    @Test @MainActor func pauseClosesActivityUnlessItIsKeptOnThroughPause() async throws {
+        for keptOn in [false, true] {
+            let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+            let state = State()
+            var config = AppConfig()
+            if keptOn { config.activityContinuesThroughPause = true }
+            let selected = config
+            let app = DesktopActivityApp(pid: 42, name: "Fixture", bundleID: "example.fixture")
+            let source = DesktopActivitySource(storage: StorageManager(baseDirectory: root.appendingPathComponent("captures")),
+                eligibility: { !selected.activityHeld(paused: state.paused, stopped: false) }, locked: { false }, foreground: { app },
+                reader: { _, _, _ in DesktopActivityObservation(rows: [DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "Fixture")]) },
+                now: { state.now })
+            source.configure(config)
+            await source.sample()?.value
+            state.now.addTimeInterval(7); state.paused = true
+            // What the pause hook does.
+            source.invalidate(); await source.sample()?.value
+            state.now.addTimeInterval(7)
+            await source.sample()?.value
+            source.invalidate()
+            let result = try rows(root)
+            #expect(source.paused != keptOn)
+            #expect(result.count == (keptOn ? 2 : 1))
+            #expect(result.allSatisfy { $0.end_ts - $0.ts == 7_000 })
+        }
+    }
+
+    @Test @MainActor func screenOffTurnsActivityOffUnlessKeptOnThroughPause() async throws {
+        for keptOn in [false, true] {
+            let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+            let app = DesktopActivityApp(pid: 42, name: "Fixture", bundleID: "example.fixture")
+            let source = DesktopActivitySource(storage: StorageManager(baseDirectory: root.appendingPathComponent("captures")),
+                eligibility: { true }, locked: { false }, foreground: { app },
+                reader: { _, _, _ in DesktopActivityObservation(rows: [DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "Fixture")]) })
+            var config = AppConfig(isScreenCaptureEnabled: false)
+            if keptOn { config.activityContinuesThroughPause = true }
+            source.configure(config)
+            await source.sample()?.value
+            source.invalidate()
+            #expect(source.enabled == keptOn)
+            #expect(artifacts(root).isEmpty != keptOn)
+        }
     }
 
     @Test func addressesRetainOnlyWebOriginAndPath() {
@@ -66,7 +172,7 @@ struct DesktopActivityTests {
 
     @Test @MainActor func activityOnlyMenubarReflectsCollectionAndPause() throws {
         var config = AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false)
-        config.isActivityEnabled = true
+        config.activityContinuesThroughPause = true
         let state = AppState.forSnapshot(config: config)
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         let eligibility = State()
@@ -80,9 +186,9 @@ struct DesktopActivityTests {
         #expect(state.observationRowState == .paused)
     }
 
-    @Test @MainActor func turningOffLastMediaSourceLeavesActivityEligible() async throws {
+    @Test @MainActor func turningOffLastMediaSourceLeavesKeptOnActivityEligible() async throws {
         var config = AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false)
-        config.isActivityEnabled = true
+        config.activityContinuesThroughPause = true
         let state = AppState.forSnapshot(config: config)
         state.configSaver = { _ in }
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
@@ -163,6 +269,7 @@ struct DesktopActivityTests {
 
     @MainActor private final class State {
         var eligible = true
+        var paused = false
         var locked = false
         var now = Date(timeIntervalSince1970: 1_800_000_001)
     }

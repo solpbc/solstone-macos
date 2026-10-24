@@ -856,15 +856,23 @@ struct SettingsView: View {
                     Toggle("activity", isOn: Binding(
                         get: { appState.config.isActivityEnabled },
                         set: { enabled in
-                            if enabled { appState.capture.clearOwnerStop() }
                             var config = appState.config
                             config.isActivityEnabled = enabled
                             appState.updateConfig(config)
                         }
                     ))
-                    Text("add app names and active or idle time to your journal. you can also include window titles and browser addresses.")
+                    Text("adds app names, window titles, browser addresses and active or idle time to your journal. it starts and pauses with screen and system audio.")
                         .font(.subheadline).foregroundStyle(.secondary)
                     if appState.config.isActivityEnabled {
+                        Toggle("keep activity on while paused", isOn: Binding(
+                            get: { appState.config.activityContinuesThroughPause },
+                            set: { value in
+                                var config = appState.config; config.activityContinuesThroughPause = value
+                                appState.updateConfig(config)
+                            }
+                        ))
+                        Text("activity goes on when you pause, and when screen and system audio are off.")
+                            .font(.subheadline).foregroundStyle(.secondary)
                         Toggle("window titles", isOn: Binding(
                             get: { appState.config.activityTitlesEnabled },
                             set: { value in
@@ -893,12 +901,14 @@ struct SettingsView: View {
                         ))
                         Text("when screen recording is unavailable, accessibility lets activity include window titles. browser addresses also use accessibility. only window titles and page addresses are used.")
                             .font(.subheadline).foregroundStyle(.secondary)
-                        Text("activity follows your pause and exclusions. it continues while screen and audio step aside for protected video. a title does not mean you watched or read it.")
+                        Text("activity follows your exclusions. it continues while screen and audio step aside for protected video. a title does not mean you watched or read it.")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                     if let activity = appState.activitySource {
                         if activity.failed {
                             Text("activity couldn't be saved. check free space on this mac.").foregroundStyle(.secondary)
+                        } else if !activity.enabled && appState.config.isActivityEnabled {
+                            Text("activity starts when screen and system audio are on")
                         } else {
                             Text(!activity.enabled ? "activity is off" : (activity.paused ? "activity is paused" : "activity is on"))
                             if activity.titleUnavailable { Text("window titles are unavailable").foregroundStyle(.secondary) }
@@ -937,7 +947,7 @@ struct SettingsView: View {
                     Text(appState.captureSourcesStatusText)
                         .accessibilityIdentifier(AXID.Settings.Sources.sourceStatus)
 #endif
-                    if appState.config.selectedSources.isEmpty && !appState.config.isActivityEnabled {
+                    if appState.config.selectedSources.isEmpty && !appState.config.isActivitySourceOn {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
                         if sourcesLead != .draining && !appState.config.isBrowserIntakeEnabled {
                             Text(UICopy.SOURCES_NONE_REASON).foregroundStyle(.secondary)

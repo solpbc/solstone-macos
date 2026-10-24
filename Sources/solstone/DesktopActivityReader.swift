@@ -20,6 +20,7 @@ struct DesktopActivityApp: Equatable, Sendable {
 
 struct DesktopActivitySettings: Equatable, Sendable {
     var enabled: Bool
+    var throughPause: Bool
     var titles: Bool
     var urls: Bool
     var accessibility: Bool
@@ -30,7 +31,8 @@ struct DesktopActivitySettings: Equatable, Sendable {
     var privateAccessibility: Bool
 
     init(_ config: AppConfig) {
-        enabled = config.isActivityEnabled
+        enabled = config.isActivitySourceOn
+        throughPause = config.activityContinuesThroughPause
         titles = config.activityTitlesEnabled
         urls = config.activityURLsEnabled
         accessibility = config.activityAccessibilityEnabled

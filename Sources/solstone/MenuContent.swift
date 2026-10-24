@@ -281,7 +281,9 @@ struct MenuContent: View {
     // MARK: - Pause Controls
 
     private var hasPauseControl: Bool {
-        if let activity = appState.activitySource, activity.enabled && !activity.paused && !activity.failed { return true }
+        // Activity kept on through pause has nothing for pause to stop.
+        if let activity = appState.activitySource, activity.enabled && !activity.paused && !activity.failed,
+           !appState.config.activityContinuesThroughPause { return true }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         return menuPauseControls(
             mediaRecording: appState.isRecording,
@@ -296,7 +298,8 @@ struct MenuContent: View {
     }
 
     private var hasResumeControl: Bool {
-        if appState.config.isActivityEnabled && appState.pauseManager.isPaused { return true }
+        if let activity = appState.activitySource, activity.enabled, appState.pauseManager.isPaused,
+           !appState.config.activityContinuesThroughPause { return true }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         return menuPauseControls(
             mediaRecording: appState.isRecording,

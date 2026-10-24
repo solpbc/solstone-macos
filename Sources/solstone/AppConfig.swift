@@ -155,6 +155,7 @@ public struct AppConfig: Sendable {
     public static let knownKeys: [String] = [
         "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled", "isBrowserIntakeEnabled",
         "isActivityEnabled", "activityTitlesEnabled", "activityURLsEnabled", "activityAccessibilityEnabled",
+        "activityContinuesThroughPause",
         "microphonePriority", "excludedApps", "excludedTitlePatterns",
         "excludePrivateBrowsing", "excludePrivateBrowsingAccessibility", "serverURL", "serverKey",
         "syncPaused", "debugSegments",
@@ -165,6 +166,11 @@ public struct AppConfig: Sendable {
     ]
 
     private enum Keys {
+        static let isActivityEnabled = "isActivityEnabled"
+        static let activityTitlesEnabled = "activityTitlesEnabled"
+        static let activityURLsEnabled = "activityURLsEnabled"
+        static let activityAccessibilityEnabled = "activityAccessibilityEnabled"
+        static let activityContinuesThroughPause = "activityContinuesThroughPause"
         static let isScreenCaptureEnabled = "isScreenCaptureEnabled"
         static let isMicrophoneCaptureEnabled = "isMicrophoneCaptureEnabled"
         static let isBrowserIntakeEnabled = "isBrowserIntakeEnabled"
@@ -191,12 +197,52 @@ public struct AppConfig: Sendable {
         static let reseededBluetoothMicrophoneUIDs = "reseededBluetoothMicrophoneUIDs"
         static let didReseedCaptureSourcesOn = "didReseedCaptureSourcesOn"
         static let didAddPasswordManagerExclusions = "didAddPasswordManagerExclusions"
+        static let didAdoptActivityFollowsScreen = "didAdoptActivityFollowsScreen"
     }
 
-    public var isActivityEnabled: Bool = false
-    public var activityTitlesEnabled: Bool = false
-    public var activityURLsEnabled: Bool = false
+    // MARK: - Activity
+
+    // Only what the owner sets is saved. nil reads as the current default, so a later default
+    // change reaches everyone who hasn't chosen.
+    private var activityChoice: Bool?
+    private var activityTitlesChoice: Bool?
+    private var activityURLsChoice: Bool?
+    private var activityThroughPauseChoice: Bool?
+
+    /// Off only when the owner turns activity off. Otherwise activity starts and pauses with screen.
+    public var isActivityEnabled: Bool {
+        get { activityChoice ?? true }
+        set { activityChoice = newValue }
+    }
+
+    public var activityTitlesEnabled: Bool {
+        get { activityTitlesChoice ?? true }
+        set { activityTitlesChoice = newValue }
+    }
+
+    public var activityURLsEnabled: Bool {
+        get { activityURLsChoice ?? true }
+        set { activityURLsChoice = newValue }
+    }
+
+    /// The owner's choice to keep activity running through pause, with or without screen.
+    public var activityContinuesThroughPause: Bool {
+        get { activityThroughPauseChoice ?? false }
+        set { activityThroughPauseChoice = newValue }
+    }
+
+    /// The Accessibility reader for activity is its own permission ask, off until the owner turns it on.
     public var activityAccessibilityEnabled: Bool = false
+
+    /// Activity runs with screen, or on its own when the owner keeps it on through pause.
+    public var isActivitySourceOn: Bool {
+        isActivityEnabled && (activityContinuesThroughPause || isScreenCaptureEnabled)
+    }
+
+    /// The owner's pause or stop holds activity, as it holds audio, unless activity is kept on through pause.
+    public func activityHeld(paused: Bool, stopped: Bool) -> Bool {
+        !activityContinuesThroughPause && (paused || stopped)
+    }
 
     // MARK: - Properties
 
@@ -422,11 +468,25 @@ public struct AppConfig: Sendable {
             pauseShortcut: pauseShortcut
         )
         var activityConfig = config
-        activityConfig.isActivityEnabled = defaults.bool(forKey: "isActivityEnabled")
-        activityConfig.activityTitlesEnabled = defaults.bool(forKey: "activityTitlesEnabled")
-        activityConfig.activityURLsEnabled = defaults.bool(forKey: "activityURLsEnabled")
-        activityConfig.activityAccessibilityEnabled = defaults.bool(forKey: "activityAccessibilityEnabled")
+        activityConfig.activityChoice = defaults.object(forKey: Keys.isActivityEnabled) as? Bool
+        activityConfig.activityTitlesChoice = defaults.object(forKey: Keys.activityTitlesEnabled) as? Bool
+        activityConfig.activityURLsChoice = defaults.object(forKey: Keys.activityURLsEnabled) as? Bool
+        activityConfig.activityThroughPauseChoice = defaults.object(forKey: Keys.activityContinuesThroughPause) as? Bool
+        activityConfig.activityAccessibilityEnabled = defaults.bool(forKey: Keys.activityAccessibilityEnabled)
         return activityConfig
+    }
+
+    /// One-shot: builds before activity followed screen saved the activity switch, window titles
+    /// and browser addresses as off whether or not the owner chose that, so a saved value can't be
+    /// told apart from a choice. Those three are discarded once, and read as the current defaults.
+    /// The Accessibility permission choice and everything else stay as saved. A choice the owner
+    /// makes after this runs is kept.
+    internal static func adoptActivityFollowsScreenIfNeeded(_ defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: Keys.didAdoptActivityFollowsScreen) else { return }
+        for key in [Keys.isActivityEnabled, Keys.activityTitlesEnabled, Keys.activityURLsEnabled] {
+            defaults.removeObject(forKey: key)
+        }
+        defaults.set(true, forKey: Keys.didAdoptActivityFollowsScreen)
     }
 
     /// Loads config or creates with defaults if missing
@@ -441,6 +501,9 @@ public struct AppConfig: Sendable {
         let defaults = UserDefaults.standard
         let legacyConfigPaths = legacyConfigPaths ?? productionLegacyConfigPaths
         var config: AppConfig?
+
+        // Before anything below can save, so no old activity value is carried forward.
+        adoptActivityFollowsScreenIfNeeded(defaults)
 
         // Check for migration from JSON config
         if !defaults.bool(forKey: Keys.didMigrateFromJSON) {
@@ -485,10 +548,15 @@ public struct AppConfig: Sendable {
 
     /// Saves config to UserDefaults
     public func save(to defaults: UserDefaults = .standard) throws {
-        defaults.set(isActivityEnabled, forKey: "isActivityEnabled")
-        defaults.set(activityTitlesEnabled, forKey: "activityTitlesEnabled")
-        defaults.set(activityURLsEnabled, forKey: "activityURLsEnabled")
-        defaults.set(activityAccessibilityEnabled, forKey: "activityAccessibilityEnabled")
+        for (choice, key) in [
+            (activityChoice, Keys.isActivityEnabled),
+            (activityTitlesChoice, Keys.activityTitlesEnabled),
+            (activityURLsChoice, Keys.activityURLsEnabled),
+            (activityThroughPauseChoice, Keys.activityContinuesThroughPause)
+        ] {
+            if let choice { defaults.set(choice, forKey: key) } else { defaults.removeObject(forKey: key) }
+        }
+        defaults.set(activityAccessibilityEnabled, forKey: Keys.activityAccessibilityEnabled)
         defaults.set(isScreenCaptureEnabled, forKey: Keys.isScreenCaptureEnabled)
         defaults.set(isMicrophoneCaptureEnabled, forKey: Keys.isMicrophoneCaptureEnabled)
         defaults.set(isBrowserIntakeEnabled, forKey: Keys.isBrowserIntakeEnabled)

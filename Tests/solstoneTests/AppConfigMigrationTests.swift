@@ -373,6 +373,53 @@ struct AppConfigMigrationTests {
         #expect(store.load()?.phase == .journal)
     }
 
+    // MARK: - Activity
+
+    private static let activityKeys = ["isActivityEnabled", "activityTitlesEnabled", "activityURLsEnabled", "activityContinuesThroughPause"]
+
+    @Test func freshInstallSavesNoActivityDefaultsAndKeepsAnOwnersOff() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let absent = [dir.appendingPathComponent("absent.json")]
+
+        let config = try AppConfig.loadOrCreateDefault(legacyConfigPaths: absent, continuationDirectory: dir, nativeSetupEnabled: true)
+        #expect(config.isActivityEnabled && config.activityTitlesEnabled && config.activityURLsEnabled)
+        #expect(Self.activityKeys.allSatisfy { UserDefaults.standard.object(forKey: $0) == nil })
+        #expect(UserDefaults.standard.bool(forKey: "didAdoptActivityFollowsScreen"))
+
+        var owner = config
+        owner.isActivityEnabled = false
+        try owner.save()
+        let relaunched = try AppConfig.loadOrCreateDefault(legacyConfigPaths: absent, continuationDirectory: dir, nativeSetupEnabled: true)
+        #expect(!relaunched.isActivityEnabled)
+    }
+
+    @Test func existingInstallMovesToActivityFollowingScreenOnce() throws {
+        clearConfigDefaults()
+        defer { clearConfigDefaults() }
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let absent = [dir.appendingPathComponent("absent.json")]
+        // What an earlier build left: a saved config with every activity value written as off.
+        try AppConfig(isMicrophoneCaptureEnabled: false).save()
+        for key in ["isActivityEnabled", "activityTitlesEnabled", "activityURLsEnabled"] {
+            UserDefaults.standard.set(false, forKey: key)
+        }
+        UserDefaults.standard.set(true, forKey: "activityAccessibilityEnabled")
+
+        let migrated = try AppConfig.loadOrCreateDefault(legacyConfigPaths: absent, continuationDirectory: dir)
+        #expect(migrated.isActivityEnabled && migrated.activityTitlesEnabled && migrated.activityURLsEnabled)
+        #expect(migrated.activityAccessibilityEnabled && !migrated.isMicrophoneCaptureEnabled)
+
+        var owner = migrated
+        owner.activityTitlesEnabled = false
+        try owner.save()
+        let relaunched = try AppConfig.loadOrCreateDefault(legacyConfigPaths: absent, continuationDirectory: dir)
+        #expect(!relaunched.activityTitlesEnabled && relaunched.isActivityEnabled)
+    }
+
     @Test func unqualifiedFreshInstallRetainsLegacyDefaultsWithoutCreatingSetupProgress() throws {
         clearConfigDefaults()
         defer { clearConfigDefaults() }
@@ -608,6 +655,7 @@ struct AppConfigMigrationTests {
             "reseededBluetoothMicrophoneUIDs",
             "didReseedCaptureSourcesOn",
             "didAddPasswordManagerExclusions",
+            "didAdoptActivityFollowsScreen",
             "localRetentionMB"
         ] {
             UserDefaults.standard.removeObject(forKey: key)

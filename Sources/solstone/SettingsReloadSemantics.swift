@@ -33,6 +33,7 @@ public enum SettingsReloadSemantics {
         "activityTitlesEnabled": .live,
         "activityURLsEnabled": .live,
         "activityAccessibilityEnabled": .live,
+        "activityContinuesThroughPause": .live,
         "pauseForProtectedVideo": .live,
         "protectedVideoTitlePatterns": .live,
         "pauseShortcut": .live,

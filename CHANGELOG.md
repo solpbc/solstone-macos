@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- activity now starts and pauses with screen and system audio, and includes window titles and browser addresses. in settings, you can turn activity off, or keep it on while paused. if you set up before this version, your activity settings move to these defaults once, and anything you change after that stays.
+
 ### Fixed
 
 - a microphone that sends a moment of complete silence, as some audio interfaces do when plugged back in, no longer loses its sound for up to five minutes afterward. thanks @dvanduzer.
