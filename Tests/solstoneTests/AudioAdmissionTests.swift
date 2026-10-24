@@ -322,6 +322,35 @@ struct AudioAdmissionTests {
         #expect(try #require(try await admissionDecode(writer.url).first).count == 200 * 48 + 480)
     }
 
+    @Test func longDigitalSilenceInSmallBuffersNeverBlocksLaterAudio() async throws {
+        // A replugged interface delivered 512-frame buffers of exact zeros. Deferred
+        // silence must not hold every writer job, or later speech is refused.
+        let root = try makeTempDirectory("small-buffer-silence"); defer { try? FileManager.default.removeItem(at: root) }
+        let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("mic.m4a"),
+            trackType: .microphone(name: "Interface", deviceUID: "interface"), segmentStartTime: .zero)
+        let frames = 512, quiet = 200, tone = 20
+        for index in 0..<(quiet + tone) {
+            let pcm = try admissionPCM(frames: frames, frequency: index < quiet ? 0 : 660)
+            #expect(writer.enqueuePCMBuffer(pcm, presentationTime: CMTime(value: Int64(index * frames), timescale: 48_000)) != nil)
+            try await withTimeout(seconds: 2) {
+                while writer.mediaBudget.snapshot.stages[AudioMediaBudget.Stage.writer.rawValue].jobs >= AudioMediaBudget.jobsPerStage {
+                    try await Task.sleep(for: .milliseconds(1))
+                }
+            }
+        }
+        _ = await writer.finish()
+        let stats = writer.statisticsSnapshot, total = (quiet + tone) * frames
+        #expect(stats.receivedFrames == total && stats.acceptedFrames == total && stats.droppedFrames == 0)
+        #expect(stats.failures.isEmpty)
+        let decoded = try #require(try await admissionDecode(writer.url).first)
+        #expect(abs(decoded.count - total) <= 2)
+        let toneStart = Double(quiet * frames) / 48_000
+        #expect(admissionRMS(decoded, start: 0.025, end: toneStart - 0.025) < 0.002)
+        #expect(admissionTone(decoded, frequency: 660, start: toneStart + 0.025,
+            end: Double(total) / 48_000 - 0.025) > 0.08)
+        admissionBudgetIsEmpty(writer.mediaBudget)
+    }
+
     @Test func tinyWriterJobsAreBoundedAndRejectionEvidenceCannotQueueUnboundedReports() async throws {
         let root = try makeTempDirectory("tiny-writer-admission"); defer { try? FileManager.default.removeItem(at: root) }
         let reports = LockedArray<AudioWriterStatistics>([])

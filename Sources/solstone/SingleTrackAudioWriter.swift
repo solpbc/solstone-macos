@@ -159,6 +159,9 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
 
     /// Maximum silence duration before forcing a flush (1 second worth of samples at 48kHz)
     private static let maxSilenceSamples: Int = 48000
+    /// Each deferred silent buffer holds a writer job until its batch is written, and
+    /// the job limit is shared with the source's other writers and in-flight audio.
+    private static let maxDeferredSilentBuffers = AudioMediaBudget.jobsPerStage / 4
 
     public var onComplete: (() -> Void)?
 
@@ -508,11 +511,12 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
                 }
             }
 
-            // Check if we should flush (max silence duration reached)
+            // Flush at the batch duration, or sooner when small buffers would hold the
+            // job limit first: a refused buffer never reaches here to flush the batch.
             let planes = asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0 ? 1 : Int(asbd.mChannelsPerFrame)
             let byteLimit = (AudioMediaBudget.bytesPerStage / 2) / (Int(asbd.mBytesPerFrame) * planes)
             let batchFrames = min(Self.maxSilenceSamples, Int(ceil(asbd.mSampleRate)), max(1, byteLimit))
-            if silenceAccumulatedSamples >= batchFrames {
+            if silenceAccumulatedSamples >= batchFrames || pendingSilentWork.count >= Self.maxDeferredSilentBuffers {
                 flushSilence(firstTime: firstTime)
             }
 

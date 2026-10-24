@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- a microphone that sends a moment of complete silence, as some audio interfaces do when plugged back in, no longer loses its sound for up to five minutes afterward. thanks @dvanduzer.
+
 ## [2.0.46] - 2026-10-24
 
 ### Added
