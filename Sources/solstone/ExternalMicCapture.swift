@@ -525,6 +525,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
             self.clearConverterWithoutDraining()
             guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request }) else { return }
             if self.layoutRequiresNewChoice() {
+                Logger.audio.notice("Microphone \(self.device.uid, privacy: .public) input layout no longer admits the saved choice; stopping")
                 self.teardownEngine()
                 self.revokeUnacceptedAudio()
                 self.callbackLock.withLock {
@@ -597,6 +598,7 @@ public final class ExternalMicCapture: @unchecked Sendable {
                 guard self.callbackLock.withLock({ self.captureRequested && self.requestedEpoch == request &&
                     admittedEngineEpoch == self.engineEpoch }) else { return }
                 if self.layoutRequiresNewChoice() {
+                    Logger.audio.notice("Microphone \(self.device.uid, privacy: .public) input layout no longer admits the saved choice; stopping")
                     self.teardownEngine()
                     self.revokeUnacceptedAudio()
                     self.callbackLock.withLock {

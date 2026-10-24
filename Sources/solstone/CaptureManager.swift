@@ -179,6 +179,8 @@ public final class CaptureManager {
     private var disabledMicUIDs: Set<String> = []
     private var enabledMicUIDs: Set<String> = []
     private var hasLiveMicrophoneSelection = false
+    /// Last logged admission of each selected microphone, so only changes are logged.
+    private var microphoneAdmissionNotes: [String: String] = [:]
     internal var microphoneSelectionProvider: (@MainActor () -> (disabled: Set<String>, enabled: Set<String>))?
     internal var microphoneChoiceProvider: (@MainActor (String) -> MicrophoneChoice?)?
 
@@ -651,16 +653,34 @@ public final class CaptureManager {
                 micCaptureManager.setSavedChoice(for: device.uid, choice: microphoneChoiceProvider(device.uid))
             }
         }
-        let admittedUIDs = Set(selected.filter { device in
-            classifyMicrophone(device: device, choice: microphoneChoiceProvider?(device.uid),
-                layoutResult: layoutReader(device.id)) == .admitted
-        }.map(\.uid))
+        var admittedUIDs = Set<String>()
+        for device in selected {
+            let choice = microphoneChoiceProvider?(device.uid)
+            let state = classifyMicrophone(device: device, choice: choice, layoutResult: layoutReader(device.id))
+            if state == .admitted { admittedUIDs.insert(device.uid) }
+            noteMicrophoneAdmission(device, state: state, hasChoice: choice != nil)
+        }
         let revoked = micCaptureManager.updateSelection(selected, admittedUIDs: admittedUIDs)
         for uid in revoked {
             currentSegment?.deselectMicrophone(deviceUID: uid)
             micCaptureManager.stopCapture(deviceUID: uid)
         }
         return selected
+    }
+
+    /// A selected microphone that stops being admitted leaves the journal without any
+    /// capture failure, so each change of admission is logged where it is decided.
+    private func noteMicrophoneAdmission(_ device: AudioInputDevice, state: MicrophoneInterfaceState, hasChoice: Bool) {
+        let note: String
+        switch state {
+        case .admitted: note = "admitted"
+        case .layoutUnavailable: note = "not admitted: input layout unreadable"
+        case .needsChoice(let layout):
+            let streams = layout.fingerprint.streams.map { "\($0.startingChannel)+\($0.channelCount)" }.joined(separator: ",")
+            note = "not admitted: \(hasChoice ? "saved choice does not match" : "no saved choice for") \(layout.channelCount) inputs, streams \(streams)"
+        }
+        guard microphoneAdmissionNotes.updateValue(note, forKey: device.uid) != note else { return }
+        Logger.capture.notice("Microphone \(device.uid, privacy: .public) \(note, privacy: .public)")
     }
 
     private func reconcileMicrophoneSelection(duringStartup: Bool = false, restartFailed: Bool = false,
