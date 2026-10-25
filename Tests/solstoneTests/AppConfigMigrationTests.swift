@@ -413,6 +413,7 @@ struct AppConfigMigrationTests {
         let absent = [dir.appendingPathComponent("absent.json")]
         // What an earlier build left: a saved config with every activity value written as off.
         try AppConfig(isMicrophoneCaptureEnabled: false).save()
+        UserDefaults.standard.set(true, forKey: "excludePrivateBrowsing")
         for key in ["isActivityEnabled", "activityTitlesEnabled", "activityURLsEnabled"] {
             UserDefaults.standard.set(false, forKey: key)
         }
@@ -450,6 +451,7 @@ struct AppConfigMigrationTests {
         let dir = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         try AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: true).save()
+        UserDefaults.standard.set(true, forKey: "excludePrivateBrowsing")
         let store = SetupContinuationStore(directory: dir)
         try store.save(SetupContinuation(phase: .screen))
         let progress = try Data(contentsOf: store.fileURL)
@@ -476,6 +478,7 @@ struct AppConfigMigrationTests {
                 legacyConfigPaths: [], nativeSetupEnabled: true, continuationStore: blocked
             )
         }
+        #expect(UserDefaults.standard.object(forKey: "didRecordConfigPresence") == nil)
         #expect(UserDefaults.standard.object(forKey: "excludePrivateBrowsing") == nil)
         #expect(UserDefaults.standard.object(forKey: "didReseedCaptureSourcesOn") == nil)
         #expect(try blocked.loadChecked() == nil)
@@ -487,7 +490,8 @@ struct AppConfigMigrationTests {
         #expect(!config.isScreenCaptureEnabled)
         #expect(!config.isMicrophoneCaptureEnabled)
         #expect(try blocked.loadChecked()?.phase == .journal)
-        #expect(UserDefaults.standard.object(forKey: "excludePrivateBrowsing") != nil)
+        #expect(UserDefaults.standard.object(forKey: "didRecordConfigPresence") != nil)
+        #expect(UserDefaults.standard.object(forKey: "excludePrivateBrowsing") == nil)
         #expect(UserDefaults.standard.bool(forKey: "didReseedCaptureSourcesOn"))
     }
 
@@ -531,6 +535,7 @@ struct AppConfigMigrationTests {
             )
         }
         #expect(try Data(contentsOf: store.fileURL) == corrupt)
+        #expect(UserDefaults.standard.object(forKey: "didRecordConfigPresence") == nil)
         #expect(UserDefaults.standard.object(forKey: "excludePrivateBrowsing") == nil)
         #expect(UserDefaults.standard.object(forKey: "didReseedCaptureSourcesOn") == nil)
     }
@@ -547,6 +552,7 @@ struct AppConfigMigrationTests {
                 legacyConfigPaths: [], nativeSetupEnabled: true, continuationStore: store
             )
         }
+        #expect(UserDefaults.standard.object(forKey: "didRecordConfigPresence") == nil)
         #expect(UserDefaults.standard.object(forKey: "excludePrivateBrowsing") == nil)
         #expect(UserDefaults.standard.object(forKey: "didReseedCaptureSourcesOn") == nil)
         #expect((try store.fileURL.resourceValues(forKeys: [.isDirectoryKey])).isDirectory == true)
@@ -665,6 +671,8 @@ struct AppConfigMigrationTests {
             "didReseedCaptureSourcesOn",
             "didAddPasswordManagerExclusions",
             "didAdoptActivityFollowsScreen",
+            "didRecordConfigPresence",
+            "didFinishOwnerScalarConversion",
             "localRetentionMB"
         ] {
             UserDefaults.standard.removeObject(forKey: key)

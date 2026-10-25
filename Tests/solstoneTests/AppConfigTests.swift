@@ -272,4 +272,474 @@ struct AppConfigTests {
         let config = AppConfig.load(from: defaults)
         #expect(config.protectedVideoTitlePatterns == ["valid-pattern", "another-pattern"])
     }
+
+    // MARK: - Sparse Scalar Persistence
+
+    @Test func untouchedSaveOmitsOwnerScalarDefaults() throws {
+        let suiteName = "test.appconfig.sparse.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let config = AppConfig()
+        try config.save(to: defaults)
+
+        let convertedKeys = [
+            "isBrowserIntakeEnabled",
+            "excludePrivateBrowsing",
+            "excludePrivateBrowsingAccessibility",
+            "activityAccessibilityEnabled",
+            "syncPaused",
+            "debugSegments",
+            "preserveSyncedSegments",
+            "microphoneGain",
+            "silenceMusic",
+            "pauseForProtectedVideo",
+        ]
+        for key in convertedKeys {
+            #expect(defaults.object(forKey: key) == nil, "Expected \(key) to be omitted from defaults")
+        }
+
+        #expect(defaults.object(forKey: "isScreenCaptureEnabled") as? Bool == true)
+        #expect(defaults.object(forKey: "isMicrophoneCaptureEnabled") as? Bool == true)
+    }
+
+    @Test func explicitChoiceEqualToDefaultPersists() throws {
+        let suiteName = "test.appconfig.explicit.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var config = AppConfig()
+        config.excludePrivateBrowsing = true
+        config.microphoneGain = 2.0
+        try config.save(to: defaults)
+
+        let loaded = AppConfig.load(from: defaults)
+        #expect(defaults.object(forKey: "excludePrivateBrowsing") as? Bool == true)
+        #expect(defaults.object(forKey: "microphoneGain") as? Float == 2.0)
+
+        var updated = loaded
+        updated.serverURL = "https://journal.example.test"
+        try updated.save(to: defaults)
+
+        #expect(defaults.object(forKey: "excludePrivateBrowsing") as? Bool == true)
+        #expect(defaults.object(forKey: "microphoneGain") as? Float == 2.0)
+        #expect(defaults.object(forKey: "syncPaused") == nil)
+        #expect(updated.syncPaused == false)
+        #expect(updated.isBrowserIntakeEnabled == true)
+    }
+
+    @Test func freshNativeSetupAndUnqualifiedSetupOnSuite() throws {
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let absent = dir.appendingPathComponent("absent.json")
+        let contDir = dir.appendingPathComponent("continuation", isDirectory: true)
+
+        let suiteName = "test.appconfig.fresh.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let freshConfig = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: contDir,
+            nativeSetupEnabled: true,
+            defaults: defaults
+        )
+
+        #expect(!freshConfig.isScreenCaptureEnabled)
+        #expect(!freshConfig.isMicrophoneCaptureEnabled)
+        let store = SetupContinuationStore(directory: contDir)
+        #expect(try store.loadChecked()?.phase == .journal)
+        #expect(defaults.bool(forKey: "didRecordConfigPresence"))
+        #expect(defaults.bool(forKey: "didReseedCaptureSourcesOn"))
+        #expect(defaults.bool(forKey: "didAddPasswordManagerExclusions"))
+        #expect(defaults.bool(forKey: "didFinishOwnerScalarConversion"))
+        #expect(freshConfig.excludedApps == AppConfig.defaultExclusions)
+
+        let convertedKeys = [
+            "isBrowserIntakeEnabled", "excludePrivateBrowsing", "excludePrivateBrowsingAccessibility",
+            "activityAccessibilityEnabled", "syncPaused", "debugSegments",
+            "preserveSyncedSegments", "microphoneGain", "silenceMusic", "pauseForProtectedVideo"
+        ]
+        for key in convertedKeys {
+            #expect(defaults.object(forKey: key) == nil)
+        }
+
+        let beforeContinuation = try Data(contentsOf: store.fileURL)
+        let secondConfig = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: contDir,
+            nativeSetupEnabled: true,
+            defaults: defaults
+        )
+        #expect(!secondConfig.isScreenCaptureEnabled)
+        #expect(!secondConfig.isMicrophoneCaptureEnabled)
+        #expect(try Data(contentsOf: store.fileURL) == beforeContinuation)
+
+        // Unqualified fresh setup
+        let unqSuite = "test.appconfig.unqualified.\(UUID().uuidString)"
+        let unqDefaults = try #require(UserDefaults(suiteName: unqSuite))
+        defer { unqDefaults.removePersistentDomain(forName: unqSuite) }
+        let unqContDir = dir.appendingPathComponent("unqCont", isDirectory: true)
+
+        let unqConfig = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: unqContDir,
+            nativeSetupEnabled: false,
+            defaults: unqDefaults
+        )
+        #expect(unqConfig.isScreenCaptureEnabled)
+        #expect(unqConfig.isMicrophoneCaptureEnabled)
+        #expect(!FileManager.default.fileExists(atPath: SetupContinuationStore(directory: unqContDir).fileURL.path))
+        #expect(unqDefaults.bool(forKey: "didRecordConfigPresence"))
+
+        // Thrown continuation write leaves existence, completion, reseeds, and converted keys absent
+        let blockedSuite = "test.appconfig.blocked.\(UUID().uuidString)"
+        let blockedDefaults = try #require(UserDefaults(suiteName: blockedSuite))
+        defer { blockedDefaults.removePersistentDomain(forName: blockedSuite) }
+        let blockedDir = dir.appendingPathComponent("blockedCont", isDirectory: true)
+        let blockedStore = SetupContinuationStore(directory: blockedDir, replace: { _, _ in
+            throw CocoaError(.fileWriteNoPermission)
+        })
+
+        #expect(throws: CocoaError.self) {
+            try AppConfig.loadOrCreateDefault(
+                legacyConfigPaths: [absent],
+                continuationDirectory: blockedDir,
+                nativeSetupEnabled: true,
+                continuationStore: blockedStore,
+                defaults: blockedDefaults
+            )
+        }
+        #expect(blockedDefaults.object(forKey: "didRecordConfigPresence") == nil)
+        #expect(blockedDefaults.object(forKey: "didFinishOwnerScalarConversion") == nil)
+        #expect(blockedDefaults.object(forKey: "didReseedCaptureSourcesOn") == nil)
+        for key in convertedKeys {
+            #expect(blockedDefaults.object(forKey: key) == nil)
+        }
+
+        let retry = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: blockedDir,
+            nativeSetupEnabled: true,
+            continuationStore: SetupContinuationStore(directory: blockedDir),
+            defaults: blockedDefaults
+        )
+        #expect(!retry.isScreenCaptureEnabled)
+        #expect(!retry.isMicrophoneCaptureEnabled)
+        #expect(blockedDefaults.bool(forKey: "didRecordConfigPresence"))
+    }
+
+    @Test func preConversionDomainStripsFrozenDefaultsOnce() throws {
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let absent = dir.appendingPathComponent("absent.json")
+        let contDir = dir.appendingPathComponent("continuation", isDirectory: true)
+
+        let suiteName = "test.appconfig.preconversion.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(true, forKey: "isBrowserIntakeEnabled")
+        defaults.set(true, forKey: "excludePrivateBrowsing")
+        defaults.set(false, forKey: "excludePrivateBrowsingAccessibility")
+        defaults.set(false, forKey: "activityAccessibilityEnabled")
+        defaults.set(false, forKey: "syncPaused")
+        defaults.set(false, forKey: "debugSegments")
+        defaults.set(false, forKey: "preserveSyncedSegments")
+        defaults.set(Float(2.0), forKey: "microphoneGain")
+        defaults.set(true, forKey: "silenceMusic")
+        defaults.set(true, forKey: "pauseForProtectedVideo")
+
+        defaults.set(false, forKey: "isScreenCaptureEnabled")
+        defaults.set(true, forKey: "isMicrophoneCaptureEnabled")
+        defaults.set(try JSONEncoder().encode([MicrophoneEntry(uid: "mic-1", name: "Mic 1")]), forKey: "microphonePriority")
+        defaults.set(try JSONEncoder().encode([AppEntry(bundleID: "com.test.app", name: "Test App")]), forKey: "excludedApps")
+        defaults.set(["fixture-pattern"], forKey: "excludedTitlePatterns")
+        defaults.set(["protected-pattern"], forKey: "protectedVideoTitlePatterns")
+
+        let loaded = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: contDir,
+            defaults: defaults
+        )
+
+        let convertedKeys = [
+            "isBrowserIntakeEnabled", "excludePrivateBrowsing", "excludePrivateBrowsingAccessibility",
+            "activityAccessibilityEnabled", "syncPaused", "debugSegments",
+            "preserveSyncedSegments", "microphoneGain", "silenceMusic", "pauseForProtectedVideo"
+        ]
+        for key in convertedKeys {
+            #expect(defaults.object(forKey: key) == nil, "Expected \(key) to be removed during conversion")
+        }
+        #expect(defaults.bool(forKey: "didRecordConfigPresence"))
+        #expect(defaults.bool(forKey: "didFinishOwnerScalarConversion"))
+        #expect(!loaded.isScreenCaptureEnabled)
+        #expect(loaded.isMicrophoneCaptureEnabled)
+        #expect(loaded.microphonePriority.count == 1)
+        #expect(loaded.excludedApps.count == 1)
+        #expect(loaded.excludedTitlePatterns == ["fixture-pattern"])
+        #expect(loaded.protectedVideoTitlePatterns == ["protected-pattern"])
+
+        var updated = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: contDir,
+            defaults: defaults
+        )
+        updated.serverURL = "https://example.com"
+        try updated.save(to: defaults)
+        for key in convertedKeys {
+            #expect(defaults.object(forKey: key) == nil)
+        }
+
+        // Domain with only existence marker plus source keys stays existing and does not write continuation
+        let existSuite = "test.appconfig.existonly.\(UUID().uuidString)"
+        let existDefaults = try #require(UserDefaults(suiteName: existSuite))
+        defer { existDefaults.removePersistentDomain(forName: existSuite) }
+        let existContDir = dir.appendingPathComponent("existCont", isDirectory: true)
+
+        existDefaults.set(true, forKey: "didRecordConfigPresence")
+        existDefaults.set(true, forKey: "didFinishOwnerScalarConversion")
+        existDefaults.set(true, forKey: "isScreenCaptureEnabled")
+        existDefaults.set(true, forKey: "isMicrophoneCaptureEnabled")
+
+        _ = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: existContDir,
+            nativeSetupEnabled: true,
+            defaults: existDefaults
+        )
+        #expect(!FileManager.default.fileExists(atPath: SetupContinuationStore(directory: existContDir).fileURL.path))
+    }
+
+    @Test func mixedDomainKeepsNondefaultsAndUnreadable() throws {
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let absent = dir.appendingPathComponent("absent.json")
+        let contDir = dir.appendingPathComponent("continuation", isDirectory: true)
+
+        let suiteName = "test.appconfig.mixed.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(true, forKey: "excludePrivateBrowsing") // sentinel
+        defaults.set(true, forKey: "silenceMusic") // eligible default -> strip
+        defaults.set(true, forKey: "syncPaused") // nondefault -> keep
+        defaults.set("nope", forKey: "microphoneGain") // unreadable -> keep
+        defaults.set(true, forKey: "didAdoptActivityFollowsScreen")
+        defaults.set(true, forKey: "didReseedCaptureSourcesOn")
+        defaults.set(false, forKey: "activityTitlesEnabled") // owner choice
+
+        let config = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: contDir,
+            defaults: defaults
+        )
+
+        #expect(defaults.object(forKey: "silenceMusic") == nil)
+        #expect(defaults.object(forKey: "syncPaused") as? Bool == true)
+        #expect(defaults.object(forKey: "microphoneGain") as? String == "nope")
+        #expect(defaults.bool(forKey: "didAdoptActivityFollowsScreen"))
+        #expect(defaults.bool(forKey: "didReseedCaptureSourcesOn"))
+        #expect(defaults.object(forKey: "activityTitlesEnabled") as? Bool == false)
+        #expect(config.activityTitlesEnabled == false)
+
+        _ = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: contDir,
+            defaults: defaults
+        )
+        #expect(defaults.object(forKey: "syncPaused") as? Bool == true)
+        #expect(defaults.object(forKey: "microphoneGain") as? String == "nope")
+        #expect(defaults.object(forKey: "activityTitlesEnabled") as? Bool == false)
+    }
+
+    @Test func legacyJSONMigrationPreservesExplicitScalars() throws {
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let jsonURL = dir.appendingPathComponent("config.json")
+        let contDir = dir.appendingPathComponent("continuation", isDirectory: true)
+
+        let json = """
+        {
+            "serverURL": "https://journal.test",
+            "serverKey": "key-123",
+            "excludePrivateBrowsing": true,
+            "microphoneGain": 2.0
+        }
+        """
+        try Data(json.utf8).write(to: jsonURL)
+
+        let suiteName = "test.appconfig.json.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let migrated = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [jsonURL],
+            continuationDirectory: contDir,
+            defaults: defaults
+        )
+
+        #expect(migrated.serverURL == "https://journal.test")
+        #expect(migrated.serverKey == "key-123")
+        #expect(defaults.object(forKey: "excludePrivateBrowsing") as? Bool == true)
+        #expect(defaults.object(forKey: "microphoneGain") as? Float == 2.0)
+        #expect(defaults.object(forKey: "syncPaused") == nil)
+        #expect(defaults.object(forKey: "silenceMusic") == nil)
+        #expect(defaults.object(forKey: "isScreenCaptureEnabled") as? Bool == true)
+        #expect(defaults.object(forKey: "isMicrophoneCaptureEnabled") as? Bool == true)
+
+        let absent = dir.appendingPathComponent("absent.json")
+        let second = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: contDir,
+            nativeSetupEnabled: true,
+            defaults: defaults
+        )
+        #expect(!FileManager.default.fileExists(atPath: SetupContinuationStore(directory: contDir).fileURL.path))
+        #expect(second.serverURL == "https://journal.test")
+        #expect(second.serverKey == "key-123")
+        #expect(defaults.object(forKey: "excludePrivateBrowsing") as? Bool == true)
+        #expect(defaults.object(forKey: "microphoneGain") as? Float == 2.0)
+    }
+
+    @Test func interruptedDomainRecordingUserDefaults() throws {
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let absent = dir.appendingPathComponent("absent.json")
+        let contDir = dir.appendingPathComponent("continuation", isDirectory: true)
+
+        // Finish case
+        let finishSuite = "test.appconfig.finish.\(UUID().uuidString)"
+        let finishRecorder = try #require(RecordingUserDefaults(suiteName: finishSuite))
+        defer { finishRecorder.removePersistentDomain(forName: finishSuite) }
+        #expect(type(of: finishRecorder) == RecordingUserDefaults.self)
+
+        finishRecorder.set(true, forKey: "didRecordConfigPresence")
+        finishRecorder.set(true, forKey: "silenceMusic")
+        finishRecorder.set(false, forKey: "debugSegments")
+        finishRecorder.set(true, forKey: "syncPaused")
+        finishRecorder.set(false, forKey: "isScreenCaptureEnabled")
+        finishRecorder.set(true, forKey: "isMicrophoneCaptureEnabled")
+        finishRecorder.set(true, forKey: "didMigrateFromJSON")
+        finishRecorder.set(true, forKey: "didAdoptActivityFollowsScreen")
+        finishRecorder.set(true, forKey: "didReseedCaptureSourcesOn")
+        finishRecorder.set(true, forKey: "didReseedOptInMicrophones")
+        finishRecorder.set(["bt-1"], forKey: "reseededBluetoothMicrophoneUIDs")
+        finishRecorder.set(true, forKey: "didAddPasswordManagerExclusions")
+        finishRecorder.set(false, forKey: "activityTitlesEnabled")
+
+        let finishConfig = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: contDir,
+            nativeSetupEnabled: true,
+            defaults: finishRecorder
+        )
+
+        #expect(finishRecorder.object(forKey: "silenceMusic") == nil)
+        #expect(finishRecorder.object(forKey: "debugSegments") == nil)
+        #expect(finishRecorder.bool(forKey: "didFinishOwnerScalarConversion"))
+        #expect(!finishConfig.isScreenCaptureEnabled)
+        #expect(finishConfig.isMicrophoneCaptureEnabled)
+        #expect(finishConfig.syncPaused == true)
+        #expect(finishConfig.activityTitlesEnabled == false)
+        #expect(finishRecorder.bool(forKey: "didMigrateFromJSON"))
+        #expect(finishRecorder.bool(forKey: "didAdoptActivityFollowsScreen"))
+        #expect(finishRecorder.bool(forKey: "didReseedCaptureSourcesOn"))
+        #expect(finishRecorder.bool(forKey: "didReseedOptInMicrophones"))
+        #expect(finishRecorder.stringArray(forKey: "reseededBluetoothMicrophoneUIDs") == ["bt-1"])
+        #expect(finishRecorder.bool(forKey: "didAddPasswordManagerExclusions"))
+        #expect(!FileManager.default.fileExists(atPath: SetupContinuationStore(directory: contDir).fileURL.path))
+
+        // Order case
+        let orderSuite = "test.appconfig.order.\(UUID().uuidString)"
+        let orderRecorder = try #require(RecordingUserDefaults(suiteName: orderSuite))
+        defer { orderRecorder.removePersistentDomain(forName: orderSuite) }
+        let orderContDir = dir.appendingPathComponent("orderCont", isDirectory: true)
+
+        orderRecorder.set(true, forKey: "excludePrivateBrowsing") // sentinel
+        orderRecorder.set(true, forKey: "isBrowserIntakeEnabled")
+        orderRecorder.set(false, forKey: "excludePrivateBrowsingAccessibility")
+        orderRecorder.set(false, forKey: "activityAccessibilityEnabled")
+        orderRecorder.set(false, forKey: "syncPaused")
+        orderRecorder.set(false, forKey: "debugSegments")
+        orderRecorder.set(false, forKey: "preserveSyncedSegments")
+        orderRecorder.set(Float(2.0), forKey: "microphoneGain")
+        orderRecorder.set(true, forKey: "silenceMusic")
+        orderRecorder.set(true, forKey: "pauseForProtectedVideo")
+        orderRecorder.set(true, forKey: "didMigrateFromJSON")
+
+        orderRecorder.recordedEvents.removeAll()
+
+        _ = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [absent],
+            continuationDirectory: orderContDir,
+            defaults: orderRecorder
+        )
+
+        #expect(!orderRecorder.recordedEvents.isEmpty)
+        let presenceIdx = try #require(orderRecorder.recordedEvents.firstIndex(where: {
+            $0 == .setBool("didRecordConfigPresence", true) || $0 == .setAny("didRecordConfigPresence")
+        }))
+        let removeSentinelIdx = try #require(orderRecorder.recordedEvents.firstIndex(where: {
+            $0 == .remove("excludePrivateBrowsing")
+        }))
+        let completionIdx = try #require(orderRecorder.recordedEvents.lastIndex(where: {
+            $0 == .setBool("didFinishOwnerScalarConversion", true) || $0 == .setAny("didFinishOwnerScalarConversion")
+        }))
+
+        let convertedKeySet = Set([
+            "isBrowserIntakeEnabled", "excludePrivateBrowsing", "excludePrivateBrowsingAccessibility",
+            "activityAccessibilityEnabled", "syncPaused", "debugSegments",
+            "preserveSyncedSegments", "microphoneGain", "silenceMusic", "pauseForProtectedVideo"
+        ])
+        let lastRemovalIdx = try #require(orderRecorder.recordedEvents.lastIndex(where: {
+            if case .remove(let key) = $0 { return convertedKeySet.contains(key) }
+            return false
+        }))
+
+        #expect(presenceIdx < removeSentinelIdx)
+        #expect(completionIdx > lastRemovalIdx)
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("solstone-appconfig-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+}
+
+private final class RecordingUserDefaults: UserDefaults, @unchecked Sendable {
+    enum Event: Equatable {
+        case setAny(String)
+        case setBool(String, Bool)
+        case setFloat(String, Float)
+        case remove(String)
+    }
+
+    var recordedEvents: [Event] = []
+
+    override init?(suiteName suitename: String?) {
+        super.init(suiteName: suitename)
+    }
+
+    override func set(_ value: Any?, forKey defaultName: String) {
+        recordedEvents.append(.setAny(defaultName))
+        super.set(value, forKey: defaultName)
+    }
+
+    override func set(_ value: Bool, forKey defaultName: String) {
+        recordedEvents.append(.setBool(defaultName, value))
+        super.set(value, forKey: defaultName)
+    }
+
+    override func set(_ value: Float, forKey defaultName: String) {
+        recordedEvents.append(.setFloat(defaultName, value))
+        super.set(value, forKey: defaultName)
+    }
+
+    override func removeObject(forKey defaultName: String) {
+        recordedEvents.append(.remove(defaultName))
+        super.removeObject(forKey: defaultName)
+    }
 }

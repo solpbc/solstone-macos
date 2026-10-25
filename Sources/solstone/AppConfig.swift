@@ -198,6 +198,8 @@ public struct AppConfig: Sendable {
         static let didReseedCaptureSourcesOn = "didReseedCaptureSourcesOn"
         static let didAddPasswordManagerExclusions = "didAddPasswordManagerExclusions"
         static let didAdoptActivityFollowsScreen = "didAdoptActivityFollowsScreen"
+        static let didRecordConfigPresence = "didRecordConfigPresence"
+        static let didFinishOwnerScalarConversion = "didFinishOwnerScalarConversion"
     }
 
     // MARK: - Activity
@@ -232,7 +234,11 @@ public struct AppConfig: Sendable {
     }
 
     /// The Accessibility reader for activity is its own permission ask, off until the owner turns it on.
-    public var activityAccessibilityEnabled: Bool = false
+    private var activityAccessibilityChoice: Bool?
+    public var activityAccessibilityEnabled: Bool {
+        get { activityAccessibilityChoice ?? false }
+        set { activityAccessibilityChoice = newValue }
+    }
 
     /// Activity runs with screen, or on its own when the owner keeps it on through pause.
     public var isActivitySourceOn: Bool {
@@ -258,8 +264,12 @@ public struct AppConfig: Sendable {
     /// When true, microphone capture is enabled by the owner
     public var isMicrophoneCaptureEnabled: Bool
 
+    private var isBrowserIntakeChoice: Bool?
     /// When true, browser-host intake is enabled for the owner.
-    public var isBrowserIntakeEnabled: Bool
+    public var isBrowserIntakeEnabled: Bool {
+        get { isBrowserIntakeChoice ?? true }
+        set { isBrowserIntakeChoice = newValue }
+    }
 
     /// Returns the active capture sources selected by the owner
     public var selectedSources: CaptureSources {
@@ -283,14 +293,22 @@ public struct AppConfig: Sendable {
     /// Example: "reddit" will exclude any window with "reddit" in the title
     public var excludedTitlePatterns: [String]
 
+    private var excludePrivateBrowsingChoice: Bool?
     /// Exclude private browser windows, detected by a marker in the window title.
     /// Only Firefox shows one on the Mac (measured), so owner copy names only Firefox.
-    public var excludePrivateBrowsing: Bool
+    public var excludePrivateBrowsing: Bool {
+        get { excludePrivateBrowsingChoice ?? true }
+        set { excludePrivateBrowsingChoice = newValue }
+    }
 
+    private var excludePrivateBrowsingAccessibilityChoice: Bool?
     /// Also match Safari, Chrome, Edge and Brave private windows by their Accessibility titles.
     /// Off unless the owner turns it on in the private-window setting, the only place the
     /// Accessibility permission is ever asked for.
-    public var excludePrivateBrowsingAccessibility: Bool
+    public var excludePrivateBrowsingAccessibility: Bool {
+        get { excludePrivateBrowsingAccessibilityChoice ?? false }
+        set { excludePrivateBrowsingAccessibilityChoice = newValue }
+    }
 
     // MARK: - Server Upload Configuration
 
@@ -300,20 +318,40 @@ public struct AppConfig: Sendable {
     /// API key for observer server authentication
     public var serverKey: String?
 
+    private var syncPausedChoice: Bool?
     /// When true, syncing is paused (uploads skipped, but segments still recorded locally)
-    public var syncPaused: Bool
+    public var syncPaused: Bool {
+        get { syncPausedChoice ?? false }
+        set { syncPausedChoice = newValue }
+    }
 
+    private var debugSegmentsChoice: Bool?
     /// When true, use 1-minute segments instead of 5-minute (for testing)
-    public var debugSegments: Bool
+    public var debugSegments: Bool {
+        get { debugSegmentsChoice ?? false }
+        set { debugSegmentsChoice = newValue }
+    }
 
+    private var preserveSyncedSegmentsChoice: Bool?
     /// When true, a segment the journal confirmed is moved to the preserved-segments folder instead of being removed
-    public var preserveSyncedSegments: Bool
+    public var preserveSyncedSegments: Bool {
+        get { preserveSyncedSegmentsChoice ?? false }
+        set { preserveSyncedSegmentsChoice = newValue }
+    }
 
+    private var microphoneGainChoice: Float?
     /// Microphone gain multiplier (1.0 to 8.0). Default: 2.0
-    public var microphoneGain: Float
+    public var microphoneGain: Float {
+        get { microphoneGainChoice ?? 2.0 }
+        set { microphoneGainChoice = newValue }
+    }
 
+    private var silenceMusicChoice: Bool?
     /// When true, silence music-only portions of system audio during remix. Default: true
-    public var silenceMusic: Bool
+    public var silenceMusic: Bool {
+        get { silenceMusicChoice ?? true }
+        set { silenceMusicChoice = newValue }
+    }
 
     /// Configured service mode. Nil means no mode has been explicitly selected yet.
     public var serviceMode: ServiceMode?
@@ -324,8 +362,12 @@ public struct AppConfig: Sendable {
     /// Journal-assigned observer name returned during registration.
     public var observerName: String?
 
+    private var pauseForProtectedVideoChoice: Bool?
     /// When true, pause capture while protected video is on screen. Default: true
-    public var pauseForProtectedVideo: Bool
+    public var pauseForProtectedVideo: Bool {
+        get { pauseForProtectedVideoChoice ?? true }
+        set { pauseForProtectedVideoChoice = newValue }
+    }
 
     /// User-defined window title patterns for protected video detection.
     public var protectedVideoTitlePatterns: [String]
@@ -360,45 +402,45 @@ public struct AppConfig: Sendable {
     public init(
         isScreenCaptureEnabled: Bool = true,
         isMicrophoneCaptureEnabled: Bool = true,
-        isBrowserIntakeEnabled: Bool = true,
+        isBrowserIntakeEnabled: Bool? = nil,
         microphonePriority: [MicrophoneEntry] = [],
         excludedApps: [AppEntry] = [],
         excludedTitlePatterns: [String] = [],
-        excludePrivateBrowsing: Bool = true,
-        excludePrivateBrowsingAccessibility: Bool = false,
+        excludePrivateBrowsing: Bool? = nil,
+        excludePrivateBrowsingAccessibility: Bool? = nil,
         serverURL: String? = nil,
         serverKey: String? = nil,
-        syncPaused: Bool = false,
-        debugSegments: Bool = false,
-        preserveSyncedSegments: Bool = false,
-        microphoneGain: Float = 2.0,
-        silenceMusic: Bool = true,
+        syncPaused: Bool? = nil,
+        debugSegments: Bool? = nil,
+        preserveSyncedSegments: Bool? = nil,
+        microphoneGain: Float? = nil,
+        silenceMusic: Bool? = nil,
         serviceMode: ServiceMode? = nil,
         journalPath: String? = nil,
         observerName: String? = nil,
-        pauseForProtectedVideo: Bool = true,
+        pauseForProtectedVideo: Bool? = nil,
         protectedVideoTitlePatterns: [String] = [],
         pauseShortcut: PauseShortcutChord? = nil
     ) {
         self.isScreenCaptureEnabled = isScreenCaptureEnabled
         self.isMicrophoneCaptureEnabled = isMicrophoneCaptureEnabled
-        self.isBrowserIntakeEnabled = isBrowserIntakeEnabled
+        self.isBrowserIntakeChoice = isBrowserIntakeEnabled
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
         self.excludedTitlePatterns = excludedTitlePatterns
-        self.excludePrivateBrowsing = excludePrivateBrowsing
-        self.excludePrivateBrowsingAccessibility = excludePrivateBrowsingAccessibility
+        self.excludePrivateBrowsingChoice = excludePrivateBrowsing
+        self.excludePrivateBrowsingAccessibilityChoice = excludePrivateBrowsingAccessibility
         self.serverURL = serverURL
         self.serverKey = serverKey
-        self.syncPaused = syncPaused
-        self.debugSegments = debugSegments
-        self.preserveSyncedSegments = preserveSyncedSegments
-        self.microphoneGain = microphoneGain
-        self.silenceMusic = silenceMusic
+        self.syncPausedChoice = syncPaused
+        self.debugSegmentsChoice = debugSegments
+        self.preserveSyncedSegmentsChoice = preserveSyncedSegments
+        self.microphoneGainChoice = microphoneGain
+        self.silenceMusicChoice = silenceMusic
         self.serviceMode = serviceMode
         self.journalPath = journalPath
         self.observerName = observerName
-        self.pauseForProtectedVideo = pauseForProtectedVideo
+        self.pauseForProtectedVideoChoice = pauseForProtectedVideo
         self.protectedVideoTitlePatterns = protectedVideoTitlePatterns
         self.pauseShortcut = pauseShortcut
     }
@@ -453,23 +495,23 @@ public struct AppConfig: Sendable {
         let config = AppConfig(
             isScreenCaptureEnabled: defaults.object(forKey: Keys.isScreenCaptureEnabled) as? Bool ?? true,
             isMicrophoneCaptureEnabled: defaults.object(forKey: Keys.isMicrophoneCaptureEnabled) as? Bool ?? true,
-            isBrowserIntakeEnabled: defaults.object(forKey: Keys.isBrowserIntakeEnabled) as? Bool ?? true,
+            isBrowserIntakeEnabled: defaults.object(forKey: Keys.isBrowserIntakeEnabled) as? Bool,
             microphonePriority: microphonePriority,
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
-            excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool ?? true,
-            excludePrivateBrowsingAccessibility: defaults.bool(forKey: Keys.excludePrivateBrowsingAccessibility),
+            excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool,
+            excludePrivateBrowsingAccessibility: defaults.object(forKey: Keys.excludePrivateBrowsingAccessibility) as? Bool,
             serverURL: serverURL,
             serverKey: isSavedTunnelPort ? nil : defaults.string(forKey: Keys.serverKey),
-            syncPaused: defaults.bool(forKey: Keys.syncPaused),
-            debugSegments: defaults.bool(forKey: Keys.debugSegments),
-            preserveSyncedSegments: defaults.bool(forKey: Keys.preserveSyncedSegments),
-            microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float ?? 2.0,
-            silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool ?? true,
+            syncPaused: defaults.object(forKey: Keys.syncPaused) as? Bool,
+            debugSegments: defaults.object(forKey: Keys.debugSegments) as? Bool,
+            preserveSyncedSegments: defaults.object(forKey: Keys.preserveSyncedSegments) as? Bool,
+            microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float,
+            silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool,
             serviceMode: serviceMode,
             journalPath: defaults.string(forKey: Keys.journalPath),
             observerName: defaults.string(forKey: Keys.observerName),
-            pauseForProtectedVideo: defaults.object(forKey: Keys.pauseForProtectedVideo) as? Bool ?? true,
+            pauseForProtectedVideo: defaults.object(forKey: Keys.pauseForProtectedVideo) as? Bool,
             protectedVideoTitlePatterns: protectedPatterns,
             pauseShortcut: pauseShortcut
         )
@@ -478,21 +520,82 @@ public struct AppConfig: Sendable {
         activityConfig.activityTitlesChoice = defaults.object(forKey: Keys.activityTitlesEnabled) as? Bool
         activityConfig.activityURLsChoice = defaults.object(forKey: Keys.activityURLsEnabled) as? Bool
         activityConfig.activityThroughPauseChoice = defaults.object(forKey: Keys.activityContinuesThroughPause) as? Bool
-        activityConfig.activityAccessibilityEnabled = defaults.bool(forKey: Keys.activityAccessibilityEnabled)
+        activityConfig.activityAccessibilityChoice = defaults.object(forKey: Keys.activityAccessibilityEnabled) as? Bool
         return activityConfig
     }
 
     /// One-shot: builds before activity followed screen saved the activity switch, window titles
     /// and browser addresses as off whether or not the owner chose that, so a saved value can't be
     /// told apart from a choice. Those three are discarded once, and read as the current defaults.
-    /// The Accessibility permission choice and everything else stay as saved. A choice the owner
-    /// makes after this runs is kept.
+    /// Adoption still leaves the Accessibility permission choice alone; an inherited stored false
+    /// is a materialized default that scalar conversion removes once. An owner choice after that stays.
     internal static func adoptActivityFollowsScreenIfNeeded(_ defaults: UserDefaults = .standard) {
         guard !defaults.bool(forKey: Keys.didAdoptActivityFollowsScreen) else { return }
         for key in [Keys.isActivityEnabled, Keys.activityTitlesEnabled, Keys.activityURLsEnabled] {
             defaults.removeObject(forKey: key)
         }
         defaults.set(true, forKey: Keys.didAdoptActivityFollowsScreen)
+    }
+
+    // Frozen default values for scalar settings. A later change to getter defaults
+    // must NOT edit these constants; they represent the defaults at the time of scalar conversion.
+    private static let frozenBrowserIntakeDefault: Bool = true
+    private static let frozenExcludePrivateBrowsingDefault: Bool = true
+    private static let frozenExcludePrivateBrowsingAccessibilityDefault: Bool = false
+    private static let frozenActivityAccessibilityDefault: Bool = false
+    private static let frozenSyncPausedDefault: Bool = false
+    private static let frozenDebugSegmentsDefault: Bool = false
+    private static let frozenPreserveSyncedSegmentsDefault: Bool = false
+    private static let frozenMicrophoneGainDefault: Float = 2.0
+    private static let frozenSilenceMusicDefault: Bool = true
+    private static let frozenPauseForProtectedVideoDefault: Bool = true
+
+    internal static func convertMaterializedScalarDefaultsIfNeeded(
+        _ defaults: UserDefaults,
+        preserving: Set<String> = []
+    ) {
+        guard !defaults.bool(forKey: Keys.didFinishOwnerScalarConversion) else { return }
+
+        if defaults.object(forKey: Keys.didRecordConfigPresence) == nil {
+            defaults.set(true, forKey: Keys.didRecordConfigPresence)
+        }
+
+        let boolConversions: [(String, Bool)] = [
+            (Keys.isBrowserIntakeEnabled, frozenBrowserIntakeDefault),
+            (Keys.excludePrivateBrowsing, frozenExcludePrivateBrowsingDefault),
+            (Keys.excludePrivateBrowsingAccessibility, frozenExcludePrivateBrowsingAccessibilityDefault),
+            (Keys.activityAccessibilityEnabled, frozenActivityAccessibilityDefault),
+            (Keys.syncPaused, frozenSyncPausedDefault),
+            (Keys.debugSegments, frozenDebugSegmentsDefault),
+            (Keys.preserveSyncedSegments, frozenPreserveSyncedSegmentsDefault),
+            (Keys.silenceMusic, frozenSilenceMusicDefault),
+            (Keys.pauseForProtectedVideo, frozenPauseForProtectedVideoDefault)
+        ]
+
+        for (key, frozenDefault) in boolConversions where !preserving.contains(key) {
+            guard let object = defaults.object(forKey: key) else { continue }
+            if let value = object as? Bool {
+                if value == frozenDefault {
+                    defaults.removeObject(forKey: key)
+                }
+            } else {
+                Logger.general.warning("Stored setting \(key, privacy: .public) does not cast to Bool, leaving untouched")
+            }
+        }
+
+        if !preserving.contains(Keys.microphoneGain) {
+            if let object = defaults.object(forKey: Keys.microphoneGain) {
+                if let value = object as? Float {
+                    if value == frozenMicrophoneGainDefault {
+                        defaults.removeObject(forKey: Keys.microphoneGain)
+                    }
+                } else {
+                    Logger.general.warning("Stored setting \(Keys.microphoneGain, privacy: .public) does not cast to Float, leaving untouched")
+                }
+            }
+        }
+
+        defaults.set(true, forKey: Keys.didFinishOwnerScalarConversion)
     }
 
     /// Loads config or creates with defaults if missing
@@ -502,32 +605,43 @@ public struct AppConfig: Sendable {
         log: any ClassifiedLogSinking = LoggerClassifiedLogSink.general,
         continuationDirectory: URL? = nil,
         nativeSetupEnabled: Bool = false,
-        continuationStore: SetupContinuationStore? = nil
+        continuationStore: SetupContinuationStore? = nil,
+        defaults: UserDefaults = .standard
     ) throws -> AppConfig {
-        let defaults = UserDefaults.standard
         let legacyConfigPaths = legacyConfigPaths ?? productionLegacyConfigPaths
-        var config: AppConfig?
 
         // Before anything below can save, so no old activity value is carried forward.
         adoptActivityFollowsScreenIfNeeded(defaults)
 
+        let isExistingDomain = defaults.object(forKey: Keys.didRecordConfigPresence) != nil ||
+            (defaults.object(forKey: Keys.didFinishOwnerScalarConversion) == nil && defaults.object(forKey: Keys.excludePrivateBrowsing) != nil)
+
+        var migratedConfig: AppConfig?
+        var jsonPreserving: Set<String> = []
+
         // Check for migration from JSON config
         if !defaults.bool(forKey: Keys.didMigrateFromJSON) {
-            if let migrated = migrateFromJSON(legacyConfigPaths: legacyConfigPaths, log: log) {
-                config = migrated
+            if let (migrated, preserving) = migrateFromJSON(
+                legacyConfigPaths: legacyConfigPaths,
+                log: log,
+                defaults: defaults,
+                isExistingDomain: isExistingDomain
+            ) {
+                migratedConfig = migrated
+                jsonPreserving = preserving
             } else {
                 // Mark migration as complete even if no file existed
                 defaults.set(true, forKey: Keys.didMigrateFromJSON)
             }
         }
 
-        if let config {
-            return config
-        }
-
-        // Check if we have any config stored
-        if defaults.object(forKey: Keys.excludePrivateBrowsing) != nil {
-            return load()
+        // Recognize an existing install: presence marker, or legacy sentinel until conversion finishes.
+        if migratedConfig != nil || isExistingDomain {
+            convertMaterializedScalarDefaultsIfNeeded(defaults, preserving: jsonPreserving)
+            if let migratedConfig {
+                return migratedConfig
+            }
+            return load(from: defaults)
         }
 
         if nativeSetupEnabled {
@@ -545,9 +659,11 @@ public struct AppConfig: Sendable {
             isMicrophoneCaptureEnabled: !nativeSetupEnabled
         )
         defaultConfig.excludedApps = defaultExclusions
-        try defaultConfig.save()
+        try defaultConfig.save(to: defaults)
+        defaults.set(true, forKey: Keys.didRecordConfigPresence)
         defaults.set(true, forKey: Keys.didReseedCaptureSourcesOn)
         defaults.set(true, forKey: Keys.didAddPasswordManagerExclusions)
+        defaults.set(true, forKey: Keys.didFinishOwnerScalarConversion)
         Logger.general.info("Created default config in UserDefaults")
         return defaultConfig
     }
@@ -562,10 +678,10 @@ public struct AppConfig: Sendable {
         ] {
             if let choice { defaults.set(choice, forKey: key) } else { defaults.removeObject(forKey: key) }
         }
-        defaults.set(activityAccessibilityEnabled, forKey: Keys.activityAccessibilityEnabled)
+        saveScalarChoice(activityAccessibilityChoice, forKey: Keys.activityAccessibilityEnabled, in: defaults)
         defaults.set(isScreenCaptureEnabled, forKey: Keys.isScreenCaptureEnabled)
         defaults.set(isMicrophoneCaptureEnabled, forKey: Keys.isMicrophoneCaptureEnabled)
-        defaults.set(isBrowserIntakeEnabled, forKey: Keys.isBrowserIntakeEnabled)
+        saveScalarChoice(isBrowserIntakeChoice, forKey: Keys.isBrowserIntakeEnabled, in: defaults)
 
         // Save complex types as JSON data
         if let data = try? JSONEncoder().encode(microphonePriority) {
@@ -576,8 +692,8 @@ public struct AppConfig: Sendable {
         }
 
         defaults.set(excludedTitlePatterns, forKey: Keys.excludedTitlePatterns)
-        defaults.set(excludePrivateBrowsing, forKey: Keys.excludePrivateBrowsing)
-        defaults.set(excludePrivateBrowsingAccessibility, forKey: Keys.excludePrivateBrowsingAccessibility)
+        saveScalarChoice(excludePrivateBrowsingChoice, forKey: Keys.excludePrivateBrowsing, in: defaults)
+        saveScalarChoice(excludePrivateBrowsingAccessibilityChoice, forKey: Keys.excludePrivateBrowsingAccessibility, in: defaults)
         defaults.set(serverURL, forKey: Keys.serverURL)
         defaults.set(serverKey, forKey: Keys.serverKey)
         if let serviceMode {
@@ -595,17 +711,37 @@ public struct AppConfig: Sendable {
         } else {
             defaults.removeObject(forKey: Keys.observerName)
         }
-        defaults.set(syncPaused, forKey: Keys.syncPaused)
-        defaults.set(debugSegments, forKey: Keys.debugSegments)
-        defaults.set(preserveSyncedSegments, forKey: Keys.preserveSyncedSegments)
-        defaults.set(microphoneGain, forKey: Keys.microphoneGain)
-        defaults.set(silenceMusic, forKey: Keys.silenceMusic)
-        defaults.set(pauseForProtectedVideo, forKey: Keys.pauseForProtectedVideo)
+        saveScalarChoice(syncPausedChoice, forKey: Keys.syncPaused, in: defaults)
+        saveScalarChoice(debugSegmentsChoice, forKey: Keys.debugSegments, in: defaults)
+        saveScalarChoice(preserveSyncedSegmentsChoice, forKey: Keys.preserveSyncedSegments, in: defaults)
+        saveScalarChoice(microphoneGainChoice, forKey: Keys.microphoneGain, in: defaults)
+        saveScalarChoice(silenceMusicChoice, forKey: Keys.silenceMusic, in: defaults)
+        saveScalarChoice(pauseForProtectedVideoChoice, forKey: Keys.pauseForProtectedVideo, in: defaults)
         defaults.set(protectedVideoTitlePatterns, forKey: Keys.protectedVideoTitlePatterns)
         if let pauseShortcut {
             defaults.set(pauseShortcut.encodedString, forKey: Keys.pauseShortcut)
         } else {
             defaults.removeObject(forKey: Keys.pauseShortcut)
+        }
+    }
+
+    private func saveScalarChoice(_ choice: Bool?, forKey key: String, in defaults: UserDefaults) {
+        if let choice {
+            defaults.set(choice, forKey: key)
+        } else if let existing = defaults.object(forKey: key) {
+            if existing as? Bool != nil {
+                defaults.removeObject(forKey: key)
+            }
+        }
+    }
+
+    private func saveScalarChoice(_ choice: Float?, forKey key: String, in defaults: UserDefaults) {
+        if let choice {
+            defaults.set(choice, forKey: key)
+        } else if let existing = defaults.object(forKey: key) {
+            if existing as? Float != nil {
+                defaults.removeObject(forKey: key)
+            }
         }
     }
 
@@ -629,10 +765,10 @@ public struct AppConfig: Sendable {
     /// Migrates from legacy JSON config if present
     private static func migrateFromJSON(
         legacyConfigPaths pathsToTry: [URL],
-        log: any ClassifiedLogSinking
-    ) -> AppConfig? {
-        let defaults = UserDefaults.standard
-
+        log: any ClassifiedLogSinking,
+        defaults: UserDefaults,
+        isExistingDomain: Bool
+    ) -> (AppConfig, Set<String>)? {
         for path in pathsToTry {
             guard FileManager.default.fileExists(atPath: path.path) else {
                 continue
@@ -650,19 +786,32 @@ public struct AppConfig: Sendable {
                     microphonePriority: legacyConfig.microphonePriority ?? [],
                     excludedApps: legacyConfig.excludedApps ?? [],
                     excludedTitlePatterns: legacyConfig.excludedTitlePatterns ?? [],
-                    excludePrivateBrowsing: legacyConfig.excludePrivateBrowsing ?? true,
+                    excludePrivateBrowsing: legacyConfig.excludePrivateBrowsing,
                     serverURL: legacyConfig.serverURL,
                     serverKey: legacyConfig.serverKey,
-                    syncPaused: legacyConfig.syncPaused ?? false,
-                    debugSegments: legacyConfig.debugSegments ?? false,
-                    microphoneGain: legacyConfig.microphoneGain ?? 2.0,
-                    silenceMusic: legacyConfig.silenceMusic ?? true,
-                    pauseForProtectedVideo: legacyConfig.pauseForProtectedVideo ?? true,
+                    syncPaused: legacyConfig.syncPaused,
+                    debugSegments: legacyConfig.debugSegments,
+                    microphoneGain: legacyConfig.microphoneGain,
+                    silenceMusic: legacyConfig.silenceMusic,
+                    pauseForProtectedVideo: legacyConfig.pauseForProtectedVideo,
                     protectedVideoTitlePatterns: legacyProtectedPatterns
                 )
 
-                try config.save()
+                if isExistingDomain {
+                    defaults.set(true, forKey: Keys.didRecordConfigPresence)
+                }
+
+                try config.save(to: defaults)
                 defaults.set(true, forKey: Keys.didMigrateFromJSON)
+
+                var preserving: Set<String> = []
+                if legacyConfig.excludePrivateBrowsing != nil { preserving.insert(Keys.excludePrivateBrowsing) }
+                if legacyConfig.syncPaused != nil { preserving.insert(Keys.syncPaused) }
+                if legacyConfig.debugSegments != nil { preserving.insert(Keys.debugSegments) }
+                if legacyConfig.microphoneGain != nil { preserving.insert(Keys.microphoneGain) }
+                if legacyConfig.silenceMusic != nil { preserving.insert(Keys.silenceMusic) }
+                if legacyConfig.pauseForProtectedVideo != nil { preserving.insert(Keys.pauseForProtectedVideo) }
+
                 log.emit(
                     ClassifiedLogEmission(
                         level: .info,
@@ -675,7 +824,7 @@ public struct AppConfig: Sendable {
                 let backupPath = path.appendingPathExtension("migrated")
                 try? FileManager.default.moveItem(at: path, to: backupPath)
 
-                return config
+                return (config, preserving)
             } catch {
                 log.emit(
                     ClassifiedLogEmission(

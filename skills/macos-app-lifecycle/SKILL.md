@@ -79,7 +79,7 @@ Two shutdown paths:
 
 `AppConfig.swift` — struct with `save()`/`load()` methods.
 
-**UserDefaults:** All settings including server key. Complex types (`microphonePriority: [MicrophoneEntry]`, `excludedApps: [AppEntry]`) are JSON-encoded to `Data` before storing.
+**UserDefaults:** Settings live here, including the server key. A scalar is stored only when the owner has set it; a missing key reads the code default. Screen and microphone choices are stored on every save. Complex types (`microphonePriority: [MicrophoneEntry]`, `excludedApps: [AppEntry]`) are JSON-encoded to `Data` before storing.
 
 **Auto-saving:** SettingsView uses `Binding(get:set:)` that calls `appState.updateConfig()` on every set — updates in-memory state, propagates to managers, persists.
 
