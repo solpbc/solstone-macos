@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- when someone ends a Screen Sharing session with your mac, your journal no longer gets a run of one-second segments. thanks @dvanduzer.
+
 ## [2.0.47] - 2026-10-24
 
 ### Changed
