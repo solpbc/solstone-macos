@@ -239,6 +239,11 @@ public struct AppConfig: Sendable {
         isActivityEnabled && (activityContinuesThroughPause || isScreenCaptureEnabled)
     }
 
+    /// Activity is on and the owner keeps it running through pause.
+    public var isActivityKeptOnThroughPause: Bool {
+        isActivityEnabled && activityContinuesThroughPause
+    }
+
     /// The owner's pause or stop holds activity, as it holds audio, unless activity is kept on through pause.
     public func activityHeld(paused: Bool, stopped: Bool) -> Bool {
         !activityContinuesThroughPause && (paused || stopped)

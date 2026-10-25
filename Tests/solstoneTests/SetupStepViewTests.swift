@@ -395,6 +395,23 @@ struct SetupStepViewTests {
     }
 
     // 7. Proof labels decisions
+    @Test func pausedHintSaysWhatStillGoesInWhenActivityIsKeptOn() {
+        let controls = PermissionSourceLiveControls(pause: false, resume: true, openSources: false, checkStatus: false)
+        for source in [CaptureSources.screen, .microphone] {
+            let following = SetupProofDecisionResolver.resolve(source: source, liveState: .paused(.owner), controls: controls)
+            #expect(following.hint == UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT)
+            let keptOn = SetupProofDecisionResolver.resolve(
+                source: source, liveState: .paused(.owner), controls: controls, activityKeptOn: true)
+            #expect(keptOn.hint == UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT)
+        }
+        var config = AppConfig()
+        #expect(!config.isActivityKeptOnThroughPause)
+        config.activityContinuesThroughPause = true
+        #expect(config.isActivityKeptOnThroughPause)
+        config.isActivityEnabled = false
+        #expect(!config.isActivityKeptOnThroughPause)
+    }
+
     @Test func proofLabelsDecisions() {
         // Protected video: does not include "microphone on" or "screen on", includes "paused for protected video", resume absent
         let micPV = SetupProofDecisionResolver.resolve(

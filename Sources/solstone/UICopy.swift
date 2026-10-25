@@ -431,6 +431,12 @@ public enum UICopy {
     public static let SETTINGS_PERMISSIONS_LIVE_ON = "on"
     public static let SETTINGS_PERMISSIONS_LIVE_ON_HINT = "you can pause everything at any time."
     public static let SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT = "nothing new from this app goes into your journal while it's paused."
+    public static let SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT = "while it's paused, only app activity goes into your journal."
+
+    /// The paused hint must not say nothing goes in when the owner keeps activity on through pause.
+    public static func pausedHint(activityKeptOn: Bool) -> String {
+        activityKeptOn ? SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT : SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT
+    }
     public static let SETTINGS_PERMISSIONS_LIVE_OFF = "off"
     public static let SETTINGS_PERMISSIONS_LIVE_OFF_HINT = "turned off in sources."
     public static let SETTINGS_PERMISSIONS_LIVE_NOT_RUNNING = "granted, not on right now"

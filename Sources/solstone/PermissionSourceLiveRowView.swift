@@ -100,7 +100,7 @@ struct PermissionSourceLiveRowView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .paused:
-            Text(UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT)
+            Text(UICopy.pausedHint(activityKeptOn: appState.config.isActivityKeptOnThroughPause))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .off:

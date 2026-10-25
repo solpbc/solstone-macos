@@ -24,7 +24,8 @@ enum SetupProofDecisionResolver {
         source: CaptureSources,
         liveState: PermissionSourceLiveState,
         controls: PermissionSourceLiveControls,
-        timeRemaining: String? = nil
+        timeRemaining: String? = nil,
+        activityKeptOn: Bool = false
     ) -> SetupProofDecision {
         let isScreen = source.contains(.screen)
         switch liveState {
@@ -53,7 +54,7 @@ enum SetupProofDecisionResolver {
                 title: isScreen ? UICopy.SETUP_SCREEN_STATUS_PAUSED : UICopy.SETUP_MICROPHONE_STATUS_PAUSED,
                 kind: .paused,
                 reason: reason,
-                hint: UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT,
+                hint: UICopy.pausedHint(activityKeptOn: activityKeptOn),
                 showMeter: !isScreen,
                 isMeterPaused: true,
                 showPauseMenu: false,
@@ -113,7 +114,8 @@ struct SetupMicrophoneProofView: View {
                 source: .microphone,
                 liveState: liveState,
                 controls: controls,
-                timeRemaining: { _ = appState.pauseManager.refreshTick; return appState.pauseManager.formatTimeRemaining() }()
+                timeRemaining: { _ = appState.pauseManager.refreshTick; return appState.pauseManager.formatTimeRemaining() }(),
+                activityKeptOn: appState.config.isActivityKeptOnThroughPause
             )
 
             VStack(alignment: .leading, spacing: 12) {
@@ -226,7 +228,8 @@ struct SetupScreenProofView: View {
                     source: .screen,
                     liveState: liveState,
                     controls: controls,
-                    timeRemaining: { _ = appState.pauseManager.refreshTick; return appState.pauseManager.formatTimeRemaining() }()
+                    timeRemaining: { _ = appState.pauseManager.refreshTick; return appState.pauseManager.formatTimeRemaining() }(),
+                    activityKeptOn: appState.config.isActivityKeptOnThroughPause
                 )
 
                 AXStateCompanion(
