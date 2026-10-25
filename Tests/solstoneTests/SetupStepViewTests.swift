@@ -395,21 +395,32 @@ struct SetupStepViewTests {
     }
 
     // 7. Proof labels decisions
+    private func pausedHint(_ reason: PermissionSourcePauseReason, _ config: AppConfig, _ source: CaptureSources) -> String? {
+        SetupProofDecisionResolver.resolve(
+            source: source, liveState: .paused(reason),
+            controls: PermissionSourceLiveControls(pause: false, resume: true, openSources: false, checkStatus: false),
+            activityGoesOn: config.activityGoesOn(whilePausedFor:)
+        ).hint
+    }
+
     @Test func pausedHintSaysWhatStillGoesInWhenActivityIsKeptOn() {
-        let controls = PermissionSourceLiveControls(pause: false, resume: true, openSources: false, checkStatus: false)
+        var keptOn = AppConfig(); keptOn.activityContinuesThroughPause = true
+        var keptOnButOff = keptOn; keptOnButOff.isActivityEnabled = false
         for source in [CaptureSources.screen, .microphone] {
-            let following = SetupProofDecisionResolver.resolve(source: source, liveState: .paused(.owner), controls: controls)
-            #expect(following.hint == UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT)
-            let keptOn = SetupProofDecisionResolver.resolve(
-                source: source, liveState: .paused(.owner), controls: controls, activityKeptOn: true)
-            #expect(keptOn.hint == UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT)
+            #expect(pausedHint(.owner, AppConfig(), source) == UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT)
+            #expect(pausedHint(.owner, keptOn, source) == UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT)
+            #expect(pausedHint(.owner, keptOnButOff, source) == UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT)
         }
-        var config = AppConfig()
-        #expect(!config.isActivityKeptOnThroughPause)
-        config.activityContinuesThroughPause = true
-        #expect(config.isActivityKeptOnThroughPause)
-        config.isActivityEnabled = false
-        #expect(!config.isActivityKeptOnThroughPause)
+    }
+
+    // Activity continues through the protected-video pause whenever it is running.
+    @Test func protectedVideoPauseHintSaysActivityStillGoesIn() {
+        var activityOff = AppConfig(); activityOff.isActivityEnabled = false
+        for source in [CaptureSources.screen, .microphone] {
+            #expect(pausedHint(.protectedVideo, AppConfig(), source) == UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT)
+            #expect(pausedHint(.protectedVideo, AppConfig(isScreenCaptureEnabled: false), source) == UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT)
+            #expect(pausedHint(.protectedVideo, activityOff, source) == UICopy.SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT)
+        }
     }
 
     @Test func proofLabelsDecisions() {

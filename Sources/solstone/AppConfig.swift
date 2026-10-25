@@ -239,9 +239,10 @@ public struct AppConfig: Sendable {
         isActivityEnabled && (activityContinuesThroughPause || isScreenCaptureEnabled)
     }
 
-    /// Activity is on and the owner keeps it running through pause.
-    public var isActivityKeptOnThroughPause: Bool {
-        isActivityEnabled && activityContinuesThroughPause
+    /// Whether activity still goes into the journal during a pause: when the owner keeps it on
+    /// through pause, or during the protected-video pause, which activity always continues through.
+    func activityGoesOn(whilePausedFor reason: PermissionSourcePauseReason) -> Bool {
+        (isActivityEnabled && activityContinuesThroughPause) || (reason == .protectedVideo && isActivitySourceOn)
     }
 
     /// The owner's pause or stop holds activity, as it holds audio, unless activity is kept on through pause.
