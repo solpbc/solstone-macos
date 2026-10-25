@@ -45,6 +45,9 @@ struct MicrophoneDisplayEntry: Identifiable {
         self.layout = layout
         self.choice = entry.choice
     }
+
+    /// Always holds a Bluetooth headset in its call profile, which degrades its playback everywhere.
+    var showsCallModeNote: Bool { offersFollowing && mode == .always }
 }
 
 func isConnectButtonDisabled(observerURL: String, observerKey: String, connectionTestState: ConnectionTestState) -> Bool {
@@ -5090,6 +5093,12 @@ struct MicrophoneRow: View {
                         .accessibilityIdentifier(AXID.Settings.Microphones.inputRetry(entry.uid))
                     }
                 }
+            }
+
+            if entry.showsCallModeNote {
+                Text(UICopy.MICROPHONE_ALWAYS_CALL_MODE)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 2)

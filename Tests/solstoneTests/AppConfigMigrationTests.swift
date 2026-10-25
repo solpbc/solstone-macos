@@ -257,6 +257,15 @@ struct AppConfigMigrationTests {
         }
     }
 
+    @Test func onlyABluetoothMicrophoneOnAlwaysCarriesTheCallModeNote() {
+        let headset = { MicrophoneEntry(uid: "headset", name: "Headset", mode: $0) }
+        #expect(MicrophoneDisplayEntry(from: headset(.always), isConnected: true, isBluetooth: true).showsCallModeNote)
+        #expect(!MicrophoneDisplayEntry(from: headset(.whenInUseElsewhere), isConnected: true, isBluetooth: true).showsCallModeNote)
+        #expect(!MicrophoneDisplayEntry(from: headset(.off), isConnected: true, isBluetooth: true).showsCallModeNote)
+        let usb = MicrophoneEntry(uid: "usb", name: "USB", mode: .always)
+        #expect(!MicrophoneDisplayEntry(from: usb, isConnected: true).showsCallModeNote)
+    }
+
     // MARK: - Capture sources
 
     // 2.0.6 read an absent key as `false`, so every install that upgraded into it stopped

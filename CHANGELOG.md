@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- in settings, a bluetooth headset set to always now shows a note that it stays in call mode, so everything you hear through it sounds like a phone call. thanks @dvanduzer.
+
 ### Fixed
 
 - when someone ends a Screen Sharing session with your mac, your journal no longer gets a run of one-second segments. thanks @dvanduzer.

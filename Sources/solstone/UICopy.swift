@@ -59,6 +59,7 @@ public enum UICopy {
     public static let MICROPHONE_MODE_ALWAYS = "always"
     public static let MICROPHONE_MODE_OFF = "off"
     public static let MICROPHONE_MODE_HELP = "a bluetooth headset sounds worse while its microphone is open, so by default it only goes into your journal while another app, such as a call app, is already using it."
+    public static let MICROPHONE_ALWAYS_CALL_MODE = "set to always, this headset stays in call mode, so everything you hear through it sounds like a phone call."
     public static let MICROPHONE_NEEDS_CHOICE = "this interface has more than two inputs. pick an input for your journal."
     public static let MICROPHONE_INPUTS_CHANGED = "this interface's inputs changed. pick an input for your journal."
     public static let MICROPHONE_LAYOUT_UNAVAILABLE = "this interface's inputs can't be read."
