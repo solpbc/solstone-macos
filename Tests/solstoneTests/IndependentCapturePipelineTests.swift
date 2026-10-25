@@ -249,6 +249,36 @@ struct IndependentCapturePipelineTests {
         #expect(manager.activeSources == [.microphone])
     }
 
+    @Test func aBurstOfDisplayNotificationsIsHandledOnceItSettles() async throws {
+        let root = try makeTempDirectory("display-change-burst")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let reads = LockedCounter()
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: { directory, _, _, _ in FakeCaptureSegment(outputDirectory: directory) },
+            finalizer: FakeFinalizer(),
+            allowsEmptyDisplayConfigurationForTesting: true,
+            shareableContentProvider: {
+                reads.increment()
+                throw FakeCaptureError.startFailed
+            }
+        )
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
+        _ = await executor.enqueue(.start(reason: .user, sources: [.screen], disabledMicUIDs: [], enabledMicUIDs: []))
+        let before = reads.count
+        manager.displayChangeSettleDelay = .milliseconds(100)
+
+        // A Screen Sharing viewer leaving sent several notifications in a few seconds,
+        // and each one used to cut its own segment.
+        for _ in 0..<5 { manager.noteScreenParametersChanged() }
+        try await withTimeout(seconds: 5) { await reads.waitUntilCount(before + 1) }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(reads.count == before + 1)
+
+        _ = await executor.enqueue(.stop(reason: .user))
+    }
+
     @Test func lossOfOnlyMicrophoneNeverClaimsScreenIsRunning() {
         let state = AppState.forSnapshot(config: AppConfig(isMicrophoneCaptureEnabled: true))
         state.isRecording = true

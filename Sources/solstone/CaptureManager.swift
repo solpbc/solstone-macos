@@ -145,6 +145,9 @@ public final class CaptureManager {
     private var heartbeatTimerRevision: UInt64 = 0
     private var livenessTimer: Timer?
     static let livenessInterval: TimeInterval = 5
+    /// How long display notifications must stay quiet before the display set is re-read.
+    internal var displayChangeSettleDelay: Duration = .seconds(2)
+    private var pendingDisplayChange: Task<Void, Never>?
     /// A running microphone engine with no tap buffer for this long has stalled.
     static let microphoneStallSeconds: TimeInterval = 5
     private var segmentStartGeneration = 0
@@ -475,9 +478,7 @@ public final class CaptureManager {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                await self?.handleDisplayChange()
-            }
+            MainActor.assumeIsolated { self?.noteScreenParametersChanged() }
         }
 
         windowExclusionManager.configure(
@@ -1399,6 +1400,20 @@ public final class CaptureManager {
         guard segmentStartGeneration == generationAtSpawn + 1 else { return }
         _ = await discardCurrentSegmentWithoutEnqueue(matching: abandonedDir)
         await stopPersistentAudioForDiscard()
+    }
+
+    /// A display reconfiguration (a Screen Sharing viewer joining or leaving, a display
+    /// waking) arrives as a burst of notifications over a few seconds. Acting on each one
+    /// cut a segment per intermediate display set, so act once the burst has gone quiet.
+    internal func noteScreenParametersChanged() {
+        pendingDisplayChange?.cancel()
+        let settle = displayChangeSettleDelay
+        pendingDisplayChange = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: settle)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingDisplayChange = nil
+            await self.handleDisplayChange()
+        }
     }
 
     internal func handleDisplayChange() async {
