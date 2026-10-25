@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.47] - 2026-10-24
+
 ### Changed
 
-- the names of the apps you use and their window titles now go into your journal whenever screen and system audio are on, even if activity was off before. browser addresses go in too once you allow accessibility for activity. activity starts and pauses with screen and system audio. in settings, you can turn activity, window titles or browser addresses off, or keep activity on while paused.
+- the names of the apps you use and their window titles now go into your journal whenever screen and system audio are on, even if activity was off before. browser addresses go in too once you allow accessibility for activity. activity starts and pauses with screen and system audio. in settings, you can turn activity, window titles or browser addresses off, or keep activity on while paused or with screen and system audio off.
 
 ### Fixed
 
