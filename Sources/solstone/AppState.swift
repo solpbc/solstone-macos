@@ -2751,18 +2751,9 @@ public final class AppState {
             fresh.serviceMode != config.serviceMode ||
             fresh.journalPath != config.journalPath ||
             fresh.syncPaused != config.syncPaused
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-        let browserIntakeChanged = fresh.isBrowserIntakeEnabled != config.isBrowserIntakeEnabled
-#else
-        let browserIntakeChanged = false
-#endif
-        let activityChanged = fresh.isActivityEnabled != config.isActivityEnabled ||
-            fresh.activityTitlesEnabled != config.activityTitlesEnabled ||
-            fresh.activityURLsEnabled != config.activityURLsEnabled ||
-            fresh.activityAccessibilityEnabled != config.activityAccessibilityEnabled ||
-            fresh.activityContinuesThroughPause != config.activityContinuesThroughPause
-        let shortcutChanged = fresh.pauseShortcut != config.pauseShortcut
-        guard journalConnectionChanged || browserIntakeChanged || activityChanged || shortcutChanged else {
+        // Presence is part of a choice: an explicit default and an absent key
+        // have the same effective value but must survive saves differently.
+        guard fresh != config else {
             return
         }
 

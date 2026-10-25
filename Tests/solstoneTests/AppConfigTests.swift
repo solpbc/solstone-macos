@@ -553,7 +553,65 @@ struct AppConfigTests {
         #expect(defaults.object(forKey: "activityTitlesEnabled") as? Bool == false)
     }
 
-    @Test func legacyJSONMigrationPreservesExplicitScalars() throws {
+    @Test func externalDefaultChoicesAndRemovalsReconcileWithoutSaveLoops() throws {
+        let suite = "test.appconfig.external-choices.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let choices: [(String, Any)] = [
+            ("isBrowserIntakeEnabled", true), ("excludePrivateBrowsing", true),
+            ("excludePrivateBrowsingAccessibility", false), ("activityAccessibilityEnabled", false),
+            ("syncPaused", false), ("debugSegments", false), ("preserveSyncedSegments", false),
+            ("microphoneGain", Float(2.0)), ("silenceMusic", true), ("pauseForProtectedVideo", true)
+        ]
+        for (key, value) in choices {
+            defaults.removePersistentDomain(forName: suite)
+            var current = AppConfig.load(from: defaults)
+            defaults.set(value, forKey: key)
+            let fresh = AppConfig.load(from: defaults)
+            #expect(fresh != current, "External choice for \(key) must trigger reconciliation")
+            current = fresh
+            current.serverURL = "https://journal.test"
+            try current.save(to: defaults)
+            #expect(defaults.object(forKey: key) != nil)
+            #expect(AppConfig.load(from: defaults) == current)
+
+            defaults.removeObject(forKey: key)
+            let cleared = AppConfig.load(from: defaults)
+            #expect(cleared != current, "Removing \(key) must restore code-default behavior")
+            current = cleared
+            current.serverKey = "test-key"
+            try current.save(to: defaults)
+            #expect(defaults.object(forKey: key) == nil)
+            #expect(AppConfig.load(from: defaults) == current)
+        }
+    }
+
+    @Test func existingStringBooleansKeepTheirMeaningThroughConversionAndSave() throws {
+        let suite = "test.appconfig.coerced-bools.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fields: [(String, KeyPath<AppConfig, Bool>)] = [
+            ("excludePrivateBrowsingAccessibility", \.excludePrivateBrowsingAccessibility),
+            ("activityAccessibilityEnabled", \.activityAccessibilityEnabled),
+            ("syncPaused", \.syncPaused), ("debugSegments", \.debugSegments),
+            ("preserveSyncedSegments", \.preserveSyncedSegments)
+        ]
+        for (key, field) in fields {
+            for (text, expected) in [("YES", true), ("true", true), ("NO", false)] {
+                defaults.removePersistentDomain(forName: suite)
+                defaults.set(true, forKey: "excludePrivateBrowsing")
+                defaults.set(text, forKey: key)
+                var config = try AppConfig.loadOrCreateDefault(legacyConfigPaths: [], defaults: defaults)
+                #expect(config[keyPath: field] == expected)
+                config.serverURL = "https://journal.test"
+                try config.save(to: defaults)
+                #expect(defaults.object(forKey: key) as? Bool == expected)
+                #expect(AppConfig.load(from: defaults)[keyPath: field] == expected)
+            }
+        }
+    }
+
+    @Test func legacyJSONDropsMaterializedDefaultsAndKeepsNondefaults() throws {
         let dir = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let jsonURL = dir.appendingPathComponent("config.json")
@@ -564,7 +622,9 @@ struct AppConfigTests {
             "serverURL": "https://journal.test",
             "serverKey": "key-123",
             "excludePrivateBrowsing": true,
-            "microphoneGain": 2.0
+            "microphoneGain": 2.0,
+            "syncPaused": true,
+            "silenceMusic": false
         }
         """
         try Data(json.utf8).write(to: jsonURL)
@@ -581,10 +641,15 @@ struct AppConfigTests {
 
         #expect(migrated.serverURL == "https://journal.test")
         #expect(migrated.serverKey == "key-123")
-        #expect(defaults.object(forKey: "excludePrivateBrowsing") as? Bool == true)
-        #expect(defaults.object(forKey: "microphoneGain") as? Float == 2.0)
-        #expect(defaults.object(forKey: "syncPaused") == nil)
-        #expect(defaults.object(forKey: "silenceMusic") == nil)
+        #expect(defaults.object(forKey: "excludePrivateBrowsing") == nil)
+        #expect(defaults.object(forKey: "microphoneGain") == nil)
+        #expect(defaults.object(forKey: "syncPaused") as? Bool == true)
+        #expect(defaults.object(forKey: "silenceMusic") as? Bool == false)
+        #expect(migrated.excludePrivateBrowsing)
+        #expect(migrated.microphoneGain == 2.0)
+        try migrated.save(to: defaults)
+        #expect(defaults.object(forKey: "excludePrivateBrowsing") == nil)
+        #expect(defaults.object(forKey: "microphoneGain") == nil)
         #expect(defaults.object(forKey: "isScreenCaptureEnabled") as? Bool == true)
         #expect(defaults.object(forKey: "isMicrophoneCaptureEnabled") as? Bool == true)
 
@@ -598,8 +663,65 @@ struct AppConfigTests {
         #expect(!FileManager.default.fileExists(atPath: SetupContinuationStore(directory: contDir).fileURL.path))
         #expect(second.serverURL == "https://journal.test")
         #expect(second.serverKey == "key-123")
-        #expect(defaults.object(forKey: "excludePrivateBrowsing") as? Bool == true)
-        #expect(defaults.object(forKey: "microphoneGain") as? Float == 2.0)
+        #expect(defaults.object(forKey: "excludePrivateBrowsing") == nil)
+        #expect(defaults.object(forKey: "microphoneGain") == nil)
+        #expect(second.syncPaused)
+        #expect(!second.silenceMusic)
+    }
+
+    @Test func legacyJSONRecordsPresenceBeforeImportCompletion() throws {
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let jsonURL = dir.appendingPathComponent("config.json")
+        try Data(#"{"serverURL":"https://journal.test","microphoneGain":3.5}"#.utf8).write(to: jsonURL)
+        let suite = "test.appconfig.json-order.\(UUID().uuidString)"
+        let defaults = try #require(RecordingUserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let config = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [jsonURL], defaults: defaults
+        )
+        #expect(config.microphoneGain == 3.5)
+        let presence = try #require(defaults.recordedEvents.firstIndex(where: {
+            $0 == .setBool("didRecordConfigPresence", true) || $0 == .setAny("didRecordConfigPresence")
+        }))
+        let imported = try #require(defaults.recordedEvents.firstIndex(where: {
+            $0 == .setBool("didMigrateFromJSON", true) || $0 == .setAny("didMigrateFromJSON")
+        }))
+        let converted = try #require(defaults.recordedEvents.firstIndex(where: {
+            $0 == .setBool("didFinishOwnerScalarConversion", true) || $0 == .setAny("didFinishOwnerScalarConversion")
+        }))
+        #expect(presence < imported)
+        #expect(imported < converted)
+    }
+
+    @Test func interruptedJSONImportResumesWithoutTheOldSentinel() throws {
+        let dir = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let continuation = dir.appendingPathComponent("continuation", isDirectory: true)
+        let suite = "test.appconfig.json-interrupted.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        // Import finished, but scalar conversion has not. No legacy sentinel was present.
+        defaults.set(true, forKey: "didRecordConfigPresence")
+        defaults.set(true, forKey: "didMigrateFromJSON")
+        defaults.set("https://journal.test", forKey: "serverURL")
+        defaults.set(Float(2.0), forKey: "microphoneGain")
+        defaults.set(true, forKey: "syncPaused")
+        defaults.set(false, forKey: "isScreenCaptureEnabled")
+        defaults.set(true, forKey: "isMicrophoneCaptureEnabled")
+
+        let config = try AppConfig.loadOrCreateDefault(
+            legacyConfigPaths: [], continuationDirectory: continuation,
+            nativeSetupEnabled: true, defaults: defaults
+        )
+        #expect(config.serverURL == "https://journal.test")
+        #expect(config.syncPaused)
+        #expect(!config.isScreenCaptureEnabled)
+        #expect(config.isMicrophoneCaptureEnabled)
+        #expect(defaults.object(forKey: "microphoneGain") == nil)
+        #expect(defaults.bool(forKey: "didFinishOwnerScalarConversion"))
+        #expect(!FileManager.default.fileExists(atPath: SetupContinuationStore(directory: continuation).fileURL.path))
     }
 
     @Test func interruptedDomainRecordingUserDefaults() throws {

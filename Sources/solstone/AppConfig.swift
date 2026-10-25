@@ -149,7 +149,7 @@ public struct AppEntry: Codable, Equatable, Sendable {
 
 /// Configuration for SolstoneCapture
 /// Stored in UserDefaults
-public struct AppConfig: Sendable {
+public struct AppConfig: Sendable, Equatable {
     // MARK: - UserDefaults Keys
 
     public static let knownKeys: [String] = [
@@ -500,12 +500,12 @@ public struct AppConfig: Sendable {
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
             excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool,
-            excludePrivateBrowsingAccessibility: defaults.object(forKey: Keys.excludePrivateBrowsingAccessibility) as? Bool,
+            excludePrivateBrowsingAccessibility: storedCoercedBool(defaults, key: Keys.excludePrivateBrowsingAccessibility),
             serverURL: serverURL,
             serverKey: isSavedTunnelPort ? nil : defaults.string(forKey: Keys.serverKey),
-            syncPaused: defaults.object(forKey: Keys.syncPaused) as? Bool,
-            debugSegments: defaults.object(forKey: Keys.debugSegments) as? Bool,
-            preserveSyncedSegments: defaults.object(forKey: Keys.preserveSyncedSegments) as? Bool,
+            syncPaused: storedCoercedBool(defaults, key: Keys.syncPaused),
+            debugSegments: storedCoercedBool(defaults, key: Keys.debugSegments),
+            preserveSyncedSegments: storedCoercedBool(defaults, key: Keys.preserveSyncedSegments),
             microphoneGain: defaults.object(forKey: Keys.microphoneGain) as? Float,
             silenceMusic: defaults.object(forKey: Keys.silenceMusic) as? Bool,
             serviceMode: serviceMode,
@@ -520,8 +520,14 @@ public struct AppConfig: Sendable {
         activityConfig.activityTitlesChoice = defaults.object(forKey: Keys.activityTitlesEnabled) as? Bool
         activityConfig.activityURLsChoice = defaults.object(forKey: Keys.activityURLsEnabled) as? Bool
         activityConfig.activityThroughPauseChoice = defaults.object(forKey: Keys.activityContinuesThroughPause) as? Bool
-        activityConfig.activityAccessibilityChoice = defaults.object(forKey: Keys.activityAccessibilityEnabled) as? Bool
+        activityConfig.activityAccessibilityChoice = storedCoercedBool(defaults, key: Keys.activityAccessibilityEnabled)
         return activityConfig
+    }
+
+    private static func storedCoercedBool(_ defaults: UserDefaults, key: String) -> Bool? {
+        guard defaults.object(forKey: key) != nil else { return nil }
+        // These settings historically used bool(forKey:), including its string coercion.
+        return defaults.bool(forKey: key)
     }
 
     /// One-shot: builds before activity followed screen saved the activity switch, window titles
@@ -550,10 +556,7 @@ public struct AppConfig: Sendable {
     private static let frozenSilenceMusicDefault: Bool = true
     private static let frozenPauseForProtectedVideoDefault: Bool = true
 
-    internal static func convertMaterializedScalarDefaultsIfNeeded(
-        _ defaults: UserDefaults,
-        preserving: Set<String> = []
-    ) {
+    internal static func convertMaterializedScalarDefaultsIfNeeded(_ defaults: UserDefaults) {
         guard !defaults.bool(forKey: Keys.didFinishOwnerScalarConversion) else { return }
 
         if defaults.object(forKey: Keys.didRecordConfigPresence) == nil {
@@ -572,7 +575,7 @@ public struct AppConfig: Sendable {
             (Keys.pauseForProtectedVideo, frozenPauseForProtectedVideoDefault)
         ]
 
-        for (key, frozenDefault) in boolConversions where !preserving.contains(key) {
+        for (key, frozenDefault) in boolConversions {
             guard let object = defaults.object(forKey: key) else { continue }
             if let value = object as? Bool {
                 if value == frozenDefault {
@@ -583,15 +586,13 @@ public struct AppConfig: Sendable {
             }
         }
 
-        if !preserving.contains(Keys.microphoneGain) {
-            if let object = defaults.object(forKey: Keys.microphoneGain) {
-                if let value = object as? Float {
-                    if value == frozenMicrophoneGainDefault {
-                        defaults.removeObject(forKey: Keys.microphoneGain)
-                    }
-                } else {
-                    Logger.general.warning("Stored setting \(Keys.microphoneGain, privacy: .public) does not cast to Float, leaving untouched")
+        if let object = defaults.object(forKey: Keys.microphoneGain) {
+            if let value = object as? Float {
+                if value == frozenMicrophoneGainDefault {
+                    defaults.removeObject(forKey: Keys.microphoneGain)
                 }
+            } else {
+                Logger.general.warning("Stored setting \(Keys.microphoneGain, privacy: .public) does not cast to Float, leaving untouched")
             }
         }
 
@@ -617,18 +618,15 @@ public struct AppConfig: Sendable {
             (defaults.object(forKey: Keys.didFinishOwnerScalarConversion) == nil && defaults.object(forKey: Keys.excludePrivateBrowsing) != nil)
 
         var migratedConfig: AppConfig?
-        var jsonPreserving: Set<String> = []
 
         // Check for migration from JSON config
         if !defaults.bool(forKey: Keys.didMigrateFromJSON) {
-            if let (migrated, preserving) = migrateFromJSON(
+            if let migrated = migrateFromJSON(
                 legacyConfigPaths: legacyConfigPaths,
                 log: log,
-                defaults: defaults,
-                isExistingDomain: isExistingDomain
+                defaults: defaults
             ) {
                 migratedConfig = migrated
-                jsonPreserving = preserving
             } else {
                 // Mark migration as complete even if no file existed
                 defaults.set(true, forKey: Keys.didMigrateFromJSON)
@@ -637,10 +635,7 @@ public struct AppConfig: Sendable {
 
         // Recognize an existing install: presence marker, or legacy sentinel until conversion finishes.
         if migratedConfig != nil || isExistingDomain {
-            convertMaterializedScalarDefaultsIfNeeded(defaults, preserving: jsonPreserving)
-            if let migratedConfig {
-                return migratedConfig
-            }
+            convertMaterializedScalarDefaultsIfNeeded(defaults)
             return load(from: defaults)
         }
 
@@ -766,9 +761,8 @@ public struct AppConfig: Sendable {
     private static func migrateFromJSON(
         legacyConfigPaths pathsToTry: [URL],
         log: any ClassifiedLogSinking,
-        defaults: UserDefaults,
-        isExistingDomain: Bool
-    ) -> (AppConfig, Set<String>)? {
+        defaults: UserDefaults
+    ) -> AppConfig? {
         for path in pathsToTry {
             guard FileManager.default.fileExists(atPath: path.path) else {
                 continue
@@ -797,20 +791,12 @@ public struct AppConfig: Sendable {
                     protectedVideoTitlePatterns: legacyProtectedPatterns
                 )
 
-                if isExistingDomain {
-                    defaults.set(true, forKey: Keys.didRecordConfigPresence)
-                }
+                // Keep an interrupted import recognizable even if the legacy file
+                // has no private-browsing key to serve as the former sentinel.
+                defaults.set(true, forKey: Keys.didRecordConfigPresence)
 
                 try config.save(to: defaults)
                 defaults.set(true, forKey: Keys.didMigrateFromJSON)
-
-                var preserving: Set<String> = []
-                if legacyConfig.excludePrivateBrowsing != nil { preserving.insert(Keys.excludePrivateBrowsing) }
-                if legacyConfig.syncPaused != nil { preserving.insert(Keys.syncPaused) }
-                if legacyConfig.debugSegments != nil { preserving.insert(Keys.debugSegments) }
-                if legacyConfig.microphoneGain != nil { preserving.insert(Keys.microphoneGain) }
-                if legacyConfig.silenceMusic != nil { preserving.insert(Keys.silenceMusic) }
-                if legacyConfig.pauseForProtectedVideo != nil { preserving.insert(Keys.pauseForProtectedVideo) }
 
                 log.emit(
                     ClassifiedLogEmission(
@@ -824,7 +810,7 @@ public struct AppConfig: Sendable {
                 let backupPath = path.appendingPathExtension("migrated")
                 try? FileManager.default.moveItem(at: path, to: backupPath)
 
-                return (config, preserving)
+                return config
             } catch {
                 log.emit(
                     ClassifiedLogEmission(
