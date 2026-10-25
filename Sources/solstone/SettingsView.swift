@@ -861,7 +861,7 @@ struct SettingsView: View {
                             appState.updateConfig(config)
                         }
                     ))
-                    Text("adds app names, window titles, browser addresses and active or idle time to your journal. it starts and pauses with screen and system audio.")
+                    Text("adds app names, window titles and active or idle time to your journal, and browser addresses if you allow accessibility. it starts and pauses with screen and system audio.")
                         .font(.subheadline).foregroundStyle(.secondary)
                     if appState.config.isActivityEnabled {
                         Toggle("keep activity on while paused", isOn: Binding(
@@ -871,7 +871,7 @@ struct SettingsView: View {
                                 appState.updateConfig(config)
                             }
                         ))
-                        Text("activity goes on when you pause, and when screen and system audio are off.")
+                        Text("activity keeps going when you pause, and when screen and system audio are off.")
                             .font(.subheadline).foregroundStyle(.secondary)
                         Toggle("window titles", isOn: Binding(
                             get: { appState.config.activityTitlesEnabled },

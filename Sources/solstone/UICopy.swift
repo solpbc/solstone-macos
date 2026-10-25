@@ -173,7 +173,7 @@ public enum UICopy {
     public static let SETUP_NOT_NOW = "not now"
     public static let SETUP_CONTINUE = "continue"
     public static let SETUP_SCREEN_AND_COMPUTER_SOUND = "screen and computer sound"
-    public static let SETUP_SCREEN_EXPLAINER = "your screen and its computer sound go into your journal, with the apps and window titles you use. they stay off until you turn them on."
+    public static let SETUP_SCREEN_EXPLAINER = "your screen and its computer sound go into your journal, with the apps you use and their window titles. they stay off until you turn them on."
     public static let SETUP_SCREEN_STORAGE = "what you share stays on this mac until it goes into your journal on your own devices. your journal is always private, only yours."
     public static let SETUP_SCREEN_LEFT_OUT = "1Password, Bitwarden and the other password manager apps listed in settings are left out, but a password manager inside your browser isn't."
     public static let SETUP_TURN_ON_SCREEN = "turn on screen and computer sound"
@@ -431,7 +431,7 @@ public enum UICopy {
     public static let SETTINGS_PERMISSIONS_LIVE_ON = "on"
     public static let SETTINGS_PERMISSIONS_LIVE_ON_HINT = "you can pause everything at any time."
     public static let SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT = "nothing new from this app goes into your journal while it's paused."
-    public static let SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT = "while it's paused, only app activity goes into your journal."
+    public static let SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT = "while this app is paused, only activity goes into your journal."
 
     /// The paused hint must not say nothing goes in while activity still does.
     public static func pausedHint(activityGoesOn: Bool) -> String {
