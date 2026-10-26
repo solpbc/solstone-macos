@@ -172,7 +172,7 @@ public struct ClientSelfReportedSnapshot: Equatable, Sendable {
         // Hostname changes are picked up on the next connection-lifecycle trigger.
         let rawName = Host.current().localizedName
         let rawAppID = Bundle.main.bundleIdentifier ?? SolstoneIdentity.bundleIdentifier
-        let rawAppVersion = AppVersion.short
+        let rawAppVersion = AppVersion.reported
 
         return ClientSelfReportedSnapshot(
             name: rawName,

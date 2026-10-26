@@ -50,7 +50,7 @@ public final class AudioCaptureRecorder: @unchecked Sendable {
 #endif
 
     public init(directory: URL, timePrefix: String, expected: [(id: String, kind: String)],
-                appVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+                appVersion: String = AppVersion.reported,
                 appBuild: String = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
                 onFirstFailure: (@Sendable () -> Void)? = nil) throws {
         self.onFirstFailure = onFirstFailure

@@ -261,6 +261,7 @@ struct JournalClientSelfTests {
         #expect(snapshot.platform == "macos")
         #expect(snapshot.deviceType == "desktop")
         #expect(snapshot.appID != nil)
+        #expect(snapshot.appVersion == AppVersion.reported)
     }
 
     @Test("BoundedLoopbackClient session config connectionProxyDictionary empty")
