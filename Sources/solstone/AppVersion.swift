@@ -15,17 +15,24 @@ enum AppVersion {
         Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
     }
 
-    /// The `app_version` this app reports to the journal: the short version with the
-    /// build as semver build metadata, e.g. "2.0.48+128". Not for owner-facing display.
+    /// The `app_version` this app reports to the journal, in the about block's
+    /// `<version> (<build>)` form, e.g. "2.0.48 (128)". The journal shows it verbatim.
+    /// Not for owner-facing display in this app.
     @usableFromInline
     static var reported: String {
         reported(short: short, build: build)
     }
 
-    /// `short+build` when the build is real; the short version alone when it is
-    /// missing or the "unknown" placeholder.
+    /// The journal's `app_version` limit, in UTF-8 bytes.
+    static let reportedMaxBytes = 64
+
+    /// `short (build)` when the build is real and the result fits the journal's
+    /// 64-byte limit; the short version alone when the build is missing, the
+    /// "unknown" placeholder, or the combined value would be too long.
     static func reported(short: String, build: String) -> String {
         guard !build.isEmpty, build != "unknown" else { return short }
-        return "\(short)+\(build)"
+        let combined = "\(short) (\(build))"
+        guard combined.utf8.count <= reportedMaxBytes else { return short }
+        return combined
     }
 }
