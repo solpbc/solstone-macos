@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- in Safari, you can now share all sites with the solstone extension: choose all sites in the extension's settings, after a separate agreement, and leave out the sites you don't want. sites you add one at a time remain the default, and your list is kept for when you switch back. settings shows you how to allow all websites in Safari's own settings, and checks again when you come back. the popup names how you're sharing and why the page you're on is or isn't shared.
 - in settings, a bluetooth headset set to always now shows a note that it stays in call mode, so everything you hear through it sounds like a phone call. thanks @dvanduzer.
 
 ### Fixed

@@ -38,8 +38,13 @@
     }
   }
 
+  const SITES_CARD_ACTIONS = new Set(["open-settings", "allow-all-sites", "retry-all-sites"]);
   let state = null;
   let disclosureResolve = null;
+  let allSitesDisclosure = false;
+  let disclosureReturnFocus = null;
+  let accessCheck = null;
+  let lastBroadReady = null;
   let step1Action = null;
   let paintSequence = 0;
   let appliedCaptureEpoch = -1;
@@ -76,7 +81,13 @@
       status: state,
       cmd,
       requestPermission: (request) => chrome.permissions.request(request),
+      removePermission: (request) => chrome.permissions.remove(request),
     };
+  }
+
+  function focus(id) {
+    const element = typeof id === "string" ? $(id) : id;
+    if (element && !element.hidden && typeof element.focus === "function") element.focus();
   }
 
   function closeDisclosure(confirmed) {
@@ -85,12 +96,20 @@
     if ($("sitesMain")) $("sitesMain").hidden = false;
     const resolve = disclosureResolve;
     disclosureResolve = null;
-    if ($("newHost") && typeof $("newHost").focus === "function") $("newHost").focus();
+    focus(disclosureReturnFocus || "newHost");
+    disclosureReturnFocus = null;
     resolve(confirmed);
   }
 
-  function presentDisclosure(host) {
-    const copy = Disclosure.addSite(host, state);
+  function presentDisclosure(host, allSites = false) {
+    allSitesDisclosure = allSites;
+    const copy = allSites
+      ? Copy.allSitesCopy(state?.brand, { excludedCount: (state?.excludedHosts || []).length, chosenCount: chosenList().length })
+      : Disclosure.addSite(host, state);
+    if ($("siteDisclosureLeaveOut")) {
+      $("siteDisclosureLeaveOut").textContent = copy.leaveOut || "";
+      $("siteDisclosureLeaveOut").hidden = !copy.leaveOut;
+    }
     if ($("siteDisclosureTitle")) $("siteDisclosureTitle").textContent = copy.title;
     if ($("siteDisclosureWhat")) $("siteDisclosureWhat").textContent = copy.what;
     if ($("siteDisclosureUnsent")) $("siteDisclosureUnsent").textContent = copy.unsent;
@@ -101,18 +120,43 @@
     if ($("siteDisclosureCancel")) $("siteDisclosureCancel").textContent = copy.cancelLabel;
     if ($("sitesMain")) $("sitesMain").hidden = true;
     if ($("siteDisclosure")) $("siteDisclosure").hidden = false;
-    if ($("siteDisclosureConfirm") && typeof $("siteDisclosureConfirm").focus === "function") {
-      $("siteDisclosureConfirm").focus();
-    }
+    // A wider agreement is read from its title, never confirmed by a stray Enter.
+    focus(allSites ? "siteDisclosureTitle" : "siteDisclosureConfirm");
     return new Promise((resolve) => {
       disclosureResolve = resolve;
     });
   }
 
+  function chosenList() {
+    return Array.isArray(state && state.chosenOrigins)
+      ? state.chosenOrigins
+      : Array.isArray(state && state.grantedOrigins)
+      ? state.grantedOrigins
+      : [];
+  }
+
+  function fieldError(message) {
+    const error = $("siteInputError");
+    if (!error) return;
+    error.textContent = message || "";
+    error.hidden = !message;
+  }
+
   async function addSiteFromInput(inputElement) {
     clearAnnouncement();
+    fieldError("");
     const raw = inputElement ? inputElement.value : "";
+    if (state?.siteMode === "all") {
+      const host = Hosts.excludedHostname(raw.trim());
+      if (!host) { fieldError("enter a website address, like mail.google.com."); focus(inputElement); return; }
+      const result = await cmd({ cmd: "setExcludedHost", host, excluded: true });
+      if (result.error) showActionError(result.error);
+      else { inputElement.value = ""; announce(Copy.leftOutAnnouncement(host), "ok"); }
+      await refresh();
+      return;
+    }
     if (!Hosts.isValidHostInput(raw)) {
+      if (raw.trim()) { fieldError("enter a website address, like mail.google.com."); focus(inputElement); }
       return;
     }
     let input = normHost(raw);
@@ -150,8 +194,10 @@
       openApp: () => chrome.tabs.create({ url: "https://solstone.app" }),
       reload: () => chrome.runtime.reload(),
       grantSite: (origin) => View.grantSite(origin, siteEffects()),
+      allowAllSites: () => View.regrantAllSites(siteEffects()),
       showError: showActionError,
-      showDenied: () => announce("permission declined. this site stays paused.", "bad"),
+      showDenied: (action) => announce(action?.id === "allow-all-sites"
+        ? Copy.accessCopy(state?.brand).declined : "permission declined. this site stays paused.", "bad"),
       lossSeq: () => state?.lossNotice?.seq,
     };
   }
@@ -160,6 +206,12 @@
     const list = $(containerId);
     if (!list) return;
     list.replaceChildren();
+    if (state?.siteMode === "all" && allowlist.length === 0 && containerId === "siteList") {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "no sites left out.";
+      list.append(empty);
+    }
 
     for (const entry of allowlist) {
       let host = entry;
@@ -167,7 +219,8 @@
         if (entry.startsWith("http")) host = new URL(entry).hostname;
       } catch (_e) {}
 
-      const rowState = Status.siteRow(entry, state);
+      const excluded = state?.siteMode === "all";
+      const rowState = excluded ? { kind: "excluded", label: "left out" } : Status.siteRow(entry, state);
       const row = document.createElement("div");
       row.className = "site";
       const copyEl = document.createElement("div");
@@ -191,8 +244,8 @@
       }
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.textContent = "remove";
-      remove.addEventListener("click", () => runSiteAction({ id: "remove-site", host, origin: entry }));
+      remove.textContent = excluded ? "include again" : "remove";
+      remove.addEventListener("click", () => runSiteAction({ id: excluded ? "include-site" : "remove-site", host, origin: entry }));
       actions.append(remove);
       row.append(copyEl, actions);
       list.append(row);
@@ -339,7 +392,7 @@
         const headline = document.createElement("div");
         headline.className = "status-also";
         headline.textContent = item.headline;
-        if (item.action) {
+        if (item.action && !SITES_CARD_ACTIONS.has(item.action.id)) {
           const button = document.createElement("button");
           button.type = "button";
           button.textContent = item.action.label;
@@ -352,7 +405,9 @@
     const actions = $("statusActions");
     if (actions) {
       actions.replaceChildren();
-      if (derived.action) {
+      // This page is settings, and its sites card carries the browser-access
+      // actions, so the status card doesn't repeat them or point at itself.
+      if (derived.action && !SITES_CARD_ACTIONS.has(derived.action.id)) {
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = derived.action.label;
@@ -362,16 +417,108 @@
     }
 
     // Sites Section
-    const allowlist = Array.isArray(state && state.chosenOrigins)
-      ? state.chosenOrigins
-      : Array.isArray(state && state.grantedOrigins)
-      ? state.grantedOrigins
-      : [];
-    renderSiteRowsInto("siteList", allowlist);
+    renderSites();
 
     // Indicator Section
     if ($("showPageIndicator")) $("showPageIndicator").checked = !!(state && state.showPageIndicator);
 
+  }
+
+  function renderMode(id, mode, current) {
+    const words = Copy.SITE_MODES[mode];
+    $(`${id}Title`).textContent = words.title;
+    $(`${id}Body`).textContent = words.body;
+    $(id).className = `mode${current ? " current" : ""}`;
+    $(`${id}Current`).textContent = Copy.SITE_MODES.current;
+    $(`${id}Current`).hidden = !current;
+    const button = $(`${id}Btn`);
+    button.hidden = current || state?.sitePolicyPending === true;
+    button.textContent = mode === "all" ? Copy.SITE_MODES.chooseAll : Copy.SITE_MODES.chooseSelected;
+  }
+
+  function renderAccess(allSites) {
+    const panel = $("accessPanel");
+    if (!panel) return;
+    panel.hidden = !allSites || state?.sitePolicyPending === true;
+    if (panel.hidden) return;
+    const words = Copy.accessCopy(state?.brand);
+    const safari = state?.brand === "safari";
+    const granted = state.broadGranted === true;
+    const failed = granted && state.allSitesRegistration === "failed";
+
+    $("accessGranted").hidden = !granted || failed;
+    $("accessGranted").textContent = [words.granted, words.grantedNote].filter(Boolean).join(" ");
+
+    $("accessMissing").hidden = granted && !failed;
+    $("accessTitle").textContent = failed ? words.failedTitle : words.missingTitle;
+    $("accessBody").textContent = failed ? words.failedBody : words.missingBody;
+    const steps = $("accessSteps");
+    steps.replaceChildren();
+    for (const step of failed ? [] : words.steps) {
+      const item = document.createElement("li");
+      item.textContent = step;
+      steps.append(item);
+    }
+    steps.hidden = failed || words.steps.length === 0;
+    $("accessReturn").textContent = words.returnNote;
+    $("accessReturn").hidden = failed || !words.returnNote;
+    // Chrome, Edge and Firefox ask in a prompt; Safari only answers in its settings.
+    $("accessAllow").hidden = failed || safari;
+    $("accessAllow").textContent = words.allowLabel;
+    $("accessCheck").hidden = !failed && !safari;
+    $("accessCheck").textContent = failed ? words.retryLabel : words.checkLabel;
+    $("accessChecking").textContent = accessCheck ? words.checking : "";
+
+    const denied = granted ? (state.browserDeniedOrigins || []) : [];
+    $("accessDenied").hidden = denied.length === 0;
+    $("accessDeniedTitle").textContent = words.deniedTitle;
+    const list = $("accessDeniedList");
+    list.replaceChildren();
+    for (const origin of denied) {
+      const item = document.createElement("li");
+      try { item.textContent = new URL(origin).hostname; } catch (_e) { item.textContent = origin; }
+      list.append(item);
+    }
+    $("accessDeniedHelp").textContent = words.deniedHelp;
+    $("accessDeniedHelp").hidden = !words.deniedHelp;
+  }
+
+  function renderSites() {
+    const allSites = state?.siteMode === "all";
+    const chosen = chosenList();
+    const excluded = state?.excludedHosts || [];
+    // All sites is current only under the current agreement; an older one is
+    // agreed again from the all-sites tile.
+    const agreedAll = allSites && state.allSitesConsent === Hosts.ALL_SITES_CONSENT_VERSION;
+    renderMode("modeSelected", "selected", !allSites);
+    renderMode("modeAll", "all", agreedAll);
+    renderAccess(agreedAll);
+
+    $("listHeading").textContent = allSites ? "sites left out" : "your sites";
+    $("siteModeHelp").textContent = allSites ? Copy.LEAVE_OUT_HELP : "";
+    $("siteModeHelp").hidden = !allSites;
+    $("siteInputLabel").textContent = allSites ? "leave out a site" : "add a site";
+    $("addBtn").textContent = allSites ? "leave out" : "add this site";
+
+    const inactive = !allSites ? (state?.inactiveOrigins || []).filter(origin => chosen.includes(origin)) : [];
+    const regrant = $("regrant");
+    regrant.hidden = inactive.length < 2;
+    if (!regrant.hidden) {
+      const words = Copy.regrantCopy(state?.brand, inactive.length);
+      $("regrantLine").textContent = words.line;
+      $("regrantBtn").textContent = words.label;
+    }
+
+    renderSiteRowsInto("siteList", allSites ? excluded : chosen);
+    const kept = Copy.keptNote(allSites ? "all" : "selected", allSites ? chosen.length : excluded.length);
+    $("keptNote").textContent = kept;
+    $("keptNote").hidden = !kept;
+
+    // Coming back from the browser's settings: say so once access arrives.
+    const broadReady = agreedAll && state.broadGranted === true && state.allSitesRegistration !== "failed" &&
+      state.sitePolicyPending !== true;
+    if (lastBroadReady === false && broadReady) announce(Copy.accessCopy(state?.brand).nowAllowed, "ok");
+    lastBroadReady = agreedAll && state.sitePolicyPending !== true ? broadReady : null;
   }
 
   function paint(nextState, sequence) {
@@ -391,7 +538,7 @@
       ? state.grantedOrigins
       : [];
 
-    const isWelcome = (!state || state.consentVersion !== 1) || chosen.length === 0;
+    const isWelcome = !state || state.consentVersion !== 1;
 
     if (isWelcome) {
       renderWelcome(derived);
@@ -466,7 +613,23 @@
 
   // Site Disclosure confirmation
   if ($("siteDisclosureConfirm")) {
-    $("siteDisclosureConfirm").addEventListener("click", () => closeDisclosure(true));
+    $("siteDisclosureConfirm").addEventListener("click", () => {
+      if (allSitesDisclosure) {
+        // Invoke permission request in this actual confirming gesture.
+        const result = View.grantAllSites(siteEffects());
+        closeDisclosure(true);
+        result.then(async value => {
+          await refresh();
+          if (value.denied) announce("permission declined. your mode hasn't changed.", "bad");
+          else if (value.error) showActionError(value.error);
+          else if (state?.siteMode === "all" && state.broadGranted !== true) focus("accessTitle");
+          else if (state?.siteMode === "all") {
+            announce("all sites are shared now. leave out any site below.", "ok");
+            focus("sitesHeading");
+          }
+        });
+      } else closeDisclosure(true);
+    });
   }
   if ($("siteDisclosureCancel")) {
     $("siteDisclosureCancel").addEventListener("click", () => closeDisclosure(false));
@@ -475,11 +638,80 @@
     if (event.key === "Escape" && $("siteDisclosure") && !$("siteDisclosure").hidden) closeDisclosure(false);
   });
 
+  $("modeAllBtn").addEventListener("click", async () => {
+    if (state?.siteMode === "all" && state.allSitesConsent === Hosts.ALL_SITES_CONSENT_VERSION) return;
+    clearAnnouncement();
+    disclosureReturnFocus = $("modeAllBtn");
+    await presentDisclosure(null, true);
+  });
+  $("modeSelectedBtn").addEventListener("click", async () => {
+    clearAnnouncement();
+    const result = await cmd({ cmd: "setSiteMode", mode: "selected" });
+    if (result.error) showActionError(result.error);
+    await refresh();
+    if (!result.error) {
+      const lost = (state?.inactiveOrigins || []).length;
+      announce(lost > 0
+        ? `only the sites you add are shared now. ${Copy.regrantCopy(state?.brand, lost).line}`
+        : "only the sites you add are shared now.", "ok");
+    }
+    focus("sitesHeading");
+  });
+  $("accessAllow").addEventListener("click", async () => {
+    clearAnnouncement();
+    await Actions.run({ id: "allow-all-sites" }, sharedActionEffects());
+  });
+
+  // Safari's grant is made in its own settings window, so this page re-reads the
+  // browser whenever the owner comes back to it, and on request.
+  async function checkAccess(explicit) {
+    if (state?.siteMode !== "all") { await refresh(); return; }
+    if (accessCheck) return;
+    // A check that doesn't answer gives up, so check again always works; the
+    // status channel still brings the answer whenever the browser gives it.
+    accessCheck = Promise.race([cmd({ cmd: "refreshSiteAccess" }),
+      new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 10000))]);
+    renderSites();
+    const result = await accessCheck;
+    accessCheck = null;
+    await refresh();
+    if (result?.timedOut) renderSites();
+    else if (result?.error) showActionError(result.error);
+    else if (explicit && state?.siteMode === "all" && state.broadGranted !== true) {
+      announce(Copy.accessCopy(state?.brand).stillMissing, "bad");
+    }
+  }
+  $("accessCheck").addEventListener("click", () => checkAccess(true));
+  // Safari can unload and restart the background without closing this page's
+  // status channel, so coming back reconnects before trusting what is shown.
+  function onReturn() {
+    subscribeStatus();
+    checkAccess(false);
+  }
+  window.addEventListener("focus", onReturn);
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") onReturn();
+    });
+  }
+  $("regrantBtn").addEventListener("click", async () => {
+    clearAnnouncement();
+    const result = await View.grantChosenSites(state?.inactiveOrigins || [], siteEffects());
+    if (result.denied) announce("permission declined. those sites stay paused.", "bad");
+    else if (result.error) showActionError(result.error);
+    await refresh();
+  });
+
   let subscriptionEpoch = 0;
   let reconnectTimer = null;
+  let statusPort = null;
+  let lastStatusAt = Date.now();
   function subscribeStatus() {
     const generation = ++subscriptionEpoch;
     appliedCaptureEpoch = -1;
+    lastStatusAt = Date.now();
+    try { statusPort?.disconnect?.(); } catch (_e) {}
+    statusPort = null;
     const disconnected = () => {
       if (generation !== subscriptionEpoch) return;
       subscriptionEpoch++;
@@ -496,13 +728,32 @@
     };
     try {
       const port = chrome.runtime.connect({ name: "status" });
+      statusPort = port;
       port.onMessage.addListener(msg => {
-        if (generation === subscriptionEpoch && msg?.type === "status" && msg.status) applyStatus(msg.status);
+        if (generation === subscriptionEpoch && msg?.type === "status" && msg.status) {
+          lastStatusAt = Date.now();
+          applyStatus(msg.status);
+        }
       });
       port.onDisconnect.addListener(disconnected);
     } catch (_e) { disconnected(); }
   }
   subscribeStatus();
+
+  // The background pushes status every few seconds while the app is connected.
+  // A visible page that hears nothing for a while resubscribes rather than keep
+  // showing a state from a background that is gone.
+  function watchStatus() {
+    if (typeof document.visibilityState !== "string") return;
+    setTimeout(() => {
+      if (document.visibilityState === "visible" && Date.now() - lastStatusAt > 12000) {
+        subscribeStatus();
+        refresh();
+      }
+      watchStatus();
+    }, 5000);
+  }
+  watchStatus();
 
   globalThis.SolstoneOptions = { refresh };
   refresh();

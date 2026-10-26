@@ -35,13 +35,32 @@
     }
     if (action.id === "allow-again") {
       const result = await effects.grantSite(action.origin);
-      if (result?.denied) effects.showDenied();
+      if (result?.denied) effects.showDenied(action);
       else if (result?.error) effects.showError(result.error);
       await refresh();
       return true;
     }
     if (action.id === "remove-site") {
       const result = await cmd({ cmd: "removeGrantedOrigin", origin: action.origin });
+      if (result?.error) effects.showError(result.error);
+      await refresh();
+      return true;
+    }
+    if (action.id === "allow-all-sites") {
+      const result = await effects.allowAllSites();
+      if (result?.denied) effects.showDenied(action);
+      else if (result?.error) effects.showError(result.error);
+      await refresh();
+      return true;
+    }
+    if (action.id === "retry-all-sites") {
+      const result = await cmd({ cmd: "refreshSiteAccess" });
+      if (result?.error) effects.showError(result.error);
+      await refresh();
+      return true;
+    }
+    if (action.id === "exclude-site" || action.id === "include-site") {
+      const result = await cmd({ cmd: "setExcludedHost", host: action.host || action.origin, excluded: action.id === "exclude-site" });
       if (result?.error) effects.showError(result.error);
       await refresh();
       return true;

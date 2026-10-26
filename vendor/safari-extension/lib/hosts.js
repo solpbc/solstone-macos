@@ -90,6 +90,31 @@
     return !((pausedHosts || {})[matchHostFor(locationHost)]);
   }
 
+  const ALL_SITES_CONSENT_VERSION = 1;
+
+  function excludedHostname(input) {
+    try {
+      const url = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`);
+      if (!/^https?:$/.test(url.protocol) || url.username || url.password || !url.hostname ||
+          url.hostname.includes("*") || /\s/.test(input)) return null;
+      return url.hostname.toLowerCase();
+    } catch (_e) { return null; }
+  }
+
+  // Owner scope and the browser's broad grant are separate facts. Effective
+  // document access is additionally enforced by each browser-mediated read.
+  function originGranted(state, origin) {
+    if (state.sitePolicyPending) return false;
+    let url;
+    try { url = new URL(origin); } catch (_e) { return false; }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    if (state.siteMode === "all") {
+      return state.allSitesConsent === ALL_SITES_CONSENT_VERSION && state.broadGranted === true &&
+        !(state.excludedHosts || []).includes(url.hostname.toLowerCase());
+    }
+    return Array.from(state.grantedOrigins || []).includes(url.origin);
+  }
+
   function isValidHostInput(input) {
     const raw = String(input || "").trim();
     if (!raw || /\s/.test(raw) || raw.includes("/")) return false;
@@ -106,6 +131,9 @@
     removalSubsumesProtectedOrigin,
     hostAllowed,
     hostObservable,
+    ALL_SITES_CONSENT_VERSION,
+    excludedHostname,
+    originGranted,
     isValidHostInput,
   };
 })();

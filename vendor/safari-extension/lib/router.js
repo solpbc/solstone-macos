@@ -17,6 +17,10 @@
   let grantChain = Promise.resolve();
   let pauseEpoch = 0;
 
+  function originGranted(port, origin) {
+    return H.originGranted(port, origin);
+  }
+
   function ownerStateFor(port) {
     const current = port.ownerSites || {};
     return {
@@ -288,6 +292,7 @@
         }
 
         case "intendAddOrigin": {
+          if (port.siteMode === "all") return { ok: false, error: "wrong_site_mode" };
           const origin = normalizeOrigin(msg.origin);
           if (!origin) return { ok: false, error: "invalid_origin" };
           let host = "";
@@ -306,6 +311,22 @@
           return { ok: true };
         }
 
+        case "intendAllSites": {
+          if (port.consentVersion !== Gate.CONSENT_VERSION) return { ok: false, error: "missing_consent" };
+          applyOwnerEvent(port, { type: "reserve", origin: null, pattern: "*://*/*", now: port.now() });
+          return { ok: true };
+        }
+
+        case "setSiteMode":
+        case "setExcludedHost": {
+          if (!deps.updateSitePolicy) return { ok: false, error: "policy_unavailable" };
+          return deps.updateSitePolicy(msg);
+        }
+        case "refreshSiteAccess": {
+          if (!deps.refreshSiteAccess) return { ok: false, error: "policy_unavailable" };
+          return deps.refreshSiteAccess();
+        }
+
         case "dismissTruncation": {
           const origin = normalizeOrigin(msg.origin);
           const bound = typeof msg.bound === "string" ? msg.bound : String(msg.bound || "");
@@ -315,6 +336,7 @@
         }
 
         case "addGrantedOrigin": {
+          if (port.siteMode === "all") return { ok: false, error: "wrong_site_mode" };
           const origin = normalizeOrigin(msg.origin);
           if (!origin) return { ok: false, error: "invalid_origin" };
 
@@ -463,13 +485,13 @@
 
     if (sender.url === "about:blank") {
       senderOrigin = normalizeOrigin(sender.origin);
-      if (!senderOrigin || !port.grantedOrigins.has(senderOrigin)) {
+      if (!senderOrigin || !originGranted(port, senderOrigin)) {
         return { ok: false, error: "origin_not_granted" };
       }
       senderUrl = Blocks.originPath(senderOrigin + "/");
     } else {
       senderOrigin = normalizeOrigin(sender.origin || (sender.url ? new URL(sender.url).origin : ""));
-      if (!senderOrigin || !port.grantedOrigins.has(senderOrigin)) {
+      if (!senderOrigin || !originGranted(port, senderOrigin)) {
         return { ok: false, error: "origin_not_granted" };
       }
       senderUrl = Blocks.originPath(sender.url || "");
@@ -549,6 +571,10 @@
           paused: port.paused,
           showPageIndicator: port.showPageIndicator,
           grantedOrigins: Array.from(port.grantedOrigins),
+          siteMode: port.siteMode || "selected",
+          excludedHosts: [...(port.excludedHosts || [])],
+          allSitesConsent: port.allSitesConsent || 0,
+          broadGranted: port.broadGranted === true,
           hostCapture: port.hostCapture,
           hostDelivery: port.hostDelivery,
           hostFailure: port.hostFailure,
@@ -560,9 +586,57 @@
         };
       }
 
+      case "read": {
+        if (port.siteMode !== "all" || !binding || !deps.executeBrowserRead ||
+            !Number.isSafeInteger(msg.requestId) || !["skim", "observe", "root"].includes(msg.action)) return { ok: false, error: "invalid_read" };
+        port.syncCaptureAuthority?.();
+        const decision = Gate.computeDecision({
+          lease: port.lease, paused: port.paused, consentVersion: port.consentVersion,
+          originGranted: originGranted(port, senderOrigin), pressure: port.pressure,
+          hostCapture: port.hostCapture, capturePermitted: port.capturePermitted === true, now: port.now(),
+        });
+        if (!decision.open || msg.captureEpoch !== port.captureEpoch || msg.leaseToken !== port.lease?.token) {
+          return { ok: false, error: "authority_mismatch" };
+        }
+        if (binding.readPending) return { ok: false, error: "read_pending" };
+        const nonce = mintCtx();
+        const admittedEpoch = port.captureEpoch;
+        const admittedPermissionEpoch = port.permissionEpoch;
+        const authorize = () => {
+          port.syncCaptureAuthority?.();
+          return frameBindings.get(fKey) === binding && port.captureEpoch === admittedEpoch &&
+            port.permissionEpoch === admittedPermissionEpoch && originGranted(port, senderOrigin) &&
+            Gate.computeDecision({lease:port.lease, paused:port.paused, consentVersion:port.consentVersion,
+              originGranted:true, pressure:port.pressure, hostCapture:port.hostCapture,
+              capturePermitted:port.capturePermitted === true, now:port.now()}).open;
+        };
+        binding.readPending = true;
+        binding.readNonce = nonce;
+        binding.readPermissionEpoch = admittedPermissionEpoch;
+        try {
+          const result = await deps.executeBrowserRead(binding, { nonce, action: msg.action,
+            reason: msg.reason, requestId: msg.requestId, captureEpoch: admittedEpoch, leaseToken: port.lease.token }, authorize);
+          if (!authorize()) return { ok: false, error: "authority_mismatch" };
+          if (result !== true) return { ok: false, error: "read_not_executed" };
+          if (port.browserDeniedOrigins?.delete(senderOrigin)) port.notify();
+          return { ok: true };
+        } catch (_e) {
+          if (binding.readNonce === nonce) binding.readNonce = null;
+          port.browserDeniedOrigins?.add(senderOrigin);
+          port.notify();
+          return { ok: false, error: "browser_access_denied" };
+        } finally { binding.readPending = false; }
+      }
+
       case "skim": {
         if (!binding) {
           return { ok: false, error: "challenge_mismatch" };
+        }
+        if (port.siteMode === "all") {
+          if (!msg.readNonce || binding.readNonce !== msg.readNonce || binding.readPermissionEpoch !== port.permissionEpoch) {
+            return { ok: false, error: "read_not_authorized" };
+          }
+          binding.readNonce = null;
         }
         const nowMs = port.now();
         const codec = globalThis.SolstoneNativeBrowser;
@@ -590,7 +664,7 @@
             lease: port.lease,
             paused: port.paused,
             consentVersion: port.consentVersion,
-            originGranted: port.grantedOrigins.has(senderOrigin),
+            originGranted: originGranted(port, senderOrigin),
             pressure: port.pressure,
             hostCapture: port.hostCapture,
             capturePermitted: port.capturePermitted === true,

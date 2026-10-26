@@ -80,7 +80,7 @@
         background: #fff;
         color: var(--ink);
       }
-      input[type="checkbox"] { width: auto; }
+      input[type="checkbox"], input[type="radio"] { width: auto; }
       button {
         min-height: 34px;
         font: inherit;
@@ -164,10 +164,46 @@
       .action-message { min-height: 0; margin: 12px 0; color: var(--muted); font-size: 12px; }
       .action-message.ok { color: var(--success-ink); }
       .action-message.bad { color: var(--bad); }
+      .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+      .mode {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 12px 13px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+      }
+      .mode.current { border-color: var(--orange); background: var(--orange-wash); }
+      .mode-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+      .mode-title { font-weight: 600; }
+      .mode-current { color: var(--ink); font-size: 12px; }
+      .mode-current::before { content: "\2713  "; }
+      .mode-body { margin: 4px 0 0; color: var(--soft); font-size: 13px; }
+      .mode button { margin-top: 10px; }
+      .access { margin-top: 14px; padding: 12px 13px; border-radius: 11px; background: var(--ground); }
+      .access h3 { margin: 0; }
+      .access-granted { margin: 0; display: flex; gap: 8px; align-items: baseline; }
+      .access-granted::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--success); transform: translateY(-1px); }
+      .access-steps { margin: 8px 0 0; padding-left: 22px; }
+      .access-steps li { margin-top: 4px; padding-left: 2px; }
+      #accessChecking:empty { display: none; }
+      #accessDenied { margin-top: 10px; }
+      #accessGranted:not([hidden]) + #accessMissing[hidden] + #accessDenied { border-top: 1px solid var(--line); padding-top: 10px; }
+      .denied-list { margin: 6px 0 0; padding-left: 22px; overflow-wrap: anywhere; }
+      #listHeading { margin-top: 18px; }
+      .regrant {
+        display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+        margin: 8px 0; padding: 9px 11px; border-radius: 10px; background: var(--bad-wash); color: var(--bad);
+      }
+      .field-error { margin: 6px 0 0; color: var(--bad); font-size: 12px; }
+      .agreement { margin-top: 2px; }
+      .agreement h3 { margin-top: 4px; font-size: 15px; }
+      h2:focus-visible, h3:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
       footer { color: var(--muted); font-size: 12px; }
       @media (max-width: 620px) {
         body { padding: 18px; }
         .site { align-items: flex-start; flex-direction: column; }
+        .modes { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -252,24 +288,72 @@
           <div id="statusActions"></div>
         </section>
 
-        <section id="sitesCard" class="card">
-          <h2>your sites</h2>
+        <section id="sitesCard" class="card" aria-labelledby="sitesHeading">
+          <h2 id="sitesHeading" tabindex="-1">what you share</h2>
           <div id="sitesMain">
+            <div class="modes" role="group" aria-labelledby="sitesHeading">
+              <div id="modeSelected" class="mode">
+                <div class="mode-head">
+                  <span id="modeSelectedTitle" class="mode-title"></span>
+                  <span id="modeSelectedCurrent" class="mode-current" hidden></span>
+                </div>
+                <p id="modeSelectedBody" class="mode-body"></p>
+                <button id="modeSelectedBtn" type="button" hidden></button>
+              </div>
+              <div id="modeAll" class="mode">
+                <div class="mode-head">
+                  <span id="modeAllTitle" class="mode-title"></span>
+                  <span id="modeAllCurrent" class="mode-current" hidden></span>
+                </div>
+                <p id="modeAllBody" class="mode-body"></p>
+                <button id="modeAllBtn" type="button" hidden></button>
+              </div>
+            </div>
+
+            <div id="accessPanel" class="access" hidden>
+              <p id="accessGranted" class="access-granted" hidden></p>
+              <div id="accessMissing" hidden>
+                <h3 id="accessTitle" tabindex="-1"></h3>
+                <p id="accessBody" class="muted"></p>
+                <ol id="accessSteps" class="access-steps"></ol>
+                <p id="accessReturn" class="muted" hidden></p>
+                <div class="actions">
+                  <button id="accessAllow" class="primary" type="button" hidden></button>
+                  <button id="accessCheck" type="button" hidden></button>
+                </div>
+                <p id="accessChecking" class="muted" aria-live="polite"></p>
+              </div>
+              <div id="accessDenied" hidden>
+                <p id="accessDeniedTitle"></p>
+                <ul id="accessDeniedList" class="denied-list"></ul>
+                <p id="accessDeniedHelp" class="muted" hidden></p>
+              </div>
+            </div>
+
+            <h3 id="listHeading"></h3>
+            <p id="siteModeHelp" class="muted" hidden></p>
+            <div id="regrant" class="regrant" hidden>
+              <span id="regrantLine"></span>
+              <button id="regrantBtn" type="button"></button>
+            </div>
             <form id="addForm" novalidate>
               <div class="addrow">
                 <div>
-                  <label for="newHost">add this site</label>
-                  <input id="newHost" placeholder="mail.google.com" />
+                  <label id="siteInputLabel" for="newHost">add a site</label>
+                  <input id="newHost" placeholder="mail.google.com" autocomplete="off" spellcheck="false" aria-describedby="siteInputError" />
                 </div>
                 <button id="addBtn" class="primary" type="submit">add this site</button>
               </div>
+              <p id="siteInputError" class="field-error" hidden></p>
             </form>
             <div id="siteList"></div>
+            <p id="keptNote" class="muted" hidden></p>
           </div>
-          <section id="siteDisclosure" hidden>
-            <h3 id="siteDisclosureTitle"></h3>
+          <section id="siteDisclosure" class="agreement" aria-labelledby="siteDisclosureTitle" hidden>
+            <h3 id="siteDisclosureTitle" tabindex="-1"></h3>
             <p id="siteDisclosureWhat" class="strongish"></p>
             <p id="siteDisclosureUnsent"></p>
+            <p id="siteDisclosureLeaveOut" hidden></p>
             <div class="destination-box">
               <div class="key">it goes to</div>
               <div id="siteDisclosureDestination" class="value"></div>
@@ -287,7 +371,7 @@
           <h2>on-page marker</h2>
           <label class="marker-label">
             <input type="checkbox" id="showPageIndicator" />
-            show a small solstone mark on pages you've added
+            show a small solstone mark on pages you share
           </label>
         </section>
 

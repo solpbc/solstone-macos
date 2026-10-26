@@ -31,21 +31,27 @@
     }
   }
 
-  function originFor(url) {
+  // What kind of page the active tab is. A tab with no address is one the browser
+  // didn't show this extension (Safari hides a page it denies), so it's "unknown",
+  // never assumed to be a page that could be read.
+  function pageFor(tab) {
+    if (tab?.incognito === true) {
+      let host = "";
+      try { host = new URL(tab.url).hostname; } catch (_error) {}
+      return { origin: "", host, ok: false, kind: "private" };
+    }
+    if (!tab || !tab.url) return { origin: "", host: "", ok: false, kind: "unknown" };
     try {
-      const parsed = new URL(url);
-      return {
-        origin: parsed.origin,
-        host: parsed.hostname,
-        ok: parsed.protocol === "http:" || parsed.protocol === "https:",
-      };
+      const parsed = new URL(tab.url);
+      const ok = parsed.protocol === "http:" || parsed.protocol === "https:";
+      return { origin: ok ? parsed.origin : "", host: ok ? parsed.hostname : "", ok, kind: ok ? "web" : "restricted" };
     } catch (_error) {
-      return { origin: "", host: "", ok: false };
+      return { origin: "", host: "", ok: false, kind: "unknown" };
     }
   }
 
   let state = null;
-  let page = { origin: "", host: "", ok: false };
+  let page = { origin: "", host: "", ok: false, kind: "" };
   let disclosureResolve = null;
   let previousActiveElement = null;
   let paintSequence = 0;
@@ -72,8 +78,11 @@
       openApp: () => chrome.tabs.create({ url: "https://solstone.app" }),
       reload: () => chrome.runtime.reload(),
       grantSite: (origin) => View.grantSite(origin, siteEffects()),
+      allowAllSites: () => View.regrantAllSites(siteEffects()),
       showError: showActionError,
-      showDenied: () => showActionMessage("permission declined. this site stays paused."),
+      showDenied: (action) => showActionMessage(action?.id === "allow-all-sites"
+        ? globalThis.SolstoneCopy.accessCopy(state?.brand).declined
+        : "permission declined. this site stays paused."),
       lossSeq: () => state?.lossNotice?.seq,
     });
   }
@@ -105,6 +114,7 @@
       status: state,
       cmd,
       requestPermission: (request) => chrome.permissions.request(request),
+      removePermission: (request) => chrome.permissions.remove(request),
     };
   }
 
@@ -153,6 +163,10 @@
 
   async function runPageSiteAction(action) {
     showActionMessage("");
+    if (action.id === "exclude-site" || action.id === "include-site") {
+      await runAction({ ...action, host: page.host, origin: page.origin });
+      return;
+    }
     if (action.id === "remove-site") {
       const origin = page.origin || `https://${page.host}`;
       const result = await cmd({ cmd: "removeGrantedOrigin", origin });
@@ -173,12 +187,20 @@
     if (!section) return;
     $("pageHost").textContent = section.host;
     $("currentPageState").textContent = section.state;
+    $("currentPageState").className = `page-state${section.state === "on now" ? " ok" : ""}`;
+    if ($("pageNote")) {
+      $("pageNote").textContent = section.note || "";
+      $("pageNote").hidden = !section.note;
+    }
 
     const siteAction = $("pageSiteAction");
-    siteAction.textContent = section.siteAction.label;
-    siteAction.disabled = section.siteAction.disabled;
-    siteAction.className = section.siteAction.primary ? "primary" : "";
-    siteAction.onclick = () => runPageSiteAction(section.siteAction);
+    siteAction.hidden = !section.siteAction;
+    if (section.siteAction) {
+      siteAction.textContent = section.siteAction.label;
+      siteAction.disabled = section.siteAction.disabled;
+      siteAction.className = section.siteAction.primary ? "primary" : "";
+      siteAction.onclick = () => runPageSiteAction(section.siteAction);
+    }
 
     const pauseAction = $("pauseAction");
     pauseAction.hidden = !section.pauseAction;
@@ -258,8 +280,7 @@
     renderCurrent();
     const tab = await currentTab();
     if (sequence !== paintSequence) return;
-    const current = tab && tab.url ? originFor(tab.url) : { origin: "", host: "", ok: false };
-    page = { origin: current.origin, host: current.host, ok: current.ok };
+    page = tab ? pageFor(tab) : { origin: "", host: "", ok: false, kind: "unknown" };
     renderCurrent();
   }
 

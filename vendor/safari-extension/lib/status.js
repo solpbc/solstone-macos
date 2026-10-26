@@ -220,7 +220,31 @@
         });
       }
 
-      if (chosenOrigins.length === 0) {
+      if (status.sitePolicyPending) {
+        items.push({ layer: 3, kind: "site-policy-pending", mark: "paused", badge: "", headline: "changing your sites",
+          sub: "nothing new is taken in until this is saved", reason: "", action: null, connecting: null });
+      } else if (status.siteMode === "all" && status.allSitesConsent !== globalThis.SolstoneHosts.ALL_SITES_CONSENT_VERSION) {
+        // An agreement from an older all-sites disclosure is agreed again in settings,
+        // never answered by asking the browser for access.
+        items.push({ layer: 3, kind: "all-sites-agreement", mark: "paused", badge: "", headline: "agree to all sites again",
+          sub: "nothing new is taken in from this browser", reason: "", action: { id: "open-settings", label: "open settings" }, connecting: null });
+      } else if (status.siteMode === "all" && status.broadGranted !== true) {
+        // Safari grants all websites only in its own settings, so its action is the
+        // settings page's steps; elsewhere the popup can ask the browser directly.
+        const safari = status.brand === "safari";
+        items.push({ layer: 3, kind: "all-sites-access", mark: "paused", badge: "",
+          headline: safari ? "allow all websites in Safari" : `${bName} isn't allowing all websites`,
+          sub: "nothing new is taken in from this browser",
+          reason: safari
+            ? "in Safari, choose Safari \u203a Settings, then Websites and solstone. set For other websites to Allow."
+            : "allow it again, or switch back to sites you add.",
+          action: safari ? { id: "open-settings", label: "show me how" } : { id: "allow-all-sites", label: `allow in ${bName}` },
+          connecting: null });
+      } else if (status.siteMode === "all" && status.allSitesRegistration === "failed") {
+        items.push({ layer: 3, kind: "all-sites-registration", mark: "attention", badge: "!", headline: "couldn't start on your sites",
+          sub: "nothing new is taken in from this browser", reason: `something went wrong turning on all sites in ${bName}.`,
+          action: { id: "retry-all-sites", label: "try again" }, connecting: null });
+      } else if (status.siteMode !== "all" && chosenOrigins.length === 0) {
         items.push({
           layer: 3,
           kind: "no-sites",
@@ -439,7 +463,7 @@
               badge: "",
               headline: "on",
               sub: deliverySub,
-              reason: "none of your sites are open right now.",
+              reason: status.siteMode === "all" ? "none of the websites you share are open right now." : "none of your sites are open right now.",
               action: null,
               connecting: null,
             });
@@ -531,9 +555,28 @@
     const openTabOrigins = Array.isArray(extras.openTabOrigins) ? extras.openTabOrigins :
       (Array.isArray(tabs.openOrigins) ? tabs.openOrigins : []);
     const tabsKnown = typeof extras.tabsKnown === "boolean" ? extras.tabsKnown : tabs.known === true;
+    let host = "";
+    try { host = new URL(entry).hostname; } catch (_e) {}
+    const isTabOpen = openTabOrigins.includes(entry);
+    const leaseOpen = !!status.lease && Number(status.lease.freshnessMs) > 0;
+    const gateOpenFor = (granted) => granted && status.capturePermitted === true && leaseOpen && status.consentVersion === 1 &&
+      !status.paused && !status.pressure?.active && status.hostCapture === "permitted" && status.custody?.full !== true;
+    if (status.siteMode === "all") {
+      // In all-sites mode a site isn't added or granted on its own: it is left
+      // out, refused by the browser, or covered by the one broad grant.
+      if ((status.excludedHosts || []).includes(host)) return { kind: "excluded", label: "left out", action: null };
+      if ((status.browserDeniedOrigins || []).includes(entry)) {
+        return { kind: "denied-by-browser", label: `${bName} is denying this site`, action: null };
+      }
+      if (status.paused || status.hostCapture === "paused") return { kind: "paused", label: "paused", action: null };
+      if (status.allSitesRegistration === "failed" || !gateOpenFor(globalThis.SolstoneHosts.originGranted(status, entry))) {
+        return { kind: "not-taken-in", label: "not taken in right now", action: null };
+      }
+      if (tabsKnown && isTabOpen) return { kind: "on-now", label: "on now", action: null };
+      return { kind: "included", label: "included", action: null };
+    }
     const isInactive = inactiveOrigins.includes(entry);
     const isGranted = grantedOrigins.includes(entry);
-    const isTabOpen = openTabOrigins.includes(entry);
 
     if (registration === "failed" || enqueueError) {
       const stored = registration === "failed" ? registration : enqueueError;
@@ -556,9 +599,7 @@
       };
     }
 
-    const leaseOpen = !!status.lease && Number(status.lease.freshnessMs) > 0;
-    const gateOpen = isGranted && status.capturePermitted === true && leaseOpen && status.consentVersion === 1 &&
-      !status.paused && !status.pressure?.active && status.hostCapture === "permitted" && status.custody?.full !== true;
+    const gateOpen = gateOpenFor(isGranted);
     if (!isGranted || (tabsKnown && isTabOpen && !gateOpen)) return { kind: "not-taken-in", label: "not taken in right now", action: null };
 
     if (registration === "reload" && tabsKnown && isTabOpen) {
@@ -594,8 +635,9 @@
       } catch (_e) {}
     }
     const openOrigins = Array.from(origins).sort();
-    const grants = new Set(Array.isArray(options.grantedOrigins) ? options.grantedOrigins : []);
-    return { known: true, openOrigins, anyGrantedTabOpen: openOrigins.some((origin) => grants.has(origin)) };
+    const grants = new Set(options.grantedOrigins || []);
+    return { known: true, openOrigins, anyGrantedTabOpen: openOrigins.some((origin) =>
+      options.siteMode === "all" ? globalThis.SolstoneHosts.originGranted(options, origin) : grants.has(origin)) };
   }
 
   function welcomeHold(status) {

@@ -18,6 +18,7 @@
         --orange: #e8913a;
         --focus: #B06A1A;
         --success: #3F9D6A;
+        --success-ink: #166534;
         --warn: #C99A2E;
         --bad: #9f2d2d;
         --bad-wash: #f8e9e6;
@@ -53,13 +54,14 @@
         flex-direction: column;
         flex: 1 1 auto;
         min-height: 0;
-        overflow: hidden;
+        overflow-y: auto;
         padding: 0 14px 12px;
       }
-      #verdict, #page, #siteCount, #actionMessage { flex: none; }
+      /* main scrolls as one column, so no section is squeezed into its own tiny
+         scroller; a long attention list keeps a bounded height of its own. */
+      main > * { flex: none; }
       #siteIssues {
-        flex: 1 1 auto;
-        min-height: 0;
+        max-height: 240px;
         overflow-y: auto;
       }
       #disclosure {
@@ -126,15 +128,14 @@
       .site-issue .h { font-weight: 600; overflow-wrap: anywhere; }
       .site-issue .w { color: var(--soft); font-size: 12px; }
       .site-issue button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
-      .page-line {
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 8px;
-      }
-      .page-host { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
-      .page-state { color: var(--soft); font-size: 12px; text-align: right; }
-      .pact { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 9px; }
+      .page-line { min-width: 0; }
+      .page-host { display: block; font-weight: 600; overflow-wrap: anywhere; }
+      .page-state { display: block; margin-top: 1px; color: var(--soft); font-size: 12px; }
+      .page-state.ok { color: var(--success-ink); }
+      .page-state.bad { color: var(--bad); }
+      .page-note { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+      .pact { display: flex; gap: 8px; margin-top: 9px; }
+      .pact button { flex: 1 1 0; min-width: 0; }
       .site-count {
         display: flex;
         justify-content: space-between;
@@ -220,6 +221,7 @@
           <span id="pageHost" class="page-host"></span>
           <span id="currentPageState" class="page-state"></span>
         </div>
+        <p id="pageNote" class="page-note" hidden></p>
         <div class="pact">
           <button id="pageSiteAction" type="button"></button>
           <button id="pauseAction" type="button"></button>
@@ -227,10 +229,10 @@
       </section>
 
       <section id="siteCount" class="blk" hidden>
-        <h2 class="blk-h">your sites</h2>
+        <h2 class="blk-h">sharing</h2>
         <div class="site-count">
           <span id="siteCountText"></span>
-          <a id="allSitesLink" href="#">all sites ›</a>
+          <a id="allSitesLink" href="#">manage ›</a>
         </div>
       </section>
 

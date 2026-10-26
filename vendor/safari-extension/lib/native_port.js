@@ -121,6 +121,13 @@
       this.paused = false;
       this.chosenOrigins = new Set();
       this.grantedOrigins = new Set();
+      this.siteMode = "selected";
+      this.excludedHosts = [];
+      this.allSitesConsent = 0;
+      this.broadGranted = false;
+      this.allSitesRegistration = null;
+      this.browserDeniedOrigins = new Set();
+      this.sitePolicyPending = false;
       this.permissionEpoch = 0;
       this.ownerSites = { grantEpoch: 0, reservation: null, registration: {}, enqueue: {} };
       this.registration = {};
@@ -140,6 +147,7 @@
     syncCaptureAuthority() {
       const signature = JSON.stringify([this.connectionToken, this.stateRevision, this.paused,
         this.consentVersion, [...this.chosenOrigins].sort(), [...this.grantedOrigins].sort(), this.pressure.active,
+        this.siteMode, this.excludedHosts, this.allSitesConsent, this.broadGranted, this.sitePolicyPending, this.permissionEpoch,
         this.capturePermitted, this.hostCapture, this.lease]);
       if (signature !== this.captureSignature) {
         this.captureSignature = signature;
@@ -327,8 +335,10 @@
       if (this.ownerSites?.reservation && nowMs >= this.ownerSites.reservation.expiresAt) this.ownerSites.reservation = null;
       const chosenList = Array.from(this.chosenOrigins).sort();
       const grantedList = Array.from(this.grantedOrigins).sort();
-      const inactiveOrigins = chosenList.filter((o) => !this.grantedOrigins.has(o)).sort();
-      const originGranted = this.grantedOrigins.size > 0;
+      const inactiveOrigins = this.siteMode === "all" ? [] : chosenList.filter((o) => !this.grantedOrigins.has(o)).sort();
+      const originGranted = !this.sitePolicyPending && (this.siteMode === "all"
+        ? this.broadGranted && this.allSitesConsent === globalThis.SolstoneHosts.ALL_SITES_CONSENT_VERSION
+        : this.grantedOrigins.size > 0);
       const fresh = (this.hostStateDeadline == null || nowMs < this.hostStateDeadline) &&
         (!this.lease || nowMs < this.lease.receivedAt + this.lease.freshnessMs);
       const capturePermitted = fresh && this.capturePermitted === true;
@@ -391,6 +401,13 @@
         consentVersion: this.consentVersion,
         chosenOrigins: chosenList,
         grantedOrigins: grantedList,
+        siteMode: this.siteMode,
+        excludedHosts: [...this.excludedHosts],
+        allSitesConsent: this.allSitesConsent,
+        broadGranted: this.broadGranted,
+        allSitesRegistration: this.allSitesRegistration,
+        browserDeniedOrigins: [...this.browserDeniedOrigins],
+        sitePolicyPending: this.sitePolicyPending,
         inactiveOrigins,
         openTabs: this.openTabs ? { ...this.openTabs, openOrigins: Array.isArray(this.openTabs.openOrigins) ? this.openTabs.openOrigins.slice() : null } : { known: false, openOrigins: null, anyGrantedTabOpen: null },
         showPageIndicator: !!this.showPageIndicator,

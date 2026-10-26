@@ -27,6 +27,12 @@
   let paused = false;
   let consentVersion = 0;
   let originGranted = false;
+  let browserMediated = false;
+  let injectedRead = null;
+  let browserReadPending = false;
+  let readSequence = 0;
+  let readRequestedAt = 0;
+  let readTimer = null;
   let showIndicator = false;
   let hostCapture = null;
   let capturePermitted = false;
@@ -94,6 +100,7 @@
   function doSkim(reason) {
     const decisionBefore = getDecision();
     if (!decisionBefore.open) return;
+    if (browserMediated && !injectedRead) { requestBrowserRead("skim", reason); return; }
 
     if (!adapter) adapter = A.adapterForHost(location.host);
     const targetRoot = A.pickRoot(adapter, document);
@@ -118,6 +125,7 @@
       connectionGeneration,
       destinationGeneration,
       leaseToken: lease?.token || null,
+      readNonce: injectedRead?.nonce || null,
     };
     if (omitted) msg.omitted = true;
     if (clips.length) msg.clips = clips;
@@ -141,6 +149,7 @@
   function startObserving() {
     const decision = getDecision();
     if (!decision.open) return;
+    if (browserMediated && !injectedRead) { requestBrowserRead("observe", "initial"); return; }
 
     const discovered = Gate.runIfPermitted(decision, {
       discover: getHooks().discover,
@@ -151,6 +160,9 @@
     if (observer) observer.disconnect();
     observer = new MutationObserver((mutations) => {
       if (!getDecision().open) { stopObserving(); return; }
+      // In broad mode a retained listener only schedules browser-authorized
+      // execution. Safari can retain it after a denial with no removal event.
+      if (browserMediated) { scheduleSkim(); return; }
       const indicatorHost = document.getElementById("solstone-observer-indicator-host");
       const filtered = mutations.filter((m) => {
         if (!indicatorHost) return true;
@@ -175,6 +187,9 @@
 
   function stopObserving() {
     grantEpoch++;
+    readSequence++;
+    browserReadPending = false;
+    clearTimeout(readTimer);
     clearTimeout(leaseTimer);
     leaseTimer = null;
     if (observer) {
@@ -196,7 +211,8 @@
   function handleSolicitedGrant(response, reqTime) {
     if (typeof response.paused === "boolean") paused = response.paused;
     if (typeof response.consentVersion === "number") consentVersion = response.consentVersion;
-    originGranted = Array.isArray(response.grantedOrigins) && response.grantedOrigins.includes(location.origin);
+    browserMediated = response.siteMode === "all";
+    originGranted = globalThis.SolstoneHosts.originGranted(response, location.origin);
     if (typeof response.showPageIndicator === "boolean") showIndicator = response.showPageIndicator;
     hostCapture = response.hostCapture || null;
     capturePermitted = response.capturePermitted === true;
@@ -242,7 +258,8 @@
   function handleLeaseUpdate(msg) {
     if (typeof msg.paused === "boolean") paused = msg.paused;
     if (typeof msg.consentVersion === "number") consentVersion = msg.consentVersion;
-    originGranted = Array.isArray(msg.grantedOrigins) && msg.grantedOrigins.includes(location.origin);
+    browserMediated = msg.siteMode === "all";
+    originGranted = globalThis.SolstoneHosts.originGranted(msg, location.origin);
     if (typeof msg.showIndicator === "boolean") showIndicator = msg.showIndicator;
     hostCapture = msg.hostCapture || null;
     capturePermitted = msg.capturePermitted === true;
@@ -275,7 +292,7 @@
   function waitForRoot() {
     let tries = 0;
     if (rootInterval) clearInterval(rootInterval);
-    rootInterval = setInterval(() => {
+    const check = () => {
       tries++;
       const decision = getDecision();
       const discovered = Gate.runIfPermitted(decision, {
@@ -296,8 +313,53 @@
           rootInterval = null;
         }
       }
+    };
+    rootCheck = check;
+    rootInterval = setInterval(() => {
+      if (browserMediated) requestBrowserRead("root", "initial");
+      else check();
     }, 500);
   }
+
+  let rootCheck = null;
+  function requestBrowserRead(action, reason) {
+    if (browserReadPending || !getDecision().open) return;
+    browserReadPending = true;
+    const requestId = ++readSequence;
+    readRequestedAt = now();
+    readTimer = setTimeout(() => {
+      if (readSequence !== requestId) return;
+      browserReadPending = false;
+      readSequence++;
+    }, 5000);
+    try {
+      chrome.runtime.sendMessage({ kind: "read", action, reason, requestId,
+        realmToken: REALM_TOKEN, documentKey: DOCUMENT_KEY,
+        captureEpoch, leaseToken: lease?.token || null }, () => {
+        if (readSequence !== requestId) return;
+        browserReadPending = false;
+        clearTimeout(readTimer);
+        void chrome.runtime.lastError;
+      });
+    } catch (_e) { browserReadPending = false; }
+  }
+
+  // The browser invokes this in its isolated world only after checking current
+  // access. The document identity and lease prevent a queued read from moving
+  // to a replacement frame or surviving a policy/authority withdrawal.
+  globalThis.__solstoneAuthorizedRead = (realm, documentKey, read) => {
+    if (!browserMediated || realm !== REALM_TOKEN || documentKey !== DOCUMENT_KEY ||
+        !browserReadPending || read.requestId !== readSequence || now() >= readRequestedAt + 5000 ||
+        read.captureEpoch !== captureEpoch || read.leaseToken !== lease?.token || !getDecision().open) return false;
+    injectedRead = read;
+    try {
+      if (read.action === "root") rootCheck?.();
+      else if (read.action === "observe") startObserving();
+      else if (read.action === "skim") doSkim(read.reason || "change");
+      else return false;
+      return true;
+    } finally { injectedRead = null; }
+  };
 
   function requestGrant() {
     const reqTime = now();
@@ -334,7 +396,8 @@
       else stopObserving();
       if (showIndicator) Indicator.show(paused);
     } else if (msg.kind === "resnapshot") {
-      doSkim("change");
+      if (!getDecision().open) requestGrant();
+      else doSkim("change");
     } else if (msg.kind === "stop" || msg.kind === "permissionRemoved") {
       lease = null;
       stopObserving();
