@@ -31,8 +31,78 @@ private func openFrame(_ connection: String) -> Data {
     Data("{\"c\":\"\(connection)\",\"type\":\"safari_open\"}".utf8)
 }
 
+private func bridgeDirectory() throws -> URL {
+    let root = URL(fileURLWithPath: "/private/var/tmp/sb-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false,
+                                            attributes: [.posixPermissions: 0o700])
+    return root
+}
+
+private func boundSocket(at url: URL, listening: Bool) throws -> Int32 {
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    var address = try #require(NativeHostEndpoint.address(url.path))
+    let bound = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+    }
+    try #require(bound == 0)
+    if listening { try #require(listen(fd, 1) == 0) }
+    return fd
+}
+
+private func inode(_ url: URL) -> ino_t? {
+    var info = stat()
+    return lstat(url.path, &info) == 0 ? info.st_ino : nil
+}
+
+private let noHost = URL(fileURLWithPath: "/nonexistent/host.sock")
+
 @Suite("SafariExtensionBridge", .serialized)
 struct SafariExtensionBridgeTests {
+    @Test func aSocketACrashLeftIsReclaimedAndRemovedOnQuit() throws {
+        let root = try bridgeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socketURL = root.appendingPathComponent(SafariExtensionBridge.socketName)
+        close(try boundSocket(at: socketURL, listening: false))
+        let address = try #require(NativeHostEndpoint.address(socketURL.path))
+        #expect(SafariExtensionBridge.probe(address) == .stale)
+
+        let subject = bridge(hostSocket: noHost, log: DispatchLog())
+        subject.start(socketURL: socketURL)
+        #expect(SafariExtensionBridge.probe(address) == .live)
+        subject.stop()
+        #expect(!FileManager.default.fileExists(atPath: socketURL.path))
+    }
+
+    @Test func aSocketThatAnswersKeepsItsListener() throws {
+        let root = try bridgeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socketURL = root.appendingPathComponent(SafariExtensionBridge.socketName)
+        let live = try boundSocket(at: socketURL, listening: true)
+        defer { close(live) }
+        let before = inode(socketURL)
+
+        let subject = bridge(hostSocket: noHost, log: DispatchLog())
+        subject.start(socketURL: socketURL)
+        subject.stop()
+        #expect(before != nil && inode(socketURL) == before)
+    }
+
+    @Test func aSecondAppStartingAtOnceLeavesTheFirstItsSocket() throws {
+        let root = try bridgeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let socketURL = root.appendingPathComponent(SafariExtensionBridge.socketName)
+        let first = bridge(hostSocket: noHost, log: DispatchLog())
+        first.start(socketURL: socketURL)
+        let published = inode(socketURL)
+
+        let second = bridge(hostSocket: noHost, log: DispatchLog())
+        second.start(socketURL: socketURL)
+        second.stop()
+        #expect(published != nil && inode(socketURL) == published)
+        first.stop()
+        #expect(!FileManager.default.fileExists(atPath: socketURL.path))
+    }
+
     @Test func anUnavailableIntakeAnswersTheHelloAndCloses() throws {
         let log = DispatchLog()
         let missing = URL(fileURLWithPath: "/private/var/tmp/sb-missing-\(UUID().uuidString.prefix(8))/host.sock")

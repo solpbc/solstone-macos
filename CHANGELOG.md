@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- if the solstone app quits unexpectedly or is force-quit, the solstone extension can reach it again the next time it opens. before, the extension showed "can't reach the solstone app" until you used repair in settings.
+
 ## [2.0.48] - 2026-10-25
 
 ### Added

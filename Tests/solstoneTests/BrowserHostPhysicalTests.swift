@@ -205,8 +205,56 @@ struct BrowserHostFramedTransportTests {
     }
 }
 
+/// What a crash or force-quit leaves: the published socket and the fence naming it.
+private func physicalLeftEndpoint(in root: URL, listening: Bool) throws -> Int32 {
+    let endpoint = root.appendingPathComponent("host.sock")
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    var address = try #require(NativeHostEndpoint.address(endpoint.path))
+    let bound = withUnsafePointer(to: &address) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+    }
+    try #require(bound == 0 && chmod(endpoint.path, 0o600) == 0)
+    if listening { try #require(listen(fd, 1) == 0) }
+    var info = stat()
+    try #require(lstat(endpoint.path, &info) == 0)
+    let fence = root.appendingPathComponent("host.fence")
+    try Data("\(UInt64(info.st_dev)):\(UInt64(info.st_ino))\n".utf8).write(to: fence)
+    try #require(chmod(fence.path, 0o600) == 0)
+    return fd
+}
+
+private func physicalInode(_ url: URL) -> ino_t? {
+    var info = stat()
+    return lstat(url.path, &info) == 0 ? info.st_ino : nil
+}
+
 @Suite("BrowserHostFenceFiles")
 struct BrowserHostFenceFilesTests {
+    @Test func listenerReclaimsTheSocketACrashLeft() throws {
+        let root = try physicalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        Darwin.close(try physicalLeftEndpoint(in: root, listening: false))
+        let fence = BrowserHostEndpointFence(rootURL: root)
+        defer { fence.release() }
+        _ = try fence.bindListener()
+        #expect(fence.inspectEndpoint() == .live)
+    }
+
+    @Test func listenerLeavesASocketThatAnswersInPlace() throws {
+        let root = try physicalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = try physicalLeftEndpoint(in: root, listening: true)
+        defer { Darwin.close(live) }
+        let endpoint = root.appendingPathComponent("host.sock")
+        let before = physicalInode(endpoint)
+        let fence = BrowserHostEndpointFence(rootURL: root)
+        defer { fence.release() }
+        #expect(throws: BrowserHostListenerError.endpointCollision) { _ = try fence.bindListener() }
+        #expect(before != nil && physicalInode(endpoint) == before)
+    }
+
     @Test func normalDarwinBindAndConnectUseFilesystemIdentity() throws {
         let root = try physicalRoot()
         defer { try? FileManager.default.removeItem(at: root) }

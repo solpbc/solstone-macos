@@ -346,7 +346,13 @@ final class BrowserHostEndpointFence: @unchecked Sendable {
         guard validSocket(first), try acquireFence(create: false) else {
             return inspectEndpoint() == .live ? .live : .refused
         }
-        guard fenceMatches(root: rootFD, fence: fenceFD), provenanceMatches(fenceFD, endpoint: first) else { return .refused }
+        return try removeIfStale(first)
+    }
+
+    /// Holding the fence: removes `host.sock` only when this app published it and nothing answers on it.
+    private func removeIfStale(_ first: stat) throws -> BrowserHostEndpointDisposition {
+        guard validSocket(first), fenceMatches(root: rootFD, fence: fenceFD),
+              provenanceMatches(fenceFD, endpoint: first) else { return .refused }
         let disposition = probe()
         guard disposition == .stale else { return disposition }
         guard rootStillVerified(), fenceMatches(root: rootFD, fence: fenceFD),
@@ -360,9 +366,21 @@ final class BrowserHostEndpointFence: @unchecked Sendable {
         var succeeded = false
         defer { if !succeeded { release() } }
         try verifyOrCreateRoot()
-        guard try acquireFence(create: true) else { throw BrowserHostListenerError.endpointCollision }
+        guard try acquireFence(create: true) else {
+            Logger.storage.error("Browser host listener left off: another solstone app holds the endpoint fence")
+            throw BrowserHostListenerError.endpointCollision
+        }
         guard rootStillVerified(), fenceMatches(root: rootFD, fence: fenceFD) else { throw BrowserHostListenerError.unsafeEndpoint }
-        guard try endpointInfo() == nil else { throw BrowserHostListenerError.endpointCollision }
+        // Holding the fence, a host.sock is what a crashed or force-quit owner left behind.
+        if let existing = try endpointInfo() {
+            let disposition = try removeIfStale(existing)
+            if disposition == .removed {
+                Logger.storage.notice("Browser host listener reclaimed a stale host.sock")
+            } else if try endpointInfo() != nil {
+                Logger.storage.error("Browser host listener left off: host.sock is \(disposition.rawValue, privacy: .public), not reclaimed")
+                throw BrowserHostListenerError.endpointCollision
+            }
+        }
         // Bind privately, retain the filesystem identity, then publish without replacing an entry.
         let temporaryName = "." + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(8)
         let temporaryPath = rootURL.appendingPathComponent(temporaryName).path
@@ -383,7 +401,9 @@ final class BrowserHostEndpointFence: @unchecked Sendable {
             }
         }
         guard bound == 0 else {
-            throw errno == EADDRINUSE ? BrowserHostListenerError.endpointCollision : BrowserHostListenerError.socketFailure
+            guard errno == EADDRINUSE else { throw BrowserHostListenerError.socketFailure }
+            Logger.storage.error("Browser host listener left off: its private socket name is taken")
+            throw BrowserHostListenerError.endpointCollision
         }
         guard let before = try endpointInfo(temporaryName), before.kind == S_IFSOCK, before.uid == euid,
               rootStillVerified(), fenceMatches(root: rootFD, fence: fenceFD) else {
@@ -1027,6 +1047,7 @@ public actor BrowserHostListener {
             endpointFence.release()
             fence = nil
             publishStatus(.pathTooLong)
+            Logger.storage.error("Browser host listener left off: socket path too long")
         } catch {
             endpointFence.release()
             fence = nil

@@ -227,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.audioDeviceMonitor.stopListening()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             state.stopBrowserIntake()
+            SafariExtensionBridge.shared.stop()
 #endif
             state.isTerminating = true
             state.appKitTerminationBegan = true

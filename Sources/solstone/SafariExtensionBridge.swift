@@ -21,6 +21,7 @@ public final class SafariExtensionBridge: @unchecked Sendable {
     public static let groupIdentifier = "7QCG8V4M6H.app.solstone.observer"
     public static let extensionIdentifier = "app.solstone.observer.safari"
     static let socketName = "safari.sock"
+    static let lockName = "safari.lock"
     static let openFrameType = "safari_open"
     private static let logger = Logger(subsystem: "app.solstone.observer", category: "safari")
 
@@ -30,6 +31,7 @@ public final class SafariExtensionBridge: @unchecked Sendable {
 
     private let lock = NSLock()
     private var listenerFD: Int32 = -1
+    private var published: (path: String, device: dev_t, inode: ino_t)?
     private let hostSocketURL: @Sendable () -> URL
     private let dispatcher: Dispatcher
     private let dispatchQueue = DispatchQueue(label: "app.solstone.observer.safari.dispatch")
@@ -63,31 +65,95 @@ public final class SafariExtensionBridge: @unchecked Sendable {
             return
         }
         try? FileManager.default.createDirectory(at: socketURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // One app owns the socket at a time. The kernel drops the lock however the app ends,
+        // so whoever holds it may treat a socket nothing answers on as left by a crash.
+        let lockPath = socketURL.deletingLastPathComponent().appendingPathComponent(Self.lockName).path
+        let held = open(lockPath, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard held >= 0 else {
+            Self.logger.error("Safari bridge left off: lock unavailable (\(errno, privacy: .public))")
+            return
+        }
+        guard flock(held, LOCK_EX | LOCK_NB) == 0 else {
+            Self.logger.error("Safari bridge left off: another solstone app holds safari.sock")
+            Darwin.close(held)
+            return
+        }
         var existing = stat()
         if lstat(path, &existing) == 0 {
             guard (existing.st_mode & S_IFMT) == S_IFSOCK, existing.st_uid == geteuid() else {
                 Self.logger.error("Safari bridge left off: endpoint is not ours")
+                Darwin.close(held)
                 return
             }
-            unlink(path)
+            switch Self.probe(address) {
+            case .live:
+                Self.logger.error("Safari bridge left off: a listener already answers on safari.sock")
+                Darwin.close(held)
+                return
+            case .unknown(let failure):
+                Self.logger.error("Safari bridge left off: safari.sock could not be checked (\(failure, privacy: .public))")
+                Darwin.close(held)
+                return
+            case .stale:
+                unlink(path)
+                Self.logger.notice("Safari bridge reclaimed a stale safari.sock")
+            }
         }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else {
+            Self.logger.error("Safari bridge left off: socket failed (\(errno, privacy: .public))")
+            Darwin.close(held)
+            return
+        }
         let previousMask = umask(0o077)
         let bound = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
         umask(previousMask)
-        guard bound == 0, chmod(path, 0o600) == 0, listen(fd, 16) == 0 else {
+        var created = stat()
+        guard bound == 0, chmod(path, 0o600) == 0, listen(fd, 16) == 0, lstat(path, &created) == 0 else {
             Self.logger.error("Safari bridge left off: bind failed (\(errno, privacy: .public))")
             Darwin.close(fd)
+            Darwin.close(held)
             return
         }
         listenerFD = fd
+        published = (path, created.st_dev, created.st_ino)
         Self.logger.notice("Safari bridge listening")
         let thread = Thread { [weak self] in self?.acceptLoop(fd) }
         thread.name = "safari-bridge-accept"
         thread.start()
+    }
+
+    /// On orderly quit, removes the socket this app published. The listener ends with the process.
+    public func stop() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let published else { return }
+        self.published = nil
+        var current = stat()
+        guard lstat(published.path, &current) == 0, current.st_dev == published.device, current.st_ino == published.inode else {
+            Self.logger.notice("Safari bridge left safari.sock in place: it is no longer the one it published")
+            return
+        }
+        unlink(published.path)
+        Self.logger.notice("Safari bridge removed safari.sock")
+    }
+
+    enum SocketProbe: Equatable { case live, stale, unknown(Int32) }
+
+    /// A socket nothing listens on refuses the connection; one already gone is stale too.
+    static func probe(_ address: sockaddr_un) -> SocketProbe {
+        var address = address
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return .unknown(errno) }
+        defer { Darwin.close(fd) }
+        let result = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        if result == 0 { return .live }
+        let failure = errno
+        return failure == ECONNREFUSED || failure == ENOENT ? .stale : .unknown(failure)
     }
 
     private func acceptLoop(_ fd: Int32) {
