@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - if the solstone app quits unexpectedly or is force-quit, the solstone extension can reach it again the next time it opens. before, the extension showed "can't reach the solstone app" until you used repair in settings.
-- the solstone app now pauses the solstone extension while your mac is locked or asleep. before, a mac that woke briefly in the night to check the network could add a "browsing" activity to your journal for a tab left open in the background. thanks @dvanduzer.
+- the solstone app now tells the solstone extension that solstone is paused while your mac is locked or asleep, not only when you pause it. thanks @dvanduzer.
 
 ## [2.0.48] - 2026-10-25
 

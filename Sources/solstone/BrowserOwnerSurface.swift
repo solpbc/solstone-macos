@@ -422,7 +422,7 @@ public func buildBrowserDiagnosticRows(
         pagesHuman = "off"
         pagesMachine = "off"
     } else if snapshot.capture == "paused" {
-        pagesHuman = "paused"
+        pagesHuman = "solstone paused"
         pagesMachine = "paused"
     } else if let hold = ownerHold(snapshot) {
         pagesHuman = "held"
