@@ -81,6 +81,9 @@ final class CaptureLifecycleManager {
     // The existing lock notifications close intake immediately, while media recovery
     // retains its provider-based semantics. No additional lock observer is installed.
     internal var isActivityScreenLocked: Bool { intakeLockHeld || isScreenLocked() }
+    // Nobody is at this Mac: it is asleep (a dark wake included), locked, or another
+    // user's session is in front. Desktop activity and browser reads both stop here.
+    internal var isAway: Bool { !isMachineAwake || isActivityScreenLocked || !isSessionActive }
     nonisolated(unsafe) private var resignObserver: NSObjectProtocol?
     nonisolated(unsafe) private var activeObserver: NSObjectProtocol?
 

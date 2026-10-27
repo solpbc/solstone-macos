@@ -150,6 +150,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     public var isPaused: Bool {
         lock.withLock { _isPaused }
     }
+    private var _isAway: Bool = false
     private var isStoreFailed: Bool = false
 
     private let storeIncarnation = UUID()
@@ -191,6 +192,12 @@ public final class BrowserIntakeStore: @unchecked Sendable {
 
     public func setPaused(_ paused: Bool) {
         lock.withLock { _isPaused = paused }
+    }
+
+    /// Holds reads while nobody is at the Mac. The extension sees it as a pause,
+    /// so a tab left open is not read on a dark wake. Owner pause is unchanged.
+    public func setAway(_ away: Bool) {
+        lock.withLock { _isAway = away }
     }
 
     public func setStoreFailed(_ failed: Bool) {
@@ -1319,7 +1326,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         let periodId = currentOpenPeriodId
         var delivery = heldPayloadBytes > 0 ? "kept_locally" : "idle"
         var capture = isFull ? "intake_off" : "permitted"
-        if _isPaused {
+        if _isPaused || _isAway {
             capture = "paused"
         }
         var failure: String? = nil

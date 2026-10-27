@@ -2504,8 +2504,7 @@ public final class AppState {
             storage: storageManager,
             eligibility: { [weak self, weak lifecycle] in
                 guard let self, let lifecycle else { return false }
-                return !self.isTerminating && !self.activityHeldByOwner &&
-                    lifecycle.isMachineAwake && !lifecycle.isActivityScreenLocked && lifecycle.isSessionActive
+                return !self.isTerminating && !self.activityHeldByOwner && !lifecycle.isAway
             },
             locked: { [weak self, weak lifecycle] in
                 guard let self, let lifecycle else { return false }
@@ -2515,7 +2514,8 @@ public final class AppState {
             onSealed: { [weak self] in self?.uploadCoordinator.triggerSync() }
         )
         activitySource = source
-        lifecycle.onIntakeEligibilityChanged = { [weak source] in source?.invalidate(); source?.sample() }
+        let previousEligibility = lifecycle.onIntakeEligibilityChanged
+        lifecycle.onIntakeEligibilityChanged = { [weak source] in previousEligibility?(); source?.invalidate(); source?.sample() }
         let previousPause = pauseManager.onPauseIntake
         // Kept on through pause, activity closes its interval at the pause and goes on at once.
         pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.invalidate(); source?.sample() }
@@ -2860,6 +2860,18 @@ public final class AppState {
             if let owner = self?.browserIntakeOwner {
                 Task { await owner.scheduleDelivery() }
             }
+            if let listener = self?.browserHostListener {
+                Task { await listener.refreshSnapshot() }
+            }
+        }
+
+        let lifecycle = capture.captureManager.lifecycleManager
+        store.setAway(lifecycle.isAway)
+        let previousEligibility = lifecycle.onIntakeEligibilityChanged
+        lifecycle.onIntakeEligibilityChanged = { [weak self, weak lifecycle, weak store] in
+            previousEligibility?()
+            guard let lifecycle else { return }
+            store?.setAway(lifecycle.isAway)
             if let listener = self?.browserHostListener {
                 Task { await listener.refreshSnapshot() }
             }

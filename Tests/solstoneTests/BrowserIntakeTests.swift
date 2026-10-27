@@ -1188,6 +1188,59 @@ struct BrowserIntakeAdmissionTests {
         #expect(repResumed["result"] as? String == "duplicate")
     }
 
+    @Test @MainActor func test4_lockSleepAndSessionSwitchHoldReadsLikeAPause() async throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let authority = BrowserIntakeAuthority(
+            store: store,
+            projection: projection,
+            wallClock: { Date(timeIntervalSince1970: 1700000000) },
+            timeZone: TimeZone(identifier: "UTC")!
+        )
+        let lifecycle = CaptureLifecycleManager(isScreenLocked: { false })
+        lifecycle.onIntakeEligibilityChanged = { [weak store, weak lifecycle] in
+            guard let lifecycle else { return }
+            store?.setAway(lifecycle.isAway)
+        }
+        _ = try authority.testConnectionGeneration(identityToken: "tok-away")
+        #expect(authority.status()["capture"] as? String == "permitted")
+
+        // A locked Mac that dark-wakes stays locked: reads hold through it.
+        await lifecycle.handleScreenLocked()
+        #expect(authority.status()["capture"] as? String == "paused")
+        await lifecycle.handleWillSleep()
+        await lifecycle.handleDidWake()
+        #expect(authority.status()["capture"] as? String == "paused")
+        await lifecycle.handleScreenUnlocked()
+        #expect(authority.status()["capture"] as? String == "permitted")
+
+        // Asleep without a lock.
+        await lifecycle.handleWillSleep()
+        #expect(authority.status()["capture"] as? String == "paused")
+        await lifecycle.handleDidWake()
+        #expect(authority.status()["capture"] as? String == "permitted")
+
+        // Another user's session in front.
+        lifecycle.isSessionActive = false
+        lifecycle.onIntakeEligibilityChanged?()
+        #expect(authority.status()["capture"] as? String == "paused")
+        lifecycle.isSessionActive = true
+        lifecycle.onIntakeEligibilityChanged?()
+        #expect(authority.status()["capture"] as? String == "permitted")
+
+        // Away and owner pause are independent: ending one leaves the other in force.
+        await lifecycle.handleScreenLocked()
+        authority.setPaused(true)
+        await lifecycle.handleScreenUnlocked()
+        #expect(authority.status()["capture"] as? String == "paused")
+        authority.setPaused(false)
+        #expect(authority.status()["capture"] as? String == "permitted")
+        #expect(!store.isPaused)
+    }
+
     @Test func test7_nulIdentifiersAndDigestRestart() throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }
