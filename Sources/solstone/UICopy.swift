@@ -102,7 +102,7 @@ public enum UICopy {
     public static let SOURCES_BROWSER_UNKNOWN = "browser status isn't known yet."
     public static let SOURCES_BROWSER_HELD = "new browser pages aren't being taken in right now."
     public static let SOURCES_BROWSER_LOST_AND_HELD = "some browser pages couldn't be kept, so they won't go into your journal. new browser pages aren't being taken in right now."
-    public static let SOURCES_BROWSER_PAUSED = "solstone is paused. the solstone extension may keep taking in your shared sites, and they still go into your journal."
+    public static let SOURCES_BROWSER_PAUSED = "paused with the rest of the solstone app. pausing doesn't hold back what's already taken in."
     public static let SOURCES_BROWSER_DELIVERY_FAILED = "kept on this mac, not reaching your journal right now"
     public static let SOURCES_BROWSER_REGISTRATION_BROKEN = "your browsers can't find the solstone app on this mac."
     public static let SOURCES_BROWSER_DISCARD = "discard waiting browser pages"
