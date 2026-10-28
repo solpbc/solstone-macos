@@ -196,6 +196,8 @@ public final class BrowserIntakeStore: @unchecked Sendable {
 
     /// Holds reads while nobody is at the Mac. The extension sees it as a pause,
     /// so a tab left open is not read on a dark wake. Owner pause is unchanged.
+    /// The state also carries `away`, so an extension the owner set to keep
+    /// reading through their own pause still stops here.
     public func setAway(_ away: Bool) {
         lock.withLock { _isAway = away }
     }
@@ -1350,7 +1352,8 @@ public final class BrowserIntakeStore: @unchecked Sendable {
             "freshness_ms": freshness,
             "destination_generation": gen,
             "period_id": periodId ?? NSNull(),
-            "custody": ["full": isFull, "stale": isStale]
+            "custody": ["full": isFull, "stale": isStale],
+            "away": _isAway
         ]
         if let failure {
             res["failure"] = failure

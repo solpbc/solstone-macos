@@ -1241,6 +1241,71 @@ struct BrowserIntakeAdmissionTests {
         #expect(!store.isPaused)
     }
 
+    /// The extension can be set to keep reading through the owner's pause, so
+    /// what it is told must say whether anyone is at the Mac: `away` is true
+    /// while locked or asleep, and false for the owner's own pause.
+    @Test @MainActor func test4_awayTellsTheExtensionNobodyIsHereApartFromTheOwnersPause() async throws {
+        let tempRoot = try createTempRoot()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: tempRoot, projection: projection)
+        let authority = BrowserIntakeAuthority(
+            store: store,
+            projection: projection,
+            wallClock: { Date(timeIntervalSince1970: 1700000000) },
+            timeZone: TimeZone(identifier: "UTC")!
+        )
+        let lifecycle = CaptureLifecycleManager(isScreenLocked: { false })
+        lifecycle.onIntakeEligibilityChanged = { [weak store, weak lifecycle] in
+            guard let lifecycle else { return }
+            store?.setAway(lifecycle.isAway)
+        }
+        _ = try authority.testConnectionGeneration(identityToken: "tok-away-fact")
+        let hello = Data(#"{"type":"hello","protocol":1,"version":"1.0.0","brand":"chrome","inst":"desktop_inst_1"}"#.utf8)
+        func told() throws -> (state: [String: Any], ack: [String: Any]) {
+            let state = authority.status()
+            let ack = try authority.accept(bytes: hello, direction: "extension_to_host")
+            #expect(ack["type"] as? String == "hello_ack")
+            // Both reach the extension through the host-message validator.
+            _ = try BrowserPayloadDecoder.validatedHostMessage(state, projection: projection)
+            _ = try BrowserPayloadDecoder.validatedHostMessage(ack, projection: projection)
+            return (state, ack)
+        }
+
+        var now = try told()
+        #expect(now.state["away"] as? Bool == false)
+        #expect(now.ack["away"] as? Bool == false)
+
+        // The owner's pause: paused, and someone is here.
+        authority.setPaused(true)
+        now = try told()
+        #expect(now.state["capture"] as? String == "paused")
+        #expect(now.state["away"] as? Bool == false)
+        #expect(now.ack["capture"] as? String == "paused")
+        #expect(now.ack["away"] as? Bool == false)
+
+        // Locked during the owner's pause: still paused, and now away.
+        await lifecycle.handleScreenLocked()
+        now = try told()
+        #expect(now.state["capture"] as? String == "paused")
+        #expect(now.state["away"] as? Bool == true)
+        #expect(now.ack["away"] as? Bool == true)
+
+        // Locked and asleep with no owner pause: paused and away.
+        authority.setPaused(false)
+        await lifecycle.handleWillSleep()
+        now = try told()
+        #expect(now.state["capture"] as? String == "paused")
+        #expect(now.state["away"] as? Bool == true)
+
+        await lifecycle.handleDidWake()
+        await lifecycle.handleScreenUnlocked()
+        now = try told()
+        #expect(now.state["capture"] as? String == "permitted")
+        #expect(now.state["away"] as? Bool == false)
+    }
+
     @Test func test7_nulIdentifiersAndDigestRestart() throws {
         let tempRoot = try createTempRoot()
         defer { try? FileManager.default.removeItem(at: tempRoot) }

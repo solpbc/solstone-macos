@@ -296,6 +296,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                     "custody": stat["custody"] ?? ["full": false, "stale": false]
                 ]
                 if let fail = stat["failure"] { reply["failure"] = fail }
+                if let away = stat["away"] { reply["away"] = away }
                 return reply
 
             case .state, .boundary, .accepted, .bye, .unsupported:
