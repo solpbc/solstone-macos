@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- the solstone app now tells the solstone extension whether you paused the solstone app or your mac is locked or asleep.
+
 ## [2.0.49] - 2026-10-27
 
 ### Fixed
