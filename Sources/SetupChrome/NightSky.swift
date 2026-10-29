@@ -76,9 +76,8 @@ final class NightSky {
  func suppression(_ frame:NightFrame,_ p:CGPoint)->Double {var alpha=0.0;for g in frame.glows {let f=hypot(p.x-g.x,p.y-g.y)/g.radius;if f<1 {alpha += g.alpha*(f<=0.38 ? 1-0.55*f/0.38 : 0.45*(1-(f-0.38)/0.62))}};return 1-min(0.9,1.9*alpha)}
  func paintStatic(_ ctx:CGContext,frame:NightFrame,rise:Double,set:Double,minute:Double,dark:Bool,still:Bool,watch:Bool) {
   let ns=state(frame,rise:rise,set:set,minute:minute)
-  #if !os(watchOS)
-  if ns.aurora>0.001 && !watch {paintAurora(ctx,ns:ns,minute:minute,dark:dark,still:still)}
-  #endif
+  // The watch's wrist-down sky keeps the aurora's once-a-minute shape: Always On redraws on the minute anyway.
+  if ns.aurora>0.001 {paintAurora(ctx,ns:ns,minute:minute,dark:dark,still:still && !watch)}
   for st in stars {let i=Double(st.level),p=rotate(st.x,st.y,ns.angle);if p.x < -3 || p.y < -3 || p.x > width+3 || p.y > height+3 {continue}
    let a=0.92*pow(Self.phi,-0.75*i),threshold=[0.18,0.38,0.58,0.74][st.level],alpha=(dark ? a:min(1,a*1.05+0.08))*Self.smooth((ns.stars-threshold)/0.2)*suppression(frame,p)
    if alpha>=0.01 {Self.dot(ctx,p,1.75*pow(Self.phi,-0.5*i)*(dark ? 1:1.1),0xFFCC33,alpha)}
@@ -89,7 +88,6 @@ final class NightSky {
   }
   if still || watch {paintMeteors(ctx,frame:frame,rise:rise,set:set,minute:minute,dark:dark,still:true)}
  }
- #if !os(watchOS)
  func paintAurora(_ ctx:CGContext,ns:NightState,minute:Double,dark:Bool,still:Bool) {
   let w=Int(ceil(width/4)),h=Int(ceil(height/4)),small=Self.context(w,h),phase=still ? 2.1:floor(minute)*0.9,peak=(dark ? 0.34:0.42*1.3)*ns.aurora
   for xi in 0..<w {let x=Double(xi)*4+2,dx=x-ox,yb=oy-sqrt(max(0,arcRadius*arcRadius-dx*dx))+side*0.04*sin(x/side*6+phase*0.8)
@@ -100,10 +98,17 @@ final class NightSky {
    let gradient=CGGradient(colorsSpace:CGColorSpace(name:CGColorSpace.sRGB),colors:colors as CFArray,locations:[0,0.06,0.35,0.7,1])!
    small.saveGState();small.clip(to:CGRect(x:Double(xi),y:min(y0,y1),width:1.2,height:abs(y0-y1)));small.drawLinearGradient(gradient,start:CGPoint(x:0,y:y0),end:CGPoint(x:0,y:y1),options:[]);small.restoreGState()
   }
+  #if os(watchOS)
+  // watchOS has no CoreImage. The watch is always dark, so the aurora composites additively, and nine
+  // offset draws at a ninth of the alpha sum to a box blur of the same strength as the blur below.
+  if let image=small.makeImage() {ctx.saveGState();ctx.setBlendMode(.plusLighter);ctx.interpolationQuality = .high;ctx.setAlpha(1.0/9);ctx.translateBy(x:0,y:Double(h)*4);ctx.scaleBy(x:1,y:-1)
+   for dx in [-2.0,0,2.0] {for dy in [-2.0,0,2.0] {ctx.draw(image,in:CGRect(x:dx,y:dy,width:Double(w)*4,height:Double(h)*4))}}
+   ctx.restoreGState()}
+  #else
   let source=CIImage(cgImage:small.makeImage()!),blurred=source.applyingFilter("CIGaussianBlur",parameters:[kCIInputRadiusKey:0.9])
   if let image=imageContext.createCGImage(blurred,from:source.extent) {ctx.saveGState();ctx.setBlendMode(dark ? .plusLighter:.screen);ctx.interpolationQuality = .high;ctx.translateBy(x:0,y:Double(h)*4);ctx.scaleBy(x:1,y:-1);ctx.draw(image,in:CGRect(x:0,y:0,width:Double(w)*4,height:Double(h)*4));ctx.restoreGState()}
+  #endif
  }
- #endif
  static func line(_ ctx:CGContext,_ a:CGPoint,_ b:CGPoint,_ color:UInt32,_ alpha:Double,_ width:Double){
   ctx.saveGState();ctx.setLineWidth(width);ctx.setLineCap(.round);ctx.move(to:a);ctx.addLine(to:b);ctx.replacePathWithStrokedPath();ctx.clip()
   let gradient=CGGradient(colorsSpace:CGColorSpace(name:CGColorSpace.sRGB),colors:[Self.color(color,0),Self.color(color,alpha)] as CFArray,locations:[0,1])!;ctx.drawLinearGradient(gradient,start:a,end:b,options:[.drawsBeforeStartLocation,.drawsAfterEndLocation]);ctx.restoreGState()
