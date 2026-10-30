@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- if the Safari extension was on and can no longer be checked, the menu bar shows an alert.
+- if the solstone extension in Safari was on and the solstone app can no longer check it, the menu bar and settings now say so.
 
 ## [2.0.50] - 2026-10-28
 

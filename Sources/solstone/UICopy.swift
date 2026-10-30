@@ -128,7 +128,7 @@ public enum UICopy {
     }
     public static let SOURCES_BROWSER_FOOTNOTE = "the solstone extension works in Chrome, Edge, Firefox and Safari. it takes in nothing from private windows. that covers this extension only."
     public static let SOURCES_BROWSER_SAFARI_SETTINGS_ACTION = "open Safari settings"
-    public static let SOURCES_BROWSER_SAFARI_UNAVAILABLE = "can't check the Safari extension"
+    public static let SOURCES_BROWSER_SAFARI_UNAVAILABLE = "can't check the solstone extension in Safari"
     public static let SOURCES_BROWSER_SAFARI_ON = "on in Safari"
     public static let SOURCES_BROWSER_SAFARI_OFF = "off in Safari. check solstone under extensions to turn it on."
     public static let SOURCES_BROWSER_SAFARI_SETTINGS_FAILED = "couldn't open Safari settings. in Safari, open settings, then extensions."
