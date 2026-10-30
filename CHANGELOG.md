@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.51] - 2026-10-30
+
 ### Fixed
 
 - if the solstone extension in Safari was on and the solstone app can no longer check it, the menu bar and settings now say so.
