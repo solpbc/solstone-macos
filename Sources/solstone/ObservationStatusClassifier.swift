@@ -96,7 +96,7 @@ internal func classifyJournalConnection(
 }
 
 internal enum AttentionReason: Equatable, CaseIterable {
-    case permissions, privateWindows, journal, updateAvailable, updateCheckFailed
+    case permissions, privateWindows, safariExtension, journal, updateAvailable, updateCheckFailed
 }
 
 internal struct MenubarPresentation: Equatable {
@@ -130,7 +130,8 @@ internal func classifyMenubarPresentation(
     journalNeedsAttention: Bool,
     durableUpdateStatus: DurableUpdateStatus,
     privateWindowsNeedAttention: Bool = false,
-    screenFailureNeedsAttention: Bool = false
+    screenFailureNeedsAttention: Bool = false,
+    safariExtensionNeedsAttention: Bool = false
 ) -> MenubarPresentation {
     MenubarPresentation(
         observation: observation,
@@ -138,7 +139,8 @@ internal func classifyMenubarPresentation(
             permissionsNeedAttention: permissionsNeedAttention,
             journalNeedsAttention: journalNeedsAttention,
             durableUpdateStatus: durableUpdateStatus,
-            privateWindowsNeedAttention: privateWindowsNeedAttention
+            privateWindowsNeedAttention: privateWindowsNeedAttention,
+            safariExtensionNeedsAttention: safariExtensionNeedsAttention
         ),
         screenFailureNeedsAttention: screenFailureNeedsAttention
     )
@@ -148,10 +150,12 @@ private func firstAttentionReason(
     permissionsNeedAttention: Bool,
     journalNeedsAttention: Bool,
     durableUpdateStatus: DurableUpdateStatus,
-    privateWindowsNeedAttention: Bool
+    privateWindowsNeedAttention: Bool,
+    safariExtensionNeedsAttention: Bool
 ) -> AttentionReason? {
     if permissionsNeedAttention { return .permissions }
     if privateWindowsNeedAttention { return .privateWindows }
+    if safariExtensionNeedsAttention { return .safariExtension }
     if journalNeedsAttention { return .journal }
     return updateAttentionReason(for: durableUpdateStatus)
 }
@@ -192,7 +196,7 @@ internal func attentionToSurface(
             }
         }
         return reason
-    case .privateWindows, .updateAvailable, .updateCheckFailed:
+    case .privateWindows, .safariExtension, .updateAvailable, .updateCheckFailed:
         return reason
     }
 }
@@ -204,6 +208,7 @@ internal func attentionSuffix(
     switch reason {
     case .permissions: return UICopy.SETTINGS_ATTENTION_PERMISSIONS
     case .privateWindows: return UICopy.SETTINGS_ATTENTION_PRIVATE_WINDOWS
+    case .safariExtension: return UICopy.SOURCES_BROWSER_SAFARI_UNAVAILABLE
     case .journal:
         if let verdict, verdict.failureCause != nil {
             return verdict.message
@@ -323,14 +328,20 @@ extension AppState {
     }
 
     internal func menubarPresentation(durableUpdateStatus: DurableUpdateStatus) -> MenubarPresentation {
-        classifyMenubarPresentation(
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        let safariExtensionAttention = safariExtensionNeedsAttention
+#else
+        let safariExtensionAttention = false
+#endif
+        return classifyMenubarPresentation(
             observation: observationRowState,
             permissionsNeedAttention: permissionsNeedAttention,
             journalNeedsAttention: serviceNeedsAttention,
             durableUpdateStatus: durableUpdateStatus,
             privateWindowsNeedAttention: privateWindowAccessibilityEnabled
                 && privateWindowAccessibilityMonitor.needsAttention,
-            screenFailureNeedsAttention: capture.screenFailure != nil
+            screenFailureNeedsAttention: capture.screenFailure != nil,
+            safariExtensionNeedsAttention: safariExtensionAttention
         )
     }
 }

@@ -1188,7 +1188,10 @@ struct SettingsView: View {
                 switch appState.safariExtensionState {
                 case .on: Text(UICopy.SOURCES_BROWSER_SAFARI_ON).foregroundStyle(.secondary)
                 case .off: Text(UICopy.SOURCES_BROWSER_SAFARI_OFF).foregroundStyle(.secondary)
-                case .unknown: EmptyView()
+                case .unknown:
+                    if appState.safariExtensionNeedsAttention {
+                        Text(UICopy.SOURCES_BROWSER_SAFARI_UNAVAILABLE).foregroundStyle(.orange)
+                    }
                 }
             }
             if appState.safariSettingsLaunch == .failed {

@@ -117,7 +117,9 @@ public final class AppState {
     }
     var browserStoreLaunch: [BrowserBrand: BrowserStoreLaunch] = [:]
     var safariExtensionControl = SafariExtensionControl.live
-    var safariExtensionState: SafariExtensionAXState = .unknown
+    var safariExtensionHealth = SafariExtensionHealth()
+    var safariExtensionState: SafariExtensionAXState { safariExtensionHealth.state }
+    var safariExtensionNeedsAttention: Bool { config.isBrowserIntakeEnabled && safariExtensionHealth.needsAttention }
     var safariSettingsLaunch: BrowserStoreLaunch = .disabled
     public private(set) var browserUploadGate: BrowserUploadGate?
     public private(set) var browserUploadPlanner: BrowserUploadPlanner?
@@ -1024,9 +1026,7 @@ public final class AppState {
     }
 
     func refreshSafariExtensionState() {
-        safariExtensionControl.readState { [weak self] state in
-            Task { @MainActor in self?.safariExtensionState = state }
-        }
+        Task { await safariExtensionHealth.refresh() }
     }
 
     func openSafariExtensionSettings() {
@@ -2073,6 +2073,9 @@ public final class AppState {
     deinit {
         MainActor.assumeIsolated {
             shortcutController.unregister()
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            safariExtensionHealth.stop()
+#endif
             privateWindowAccessibilityMonitor.stop()
             notificationRequestTask?.cancel()
             if let activationObserver {
@@ -2287,6 +2290,9 @@ public final class AppState {
         // always comes through the designated initializer. This initializer
         // starts no capture, recovery, or startup sync of its own; normal
         // startup composition owns activation after it creates the state.
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        self.safariExtensionHealth = SafariExtensionHealth(control: nil, loadExpected: { false }, saveExpected: { _ in })
+#endif
         self.automaticObservationPipelineEnabled = true
         self.config = config
         self.sameMachinePairStart = sameMachinePairStart
@@ -2981,6 +2987,7 @@ public final class AppState {
     }
 
     public func stopBrowserIntake() {
+        safariExtensionHealth.stop()
         browserIntakeOwner?.stop()
     }
 #endif

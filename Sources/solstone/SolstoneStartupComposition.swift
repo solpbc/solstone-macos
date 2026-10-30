@@ -102,6 +102,7 @@ internal enum SolstoneStartupComposition {
             let updateController = makeUpdateController(appState)
             registerUpdateAnnouncement(updateController)
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            appState.safariExtensionHealth.start()
             appState.startBrowserIntake(updateController: updateController)
 #endif
             if automaticObservationPipelineEnabled {

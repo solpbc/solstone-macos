@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- if the Safari extension was on and can no longer be checked, the menu bar shows an alert.
+
 ## [2.0.50] - 2026-10-28
 
 ### Changed

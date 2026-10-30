@@ -62,7 +62,10 @@ struct MenuContent: View {
                 .accessibilityIdentifier(AXID.Menubar.openJournalButton)
             }
             Button {
-                if menubarPresentation.attention == .privateWindows {
+                if menubarPresentation.attention == .safariExtension {
+                    openSettings(tab: "sources")
+                    NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+                } else if menubarPresentation.attention == .privateWindows {
                     appState.requestPrivateWindowSettingsRecovery()
                 } else {
                     openWindow(id: "settings")
