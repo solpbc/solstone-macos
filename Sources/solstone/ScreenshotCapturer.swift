@@ -79,14 +79,6 @@ public final class ScreenshotCapturer {
     private var healthCheckFrameCount = 0
     private var firstFrameLogged = false
     private var streamStartTime: Date?
-#if DEBUG || SOLSTONE_TEST_SUPPORT
-    internal private(set) var _teardownTraceForTesting: [String] = []
-    internal private(set) var _restartDecisionTraceForTesting: [String] = []
-    internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
-    internal var _streamGenerationForTesting: Int { streamGeneration }
-    internal var _submittedVideoFrameCountForTesting: Int { frameIndex }
-    internal var _lastAppendedPTSForTesting: CMTime? { _lastAppendedPTS }
-    internal var _lastAppendedBufferForTesting: CVPixelBuffer?
     private var _lastAppendedPTS: CMTime?
     private var lastWrittenPTS: CMTime? = nil
 
@@ -104,6 +96,14 @@ public final class ScreenshotCapturer {
         lastWrittenPTS = pts
         return pts
     }
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+    internal private(set) var _teardownTraceForTesting: [String] = []
+    internal private(set) var _restartDecisionTraceForTesting: [String] = []
+    internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
+    internal var _streamGenerationForTesting: Int { streamGeneration }
+    internal var _submittedVideoFrameCountForTesting: Int { frameIndex }
+    internal var _lastAppendedPTSForTesting: CMTime? { _lastAppendedPTS }
+    internal var _lastAppendedBufferForTesting: CVPixelBuffer?
     internal var _isRunningForTesting: Bool { isRunning }
     internal var _hasStreamForTesting: Bool { stream != nil }
     internal var _isHealthCheckActiveForTesting: Bool { healthCheckTimer != nil }
