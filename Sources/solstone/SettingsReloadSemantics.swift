@@ -19,6 +19,7 @@ public enum SettingsReloadSemantics {
         "microphonePriority": .live,
         "excludedApps": .live,
         "excludedTitlePatterns": .live,
+        "excludedSites": .live,
         "excludePrivateBrowsing": .live,
         "excludePrivateBrowsingAccessibility": .live,
         "syncPaused": .live,

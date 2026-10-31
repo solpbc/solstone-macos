@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- in settings, you can now leave out websites so your screen recording pauses while they show in Safari, and their titles and addresses stay out of your journal.
+
 ### Changed
 
 - the app names and window titles from activity now go into your journal together with your screen from the same moment, instead of on their own.

@@ -156,7 +156,7 @@ public struct AppConfig: Sendable, Equatable {
         "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled", "isBrowserIntakeEnabled",
         "isActivityEnabled", "activityTitlesEnabled", "activityURLsEnabled", "activityAccessibilityEnabled",
         "activityContinuesThroughPause",
-        "microphonePriority", "excludedApps", "excludedTitlePatterns",
+        "microphonePriority", "excludedApps", "excludedTitlePatterns", "excludedSites",
         "excludePrivateBrowsing", "excludePrivateBrowsingAccessibility", "serverURL", "serverKey",
         "syncPaused", "debugSegments",
         "preserveSyncedSegments", "microphoneGain", "silenceMusic",
@@ -177,6 +177,7 @@ public struct AppConfig: Sendable, Equatable {
         static let microphonePriority = "microphonePriority"
         static let excludedApps = "excludedApps"
         static let excludedTitlePatterns = "excludedTitlePatterns"
+        static let excludedSites = "excludedSites"
         static let excludePrivateBrowsing = "excludePrivateBrowsing"
         static let excludePrivateBrowsingAccessibility = "excludePrivateBrowsingAccessibility"
         static let serverURL = "serverURL"
@@ -293,6 +294,9 @@ public struct AppConfig: Sendable, Equatable {
     /// Example: "reddit" will exclude any window with "reddit" in the title
     public var excludedTitlePatterns: [String]
 
+    /// Left-out websites - pause recording and exclude from activity while showing
+    public var excludedSites: [String]
+
     private var excludePrivateBrowsingChoice: Bool?
     /// Exclude private browser windows, detected by a marker in the window title.
     /// Only Firefox shows one on the Mac (measured), so owner copy names only Firefox.
@@ -406,6 +410,7 @@ public struct AppConfig: Sendable, Equatable {
         microphonePriority: [MicrophoneEntry] = [],
         excludedApps: [AppEntry] = [],
         excludedTitlePatterns: [String] = [],
+        excludedSites: [String] = [],
         excludePrivateBrowsing: Bool? = nil,
         excludePrivateBrowsingAccessibility: Bool? = nil,
         serverURL: String? = nil,
@@ -428,6 +433,7 @@ public struct AppConfig: Sendable, Equatable {
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
         self.excludedTitlePatterns = excludedTitlePatterns
+        self.excludedSites = excludedSites
         self.excludePrivateBrowsingChoice = excludePrivateBrowsing
         self.excludePrivateBrowsingAccessibilityChoice = excludePrivateBrowsingAccessibility
         self.serverURL = serverURL
@@ -499,6 +505,7 @@ public struct AppConfig: Sendable, Equatable {
             microphonePriority: microphonePriority,
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
+            excludedSites: defaults.stringArray(forKey: Keys.excludedSites) ?? [],
             excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool,
             excludePrivateBrowsingAccessibility: storedCoercedBool(defaults, key: Keys.excludePrivateBrowsingAccessibility),
             serverURL: serverURL,
@@ -687,6 +694,7 @@ public struct AppConfig: Sendable, Equatable {
         }
 
         defaults.set(excludedTitlePatterns, forKey: Keys.excludedTitlePatterns)
+        defaults.set(excludedSites, forKey: Keys.excludedSites)
         saveScalarChoice(excludePrivateBrowsingChoice, forKey: Keys.excludePrivateBrowsing, in: defaults)
         saveScalarChoice(excludePrivateBrowsingAccessibilityChoice, forKey: Keys.excludePrivateBrowsingAccessibility, in: defaults)
         defaults.set(serverURL, forKey: Keys.serverURL)

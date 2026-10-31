@@ -166,6 +166,13 @@ enum AXContract {
         AXID.Settings.Privacy.protectedVideoPatternsList,
         AXID.Settings.Privacy.protectedVideoPatternField,
         AXID.Settings.Privacy.protectedVideoPatternAdd,
+        AXID.Settings.Privacy.websitesList,
+        AXID.Settings.Privacy.websiteField,
+        AXID.Settings.Privacy.websiteAdd,
+        AXID.Settings.Privacy.websiteFieldError,
+        AXID.Settings.Privacy.websiteAccessibilityCaution,
+        AXID.Settings.Privacy.websiteBrowserCaution,
+        AXID.Settings.Privacy.websiteLimits,
         AXID.Settings.Privacy.privateBrowsing,
         AXID.Settings.Privacy.privateBrowsingAccessibility,
         AXID.Settings.Privacy.privateBrowsingAccessibilityState,
@@ -367,6 +374,16 @@ enum AXContract {
             ParameterizedIdentifier(
                 template: "settings.privacy.protectedVideo.patterns.remove.{value}",
                 key: "title pattern",
+                runtime: true
+            ),
+            ParameterizedIdentifier(
+                template: "settings.privacy.websites.remove.{value}",
+                key: "website host",
+                runtime: true
+            ),
+            ParameterizedIdentifier(
+                template: "settings.privacy.websites.site.{value}",
+                key: "website host",
                 runtime: true
             )
         ].sorted { $0.template < $1.template }
