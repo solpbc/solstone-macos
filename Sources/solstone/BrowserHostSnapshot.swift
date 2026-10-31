@@ -92,6 +92,8 @@ public struct BrowserHostSnapshotValue: Sendable, Equatable {
     public var listener: BrowserHostListenerState
     public var shutdown: Bool
     public var quiescence: Bool
+    /// Newest page time written per browser since the app started, in milliseconds.
+    public var lastPageMs: [BrowserBrand: UInt64] = [:]
 
     public init(
         intakeEnabled: Bool = true,

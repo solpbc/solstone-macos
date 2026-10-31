@@ -299,7 +299,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
                 if let away = stat["away"] { reply["away"] = away }
                 return reply
 
-            case .state, .boundary, .accepted, .bye, .unsupported:
+            case .state, .boundary, .accepted, .bye, .unsupported, .siteRule:
                 return refusalReply(BrowserRefusal(code: "bad_direction"))
 
             case .batch(let batch):

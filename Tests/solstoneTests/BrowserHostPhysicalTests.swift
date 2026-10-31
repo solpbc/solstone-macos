@@ -1138,4 +1138,66 @@ struct BrowserHostListenerRestartTests {
         }
     }
 }
+@Suite("BrowserHostSiteList")
+struct BrowserHostSiteListTests {
+    @Test func listRidesOnEveryStateAndARuleIsAnsweredWithoutClosingTheSession() async throws {
+        try await withPhysicalListener { fixture in
+            let applied = PhysicalRuleLog()
+            let source = fixture.listener.siteListSource
+            source.update(BrowserSiteListSnapshot(sites: ["bank.com"], epoch: "e1", rev: 3, screen: true, activity: true))
+            await fixture.listener.setSiteRuleHandler { host, out in
+                await applied.append(host, out)
+                var next = source.current ?? BrowserSiteListSnapshot()
+                if out { next.sites.append(host) } else { next.sites.removeAll { $0 == host } }
+                next.rev += 1
+                source.update(next)
+            }
+            await fixture.start()
+            let fd = try fixture.openConnection()
+            defer { Darwin.close(fd) }
+            let ack = try await physicalHello(fd, inst: "physical-instance")
+            #expect(ack["left_out"] as? [String] == ["bank.com"])
+            #expect(ack["left_out_epoch"] as? String == "e1")
+            #expect(ack["left_out_rev"] as? Int == 3)
+            #expect((ack["desktop"] as? [String: Any])?["sites"] as? String == "not_checked")
+            _ = try await physicalMessage("state", from: fd)
+
+            try await physicalWrite(Data(#"{"type":"site_rule","id":7,"host":"news.com","out":true}"#.utf8), to: fd)
+            let answered = try await physicalMessage("state", from: fd) { $0["site_rule_ack"] as? Int == 7 }
+            #expect(answered["left_out"] as? [String] == ["bank.com", "news.com"])
+            #expect(answered["left_out_rev"] as? Int == 4)
+            #expect(await applied.entries == ["news.com:true"])
+
+            try await physicalWrite(Data(#"{"type":"site_rule","id":8,"host":"not a host","out":true}"#.utf8), to: fd)
+            let refused = try await physicalMessage("state", from: fd) { $0["site_rule_ack"] as? Int == 8 }
+            #expect(refused["left_out_rev"] as? Int == 4)
+            #expect(await applied.entries == ["news.com:true"])
+
+            try await physicalWrite(Data(#"{"type":"site_rule","id":9,"host":"news.com","out":false}"#.utf8), to: fd)
+            let removed = try await physicalMessage("state", from: fd) { $0["site_rule_ack"] as? Int == 9 }
+            #expect(removed["left_out"] as? [String] == ["bank.com"])
+            #expect(await applied.entries == ["news.com:true", "news.com:false"])
+        }
+    }
+
+    @Test func anAcceptedBatchRecordsWhenItsNewestPageWasFrom() async throws {
+        try await withPhysicalListener { fixture in
+            await fixture.start()
+            let fd = try await fixture.connect()
+            defer { Darwin.close(fd) }
+            let generation = try #require(fixture.owner.store.getDestinationGeneration())
+            try await physicalWrite(physicalBatch(generation: generation, inst: "physical-instance",
+                                                  id: "dddddddddddddddddddddddddddddddd"), to: fd)
+            let reply = try await physicalMessage("accepted", from: fd)
+            #expect(reply["result"] as? String == "accepted")
+            #expect(await fixture.listener.lastPageTimes()[.chrome] == 1)
+        }
+    }
+}
+
+private actor PhysicalRuleLog {
+    private(set) var entries: [String] = []
+    func append(_ host: String, _ out: Bool) { entries.append("\(host):\(out)") }
+}
+
 #endif

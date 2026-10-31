@@ -1131,17 +1131,6 @@ struct SettingsView: View {
         }
     }
 
-    private func browserRowStatusText(_ row: BrowserBrandRow) -> String {
-        if row.needsAppUpdate { return UICopy.SOURCES_BROWSER_NEEDS_APP_UPDATE }
-        if row.needsExtensionUpdate { return UICopy.SOURCES_BROWSER_NEEDS_EXT_UPDATE }
-        if row.connectedCount > 0 {
-            return UICopy.SOURCES_BROWSER_CONNECTED_NOW
-        }
-        if let bucket = row.lastSeen {
-            return UICopy.sourcesBrowserLastSeen(formatRelativeBucket(bucket))
-        }
-        return UICopy.SOURCES_BROWSERS_NO_HISTORY
-    }
 
     private var browserRepairValue: BrowserRepairAXState {
         if appState.browserRepair.inFlight { return .inFlight }
@@ -3623,7 +3612,7 @@ struct SettingsView: View {
                                 HStack {
                                     Text(site)
                                     Spacer()
-                                    Button(action: { appState.removeExcludedSite(at: index) }) {
+                                    Button(action: { appState.removeExcludedSite(site) }) {
                                         Image(systemName: "minus.circle")
                                             .foregroundStyle(.red)
                                     }

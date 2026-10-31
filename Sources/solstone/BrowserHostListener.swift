@@ -156,14 +156,34 @@ public actor BrowserHostOutbound {
     private var isWriting = false
     private var isClosed = false
     private var drainTask: Task<Void, Never>?
+    private var siteListSource: BrowserSiteListSource?
+    private var siteListProjection: BrowserContractProjection?
+    private var sessionBrand: BrowserBrand?
+    private var siteRuleAck: Int?
 
     public init(sink: any BrowserHostByteSink) {
         self.sink = sink
     }
 
+    /// Every state and hello_ack this session sends carries the app's website list,
+    /// this browser's desktop facts and the last site_rule it answered.
+    func attachSiteList(_ source: BrowserSiteListSource?, projection: BrowserContractProjection?) {
+        siteListSource = source
+        siteListProjection = projection
+    }
+
+    func setSessionBrand(_ brand: BrowserBrand) { sessionBrand = brand }
+
+    func setSiteRuleAck(_ id: Int) { siteRuleAck = id }
+
+    private func decorated(_ data: Data) -> Data {
+        guard let siteListSource, let siteListProjection else { return data }
+        return siteListSource.decorate(data, brand: sessionBrand, siteRuleAck: siteRuleAck, projection: siteListProjection)
+    }
+
     public func enqueueState(_ data: Data) {
         guard !isClosed, pendingBye == nil else { return }
-        pendingState = data
+        pendingState = decorated(data)
         drainIfNeeded()
     }
 
@@ -190,7 +210,7 @@ public actor BrowserHostOutbound {
         } else if !sameEpoch || periodID == nil {
             pendingBoundary = nil
         }
-        pendingState = state
+        pendingState = decorated(state)
         publishedPeriodID = periodID
         publishedDestinationGeneration = destinationGeneration
         drainIfNeeded()
@@ -202,7 +222,7 @@ public actor BrowserHostOutbound {
             budgetRelease()
             return
         }
-        pendingReplies.append((data, budgetRelease))
+        pendingReplies.append((decorated(data), budgetRelease))
         drainIfNeeded()
     }
 
@@ -933,6 +953,37 @@ public actor BrowserHostListener {
     private var quiescenceTask: Task<Void, Never>?
     private let publicationValidity = BrowserHostPublicationValidity()
     private var currentSnapshot = BrowserHostSnapshotValue()
+    /// The app's website list, decorated onto every state and hello_ack a session sends.
+    public nonisolated let siteListSource = BrowserSiteListSource()
+    private var siteRuleHandler: (@Sendable (String, Bool) async -> Void)?
+    /// Newest page time written, per browser, since the app started (milliseconds).
+    private var lastPageMs: [BrowserBrand: UInt64] = [:]
+
+    /// The app applies a leave-out or include from an extension to its own website list.
+    public func setSiteRuleHandler(_ handler: (@Sendable (String, Bool) async -> Void)?) {
+        siteRuleHandler = handler
+    }
+
+    /// Republish to every session after the website list or desktop facts changed.
+    public func publishSiteListChange() async {
+        await publishCurrentStatus()
+    }
+
+    func applySiteRule(host: String, out: Bool) async {
+        await siteRuleHandler?(host, out)
+    }
+
+    func notePageArrival(sessionID: UUID, newestMs: UInt64) async {
+        guard let brand = profiles.sessionKey(for: sessionID)?.brand else { return }
+        let newest = max(lastPageMs[brand] ?? 0, newestMs)
+        guard newest != lastPageMs[brand] else { return }
+        lastPageMs[brand] = newest
+        currentSnapshot.lastPageMs = lastPageMs
+        let value = currentSnapshot
+        await MainActor.run { snapshot.publish(value) }
+    }
+
+    public func lastPageTimes() -> [BrowserBrand: UInt64] { lastPageMs }
     private let publicationWillEnqueue: @Sendable () async -> Void
     private let beforeBatchAdmission: @Sendable () async -> Void
 
@@ -1237,6 +1288,7 @@ public actor BrowserHostListener {
             shutdown: lifecycle.shutdown,
             quiescence: lifecycle.quiescence
         )
+        currentSnapshot.lastPageMs = lastPageMs
         let value = currentSnapshot
         let revision = publicationValidity.advance()
         Task { @MainActor [snapshot, publicationValidity] in
@@ -1279,6 +1331,7 @@ public actor BrowserHostListener {
             custodyPresent: facts.custodyPresent, profiles: profileGroups(), registration: registration,
             listener: currentSnapshot.listener, shutdown: lifecycle.shutdown, quiescence: lifecycle.quiescence
         )
+        currentSnapshot.lastPageMs = lastPageMs
         let value = currentSnapshot
         await MainActor.run { if current() { snapshot.publish(value) } }
         guard current() else { return }
@@ -1523,10 +1576,12 @@ public actor BrowserHostListener {
         budget.releaseInput(contextFrame.reservedByteCount, large: contextFrame.isLargeAssembly)
         guard let context, acceptingModes.contains(context.mode), lifecycleCurrent() else { return }
 
+        await outbound.attachSiteList(listener.siteListSource, projection: projection)
         var authority: BrowserHostSessionAuthority?
         var renewal: Task<Void, Never>?
         defer { renewal?.cancel() }
         var first = true
+        var ruleBucket = BrowserSiteRuleBucket(nowMs: DispatchTime.now().uptimeNanoseconds / 1_000_000)
         while lifecycleCurrent() {
             let remaining = remainingHandshakeMs(connectedAt: connectedAt, handshakeMs: limits.handshakeMs)
             let live: @Sendable () -> Bool
@@ -1558,8 +1613,23 @@ public actor BrowserHostListener {
                     projection: projection, updateGate: updateGate, isCurrent: lifecycleCurrent, decoded: decoded)
                 if decision == .close { return }
             } else {
+                // An owner's leave-out or include from the extension. Every one is answered with a
+                // state carrying its id, refused or not, and none closes the session.
+                if let ruleID = BrowserPayloadDecoder.siteRuleID(in: frame.body) {
+                    guard authority != nil, live() else { continue }
+                    let allowed = ruleBucket.take(nowMs: DispatchTime.now().uptimeNanoseconds / 1_000_000)
+                    if allowed, case .accept(.siteRule(let rule)) = decoded {
+                        await listener.applySiteRule(host: rule.host, out: rule.out)
+                    }
+                    await outbound.setSiteRuleAck(ruleID)
+                    await listener.publishSiteListChange()
+                    continue
+                }
                 guard case .accept(.batch(let batch)) = decoded,
                       let authority, BrowserOpaqueString.equals(batch.inst, authority.inst), live() else { return }
+            }
+            if let decision, case .compatible(let brand, _, _) = decision {
+                await outbound.setSessionBrand(brand)
             }
             guard live(), budget.reserveReply(limits.hostToExtension, for: sessionID) else { return }
             if case .accept(.batch) = decoded {
@@ -1573,6 +1643,11 @@ public actor BrowserHostListener {
             guard case .message(let reply) = result else {
                 budget.releaseReply(limits.hostToExtension, for: sessionID)
                 return
+            }
+            if case .accept(.batch(let batch)) = decoded, !batch.records.isEmpty,
+               let object = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any],
+               object["type"] as? String == "accepted", object["result"] as? String == "accepted" {
+                await listener.notePageArrival(sessionID: sessionID, newestMs: batch.records.map(\.ts).max() ?? 0)
             }
             await outbound.enqueueReply(reply) { budget.releaseReply(limits.hostToExtension, for: sessionID) }
             if let decision {

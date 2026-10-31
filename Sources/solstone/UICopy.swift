@@ -89,6 +89,8 @@ public enum UICopy {
     }
     public static let SOURCES_BROWSER_CONNECTED_NOW = "connected now"
     public static func sourcesBrowserLastSeen(_ relative: String) -> String { "last seen \(relative)" }
+    public static func sourcesBrowserConnectedLastPage(_ relative: String) -> String { "connected now · last page \(relative)" }
+    public static func sourcesBrowserLastPage(_ relative: String) -> String { "last page \(relative)" }
     public static let SOURCES_BROWSER_NEEDS_EXT_UPDATE = "needs an extension update"
     public static let SOURCES_BROWSER_NEEDS_APP_UPDATE = "needs a solstone app update"
 

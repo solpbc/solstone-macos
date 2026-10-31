@@ -86,6 +86,13 @@ public struct BrowserDecodedBatch: Sendable, Equatable {
     public let records: [BrowserDecodedBatchRecord]
 }
 
+/// An owner's leave-out or include from the extension, for the app's website list.
+public struct BrowserDecodedSiteRule: Sendable, Equatable {
+    public let id: Int
+    public let host: String
+    public let out: Bool
+}
+
 public struct BrowserDecodedHello: Sendable, Equatable {
     public let protocolVersion: Int
     public let version: String
@@ -133,6 +140,7 @@ public struct BrowserDecodedUnsupported: Sendable, Equatable {
 public enum BrowserDecodedMessage: Sendable, Equatable {
     case hello(BrowserDecodedHello)
     case batch(BrowserDecodedBatch)
+    case siteRule(BrowserDecodedSiteRule)
     case state(BrowserDecodedState)
     case boundary(BrowserDecodedBoundary)
     case accepted(BrowserDecodedAccepted)
@@ -762,12 +770,12 @@ public enum BrowserPayloadDecoder {
             return .refuse(BrowserRefusal(code: "missing_field"))
         }
 
-        let knownTypes = ["hello", "batch", "hello_ack", "unsupported", "state", "boundary", "accepted", "bye"]
+        let knownTypes = ["hello", "batch", "site_rule", "hello_ack", "unsupported", "state", "boundary", "accepted", "bye"]
         if !knownTypes.contains(type) {
             return .refuse(BrowserRefusal(code: "bad_type"))
         }
 
-        let extToHostTypes = ["hello", "batch"]
+        let extToHostTypes = ["hello", "batch", "site_rule"]
         let hostToExtTypes = ["hello_ack", "unsupported", "state", "boundary", "accepted", "bye"]
         let allowedTypes = direction == "extension_to_host" ? extToHostTypes : hostToExtTypes
         if !allowedTypes.contains(type) {
@@ -783,6 +791,8 @@ public enum BrowserPayloadDecoder {
             return decodeHello(root: root, projection: projection)
         case "batch":
             return decodeBatch(root: root, rawBytes: bytes, projection: projection)
+        case "site_rule":
+            return decodeSiteRule(root: root)
         case "state", "hello_ack":
             return decodeState(root: root, type: type, projection: projection)
         case "boundary":
@@ -835,6 +845,32 @@ public enum BrowserPayloadDecoder {
             return .refuse(BrowserRefusal(code: "bad_record", field: key, cause: "too_long", row: row))
         }
         return nil
+    }
+
+    /// The `id` of a site_rule frame, if it carries a positive integer one, even when the
+    /// rest of the frame is refused, so the session can still answer it.
+    public static func siteRuleID(in bytes: Data) -> Int? {
+        guard let root = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              root["type"] as? String == "site_rule", let raw = root["id"], isNonNegativeInteger(raw) else { return nil }
+        let id = (raw as! NSNumber).intValue
+        return id >= 1 ? id : nil
+    }
+
+    private static func decodeSiteRule(root: [String: Any]) -> BrowserDecodeResult {
+        guard let idRaw = root["id"], let hostRaw = root["host"], let outRaw = root["out"] else {
+            return .refuse(BrowserRefusal(code: "missing_field"))
+        }
+        guard isNonNegativeInteger(idRaw), (idRaw as! NSNumber).intValue >= 1 else {
+            return .refuse(BrowserRefusal(code: "bad_number"))
+        }
+        guard let out = outRaw as? NSNumber, CFGetTypeID(out) == CFBooleanGetTypeID() else {
+            return .refuse(BrowserRefusal(code: "bad_type"))
+        }
+        guard let host = hostRaw as? String, (1...253).contains(host.utf8.count),
+              host.range(of: #"^(\[[0-9a-fA-F:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*)$"#, options: .regularExpression) != nil else {
+            return .refuse(BrowserRefusal(code: "invalid_host"))
+        }
+        return .accept(.siteRule(BrowserDecodedSiteRule(id: (idRaw as! NSNumber).intValue, host: host, out: out.boolValue)))
     }
 
     private static func decodeHello(root: [String: Any], projection: BrowserContractProjection) -> BrowserDecodeResult {
@@ -1407,6 +1443,8 @@ public enum BrowserPayloadDecoder {
                 order = keyOrderMap["block"] ?? []
             } else if dict["label"] != nil || dict["level"] != nil || dict["linkHost"] != nil {
                 order = keyOrderMap["block_attrs"] ?? []
+            } else if dict["screen"] != nil || dict["activity"] != nil || dict["sites"] != nil {
+                order = keyOrderMap["desktop"] ?? []
             }
 
             let allKeys = Array(dict.keys)

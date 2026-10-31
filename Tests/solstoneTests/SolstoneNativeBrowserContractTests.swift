@@ -48,7 +48,7 @@ struct SolstoneNativeBrowserContractTests {
         }
 
         #expect(adoption["bundle_path"] as? String == "contracts/native-browser")
-        #expect(adoption["source_revision"] as? String == "175ea73c9975feec3b929c65385374d0098dd61a")
+        #expect(adoption["source_revision"] as? String == "3ea9d5f3baa881b68db81e0eac1a2031f4f38d28")
         #expect(adoption["bundle_version"] as? String == "1.4.0")
         #expect(adoption["wire_protocol"] as? Int == 1)
         #expect(adoption["manifest_sha256"] as? String == "410fe45a1bd83286f95eab0819df3bf072bb87b379f3e4889fe7a959071e21dd")
@@ -125,7 +125,7 @@ struct SolstoneNativeBrowserContractTests {
             return
         }
 
-        #expect(corpus.count == 177)
+        #expect(corpus.count == 180)
 
         for v in corpus {
             let id = v["id"] as? String ?? ""
@@ -185,7 +185,7 @@ struct SolstoneNativeBrowserContractTests {
             return
         }
 
-        #expect(recipes.count == 6)
+        #expect(recipes.count == 7)
 
         for r in recipes {
             let id = r["id"] as? String ?? ""
@@ -199,7 +199,7 @@ struct SolstoneNativeBrowserContractTests {
 
             let decoded = BrowserPayloadDecoder.decode(
                 bytes: recipeBytes,
-                direction: "extension_to_host",
+                direction: id == "state_payload_max" ? "host_to_extension" : "extension_to_host",
                 projection: projection
             )
             switch id {
@@ -408,6 +408,26 @@ struct SolstoneNativeBrowserContractTests {
             let emptyBytes = encodeCanonical(baseObj, projection: projection)
             let padLen = targetLen - emptyBytes.count
             baseObj["pad"] = String(repeating: "a", count: padLen)
+            return encodeCanonical(baseObj, projection: projection)
+        } else if id == "state_payload_max" {
+            var baseObj: [String: Any] = [
+                "type": "state",
+                "capture": "permitted",
+                "delivery": "idle",
+                "freshness_ms": 0,
+                "destination_generation": "g",
+                "period_id": "p",
+                "custody": ["full": false, "stale": false],
+                "version": "1.0.0",
+                "left_out": Array(repeating: String(repeating: "a", count: 249) + ".com", count: 200),
+                "left_out_epoch": String(repeating: "e", count: 64),
+                "left_out_rev": 1000,
+                "desktop": ["screen": true, "activity": true, "sites": "on"],
+                "site_rule_ack": 1,
+                "pad": ""
+            ]
+            let emptyBytes = encodeCanonical(baseObj, projection: projection)
+            baseObj["pad"] = String(repeating: "a", count: controlMax - emptyBytes.count)
             return encodeCanonical(baseObj, projection: projection)
         } else if id == "batch_delta_cap_3000" {
             var deltas: [[String: Any]] = []

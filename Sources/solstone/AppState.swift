@@ -367,7 +367,49 @@ public final class AppState {
         return privateWindowAccessibilityMonitor.sitesEnabled && privateWindowAccessibilityMonitor.lastReadWorks == false
     }
 
-    internal var currentSiteSafariCaution: Bool = false
+    internal var currentSiteSafariCaution: Bool = false {
+        didSet {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            if oldValue != currentSiteSafariCaution { refreshBrowserSiteList() }
+#endif
+        }
+    }
+
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    /// Tells every browser extension the app's website list, and what still goes into the
+    /// journal from this mac, whenever either changes.
+    func refreshBrowserSiteList() {
+        guard let listener = browserHostListener else { return }
+        let paused = pauseManager.isPaused
+        let snapshot = BrowserSiteListSnapshot(
+            sites: config.excludedSites,
+            epoch: config.excludedSitesEpoch,
+            rev: config.excludedSitesRev,
+            screen: config.isScreenCaptureEnabled && isRecording && !paused,
+            activity: config.isActivitySourceOn && !config.activityHeld(paused: paused, stopped: !isRecording),
+            checkedBrands: [.safari],
+            accessibilityWorks: privateWindowAccessibilityMonitor.lastReadWorks == true,
+            brandsWithCaution: currentSiteSafariCaution ? [.safari] : []
+        )
+        if listener.siteListSource.update(snapshot) {
+            Task { await listener.publishSiteListChange() }
+        }
+    }
+
+    /// A leave-out or include from a browser extension, applied as a Settings edit would be.
+    func applyBrowserSiteRule(host: String, out: Bool) {
+        guard let stored = SiteRule.storedHost(host) else { return }
+        var newConfig = config
+        if out {
+            guard !newConfig.excludedSites.contains(stored), newConfig.excludedSites.count < 200 else { return }
+            newConfig.excludedSites.append(stored)
+        } else {
+            guard newConfig.excludedSites.contains(stored) else { return }
+            newConfig.excludedSites.removeAll { $0 == stored }
+        }
+        updateConfig(newConfig)
+    }
+#endif
 
     public var siteSafariCaution: Bool {
         guard !config.excludedSites.isEmpty else { return false }
@@ -407,10 +449,11 @@ public final class AppState {
         return nil
     }
 
-    public func removeExcludedSite(at index: Int) {
-        guard index >= 0 && index < config.excludedSites.count else { return }
+    /// Removes by value: a browser extension can change the list between render and tap.
+    public func removeExcludedSite(_ site: String) {
+        guard config.excludedSites.contains(site) else { return }
         var newConfig = config
-        newConfig.excludedSites.remove(at: index)
+        newConfig.excludedSites.removeAll { $0 == site }
         updateConfig(newConfig)
     }
 
@@ -783,8 +826,14 @@ public final class AppState {
     // MARK: - Configuration
 
     /// Update and save configuration
-    public func updateConfig(_ newConfig: AppConfig) {
+    public func updateConfig(_ incoming: AppConfig) {
         let oldConfig = config
+        var newConfig = incoming
+        // Every change to the website list moves its revision on, whatever made it.
+        if newConfig.excludedSites != oldConfig.excludedSites {
+            newConfig.excludedSitesEpoch = oldConfig.excludedSitesEpoch
+            newConfig.excludedSitesRev = max(newConfig.excludedSitesRev, oldConfig.excludedSitesRev + 1)
+        }
         let oldPriority = oldConfig.microphonePriority
         let oldDisabled = oldConfig.disabledMicrophoneUIDs
         let oldEnabled = oldConfig.enabledMicrophoneUIDs
@@ -798,6 +847,9 @@ public final class AppState {
         }
         activitySource?.configure(newConfig)
         clearLatestFrameIfNeeded()
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+        refreshBrowserSiteList()
+#endif
         reconcilePrivateWindowAccessibility()
         uploadCoordinator.updateConfig(newConfig)
         uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
@@ -2963,6 +3015,7 @@ public final class AppState {
             previousPause?()
             authority?.setPaused(true)
             store?.setPaused(true)
+            self?.refreshBrowserSiteList()
             if let listener = self?.browserHostListener {
                 Task { await listener.refreshSnapshot() }
             }
@@ -2972,6 +3025,7 @@ public final class AppState {
             previousResume?()
             authority?.setPaused(false)
             store?.setPaused(false)
+            self?.refreshBrowserSiteList()
             if let owner = self?.browserIntakeOwner {
                 Task { await owner.scheduleDelivery() }
             }
@@ -3078,6 +3132,10 @@ public final class AppState {
             await MainActor.run {
                 guard !state.isTerminating, state.appQuitCoordinator.preparationGeneration == generation else { return }
                 state.browserHostListener = listener
+                state.refreshBrowserSiteList()
+            }
+            await listener.setSiteRuleHandler { [weak state] host, out in
+                await MainActor.run { state?.applyBrowserSiteRule(host: host, out: out) }
             }
             guard await MainActor.run(body: { !state.isTerminating && state.appQuitCoordinator.preparationGeneration == generation }) else {
                 await owner.stopAndDrain()

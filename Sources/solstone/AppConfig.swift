@@ -156,7 +156,7 @@ public struct AppConfig: Sendable, Equatable {
         "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled", "isBrowserIntakeEnabled",
         "isActivityEnabled", "activityTitlesEnabled", "activityURLsEnabled", "activityAccessibilityEnabled",
         "activityContinuesThroughPause",
-        "microphonePriority", "excludedApps", "excludedTitlePatterns", "excludedSites",
+        "microphonePriority", "excludedApps", "excludedTitlePatterns", "excludedSites", "excludedSitesState",
         "excludePrivateBrowsing", "excludePrivateBrowsingAccessibility", "serverURL", "serverKey",
         "syncPaused", "debugSegments",
         "preserveSyncedSegments", "microphoneGain", "silenceMusic",
@@ -178,6 +178,8 @@ public struct AppConfig: Sendable, Equatable {
         static let excludedApps = "excludedApps"
         static let excludedTitlePatterns = "excludedTitlePatterns"
         static let excludedSites = "excludedSites"
+        static let excludedSitesState = "excludedSitesState"
+        static let excludedSitesStateBackup = "excludedSitesState.backup"
         static let excludePrivateBrowsing = "excludePrivateBrowsing"
         static let excludePrivateBrowsingAccessibility = "excludePrivateBrowsingAccessibility"
         static let serverURL = "serverURL"
@@ -296,6 +298,12 @@ public struct AppConfig: Sendable, Equatable {
 
     /// Left-out websites - pause recording and exclude from activity while showing
     public var excludedSites: [String]
+    /// The list's lineage, minted whenever the app can't vouch for continuity (a fresh
+    /// install, wiped settings, an unreadable store). Browser extensions treat a new
+    /// epoch as a reset and send back what they had.
+    public var excludedSitesEpoch: String
+    /// Increases on every change to `excludedSites` within one epoch.
+    public var excludedSitesRev: Int
 
     private var excludePrivateBrowsingChoice: Bool?
     /// Exclude private browser windows, detected by a marker in the window title.
@@ -411,6 +419,8 @@ public struct AppConfig: Sendable, Equatable {
         excludedApps: [AppEntry] = [],
         excludedTitlePatterns: [String] = [],
         excludedSites: [String] = [],
+        excludedSitesEpoch: String = "",
+        excludedSitesRev: Int = 0,
         excludePrivateBrowsing: Bool? = nil,
         excludePrivateBrowsingAccessibility: Bool? = nil,
         serverURL: String? = nil,
@@ -434,6 +444,8 @@ public struct AppConfig: Sendable, Equatable {
         self.excludedApps = excludedApps
         self.excludedTitlePatterns = excludedTitlePatterns
         self.excludedSites = excludedSites
+        self.excludedSitesEpoch = excludedSitesEpoch
+        self.excludedSitesRev = excludedSitesRev
         self.excludePrivateBrowsingChoice = excludePrivateBrowsing
         self.excludePrivateBrowsingAccessibilityChoice = excludePrivateBrowsingAccessibility
         self.serverURL = serverURL
@@ -454,6 +466,41 @@ public struct AppConfig: Sendable, Equatable {
     // MARK: - Load/Save
 
     /// Loads config from UserDefaults
+    struct ExcludedSitesState: Codable, Equatable {
+        var epoch: String
+        var rev: Int
+        var sites: [String]
+    }
+
+    static func storeExcludedSitesState(_ state: ExcludedSitesState, in defaults: UserDefaults) {
+        guard !state.epoch.isEmpty, let data = try? JSONEncoder().encode(state) else { return }
+        defaults.set(data, forKey: Keys.excludedSitesState)
+    }
+
+    /// The list, its epoch and rev, read as one value. Anything minted here is saved at once,
+    /// so loading the same stored bytes twice gives the same result.
+    static func loadExcludedSitesState(from defaults: UserDefaults) -> ExcludedSitesState {
+        // Loaded as stored, never trimmed: a website the owner left out is never dropped here.
+        let legacySites = defaults.stringArray(forKey: Keys.excludedSites) ?? []
+        if let stored = defaults.object(forKey: Keys.excludedSitesState) {
+            if let data = stored as? Data, let state = try? JSONDecoder().decode(ExcludedSitesState.self, from: data),
+               !state.epoch.isEmpty {
+                // The plain list is written beside the state on every save. If they differ, an
+                // older build changed the list since: take its list as a new revision.
+                guard state.sites != legacySites, defaults.object(forKey: Keys.excludedSites) != nil else { return state }
+                let updated = ExcludedSitesState(epoch: state.epoch, rev: state.rev + 1, sites: legacySites)
+                storeExcludedSitesState(updated, in: defaults)
+                return updated
+            }
+            // Unreadable: keep it aside, and start a new lineage. The plain list saved beside
+            // it is kept, so no website the owner left out is dropped.
+            defaults.set(stored, forKey: Keys.excludedSitesStateBackup)
+        }
+        let state = ExcludedSitesState(epoch: UUID().uuidString.lowercased(), rev: legacySites.isEmpty ? 0 : 1, sites: legacySites)
+        storeExcludedSitesState(state, in: defaults)
+        return state
+    }
+
     public static func load() -> AppConfig {
         CFPreferencesAppSynchronize(SolstoneIdentity.bundleIdentifier as CFString)
         return load(from: .standard)
@@ -498,6 +545,8 @@ public struct AppConfig: Sendable, Equatable {
             pauseShortcut = nil
         }
 
+        let siteState = loadExcludedSitesState(from: defaults)
+
         let config = AppConfig(
             isScreenCaptureEnabled: defaults.object(forKey: Keys.isScreenCaptureEnabled) as? Bool ?? true,
             isMicrophoneCaptureEnabled: defaults.object(forKey: Keys.isMicrophoneCaptureEnabled) as? Bool ?? true,
@@ -505,7 +554,9 @@ public struct AppConfig: Sendable, Equatable {
             microphonePriority: microphonePriority,
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
-            excludedSites: defaults.stringArray(forKey: Keys.excludedSites) ?? [],
+            excludedSites: siteState.sites,
+            excludedSitesEpoch: siteState.epoch,
+            excludedSitesRev: siteState.rev,
             excludePrivateBrowsing: defaults.object(forKey: Keys.excludePrivateBrowsing) as? Bool,
             excludePrivateBrowsingAccessibility: storedCoercedBool(defaults, key: Keys.excludePrivateBrowsingAccessibility),
             serverURL: serverURL,
@@ -695,6 +746,8 @@ public struct AppConfig: Sendable, Equatable {
 
         defaults.set(excludedTitlePatterns, forKey: Keys.excludedTitlePatterns)
         defaults.set(excludedSites, forKey: Keys.excludedSites)
+        Self.storeExcludedSitesState(ExcludedSitesState(epoch: excludedSitesEpoch, rev: excludedSitesRev, sites: excludedSites),
+                                     in: defaults)
         saveScalarChoice(excludePrivateBrowsingChoice, forKey: Keys.excludePrivateBrowsing, in: defaults)
         saveScalarChoice(excludePrivateBrowsingAccessibilityChoice, forKey: Keys.excludePrivateBrowsingAccessibility, in: defaults)
         defaults.set(serverURL, forKey: Keys.serverURL)

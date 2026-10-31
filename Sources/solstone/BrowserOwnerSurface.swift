@@ -179,6 +179,8 @@ public struct BrowserBrandRow: Equatable, Sendable {
     public var registration: BrowserHostRegistrationState
     public var needsAppUpdate = false
     public var needsExtensionUpdate = false
+    /// When the newest page written from this browser was from, since the app started.
+    public var lastPage: BrowserRelativeTimeBucket?
 
     public var state: BrowserProfileAXState {
         if needsAppUpdate { return .needsAppUpdate }
@@ -389,8 +391,28 @@ public func browserBrandRows(_ snapshot: BrowserHostSnapshotValue, now: Date, ca
         )
         row.needsAppUpdate = profiles.contains { $0.handshake == .unsupportedApp }
         row.needsExtensionUpdate = profiles.contains { $0.handshake == .unsupportedExtension }
+        if let ms = snapshot.lastPageMs[brand], ms > 0 {
+            let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
+            row.lastPage = browserRelativeTimeBucket(lastSeen: min(date, now), now: now, calendar: calendar)
+        }
         return row
     }
+}
+
+/// What a browser's Sources row says. Update states keep precedence; a connected browser
+/// that has sent pages since the app started says when the newest one was from.
+public func browserRowStatusText(_ row: BrowserBrandRow) -> String {
+    if row.needsAppUpdate { return UICopy.SOURCES_BROWSER_NEEDS_APP_UPDATE }
+    if row.needsExtensionUpdate { return UICopy.SOURCES_BROWSER_NEEDS_EXT_UPDATE }
+    if row.connectedCount > 0 {
+        if let page = row.lastPage { return UICopy.sourcesBrowserConnectedLastPage(formatRelativeBucket(page)) }
+        return UICopy.SOURCES_BROWSER_CONNECTED_NOW
+    }
+    if let page = row.lastPage { return UICopy.sourcesBrowserLastPage(formatRelativeBucket(page)) }
+    if let bucket = row.lastSeen {
+        return UICopy.sourcesBrowserLastSeen(formatRelativeBucket(bucket))
+    }
+    return UICopy.SOURCES_BROWSERS_NO_HISTORY
 }
 
 public func formatRelativeBucket(_ bucket: BrowserRelativeTimeBucket) -> String {
