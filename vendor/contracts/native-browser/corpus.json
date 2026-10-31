@@ -166,6 +166,26 @@
     "payload": "{\"type\":\"batch\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"queued_at_ms\":100,\"records\":[{\"t\":\"delta\",\"ts\":100,\"ctx\":\"c\",\"op\":\"remove\",\"block\":{\"id\":\"d1\"}}]}"
   },
   {
+    "id": "site_rule_positive",
+    "direction": "extension_to_host",
+    "expect": "accept",
+    "payload": "{\"type\":\"site_rule\",\"id\":1,\"host\":\"example.com\",\"out\":true}"
+  },
+  {
+    "id": "site_rule_wrong_direction",
+    "direction": "host_to_extension",
+    "expect": "refuse",
+    "code": "bad_direction",
+    "payload": "{\"type\":\"site_rule\",\"id\":1,\"host\":\"example.com\",\"out\":true}"
+  },
+  {
+    "id": "site_rule_missing_field",
+    "direction": "extension_to_host",
+    "expect": "refuse",
+    "code": "missing_field",
+    "payload": "{\"type\":\"site_rule\",\"id\":1,\"host\":\"example.com\"}"
+  },
+  {
     "id": "hello_invalid_brand",
     "direction": "extension_to_host",
     "expect": "refuse",

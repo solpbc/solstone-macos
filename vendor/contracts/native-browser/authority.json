@@ -1,5 +1,5 @@
 {
-  "bundle_version": "1.3.0",
+  "bundle_version": "1.4.0",
   "wire_protocol": 1,
   "journal": {
     "id": "solstone-journal-format:browser-jsonl",
@@ -31,7 +31,8 @@
   "directions": {
     "extension_to_host": [
       "hello",
-      "batch"
+      "batch",
+      "site_rule"
     ],
     "host_to_extension": [
       "hello_ack",
@@ -96,14 +97,16 @@
       "chrome_id": "eibbeeoifjoabddfmgeggnageolkcnim",
       "edge_id": "eibbeeoifjoabddfmgeggnageolkcnim",
       "firefox_id": "browser@solstone.app",
-      "safari_id": "app.solstone.observer.safari (7QCG8V4M6H)"
+      "safari_id": "app.solstone.observer.safari (7QCG8V4M6H)",
+      "safari_ios_id": "app.solstone.swift.safari (7QCG8V4M6H)"
     },
     "dev": {
       "host": "app.solstone.browser.dev",
       "chrome_id": "fgfnkcefedeheoeamppkiiloncfekakf",
       "edge_id": "fgfnkcefedeheoeamppkiiloncfekakf",
       "firefox_id": "browser.dev@solstone.app",
-      "safari_id": ""
+      "safari_id": "",
+      "safari_ios_id": ""
     }
   },
   "string_bounds": {
@@ -243,7 +246,12 @@
       "period_id",
       "failure",
       "custody",
-      "version"
+      "version",
+      "left_out",
+      "left_out_epoch",
+      "left_out_rev",
+      "desktop",
+      "site_rule_ack"
     ],
     "unsupported": [
       "type",
@@ -259,7 +267,23 @@
       "period_id",
       "failure",
       "custody",
-      "version"
+      "version",
+      "left_out",
+      "left_out_epoch",
+      "left_out_rev",
+      "desktop",
+      "site_rule_ack"
+    ],
+    "site_rule": [
+      "type",
+      "id",
+      "host",
+      "out"
+    ],
+    "desktop": [
+      "screen",
+      "activity",
+      "sites"
     ],
     "batch": [
       "type",

@@ -26,6 +26,12 @@
     "code": "oversize"
   },
   {
+    "id": "state_payload_max",
+    "target_length": 65536,
+    "sha256": "f35dee93c35913667fd03ba3f73a8604bcccd6c5863e5e686232c5bd8716cf58",
+    "expect": "accept"
+  },
+  {
     "id": "batch_delta_cap_3000",
     "target_length": 213911,
     "sha256": "0186d9170294f32f5e2d7b54c12c0476e771686b88c9d48ae1dbc83d3e4e4594",

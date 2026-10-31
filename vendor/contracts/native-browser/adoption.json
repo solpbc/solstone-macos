@@ -1,9 +1,9 @@
 {
   "bundle_path": "contracts/native-browser",
-  "source_revision": "175ea73c9975feec3b929c65385374d0098dd61a",
-  "bundle_version": "1.3.0",
+  "source_revision": "3ea9d5f3baa881b68db81e0eac1a2031f4f38d28",
+  "bundle_version": "1.4.0",
   "wire_protocol": 1,
-  "manifest_sha256": "ccaeb5080ce8ff8b6afbc9e507937c7607d7aa1d52650dadf184b57e36f38c4f",
+  "manifest_sha256": "410fe45a1bd83286f95eab0819df3bf072bb87b379f3e4889fe7a959071e21dd",
   "journal_schema_id": "solstone-journal-format:browser-jsonl",
   "journal_schema_sha256": "c14e66318587b8fa451ef1363e113885bdd80a41ce680b0c62fcc9033460a2e1",
   "journal_schema_revision": "3b99f1af61d4e82c5c9c3748d90c1242c28c1e5b"

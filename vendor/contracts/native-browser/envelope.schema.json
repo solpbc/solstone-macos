@@ -26,6 +26,9 @@
     },
     {
       "$ref": "#/$defs/bye"
+    },
+    {
+      "$ref": "#/$defs/site_rule"
     }
   ],
   "$defs": {
@@ -156,6 +159,49 @@
               "type": "boolean"
             }
           }
+        },
+        "left_out": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          }
+        },
+        "left_out_epoch": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "left_out_rev": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "desktop": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "screen",
+            "activity",
+            "sites"
+          ],
+          "properties": {
+            "screen": {
+              "type": "boolean"
+            },
+            "activity": {
+              "type": "boolean"
+            },
+            "sites": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        "site_rule_ack": {
+          "type": "integer",
+          "description": "id of the last site_rule this session has answered; repeated on every later per-session state"
         }
       },
       "allOf": [
@@ -367,6 +413,49 @@
               "type": "boolean"
             }
           }
+        },
+        "left_out": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 253
+          }
+        },
+        "left_out_epoch": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "left_out_rev": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "desktop": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "screen",
+            "activity",
+            "sites"
+          ],
+          "properties": {
+            "screen": {
+              "type": "boolean"
+            },
+            "activity": {
+              "type": "boolean"
+            },
+            "sites": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        "site_rule_ack": {
+          "type": "integer",
+          "description": "id of the last site_rule this session has answered; repeated on every later per-session state"
         }
       },
       "allOf": [
@@ -693,6 +782,34 @@
             "replaced",
             "update"
           ]
+        }
+      }
+    },
+    "site_rule": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "type",
+        "id",
+        "host",
+        "out"
+      ],
+      "properties": {
+        "type": {
+          "const": "site_rule"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^(\\[[0-9a-fA-F:.]+\\]|(?:\\d{1,3}\\.){3}\\d{1,3}|[a-zA-Z0-9_-]+(?:\\.[a-zA-Z0-9_-]+)*)$"
+        },
+        "out": {
+          "type": "boolean"
         }
       }
     }

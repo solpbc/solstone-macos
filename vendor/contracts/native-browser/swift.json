@@ -1,6 +1,6 @@
 {
   "constants": {
-    "BUNDLE_VERSION": "1.3.0",
+    "BUNDLE_VERSION": "1.4.0",
     "WIRE_PROTOCOL": 1,
     "EXTENSION_TO_HOST_MAX": 33554432,
     "HOST_TO_EXTENSION_MAX": 65536,
@@ -40,7 +40,8 @@
     "DIRECTIONS": {
       "extension_to_host": [
         "hello",
-        "batch"
+        "batch",
+        "site_rule"
       ],
       "host_to_extension": [
         "hello_ack",
@@ -103,14 +104,16 @@
         "chrome_id": "eibbeeoifjoabddfmgeggnageolkcnim",
         "edge_id": "eibbeeoifjoabddfmgeggnageolkcnim",
         "firefox_id": "browser@solstone.app",
-        "safari_id": "app.solstone.observer.safari (7QCG8V4M6H)"
+        "safari_id": "app.solstone.observer.safari (7QCG8V4M6H)",
+        "safari_ios_id": "app.solstone.swift.safari (7QCG8V4M6H)"
       },
       "dev": {
         "host": "app.solstone.browser.dev",
         "chrome_id": "fgfnkcefedeheoeamppkiiloncfekakf",
         "edge_id": "fgfnkcefedeheoeamppkiiloncfekakf",
         "firefox_id": "browser.dev@solstone.app",
-        "safari_id": ""
+        "safari_id": "",
+        "safari_ios_id": ""
       }
     },
     "REGISTRATION": {
@@ -244,7 +247,12 @@
         "period_id",
         "failure",
         "custody",
-        "version"
+        "version",
+        "left_out",
+        "left_out_epoch",
+        "left_out_rev",
+        "desktop",
+        "site_rule_ack"
       ],
       "unsupported": [
         "type",
@@ -260,7 +268,23 @@
         "period_id",
         "failure",
         "custody",
-        "version"
+        "version",
+        "left_out",
+        "left_out_epoch",
+        "left_out_rev",
+        "desktop",
+        "site_rule_ack"
+      ],
+      "site_rule": [
+        "type",
+        "id",
+        "host",
+        "out"
+      ],
+      "desktop": [
+        "screen",
+        "activity",
+        "sites"
       ],
       "batch": [
         "type",
@@ -493,6 +517,26 @@
       "expect": "refuse",
       "code": "missing_field",
       "payload": "{\"type\":\"batch\",\"destination_generation\":\"g1\",\"inst\":\"inst1\",\"queued_at_ms\":100,\"records\":[{\"t\":\"delta\",\"ts\":100,\"ctx\":\"c\",\"op\":\"remove\",\"block\":{\"id\":\"d1\"}}]}"
+    },
+    {
+      "id": "site_rule_positive",
+      "direction": "extension_to_host",
+      "expect": "accept",
+      "payload": "{\"type\":\"site_rule\",\"id\":1,\"host\":\"example.com\",\"out\":true}"
+    },
+    {
+      "id": "site_rule_wrong_direction",
+      "direction": "host_to_extension",
+      "expect": "refuse",
+      "code": "bad_direction",
+      "payload": "{\"type\":\"site_rule\",\"id\":1,\"host\":\"example.com\",\"out\":true}"
+    },
+    {
+      "id": "site_rule_missing_field",
+      "direction": "extension_to_host",
+      "expect": "refuse",
+      "code": "missing_field",
+      "payload": "{\"type\":\"site_rule\",\"id\":1,\"host\":\"example.com\"}"
     },
     {
       "id": "hello_invalid_brand",

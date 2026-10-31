@@ -23,7 +23,7 @@
       "minLength": 1
     },
     "bundle_version": {
-      "const": "1.3.0"
+      "const": "1.4.0"
     },
     "wire_protocol": {
       "const": 1

@@ -5,7 +5,7 @@
   "use strict";
 
   globalThis.SolstoneNativeBrowserConstants = Object.freeze({
-  "BUNDLE_VERSION": "1.3.0",
+  "BUNDLE_VERSION": "1.4.0",
   "WIRE_PROTOCOL": 1,
   "EXTENSION_TO_HOST_MAX": 33554432,
   "HOST_TO_EXTENSION_MAX": 65536,
@@ -45,7 +45,8 @@
   "DIRECTIONS": {
     "extension_to_host": [
       "hello",
-      "batch"
+      "batch",
+      "site_rule"
     ],
     "host_to_extension": [
       "hello_ack",
@@ -108,14 +109,16 @@
       "chrome_id": "eibbeeoifjoabddfmgeggnageolkcnim",
       "edge_id": "eibbeeoifjoabddfmgeggnageolkcnim",
       "firefox_id": "browser@solstone.app",
-      "safari_id": "app.solstone.observer.safari (7QCG8V4M6H)"
+      "safari_id": "app.solstone.observer.safari (7QCG8V4M6H)",
+      "safari_ios_id": "app.solstone.swift.safari (7QCG8V4M6H)"
     },
     "dev": {
       "host": "app.solstone.browser.dev",
       "chrome_id": "fgfnkcefedeheoeamppkiiloncfekakf",
       "edge_id": "fgfnkcefedeheoeamppkiiloncfekakf",
       "firefox_id": "browser.dev@solstone.app",
-      "safari_id": ""
+      "safari_id": "",
+      "safari_ios_id": ""
     }
   },
   "REGISTRATION": {
@@ -249,7 +252,12 @@
       "period_id",
       "failure",
       "custody",
-      "version"
+      "version",
+      "left_out",
+      "left_out_epoch",
+      "left_out_rev",
+      "desktop",
+      "site_rule_ack"
     ],
     "unsupported": [
       "type",
@@ -265,7 +273,23 @@
       "period_id",
       "failure",
       "custody",
-      "version"
+      "version",
+      "left_out",
+      "left_out_epoch",
+      "left_out_rev",
+      "desktop",
+      "site_rule_ack"
+    ],
+    "site_rule": [
+      "type",
+      "id",
+      "host",
+      "out"
+    ],
+    "desktop": [
+      "screen",
+      "activity",
+      "sites"
     ],
     "batch": [
       "type",
