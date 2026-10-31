@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- in settings, you can now leave out websites: while one shows in Safari, screen intake pauses and it stays out of activity. the solstone extension doesn't use this list yet. limits are listed under the setting.
+- in settings, you can now leave out websites: while one shows in Safari, screen intake pauses and it stays out of activity. the solstone extension doesn't use this list. limits are listed under the setting.
 
 ### Changed
 
