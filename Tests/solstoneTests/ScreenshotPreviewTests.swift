@@ -61,11 +61,12 @@ struct ScreenshotPreviewTests {
         var screenshotCapturer: ScreenshotCapturer?
         let writer = SegmentWriter(
             outputDirectory: dir, timePrefix: "120000",
-            screenshotCapturerFactory: { info, url, rate, duration, filter, verbose in
+            screenshotCapturerFactory: { info, url, rate, duration, filter, verbose, siteRuleLock, appendsClosedLock in
                 let capturer = try ScreenshotCapturer(
                     displayID: info.displayID, videoURL: url, width: info.width, height: info.height,
                     frameRate: rate, duration: duration, contentFilter: try #require(filter),
-                    verbose: verbose, streamFactory: factory.factory
+                    verbose: verbose, streamFactory: factory.factory,
+                    siteRuleLock: siteRuleLock, appendsClosedLock: appendsClosedLock
                 )
                 screenshotCapturer = capturer
                 return capturer

@@ -5,6 +5,7 @@ import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 import SolstoneCore
 import Testing
@@ -44,7 +45,7 @@ struct ScreenIntakeWarningTests {
         let writer = SegmentWriter(
             outputDirectory: dir,
             timePrefix: "120000",
-            screenshotCapturerFactory: { _, _, _, _, _, _ in
+            screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in
                 FakeScreenshotCapturer(behavior: .throwOnStart)
             },
             audioManagerFactory: { _, _, _, _ in audioManager }
@@ -78,7 +79,7 @@ struct ScreenIntakeWarningTests {
         let writer = SegmentWriter(
             outputDirectory: dir,
             timePrefix: "120000",
-            screenshotCapturerFactory: { info, _, _, _, _, _ in
+            screenshotCapturerFactory: { info, _, _, _, _, _, _, _ in
                 if info.displayID == self.dummyDisplay1.displayID {
                     return FakeScreenshotCapturer(behavior: .throwOnStart)
                 } else {
@@ -125,7 +126,7 @@ struct ScreenIntakeWarningTests {
         let writer = SegmentWriter(
             outputDirectory: dir,
             timePrefix: "120000",
-            screenshotCapturerFactory: { info, _, _, _, _, _ in
+            screenshotCapturerFactory: { info, _, _, _, _, _, _, _ in
                 if info.displayID == self.dummyDisplay1.displayID {
                     throw SegmentWriter.SegmentError.missingContentFilter(displayID: info.displayID)
                 } else {
@@ -170,7 +171,7 @@ struct ScreenIntakeWarningTests {
         let writer = SegmentWriter(
             outputDirectory: dir,
             timePrefix: "120000",
-            screenshotCapturerFactory: { info, _, _, _, _, _ in
+            screenshotCapturerFactory: { info, _, _, _, _, _, _, _ in
                 throw SegmentWriter.SegmentError.missingContentFilter(displayID: info.displayID)
             },
             audioManagerFactory: { _, _, _, _ in audioManager }
@@ -213,7 +214,9 @@ struct ScreenIntakeWarningTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: factory.factory
+            streamFactory: factory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         capturer._restartParkHookForTesting = {}
         try await capturer.start()
@@ -254,7 +257,9 @@ struct ScreenIntakeWarningTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: factoryA.factory
+            streamFactory: factoryA.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         try await capturerA.start()
         #expect(capturerA._isRunningForTesting)
@@ -283,7 +288,9 @@ struct ScreenIntakeWarningTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: factoryB.factory
+            streamFactory: factoryB.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         capturerB._restartParkHookForTesting = {}
         try await capturerB.start()
@@ -322,7 +329,9 @@ struct ScreenIntakeWarningTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: factory.factory
+            streamFactory: factory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         try await capturer.start()
 
@@ -630,7 +639,9 @@ struct ScreenIntakeWarningTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: factory.factory
+            streamFactory: factory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
 
         var screenStoppedCalls = 0
@@ -699,7 +710,9 @@ struct ScreenIntakeWarningTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: factory.factory
+            streamFactory: factory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
 
         var screenStoppedCalls = 0
@@ -752,7 +765,9 @@ struct ScreenIntakeWarningTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: factory.factory
+            streamFactory: factory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         try await capturer.start()
 
@@ -790,7 +805,9 @@ struct ScreenIntakeWarningTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: factory.factory
+            streamFactory: factory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         capturer._restartParkHookForTesting = {}
 
@@ -863,7 +880,9 @@ struct ScreenIntakeWarningTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: factory.factory
+            streamFactory: factory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         capturer._restartParkHookForTesting = {}
 

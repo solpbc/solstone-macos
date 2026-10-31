@@ -21,18 +21,14 @@ public final class ScreenshotCapturer {
     public var currentPreviewEpoch: (@Sendable () -> UInt64)?
     public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
     public var siteFrameGate: SiteFrameGate?
-    private var boundSiteRuleLock: OSAllocatedUnfairLock<Bool>? = nil
-    private let localSiteRuleLock = OSAllocatedUnfairLock(initialState: false)
-    private var activeRuleLock: OSAllocatedUnfairLock<Bool> { boundSiteRuleLock ?? localSiteRuleLock }
-
-    public func bindSiteRuleLock(_ lock: OSAllocatedUnfairLock<Bool>) {
-        self.boundSiteRuleLock = lock
-    }
+    public let siteRuleLock: OSAllocatedUnfairLock<Bool>
+    public let appendsClosedLock: OSAllocatedUnfairLock<Bool>
+    public var hasStream: Bool { stream != nil }
 
     public var isSiteRuleActive: Bool {
-        get { activeRuleLock.withLock { $0 } }
+        get { siteRuleLock.withLock { $0 } }
         set {
-            activeRuleLock.withLock { $0 = newValue }
+            siteRuleLock.withLock { $0 = newValue }
             if !newValue {
                 discardPendingSiteFrames()
             }
@@ -132,7 +128,9 @@ public final class ScreenshotCapturer {
         frameRate: Double,
         duration: Double?,
         contentFilter: SCContentFilter,
-        verbose: Bool
+        verbose: Bool,
+        siteRuleLock: OSAllocatedUnfairLock<Bool>,
+        appendsClosedLock: OSAllocatedUnfairLock<Bool>
     ) throws {
         try self.init(
             displayID: displayID,
@@ -143,7 +141,9 @@ public final class ScreenshotCapturer {
             duration: duration,
             contentFilter: contentFilter,
             verbose: verbose,
-            streamFactory: defaultCaptureStreamFactory
+            streamFactory: defaultCaptureStreamFactory,
+            siteRuleLock: siteRuleLock,
+            appendsClosedLock: appendsClosedLock
         )
     }
 
@@ -158,7 +158,9 @@ public final class ScreenshotCapturer {
         verbose: Bool,
         streamFactory: @escaping CaptureStreamFactory,
         captureStartTime: Date = Date(),
-        captureOriginTicks: UInt64 = mach_absolute_time()
+        captureOriginTicks: UInt64 = mach_absolute_time(),
+        siteRuleLock: OSAllocatedUnfairLock<Bool>,
+        appendsClosedLock: OSAllocatedUnfairLock<Bool>
     ) throws {
         self.displayID = displayID
         self.contentFilter = contentFilter
@@ -166,6 +168,8 @@ public final class ScreenshotCapturer {
         self.streamFactory = streamFactory
         self.captureStartTime = captureStartTime
         self.captureOriginTicks = captureOriginTicks
+        self.siteRuleLock = siteRuleLock
+        self.appendsClosedLock = appendsClosedLock
 
         // Create video writer
         self.videoWriter = try VideoWriter.create(
@@ -212,13 +216,17 @@ public final class ScreenshotCapturer {
         let gen = streamGeneration
 
         guard !isRunning else { return }
+        if appendsClosedLock.withLock({ $0 }) {
+            isRunning = false
+            return
+        }
         isRunning = true
         firstFrameLogged = false
         streamStartTime = Date()
 
         do {
             // Create stream output handler
-            let output = VideoStreamOutput(sampleQueueRuleActive: activeRuleLock) { [weak self] pixelBuffer, isIdle, displayTicks in
+            let output = VideoStreamOutput(sampleQueueRuleActive: siteRuleLock) { [weak self] pixelBuffer, isIdle, displayTicks in
                 let epoch = self?.currentPreviewEpoch?() ?? 0
                 Task { @MainActor in
                     self?.handleFrameFromOutput(generation: gen, pixelBuffer: pixelBuffer, isIdle: isIdle, epoch: epoch, displayTimeTicks: displayTicks)
@@ -232,7 +240,8 @@ public final class ScreenshotCapturer {
             }
 
             // Create and start the persistent stream
-            guard streamGeneration == gen else {
+            guard streamGeneration == gen, !appendsClosedLock.withLock({ $0 }) else {
+                isRunning = false
                 Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
                 appendRestartSuppressedTraceForTesting()
                 return
@@ -240,7 +249,8 @@ public final class ScreenshotCapturer {
             let newStream = streamFactory(contentFilter, configuration, delegate)
             try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
             try await newStream.startCapture()
-            guard streamGeneration == gen else {
+            guard streamGeneration == gen, !appendsClosedLock.withLock({ $0 }) else {
+                isRunning = false
                 Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
                 appendRestartSuppressedTraceForTesting()
                 try? await newStream.stopCapture()
@@ -293,6 +303,10 @@ public final class ScreenshotCapturer {
         // the receiver still enforces the current epoch, source and pause authority.
         if let onLatestFrame, let image = downscalePixelBufferToCGImage(pixelBuffer, maxSide: 640) {
             onLatestFrame(image, streamGeneration, epoch)
+        }
+
+        if appendsClosedLock.withLock({ $0 }) {
+            return
         }
 
         // SCStream tells us when content hasn't changed via frame status.
@@ -578,7 +592,7 @@ public final class ScreenshotCapturer {
 
                 let attemptGen = gen
 
-                let output = VideoStreamOutput(sampleQueueRuleActive: activeRuleLock) { [weak self] pixelBuffer, isIdle, displayTicks in
+                let output = VideoStreamOutput(sampleQueueRuleActive: siteRuleLock) { [weak self] pixelBuffer, isIdle, displayTicks in
                     let epoch = self?.currentPreviewEpoch?() ?? 0
                     Task { @MainActor in
                         self?.handleFrameFromOutput(generation: attemptGen, pixelBuffer: pixelBuffer, isIdle: isIdle, epoch: epoch, displayTimeTicks: displayTicks)
@@ -591,7 +605,8 @@ public final class ScreenshotCapturer {
                     }
                 }
 
-                guard streamGeneration == gen else {
+                guard streamGeneration == gen, !appendsClosedLock.withLock({ $0 }) else {
+                    isRunning = false
                     Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
                     appendRestartSuppressedTraceForTesting()
                     return
@@ -600,7 +615,8 @@ public final class ScreenshotCapturer {
                 let newStream = streamFactory(contentFilter, configuration, delegate)
                 try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
                 try await newStream.startCapture()
-                guard streamGeneration == gen else {
+                guard streamGeneration == gen, !appendsClosedLock.withLock({ $0 }) else {
+                    isRunning = false
                     Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
                     appendRestartSuppressedTraceForTesting()
                     try? await newStream.stopCapture()

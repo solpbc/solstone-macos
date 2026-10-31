@@ -3,6 +3,7 @@
 
 import CoreVideo
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 import SolstoneCore
 import Testing
@@ -14,7 +15,9 @@ struct ScreenIntakeRecoveryReviewTests {
     private func capturer(_ directory: URL, factory: FakeCaptureStreamFactory) throws -> ScreenshotCapturer {
         try ScreenshotCapturer(displayID: 101, videoURL: directory.appendingPathComponent("screen.mp4"),
             width: 100, height: 100, frameRate: 1, duration: nil,
-            contentFilter: SCContentFilter(), verbose: false, streamFactory: factory.factory)
+            contentFilter: SCContentFilter(), verbose: false, streamFactory: factory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false))
     }
 
     @Test func warningIsVisibleWhileRetiringTheFailedStream() async throws {

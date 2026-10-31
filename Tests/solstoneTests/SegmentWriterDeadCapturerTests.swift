@@ -21,7 +21,7 @@ struct SegmentWriterDeadCapturerTests {
         let writer = SegmentWriter(
             outputDirectory: dir,
             timePrefix: "120000",
-            screenshotCapturerFactory: { info, videoURL, frameRate, duration, contentFilter, verbose in
+            screenshotCapturerFactory: { info, videoURL, frameRate, duration, contentFilter, verbose, siteRuleLock, appendsClosedLock in
                 guard let contentFilter else {
                     throw SegmentWriter.SegmentError.missingContentFilter(displayID: info.displayID)
                 }
@@ -34,7 +34,9 @@ struct SegmentWriterDeadCapturerTests {
                     duration: duration,
                     contentFilter: contentFilter,
                     verbose: verbose,
-                    streamFactory: streamFactory.factory
+                    streamFactory: streamFactory.factory,
+                    siteRuleLock: siteRuleLock,
+                    appendsClosedLock: appendsClosedLock
                 )
             },
             audioManagerFactory: { _, _, _, _ in audioManager }

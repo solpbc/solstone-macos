@@ -20,11 +20,13 @@ struct DesktopActivitySiteRuleTests {
 
     @Test func frontmostSafariCoveredURLCallsSeamAndReturnsEmptyRows() {
         let seamCalled = OSAllocatedUnfairLock(initialState: false)
+        let recordedTimeout = OSAllocatedUnfairLock<Float?>(initialState: nil)
         let reader = DesktopActivityReader(
             permit: DesktopActivityReadPermit(),
-            walkSeam: { _, mode, _ in
+            walkSeam: { _, mode, _, timeout in
                 #expect(mode == .everyTopLevel)
                 seamCalled.withLock { $0 = true }
+                recordedTimeout.withLock { $0 = timeout }
                 return WebAreaWalkResult(urls: ["https://login.bank.com/account"], completeness: .complete)
             }
         )
@@ -33,6 +35,7 @@ struct DesktopActivitySiteRuleTests {
         let observation = reader.read(app: safari, settings: makeSettings())
 
         #expect(seamCalled.withLock { $0 } == true)
+        #expect(recordedTimeout.withLock { $0 } == 0.05)
         #expect(observation.rows.isEmpty)
     }
 
@@ -40,7 +43,7 @@ struct DesktopActivitySiteRuleTests {
         let seamCalled = OSAllocatedUnfairLock(initialState: false)
         let reader = DesktopActivityReader(
             permit: DesktopActivityReadPermit(),
-            walkSeam: { _, _, _ in
+            walkSeam: { _, _, _, _ in
                 seamCalled.withLock { $0 = true }
                 return WebAreaWalkResult(urls: ["https://bank.com/dashboard"], completeness: .complete)
             }
@@ -57,7 +60,7 @@ struct DesktopActivitySiteRuleTests {
         let seamCalled = OSAllocatedUnfairLock(initialState: false)
         let reader = DesktopActivityReader(
             permit: DesktopActivityReadPermit(),
-            walkSeam: { _, _, _ in
+            walkSeam: { _, _, _, _ in
                 seamCalled.withLock { $0 = true }
                 return WebAreaWalkResult(urls: ["https://bank.com"], completeness: .complete)
             }
@@ -74,7 +77,7 @@ struct DesktopActivitySiteRuleTests {
         let seamCalled = OSAllocatedUnfairLock(initialState: false)
         let reader = DesktopActivityReader(
             permit: DesktopActivityReadPermit(),
-            walkSeam: { _, mode, _ in
+            walkSeam: { _, mode, _, _ in
                 seamCalled.withLock { $0 = true }
                 return WebAreaWalkResult(urls: ["https://example.com/news"], completeness: .complete)
             }
@@ -94,7 +97,7 @@ struct DesktopActivitySiteRuleTests {
         let seamCalled = OSAllocatedUnfairLock(initialState: false)
         let reader = DesktopActivityReader(
             permit: DesktopActivityReadPermit(),
-            walkSeam: { _, mode, _ in
+            walkSeam: { _, mode, _, _ in
                 seamCalled.withLock { $0 = true }
                 return WebAreaWalkResult(urls: [nil], completeness: .complete)
             }
@@ -134,5 +137,67 @@ struct DesktopActivitySiteRuleTests {
             isSweep: false
         )
         #expect(verdict == .pending)
+    }
+
+    @Test func firstDocumentWalksChildrenOfFailedRoleAndReturnsComplete() {
+        let nodes = [
+            WebAreaWalker.TestNode(roleFailed: true, role: nil, childrenFailed: false, children: [1], url: nil),
+            WebAreaWalker.TestNode(roleFailed: false, role: "AXWebArea", childrenFailed: false, children: [], url: "https://child.com/doc")
+        ]
+        let result = WebAreaWalker.walk(nodes: nodes, mode: .firstDocument)
+        #expect(result.completeness == .complete)
+        #expect(result.urls == ["https://child.com/doc"])
+    }
+
+    @Test func everyTopLevelFailedRoleWithCoveredChildYieldsEmptyRowsAndAXError() {
+        let nodes = [
+            WebAreaWalker.TestNode(roleFailed: true, role: nil, childrenFailed: false, children: [1], url: nil),
+            WebAreaWalker.TestNode(roleFailed: false, role: "AXWebArea", childrenFailed: false, children: [], url: "https://login.bank.com/account")
+        ]
+        let walkResult = WebAreaWalker.walk(nodes: nodes, mode: .everyTopLevel)
+        #expect(walkResult.completeness != .complete)
+        #expect(walkResult.completeness == .axError)
+
+        let reader = DesktopActivityReader(
+            permit: DesktopActivityReadPermit(),
+            walkSeam: { _, _, _, _ in
+                walkResult
+            }
+        )
+        let safari = DesktopActivityApp(pid: 1234, name: "Safari", bundleID: "com.apple.Safari")
+        let observation = reader.read(app: safari, settings: makeSettings())
+        #expect(observation.rows.isEmpty)
+    }
+
+    @Test func everyTopLevelFailedRoleWithUncoveredChildYieldsPendingDecisionAndKeepsRows() {
+        let nodes = [
+            WebAreaWalker.TestNode(roleFailed: true, role: nil, childrenFailed: false, children: [1], url: nil),
+            WebAreaWalker.TestNode(roleFailed: false, role: "AXWebArea", childrenFailed: false, children: [], url: "https://uncovered.com/page")
+        ]
+        let walkResult = WebAreaWalker.walk(nodes: nodes, mode: .everyTopLevel)
+        #expect(walkResult.completeness != .complete)
+        #expect(walkResult.completeness == .axError)
+
+        var decision = SiteDecision()
+        let verdict = decision.evaluate(
+            key: SiteDecisionKey(windowID: 1, title: "Title"),
+            initialAXTitle: "Title",
+            finalAXTitle: "Title",
+            walk: walkResult,
+            sites: ["bank.com"],
+            now: 1.0,
+            isSweep: false
+        )
+        #expect(verdict == .pending)
+
+        let reader = DesktopActivityReader(
+            permit: DesktopActivityReadPermit(),
+            walkSeam: { _, _, _, _ in
+                walkResult
+            }
+        )
+        let safari = DesktopActivityApp(pid: 1234, name: "Safari", bundleID: "com.apple.Safari")
+        let observation = reader.read(app: safari, settings: makeSettings())
+        #expect(!observation.rows.isEmpty)
     }
 }

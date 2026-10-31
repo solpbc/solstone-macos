@@ -4,7 +4,60 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import Darwin
 import Foundation
+
+public enum SiteWindowObservation {
+    public static func isProcessAliveProduction(_ pid: pid_t) -> Bool {
+        if kill(pid, 0) == 0 { return true }
+        return errno != ESRCH
+    }
+
+    public static func copyApplicationWindowsAX(_ pid: pid_t) -> [AXUIElement]? {
+        let appRef = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appRef, 0.05)
+        var windowsValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsValue) == .success,
+              let winList = windowsValue as? [AXUIElement] else {
+            return nil
+        }
+        return winList
+    }
+
+    public static func observeSiteWindow(
+        wid: CGWindowID,
+        pid: pid_t,
+        title: String,
+        isProcessAlive: @Sendable (pid_t) -> Bool = isProcessAliveProduction,
+        copyWindows: @Sendable (pid_t) -> [AXUIElement]? = copyApplicationWindowsAX
+    ) -> (initialAXTitle: String?, walk: WebAreaWalkResult, finalAXTitle: String?, windowMissing: Bool) {
+        guard isProcessAlive(pid) else {
+            return (nil, WebAreaWalkResult(urls: [], completeness: .axError), nil, true)
+        }
+
+        guard let winList = copyWindows(pid) else {
+            return (title, WebAreaWalkResult(urls: [], completeness: .axError), title, false)
+        }
+
+        guard let targetWindow = winList.first(where: {
+            var w: CGWindowID = 0
+            return _AXUIElementGetWindow($0, &w) == .success && w == wid
+        }) else {
+            return (nil, WebAreaWalkResult(urls: [], completeness: .axError), nil, true)
+        }
+
+        AXUIElementSetMessagingTimeout(targetWindow, 0.025)
+        func readStr(_ attr: String) -> String? {
+            var val: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(targetWindow, attr as CFString, &val) == .success else { return nil }
+            return val as? String
+        }
+        let initial = readStr(kAXTitleAttribute)
+        let walk = WebAreaWalker.walk(targetWindow, mode: .everyTopLevel)
+        let final = readStr(kAXTitleAttribute)
+        return (initial, walk, final, false)
+    }
+}
 
 struct SiteVisibleWindow: Sendable, Equatable {
     let windowID: CGWindowID
@@ -48,29 +101,7 @@ struct SiteSamplerHooks: Sendable {
             mach_absolute_time()
         },
         observe: @escaping @Sendable (CGWindowID, pid_t, String) -> (initialAXTitle: String?, walk: WebAreaWalkResult, finalAXTitle: String?, windowMissing: Bool) = { wid, pid, title in
-            let appRef = AXUIElementCreateApplication(pid)
-            AXUIElementSetMessagingTimeout(appRef, 0.05)
-            var windowsValue: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &windowsValue) == .success,
-                  let winList = windowsValue as? [AXUIElement] else {
-                return (title, WebAreaWalkResult(urls: [], completeness: .axError), title, false)
-            }
-            guard let targetWindow = winList.first(where: {
-                var w: CGWindowID = 0
-                return _AXUIElementGetWindow($0, &w) == .success && w == wid
-            }) else {
-                return (nil, WebAreaWalkResult(urls: [], completeness: .axError), nil, true)
-            }
-            AXUIElementSetMessagingTimeout(targetWindow, 0.025)
-            func readStr(_ attr: String) -> String? {
-                var val: CFTypeRef?
-                guard AXUIElementCopyAttributeValue(targetWindow, attr as CFString, &val) == .success else { return nil }
-                return val as? String
-            }
-            let initial = readStr(kAXTitleAttribute)
-            let walk = WebAreaWalker.walk(targetWindow, mode: .everyTopLevel)
-            let final = readStr(kAXTitleAttribute)
-            return (initial, walk, final, false)
+            SiteWindowObservation.observeSiteWindow(wid: wid, pid: pid, title: title)
         }
     ) {
         self.safariPIDs = safariPIDs
@@ -132,7 +163,10 @@ actor SiteSampler {
         self.hooks = hooks
         self.onPoll = onPoll
         self.onDecisionUpdate = onDecisionUpdate
-        self.isAXWorking = probe.readWorks()
+        self.isAXWorking = false
+        Task { [weak self] in
+            await self?.checkProbe()
+        }
     }
 
     func performPollForTesting() async {
@@ -161,7 +195,7 @@ actor SiteSampler {
         self.sites = newSites
     }
 
-    func applySites(_ newSites: [String], generation: UInt64) {
+    func applySites(_ newSites: [String], generation: UInt64) async {
         guard generation >= appliedGeneration else { return }
         appliedGeneration = generation
         appliedSitesForTesting.append(newSites)
@@ -171,24 +205,25 @@ actor SiteSampler {
         if newSites.isEmpty {
             stop()
         } else if pollTimer == nil {
-            start()
+            await start()
         }
     }
 
-    func updateSites(_ newSites: [String]) {
-        applySites(newSites, generation: appliedGeneration + 1)
+    func updateSites(_ newSites: [String]) async {
+        await applySites(newSites, generation: appliedGeneration + 1)
     }
 
     func setProbe(_ newProbe: AccessibilityProbe) {
         self.probe = newProbe
     }
 
-    func start() {
+    func start() async {
         stop()
         guard !sites.isEmpty else { return }
 
         if isSnapshot {
-            let works = probe.readWorks()
+            let currentProbe = probe
+            let works = await Task.detached { currentProbe.readWorks() }.value
             self.isAXWorking = works
             let currentDecisions = self.decisions
             let gen = appliedGeneration
@@ -228,9 +263,24 @@ actor SiteSampler {
 
         // 1 Hz walk loop (every 1000 ms)
         walkTimer = Task { [weak self] in
+            var scheduledStart = ContinuousClock.now
             while !Task.isCancelled {
+                let actualStart = ContinuousClock.now
                 await self?.performWalkPass()
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                let elapsed = ContinuousClock.now - actualStart
+                let targetInterval = Duration.seconds(1)
+                if elapsed >= targetInterval {
+                    scheduledStart = ContinuousClock.now
+                } else {
+                    let nextScheduled = scheduledStart + targetInterval
+                    let remaining = nextScheduled - ContinuousClock.now
+                    if remaining > .zero {
+                        try? await Task.sleep(for: remaining)
+                        scheduledStart = nextScheduled
+                    } else {
+                        scheduledStart = ContinuousClock.now
+                    }
+                }
             }
         }
 
@@ -253,7 +303,8 @@ actor SiteSampler {
     }
 
     private func checkProbe() async {
-        let working = probe.readWorks()
+        let currentProbe = probe
+        let working = await Task.detached { currentProbe.readWorks() }.value
         isAXWorking = working
         let currentDecisions = decisions
         let gen = appliedGeneration
@@ -306,14 +357,14 @@ actor SiteSampler {
 
         let nowSec = HostClock.seconds(ticks: hooks.nowTicks())
 
-        // Collect decided windows (distinct window IDs currently on screen whose current title has a fresh verdict and age >= 4.0s)
+        // Collect decided windows (distinct window IDs currently on screen whose current title has a fresh verdict and age >= 3.0s)
         let decidedWindowIDs = Array(Set(latestSafariWindows.compactMap { win -> CGWindowID? in
             let key = SiteDecisionKey(windowID: win.windowID, title: win.title)
             let v = decisions.verdict(for: key, at: nowSec)
             guard v == .ordinary || v == .covered else { return nil }
             if let entry = decisions.entries[key] {
                 let age = nowSec - entry.decisionTime
-                guard age >= 4.0 else { return nil }
+                guard age >= 3.0 else { return nil }
             }
             return win.windowID
         })).sorted()

@@ -66,14 +66,15 @@ final class DesktopActivityReadPermit: Sendable {
 }
 
 struct DesktopActivityReader: Sendable {
-    public typealias WalkSeam = @Sendable (AXUIElement, WebAreaWalkMode, DesktopActivityReadPermit?) -> WebAreaWalkResult
+    public static let activityElementTimeout: Float = 0.05
+    public typealias WalkSeam = @Sendable (AXUIElement, WebAreaWalkMode, DesktopActivityReadPermit?, Float) -> WebAreaWalkResult
 
     let permit: DesktopActivityReadPermit
     let walkSeam: WalkSeam
 
     init(
         permit: DesktopActivityReadPermit,
-        walkSeam: @escaping WalkSeam = { WebAreaWalker.walk($0, mode: $1, permit: $2) }
+        walkSeam: @escaping WalkSeam = { WebAreaWalker.walk($0, mode: $1, permit: $2, elementTimeout: $3) }
     ) {
         self.permit = permit
         self.walkSeam = walkSeam
@@ -132,7 +133,7 @@ struct DesktopActivityReader: Sendable {
         var documentURL: String?
         if !settings.excludedSites.isEmpty && browser == .safari {
             let targetWindow = focusedWindow ?? AXUIElementCreateApplication(app.pid)
-            let walk = walkSeam(targetWindow, .everyTopLevel, permit)
+            let walk = walkSeam(targetWindow, .everyTopLevel, permit, Self.activityElementTimeout)
             for urlStr in walk.urls.compactMap({ $0 }) {
                 if let host = SiteRule.normalizeReadHost(urlStr) {
                     if settings.excludedSites.contains(where: { SiteRule.covers(siteHost: $0, host: host) }) {
@@ -144,7 +145,7 @@ struct DesktopActivityReader: Sendable {
                 documentURL = walk.urls.compactMap({ $0 }).first
             }
         } else if settings.urls && settings.accessibility && browser != nil, let focusedWindow {
-            let walk = walkSeam(focusedWindow, .firstDocument, permit)
+            let walk = walkSeam(focusedWindow, .firstDocument, permit, Self.activityElementTimeout)
             documentURL = walk.urls.compactMap({ $0 }).first
         }
         var row = DesktopActivityRow(kind: "foreground", method: screenGranted ? "cg-window" : (axTitle != nil && settings.accessibility ? "ax" : "nsworkspace"), app: app.name, app_id: app.bundleID)

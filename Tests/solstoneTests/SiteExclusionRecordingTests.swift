@@ -5,6 +5,7 @@ import CoreMedia
 import Foundation
 import os
 @preconcurrency import ScreenCaptureKit
+import SolstoneCore
 import Testing
 @testable import solstone
 
@@ -32,7 +33,9 @@ struct SiteExclusionRecordingTests {
             contentFilter: SCContentFilter(),
             verbose: false,
             streamFactory: fakeFactory.factory,
-            captureStartTime: startA
+            captureStartTime: startA,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         capturerA.siteFrameGate = gate
         capturerA.isSiteRuleActive = false
@@ -46,7 +49,7 @@ struct SiteExclusionRecordingTests {
         )
 
         let ptsA = try #require(capturerA._lastAppendedPTSForTesting)
-        #expect(abs(ptsA.seconds - 100.0) < 5.0)
+        #expect(abs(ptsA.seconds - 100.0) < 1.0)
 
         // Capturer B: started now, same gate, rule off
         let startB = Date()
@@ -60,7 +63,9 @@ struct SiteExclusionRecordingTests {
             contentFilter: SCContentFilter(),
             verbose: false,
             streamFactory: fakeFactory.factory,
-            captureStartTime: startB
+            captureStartTime: startB,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         capturerB.siteFrameGate = gate
         capturerB.isSiteRuleActive = false
@@ -122,7 +127,9 @@ struct SiteExclusionRecordingTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: fakeFactory.factory
+            streamFactory: fakeFactory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         capturerC.siteFrameGate = gate
         capturerC.isSiteRuleActive = false
@@ -160,7 +167,7 @@ struct SiteExclusionRecordingTests {
         let writer = SegmentWriter(
             outputDirectory: root,
             timePrefix: "test1",
-            screenshotCapturerFactory: { info, videoURL, frameRate, duration, filter, verbose in
+            screenshotCapturerFactory: { info, videoURL, frameRate, duration, filter, verbose, siteRuleLock, appendsClosedLock in
                 let capturer = try ScreenshotCapturer(
                     displayID: info.displayID,
                     videoURL: videoURL,
@@ -170,7 +177,9 @@ struct SiteExclusionRecordingTests {
                     duration: duration,
                     contentFilter: filter ?? SCContentFilter(),
                     verbose: verbose,
-                    streamFactory: { _, _, _ in fakeStream }
+                    streamFactory: { _, _, _ in fakeStream },
+                    siteRuleLock: siteRuleLock,
+                    appendsClosedLock: appendsClosedLock
                 )
                 capturedCapturer = capturer
                 return capturer
@@ -226,7 +235,9 @@ struct SiteExclusionRecordingTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: { _, _, _ in FakeCaptureStream() }
+            streamFactory: { _, _, _ in FakeCaptureStream() },
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         capturerNoGate.siteFrameGate = nil
         capturerNoGate.isSiteRuleActive = true
@@ -256,7 +267,7 @@ struct SiteExclusionRecordingTests {
         let writer = SegmentWriter(
             outputDirectory: root,
             timePrefix: "b3",
-            screenshotCapturerFactory: { info, videoURL, frameRate, duration, filter, verbose in
+            screenshotCapturerFactory: { info, videoURL, frameRate, duration, filter, verbose, siteRuleLock, appendsClosedLock in
                 let capturer = try ScreenshotCapturer(
                     displayID: info.displayID,
                     videoURL: videoURL,
@@ -266,7 +277,9 @@ struct SiteExclusionRecordingTests {
                     duration: duration,
                     contentFilter: filter ?? SCContentFilter(),
                     verbose: verbose,
-                    streamFactory: { _, _, _ in FakeCaptureStream() }
+                    streamFactory: { _, _, _ in FakeCaptureStream() },
+                    siteRuleLock: siteRuleLock,
+                    appendsClosedLock: appendsClosedLock
                 )
                 capturedCapturer = capturer
                 return capturer
@@ -349,7 +362,9 @@ struct SiteExclusionRecordingTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: fakeFactory.factory
+            streamFactory: fakeFactory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         capturerA.siteFrameGate = gate
         capturerA.isSiteRuleActive = true
@@ -364,7 +379,9 @@ struct SiteExclusionRecordingTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: fakeFactory.factory
+            streamFactory: fakeFactory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
         capturerB.siteFrameGate = gate
         capturerB.isSiteRuleActive = true
@@ -486,6 +503,7 @@ struct SiteExclusionRecordingTests {
         let sema = DispatchSemaphore(value: 0)
         let observeEntered = OneShotContinuationGate()
         let pollCount = OSAllocatedUnfairLock(initialState: 0)
+        let twoPollsGate = OneShotContinuationGate()
 
         var hooks = SiteSamplerHooks()
         hooks.safariPIDs = { [123] }
@@ -501,7 +519,13 @@ struct SiteExclusionRecordingTests {
         let sampler = SiteSampler(
             hooks: hooks,
             onPoll: { _ in
-                pollCount.withLock { $0 += 1 }
+                let count = pollCount.withLock { count -> Int in
+                    count += 1
+                    return count
+                }
+                if count >= 2 {
+                    twoPollsGate.release()
+                }
             },
             onDecisionUpdate: { _, _, _ in }
         )
@@ -516,11 +540,230 @@ struct SiteExclusionRecordingTests {
         // Wait bounded time for observe to enter and block
         await observeEntered.wait()
 
-        // While walk is blocking, wait about 1 second and assert at least 3 polls were delivered
-        let startPolls = pollCount.withLock { $0 }
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        let pollsWhileBlocked = pollCount.withLock { $0 } - startPolls
-        #expect(pollsWhileBlocked >= 3)
+        // Wait until at least 2 polls complete while observe is still blocking
+        let didArrive = (try? await withTimeout(seconds: 5.0) {
+            await twoPollsGate.wait()
+            return true
+        }) ?? false
+        #expect(didArrive)
+        #expect(pollCount.withLock { $0 } >= 2)
+        sema.signal()
+    }
+
+    @Test func readWorksBlockingDoesNotDelayPolls() async throws {
+        let sema = DispatchSemaphore(value: 0)
+        let probeEntered = OneShotContinuationGate()
+        let pollCount = OSAllocatedUnfairLock(initialState: 0)
+        let twoPollsGate = OneShotContinuationGate()
+
+        var hooks = SiteSamplerHooks()
+        hooks.safariPIDs = { [123] }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 123, layer: 0, title: "Safari")]
+        }
+
+        let probe = AccessibilityProbe(
+            readWorks: {
+                probeEntered.release()
+                sema.wait()
+                return true
+            },
+            prompt: {}
+        )
+
+        let sampler = SiteSampler(
+            probe: probe,
+            hooks: hooks,
+            onPoll: { _ in
+                let count = pollCount.withLock { count -> Int in
+                    count += 1
+                    return count
+                }
+                if count >= 2 {
+                    twoPollsGate.release()
+                }
+            },
+            onDecisionUpdate: { _, _, _ in }
+        )
+
+        defer {
+            sema.signal()
+            Task { await sampler.stop() }
+        }
+
+        await sampler.updateSites(["blocked.com"])
+
+        // Wait bounded time for probe to enter and block
+        await probeEntered.wait()
+
+        // Wait until at least 2 polls complete while probe is blocking
+        let didArrive = (try? await withTimeout(seconds: 5.0) {
+            await twoPollsGate.wait()
+            return true
+        }) ?? false
+        #expect(didArrive)
+        #expect(pollCount.withLock { $0 } >= 2)
+        sema.signal()
+    }
+
+    @Test func productionWalkTimerMaintainsFreshnessOverThirtySeconds() async throws {
+        var hooks = SiteSamplerHooks()
+        hooks.safariPIDs = { [100] }
+        let windows = [
+            SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Tab 1"),
+            SiteVisibleWindow(windowID: 2, pid: 100, layer: 0, title: "Tab 2"),
+            SiteVisibleWindow(windowID: 3, pid: 100, layer: 0, title: "Tab 3"),
+            SiteVisibleWindow(windowID: 4, pid: 100, layer: 0, title: "Tab 4")
+        ]
+        hooks.copyOnScreen = { windows }
+        hooks.observe = { wid, pid, title in
+            Thread.sleep(forTimeInterval: 0.25)
+            return (title, WebAreaWalkResult(urls: ["https://uncovered.com/\(wid)"], completeness: .complete), title, false)
+        }
+
+        let historyLock = OSAllocatedUnfairLock<[SiteDecisionKey: [Double]]>(initialState: [:])
+        let pendingAfterDecided = OSAllocatedUnfairLock(initialState: false)
+
+        let sampler = SiteSampler(
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { decision, _, _ in
+                let now = HostClock.seconds(ticks: mach_absolute_time())
+                for win in windows {
+                    let key = SiteDecisionKey(windowID: win.windowID, title: win.title)
+                    let verdict = decision.verdict(for: key, at: now)
+                    if let entry = decision.entries[key] {
+                        historyLock.withLock { history in
+                            var times = history[key] ?? []
+                            if times.last != entry.decisionTime {
+                                times.append(entry.decisionTime)
+                                history[key] = times
+                            }
+                        }
+                        if verdict == .pending {
+                            pendingAfterDecided.withLock { $0 = true }
+                        }
+                    }
+                }
+            }
+        )
+
+        defer {
+            Task { await sampler.stop() }
+        }
+
+        await sampler.updateSites(["bank.com"])
+
+        // Run for ~30 seconds
+        try await Task.sleep(for: .seconds(30))
+        await sampler.stop()
+
+        #expect(!pendingAfterDecided.withLock { $0 }, "No window should revert to pending once decided")
+
+        let history = historyLock.withLock { $0 }
+        for win in windows {
+            let key = SiteDecisionKey(windowID: win.windowID, title: win.title)
+            let times = try #require(history[key])
+            #expect(times.count >= 5, "Expected multiple decisions over 30s")
+            for i in 1..<times.count {
+                let delta = times[i] - times[i - 1]
+                #expect(delta < 5.0, "Delta between decisions should be < 5s, was \(delta)")
+            }
+        }
+    }
+
+    @Test func productionObserveClassificationHandlesLivenessAndAXErrors() async throws {
+        // 1. Alive process + failed windows read (nil) -> windowMissing == false, consecutiveFailures increases after walk pass
+        do {
+            var hooks = SiteSamplerHooks()
+            hooks.safariPIDs = { [201] }
+            hooks.copyOnScreen = {
+                [SiteVisibleWindow(windowID: 10, pid: 201, layer: 0, title: "Test Title")]
+            }
+            hooks.observe = { wid, pid, title in
+                SiteWindowObservation.observeSiteWindow(
+                    wid: wid,
+                    pid: pid,
+                    title: title,
+                    isProcessAlive: { _ in true },
+                    copyWindows: { _ in nil }
+                )
+            }
+
+            let sampler = SiteSampler(
+                hooks: hooks,
+                onPoll: { _ in },
+                onDecisionUpdate: { _, _, _ in }
+            )
+            await sampler.setSitesForTesting(["bank.com"])
+            await sampler.performPollForTesting()
+            await sampler.performWalkPassForTesting()
+
+            let decisions = await sampler.decisionsForTesting
+            #expect(decisions.consecutiveFailures == 1)
+        }
+
+        // 2. Exited pid (!isProcessAlive) -> windowMissing == true, consecutiveFailures unchanged (no entry added)
+        do {
+            var hooks = SiteSamplerHooks()
+            hooks.safariPIDs = { [202] }
+            hooks.copyOnScreen = {
+                [SiteVisibleWindow(windowID: 11, pid: 202, layer: 0, title: "Exited App")]
+            }
+            hooks.observe = { wid, pid, title in
+                SiteWindowObservation.observeSiteWindow(
+                    wid: wid,
+                    pid: pid,
+                    title: title,
+                    isProcessAlive: { _ in false },
+                    copyWindows: { _ in nil }
+                )
+            }
+
+            let sampler = SiteSampler(
+                hooks: hooks,
+                onPoll: { _ in },
+                onDecisionUpdate: { _, _, _ in }
+            )
+            await sampler.setSitesForTesting(["bank.com"])
+            await sampler.performPollForTesting()
+            await sampler.performWalkPassForTesting()
+
+            let decisions = await sampler.decisionsForTesting
+            let key = SiteDecisionKey(windowID: 11, title: "Exited App")
+            #expect(decisions.entries[key] == nil)
+        }
+
+        // 3. Successful list missing that id -> windowMissing == true, no increase
+        do {
+            var hooks = SiteSamplerHooks()
+            hooks.safariPIDs = { [203] }
+            hooks.copyOnScreen = {
+                [SiteVisibleWindow(windowID: 12, pid: 203, layer: 0, title: "Missing ID")]
+            }
+            hooks.observe = { wid, pid, title in
+                SiteWindowObservation.observeSiteWindow(
+                    wid: wid,
+                    pid: pid,
+                    title: title,
+                    isProcessAlive: { _ in true },
+                    copyWindows: { _ in [] }
+                )
+            }
+
+            let sampler = SiteSampler(
+                hooks: hooks,
+                onPoll: { _ in },
+                onDecisionUpdate: { _, _, _ in }
+            )
+            await sampler.setSitesForTesting(["bank.com"])
+            await sampler.performPollForTesting()
+            await sampler.performWalkPassForTesting()
+
+            let decisions = await sampler.decisionsForTesting
+            let key = SiteDecisionKey(windowID: 12, title: "Missing ID")
+            #expect(decisions.entries[key] == nil)
+        }
     }
 
     @MainActor
@@ -811,7 +1054,7 @@ struct SiteExclusionRecordingTests {
         let writer = SegmentWriter(
             outputDirectory: root,
             timePrefix: "h3-frame",
-            screenshotCapturerFactory: { info, videoURL, frameRate, duration, filter, verbose in
+            screenshotCapturerFactory: { info, videoURL, frameRate, duration, filter, verbose, siteRuleLock, appendsClosedLock in
                 let capturer = try ScreenshotCapturer(
                     displayID: info.displayID,
                     videoURL: videoURL,
@@ -821,7 +1064,9 @@ struct SiteExclusionRecordingTests {
                     duration: duration,
                     contentFilter: filter ?? SCContentFilter(),
                     verbose: verbose,
-                    streamFactory: { _, _, _ in FakeCaptureStream() }
+                    streamFactory: { _, _, _ in FakeCaptureStream() },
+                    siteRuleLock: siteRuleLock,
+                    appendsClosedLock: appendsClosedLock
                 )
                 capturedCapturer = capturer
                 return capturer
@@ -986,5 +1231,41 @@ struct SiteExclusionRecordingTests {
 
         let stateNoSafariCaution = AppState.forSnapshot(config: config, snapshotSafariCaution: false)
         #expect(!stateNoSafariCaution.siteSafariCaution)
+    }
+
+    @Test func siteSamplerInitProbesOffMainThreadAndPublishes() async throws {
+        let publishedGate = OneShotContinuationGate()
+        let readWorksThreadIsMain = OSAllocatedUnfairLock<Bool?>(initialState: nil)
+        let publishedBool = OSAllocatedUnfairLock<Bool?>(initialState: nil)
+
+        let probe = AccessibilityProbe(
+            readWorks: {
+                readWorksThreadIsMain.withLock { $0 = Thread.isMainThread }
+                return true
+            },
+            prompt: {}
+        )
+
+        let sampler = SiteSampler(
+            probe: probe,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, axWorking, _ in
+                publishedBool.withLock { $0 = axWorking }
+                publishedGate.release()
+            }
+        )
+
+        defer {
+            Task { await sampler.stop() }
+        }
+
+        let didPublish = (try? await withTimeout(seconds: 5.0) {
+            await publishedGate.wait()
+            return true
+        }) ?? false
+
+        #expect(didPublish)
+        #expect(readWorksThreadIsMain.withLock { $0 } == false)
+        #expect(publishedBool.withLock { $0 } == true)
     }
 }

@@ -338,7 +338,11 @@ public final class AppState {
     }
 
     internal var privateWindowAccessibilityEnabled: Bool {
-        (config.excludePrivateBrowsing && config.excludePrivateBrowsingAccessibility) || !config.excludedSites.isEmpty
+        config.excludePrivateBrowsing && config.excludePrivateBrowsingAccessibility
+    }
+
+    internal var requestPrivateWindowAccessibility: @MainActor () -> Void = {
+        AccessibilityTitleReader.ask()
     }
 
     internal func requestPrivateWindowSettingsRecovery() {
@@ -349,7 +353,10 @@ public final class AppState {
 
     private func reconcilePrivateWindowAccessibility() {
         guard !isSnapshot else { return }
-        privateWindowAccessibilityMonitor.setEnabled(privateWindowAccessibilityEnabled)
+        privateWindowAccessibilityMonitor.setInterests(
+            privateWindows: privateWindowAccessibilityEnabled,
+            sites: !config.excludedSites.isEmpty
+        )
     }
 
     public var siteAccessibilityCaution: Bool {
@@ -357,19 +364,21 @@ public final class AppState {
         if isSnapshot {
             return snapshotAccessibilityCaution
         }
-        return privateWindowAccessibilityMonitor.needsAttention
+        return privateWindowAccessibilityMonitor.sitesEnabled && privateWindowAccessibilityMonitor.lastReadWorks == false
     }
+
+    internal var currentSiteSafariCaution: Bool = false
 
     public var siteSafariCaution: Bool {
         guard !config.excludedSites.isEmpty else { return false }
         if isSnapshot {
             return snapshotSiteSafariCaution
         }
-        return capture.captureManager.siteFrameGate.currentDecisions.hasSafariCaution
+        return currentSiteSafariCaution
     }
 
     @discardableResult
-    public func addExcludedSite(_ input: String) -> String? {
+    public func addExcludedSite(_ input: String) async -> String? {
         guard let stored = SiteRule.storedHost(input) else {
             return UICopy.Websites.ERROR_INVALID_ADDRESS
         }
@@ -379,7 +388,10 @@ public final class AppState {
         if config.excludedSites.contains(stored) {
             return nil
         }
-        if !accessibilityProbe.readWorks() {
+        let works = await Task.detached { [probe = self.accessibilityProbe] in
+            probe.readWorks()
+        }.value
+        if !works {
             accessibilityProbe.prompt()
         }
         var newConfig = config
@@ -774,6 +786,9 @@ public final class AppState {
 #endif
         activitySource?.invalidate()
         config = newConfig
+        if newConfig.excludedSites.isEmpty {
+            currentSiteSafariCaution = false
+        }
         activitySource?.configure(newConfig)
         clearLatestFrameIfNeeded()
         reconcilePrivateWindowAccessibility()
@@ -2003,6 +2018,9 @@ public final class AppState {
         }
         captureManager.accessibilityProbe = probe
         captureManager.isSnapshot = false
+        captureManager.onSiteSafariCaution = { [weak captureTarget] caution in
+            captureTarget?.state?.currentSiteSafariCaution = caution
+        }
         if !config.excludedSites.isEmpty {
             captureManager.updateSiteRule(config.excludedSites)
         }
@@ -2404,6 +2422,9 @@ public final class AppState {
         let captureManager = CaptureManager(storageManager: storageManager)
         captureManager.accessibilityProbe = probe
         captureManager.isSnapshot = isSnapshot
+        captureManager.onSiteSafariCaution = { [weak captureTarget] caution in
+            captureTarget?.state?.currentSiteSafariCaution = caution
+        }
         captureManager.microphoneChoiceProvider = { [weak captureTarget] uid in
             captureTarget?.state?.config.microphonePriority.first(where: { $0.uid == uid })?.choice
         }

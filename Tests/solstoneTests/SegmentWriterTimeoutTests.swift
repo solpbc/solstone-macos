@@ -168,7 +168,7 @@ struct SegmentWriterTimeoutTests {
             timePrefix: "120000",
             capturerStopTimeoutSeconds: capturerStopTimeoutSeconds,
             audioFinishTimeoutSeconds: audioFinishTimeoutSeconds,
-            screenshotCapturerFactory: { _, _, _, _, _, _ in capturer },
+            screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in capturer },
             audioManagerFactory: { _, _, _, _ in audioManager }
         )
     }

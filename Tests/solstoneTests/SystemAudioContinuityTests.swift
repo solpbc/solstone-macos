@@ -354,7 +354,7 @@ struct SystemAudioContinuityTests {
         let display = DisplayInfo(displayID: 42, width: 64, height: 64, bounds: CGRect(x: 0, y: 0, width: 64, height: 64))
         func writer(_ prefix: String) -> SegmentWriter {
             SegmentWriter(outputDirectory: root, timePrefix: prefix,
-                screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() })
+                screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in FakeScreenshotCapturer() })
         }
         let first = writer("120000")
         _ = try await first.start(sources: .screen, displayInfos: [display], audioFilter: SCContentFilter(), systemAudioCaptureManager: manager)

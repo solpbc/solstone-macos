@@ -802,7 +802,7 @@ struct AudioAdmissionTests {
         let managers = LockedArray<PerSourceAudioManager>([])
         func writer(_ prefix: String) -> SegmentWriter {
             SegmentWriter(outputDirectory: root, timePrefix: prefix,
-                screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() },
+                screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in FakeScreenshotCapturer() },
                 audioManagerFactory: { directory, prefix, _, verbose in
                     let manager = PerSourceAudioManager(outputDirectory: directory, timePrefix: prefix, verbose: verbose)
                     managers.append(manager); return manager
@@ -849,7 +849,7 @@ struct AudioAdmissionTests {
         let display = DisplayInfo(displayID: 42, width: 64, height: 64, bounds: CGRect(x: 0, y: 0, width: 64, height: 64))
         func writer(_ prefix: String) -> SegmentWriter {
             SegmentWriter(outputDirectory: root, timePrefix: prefix,
-                screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() })
+                screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in FakeScreenshotCapturer() })
         }
         let first = writer("120000")
         _ = try await first.start(sources: .screen, displayInfos: [display], audioFilter: SCContentFilter(), systemAudioCaptureManager: system)
@@ -956,7 +956,7 @@ struct AudioAdmissionTests {
         let manager = PerSourceAudioManager(outputDirectory: dir, timePrefix: "120000")
         let system = SystemAudioCaptureManager(streamFactory: { _, _, _ in FakeCaptureStream() })
         let segment = SegmentWriter(outputDirectory: dir, timePrefix: "120000", audioFinishTimeoutSeconds: 0.02,
-            screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() }, audioManagerFactory: { _, _, _, _ in manager })
+            screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in FakeScreenshotCapturer() }, audioManagerFactory: { _, _, _, _ in manager })
         try await segment.start(sources: .screen, displayInfos: [DisplayInfo(displayID: 42, width: 100, height: 100,
             bounds: CGRect(x: 0, y: 0, width: 100, height: 100))], audioFilter: SCContentFilter(), systemAudioCaptureManager: system)
         let writer = try #require(manager._sourceWriterForTesting("system")), output = try #require(system._streamOutputForTesting)

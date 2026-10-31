@@ -3836,7 +3836,7 @@ struct SettingsView: View {
         .padding(.top, 2)
     }
 
-    private var privateWindowAccessibilityState: PrivateWindowAccessibilityState {
+    internal var privateWindowAccessibilityState: PrivateWindowAccessibilityState {
         appState.privateWindowAccessibilityEnabled ? appState.privateWindowAccessibilityMonitor.state : .off
     }
 
@@ -3847,7 +3847,7 @@ struct SettingsView: View {
         }
     }
 
-    private var excludePrivateBrowsingAccessibilityBinding: Binding<Bool> {
+    internal var excludePrivateBrowsingAccessibilityBinding: Binding<Bool> {
         Binding(
             get: { appState.config.excludePrivateBrowsing && appState.config.excludePrivateBrowsingAccessibility },
             set: { newValue in
@@ -3858,7 +3858,7 @@ struct SettingsView: View {
                 appState.updateConfig(config)
                 // The only place solstone ever asks for Accessibility access: the owner turning this on.
                 if shouldAsk {
-                    AccessibilityTitleReader.ask()
+                    appState.requestPrivateWindowAccessibility()
                 }
             }
         )
@@ -3896,11 +3896,13 @@ struct SettingsView: View {
     private func addWebsite() {
         let input = newWebsite.trimmingCharacters(in: .whitespaces)
         guard !input.isEmpty else { return }
-        if let error = appState.addExcludedSite(input) {
-            websiteError = error
-        } else {
-            websiteError = nil
-            newWebsite = ""
+        Task { @MainActor in
+            if let error = await appState.addExcludedSite(input) {
+                websiteError = error
+            } else {
+                websiteError = nil
+                newWebsite = ""
+            }
         }
     }
 

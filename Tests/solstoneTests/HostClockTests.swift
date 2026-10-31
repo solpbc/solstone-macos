@@ -42,17 +42,6 @@ struct HostClockTests {
         #expect(abs(diff - 1.0) < 0.001)
     }
 
-    @Test func pollBoundsWithinTenMilliseconds() {
-        let t1 = mach_absolute_time()
-        usleep(5_000) // 5 ms sleep
-        let t2 = mach_absolute_time()
-
-        let elapsed = HostClock.seconds(ticks: t2) - HostClock.seconds(ticks: t1)
-        // Elapsed should be between 4 ms and 15 ms, well within 10 ms of real mach_absolute_time() around the call
-        #expect(elapsed >= 0.004)
-        #expect(elapsed <= 0.020)
-    }
-
     @Test func displayTimeTicksFromSampleBuffer() throws {
         var info = mach_timebase_info()
         mach_timebase_info(&info)

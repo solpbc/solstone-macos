@@ -268,7 +268,7 @@ struct AudioTimelineTests {
         let manager = PerSourceAudioManager(outputDirectory: root, timePrefix: "120000")
         let segment = SegmentWriter(outputDirectory: root, timePrefix: "120000", capturerStopTimeoutSeconds: 2.2,
             audioFinishTimeoutSeconds: 2,
-            screenshotCapturerFactory: { _, _, _, _, _, _ in screenshot },
+            screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in screenshot },
             audioManagerFactory: { _, _, _, _ in manager })
         try await segment.start(sources: .screen, displayInfos: [DisplayInfo(displayID: 42, width: 100, height: 100,
             bounds: CGRect(x: 0, y: 0, width: 100, height: 100))])

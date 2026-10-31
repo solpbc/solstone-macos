@@ -380,7 +380,7 @@ struct IndependentCapturePipelineTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let audio = FakeAudioManager(behavior: .throwOnMicrophoneStart)
         let writer = SegmentWriter(outputDirectory: root, timePrefix: "120000",
-            screenshotCapturerFactory: { _, _, _, _, _, _ in
+            screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in
                 Issue.record("microphone-only constructed a screenshot capturer")
                 return FakeScreenshotCapturer()
             },
@@ -403,7 +403,7 @@ struct IndependentCapturePipelineTests {
         let audio = FakeAudioManager()
         let screen = FakeScreenshotCapturer(behavior: .throwOnStart)
         let writer = SegmentWriter(outputDirectory: root, timePrefix: "120000",
-            screenshotCapturerFactory: { _, videoURL, _, _, _, _ in
+            screenshotCapturerFactory: { _, videoURL, _, _, _, _, _, _ in
                 // A failed SCK start can leave partial media behind.
                 try Data("partial screen".utf8).write(to: videoURL)
                 try Data("partial system audio".utf8).write(to: root.appendingPathComponent("120000_audio_system.m4a"))
@@ -452,7 +452,7 @@ struct IndependentCapturePipelineTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let audio = FakeAudioManager()
         let writer = SegmentWriter(outputDirectory: root, timePrefix: "120000",
-            screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() },
+            screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in FakeScreenshotCapturer() },
             audioManagerFactory: { _, _, _, _ in audio })
         let active = try await writer.start(sources: .screen, displayInfos: [testDisplay], mics: [testMicrophone])
         #expect(active == .screen)

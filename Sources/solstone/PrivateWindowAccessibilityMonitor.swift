@@ -11,6 +11,7 @@ final class PrivateWindowAccessibilityMonitor {
     typealias ReadWorks = @Sendable () async -> Bool
 
     private(set) var isEnabled = false
+    private(set) var sitesEnabled = false
     private(set) var lastReadWorks: Bool?
     private(set) var askedThisSession = false
     private(set) var hasWorkedSinceAsking = false
@@ -53,14 +54,24 @@ final class PrivateWindowAccessibilityMonitor {
         lastReadWorks = nil
     }
 
-    func setEnabled(_ enabled: Bool) {
-        guard !isStopped, enabled != isEnabled else { return }
-        generation &+= 1
-        isEnabled = enabled
-        lastReadWorks = nil
-        cancelPolling?()
-        cancelPolling = nil
-        if enabled {
+    func setInterests(privateWindows: Bool, sites: Bool) {
+        guard !isStopped else { return }
+        guard privateWindows != isEnabled || sites != sitesEnabled else { return }
+        let wasActive = isEnabled || sitesEnabled
+        let isActive = privateWindows || sites
+        isEnabled = privateWindows
+        sitesEnabled = sites
+
+        if wasActive && !isActive {
+            generation &+= 1
+            lastReadWorks = nil
+            cancelPolling?()
+            cancelPolling = nil
+        } else if !wasActive && isActive {
+            generation &+= 1
+            lastReadWorks = nil
+            cancelPolling?()
+            cancelPolling = nil
             let armGeneration = generation
             cancelPolling = scheduler.armPolling { [weak self] in
                 await self?.readIfNeeded(generation: armGeneration)
@@ -69,17 +80,17 @@ final class PrivateWindowAccessibilityMonitor {
     }
 
     func stop() {
-        setEnabled(false)
+        setInterests(privateWindows: false, sites: false)
         isStopped = true
     }
 
     private func readIfNeeded(generation readGeneration: UInt64) async {
-        guard !isStopped, isEnabled, generation == readGeneration, !isReading else { return }
+        guard !isStopped, isEnabled || sitesEnabled, generation == readGeneration, !isReading else { return }
         isReading = true
         let works = await readWorks()
         isReading = false
 
-        guard !isStopped, isEnabled else { return }
+        guard !isStopped, isEnabled || sitesEnabled else { return }
         guard generation == readGeneration else {
             // A cancelled arm cannot start a read. Once an obsolete read drains, however,
             // the enabled generation needs its own immediate read, without waiting for a tick.

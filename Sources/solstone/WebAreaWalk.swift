@@ -79,22 +79,24 @@ public enum WebAreaWalker {
 
     public static func walk(
         _ window: AXUIElement,
-        mode: WebAreaWalkMode
+        mode: WebAreaWalkMode,
+        elementTimeout: Float = 0.025
     ) -> WebAreaWalkResult {
-        walk(window, mode: mode, permit: nil)
+        walk(window, mode: mode, permit: nil, elementTimeout: elementTimeout)
     }
 
     internal static func walk(
         _ window: AXUIElement,
         mode: WebAreaWalkMode,
-        permit: DesktopActivityReadPermit?
+        permit: DesktopActivityReadPermit?,
+        elementTimeout: Float = 0.025
     ) -> WebAreaWalkResult {
         walkTree(
             root: window,
             mode: mode,
             permit: permit,
             role: { node in
-                AXUIElementSetMessagingTimeout(node, 0.025)
+                AXUIElementSetMessagingTimeout(node, elementTimeout)
                 var roleValue: CFTypeRef?
                 let roleError = AXUIElementCopyAttributeValue(node, kAXRoleAttribute as CFString, &roleValue)
                 if roleError != .success && roleError != .noValue {
@@ -140,6 +142,7 @@ public enum WebAreaWalker {
         var urls: [String?] = []
         let deadline = ProcessInfo.processInfo.systemUptime + 0.25
         var hitCut = false
+        var hadAXError = false
 
         while (permit?.isValid ?? true) && !pending.isEmpty && visited < 128 {
             if ProcessInfo.processInfo.systemUptime >= deadline {
@@ -150,32 +153,28 @@ public enum WebAreaWalker {
 
             let roleRes = role(node)
             if roleRes.failed {
-                if mode == .everyTopLevel {
-                    return WebAreaWalkResult(urls: urls, completeness: .axError)
+                hadAXError = true
+            } else {
+                let roleStr = roleRes.role
+                guard ![kAXTextFieldRole, kAXTextAreaRole, "AXToolbar", "AXButton",
+                        "AXRadioButton", "AXImage", "AXMenuButton", "AXStaticText"].contains(roleStr ?? "") else {
+                    continue
                 }
-                continue
-            }
-            let roleStr = roleRes.role
-            guard ![kAXTextFieldRole, kAXTextAreaRole, "AXToolbar", "AXButton",
-                    "AXRadioButton", "AXImage", "AXMenuButton", "AXStaticText"].contains(roleStr ?? "") else {
-                continue
-            }
 
-            if roleStr == "AXWebArea" {
-                let urlString = url(node)
-                urls.append(urlString)
-                if mode == .firstDocument && urlString != nil {
-                    return WebAreaWalkResult(urls: urls, completeness: .complete)
+                if roleStr == "AXWebArea" {
+                    let urlString = url(node)
+                    urls.append(urlString)
+                    if mode == .firstDocument && urlString != nil {
+                        return WebAreaWalkResult(urls: urls, completeness: .complete)
+                    }
+                    // Do not enter page contents.
+                    continue
                 }
-                // Do not enter page contents.
-                continue
             }
 
             let childrenRes = children(node)
             if childrenRes.failed {
-                if mode == .everyTopLevel {
-                    return WebAreaWalkResult(urls: urls, completeness: .axError)
-                }
+                hadAXError = true
                 continue
             }
             let elements = childrenRes.children
@@ -189,6 +188,8 @@ public enum WebAreaWalker {
         let completeness: WebAreaWalkResult.Completeness
         if visited >= 128 || hitCut {
             completeness = .childListCut
+        } else if hadAXError {
+            completeness = .axError
         } else {
             completeness = .complete
         }

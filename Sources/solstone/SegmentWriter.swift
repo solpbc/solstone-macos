@@ -65,7 +65,7 @@ public protocol SegmentScreenshotCapturing: AnyObject, Sendable {
     var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)? { get set }
     var siteFrameGate: SiteFrameGate? { get set }
     var isSiteRuleActive: Bool { get set }
-    func bindSiteRuleLock(_ lock: OSAllocatedUnfairLock<Bool>)
+    var hasStream: Bool { get }
     func reevaluateHeldFrames()
     func discardPendingSiteFrames()
     func start() async throws
@@ -103,7 +103,9 @@ public extension SegmentScreenshotCapturing {
         get { false }
         set {}
     }
-    func bindSiteRuleLock(_ lock: OSAllocatedUnfairLock<Bool>) {}
+    var hasStream: Bool {
+        get { false }
+    }
     func reevaluateHeldFrames() {}
     func discardPendingSiteFrames() {}
 }
@@ -152,7 +154,9 @@ public final class SegmentWriter {
         _ frameRate: Double,
         _ duration: Double?,
         _ contentFilter: SCContentFilter?,
-        _ verbose: Bool
+        _ verbose: Bool,
+        _ siteRuleLock: OSAllocatedUnfairLock<Bool>,
+        _ appendsClosedLock: OSAllocatedUnfairLock<Bool>
     ) throws -> any SegmentScreenshotCapturing
 
     public typealias AudioManagerFactory = @Sendable (
@@ -176,7 +180,8 @@ public final class SegmentWriter {
     public var currentPreviewEpoch: (@Sendable () -> UInt64)?
     public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
     public var siteFrameGate: SiteFrameGate?
-    private let siteRuleLock = OSAllocatedUnfairLock(initialState: false)
+    internal let siteRuleLock: OSAllocatedUnfairLock<Bool>
+    internal let appendsClosedLock = OSAllocatedUnfairLock(initialState: false)
     public var isSiteRuleActive: Bool {
         get { siteRuleLock.withLock { $0 } }
         set {
@@ -252,7 +257,8 @@ public final class SegmentWriter {
         capturerStopTimeoutSeconds: TimeInterval = 5,
         audioFinishTimeoutSeconds: TimeInterval = 10,
         screenshotCapturerFactory: @escaping ScreenshotCapturerFactory = SegmentWriter.defaultScreenshotCapturerFactory,
-        audioManagerFactory: @escaping AudioManagerFactory = SegmentWriter.defaultAudioManagerFactory
+        audioManagerFactory: @escaping AudioManagerFactory = SegmentWriter.defaultAudioManagerFactory,
+        siteRuleLock: OSAllocatedUnfairLock<Bool> = OSAllocatedUnfairLock(initialState: false)
     ) {
         self.outputDirectory = outputDirectory
         self.timePrefix = timePrefix
@@ -262,13 +268,14 @@ public final class SegmentWriter {
         self.audioFinishTimeoutSeconds = audioFinishTimeoutSeconds
         self.screenshotCapturerFactory = screenshotCapturerFactory
         self.audioManagerFactory = audioManagerFactory
+        self.siteRuleLock = siteRuleLock
     }
 
     internal var capturerStopTimeoutSecondsForTesting: TimeInterval { capturerStopTimeoutSeconds }
 
     internal var audioFinishTimeoutSecondsForTesting: TimeInterval { audioFinishTimeoutSeconds }
 
-    public static let defaultScreenshotCapturerFactory: ScreenshotCapturerFactory = { info, videoURL, frameRate, duration, contentFilter, verbose in
+    public static let defaultScreenshotCapturerFactory: ScreenshotCapturerFactory = { info, videoURL, frameRate, duration, contentFilter, verbose, siteRuleLock, appendsClosedLock in
         guard let contentFilter else {
             throw SegmentError.missingContentFilter(displayID: info.displayID)
         }
@@ -281,7 +288,9 @@ public final class SegmentWriter {
             frameRate: frameRate,
             duration: duration,
             contentFilter: contentFilter,
-            verbose: verbose
+            verbose: verbose,
+            siteRuleLock: siteRuleLock,
+            appendsClosedLock: appendsClosedLock
         )
         capturer.onHealthFailure = {
             Logger.capture.error("ScreenshotCapturer: terminal capture failure for display \(info.displayID, privacy: .public), restart policy exhausted")
@@ -412,7 +421,9 @@ public final class SegmentWriter {
                             Self.frameRate,
                             Self.segmentDuration,
                             filters[info.displayID],
-                            verbose
+                            verbose,
+                            siteRuleLock,
+                            appendsClosedLock
                         )
                         returnedCapturer = capturer
                         capturer.onTerminalStop = { [weak self] in
@@ -428,7 +439,6 @@ public final class SegmentWriter {
                         capturer.onLatestFrame = { [weak self] image, streamGen, epoch in
                             self?.onLatestFrame?(image, streamGen, epoch)
                         }
-                        capturer.bindSiteRuleLock(siteRuleLock)
                         capturer.siteFrameGate = siteFrameGate
                         liveCapturers.append(capturer)
                         try await capturer.start()
@@ -666,6 +676,7 @@ public final class SegmentWriter {
     }
 
     public func finishCapture() async -> SegmentCaptureResult? {
+        appendsClosedLock.withLock { $0 = true }
         if let finishTask {
             return await finishTask.value
         }
@@ -680,17 +691,17 @@ public final class SegmentWriter {
     private func performFinishCapture() async -> SegmentCaptureResult? {
 
         // Stop all screenshot capturers first
-        Logger.capture.info("Stopping \(self.screenshotCapturers.count, privacy: .public) screenshot capturer(s) for background remix...")
-        for (displayID, capturer) in screenshotCapturers {
-            if verbose { Logger.capture.debug("Stopping capturer for display \(displayID, privacy: .public)...") }
+        Logger.capture.info("Stopping \(self.liveCapturers.count, privacy: .public) screenshot capturer(s) for background remix...")
+        for capturer in liveCapturers {
+            guard capturer.hasStream else { continue }
             do {
                 try await withTimeout(seconds: capturerStopTimeoutSeconds) {
                     await capturer.stop()
                 }
             } catch is TimeoutError {
-                Logger.capture.warning("Timeout stopping capturer for display \(displayID, privacy: .public)")
+                Logger.capture.warning("Timeout stopping capturer")
             } catch {
-                Logger.capture.warning("Error stopping capturer for display \(displayID, privacy: .public): \(error, privacy: .public)")
+                Logger.capture.warning("Error stopping capturer: \(error, privacy: .public)")
             }
         }
 
@@ -748,6 +759,11 @@ public final class SegmentWriter {
                 case let .failure(error):
                     Logger.capture.warning("Error finishing video for display \(displayID, privacy: .public): \(error, privacy: .public)")
                 }
+            }
+        }
+        for capturer in liveCapturers {
+            if !screenshotCapturers.values.contains(where: { $0 === capturer }), capturer.hasStream {
+                _ = await capturer.finishWithTimeout(seconds: 10)
             }
         }
 

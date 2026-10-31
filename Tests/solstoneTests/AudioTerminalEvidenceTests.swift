@@ -51,7 +51,7 @@ struct AudioTerminalEvidenceTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let manager = PerSourceAudioManager(outputDirectory: dir, timePrefix: "120000")
         let segment = SegmentWriter(outputDirectory: dir, timePrefix: "120000", audioFinishTimeoutSeconds: 0.02,
-            screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() },
+            screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in FakeScreenshotCapturer() },
             audioManagerFactory: { _, _, _, _ in manager })
         try await segment.start(sources: .screen, displayInfos: [DisplayInfo(displayID: 42, width: 100, height: 100,
             bounds: CGRect(x: 0, y: 0, width: 100, height: 100))])
@@ -112,7 +112,7 @@ struct AudioTerminalEvidenceTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let manager = PerSourceAudioManager(outputDirectory: dir, timePrefix: "120000")
         let segment = SegmentWriter(outputDirectory: dir, timePrefix: "120000", audioFinishTimeoutSeconds: 0.02,
-            screenshotCapturerFactory: { _, _, _, _, _, _ in FakeScreenshotCapturer() },
+            screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in FakeScreenshotCapturer() },
             audioManagerFactory: { _, _, _, _ in manager })
         try await segment.start(sources: .screen, displayInfos: [DisplayInfo(displayID: 42, width: 100, height: 100,
             bounds: CGRect(x: 0, y: 0, width: 100, height: 100))])

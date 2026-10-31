@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 import Testing
 @testable import solstone
@@ -414,7 +415,9 @@ struct ScreenshotCapturerStreamGenerationFenceTests {
             duration: nil,
             contentFilter: SCContentFilter(),
             verbose: false,
-            streamFactory: factory.factory
+            streamFactory: factory.factory,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
     }
 }

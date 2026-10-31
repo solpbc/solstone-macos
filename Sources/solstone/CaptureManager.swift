@@ -228,6 +228,11 @@ public final class CaptureManager {
     public let siteFrameGate = SiteFrameGate()
     internal private(set) var siteSampler: SiteSampler?
     public private(set) var siteRuleActive: Bool = false
+    internal let siteRuleLock: OSAllocatedUnfairLock<Bool>
+    public var onSiteSafariCaution: (@MainActor (Bool) -> Void)?
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+    internal var displayInfosForTesting: [DisplayInfo]? = nil
+#endif
     internal private(set) var siteListGeneration: UInt64 = 0
     private var siteListContinuation: AsyncStream<(UInt64, [String])>.Continuation?
     private var siteListTask: Task<Void, Never>?
@@ -341,14 +346,7 @@ public final class CaptureManager {
         excludePrivateBrowsingAccessibility: Bool = false,
         microphoneGain: Float = 2.0,
         verbose: Bool = false,
-        segmentFactory: @escaping SegmentFactory = { outputDirectory, timePrefix, silenceMusic, verbose in
-            SegmentWriter(
-                outputDirectory: outputDirectory,
-                timePrefix: timePrefix,
-                silenceMusic: silenceMusic,
-                verbose: verbose
-            )
-        },
+        segmentFactory: SegmentFactory? = nil,
         recoveryCoordinator: IncompleteSegmentRecoveryCoordinator = .shared,
         finalizer: any SegmentFinalizing = RemixQueue.shared,
         rotationTimeoutSeconds: TimeInterval = 30,
@@ -417,14 +415,7 @@ public final class CaptureManager {
         excludePrivateBrowsingAccessibility: Bool = false,
         microphoneGain: Float = 2.0,
         verbose: Bool = false,
-        segmentFactory: @escaping SegmentFactory = { outputDirectory, timePrefix, silenceMusic, verbose in
-            SegmentWriter(
-                outputDirectory: outputDirectory,
-                timePrefix: timePrefix,
-                silenceMusic: silenceMusic,
-                verbose: verbose
-            )
-        },
+        segmentFactory: SegmentFactory? = nil,
         recoveryCoordinator: IncompleteSegmentRecoveryCoordinator = .shared,
         finalizer: any SegmentFinalizing = RemixQueue.shared,
         rotationTimeoutSeconds: TimeInterval = 30,
@@ -451,10 +442,20 @@ public final class CaptureManager {
         preResumeSettle: (@MainActor () async -> Void)? = nil,
         transitionTimeoutSeconds: TimeInterval = 30
     ) {
+        let siteRuleLock = OSAllocatedUnfairLock(initialState: false)
+        self.siteRuleLock = siteRuleLock
         self.storageManager = storageManager
         self.silenceMusic = silenceMusic
         self.verbose = verbose
-        self.segmentFactory = segmentFactory
+        self.segmentFactory = segmentFactory ?? { outputDirectory, timePrefix, silenceMusic, verbose in
+            SegmentWriter(
+                outputDirectory: outputDirectory,
+                timePrefix: timePrefix,
+                silenceMusic: silenceMusic,
+                verbose: verbose,
+                siteRuleLock: siteRuleLock
+            )
+        }
         self.recoveryCoordinator = recoveryCoordinator
         self.finalizer = finalizer
         self.rotationTimeoutSeconds = rotationTimeoutSeconds
@@ -802,6 +803,7 @@ public final class CaptureManager {
     func receiveSiteDecision(_ decisions: SiteDecision, axAvailable: Bool, generation: UInt64) {
         guard generation == siteListGeneration else { return }
         siteFrameGate.updateDecisions(decisions, axAvailable: axAvailable)
+        onSiteSafariCaution?(decisions.hasSafariCaution)
         currentSegment?.reevaluateSiteFrames()
     }
 
@@ -1186,7 +1188,11 @@ public final class CaptureManager {
         currentSegment = segment
 
         // Start recording - convert to DisplayInfo for sendable compliance
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        let displayInfos = (sessionSources.contains(.screen) ? (displayInfosForTesting ?? displays.map { DisplayInfo(from: $0) }) : [])
+#else
         let displayInfos = sessionSources.contains(.screen) ? displays.map { DisplayInfo(from: $0) } : []
+#endif
         if sessionSources.contains(.screen) {
             if isDisplayMembershipKnown {
                 requestedDisplayIDs = allowsEmptyDisplayConfigurationForTesting && displays.isEmpty

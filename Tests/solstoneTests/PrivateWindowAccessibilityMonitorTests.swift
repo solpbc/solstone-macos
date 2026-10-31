@@ -14,7 +14,7 @@ struct PrivateWindowAccessibilityMonitorTests {
         let polling = ManualAccessibilityPolling()
         let reader = AccessibilitySampleReader(false)
         let monitor = PrivateWindowAccessibilityMonitor(readWorks: { await reader.read() }, scheduler: polling.scheduler)
-        monitor.setEnabled(false)
+        monitor.setInterests(privateWindows: false, sites: false)
         #expect(polling.passes.isEmpty)
         #expect(await reader.count == 0)
         #expect(monitor.state == .off)
@@ -25,7 +25,7 @@ struct PrivateWindowAccessibilityMonitorTests {
         let polling = ManualAccessibilityPolling()
         let reader = AccessibilitySampleReader(false)
         let monitor = PrivateWindowAccessibilityMonitor(readWorks: { await reader.read() }, scheduler: polling.scheduler)
-        monitor.setEnabled(true)
+        monitor.setInterests(privateWindows: true, sites: false)
         #expect(monitor.state == .checking)
         #expect(!monitor.needsAttention)
         #expect(!monitor.askedThisSession)
@@ -44,7 +44,7 @@ struct PrivateWindowAccessibilityMonitorTests {
         let reader = AccessibilitySampleReader(false)
         let monitor = PrivateWindowAccessibilityMonitor(readWorks: { await reader.read() }, scheduler: polling.scheduler)
         monitor.prepareForOwnerEnable()
-        monitor.setEnabled(true)
+        monitor.setInterests(privateWindows: true, sites: false)
         #expect(monitor.state == .waiting)
         #expect(!monitor.needsAttention)
         await polling.passes[0]()
@@ -60,7 +60,7 @@ struct PrivateWindowAccessibilityMonitorTests {
         await polling.passes[0]()
         #expect(monitor.state == .notWorking)
         #expect(monitor.needsAttention)
-        monitor.setEnabled(false)
+        monitor.setInterests(privateWindows: false, sites: false)
         #expect(monitor.state == .off)
         #expect(!monitor.needsAttention)
         #expect(polling.cancelled == [0])
@@ -71,13 +71,13 @@ struct PrivateWindowAccessibilityMonitorTests {
         let polling = ManualAccessibilityPolling()
         let reader = GatedAccessibilityReader()
         let monitor = PrivateWindowAccessibilityMonitor(readWorks: { await reader.read() }, scheduler: polling.scheduler)
-        monitor.setEnabled(true)
+        monitor.setInterests(privateWindows: true, sites: false)
         let first = Task { await polling.passes[0]() }
         await reader.waitForCount(1)
-        monitor.setEnabled(false)
+        monitor.setInterests(privateWindows: false, sites: false)
         await polling.passes[0]() // A delivery queued before cancellation cannot read while off.
         monitor.prepareForOwnerEnable()
-        monitor.setEnabled(true)
+        monitor.setInterests(privateWindows: true, sites: false)
         await polling.passes[0]() // The old arm cannot masquerade as the new arm.
         await polling.passes[1]() // The new arm cannot overlap the draining read.
         #expect(await reader.count == 1)
@@ -100,12 +100,12 @@ struct PrivateWindowAccessibilityMonitorTests {
         let reader = GatedAccessibilityReader()
         let monitor = PrivateWindowAccessibilityMonitor(readWorks: { await reader.read() }, scheduler: polling.scheduler)
         monitor.prepareForOwnerEnable()
-        monitor.setEnabled(true)
+        monitor.setInterests(privateWindows: true, sites: false)
         let pass = Task { await polling.passes[0]() }
         await reader.waitForCount(1)
         monitor.stop()
         await polling.passes[0]()
-        monitor.setEnabled(true)
+        monitor.setInterests(privateWindows: true, sites: false)
         #expect(polling.passes.count == 1)
         await reader.finish(true)
         await pass.value
@@ -120,15 +120,15 @@ struct PrivateWindowAccessibilityMonitorTests {
         let reader = AccessibilitySampleReader(true)
         let monitor = PrivateWindowAccessibilityMonitor(readWorks: { await reader.read() }, scheduler: polling.scheduler)
         monitor.prepareForOwnerEnable()
-        monitor.setEnabled(true)
+        monitor.setInterests(privateWindows: true, sites: false)
         await polling.passes[0]()
-        monitor.setEnabled(false)
+        monitor.setInterests(privateWindows: false, sites: false)
         #expect(monitor.state == .off)
         #expect(!monitor.needsAttention)
         #expect(monitor.askedThisSession)
         #expect(monitor.hasWorkedSinceAsking)
         await reader.set(false)
-        monitor.setEnabled(true)
+        monitor.setInterests(privateWindows: true, sites: false)
         #expect(monitor.state == .checking)
         await polling.passes[1]()
         #expect(monitor.state == .notWorking)
@@ -142,7 +142,7 @@ struct PrivateWindowAccessibilityMonitorTests {
         let polling = ManualAccessibilityPolling()
         var monitor: PrivateWindowAccessibilityMonitor? = .init(readWorks: { false }, scheduler: polling.scheduler)
         weak var weakMonitor = monitor
-        monitor?.setEnabled(true)
+        monitor?.setInterests(privateWindows: true, sites: false)
         monitor = nil
         #expect(weakMonitor == nil)
         #expect(polling.cancelled == [0])
@@ -168,7 +168,7 @@ struct PrivateWindowAccessibilityMonitorTests {
         config.excludePrivateBrowsingAccessibility = true
         let state = AppState.forSnapshot(config: config)
         state.privateWindowAccessibilityMonitor = monitor
-        monitor.setEnabled(true)
+        monitor.setInterests(privateWindows: true, sites: false)
         await polling.passes[0]()
         for paused in [false, true] {
             state.isPaused = paused
@@ -231,7 +231,7 @@ struct PrivateWindowAccessibilityMonitorTests {
 }
 
 @MainActor
-private final class ManualAccessibilityPolling {
+final class ManualAccessibilityPolling {
     var passes: [PermissionPollScheduler.Pass] = []
     var cancelled: [Int] = []
     var scheduler: PermissionPollScheduler {
@@ -243,7 +243,7 @@ private final class ManualAccessibilityPolling {
     }
 }
 
-private actor AccessibilitySampleReader {
+actor AccessibilitySampleReader {
     var works: Bool
     var count = 0
     init(_ works: Bool) { self.works = works }

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 import Testing
 @testable import solstone
@@ -20,7 +21,9 @@ struct ScreenshotCapturerTeardownTests {
             frameRate: 1,
             duration: nil,
             contentFilter: SCContentFilter(),
-            verbose: false
+            verbose: false,
+            siteRuleLock: OSAllocatedUnfairLock(initialState: false),
+            appendsClosedLock: OSAllocatedUnfairLock(initialState: false)
         )
 
         await capturer.stop()

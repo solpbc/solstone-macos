@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import CoreGraphics
 import Foundation
+import os
+@preconcurrency import ScreenCaptureKit
 import SolstoneCore
 import Testing
 @testable import solstone
@@ -890,5 +893,586 @@ struct CaptureManagerRotationWatchdogTests {
         if case .rotate = manager.inFlightIntentForTesting?.kind {
             Issue.record("expected in-flight intent to not be rotate")
         }
+    }
+
+    @Test func rotateSegmentTimeoutEmptySitesAbandonsStreamsAndDropsFrames() async throws {
+        let root = try makeTempDirectory("capture-rotation-timeout-empty-sites")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "111111.incomplete")
+        let current = FakeCaptureSegment(
+            outputDirectory: oldDir,
+            finishBehaviors: [.normal(oldDir)]
+        )
+        let finalizer = FakeFinalizer()
+        let startGate = OneShotContinuationGate()
+        let streamsLock = OSAllocatedUnfairLock<[FakeCaptureStream]>(initialState: [])
+        let capturersLock = OSAllocatedUnfairLock<[ScreenshotCapturer]>(initialState: [])
+
+        final class ManagerBox: @unchecked Sendable {
+            weak var manager: CaptureManager?
+        }
+        let box = ManagerBox()
+
+        let capturerFactory: SegmentWriter.ScreenshotCapturerFactory = { info, videoURL, frameRate, duration, contentFilter, verbose, siteRuleLock, appendsClosedLock in
+            let filter = contentFilter ?? SCContentFilter()
+            let stream: FakeCaptureStream = streamsLock.withLock { streams in
+                if streams.isEmpty {
+                    let s = FakeCaptureStream(startGates: [startGate])
+                    streams.append(s)
+                    return s
+                } else {
+                    let s = FakeCaptureStream()
+                    streams.append(s)
+                    return s
+                }
+            }
+
+            let capturer = try ScreenshotCapturer(
+                displayID: info.displayID,
+                videoURL: videoURL,
+                width: info.width,
+                height: info.height,
+                frameRate: frameRate,
+                duration: duration,
+                contentFilter: filter,
+                verbose: verbose,
+                streamFactory: { _, _, _ in stream },
+                siteRuleLock: siteRuleLock,
+                appendsClosedLock: appendsClosedLock
+            )
+            capturersLock.withLock { $0.append(capturer) }
+            return capturer
+        }
+
+        let segmentFactory: CaptureManager.SegmentFactory = { outputDirectory, timePrefix, silenceMusic, verbose in
+            SegmentWriter(
+                outputDirectory: outputDirectory,
+                timePrefix: timePrefix,
+                silenceMusic: silenceMusic,
+                verbose: verbose,
+                screenshotCapturerFactory: capturerFactory,
+                siteRuleLock: box.manager?.siteRuleLock ?? OSAllocatedUnfairLock(initialState: false)
+            )
+        }
+
+        let scheduler = FakeRecoveryScheduler()
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: segmentFactory,
+            finalizer: finalizer,
+            rotationTimeoutSeconds: 1.0,
+            allowsEmptyDisplayConfigurationForTesting: true,
+            streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: { delay, fire in
+                scheduler.schedule(delay: delay, fire: fire)
+            },
+            isScreenLocked: { false }
+        )
+        box.manager = manager
+        manager.displayInfosForTesting = [
+            DisplayInfo(displayID: 1, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16)),
+            DisplayInfo(displayID: 2, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16))
+        ]
+        manager.seedRecordingForTesting(currentSegment: current, sources: CaptureSources.screen)
+
+        let rotateTask = Task { await self.rotate(manager) }
+
+        // Wait until display 1's startCount is 1
+        while streamsLock.withLock({ $0.first?.startCount.count ?? 0 }) == 0 {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        let outcome = await rotateTask.value
+        guard case .threw(let failure) = outcome else {
+            Issue.record("expected rotate to time out")
+            return
+        }
+        #expect(failure.message == "Segment rotation timed out")
+
+        // Release the gate
+        startGate.release()
+
+        // Wait until both capturers exist and have left start()
+        var settled = false
+        for _ in 0..<100 {
+            let capturers = capturersLock.withLock { $0 }
+            if capturers.count >= 2 && !capturers[0]._hasStreamForTesting && !capturers[1]._hasStreamForTesting {
+                settled = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(settled, "Timed out waiting for both capturers to leave start")
+
+        let capturers = capturersLock.withLock { $0 }
+        let streams = streamsLock.withLock { $0 }
+        #expect(!capturers[0]._hasStreamForTesting)
+        #expect(!capturers[1]._hasStreamForTesting)
+        #expect(streams[0].stopCount.count >= 1)
+
+        let buffer = makeTestPixelBuffer(width: 16, height: 16)
+        capturers[0].handleFrameFromOutput(
+            generation: capturers[0]._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: false,
+            epoch: 0
+        )
+        capturers[1].handleFrameFromOutput(
+            generation: capturers[1]._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: false,
+            epoch: 0
+        )
+
+        #expect(capturers[0]._submittedVideoFrameCountForTesting == 0)
+        #expect(capturers[1]._submittedVideoFrameCountForTesting == 0)
+    }
+
+    @Test func rotateSegmentTimeoutCoveredSitesAbandonsStreamsAndDropsFrames() async throws {
+        let root = try makeTempDirectory("capture-rotation-timeout-covered-sites")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "111111.incomplete")
+        let current = FakeCaptureSegment(
+            outputDirectory: oldDir,
+            finishBehaviors: [.normal(oldDir)]
+        )
+        let finalizer = FakeFinalizer()
+        let startGate = OneShotContinuationGate()
+        let streamsLock = OSAllocatedUnfairLock<[FakeCaptureStream]>(initialState: [])
+        let capturersLock = OSAllocatedUnfairLock<[ScreenshotCapturer]>(initialState: [])
+
+        final class ManagerBox: @unchecked Sendable {
+            weak var manager: CaptureManager?
+        }
+        let box = ManagerBox()
+
+        let capturerFactory: SegmentWriter.ScreenshotCapturerFactory = { info, videoURL, frameRate, duration, contentFilter, verbose, siteRuleLock, appendsClosedLock in
+            let filter = contentFilter ?? SCContentFilter()
+            let stream: FakeCaptureStream = streamsLock.withLock { streams in
+                if streams.isEmpty {
+                    let s = FakeCaptureStream(startGates: [startGate])
+                    streams.append(s)
+                    return s
+                } else {
+                    let s = FakeCaptureStream()
+                    streams.append(s)
+                    return s
+                }
+            }
+
+            let capturer = try ScreenshotCapturer(
+                displayID: info.displayID,
+                videoURL: videoURL,
+                width: info.width,
+                height: info.height,
+                frameRate: frameRate,
+                duration: duration,
+                contentFilter: filter,
+                verbose: verbose,
+                streamFactory: { _, _, _ in stream },
+                siteRuleLock: siteRuleLock,
+                appendsClosedLock: appendsClosedLock
+            )
+            capturersLock.withLock { $0.append(capturer) }
+            return capturer
+        }
+
+        let segmentFactory: CaptureManager.SegmentFactory = { outputDirectory, timePrefix, silenceMusic, verbose in
+            SegmentWriter(
+                outputDirectory: outputDirectory,
+                timePrefix: timePrefix,
+                silenceMusic: silenceMusic,
+                verbose: verbose,
+                screenshotCapturerFactory: capturerFactory,
+                siteRuleLock: box.manager?.siteRuleLock ?? OSAllocatedUnfairLock(initialState: false)
+            )
+        }
+
+        let scheduler = FakeRecoveryScheduler()
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: segmentFactory,
+            finalizer: finalizer,
+            rotationTimeoutSeconds: 1.0,
+            allowsEmptyDisplayConfigurationForTesting: true,
+            streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: { delay, fire in
+                scheduler.schedule(delay: delay, fire: fire)
+            },
+            isScreenLocked: { false }
+        )
+        box.manager = manager
+        manager.displayInfosForTesting = [
+            DisplayInfo(displayID: 1, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16)),
+            DisplayInfo(displayID: 2, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16))
+        ]
+        manager.seedRecordingForTesting(currentSegment: current, sources: CaptureSources.screen)
+
+        let rotateTask = Task { await self.rotate(manager) }
+
+        while streamsLock.withLock({ $0.first?.startCount.count ?? 0 }) == 0 {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        manager.updateSiteRule(["bank.com"])
+        let p1 = SitePollSnapshot(start: 0.1, end: 0.2, windows: [SitePollWindow(windowID: 100, title: "bank.com")])
+        let p2 = SitePollSnapshot(start: 0.3, end: 0.4, windows: [SitePollWindow(windowID: 100, title: "bank.com")])
+        manager.siteFrameGate.addPoll(p1)
+        manager.siteFrameGate.addPoll(p2)
+
+        let outcome = await rotateTask.value
+        guard case .threw(let failure) = outcome else {
+            Issue.record("expected rotate to time out")
+            return
+        }
+        #expect(failure.message == "Segment rotation timed out")
+
+        startGate.release()
+
+        var settled = false
+        for _ in 0..<100 {
+            let capturers = capturersLock.withLock { $0 }
+            if capturers.count >= 2 && !capturers[0]._hasStreamForTesting && !capturers[1]._hasStreamForTesting {
+                settled = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(settled, "Timed out waiting for both capturers to leave start")
+
+        let capturers = capturersLock.withLock { $0 }
+        let streams = streamsLock.withLock { $0 }
+        #expect(!capturers[0]._hasStreamForTesting)
+        #expect(!capturers[1]._hasStreamForTesting)
+        #expect(streams[0].stopCount.count >= 1)
+
+        let buffer = makeTestPixelBuffer(width: 16, height: 16)
+        capturers[0].handleFrameFromOutput(
+            generation: capturers[0]._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: false,
+            epoch: 0
+        )
+        capturers[1].handleFrameFromOutput(
+            generation: capturers[1]._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: false,
+            epoch: 0
+        )
+
+        #expect(capturers[0]._submittedVideoFrameCountForTesting == 0)
+        #expect(capturers[1]._submittedVideoFrameCountForTesting == 0)
+    }
+
+    @Test func rotateSegmentTimeoutSharedGateRecoveryAdmitsFollowupFramesWithoutStall() async throws {
+        let root = try makeTempDirectory("capture-rotation-timeout-shared-gate")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "111111.incomplete")
+        let current = FakeCaptureSegment(
+            outputDirectory: oldDir,
+            finishBehaviors: [.normal(oldDir)]
+        )
+        let finalizer = FakeFinalizer()
+        let scheduler = FakeRecoveryScheduler()
+        let startGate = OneShotContinuationGate()
+        let streamsLock = OSAllocatedUnfairLock<[FakeCaptureStream]>(initialState: [])
+        let capturersLock = OSAllocatedUnfairLock<[ScreenshotCapturer]>(initialState: [])
+
+        final class ManagerBox: @unchecked Sendable {
+            weak var manager: CaptureManager?
+        }
+        let box = ManagerBox()
+
+        let capturerFactory: SegmentWriter.ScreenshotCapturerFactory = { info, videoURL, frameRate, duration, contentFilter, verbose, siteRuleLock, appendsClosedLock in
+            let filter = contentFilter ?? SCContentFilter()
+            let stream: FakeCaptureStream = streamsLock.withLock { streams in
+                if streams.isEmpty {
+                    let s = FakeCaptureStream(startGates: [startGate])
+                    streams.append(s)
+                    return s
+                } else {
+                    let s = FakeCaptureStream()
+                    streams.append(s)
+                    return s
+                }
+            }
+
+            let capturer = try ScreenshotCapturer(
+                displayID: info.displayID,
+                videoURL: videoURL,
+                width: info.width,
+                height: info.height,
+                frameRate: frameRate,
+                duration: duration,
+                contentFilter: filter,
+                verbose: verbose,
+                streamFactory: { _, _, _ in stream },
+                siteRuleLock: siteRuleLock,
+                appendsClosedLock: appendsClosedLock
+            )
+            capturersLock.withLock { $0.append(capturer) }
+            return capturer
+        }
+
+        let segmentFactory: CaptureManager.SegmentFactory = { outputDirectory, timePrefix, silenceMusic, verbose in
+            SegmentWriter(
+                outputDirectory: outputDirectory,
+                timePrefix: timePrefix,
+                silenceMusic: silenceMusic,
+                verbose: verbose,
+                screenshotCapturerFactory: capturerFactory,
+                siteRuleLock: box.manager?.siteRuleLock ?? OSAllocatedUnfairLock(initialState: false)
+            )
+        }
+
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: segmentFactory,
+            finalizer: finalizer,
+            rotationTimeoutSeconds: 1.0,
+            allowsEmptyDisplayConfigurationForTesting: true,
+            streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: { delay, fire in
+                scheduler.schedule(delay: delay, fire: fire)
+            },
+            isScreenLocked: { false }
+        )
+        box.manager = manager
+        manager.displayInfosForTesting = [
+            DisplayInfo(displayID: 1, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16)),
+            DisplayInfo(displayID: 2, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16))
+        ]
+        manager.seedRecordingForTesting(currentSegment: current, sources: CaptureSources.screen)
+
+        let rotateTask = Task { await self.rotate(manager) }
+
+        while streamsLock.withLock({ $0.first?.startCount.count ?? 0 }) == 0 {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        manager.updateSiteRule(["bank.com"])
+
+        let outcome = await rotateTask.value
+        guard case .threw(let failure) = outcome else {
+            Issue.record("expected rotate to time out")
+            return
+        }
+        #expect(failure.message == "Segment rotation timed out")
+
+        startGate.release()
+
+        var settled = false
+        for _ in 0..<100 {
+            let capturers = capturersLock.withLock { $0 }
+            if capturers.count >= 2 && !capturers[0]._hasStreamForTesting && !capturers[1]._hasStreamForTesting {
+                settled = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(settled, "Timed out waiting for both capturers to leave start")
+
+        #expect(manager.siteFrameGate.heldCount == 0)
+        #expect(manager.siteFrameGate.stallCount == 0)
+        #expect(manager.currentSegmentForTesting == nil)
+
+        await scheduler.fireNext()
+        #expect(manager.state.isRecording)
+
+        let totalCapturers = capturersLock.withLock { $0.count }
+        #expect(totalCapturers >= 4)
+        let followUpCapturer = capturersLock.withLock { $0[2] }
+        #expect(followUpCapturer.isSiteRuleActive)
+
+        let buffer = makeTestPixelBuffer(width: 16, height: 16)
+        let gen = followUpCapturer._streamGenerationForTesting
+        let originTicks = mach_absolute_time()
+        for i in 0..<SiteFrameGate.capacityPerDisplay {
+            followUpCapturer.handleFrameFromOutput(
+                generation: gen,
+                pixelBuffer: buffer,
+                isIdle: false,
+                epoch: 0,
+                displayTimeTicks: originTicks + UInt64(i * 1000)
+            )
+        }
+
+        #expect(manager.siteFrameGate.stallCount == 0)
+        #expect(manager.siteFrameGate.heldCount == SiteFrameGate.capacityPerDisplay)
+        #expect(followUpCapturer._submittedVideoFrameCountForTesting == 0)
+
+        #expect(manager.siteFrameGate.stallCount == 0)
+        #expect(manager.siteFrameGate.heldCount == SiteFrameGate.capacityPerDisplay)
+        #expect(followUpCapturer._submittedVideoFrameCountForTesting == 0)
+    }
+
+    @Test func rotateSegmentCommittedEmptySitesPreservesOldAndNewFrameCounts() async throws {
+        let root = try makeTempDirectory("capture-rotation-committed-empty-sites")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let oldDir = try makeSegmentDir(root: root, name: "100000.incomplete")
+        let finalizer = FakeFinalizer()
+        let streamsLock = OSAllocatedUnfairLock<[FakeCaptureStream]>(initialState: [])
+        let capturersLock = OSAllocatedUnfairLock<[ScreenshotCapturer]>(initialState: [])
+
+        final class ManagerBox: @unchecked Sendable {
+            weak var manager: CaptureManager?
+        }
+        let box = ManagerBox()
+
+        let capturerFactory: SegmentWriter.ScreenshotCapturerFactory = { info, videoURL, frameRate, duration, contentFilter, verbose, siteRuleLock, appendsClosedLock in
+            let filter = contentFilter ?? SCContentFilter()
+            let stream = FakeCaptureStream()
+            streamsLock.withLock { $0.append(stream) }
+
+            let capturer = try ScreenshotCapturer(
+                displayID: info.displayID,
+                videoURL: videoURL,
+                width: info.width,
+                height: info.height,
+                frameRate: frameRate,
+                duration: duration,
+                contentFilter: filter,
+                verbose: verbose,
+                streamFactory: { _, _, _ in stream },
+                siteRuleLock: siteRuleLock,
+                appendsClosedLock: appendsClosedLock
+            )
+            capturersLock.withLock { $0.append(capturer) }
+            return capturer
+        }
+
+        let segmentFactory: CaptureManager.SegmentFactory = { outputDirectory, timePrefix, silenceMusic, verbose in
+            SegmentWriter(
+                outputDirectory: outputDirectory,
+                timePrefix: timePrefix,
+                silenceMusic: silenceMusic,
+                verbose: verbose,
+                screenshotCapturerFactory: capturerFactory,
+                siteRuleLock: box.manager?.siteRuleLock ?? OSAllocatedUnfairLock(initialState: false)
+            )
+        }
+
+        let scheduler = FakeRecoveryScheduler()
+        let manager = CaptureManager(
+            storageManager: StorageManager(baseDirectory: root),
+            segmentFactory: segmentFactory,
+            finalizer: finalizer,
+            rotationTimeoutSeconds: 5.0,
+            allowsEmptyDisplayConfigurationForTesting: true,
+            streamFactory: defaultCaptureStreamFactory,
+            recoveryScheduler: { delay, fire in
+                scheduler.schedule(delay: delay, fire: fire)
+            },
+            isScreenLocked: { false }
+        )
+        box.manager = manager
+
+        let displays = [
+            DisplayInfo(displayID: 1, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16)),
+            DisplayInfo(displayID: 2, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16))
+        ]
+        manager.displayInfosForTesting = displays
+
+        let oldWriter = SegmentWriter(
+            outputDirectory: oldDir,
+            timePrefix: "100000",
+            screenshotCapturerFactory: capturerFactory,
+            siteRuleLock: manager.siteRuleLock
+        )
+        try await oldWriter.start(
+            sources: CaptureSources.screen,
+            displayInfos: displays,
+            filters: [:]
+        )
+        manager.seedRecordingForTesting(currentSegment: oldWriter, sources: CaptureSources.screen)
+
+        let initialCapturers = capturersLock.withLock { $0 }
+        #expect(initialCapturers.count == 2)
+        let oldCapturer1 = initialCapturers[0]
+        let oldCapturer2 = initialCapturers[1]
+
+        let buffer = makeTestPixelBuffer(width: 16, height: 16)
+
+        // Deliver one idle and one non-idle frame to each old capturer before rotate
+        oldCapturer1.handleFrameFromOutput(
+            generation: oldCapturer1._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: true,
+            epoch: 0
+        )
+        oldCapturer2.handleFrameFromOutput(
+            generation: oldCapturer2._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: true,
+            epoch: 0
+        )
+        #expect(oldCapturer1._submittedVideoFrameCountForTesting == 0)
+        #expect(oldCapturer2._submittedVideoFrameCountForTesting == 0)
+
+        oldCapturer1.handleFrameFromOutput(
+            generation: oldCapturer1._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: false,
+            epoch: 0
+        )
+        oldCapturer2.handleFrameFromOutput(
+            generation: oldCapturer2._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: false,
+            epoch: 0
+        )
+        #expect(oldCapturer1._submittedVideoFrameCountForTesting == 1)
+        #expect(oldCapturer2._submittedVideoFrameCountForTesting == 1)
+
+        // Rotate with ungated real capturers and an empty site list
+        let outcome = await self.rotate(manager)
+        guard case .committed = outcome else {
+            Issue.record("expected rotate to commit")
+            return
+        }
+
+        // Old counts stay 1
+        #expect(oldCapturer1._submittedVideoFrameCountForTesting == 1)
+        #expect(oldCapturer2._submittedVideoFrameCountForTesting == 1)
+
+        let allCapturers = capturersLock.withLock { $0 }
+        #expect(allCapturers.count == 4)
+        let newCapturer1 = allCapturers[2]
+        let newCapturer2 = allCapturers[3]
+
+        // One non-idle on each new capturer makes that count 1; an idle after it does not increment
+        newCapturer1.handleFrameFromOutput(
+            generation: newCapturer1._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: false,
+            epoch: 0
+        )
+        newCapturer2.handleFrameFromOutput(
+            generation: newCapturer2._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: false,
+            epoch: 0
+        )
+        #expect(newCapturer1._submittedVideoFrameCountForTesting == 1)
+        #expect(newCapturer2._submittedVideoFrameCountForTesting == 1)
+
+        newCapturer1.handleFrameFromOutput(
+            generation: newCapturer1._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: true,
+            epoch: 0
+        )
+        newCapturer2.handleFrameFromOutput(
+            generation: newCapturer2._streamGenerationForTesting,
+            pixelBuffer: buffer,
+            isIdle: true,
+            epoch: 0
+        )
+        #expect(newCapturer1._submittedVideoFrameCountForTesting == 1)
+        #expect(newCapturer2._submittedVideoFrameCountForTesting == 1)
     }
 }

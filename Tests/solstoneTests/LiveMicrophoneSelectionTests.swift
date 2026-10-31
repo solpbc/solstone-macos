@@ -148,7 +148,7 @@ struct LiveMicrophoneSelectionTests {
         let screen = ConsentScreenshot(opened: opened, entered: entered)
         let system = SystemAudioCaptureManager(streamFactory: { _, _, _ in FakeCaptureStream() })
         let writer = SegmentWriter(outputDirectory: root, timePrefix: "120000",
-            screenshotCapturerFactory: { _, _, _, _, _, _ in screen }, audioManagerFactory: { _, _, _, _ in audio })
+            screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in screen }, audioManagerFactory: { _, _, _, _ in audio })
         let warnings = LockedCounter()
         writer.onCaptureIssue = { _ in warnings.increment() }
         let operation = Task { @MainActor in
