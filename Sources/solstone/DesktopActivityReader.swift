@@ -80,6 +80,12 @@ struct DesktopActivityReader: Sendable {
         self.walkSeam = walkSeam
     }
 
+    /// A Safari read that can't vouch for the window: cut short, or with a page whose address
+    /// didn't come back. Not counted when Accessibility is denied outright.
+    static func siteReadIsShort(_ walk: WebAreaWalkResult, accessibilityDenied: Bool) -> Bool {
+        !accessibilityDenied && (walk.completeness != .complete || walk.urls.contains { $0 == nil })
+    }
+
     func read(app: DesktopActivityApp, settings: DesktopActivitySettings) -> DesktopActivityObservation {
         guard permit.isValid, !settings.excludes(app) else { return DesktopActivityObservation(rows: []) }
         let screenGranted = permit.isValid && CGPreflightScreenCaptureAccess()
@@ -131,6 +137,7 @@ struct DesktopActivityReader: Sendable {
         }
 
         var documentURL: String?
+        var siteUndecided = false
         if !settings.excludedSites.isEmpty && browser == .safari {
             let targetWindow = focusedWindow ?? AXUIElementCreateApplication(app.pid)
             let walk = walkSeam(targetWindow, .everyTopLevel, permit, Self.activityElementTimeout)
@@ -141,7 +148,12 @@ struct DesktopActivityReader: Sendable {
                     }
                 }
             }
-            if settings.urls && settings.accessibility {
+            // A read that came back short can't vouch for this window, so its title and
+            // address stay out of this sample, as its frames stay off the screen. Without
+            // Accessibility at all, the owner is told left-out websites can still go in.
+            if Self.siteReadIsShort(walk, accessibilityDenied: axDenied) {
+                siteUndecided = true
+            } else if settings.urls && settings.accessibility {
                 documentURL = walk.urls.compactMap({ $0 }).first
             }
         } else if settings.urls && settings.accessibility && browser != nil, let focusedWindow {
@@ -149,7 +161,7 @@ struct DesktopActivityReader: Sendable {
             documentURL = walk.urls.compactMap({ $0 }).first
         }
         var row = DesktopActivityRow(kind: "foreground", method: screenGranted ? "cg-window" : (axTitle != nil && settings.accessibility ? "ax" : "nsworkspace"), app: app.name, app_id: app.bundleID)
-        if settings.titles { row.title = title.flatMap { $0.isEmpty ? nil : String($0.prefix(2048)) } }
+        if settings.titles, !siteUndecided { row.title = title.flatMap { $0.isEmpty ? nil : String($0.prefix(2048)) } }
         // No address-bar AXValue is used. AXURL belongs to the currently committed document.
         if settings.urls && settings.accessibility { row.url = documentURL.flatMap(desktopActivityURL) }
         var rows = [row]

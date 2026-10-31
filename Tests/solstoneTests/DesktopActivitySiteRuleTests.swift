@@ -200,4 +200,28 @@ struct DesktopActivitySiteRuleTests {
         let observation = reader.read(app: safari, settings: makeSettings())
         #expect(!observation.rows.isEmpty)
     }
+
+    @Test func shortSafariReadKeepsTitleAndAddressOutOfThatSample() {
+        typealias R = DesktopActivityReader
+        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: ["https://example.com"], completeness: .timedOut), accessibilityDenied: false))
+        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: [], completeness: .axError), accessibilityDenied: false))
+        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: [nil], completeness: .complete), accessibilityDenied: false))
+        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: ["https://a.com"], completeness: .childListCut), accessibilityDenied: false))
+        #expect(!R.siteReadIsShort(WebAreaWalkResult(urls: ["https://example.com"], completeness: .complete), accessibilityDenied: false))
+        #expect(!R.siteReadIsShort(WebAreaWalkResult(urls: [], completeness: .complete), accessibilityDenied: false))
+        #expect(!R.siteReadIsShort(WebAreaWalkResult(urls: [], completeness: .axError), accessibilityDenied: true))
+    }
+
+    @Test func shortSafariReadStillWritesTheForegroundRowWithoutAnAddress() {
+        var settings = makeSettings()
+        settings.urls = true
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), walkSeam: { _, _, _, _ in
+            WebAreaWalkResult(urls: ["https://example.com/news"], completeness: .timedOut)
+        })
+        let safari = DesktopActivityApp(pid: 1234, name: "Safari", bundleID: "com.apple.Safari")
+        let row = reader.read(app: safari, settings: settings).rows.first { $0.kind == "foreground" }
+        #expect(row != nil)
+        #expect(row?.title == nil)
+        #expect(row?.url == nil)
+    }
 }
