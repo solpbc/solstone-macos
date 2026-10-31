@@ -292,6 +292,27 @@ struct BrowserHostFenceFilesTests {
         #expect(FileManager.default.fileExists(atPath: socket.path))
     }
 
+    @Test func staleSocketLeftBeforeARestartIsReclaimedWhenOnlyTheDeviceNumberMoved() throws {
+        let root = try physicalRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let owner = BrowserHostEndpointFence(rootURL: root)
+        defer { owner.release() }
+        _ = try owner.bindListener()
+        owner.closeListener()
+        let socket = root.appendingPathComponent("host.sock")
+        let inode = try #require(physicalInode(socket))
+        let provenance = root.appendingPathComponent("host.fence")
+        try FileManager.default.removeItem(at: provenance)
+        try Data("999999:\(inode)\n".utf8).write(to: provenance)
+        #expect(chmod(provenance.path, 0o600) == 0)
+        let next = BrowserHostEndpointFence(rootURL: root)
+        defer { next.release() }
+        #expect(next.inspectEndpoint() == .stale)
+        _ = try next.bindListener()
+        #expect(next.inspectEndpoint() == .live)
+        #expect(physicalInode(socket) != inode)
+    }
+
     @Test func cleanupDoesNotDeleteReplacementSocket() throws {
         let root = try physicalRoot()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -512,8 +512,13 @@ final class BrowserHostEndpointFence: @unchecked Sendable {
     private func provenanceMatches(_ fence: Int32, endpoint: stat) -> Bool {
         var bytes = [UInt8](repeating: 0, count: 128)
         let count = pread(fence, &bytes, bytes.count, 0)
-        guard count > 0, count < bytes.count else { return false }
-        return Data(bytes.prefix(count)) == Data("\(endpoint.device):\(endpoint.inode)\n".utf8)
+        guard count > 0, count < bytes.count,
+              let text = String(bytes: bytes.prefix(count), encoding: .utf8), text.hasSuffix("\n") else { return false }
+        // The fence records "device:inode". macOS numbers a volume when it mounts, so the
+        // device recorded before a restart can differ afterwards; the inode is the volume's own.
+        let fields = text.dropLast().split(separator: ":", omittingEmptySubsequences: false)
+        guard fields.count == 2, UInt64(fields[0]) != nil, let inode = UInt64(fields[1]) else { return false }
+        return inode == UInt64(endpoint.inode)
     }
 
     private func fenceMatches(root: Int32, fence: Int32) -> Bool {
