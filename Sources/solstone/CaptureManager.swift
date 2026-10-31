@@ -40,9 +40,19 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     var onFrameDelivered: (@MainActor (CGDirectDisplayID) -> Void)? { get set }
     var currentPreviewEpoch: (@Sendable () -> UInt64)? { get set }
     var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)? { get set }
+    var siteFrameGate: SiteFrameGate? { get set }
+    var isSiteRuleActive: Bool { get set }
 }
 
 public extension CaptureSegmentWriting {
+    var siteFrameGate: SiteFrameGate? {
+        get { nil }
+        set {}
+    }
+    var isSiteRuleActive: Bool {
+        get { false }
+        set {}
+    }
     func deselectMicrophone(deviceUID: String) { removeMicrophone(deviceUID: deviceUID) }
     func recordMicrophoneStall(deviceUID: String) { deselectMicrophone(deviceUID: deviceUID) }
     func sourcesWithLoss() -> [String] { [] }
@@ -211,6 +221,11 @@ public final class CaptureManager {
     private var backoffStep: Int = 0
     public private(set) var pauseForProtectedVideo: Bool
     public private(set) var protectedVideoTitlePatterns: [String]
+    public let siteFrameGate = SiteFrameGate()
+    internal private(set) var siteSampler: SiteSampler?
+    public private(set) var siteRuleActive: Bool = false
+    internal var accessibilityProbe = AccessibilityProbe()
+    public var isSnapshot: Bool = false
     private var windowListProvider: @MainActor () -> [OnScreenWindowRecord]
     private let ownPidProvider: @MainActor () -> pid_t
     private let accessibilityTitlesReader: any AccessibilityTitleReading
@@ -770,6 +785,36 @@ public final class CaptureManager {
         )
     }
 
+    public func updateSiteRule(_ sites: [String]) {
+        let active = !sites.isEmpty
+        siteRuleActive = active
+        currentSegment?.isSiteRuleActive = active
+        if active {
+            if siteSampler == nil {
+                siteSampler = SiteSampler(
+                    probe: accessibilityProbe,
+                    isSnapshot: isSnapshot,
+                    onPoll: { [weak self] poll in
+                        self?.siteFrameGate.addPoll(poll)
+                    },
+                    onDecisionUpdate: { [weak self] decisions, axAvailable in
+                        self?.siteFrameGate.updateDecisions(decisions, axAvailable: axAvailable)
+                    }
+                )
+            }
+            Task { [siteSampler] in
+                await siteSampler?.updateSites(sites)
+            }
+        } else {
+            let sampler = siteSampler
+            siteSampler = nil
+            Task {
+                await sampler?.updateSites([])
+            }
+            _ = siteFrameGate.deactivateAll()
+        }
+    }
+
     public func updateProtectedVideoSettings(pause: Bool, patterns: [String]) {
         self.pauseForProtectedVideo = pause
         self.protectedVideoTitlePatterns = patterns
@@ -1097,6 +1142,8 @@ public final class CaptureManager {
             guard let self, let segment, self.currentSegment?.outputDirectory == segment.outputDirectory else { return }
             self.onLatestFrame?(image, streamGen, epoch)
         }
+        segment.siteFrameGate = siteFrameGate
+        segment.isSiteRuleActive = siteRuleActive
         currentSegment = segment
 
         // Start recording - convert to DisplayInfo for sendable compliance
@@ -1276,7 +1323,11 @@ public final class CaptureManager {
     internal func handleHeartbeatTick() {
         let segmentName = currentSegment?.outputDirectory.lastPathComponent ?? "none"
         let sysAudio = systemAudioCaptureManager.isRunning ? "running" : "stopped"
-        Logger.capture.info("[Heartbeat] state=\(self.state.label, privacy: .public) displays=\(self.displays.count, privacy: .public) segment=\(segmentName, privacy: .public) rotation_in=\(Int(self.segmentTimeRemaining), privacy: .public)s sysaudio=\(sysAudio, privacy: .public)")
+        if siteRuleActive {
+            Logger.capture.info("[Heartbeat] state=\(self.state.label, privacy: .public) displays=\(self.displays.count, privacy: .public) segment=\(segmentName, privacy: .public) rotation_in=\(Int(self.segmentTimeRemaining), privacy: .public)s sysaudio=\(sysAudio, privacy: .public) sites held=\(self.siteFrameGate.heldCount, privacy: .public) rel=\(self.siteFrameGate.relCount, privacy: .public) cov=\(self.siteFrameGate.covCount, privacy: .public) gap=\(self.siteFrameGate.gapCount, privacy: .public) hold=\(self.siteFrameGate.holdDropCount, privacy: .public) time=\(self.siteFrameGate.timeDropCount, privacy: .public) stall=\(self.siteFrameGate.stallCount, privacy: .public) end=\(self.siteFrameGate.endCount, privacy: .public)")
+        } else {
+            Logger.capture.info("[Heartbeat] state=\(self.state.label, privacy: .public) displays=\(self.displays.count, privacy: .public) segment=\(segmentName, privacy: .public) rotation_in=\(Int(self.segmentTimeRemaining), privacy: .public)s sysaudio=\(sysAudio, privacy: .public)")
+        }
         recoveryCoordinator.scheduleDetached(excludingActiveSegment: currentSegment?.outputDirectory.standardizedFileURL.path)
     }
 

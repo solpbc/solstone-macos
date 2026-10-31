@@ -788,6 +788,78 @@ struct SnapshotTests {
         )
     }
 
+    @Test func settingsPrivacyWebsitesEmpty() throws {
+        let config = AppConfig(
+            excludedApps: [],
+            excludedTitlePatterns: [],
+            excludedSites: [],
+            excludePrivateBrowsing: false
+        )
+        let state = AppState.forSnapshot(config: config)
+        let updateController = makeSnapshotUpdateController()
+        let filename = "settings-privacy-websites-empty.png"
+        defer { try? FileManager.default.removeItem(at: outputDir.appendingPathComponent(filename)) }
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .privacy),
+            size: settingsSize,
+            to: filename
+        )
+    }
+
+    @Test func settingsPrivacyWebsitesList() throws {
+        let config = AppConfig(
+            excludedApps: [],
+            excludedTitlePatterns: [],
+            excludedSites: ["bank.com", "login.bank.com"],
+            excludePrivateBrowsing: false
+        )
+        let state = AppState.forSnapshot(config: config)
+        let updateController = makeSnapshotUpdateController()
+        let filename = "settings-privacy-websites-list.png"
+        defer { try? FileManager.default.removeItem(at: outputDir.appendingPathComponent(filename)) }
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .privacy),
+            size: settingsSize,
+            to: filename
+        )
+    }
+
+    @Test func settingsPrivacyWebsitesAccessibilityCaution() throws {
+        let config = AppConfig(
+            excludedApps: [],
+            excludedTitlePatterns: [],
+            excludedSites: ["bank.com"],
+            excludePrivateBrowsing: false
+        )
+        let state = AppState.forSnapshot(config: config)
+        let updateController = makeSnapshotUpdateController()
+        let filename = "settings-privacy-websites-accessibility-caution.png"
+        defer { try? FileManager.default.removeItem(at: outputDir.appendingPathComponent(filename)) }
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .privacy),
+            size: settingsSize,
+            to: filename
+        )
+    }
+
+    @Test func settingsPrivacyWebsitesBrowserCaution() throws {
+        let config = AppConfig(
+            excludedApps: [],
+            excludedTitlePatterns: [],
+            excludedSites: ["bank.com"],
+            excludePrivateBrowsing: false
+        )
+        let state = AppState.forSnapshot(config: config, snapshotSafariCaution: true)
+        let updateController = makeSnapshotUpdateController()
+        let filename = "settings-privacy-websites-browser-caution.png"
+        defer { try? FileManager.default.removeItem(at: outputDir.appendingPathComponent(filename)) }
+        try render(
+            SettingsView(appState: state, updateController: updateController, selectedTab: .privacy),
+            size: settingsSize,
+            to: filename
+        )
+    }
+
     @Test func settingsStatusStarting() throws {
         let state = AppState.forSnapshot(config: AppConfig(serviceMode: .bundled))
         let updateController = makeSnapshotUpdateController()

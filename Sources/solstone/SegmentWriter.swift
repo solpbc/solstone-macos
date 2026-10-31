@@ -63,6 +63,8 @@ public protocol SegmentScreenshotCapturing: AnyObject, Sendable {
     var onFrameDelivered: (@MainActor () -> Void)? { get set }
     var currentPreviewEpoch: (@Sendable () -> UInt64)? { get set }
     var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)? { get set }
+    var siteFrameGate: SiteFrameGate? { get set }
+    var isSiteRuleActive: Bool { get set }
     func start() async throws
     func stop() async
     func updateContentFilter(_ filter: SCContentFilter) async
@@ -88,6 +90,14 @@ public extension SegmentScreenshotCapturing {
     }
     var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)? {
         get { nil }
+        set {}
+    }
+    var siteFrameGate: SiteFrameGate? {
+        get { nil }
+        set {}
+    }
+    var isSiteRuleActive: Bool {
+        get { false }
         set {}
     }
 }
@@ -159,6 +169,14 @@ public final class SegmentWriter {
     public var onFrameDelivered: (@MainActor (CGDirectDisplayID) -> Void)?
     public var currentPreviewEpoch: (@Sendable () -> UInt64)?
     public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
+    public var siteFrameGate: SiteFrameGate?
+    public var isSiteRuleActive: Bool = false {
+        didSet {
+            for capturer in screenshotCapturers.values {
+                capturer.isSiteRuleActive = isSiteRuleActive
+            }
+        }
+    }
 
     private var screenshotCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
     private var audioManager: (any SegmentAudioManaging)?
@@ -382,6 +400,8 @@ public final class SegmentWriter {
                         capturer.onLatestFrame = { [weak self] image, streamGen, epoch in
                             self?.onLatestFrame?(image, streamGen, epoch)
                         }
+                        capturer.siteFrameGate = siteFrameGate
+                        capturer.isSiteRuleActive = isSiteRuleActive
                         try await capturer.start()
                         constructedCapturers[info.displayID] = capturer
                         anyDisplayStarted = true
