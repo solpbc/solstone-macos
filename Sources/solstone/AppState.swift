@@ -144,8 +144,6 @@ public final class AppState {
     private let automaticObservationPipelineEnabled: Bool
     public private(set) var config: AppConfig
     internal var privateWindowAccessibilityMonitor = PrivateWindowAccessibilityMonitor()
-    internal var accessibilityProbe: AccessibilityProbe
-    public var snapshotSiteSafariCaution: Bool = false
     private var silenceMusicHolder: DebugSettingHolder!
     private var didAttemptSameMachineMigration = false
     private static let sameMachineMigrationRetryDelays: [Duration] = [
@@ -349,46 +347,6 @@ public final class AppState {
     private func reconcilePrivateWindowAccessibility() {
         guard !isSnapshot else { return }
         privateWindowAccessibilityMonitor.setEnabled(privateWindowAccessibilityEnabled)
-    }
-
-    public var siteAccessibilityCaution: Bool {
-        guard !config.excludedSites.isEmpty else { return false }
-        return !accessibilityProbe.readWorks()
-    }
-
-    public var siteSafariCaution: Bool {
-        guard !config.excludedSites.isEmpty else { return false }
-        if isSnapshot {
-            return snapshotSiteSafariCaution
-        }
-        return capture.captureManager.siteFrameGate.currentDecisions.hasSafariCaution
-    }
-
-    @discardableResult
-    public func addExcludedSite(_ input: String) -> String? {
-        guard let stored = SiteRule.storedHost(input) else {
-            return UICopy.Websites.ERROR_INVALID_ADDRESS
-        }
-        guard config.excludedSites.count < 200 else {
-            return UICopy.Websites.ERROR_LIMIT_REACHED
-        }
-        if config.excludedSites.contains(stored) {
-            return nil
-        }
-        if !accessibilityProbe.readWorks() {
-            accessibilityProbe.prompt()
-        }
-        var newConfig = config
-        newConfig.excludedSites.append(stored)
-        updateConfig(newConfig)
-        return nil
-    }
-
-    public func removeExcludedSite(at index: Int) {
-        guard index >= 0 && index < config.excludedSites.count else { return }
-        var newConfig = config
-        newConfig.excludedSites.remove(at: index)
-        updateConfig(newConfig)
     }
 
     /// Set to true after the first permission check completes, so startup UI knows real state
@@ -802,10 +760,6 @@ public final class AppState {
                 excludedTitlePatterns: newConfig.excludedTitlePatterns,
                 excludePrivateBrowsingAccessibility: newConfig.excludePrivateBrowsingAccessibility
             )
-        }
-
-        if newConfig.excludedSites != oldConfig.excludedSites {
-            capture.captureManager.updateSiteRule(newConfig.excludedSites)
         }
 
         if newConfig.pauseForProtectedVideo != oldConfig.pauseForProtectedVideo ||
@@ -1872,11 +1826,6 @@ public final class AppState {
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = false
         self.automaticObservationPipelineEnabled = automaticObservationPipelineEnabled
-        let probe = AccessibilityProbe(
-            readWorks: { AccessibilityTitleReader().health() == .working },
-            prompt: { AccessibilityTitleReader.ask() }
-        )
-        self.accessibilityProbe = probe
         // Before capture is built below, so the first frame already leaves these apps out.
         var config = config
         config.addPasswordManagerExclusionsIfNeeded()
@@ -1996,11 +1945,6 @@ public final class AppState {
         }
         captureManager.onLatestFrame = { [weak captureTarget] image, streamGen, epoch in
             captureTarget?.state?.updateLatestFrame(image, epoch: epoch)
-        }
-        captureManager.accessibilityProbe = probe
-        captureManager.isSnapshot = false
-        if !config.excludedSites.isEmpty {
-            captureManager.updateSiteRule(config.excludedSites)
         }
         self.silenceMusicHolder = silenceMusicHolder
         let capture = CaptureCoordinator(
@@ -2177,8 +2121,7 @@ public final class AppState {
         captureStartOperation: CaptureCoordinator.StartOperation? = nil,
         shortcutState: PauseShortcutController.State = .off,
         screenFailure: ScreenFailureKind? = nil,
-        emptyMicrophoneState: MicrophoneEmptyState? = nil,
-        snapshotSafariCaution: Bool = false
+        emptyMicrophoneState: MicrophoneEmptyState? = nil
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -2227,10 +2170,6 @@ public final class AppState {
         }
         state.captureManager.onLatestFrame = { [weak state] image, _, epoch in
             state?.updateLatestFrame(image, epoch: epoch)
-        }
-        state.snapshotSiteSafariCaution = snapshotSafariCaution
-        if !config.excludedSites.isEmpty {
-            state.capture.captureManager.updateSiteRule(config.excludedSites)
         }
         return state
     }
@@ -2347,11 +2286,6 @@ public final class AppState {
         self.storageManager = storageManager
         self.audioDeviceMonitor = audioDeviceMonitor
         self.isSnapshot = isSnapshot
-        let probe = AccessibilityProbe(
-            readWorks: { false },
-            prompt: {}
-        )
-        self.accessibilityProbe = probe
         // Only the live-probe launch suppresses the automatic pipeline, and it
         // always comes through the designated initializer. This initializer
         // starts no capture, recovery, or startup sync of its own; normal
@@ -2396,8 +2330,6 @@ public final class AppState {
         self.setupModel = setupModel
         if let supportingIdentityResolver { self.supportingIdentityResolver = supportingIdentityResolver }
         let captureManager = CaptureManager(storageManager: storageManager)
-        captureManager.accessibilityProbe = probe
-        captureManager.isSnapshot = isSnapshot
         captureManager.microphoneChoiceProvider = { [weak captureTarget] uid in
             captureTarget?.state?.config.microphonePriority.first(where: { $0.uid == uid })?.choice
         }

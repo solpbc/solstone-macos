@@ -20,26 +20,9 @@ public final class ScreenshotCapturer {
     public var onFrameDelivered: (@MainActor () -> Void)?
     public var currentPreviewEpoch: (@Sendable () -> UInt64)?
     public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
-    public var siteFrameGate: SiteFrameGate?
-    public var isSiteRuleActive: Bool = false {
-        didSet {
-            let active = isSiteRuleActive
-            sampleQueueRuleActive.withLock { $0 = active }
-            if !active {
-                if let gate = siteFrameGate {
-                    let actions = gate.deactivate(displayID: displayID)
-                    applyGateActions(actions)
-                }
-                pendingBuffers.removeAll()
-            }
-        }
-    }
 
     private let videoWriter: VideoWriter
     private let verbose: Bool
-    private let sampleQueueRuleActive = OSAllocatedUnfairLock<Bool>(initialState: false)
-    private var pendingBuffers: [UInt64: CVPixelBuffer] = [:]
-    private var nextFrameID: UInt64 = 0
 
     private var contentFilter: SCContentFilter
     private let configuration: SCStreamConfiguration
@@ -51,7 +34,6 @@ public final class ScreenshotCapturer {
     private var streamGeneration: Int = 0
     private let streamFactory: CaptureStreamFactory
     private let captureStartTime: Date
-    private let captureOriginTicks: UInt64
     private var frameIndex: Int = 0
     private var skippedFrames: Int = 0
     private var consecutiveEmptyChecks = 0
@@ -123,7 +105,6 @@ public final class ScreenshotCapturer {
         self.verbose = verbose
         self.streamFactory = streamFactory
         self.captureStartTime = Date()
-        self.captureOriginTicks = mach_absolute_time()
 
         // Create video writer
         self.videoWriter = try VideoWriter.create(
@@ -176,10 +157,10 @@ public final class ScreenshotCapturer {
 
         do {
             // Create stream output handler
-            let output = VideoStreamOutput(sampleQueueRuleActive: sampleQueueRuleActive) { [weak self] pixelBuffer, isIdle, displayTicks in
+            let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
                 let epoch = self?.currentPreviewEpoch?() ?? 0
                 Task { @MainActor in
-                    self?.handleFrameFromOutput(generation: gen, pixelBuffer: pixelBuffer, isIdle: isIdle, epoch: epoch, displayTimeTicks: displayTicks)
+                    self?.handleFrameFromOutput(generation: gen, pixelBuffer: pixelBuffer, isIdle: isIdle, epoch: epoch)
                 }
             }
 
@@ -218,9 +199,9 @@ public final class ScreenshotCapturer {
         }
     }
 
-    internal func handleFrameFromOutput(generation: Int, pixelBuffer: CVPixelBuffer, isIdle: Bool, epoch: UInt64, displayTimeTicks: UInt64? = nil) {
+    internal func handleFrameFromOutput(generation: Int, pixelBuffer: CVPixelBuffer, isIdle: Bool, epoch: UInt64) {
         guard streamGeneration == generation, isRunning else { return }
-        handleFrame(pixelBuffer, isIdle: isIdle, epoch: epoch, displayTimeTicks: displayTimeTicks)
+        handleFrame(pixelBuffer, isIdle: isIdle, epoch: epoch)
     }
 
     internal func handleStreamErrorFromDelegate(generation: Int, error: Error) {
@@ -233,8 +214,7 @@ public final class ScreenshotCapturer {
     ///   - pixelBuffer: The video frame pixel buffer
     ///   - isIdle: True if SCStream reports the frame as idle (no content change)
     ///   - epoch: The preview epoch sampled on the stream queue
-    ///   - displayTimeTicks: Mach absolute timestamp from frame attachment displayTime
-    private func handleFrame(_ pixelBuffer: CVPixelBuffer, isIdle: Bool, epoch: UInt64, displayTimeTicks: UInt64? = nil) {
+    private func handleFrame(_ pixelBuffer: CVPixelBuffer, isIdle: Bool, epoch: UInt64) {
         guard isRunning else { return }
         onFrameDelivered?()
         healthCheckFrameCount += 1
@@ -245,7 +225,6 @@ public final class ScreenshotCapturer {
             Logger.capture.info("ScreenshotCapturer: First frame received for display \(self.displayID, privacy: .public) after \(elapsed, privacy: .public)s")
         }
 
-        // The live preview is not gated and is never saved.
         // A preview may have been invalidated since the last changed frame (for example,
         // while startup was still committing). A valid idle buffer can repopulate it;
         // the receiver still enforces the current epoch, source and pause authority.
@@ -263,69 +242,15 @@ public final class ScreenshotCapturer {
             return
         }
 
-        if !isSiteRuleActive {
-            // Frame has new content, encode it
-            let elapsed = Date().timeIntervalSince(captureStartTime)
-            let pts: CMTime
-            if let gate = siteFrameGate {
-                pts = gate.clampInactivePTS(displayID: displayID, elapsed: elapsed)
-            } else {
-                pts = CMTime(seconds: elapsed, preferredTimescale: 600)
-            }
+        // Frame has new content, encode it
+        let elapsed = Date().timeIntervalSince(captureStartTime)
+        let pts = CMTime(seconds: elapsed, preferredTimescale: 600)
 
-            videoWriter.appendFrame(pixelBuffer, presentationTime: pts)
-            frameIndex += 1
+        videoWriter.appendFrame(pixelBuffer, presentationTime: pts)
+        frameIndex += 1
 
-            if verbose {
-                Logger.capture.debug("ScreenshotCapturer: Display \(self.displayID, privacy: .public) frame #\(self.frameIndex, privacy: .public) at \(String(format: "%.3f", elapsed), privacy: .public)s")
-            }
-            return
-        }
-
-        guard let gate = siteFrameGate else {
-            let elapsed = Date().timeIntervalSince(captureStartTime)
-            let pts = CMTime(seconds: elapsed, preferredTimescale: 600)
-            videoWriter.appendFrame(pixelBuffer, presentationTime: pts)
-            frameIndex += 1
-            return
-        }
-
-        nextFrameID &+= 1
-        let frameID = nextFrameID
-        pendingBuffers[frameID] = pixelBuffer
-
-        let c = displayTimeTicks.map { HostClock.seconds(ticks: $0) }
-        let held = SiteHeldFrame(
-            id: frameID,
-            displayTicks: displayTimeTicks,
-            c: c,
-            originTicks: captureOriginTicks
-        )
-
-        var actions = gate.enqueue(displayID: displayID, frame: held)
-        let now = HostClock.seconds(ticks: mach_absolute_time())
-        actions.append(contentsOf: gate.evaluate(displayID: displayID, now: now))
-
-        applyGateActions(actions)
-    }
-
-    private func applyGateActions(_ actions: [SiteFrameAction]) {
-        for action in actions {
-            switch action {
-            case .release(let id, let pts):
-                if let buffer = pendingBuffers.removeValue(forKey: id) {
-                    videoWriter.appendFrame(buffer, presentationTime: pts)
-                    frameIndex += 1
-                    if verbose {
-                        Logger.capture.debug("ScreenshotCapturer: Display \(self.displayID, privacy: .public) released frame #\(self.frameIndex, privacy: .public) at \(String(format: "%.3f", pts.seconds), privacy: .public)s")
-                    }
-                }
-            case .drop(let id, let reason):
-                pendingBuffers.removeValue(forKey: id)
-                if verbose {
-                    Logger.capture.debug("ScreenshotCapturer: Display \(self.displayID, privacy: .public) dropped frame \(id, privacy: .public) (\(reason.rawValue, privacy: .public))")
-                }
-            }
+        if verbose {
+            Logger.capture.debug("ScreenshotCapturer: Display \(self.displayID, privacy: .public) frame #\(self.frameIndex, privacy: .public) at \(String(format: "%.3f", elapsed), privacy: .public)s")
         }
     }
 
@@ -384,18 +309,8 @@ public final class ScreenshotCapturer {
     public func finish(completion: @escaping @Sendable (Result<(URL, Int), Error>) -> Void) {
         Task {
             await stop()
-            drainGateAndFlush()
             videoWriter.finish(completion: completion)
         }
-    }
-
-    private func drainGateAndFlush() {
-        if let gate = siteFrameGate {
-            let now = HostClock.seconds(ticks: mach_absolute_time())
-            let actions = gate.drain(displayID: displayID, now: now)
-            applyGateActions(actions)
-        }
-        pendingBuffers.removeAll()
     }
 
     /// Finishes video writing with a timeout to prevent indefinite hangs.
@@ -534,10 +449,10 @@ public final class ScreenshotCapturer {
 
                 let attemptGen = gen
 
-                let output = VideoStreamOutput(sampleQueueRuleActive: sampleQueueRuleActive) { [weak self] pixelBuffer, isIdle, displayTicks in
+                let output = VideoStreamOutput { [weak self] pixelBuffer, isIdle in
                     let epoch = self?.currentPreviewEpoch?() ?? 0
                     Task { @MainActor in
-                        self?.handleFrameFromOutput(generation: attemptGen, pixelBuffer: pixelBuffer, isIdle: isIdle, epoch: epoch, displayTimeTicks: displayTicks)
+                        self?.handleFrameFromOutput(generation: attemptGen, pixelBuffer: pixelBuffer, isIdle: isIdle, epoch: epoch)
                     }
                 }
 
@@ -662,132 +577,28 @@ public final class ScreenshotCapturer {
 
 /// Handles video frames from SCStream and forwards pixel buffers to a callback
 internal final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
-    internal let sampleQueueRuleActive: OSAllocatedUnfairLock<Bool>
-    internal let onFrameHandler: (CVPixelBuffer, Bool, UInt64?) -> Void
+    internal let onFrame: (CVPixelBuffer, Bool) -> Void
 
-    init(
-        sampleQueueRuleActive: OSAllocatedUnfairLock<Bool> = OSAllocatedUnfairLock(initialState: false),
-        onFrame: @escaping (CVPixelBuffer, Bool, UInt64?) -> Void
-    ) {
-        self.sampleQueueRuleActive = sampleQueueRuleActive
-        self.onFrameHandler = onFrame
+    init(onFrame: @escaping (CVPixelBuffer, Bool) -> Void) {
+        self.onFrame = onFrame
         super.init()
-    }
-
-    convenience init(onFrame: @escaping (CVPixelBuffer, Bool) -> Void) {
-        self.init(sampleQueueRuleActive: OSAllocatedUnfairLock(initialState: false)) { buffer, isIdle, _ in
-            onFrame(buffer, isIdle)
-        }
-    }
-
-    internal func onFrame(_ pixelBuffer: CVPixelBuffer, _ isIdle: Bool, _ displayTicks: UInt64? = nil) {
-        onFrameHandler(pixelBuffer, isIdle, displayTicks)
     }
 
     func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
         guard outputType == .screen else { return }
 
-        let isActive = sampleQueueRuleActive.withLock { $0 }
+        // Extract pixel buffer
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        if !isActive {
-            // Extract pixel buffer
-            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-
-            // Check frame status from SCStreamFrameInfo attachments
-            // Status == .idle means no content change since last frame
-            var isIdle = false
-            if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
-               let statusValue = attachments.first?[.status] as? Int,
-               let status = SCFrameStatus(rawValue: statusValue) {
-                isIdle = (status == .idle)
-            }
-
-            onFrame(pixelBuffer, isIdle, nil)
-            return
-        }
-
-        // Rule is active: read status and displayTime, deep-copy buffer, hop only copy. Failed copy not encoded.
-        guard let sourceBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-
+        // Check frame status from SCStreamFrameInfo attachments
+        // Status == .idle means no content change since last frame
         var isIdle = false
-        var displayTime: UInt64? = nil
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]] {
-            if let statusValue = attachments.first?[.status] as? Int,
-               let status = SCFrameStatus(rawValue: statusValue) {
-                isIdle = (status == .idle)
-            }
-            displayTime = HostClock.displayTimeTicks(from: attachments)
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+           let statusValue = attachments.first?[.status] as? Int,
+           let status = SCFrameStatus(rawValue: statusValue) {
+            isIdle = (status == .idle)
         }
 
-        guard let copiedBuffer = deepCopyPixelBuffer(sourceBuffer) else { return }
-        onFrame(copiedBuffer, isIdle, displayTime)
+        onFrame(pixelBuffer, isIdle)
     }
-}
-
-private func deepCopyPixelBuffer(_ src: CVPixelBuffer) -> CVPixelBuffer? {
-    let width = CVPixelBufferGetWidth(src)
-    let height = CVPixelBufferGetHeight(src)
-    let pixelFormat = CVPixelBufferGetPixelFormatType(src)
-
-    var optDst: CVPixelBuffer?
-    let status = CVPixelBufferCreate(
-        kCFAllocatorDefault,
-        width,
-        height,
-        pixelFormat,
-        nil,
-        &optDst
-    )
-    guard status == kCVReturnSuccess, let dst = optDst else { return nil }
-
-    CVPixelBufferLockBaseAddress(src, .readOnly)
-    CVPixelBufferLockBaseAddress(dst, [])
-    defer {
-        CVPixelBufferUnlockBaseAddress(dst, [])
-        CVPixelBufferUnlockBaseAddress(src, .readOnly)
-    }
-
-    if CVPixelBufferIsPlanar(src) {
-        let planeCount = CVPixelBufferGetPlaneCount(src)
-        for plane in 0..<planeCount {
-            guard let srcAddr = CVPixelBufferGetBaseAddressOfPlane(src, plane),
-                  let dstAddr = CVPixelBufferGetBaseAddressOfPlane(dst, plane) else {
-                return nil
-            }
-            let srcBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(src, plane)
-            let dstBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(dst, plane)
-            let planeHeight = CVPixelBufferGetHeightOfPlane(src, plane)
-
-            if srcBytesPerRow == dstBytesPerRow {
-                memcpy(dstAddr, srcAddr, srcBytesPerRow * planeHeight)
-            } else {
-                let bytesToCopy = min(srcBytesPerRow, dstBytesPerRow)
-                for row in 0..<planeHeight {
-                    let srcRow = srcAddr.advanced(by: row * srcBytesPerRow)
-                    let dstRow = dstAddr.advanced(by: row * dstBytesPerRow)
-                    memcpy(dstRow, srcRow, bytesToCopy)
-                }
-            }
-        }
-    } else {
-        guard let srcAddr = CVPixelBufferGetBaseAddress(src),
-              let dstAddr = CVPixelBufferGetBaseAddress(dst) else {
-            return nil
-        }
-        let srcBytesPerRow = CVPixelBufferGetBytesPerRow(src)
-        let dstBytesPerRow = CVPixelBufferGetBytesPerRow(dst)
-
-        if srcBytesPerRow == dstBytesPerRow {
-            memcpy(dstAddr, srcAddr, srcBytesPerRow * height)
-        } else {
-            let bytesToCopy = min(srcBytesPerRow, dstBytesPerRow)
-            for row in 0..<height {
-                let srcRow = srcAddr.advanced(by: row * srcBytesPerRow)
-                let dstRow = dstAddr.advanced(by: row * dstBytesPerRow)
-                memcpy(dstRow, srcRow, bytesToCopy)
-            }
-        }
-    }
-
-    return dst
 }

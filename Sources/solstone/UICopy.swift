@@ -155,7 +155,6 @@ public enum UICopy {
     public static let SOURCES_HELP = "what you turn on here goes into your journal."
     public static let SOURCES_NONE = "both sources are off"
     public static let SOURCES_NONE_REASON = "nothing is going into your journal until you turn one back on."
-    public static let SOURCES_BROWSER_SAFARI_UNAVAILABLE = "can't check the solstone extension in Safari"
 #endif
 
     public static let CREATE_JOURNAL_ON_THIS_MAC = "create a new journal on this mac"
@@ -505,16 +504,4 @@ public enum UICopy {
     public static let MICROPHONES_EMPTY_OPEN_PERMISSIONS = "open permissions"
     public static let MICROPHONES_EMPTY_CONNECT_DESCRIPTION = "connect a microphone. for bluetooth, check that it is connected in system settings."
     public static let MICROPHONES_EMPTY_OPEN_SOUND = "open sound settings"
-
-    public enum Websites {
-        public static let DESCRIPTION_PARAGRAPH_1 = "a website you leave out is kept out of your journal. while it shows in Safari, your screen recording pauses, and its title and address stay out of activity. leaving out bank.com leaves out login.bank.com too."
-        public static let DESCRIPTION_PARAGRAPH_2 = "to check, solstone reads the address of the page each Safari window shows, through Accessibility, and compares it with this list on this mac. the address goes into activity only if you turned on browser addresses."
-        public static let LIMITS_DISCLOSURE = "checked in Safari. other browsers and web apps added to the Dock aren't checked yet; to keep one out, add it to excluded apps. when you switch tabs or pages, your screen recording pauses for a moment while solstone checks. a website shown inside another website's page isn't recognized. a left-out website's tab title can still show in a browser's tab bar. a page that changes without changing its window title, or a page shown for less than a quarter of a second, can be missed. sound isn't affected."
-        public static let ACCESSIBILITY_CAUTION = "solstone needs Accessibility to check websites. until then, your screen recording pauses whenever a Safari window is showing, and left-out websites can still go into activity."
-        public static func browserCaution(browser: String) -> String {
-            "solstone can't read page addresses in \(browser), so your screen recording pauses while it's showing a page, and left-out websites in it can still go into activity."
-        }
-        public static let ERROR_INVALID_ADDRESS = "enter a website address, like bank.com."
-        public static let ERROR_LIMIT_REACHED = "you can leave out up to 200 websites."
-    }
 }

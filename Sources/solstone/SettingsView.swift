@@ -210,8 +210,6 @@ struct SettingsView: View {
     @State private var newTitlePattern = ""
     @State private var newProtectedVideoPattern = ""
     @State private var newExcludedApp = ""
-    @State private var newWebsite = ""
-    @State private var websiteError: String? = nil
     @FocusState private var privateWindowKeyboardFocused: Bool
     @AccessibilityFocusState private var privateWindowAccessibilityFocused: Bool
     @State private var privateWindowAnnouncements = PrivateWindowAccessibilityAnnouncementPolicy()
@@ -3570,96 +3568,6 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("websites") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_1)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_2)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text(Self.privateWindowAccessibilityExplanation)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    DisclosureGroup("limits") {
-                        Text(UICopy.Websites.LIMITS_DISCLOSURE)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Privacy.websiteLimits)
-
-                    if appState.siteAccessibilityCaution {
-                        HStack(alignment: .top) {
-                            Text(UICopy.Websites.ACCESSIBILITY_CAUTION)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("open System Settings") {
-                                AccessibilityTitleReader.openSystemSettings()
-                            }
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Privacy.websiteAccessibilityCaution)
-                    }
-
-                    if appState.siteSafariCaution {
-                        Text(UICopy.Websites.browserCaution(browser: "Safari"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteBrowserCaution)
-                    }
-
-                    if appState.config.excludedSites.isEmpty {
-                        Text("no websites added")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 20)
-                    } else {
-                        VStack(spacing: 4) {
-                            ForEach(Array(appState.config.excludedSites.enumerated()), id: \.offset) { index, site in
-                                HStack {
-                                    Text(site)
-                                    Spacer()
-                                    Button(action: { appState.removeExcludedSite(at: index) }) {
-                                        Image(systemName: "minus.circle")
-                                            .foregroundStyle(.red)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("remove website")
-                                    .accessibilityIdentifier(AXID.Settings.Privacy.websiteRemove(site))
-                                }
-                                .padding(.vertical, 2)
-                                .accessibilityIdentifier(AXID.Settings.Privacy.websiteSite(site))
-                                .accessibilityValue(site)
-                            }
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Privacy.websitesList)
-                    }
-
-                    HStack {
-                        TextField("bank.com", text: $newWebsite)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { addWebsite() }
-                            .onChange(of: newWebsite) { websiteError = nil }
-                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteField)
-                        Button("add") { addWebsite() }
-                            .disabled(newWebsite.trimmingCharacters(in: .whitespaces).isEmpty)
-                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteAdd)
-                    }
-
-                    if let websiteError {
-                        Text(websiteError)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteFieldError)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
             GroupBox("protected video") {
                 VStack(alignment: .leading, spacing: 8) {
                     Toggle("pause intake while protected video is on screen", isOn: pauseProtectedVideoBinding)
@@ -3891,17 +3799,6 @@ struct SettingsView: View {
         var config = appState.config
         config.excludedTitlePatterns.remove(at: index)
         appState.updateConfig(config)
-    }
-
-    private func addWebsite() {
-        let input = newWebsite.trimmingCharacters(in: .whitespaces)
-        guard !input.isEmpty else { return }
-        if let error = appState.addExcludedSite(input) {
-            websiteError = error
-        } else {
-            websiteError = nil
-            newWebsite = ""
-        }
     }
 
     private var pauseProtectedVideoBinding: Binding<Bool> {

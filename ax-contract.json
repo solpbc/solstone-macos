@@ -52,16 +52,6 @@
         "template" : "settings.privacy.titlePatterns.remove.{value}"
       },
       {
-        "key" : "website host",
-        "runtime" : true,
-        "template" : "settings.privacy.websites.remove.{value}"
-      },
-      {
-        "key" : "website host",
-        "runtime" : true,
-        "template" : "settings.privacy.websites.site.{value}"
-      },
-      {
         "expansions" : [
           "permissions",
           "sources",
@@ -235,13 +225,6 @@
       "settings.privacy.titlePatterns.add",
       "settings.privacy.titlePatterns.field",
       "settings.privacy.titlePatterns.list",
-      "settings.privacy.websites.accessibilityCaution",
-      "settings.privacy.websites.add",
-      "settings.privacy.websites.browserCaution",
-      "settings.privacy.websites.field",
-      "settings.privacy.websites.field.error",
-      "settings.privacy.websites.limits",
-      "settings.privacy.websites.list",
       "settings.service.external.address",
       "settings.service.external.connect",
       "settings.service.external.connectionTest.state",

@@ -249,14 +249,6 @@ enum AXID {
             static let protectedVideoPatternField = "settings.privacy.protectedVideo.patterns.field"
             static let protectedVideoPatternAdd = "settings.privacy.protectedVideo.patterns.add"
 
-            static let websitesList = "settings.privacy.websites.list"
-            static let websiteField = "settings.privacy.websites.field"
-            static let websiteAdd = "settings.privacy.websites.add"
-            static let websiteFieldError = "settings.privacy.websites.field.error"
-            static let websiteAccessibilityCaution = "settings.privacy.websites.accessibilityCaution"
-            static let websiteBrowserCaution = "settings.privacy.websites.browserCaution"
-            static let websiteLimits = "settings.privacy.websites.limits"
-
             static func excludedApp(_ value: String) -> String {
                 "settings.privacy.excludedApps.app.\(value)"
             }
@@ -271,14 +263,6 @@ enum AXID {
 
             static func titlePatternRemove(_ value: String) -> String {
                 "settings.privacy.titlePatterns.remove.\(value)"
-            }
-
-            static func websiteSite(_ value: String) -> String {
-                "settings.privacy.websites.site.\(value)"
-            }
-
-            static func websiteRemove(_ value: String) -> String {
-                "settings.privacy.websites.remove.\(value)"
             }
 
             static func protectedVideoPattern(_ value: String) -> String {

@@ -29,7 +29,6 @@ struct DesktopActivitySettings: Equatable, Sendable {
     var excludedTitles: [String]
     var excludePrivate: Bool
     var privateAccessibility: Bool
-    var excludedSites: [String]
 
     init(_ config: AppConfig) {
         enabled = config.isActivitySourceOn
@@ -42,7 +41,6 @@ struct DesktopActivitySettings: Equatable, Sendable {
         excludedTitles = config.excludedTitlePatterns.map { $0.lowercased() }.filter { !$0.isEmpty }
         excludePrivate = config.excludePrivateBrowsing
         privateAccessibility = config.excludePrivateBrowsingAccessibility
-        excludedSites = config.excludedSites
     }
 
     func excludes(_ app: DesktopActivityApp) -> Bool {
@@ -66,19 +64,7 @@ final class DesktopActivityReadPermit: Sendable {
 }
 
 struct DesktopActivityReader: Sendable {
-    public typealias WalkSeam = @Sendable (AXUIElement, WebAreaWalkMode, DesktopActivityReadPermit?) -> WebAreaWalkResult
-
     let permit: DesktopActivityReadPermit
-    let walkSeam: WalkSeam
-
-    init(
-        permit: DesktopActivityReadPermit,
-        walkSeam: @escaping WalkSeam = { WebAreaWalker.walk($0, mode: $1, permit: $2) }
-    ) {
-        self.permit = permit
-        self.walkSeam = walkSeam
-    }
-
     func read(app: DesktopActivityApp, settings: DesktopActivitySettings) -> DesktopActivityObservation {
         guard permit.isValid, !settings.excludes(app) else { return DesktopActivityObservation(rows: []) }
         let screenGranted = permit.isValid && CGPreflightScreenCaptureAccess()
@@ -88,9 +74,8 @@ struct DesktopActivityReader: Sendable {
             ($0[kCGWindowLayer as String] as? Int) == 0 }
         let cgTitle = screenGranted ? window?[kCGWindowName as String] as? String : nil
         let browser = PrivateBrowser.forBundleIdentifier(app.bundleID)
-        let needsAX = (settings.accessibility && (settings.titles || settings.urls)) ||
-            (settings.excludePrivate && settings.privateAccessibility && browser != nil) ||
-            (!settings.excludedSites.isEmpty && (browser == .safari || browser == .firefox))
+        let needsAX = settings.accessibility && (settings.titles || settings.urls) ||
+            settings.excludePrivate && settings.privateAccessibility && browser != nil
         var axTitle: String?
         var axDenied = false
         var focusedWindow: AXUIElement?
@@ -128,25 +113,10 @@ struct DesktopActivityReader: Sendable {
             } else { verdict = .undecided }
             if verdict == .privateWindow { return DesktopActivityObservation(rows: []) }
         }
-
-        var documentURL: String?
-        if !settings.excludedSites.isEmpty && (browser == .safari || browser == .firefox) {
-            let targetWindow = focusedWindow ?? AXUIElementCreateApplication(app.pid)
-            let walk = walkSeam(targetWindow, .everyTopLevel, permit)
-            for urlStr in walk.urls.compactMap({ $0 }) {
-                if let host = SiteRule.normalizeReadHost(urlStr) {
-                    if settings.excludedSites.contains(where: { SiteRule.covers(siteHost: $0, host: host) }) {
-                        return DesktopActivityObservation(rows: [])
-                    }
-                }
-            }
-            if settings.urls && settings.accessibility {
-                documentURL = walk.urls.compactMap({ $0 }).first
-            }
-        } else if settings.urls && settings.accessibility && browser != nil, let focusedWindow {
-            let walk = walkSeam(focusedWindow, .firstDocument, permit)
-            documentURL = walk.urls.compactMap({ $0 }).first
-        }
+        let documentURL: String?
+        if settings.urls && settings.accessibility && browser != nil, let focusedWindow {
+            documentURL = pageURL(in: focusedWindow)
+        } else { documentURL = nil }
         var row = DesktopActivityRow(kind: "foreground", method: screenGranted ? "cg-window" : (axTitle != nil && settings.accessibility ? "ax" : "nsworkspace"), app: app.name, app_id: app.bundleID)
         if settings.titles { row.title = title.flatMap { $0.isEmpty ? nil : String($0.prefix(2048)) } }
         // No address-bar AXValue is used. AXURL belongs to the currently committed document.
