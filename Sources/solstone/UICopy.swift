@@ -507,13 +507,14 @@ public enum UICopy {
     public static let MICROPHONES_EMPTY_OPEN_SOUND = "open sound settings"
 
     public enum Websites {
-        public static let DESCRIPTION_PARAGRAPH_1 = "a website you leave out is kept out of your journal. while it shows in Safari, your screen recording pauses, and its title and address stay out of activity. leaving out bank.com leaves out login.bank.com too."
+        public static let DESCRIPTION_PARAGRAPH_1 = "a website you leave out is kept off your screen and out of activity: while it shows in Safari, screen intake pauses, and its title and address stay out of activity. leaving out bank.com leaves out login.bank.com too."
         public static let DESCRIPTION_PARAGRAPH_2 = "to check, solstone reads the address of the page each Safari window shows, through Accessibility, and compares it with this list on this mac. the address goes into activity only if you turned on browser addresses."
-        public static let LIMITS_DISCLOSURE = "checked in Safari. other browsers and web apps added to the Dock aren't checked yet; to keep one out, add it to excluded apps. when you switch tabs or pages, your screen recording pauses for a moment while solstone checks. a website shown inside another website's page isn't recognized. a left-out website's tab title can still show in a browser's tab bar. a page that changes without changing its window title, or a page shown for less than a quarter of a second, can be missed. sound isn't affected."
-        public static let ACCESSIBILITY_CAUTION = "solstone needs Accessibility to check websites. until then, your screen recording pauses whenever a Safari window is showing, and left-out websites can still go into activity."
+        public static let LIMITS_DISCLOSURE = "checked in Safari. other browsers and web apps added to the Dock aren't checked yet; to keep one out, add it to excluded apps. when you switch tabs or pages, screen intake pauses for a moment while solstone checks. a website shown inside another website's page isn't recognized. a left-out website's tab title can still show in a browser's tab bar. a page that changes without changing its window title, or a page shown for less than a quarter of a second, can be missed. the solstone extension doesn't use this list yet; leave the site out there too."
+        public static let ACCESSIBILITY_CAUTION = "solstone needs Accessibility to check websites. until then, screen intake pauses whenever a Safari window is showing, and left-out websites can still go into activity."
         public static func browserCaution(browser: String) -> String {
-            "solstone can't read page addresses in \(browser), so your screen recording pauses while it's showing a page, and left-out websites in it can still go into activity."
+            "solstone can't read page addresses in \(browser), so screen intake pauses while it's showing a page, and left-out websites in it can still go into activity."
         }
+        public static let ACCESSIBILITY_EXPLANATION = "Accessibility (called Device Control and Data Access on macOS 27) lets an app see and control everything on this mac. here solstone uses it only to read the title and page address of each Safari window, and those stay on this mac. adding your first website asks for it."
         public static let ERROR_INVALID_ADDRESS = "enter a website address, like bank.com."
         public static let ERROR_LIMIT_REACHED = "you can leave out up to 200 websites."
     }

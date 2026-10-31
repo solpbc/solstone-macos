@@ -3580,7 +3580,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Text(Self.privateWindowAccessibilityExplanation)
+                    Text(UICopy.Websites.ACCESSIBILITY_EXPLANATION)
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
