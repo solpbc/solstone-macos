@@ -693,7 +693,6 @@ public final class SegmentWriter {
         // Stop all screenshot capturers first
         Logger.capture.info("Stopping \(self.liveCapturers.count, privacy: .public) screenshot capturer(s) for background remix...")
         for capturer in liveCapturers {
-            guard capturer.hasStream else { continue }
             do {
                 try await withTimeout(seconds: capturerStopTimeoutSeconds) {
                     await capturer.stop()
