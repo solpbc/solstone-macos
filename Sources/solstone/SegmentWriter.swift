@@ -760,8 +760,11 @@ public final class SegmentWriter {
                 }
             }
         }
-        for capturer in liveCapturers {
-            if !screenshotCapturers.values.contains(where: { $0 === capturer }), capturer.hasStream {
+        for capturer in liveCapturers where !screenshotCapturers.values.contains(where: { $0 === capturer }) {
+            // A capturer that never became part of this segment (an abandoned or
+            // failed start) gives back any frames it held in the shared gate.
+            capturer.discardPendingSiteFrames()
+            if capturer.hasStream {
                 _ = await capturer.finishWithTimeout(seconds: 10)
             }
         }

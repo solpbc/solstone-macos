@@ -394,6 +394,13 @@ public final class AppState {
         if !works {
             accessibilityProbe.prompt()
         }
+        // Re-check after the await: a second submit may have added it, or filled the list.
+        if config.excludedSites.contains(stored) {
+            return nil
+        }
+        guard config.excludedSites.count < 200 else {
+            return UICopy.Websites.ERROR_LIMIT_REACHED
+        }
         var newConfig = config
         newConfig.excludedSites.append(stored)
         updateConfig(newConfig)
@@ -2019,7 +2026,7 @@ public final class AppState {
         captureManager.accessibilityProbe = probe
         captureManager.isSnapshot = false
         captureManager.onSiteSafariCaution = { [weak captureTarget] caution in
-            captureTarget?.state?.currentSiteSafariCaution = caution
+            if captureTarget?.state?.currentSiteSafariCaution != caution { captureTarget?.state?.currentSiteSafariCaution = caution }
         }
         if !config.excludedSites.isEmpty {
             captureManager.updateSiteRule(config.excludedSites)
@@ -2423,7 +2430,7 @@ public final class AppState {
         captureManager.accessibilityProbe = probe
         captureManager.isSnapshot = isSnapshot
         captureManager.onSiteSafariCaution = { [weak captureTarget] caution in
-            captureTarget?.state?.currentSiteSafariCaution = caution
+            if captureTarget?.state?.currentSiteSafariCaution != caution { captureTarget?.state?.currentSiteSafariCaution = caution }
         }
         captureManager.microphoneChoiceProvider = { [weak captureTarget] uid in
             captureTarget?.state?.config.microphonePriority.first(where: { $0.uid == uid })?.choice
