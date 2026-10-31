@@ -26,8 +26,11 @@ struct DesktopActivityRow: Codable, Equatable, Sendable {
     }
 }
 
-/// A checkpoint never belongs to a destination journal. Only sealed ordinary segments are
-/// exposed to sync; a restart seals the last observed endpoint, never the intervening gap.
+/// A checkpoint never belongs to a destination journal. While a capture segment is open, rows wait
+/// here and are written into that segment as its capture ends, so they reach the journal beside the
+/// screen they describe. Without one, rows are sealed into their own ordinary segments. Only sealed
+/// or finished segments are exposed to sync; a restart seals the last observed endpoint, never the
+/// intervening gap.
 final class DesktopActivityStore {
     struct Checkpoint: Codable {
         var closed: [DesktopActivityRow] = []
@@ -36,6 +39,15 @@ final class DesktopActivityStore {
         var targetStem: String?
         var targetDuration: Int?
         var artifactID = UUID().uuidString.lowercased()
+        /// Rows assigned to a capture segment whose file is not yet known to be written.
+        var placement: Placement?
+    }
+
+    struct Placement: Codable {
+        var day: String
+        var stem: String
+        var artifactID: String
+        var rows: [DesktopActivityRow]
     }
 
     let storage: StorageManager
@@ -77,9 +89,15 @@ final class DesktopActivityStore {
         try seal()
     }
 
-    /// Split at the ordinary five-minute UTC boundaries, including a delayed timer tick.
-    func observe(_ observations: [DesktopActivityRow], at milliseconds: Int64) throws {
+    /// Split at the ordinary five-minute UTC boundaries, including a delayed timer tick. While a
+    /// capture segment is open, the capture's own cut splits the rows instead (`place(into:at:)`).
+    func observe(_ observations: [DesktopActivityRow], at milliseconds: Int64, captureOpen: Bool = false) throws {
+        if checkpoint.placement != nil { try finishPlacement() }
         if checkpoint.targetStem != nil { try seal() }
+        if captureOpen {
+            try advance(observations, at: milliseconds)
+            return
+        }
         if checkpoint.open.isEmpty, let earliest = checkpoint.closed.map(\.ts).min(),
            milliseconds >= (earliest / 300_000 + 1) * 300_000 {
             // An excluded/private window must not strand earlier admitted rows until quit.
@@ -112,12 +130,78 @@ final class DesktopActivityStore {
         try save(next)
     }
 
-    func end(at milliseconds: Int64) throws {
-        try observe([], at: milliseconds)
-        try seal()
+    func end(at milliseconds: Int64, captureOpen: Bool = false) throws {
+        try observe([], at: milliseconds, captureOpen: captureOpen)
+        if !captureOpen { try seal() }
+    }
+
+    /// Writes every row before `cut` into the capture segment whose capture is ending, while it is
+    /// still `.incomplete`, so the segment's finishing step publishes them with its media. A row
+    /// still being observed continues from the cut, as at a boundary.
+    func place(into directory: URL, at cut: Int64) throws {
+        if checkpoint.placement != nil { try finishPlacement() }
+        if checkpoint.targetStem != nil { try seal() }
+        let name = directory.lastPathComponent
+        guard name.hasSuffix(".incomplete") else { return }
+        var next = checkpoint
+        var placed: [DesktopActivityRow] = [], closed: [DesktopActivityRow] = [], open: [DesktopActivityRow] = []
+        for row in next.closed {
+            if row.ts < cut { var inside = row; inside.end_ts = min(row.end_ts, cut); placed.append(inside) }
+            if row.ts >= cut || row.end_ts > cut { var after = row; after.ts = max(row.ts, cut); closed.append(after) }
+        }
+        for row in next.open {
+            if row.ts < cut { var inside = row; inside.end_ts = cut; placed.append(inside) }
+            var after = row; after.ts = max(row.ts, cut); after.end_ts = max(row.end_ts, cut); open.append(after)
+        }
+        guard !placed.isEmpty else { return }
+        next.closed = closed; next.open = open
+        next.placement = Placement(day: directory.deletingLastPathComponent().lastPathComponent,
+                                   stem: String(name.dropLast(".incomplete".count)),
+                                   artifactID: UUID().uuidString.lowercased(), rows: placed)
+        try save(next)
+        try finishPlacement()
+    }
+
+    private func finishPlacement() throws {
+        guard let placement = checkpoint.placement else { return }
+        guard placement.day.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil,
+              placement.stem.range(of: #"^\d{6}$"#, options: .regularExpression) != nil,
+              UUID(uuidString: placement.artifactID) != nil else { throw CocoaError(.fileReadCorruptFile) }
+        let dayURL = storage.baseDirectory.appendingPathComponent(placement.day)
+        let incomplete = dayURL.appendingPathComponent("\(placement.stem).incomplete")
+        let suffix = "_\(placement.artifactID)_desktop_activity.jsonl"
+        var next = checkpoint
+        next.placement = nil
+        if FileManager.default.fileExists(atPath: incomplete.path) {
+            // Same name and bytes on a retry, so a crash before the clear below rewrites, never duplicates.
+            try write(Self.encode(placement.rows), incomplete.appendingPathComponent("\(placement.stem)\(suffix)"))
+        } else if !Self.holds(dayURL, stem: placement.stem, suffix: suffix) {
+            // The segment finished without them (a crash before the write): seal them on their own.
+            next.closed = placement.rows + next.closed
+        }
+        try save(next)
+    }
+
+    /// Finishing renames the segment and its files, so look for the artifact id, not the name.
+    private static func holds(_ dayURL: URL, stem: String, suffix: String) -> Bool {
+        let segments = (try? FileManager.default.contentsOfDirectory(at: dayURL, includingPropertiesForKeys: nil)) ?? []
+        return segments.contains { segment in
+            let name = segment.lastPathComponent
+            guard name.hasPrefix("\(stem)_") || name == "\(stem).failed" else { return false }
+            return ((try? FileManager.default.contentsOfDirectory(atPath: segment.path)) ?? []).contains { $0.hasSuffix(suffix) }
+        }
+    }
+
+    private static func encode(_ rows: [DesktopActivityRow]) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        var data = Data()
+        for row in rows { data.append(try encoder.encode(row)); data.append(0x0A) }
+        return data
     }
 
     func seal() throws {
+        if checkpoint.placement != nil { try finishPlacement() }
         var next = checkpoint
         let rows = (next.closed + next.open).filter { $0.end_ts >= $0.ts }
         guard let start = rows.map(\.ts).min(), let end = rows.map(\.end_ts).max() else { return }
@@ -137,10 +221,7 @@ final class DesktopActivityStore {
         let incomplete = dayURL.appendingPathComponent("\(stem).incomplete")
         let completed = dayURL.appendingPathComponent("\(stem)_\(duration)")
         let filename = "\(stem)_\(next.artifactID)_desktop_activity.jsonl"
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        var data = Data()
-        for row in rows { data.append(try encoder.encode(row)); data.append(0x0A) }
+        let data = try Self.encode(rows)
         if FileManager.default.fileExists(atPath: completed.path) {
             // A crash after publication must not republish the same interval under a new name.
             guard try Data(contentsOf: completed.appendingPathComponent(filename)) == data else {

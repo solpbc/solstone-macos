@@ -301,6 +301,63 @@ struct CaptureSegmentNamingTests {
         #expect(readCount.count == 2)
     }
 
+    /// Activity seen while capture runs is written into the segment it describes and finished with it,
+    /// under the finished name, never as a segment of its own.
+    @Test func activityRidesItsCaptureSegment() async throws {
+        let previousDuration = SegmentWriter.segmentDuration
+        SegmentWriter.segmentDuration = 300
+        defer { SegmentWriter.segmentDuration = previousDuration }
+        let root = URL(fileURLWithPath: "/var/tmp").appendingPathComponent("naming-activity-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let queue = RemixQueue()
+        // The store keeps its checkpoint beside the captures directory, inside this test's root.
+        let captures = root.appendingPathComponent("captures")
+        let storage = StorageManager(baseDirectory: captures)
+        let manager = CaptureManager(
+            storageManager: storage,
+            segmentFactory: { dir, prefix, _, _ in NamingCaptureSegment(outputDirectory: dir, timePrefix: prefix) },
+            recoveryCoordinator: IncompleteSegmentRecoveryCoordinator(recoveryFactory: { NoopRecovery() }),
+            finalizer: queue,
+            allowsEmptyDisplayConfigurationForTesting: true,
+            microphoneDevices: { [] }
+        )
+        let store = DesktopActivityStore(storage: storage)
+        func now() -> Int64 { Int64((Date().timeIntervalSince1970 * 1000).rounded()) }
+        manager.onSegmentCaptureEnding = { directory in try? store.place(into: directory, at: now()) }
+        let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
+        let row = DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "Fixture")
+
+        guard case .committed = await executor.enqueue(.start(reason: .user, sources: .screen, disabledMicUIDs: [], enabledMicUIDs: [])) else {
+            Issue.record("expected start to commit"); return
+        }
+        try store.observe([row], at: now(), captureOpen: manager.hasOpenSegment)
+        guard case .committed = await executor.enqueue(.rotate(reason: .boundary)) else {
+            Issue.record("expected rotate to commit"); return
+        }
+        try store.observe([row], at: now(), captureOpen: manager.hasOpenSegment)
+        // The app closes activity before it stops media, as stopRecording does.
+        try store.end(at: now(), captureOpen: manager.hasOpenSegment)
+        guard case .committed = await executor.enqueue(.stop(reason: .user)) else {
+            Issue.record("expected stop to commit"); return
+        }
+        await queue.waitForCompletion()
+
+        #expect(store.checkpoint.closed.isEmpty && store.checkpoint.open.isEmpty && store.checkpoint.placement == nil)
+        let days = try FileManager.default.contentsOfDirectory(at: captures, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil }
+        let segments = try days.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: [.isDirectoryKey]) }
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        #expect(segments.count == 2)
+        for segment in segments {
+            let name = segment.lastPathComponent
+            #expect(name.range(of: #"^\d{6}_300$"#, options: .regularExpression) != nil)
+            let activity = try FileManager.default.contentsOfDirectory(atPath: segment.path).filter { $0.hasSuffix("_desktop_activity.jsonl") }
+            #expect(activity.count == 1 && activity.allSatisfy { $0.hasPrefix("\(name)_") })
+        }
+    }
+
     @Test func readCount() async throws {
         let previousDuration = SegmentWriter.segmentDuration
         SegmentWriter.segmentDuration = 300

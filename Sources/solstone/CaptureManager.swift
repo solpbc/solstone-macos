@@ -135,6 +135,13 @@ public final class CaptureManager {
 
     private let storageManager: StorageManager
     private var currentSegment: (any CaptureSegmentWriting)?
+
+    /// Called with a segment's `.incomplete` directory as its capture ends, before it is finished,
+    /// so desktop activity for its interval is written into it. A discarded segment is not offered.
+    var onSegmentCaptureEnding: (@MainActor (URL) -> Void)?
+
+    /// A capture segment is open, or ending, and will be offered through `onSegmentCaptureEnding`.
+    var hasOpenSegment: Bool { currentSegment != nil }
     #if DEBUG || SOLSTONE_TEST_SUPPORT
     internal var beforeResumeNativeStartForTesting: (@MainActor () async throws -> Void)?
     internal var afterSegmentDirectoryCreatedForTesting: (@MainActor () async throws -> Void)?
@@ -1290,7 +1297,7 @@ public final class CaptureManager {
         var result: SegmentCaptureResult?
         if let segment = currentSegment {
             segment.cutAudio()
-            result = await segment.finishCapture()
+            result = await finishSegmentCapture(segment)
             currentSegment = nil
             if let result {
                 await enqueueRemix(result)
@@ -1368,6 +1375,11 @@ public final class CaptureManager {
 
         // If we're exactly on a boundary, schedule for full duration
         return secondsUntilNext == 0 ? SegmentWriter.segmentDuration : TimeInterval(secondsUntilNext)
+    }
+
+    private func finishSegmentCapture(_ segment: any CaptureSegmentWriting) async -> SegmentCaptureResult? {
+        onSegmentCaptureEnding?(segment.outputDirectory)
+        return await segment.finishCapture()
     }
 
     private func enqueueRemix(_ result: SegmentCaptureResult) async {
@@ -1619,7 +1631,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         lifecycleManager.resetLifecyclePendingState(stopRecovery: true)
 
         if let segment = currentSegment {
-            let result = await segment.finishCapture()
+            let result = await finishSegmentCapture(segment)
             currentSegment = nil
             if let result {
                 await enqueueRemix(result)
@@ -1646,7 +1658,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
 
         // Finish current segment and enqueue remix before tearing down persistent captures.
         if let segment = currentSegment {
-            let result = await segment.finishCapture()
+            let result = await finishSegmentCapture(segment)
             currentSegment = nil
             if let result {
                 await enqueueRemix(result)
@@ -1695,7 +1707,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
         var oldResult: SegmentCaptureResult?
         if let segment = currentSegment {
             segment.handOffAudio(to: audioHandoff)
-            oldResult = await segment.finishCapture()
+            oldResult = await finishSegmentCapture(segment)
         }
         if let oldResult {
             logSegmentSummary(oldResult)

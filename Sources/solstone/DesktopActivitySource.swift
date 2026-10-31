@@ -17,6 +17,7 @@ final class DesktopActivitySource {
     private let store: DesktopActivityStore
     private let eligibility: @MainActor () -> Bool
     private let locked: @MainActor () -> Bool
+    private let captureOpen: @MainActor () -> Bool
     private let foreground: @MainActor () -> DesktopActivityApp?
     private let reader: @Sendable (DesktopActivityApp, DesktopActivitySettings, DesktopActivityReadPermit) -> DesktopActivityObservation
     private let now: @MainActor () -> Date
@@ -36,12 +37,13 @@ final class DesktopActivitySource {
     init(storage: StorageManager,
          eligibility: @escaping @MainActor () -> Bool,
          locked: @escaping @MainActor () -> Bool,
+         captureOpen: @escaping @MainActor () -> Bool = { false },
          foreground: @escaping @MainActor () -> DesktopActivityApp? = DesktopActivityApp.frontmost,
          reader: @escaping @Sendable (DesktopActivityApp, DesktopActivitySettings, DesktopActivityReadPermit) -> DesktopActivityObservation = { DesktopActivityReader(permit: $2).read(app: $0, settings: $1) },
          now: @escaping @MainActor () -> Date = Date.init,
          onSealed: @escaping @MainActor () -> Void = {}) {
         store = DesktopActivityStore(storage: storage)
-        self.eligibility = eligibility; self.locked = locked; self.foreground = foreground
+        self.eligibility = eligibility; self.locked = locked; self.captureOpen = captureOpen; self.foreground = foreground
         self.reader = reader; self.now = now; self.onSealed = onSealed
     }
 
@@ -85,10 +87,16 @@ final class DesktopActivitySource {
         worker?.cancel()
         // A cancelled detached read is still bounded; do not start a second one until it returns.
         do {
-            if failed { try store.seal() } else { try store.end(at: milliseconds) }
+            if failed { try store.seal() } else { try store.end(at: milliseconds, captureOpen: captureOpen()) }
             notifyPublication()
         } catch { fail() }
         paused = !eligibility()
+    }
+
+    /// Called as a capture segment's capture ends, before it is finished: its activity goes in it.
+    func placeInCaptureSegment(_ directory: URL) {
+        guard !failed else { return }
+        do { try store.place(into: directory, at: milliseconds) } catch { fail() }
     }
 
     func stop() {
@@ -105,14 +113,14 @@ final class DesktopActivitySource {
         if paused {
             // Lock is a lifecycle observation, with no foreground facts. Owner pause wins.
             if locked() {
-                do { try store.observe([DesktopActivityRow(kind: "activity", method: "nsworkspace", state: "locked")], at: milliseconds) }
+                do { try store.observe([DesktopActivityRow(kind: "activity", method: "nsworkspace", state: "locked")], at: milliseconds, captureOpen: captureOpen()) }
                 catch { fail() }
             }
             return nil
         }
         guard worker == nil else { return worker }
         guard let app = foreground(), !settings.excludes(app) else {
-            do { try store.end(at: milliseconds); notifyPublication() } catch { fail() }
+            do { try store.end(at: milliseconds, captureOpen: captureOpen()); notifyPublication() } catch { fail() }
             return nil
         }
         let revision = generation, selected = settings, read = reader
@@ -127,7 +135,7 @@ final class DesktopActivitySource {
             if let windowID = result.windowID,
                DesktopActivityReader.frontWindowID(pid: app.pid) != windowID { return }
             do {
-                try self.store.observe(result.rows, at: self.milliseconds)
+                try self.store.observe(result.rows, at: self.milliseconds, captureOpen: self.captureOpen())
                 self.titleUnavailable = result.titleUnavailable
                 self.urlUnavailable = result.urlUnavailable
                 self.notifyPublication()

@@ -230,6 +230,85 @@ struct DesktopActivityTests {
         #expect(result.allSatisfy { $0.app == nil && $0.title == nil && $0.url == nil })
     }
 
+    @Test func captureSegmentTakesItsRowsAtTheCutAndLaterRowsContinue() throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        let storage = StorageManager(baseDirectory: root.appendingPathComponent("captures"))
+        let store = DesktopActivityStore(storage: storage)
+        let start: Int64 = 1_800_000_001_000, cut = start + 301_000
+        let (capture, prefix) = try storage.createSegmentDirectory(
+            segmentStartTime: Date(timeIntervalSince1970: Double(start) / 1000), timeZone: .current)
+        let a = DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "A")
+        let b = DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "B")
+        try store.observe([a], at: start, captureOpen: true)
+        try store.observe([b], at: start + 7_000, captureOpen: true)
+        // Neither an app switch nor the five-minute boundary seals rows of their own while capture runs.
+        try store.end(at: start + 8_000, captureOpen: true)
+        try store.observe([b], at: start + 300_000, captureOpen: true)
+        #expect(artifacts(root).isEmpty)
+
+        try store.place(into: capture, at: cut)
+        let inside = artifacts(root).filter { $0.deletingLastPathComponent().lastPathComponent == capture.lastPathComponent }
+        #expect(artifacts(root).count == 1 && inside.count == 1)
+        #expect(inside.first?.lastPathComponent.hasPrefix("\(prefix)_") == true)
+        var result = try rows(root)
+        #expect(result.map(\.app) == ["A", "B", "B"])
+        #expect(result[0].ts == start && result[0].end_ts == start + 7_000)
+        #expect(result[1].ts == start + 7_000 && result[1].end_ts == start + 8_000)
+        #expect(result[2].ts == start + 300_000 && result[2].end_ts == cut)
+
+        // Without capture, the row still in front goes on from the cut into a segment of its own.
+        try store.end(at: cut + 5_000)
+        result = try rows(root)
+        #expect(artifacts(root).count == 2 && result.count == 4)
+        #expect(result[3].app == "B" && result[3].ts == cut && result[3].end_ts == cut + 5_000)
+    }
+
+    @Test func placementInterruptedBeforeItsWriteFinishesInTheSameSegment() throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        let storage = StorageManager(baseDirectory: root.appendingPathComponent("captures"))
+        let start: Int64 = 1_800_000_001_000
+        let (capture, _) = try storage.createSegmentDirectory(
+            segmentStartTime: Date(timeIntervalSince1970: Double(start) / 1000), timeZone: .current)
+        let interrupted = DesktopActivityStore(storage: storage, write: { data, url in
+            if url.lastPathComponent.hasSuffix("_desktop_activity.jsonl") { throw CocoaError(.fileWriteOutOfSpace) }
+            try DesktopActivityStore.durableWrite(data, url)
+        })
+        try interrupted.observe([DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "A")], at: start, captureOpen: true)
+        #expect(throws: (any Error).self) { try interrupted.place(into: capture, at: start + 5_000) }
+        #expect(artifacts(root).isEmpty)
+
+        try DesktopActivityStore(storage: storage).recover()
+        let count = artifacts(root).count
+        try DesktopActivityStore(storage: storage).recover()
+        #expect(artifacts(root).count == count)
+        let inside = artifacts(root).filter { $0.deletingLastPathComponent().lastPathComponent == capture.lastPathComponent }
+        #expect(inside.count == 1)
+        let placed = try Data(contentsOf: try #require(inside.first)).split(separator: 0x0A)
+            .map { try JSONDecoder().decode(DesktopActivityRow.self, from: Data($0)) }
+        #expect(placed.count == 1 && placed[0].app == "A" && placed[0].ts == start && placed[0].end_ts == start + 5_000)
+    }
+
+    @Test func rowsFromASegmentThatFinishedWithoutThemAreSealedOnTheirOwn() throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        let storage = StorageManager(baseDirectory: root.appendingPathComponent("captures"))
+        let start: Int64 = 1_800_000_001_000
+        let (capture, prefix) = try storage.createSegmentDirectory(
+            segmentStartTime: Date(timeIntervalSince1970: Double(start) / 1000), timeZone: .current)
+        let interrupted = DesktopActivityStore(storage: storage, write: { data, url in
+            if url.lastPathComponent.hasSuffix("_desktop_activity.jsonl") { throw CocoaError(.fileWriteOutOfSpace) }
+            try DesktopActivityStore.durableWrite(data, url)
+        })
+        try interrupted.observe([DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "A")], at: start, captureOpen: true)
+        #expect(throws: (any Error).self) { try interrupted.place(into: capture, at: start + 5_000) }
+        let finished = capture.deletingLastPathComponent().appendingPathComponent("\(prefix)_5")
+        try FileManager.default.moveItem(at: capture, to: finished)
+
+        try DesktopActivityStore(storage: storage).recover()
+        #expect(artifacts(root).allSatisfy { $0.deletingLastPathComponent().lastPathComponent != finished.lastPathComponent })
+        let result = try rows(root)
+        #expect(result.first?.app == "A" && result.first?.ts == start && result.first?.end_ts == start + 5_000)
+    }
+
     @Test func withheldWindowDoesNotStrandEarlierRowsPastCadence() throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         let store = DesktopActivityStore(storage: StorageManager(baseDirectory: root.appendingPathComponent("captures")))

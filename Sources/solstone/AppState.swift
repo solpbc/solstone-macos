@@ -2505,7 +2505,8 @@ public final class AppState {
 
     private func configureDesktopActivity() {
         guard automaticObservationPipelineEnabled else { return }
-        let lifecycle = capture.captureManager.lifecycleManager
+        let manager = capture.captureManager
+        let lifecycle = manager.lifecycleManager
         let source = DesktopActivitySource(
             storage: storageManager,
             eligibility: { [weak self, weak lifecycle] in
@@ -2517,9 +2518,15 @@ public final class AppState {
                 return !self.isTerminating && !self.activityHeldByOwner &&
                     lifecycle.isMachineAwake && lifecycle.isActivityScreenLocked
             },
+            captureOpen: { [weak manager] in manager?.hasOpenSegment ?? false },
             onSealed: { [weak self] in self?.uploadCoordinator.triggerSync() }
         )
         activitySource = source
+        // Activity during capture goes into the capture segment it describes, as on Linux and Windows.
+        let previousEnding = manager.onSegmentCaptureEnding
+        manager.onSegmentCaptureEnding = { [weak source] directory in
+            previousEnding?(directory); source?.placeInCaptureSegment(directory)
+        }
         let previousEligibility = lifecycle.onIntakeEligibilityChanged
         lifecycle.onIntakeEligibilityChanged = { [weak source] in previousEligibility?(); source?.invalidate(); source?.sample() }
         let previousPause = pauseManager.onPauseIntake
