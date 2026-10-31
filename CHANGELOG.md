@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- the app names and window titles from activity now go into your journal together with your screen from the same moment, instead of on their own.
+
 ### Fixed
 
 - if your mac restarted after the solstone app stopped unexpectedly, the solstone extension in Safari, Chrome, Edge and Firefox could keep saying "can't reach the solstone app" while the app was open. the extension now reaches the app again after a restart.
