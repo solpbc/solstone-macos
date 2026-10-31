@@ -78,17 +78,7 @@ public struct SiteDecision: Sendable {
         now: TimeInterval,
         isSweep: Bool
     ) -> SiteVerdict {
-        // 1. Any covered host (even on an incomplete walk) -> covered
-        for urlStr in walk.urls.compactMap({ $0 }) {
-            if let host = SiteRule.normalizeReadHost(urlStr) {
-                if sites.contains(where: { SiteRule.covers(siteHost: $0, host: host) }) {
-                    recordSuccess(for: key, verdict: .covered, now: now)
-                    return .covered
-                }
-            }
-        }
-
-        // 2. Title mismatch
+        // 1. Title mismatch
         let initialMatch = Self.titleMatches(axTitle: initialAXTitle, cgTitle: key.title)
         let finalMatch = Self.titleMatches(axTitle: finalAXTitle, cgTitle: key.title)
         if !initialMatch || !finalMatch {
@@ -97,6 +87,16 @@ public struct SiteDecision: Sendable {
         }
         // Matching title resets mismatch streak for this pair
         titleMismatchStreaks[key] = 0
+
+        // 2. Any covered host (even on an incomplete walk) -> covered
+        for urlStr in walk.urls.compactMap({ $0 }) {
+            if let host = SiteRule.normalizeReadHost(urlStr) {
+                if sites.contains(where: { SiteRule.covers(siteHost: $0, host: host) }) {
+                    recordSuccess(for: key, verdict: .covered, now: now)
+                    return .covered
+                }
+            }
+        }
 
         // 3. Missing URL -> pending
         if walk.urls.contains(where: { $0 == nil }) {

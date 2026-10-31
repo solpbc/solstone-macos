@@ -65,6 +65,9 @@ public protocol SegmentScreenshotCapturing: AnyObject, Sendable {
     var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)? { get set }
     var siteFrameGate: SiteFrameGate? { get set }
     var isSiteRuleActive: Bool { get set }
+    func bindSiteRuleLock(_ lock: OSAllocatedUnfairLock<Bool>)
+    func reevaluateHeldFrames()
+    func discardPendingSiteFrames()
     func start() async throws
     func stop() async
     func updateContentFilter(_ filter: SCContentFilter) async
@@ -100,6 +103,9 @@ public extension SegmentScreenshotCapturing {
         get { false }
         set {}
     }
+    func bindSiteRuleLock(_ lock: OSAllocatedUnfairLock<Bool>) {}
+    func reevaluateHeldFrames() {}
+    func discardPendingSiteFrames() {}
 }
 
 public protocol SegmentAudioManaging: AnyObject, Sendable {
@@ -170,14 +176,36 @@ public final class SegmentWriter {
     public var currentPreviewEpoch: (@Sendable () -> UInt64)?
     public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
     public var siteFrameGate: SiteFrameGate?
-    public var isSiteRuleActive: Bool = false {
-        didSet {
-            for capturer in screenshotCapturers.values {
-                capturer.isSiteRuleActive = isSiteRuleActive
+    private let siteRuleLock = OSAllocatedUnfairLock(initialState: false)
+    public var isSiteRuleActive: Bool {
+        get { siteRuleLock.withLock { $0 } }
+        set {
+            let changedToFalse = siteRuleLock.withLock { current -> Bool in
+                let wasTrue = current
+                current = newValue
+                return wasTrue && !newValue
+            }
+            if changedToFalse {
+                for capturer in liveCapturers {
+                    capturer.discardPendingSiteFrames()
+                }
             }
         }
     }
 
+    public func reevaluateSiteFrames() {
+        for capturer in liveCapturers {
+            capturer.reevaluateHeldFrames()
+        }
+    }
+
+    public func discardPendingSiteBuffers() {
+        for capturer in liveCapturers {
+            capturer.discardPendingSiteFrames()
+        }
+    }
+
+    private var liveCapturers: [any SegmentScreenshotCapturing] = []
     private var screenshotCapturers: [CGDirectDisplayID: any SegmentScreenshotCapturing] = [:]
     private var audioManager: (any SegmentAudioManaging)?
     private var audioDiagnostics: AudioCaptureRecorder?
@@ -400,8 +428,9 @@ public final class SegmentWriter {
                         capturer.onLatestFrame = { [weak self] image, streamGen, epoch in
                             self?.onLatestFrame?(image, streamGen, epoch)
                         }
+                        capturer.bindSiteRuleLock(siteRuleLock)
                         capturer.siteFrameGate = siteFrameGate
-                        capturer.isSiteRuleActive = isSiteRuleActive
+                        liveCapturers.append(capturer)
                         try await capturer.start()
                         constructedCapturers[info.displayID] = capturer
                         anyDisplayStarted = true

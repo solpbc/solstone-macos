@@ -93,7 +93,7 @@ struct SiteExclusionConfigTests {
             excludePrivateBrowsing: false,
             excludePrivateBrowsingAccessibility: false
         )
-        let state = AppState.forSnapshot(config: config)
+        let state = AppState.forSnapshot(config: config, snapshotAccessibilityCaution: true)
 
         #expect(state.captureManager.siteRuleActive == true)
         #expect(state.captureManager.siteSampler != nil)

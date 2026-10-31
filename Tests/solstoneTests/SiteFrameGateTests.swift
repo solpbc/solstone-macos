@@ -437,4 +437,51 @@ struct SiteFrameGateTests {
             Issue.record("Expected frame to release for TitleOld")
         }
     }
+
+    @Test func bracketPollsWithIntermediateCoveredTitleOnSameWindowDropsFrame() {
+        let gate = SiteFrameGate()
+        let originTicks = makeTicks(fromSeconds: 100.0)
+        var decisions = SiteDecision()
+
+        // Bracket polls for window 1: title A, then C, then B
+        gate.addPoll(SitePollSnapshot(start: 9.8, end: 10.0, windows: [SitePollWindow(windowID: 1, title: "TitleA")]))
+        gate.addPoll(SitePollSnapshot(start: 10.2, end: 10.3, windows: [SitePollWindow(windowID: 1, title: "TitleC")]))
+        gate.addPoll(SitePollSnapshot(start: 10.5, end: 10.6, windows: [SitePollWindow(windowID: 1, title: "TitleB")]))
+
+        // A and B are ordinary, C is covered
+        decisions.evaluate(
+            key: SiteDecisionKey(windowID: 1, title: "TitleA"),
+            initialAXTitle: "TitleA",
+            finalAXTitle: "TitleA",
+            walk: WebAreaWalkResult(urls: ["https://example.com"], completeness: .complete),
+            sites: ["bank.com"],
+            now: 10.0,
+            isSweep: false
+        )
+        decisions.evaluate(
+            key: SiteDecisionKey(windowID: 1, title: "TitleC"),
+            initialAXTitle: "TitleC",
+            finalAXTitle: "TitleC",
+            walk: WebAreaWalkResult(urls: ["https://bank.com"], completeness: .complete),
+            sites: ["bank.com"],
+            now: 10.3,
+            isSweep: false
+        )
+        decisions.evaluate(
+            key: SiteDecisionKey(windowID: 1, title: "TitleB"),
+            initialAXTitle: "TitleB",
+            finalAXTitle: "TitleB",
+            walk: WebAreaWalkResult(urls: ["https://example.com"], completeness: .complete),
+            sites: ["bank.com"],
+            now: 10.6,
+            isSweep: false
+        )
+        gate.updateDecisions(decisions, axAvailable: true)
+
+        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        _ = gate.enqueue(displayID: displayID, frame: frame)
+
+        let actions = gate.evaluate(displayID: displayID, now: 11.0)
+        #expect(actions == [.drop(id: 1, reason: .cov)])
+    }
 }

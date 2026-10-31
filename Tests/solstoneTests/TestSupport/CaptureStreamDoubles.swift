@@ -1,9 +1,69 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import CoreMedia
 import Foundation
 @preconcurrency import ScreenCaptureKit
 @testable import solstone
+
+func makeTestPixelBuffer(width: Int = 16, height: Int = 16) -> CVPixelBuffer {
+    var pixelBuffer: CVPixelBuffer?
+    let status = CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        width,
+        height,
+        kCVPixelFormatType_32BGRA,
+        nil,
+        &pixelBuffer
+    )
+    precondition(status == kCVReturnSuccess && pixelBuffer != nil)
+    return pixelBuffer!
+}
+
+func makeTestSampleBuffer(
+    pixelBuffer: CVPixelBuffer,
+    status: SCFrameStatus = .complete,
+    displayTime: UInt64? = nil
+) -> CMSampleBuffer {
+    var formatDesc: CMVideoFormatDescription?
+    CMVideoFormatDescriptionCreateForImageBuffer(
+        allocator: kCFAllocatorDefault,
+        imageBuffer: pixelBuffer,
+        formatDescriptionOut: &formatDesc
+    )
+    var timing = CMSampleTimingInfo(
+        duration: CMTime(value: 1, timescale: 60),
+        presentationTimeStamp: .zero,
+        decodeTimeStamp: .invalid
+    )
+    var sampleBuffer: CMSampleBuffer?
+    CMSampleBufferCreateForImageBuffer(
+        allocator: kCFAllocatorDefault,
+        imageBuffer: pixelBuffer,
+        dataReady: true,
+        makeDataReadyCallback: nil,
+        refcon: nil,
+        formatDescription: formatDesc!,
+        sampleTiming: &timing,
+        sampleBufferOut: &sampleBuffer
+    )
+    let buffer = sampleBuffer!
+    let arr = CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: true)!
+    let dict = unsafeBitCast(CFArrayGetValueAtIndex(arr, 0), to: CFMutableDictionary.self)
+    CFDictionarySetValue(
+        dict,
+        Unmanaged.passUnretained(SCStreamFrameInfo.status.rawValue as NSString).toOpaque(),
+        Unmanaged.passUnretained(NSNumber(value: status.rawValue)).toOpaque()
+    )
+    if let dt = displayTime {
+        CFDictionarySetValue(
+            dict,
+            Unmanaged.passUnretained(SCStreamFrameInfo.displayTime.rawValue as NSString).toOpaque(),
+            Unmanaged.passUnretained(NSNumber(value: dt)).toOpaque()
+        )
+    }
+    return buffer
+}
 
 final class FakeCaptureStream: CaptureStreamControlling, @unchecked Sendable {
     let addStreamOutputCount = LockedCounter()

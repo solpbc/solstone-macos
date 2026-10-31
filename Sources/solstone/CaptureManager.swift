@@ -42,6 +42,8 @@ public protocol CaptureSegmentWriting: AnyObject, Sendable {
     var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)? { get set }
     var siteFrameGate: SiteFrameGate? { get set }
     var isSiteRuleActive: Bool { get set }
+    func reevaluateSiteFrames()
+    func discardPendingSiteBuffers()
 }
 
 public extension CaptureSegmentWriting {
@@ -53,6 +55,8 @@ public extension CaptureSegmentWriting {
         get { false }
         set {}
     }
+    func reevaluateSiteFrames() {}
+    func discardPendingSiteBuffers() {}
     func deselectMicrophone(deviceUID: String) { removeMicrophone(deviceUID: deviceUID) }
     func recordMicrophoneStall(deviceUID: String) { deselectMicrophone(deviceUID: deviceUID) }
     func sourcesWithLoss() -> [String] { [] }
@@ -224,6 +228,9 @@ public final class CaptureManager {
     public let siteFrameGate = SiteFrameGate()
     internal private(set) var siteSampler: SiteSampler?
     public private(set) var siteRuleActive: Bool = false
+    internal private(set) var siteListGeneration: UInt64 = 0
+    private var siteListContinuation: AsyncStream<(UInt64, [String])>.Continuation?
+    private var siteListTask: Task<Void, Never>?
     internal var accessibilityProbe = AccessibilityProbe()
     public var isSnapshot: Bool = false
     private var windowListProvider: @MainActor () -> [OnScreenWindowRecord]
@@ -535,11 +542,13 @@ public final class CaptureManager {
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        siteListContinuation?.finish()
+        siteListTask?.cancel()
         protectedVideoTimer?.invalidate()
         for observer in protectedVideoWorkspaceObservers {
             workspaceNotificationCenter.removeObserver(observer)
         }
+        NotificationCenter.default.removeObserver(self)
     }
 
     // MARK: - Public Methods
@@ -785,34 +794,64 @@ public final class CaptureManager {
         )
     }
 
+    func receiveSitePoll(_ poll: SitePollSnapshot) {
+        siteFrameGate.addPoll(poll)
+        currentSegment?.reevaluateSiteFrames()
+    }
+
+    func receiveSiteDecision(_ decisions: SiteDecision, axAvailable: Bool, generation: UInt64) {
+        guard generation == siteListGeneration else { return }
+        siteFrameGate.updateDecisions(decisions, axAvailable: axAvailable)
+        currentSegment?.reevaluateSiteFrames()
+    }
+
     public func updateSiteRule(_ sites: [String]) {
         let active = !sites.isEmpty
+        siteListGeneration += 1
+        let currentGen = siteListGeneration
         siteRuleActive = active
         currentSegment?.isSiteRuleActive = active
-        if active {
-            if siteSampler == nil {
-                siteSampler = SiteSampler(
-                    probe: accessibilityProbe,
-                    isSnapshot: isSnapshot,
-                    onPoll: { [weak self] poll in
-                        self?.siteFrameGate.addPoll(poll)
-                    },
-                    onDecisionUpdate: { [weak self] decisions, axAvailable in
-                        self?.siteFrameGate.updateDecisions(decisions, axAvailable: axAvailable)
-                    }
-                )
-            }
-            Task { [siteSampler] in
-                await siteSampler?.updateSites(sites)
-            }
-        } else {
-            let sampler = siteSampler
-            siteSampler = nil
-            Task {
-                await sampler?.updateSites([])
-            }
+        siteFrameGate.updateDecisions(SiteDecision(), axAvailable: false)
+        if !active {
             _ = siteFrameGate.deactivateAll()
         }
+
+        if siteSampler == nil {
+            let sampler = SiteSampler(
+                probe: accessibilityProbe,
+                isSnapshot: isSnapshot,
+                onPoll: { [weak self] poll in
+                    self?.receiveSitePoll(poll)
+                },
+                onDecisionUpdate: { [weak self] decisions, axAvailable, generation in
+                    self?.receiveSiteDecision(decisions, axAvailable: axAvailable, generation: generation)
+                }
+            )
+            siteSampler = sampler
+
+            let (stream, continuation) = AsyncStream<(UInt64, [String])>.makeStream()
+            siteListContinuation = continuation
+            siteListTask = Task { [sampler] in
+                for await (gen, s) in stream {
+                    await sampler.applySites(s, generation: gen)
+                }
+            }
+        }
+
+        siteListContinuation?.yield((currentGen, sites))
+    }
+
+    internal func waitForSiteListDrain(timeoutSeconds: TimeInterval = 2.0) async throws {
+        guard let sampler = siteSampler else { return }
+        let deadline = ContinuousClock.now + .seconds(timeoutSeconds)
+        while ContinuousClock.now < deadline {
+            let applied = await sampler.appliedGenerationForTesting
+            if applied >= siteListGeneration {
+                return
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        throw TimeoutError(seconds: timeoutSeconds)
     }
 
     public func updateProtectedVideoSettings(pause: Bool, patterns: [String]) {

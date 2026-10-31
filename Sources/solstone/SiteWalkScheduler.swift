@@ -42,11 +42,10 @@ public struct SiteWalkScheduler: Sendable {
         func nextSweep() -> CGWindowID? {
             guard !decided.isEmpty else { return nil }
             let count = decided.count
-            let allowRepeat = count < Self.budget
             for _ in 0..<count {
                 let wid = decided[cursor % count]
                 cursor = (cursor + 1) % count
-                if allowRepeat || !scheduledSweeps.contains(wid) {
+                if !scheduledSweeps.contains(wid) {
                     scheduledSweeps.insert(wid)
                     return wid
                 }

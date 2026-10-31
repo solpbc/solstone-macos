@@ -813,7 +813,7 @@ struct SnapshotTests {
             excludedSites: ["bank.com", "login.bank.com"],
             excludePrivateBrowsing: false
         )
-        let state = AppState.forSnapshot(config: config)
+        let state = AppState.forSnapshot(config: config, snapshotAccessibilityCaution: false)
         let updateController = makeSnapshotUpdateController()
         let filename = "settings-privacy-websites-list.png"
         defer { try? FileManager.default.removeItem(at: outputDir.appendingPathComponent(filename)) }
@@ -831,7 +831,7 @@ struct SnapshotTests {
             excludedSites: ["bank.com"],
             excludePrivateBrowsing: false
         )
-        let state = AppState.forSnapshot(config: config)
+        let state = AppState.forSnapshot(config: config, snapshotAccessibilityCaution: true)
         let updateController = makeSnapshotUpdateController()
         let filename = "settings-privacy-websites-accessibility-caution.png"
         defer { try? FileManager.default.removeItem(at: outputDir.appendingPathComponent(filename)) }

@@ -229,4 +229,39 @@ struct SiteDecisionTests {
         )
         #expect(v3 == .ordinary)
     }
+
+    @Test func midWalkTitleMismatchLeavesVerdictPendingEvenWithCoveredURL() {
+        var decision = SiteDecision()
+        let key = SiteDecisionKey(windowID: 1, title: "Original Title")
+        let walk = WebAreaWalkResult(
+            urls: ["https://bank.com/account"],
+            completeness: .complete
+        )
+
+        // Initial matches, final mismatches -> pending
+        let v1 = decision.evaluate(
+            key: key,
+            initialAXTitle: "Original Title",
+            finalAXTitle: "Changed Title",
+            walk: walk,
+            sites: ["bank.com"],
+            now: 1.0,
+            isSweep: false
+        )
+        #expect(v1 == .pending)
+        #expect(decision.verdict(for: key, at: 1.0) == .pending)
+
+        // Initial mismatches, final matches -> pending
+        let v2 = decision.evaluate(
+            key: key,
+            initialAXTitle: "Changed Title",
+            finalAXTitle: "Original Title",
+            walk: walk,
+            sites: ["bank.com"],
+            now: 2.0,
+            isSweep: false
+        )
+        #expect(v2 == .pending)
+        #expect(decision.verdict(for: key, at: 2.0) == .pending)
+    }
 }

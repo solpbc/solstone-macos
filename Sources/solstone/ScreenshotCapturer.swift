@@ -21,23 +21,44 @@ public final class ScreenshotCapturer {
     public var currentPreviewEpoch: (@Sendable () -> UInt64)?
     public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
     public var siteFrameGate: SiteFrameGate?
-    public var isSiteRuleActive: Bool = false {
-        didSet {
-            let active = isSiteRuleActive
-            sampleQueueRuleActive.withLock { $0 = active }
-            if !active {
-                if let gate = siteFrameGate {
-                    let actions = gate.deactivate(displayID: displayID)
-                    applyGateActions(actions)
-                }
-                pendingBuffers.removeAll()
+    private var boundSiteRuleLock: OSAllocatedUnfairLock<Bool>? = nil
+    private let localSiteRuleLock = OSAllocatedUnfairLock(initialState: false)
+    private var activeRuleLock: OSAllocatedUnfairLock<Bool> { boundSiteRuleLock ?? localSiteRuleLock }
+
+    public func bindSiteRuleLock(_ lock: OSAllocatedUnfairLock<Bool>) {
+        self.boundSiteRuleLock = lock
+    }
+
+    public var isSiteRuleActive: Bool {
+        get { activeRuleLock.withLock { $0 } }
+        set {
+            activeRuleLock.withLock { $0 = newValue }
+            if !newValue {
+                discardPendingSiteFrames()
             }
         }
     }
 
+    public let ownerID: UInt64 = UInt64.random(in: 1...UInt64.max)
+    internal private(set) var appendsClosed: Bool = false
+
+    public func discardPendingSiteFrames() {
+        if let gate = siteFrameGate {
+            let actions = gate.deactivate(displayID: displayID, owner: ownerID)
+            applyGateActions(actions)
+        }
+        pendingBuffers.removeAll()
+    }
+
+    public func reevaluateHeldFrames() {
+        guard let gate = siteFrameGate else { return }
+        let now = HostClock.seconds(ticks: mach_absolute_time())
+        let actions = gate.evaluate(displayID: displayID, now: now, owner: ownerID)
+        applyGateActions(actions)
+    }
+
     private let videoWriter: VideoWriter
     private let verbose: Bool
-    private let sampleQueueRuleActive = OSAllocatedUnfairLock<Bool>(initialState: false)
     private var pendingBuffers: [UInt64: CVPixelBuffer] = [:]
     private var nextFrameID: UInt64 = 0
 
@@ -47,7 +68,7 @@ public final class ScreenshotCapturer {
     private var streamOutput: VideoStreamOutput?
     private var streamDelegate: StreamDelegate?
     private var healthCheckTimer: Timer?
-    private var isRunning = false
+    internal private(set) var isRunning = false
     private var streamGeneration: Int = 0
     private let streamFactory: CaptureStreamFactory
     private let captureStartTime: Date
@@ -64,6 +85,25 @@ public final class ScreenshotCapturer {
     internal var _restartParkHookForTesting: (@MainActor () async -> Void)?
     internal var _streamGenerationForTesting: Int { streamGeneration }
     internal var _submittedVideoFrameCountForTesting: Int { frameIndex }
+    internal var _lastAppendedPTSForTesting: CMTime? { _lastAppendedPTS }
+    internal var _lastAppendedBufferForTesting: CVPixelBuffer?
+    private var _lastAppendedPTS: CMTime?
+    private var lastWrittenPTS: CMTime? = nil
+
+    private func monotonicPTS(_ candidate: CMTime) -> CMTime {
+        let pts: CMTime
+        if let last = lastWrittenPTS {
+            if candidate > last {
+                pts = candidate
+            } else {
+                pts = last + CMTime(value: 1, timescale: 600)
+            }
+        } else {
+            pts = candidate
+        }
+        lastWrittenPTS = pts
+        return pts
+    }
     internal var _isRunningForTesting: Bool { isRunning }
     internal var _hasStreamForTesting: Bool { stream != nil }
     internal var _isHealthCheckActiveForTesting: Bool { healthCheckTimer != nil }
@@ -116,14 +156,16 @@ public final class ScreenshotCapturer {
         duration: Double?,
         contentFilter: SCContentFilter,
         verbose: Bool,
-        streamFactory: @escaping CaptureStreamFactory
+        streamFactory: @escaping CaptureStreamFactory,
+        captureStartTime: Date = Date(),
+        captureOriginTicks: UInt64 = mach_absolute_time()
     ) throws {
         self.displayID = displayID
         self.contentFilter = contentFilter
         self.verbose = verbose
         self.streamFactory = streamFactory
-        self.captureStartTime = Date()
-        self.captureOriginTicks = mach_absolute_time()
+        self.captureStartTime = captureStartTime
+        self.captureOriginTicks = captureOriginTicks
 
         // Create video writer
         self.videoWriter = try VideoWriter.create(
@@ -176,7 +218,7 @@ public final class ScreenshotCapturer {
 
         do {
             // Create stream output handler
-            let output = VideoStreamOutput(sampleQueueRuleActive: sampleQueueRuleActive) { [weak self] pixelBuffer, isIdle, displayTicks in
+            let output = VideoStreamOutput(sampleQueueRuleActive: activeRuleLock) { [weak self] pixelBuffer, isIdle, displayTicks in
                 let epoch = self?.currentPreviewEpoch?() ?? 0
                 Task { @MainActor in
                     self?.handleFrameFromOutput(generation: gen, pixelBuffer: pixelBuffer, isIdle: isIdle, epoch: epoch, displayTimeTicks: displayTicks)
@@ -266,13 +308,10 @@ public final class ScreenshotCapturer {
         if !isSiteRuleActive {
             // Frame has new content, encode it
             let elapsed = Date().timeIntervalSince(captureStartTime)
-            let pts: CMTime
-            if let gate = siteFrameGate {
-                pts = gate.clampInactivePTS(displayID: displayID, elapsed: elapsed)
-            } else {
-                pts = CMTime(seconds: elapsed, preferredTimescale: 600)
-            }
+            let rawPTS = CMTime(seconds: elapsed, preferredTimescale: 600)
+            let pts = monotonicPTS(rawPTS)
 
+            _lastAppendedPTS = pts
             videoWriter.appendFrame(pixelBuffer, presentationTime: pts)
             frameIndex += 1
 
@@ -283,10 +322,6 @@ public final class ScreenshotCapturer {
         }
 
         guard let gate = siteFrameGate else {
-            let elapsed = Date().timeIntervalSince(captureStartTime)
-            let pts = CMTime(seconds: elapsed, preferredTimescale: 600)
-            videoWriter.appendFrame(pixelBuffer, presentationTime: pts)
-            frameIndex += 1
             return
         }
 
@@ -297,14 +332,15 @@ public final class ScreenshotCapturer {
         let c = displayTimeTicks.map { HostClock.seconds(ticks: $0) }
         let held = SiteHeldFrame(
             id: frameID,
+            owner: ownerID,
             displayTicks: displayTimeTicks,
             c: c,
             originTicks: captureOriginTicks
         )
 
-        var actions = gate.enqueue(displayID: displayID, frame: held)
+        var actions = gate.enqueue(displayID: displayID, frame: held, owner: ownerID)
         let now = HostClock.seconds(ticks: mach_absolute_time())
-        actions.append(contentsOf: gate.evaluate(displayID: displayID, now: now))
+        actions.append(contentsOf: gate.evaluate(displayID: displayID, now: now, owner: ownerID))
 
         applyGateActions(actions)
     }
@@ -314,10 +350,17 @@ public final class ScreenshotCapturer {
             switch action {
             case .release(let id, let pts):
                 if let buffer = pendingBuffers.removeValue(forKey: id) {
-                    videoWriter.appendFrame(buffer, presentationTime: pts)
-                    frameIndex += 1
-                    if verbose {
-                        Logger.capture.debug("ScreenshotCapturer: Display \(self.displayID, privacy: .public) released frame #\(self.frameIndex, privacy: .public) at \(String(format: "%.3f", pts.seconds), privacy: .public)s")
+                    if !appendsClosed {
+                        #if DEBUG || SOLSTONE_TEST_SUPPORT
+                        _lastAppendedBufferForTesting = buffer
+                        #endif
+                        let clampedPTS = monotonicPTS(pts)
+                        _lastAppendedPTS = clampedPTS
+                        videoWriter.appendFrame(buffer, presentationTime: clampedPTS)
+                        frameIndex += 1
+                        if verbose {
+                            Logger.capture.debug("ScreenshotCapturer: Display \(self.displayID, privacy: .public) released frame #\(self.frameIndex, privacy: .public) at \(String(format: "%.3f", pts.seconds), privacy: .public)s")
+                        }
                     }
                 }
             case .drop(let id, let reason):
@@ -385,6 +428,7 @@ public final class ScreenshotCapturer {
         Task {
             await stop()
             drainGateAndFlush()
+            appendsClosed = true
             videoWriter.finish(completion: completion)
         }
     }
@@ -392,7 +436,7 @@ public final class ScreenshotCapturer {
     private func drainGateAndFlush() {
         if let gate = siteFrameGate {
             let now = HostClock.seconds(ticks: mach_absolute_time())
-            let actions = gate.drain(displayID: displayID, now: now)
+            let actions = gate.drain(displayID: displayID, now: now, owner: ownerID)
             applyGateActions(actions)
         }
         pendingBuffers.removeAll()
@@ -534,7 +578,7 @@ public final class ScreenshotCapturer {
 
                 let attemptGen = gen
 
-                let output = VideoStreamOutput(sampleQueueRuleActive: sampleQueueRuleActive) { [weak self] pixelBuffer, isIdle, displayTicks in
+                let output = VideoStreamOutput(sampleQueueRuleActive: activeRuleLock) { [weak self] pixelBuffer, isIdle, displayTicks in
                     let epoch = self?.currentPreviewEpoch?() ?? 0
                     Task { @MainActor in
                         self?.handleFrameFromOutput(generation: attemptGen, pixelBuffer: pixelBuffer, isIdle: isIdle, epoch: epoch, displayTimeTicks: displayTicks)
@@ -664,6 +708,10 @@ public final class ScreenshotCapturer {
 internal final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     internal let sampleQueueRuleActive: OSAllocatedUnfairLock<Bool>
     internal let onFrameHandler: (CVPixelBuffer, Bool, UInt64?) -> Void
+    private let _deepCopyCounter = OSAllocatedUnfairLock(initialState: 0)
+    internal var _deepCopyCountForTesting: Int {
+        _deepCopyCounter.withLock { $0 }
+    }
 
     init(
         sampleQueueRuleActive: OSAllocatedUnfairLock<Bool> = OSAllocatedUnfairLock(initialState: false),
@@ -706,21 +754,27 @@ internal final class VideoStreamOutput: NSObject, SCStreamOutput, @unchecked Sen
             return
         }
 
-        // Rule is active: read status and displayTime, deep-copy buffer, hop only copy. Failed copy not encoded.
+        // Rule is active: read status first. Idle forwards source buffer without copy.
+        // Non-idle deep-copies buffer and passes displayTime. Failed copy not encoded.
         guard let sourceBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         var isIdle = false
-        var displayTime: UInt64? = nil
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]] {
-            if let statusValue = attachments.first?[.status] as? Int,
-               let status = SCFrameStatus(rawValue: statusValue) {
-                isIdle = (status == .idle)
-            }
-            displayTime = HostClock.displayTimeTicks(from: attachments)
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+           let statusValue = attachments.first?[.status] as? Int,
+           let status = SCFrameStatus(rawValue: statusValue) {
+            isIdle = (status == .idle)
         }
 
+        let displayTime = HostClock.displayTimeTicks(from: sampleBuffer)
+
+        if isIdle {
+            onFrame(sourceBuffer, true, displayTime)
+            return
+        }
+
+        _deepCopyCounter.withLock { $0 += 1 }
         guard let copiedBuffer = deepCopyPixelBuffer(sourceBuffer) else { return }
-        onFrame(copiedBuffer, isIdle, displayTime)
+        onFrame(copiedBuffer, false, displayTime)
     }
 }
 

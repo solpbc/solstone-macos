@@ -29,12 +29,14 @@ public struct SitePollSnapshot: Sendable, Equatable {
 
 public struct SiteHeldFrame: Sendable, Equatable {
     public let id: UInt64
+    public let owner: UInt64
     public let displayTicks: UInt64?
     public let c: TimeInterval?
     public let originTicks: UInt64
 
-    public init(id: UInt64, displayTicks: UInt64?, c: TimeInterval?, originTicks: UInt64) {
+    public init(id: UInt64, owner: UInt64 = 0, displayTicks: UInt64?, c: TimeInterval?, originTicks: UInt64) {
         self.id = id
+        self.owner = owner
         self.displayTicks = displayTicks
         self.c = c
         self.originTicks = originTicks
@@ -65,7 +67,7 @@ public final class SiteFrameGate {
 
     private var polls: [SitePollSnapshot] = []
     private var heldFrames: [CGDirectDisplayID: [SiteHeldFrame]] = [:]
-    private var lastAppendedPTS: [CGDirectDisplayID: CMTime] = [:]
+    private var stashedStallDrops: [UInt64: [SiteFrameAction]] = [:]
 
     public private(set) var currentDecisions = SiteDecision()
     public private(set) var currentAXAvailable: Bool = false
@@ -99,7 +101,8 @@ public final class SiteFrameGate {
     /// Drops the oldest if exceeding capacity 4 (reason: stall).
     public func enqueue(
         displayID: CGDirectDisplayID,
-        frame: SiteHeldFrame
+        frame: SiteHeldFrame,
+        owner: UInt64 = 0
     ) -> [SiteFrameAction] {
         var actions: [SiteFrameAction] = []
         var queue = heldFrames[displayID] ?? []
@@ -107,7 +110,13 @@ public final class SiteFrameGate {
         if queue.count >= Self.capacityPerDisplay {
             let oldest = queue.removeFirst()
             stallCount += 1
-            actions.append(.drop(id: oldest.id, reason: .stall))
+            let drop = SiteFrameAction.drop(id: oldest.id, reason: .stall)
+            let effectiveOwner = owner != 0 ? owner : frame.owner
+            if oldest.owner == effectiveOwner {
+                actions.append(drop)
+            } else {
+                stashedStallDrops[oldest.owner, default: []].append(drop)
+            }
         }
 
         queue.append(frame)
@@ -120,19 +129,34 @@ public final class SiteFrameGate {
     public func evaluate(
         displayID: CGDirectDisplayID,
         now: TimeInterval,
+        owner: UInt64 = 0,
         decisions: SiteDecision? = nil,
         axAvailable: Bool? = nil
     ) -> [SiteFrameAction] {
         let decisions = decisions ?? currentDecisions
         let axAvailable = axAvailable ?? currentAXAvailable
-        guard var queue = heldFrames[displayID], !queue.isEmpty else { return [] }
         var actions: [SiteFrameAction] = []
+        if let stashed = stashedStallDrops.removeValue(forKey: owner) {
+            actions.append(contentsOf: stashed)
+        }
 
-        while !queue.isEmpty {
-            let frame = queue[0]
+        guard let queue = heldFrames[displayID], !queue.isEmpty else { return actions }
+
+        var remainingQueue: [SiteHeldFrame] = []
+        var stopOwner = false
+
+        for frame in queue {
+            if frame.owner != owner {
+                remainingQueue.append(frame)
+                continue
+            }
+
+            if stopOwner {
+                remainingQueue.append(frame)
+                continue
+            }
 
             guard let displayTicks = frame.displayTicks, let c = frame.c else {
-                queue.removeFirst()
                 timeDropCount += 1
                 actions.append(.drop(id: frame.id, reason: .time))
                 continue
@@ -144,13 +168,14 @@ public final class SiteFrameGate {
 
             guard let earlyIdx = pEarlyIndex, let lateIdx = pLateIndex, earlyIdx <= lateIdx else {
                 if now - c >= Self.holdLimitSites {
-                    queue.removeFirst()
                     holdDropCount += 1
                     actions.append(.drop(id: frame.id, reason: .hold))
                     continue
                 } else {
-                    // Still waiting for bracketing polls; hold blocks newer frames
-                    break
+                    // Still waiting for bracketing polls; hold blocks newer frames of this owner
+                    stopOwner = true
+                    remainingQueue.append(frame)
+                    continue
                 }
             }
 
@@ -167,7 +192,6 @@ public final class SiteFrameGate {
             }
 
             if hasGap {
-                queue.removeFirst()
                 gapCount += 1
                 actions.append(.drop(id: frame.id, reason: .gap))
                 continue
@@ -178,17 +202,17 @@ public final class SiteFrameGate {
                 let hasSafari = bracketRange.contains(where: { !$0.windows.isEmpty })
                 if hasSafari {
                     if now - c >= Self.holdLimitSites {
-                        queue.removeFirst()
                         holdDropCount += 1
                         actions.append(.drop(id: frame.id, reason: .hold))
                         continue
                     } else {
-                        // Hold blocks newer frames
-                        break
+                        // Hold blocks newer frames of this owner
+                        stopOwner = true
+                        remainingQueue.append(frame)
+                        continue
                     }
                 } else {
                     // No Safari window in range -> release
-                    queue.removeFirst()
                     let pts = makeClampedPTS(displayID: displayID, displayTicks: displayTicks, originTicks: frame.originTicks)
                     relCount += 1
                     actions.append(.release(id: frame.id, pts: pts))
@@ -223,7 +247,6 @@ public final class SiteFrameGate {
             }
 
             if hasCovered {
-                queue.removeFirst()
                 covCount += 1
                 actions.append(.drop(id: frame.id, reason: .cov))
                 continue
@@ -246,7 +269,6 @@ public final class SiteFrameGate {
             }
 
             if hasPendingDisappeared {
-                queue.removeFirst()
                 holdDropCount += 1
                 actions.append(.drop(id: frame.id, reason: .hold))
                 continue
@@ -267,24 +289,24 @@ public final class SiteFrameGate {
 
             if hasOtherPending {
                 if now - c >= Self.holdLimitSites {
-                    queue.removeFirst()
                     holdDropCount += 1
                     actions.append(.drop(id: frame.id, reason: .hold))
                     continue
                 } else {
-                    // Hold blocks newer frames
-                    break
+                    // Hold blocks newer frames of this owner
+                    stopOwner = true
+                    remainingQueue.append(frame)
+                    continue
                 }
             }
 
             // All windows ordinary across bracket range -> release
-            queue.removeFirst()
             let pts = makeClampedPTS(displayID: displayID, displayTicks: displayTicks, originTicks: frame.originTicks)
             relCount += 1
             actions.append(.release(id: frame.id, pts: pts))
         }
 
-        heldFrames[displayID] = queue
+        heldFrames[displayID] = remainingQueue
         updateHeldCount()
         return actions
     }
@@ -293,67 +315,65 @@ public final class SiteFrameGate {
     public func drain(
         displayID: CGDirectDisplayID,
         now: TimeInterval,
+        owner: UInt64 = 0,
         decisions: SiteDecision? = nil,
         axAvailable: Bool? = nil
     ) -> [SiteFrameAction] {
-        var actions = evaluate(displayID: displayID, now: now, decisions: decisions, axAvailable: axAvailable)
-        if var queue = heldFrames[displayID] {
-            while !queue.isEmpty {
-                let frame = queue.removeFirst()
-                endCount += 1
-                actions.append(.drop(id: frame.id, reason: .end))
+        var actions = evaluate(displayID: displayID, now: now, owner: owner, decisions: decisions, axAvailable: axAvailable)
+        if let queue = heldFrames[displayID] {
+            var remaining: [SiteHeldFrame] = []
+            for frame in queue {
+                if frame.owner == owner {
+                    endCount += 1
+                    actions.append(.drop(id: frame.id, reason: .end))
+                } else {
+                    remaining.append(frame)
+                }
             }
-            heldFrames[displayID] = []
+            heldFrames[displayID] = remaining
             updateHeldCount()
         }
         return actions
     }
 
     /// Deactivating drops held frames immediately without releasing them.
-    public func deactivate(displayID: CGDirectDisplayID) -> [SiteFrameAction] {
-        guard let queue = heldFrames.removeValue(forKey: displayID) else { return [] }
+    public func deactivate(displayID: CGDirectDisplayID, owner: UInt64 = 0) -> [SiteFrameAction] {
+        guard let queue = heldFrames[displayID] else { return [] }
+        var dropped: [SiteFrameAction] = []
+        var remaining: [SiteHeldFrame] = []
+        for frame in queue {
+            if frame.owner == owner {
+                endCount += 1
+                dropped.append(.drop(id: frame.id, reason: .end))
+            } else {
+                remaining.append(frame)
+            }
+        }
+        heldFrames[displayID] = remaining
         updateHeldCount()
-        return queue.map { .drop(id: $0.id, reason: .end) }
+        return dropped
     }
 
     public func deactivateAll() -> [SiteFrameAction] {
         var actions: [SiteFrameAction] = []
-        for displayID in Array(heldFrames.keys) {
-            actions.append(contentsOf: deactivate(displayID: displayID))
+        for (_, queue) in heldFrames {
+            for frame in queue {
+                endCount += 1
+                actions.append(.drop(id: frame.id, reason: .end))
+            }
         }
+        heldFrames.removeAll()
+        stashedStallDrops.removeAll()
+        updateHeldCount()
         return actions
-    }
-
-    public func resetPTSBaseline(for displayID: CGDirectDisplayID) {
-        lastAppendedPTS.removeValue(forKey: displayID)
     }
 
     private func updateHeldCount() {
         heldCount = heldFrames.values.reduce(0) { $0 + $1.count }
     }
 
-    public func clampInactivePTS(displayID: CGDirectDisplayID, elapsed: TimeInterval) -> CMTime {
-        let calculated = CMTime(seconds: elapsed, preferredTimescale: 600)
-        let pts: CMTime
-        if let previous = lastAppendedPTS[displayID] {
-            pts = max(calculated, previous + CMTime(value: 1, timescale: 600))
-        } else {
-            pts = calculated
-        }
-        lastAppendedPTS[displayID] = pts
-        return pts
-    }
-
     internal func makeClampedPTS(displayID: CGDirectDisplayID, displayTicks: UInt64, originTicks: UInt64) -> CMTime {
         let rawSeconds = HostClock.seconds(ticks: displayTicks) - HostClock.seconds(ticks: originTicks)
-        let calculated = CMTime(seconds: rawSeconds, preferredTimescale: 600)
-        let pts: CMTime
-        if let previous = lastAppendedPTS[displayID] {
-            pts = max(calculated, previous + CMTime(value: 1, timescale: 600))
-        } else {
-            pts = calculated
-        }
-        lastAppendedPTS[displayID] = pts
-        return pts
+        return CMTime(seconds: rawSeconds, preferredTimescale: 600)
     }
 }

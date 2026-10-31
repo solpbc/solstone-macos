@@ -146,6 +146,7 @@ public final class AppState {
     internal var privateWindowAccessibilityMonitor = PrivateWindowAccessibilityMonitor()
     internal var accessibilityProbe: AccessibilityProbe
     public var snapshotSiteSafariCaution: Bool = false
+    public var snapshotAccessibilityCaution: Bool = false
     private var silenceMusicHolder: DebugSettingHolder!
     private var didAttemptSameMachineMigration = false
     private static let sameMachineMigrationRetryDelays: [Duration] = [
@@ -337,7 +338,7 @@ public final class AppState {
     }
 
     internal var privateWindowAccessibilityEnabled: Bool {
-        config.excludePrivateBrowsing && config.excludePrivateBrowsingAccessibility
+        (config.excludePrivateBrowsing && config.excludePrivateBrowsingAccessibility) || !config.excludedSites.isEmpty
     }
 
     internal func requestPrivateWindowSettingsRecovery() {
@@ -353,7 +354,10 @@ public final class AppState {
 
     public var siteAccessibilityCaution: Bool {
         guard !config.excludedSites.isEmpty else { return false }
-        return !accessibilityProbe.readWorks()
+        if isSnapshot {
+            return snapshotAccessibilityCaution
+        }
+        return privateWindowAccessibilityMonitor.needsAttention
     }
 
     public var siteSafariCaution: Bool {
@@ -2178,7 +2182,8 @@ public final class AppState {
         shortcutState: PauseShortcutController.State = .off,
         screenFailure: ScreenFailureKind? = nil,
         emptyMicrophoneState: MicrophoneEmptyState? = nil,
-        snapshotSafariCaution: Bool = false
+        snapshotSafariCaution: Bool = false,
+        snapshotAccessibilityCaution: Bool = false
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -2229,6 +2234,7 @@ public final class AppState {
             state?.updateLatestFrame(image, epoch: epoch)
         }
         state.snapshotSiteSafariCaution = snapshotSafariCaution
+        state.snapshotAccessibilityCaution = snapshotAccessibilityCaution
         if !config.excludedSites.isEmpty {
             state.capture.captureManager.updateSiteRule(config.excludedSites)
         }

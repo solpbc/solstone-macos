@@ -90,7 +90,7 @@ struct DesktopActivityReader: Sendable {
         let browser = PrivateBrowser.forBundleIdentifier(app.bundleID)
         let needsAX = (settings.accessibility && (settings.titles || settings.urls)) ||
             (settings.excludePrivate && settings.privateAccessibility && browser != nil) ||
-            (!settings.excludedSites.isEmpty && (browser == .safari || browser == .firefox))
+            (!settings.excludedSites.isEmpty && browser == .safari)
         var axTitle: String?
         var axDenied = false
         var focusedWindow: AXUIElement?
@@ -130,7 +130,7 @@ struct DesktopActivityReader: Sendable {
         }
 
         var documentURL: String?
-        if !settings.excludedSites.isEmpty && (browser == .safari || browser == .firefox) {
+        if !settings.excludedSites.isEmpty && browser == .safari {
             let targetWindow = focusedWindow ?? AXUIElementCreateApplication(app.pid)
             let walk = walkSeam(targetWindow, .everyTopLevel, permit)
             for urlStr in walk.urls.compactMap({ $0 }) {
@@ -189,37 +189,5 @@ struct DesktopActivityReader: Sendable {
         var value: CFTypeRef?
         guard permit.isValid, AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
         return value as? String
-    }
-
-    private func pageURL(in window: AXUIElement) -> String? {
-        var pending = [window]
-        var visited = 0
-        let deadline = ProcessInfo.processInfo.systemUptime + 0.25
-        // Traverse references and roles only. No generic title/name/value/text attributes.
-        while permit.isValid && !pending.isEmpty && visited < 128 && ProcessInfo.processInfo.systemUptime < deadline {
-            let node = pending.removeLast(); visited += 1
-            AXUIElementSetMessagingTimeout(node, 0.025)
-            let role = string(node, kAXRoleAttribute)
-            // Browser chrome may contain hundreds of tabs and toolbar icons. None can
-            // supply a committed document URL, so keep them out of the traversal budget.
-            guard ![kAXTextFieldRole, kAXTextAreaRole, "AXToolbar", "AXButton",
-                    "AXRadioButton", "AXImage", "AXMenuButton", "AXStaticText"].contains(role ?? "") else { continue }
-            if role == "AXWebArea" {
-                var value: CFTypeRef?
-                if permit.isValid, AXUIElementCopyAttributeValue(node, "AXURL" as CFString, &value) == .success {
-                    if let url = value as? URL { return url.absoluteString }
-                    if let url = value as? String { return url }
-                }
-                // Do not enter page contents.
-                continue
-            }
-            var children: CFTypeRef?
-            if permit.isValid, AXUIElementCopyAttributeValue(node, kAXChildrenAttribute as CFString, &children) == .success,
-               let elements = children as? [AXUIElement] {
-                // Depth first reaches the selected document before enumerating tab chrome.
-                pending.append(contentsOf: elements.prefix(max(0, 128 - pending.count)).reversed())
-            }
-        }
-        return nil
     }
 }

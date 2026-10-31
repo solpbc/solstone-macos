@@ -36,12 +36,11 @@ struct DesktopActivitySiteRuleTests {
         #expect(observation.rows.isEmpty)
     }
 
-    @Test func frontmostFirefoxCoveredURLCallsSeamAndReturnsEmptyRows() {
+    @Test func frontmostFirefoxDoesNotCallSeamAndKeepsRows() {
         let seamCalled = OSAllocatedUnfairLock(initialState: false)
         let reader = DesktopActivityReader(
             permit: DesktopActivityReadPermit(),
-            walkSeam: { _, mode, _ in
-                #expect(mode == .everyTopLevel)
+            walkSeam: { _, _, _ in
                 seamCalled.withLock { $0 = true }
                 return WebAreaWalkResult(urls: ["https://bank.com/dashboard"], completeness: .complete)
             }
@@ -50,8 +49,8 @@ struct DesktopActivitySiteRuleTests {
         let firefox = DesktopActivityApp(pid: 1235, name: "Firefox", bundleID: "org.mozilla.firefox")
         let observation = reader.read(app: firefox, settings: makeSettings())
 
-        #expect(seamCalled.withLock { $0 } == true)
-        #expect(observation.rows.isEmpty)
+        #expect(seamCalled.withLock { $0 } == false)
+        #expect(!observation.rows.isEmpty)
     }
 
     @Test func frontmostChromeDoesNotCallSeamAndKeepsRows() {
@@ -108,5 +107,32 @@ struct DesktopActivitySiteRuleTests {
         #expect(!observation.rows.isEmpty)
         let foregroundRow = observation.rows.first { $0.kind == "foreground" }
         #expect(foregroundRow != nil)
+    }
+
+    @Test func emptyListWalkContinuesPastFailedNode() {
+        let nodes = [
+            WebAreaWalker.TestNode(roleFailed: false, role: "AXGroup", childrenFailed: false, children: [1, 2], url: nil),
+            WebAreaWalker.TestNode(roleFailed: true, role: nil, childrenFailed: false, children: [], url: nil),
+            WebAreaWalker.TestNode(roleFailed: false, role: "AXWebArea", childrenFailed: false, children: [], url: "https://example.com/page")
+        ]
+
+        let firstDoc = WebAreaWalker.walk(nodes: nodes, mode: .firstDocument)
+        #expect(firstDoc.completeness == .complete)
+        #expect(firstDoc.urls == ["https://example.com/page"])
+
+        let everyTop = WebAreaWalker.walk(nodes: nodes, mode: .everyTopLevel)
+        #expect(everyTop.completeness == .axError)
+
+        var decision = SiteDecision()
+        let verdict = decision.evaluate(
+            key: SiteDecisionKey(windowID: 1, title: "Title"),
+            initialAXTitle: "Title",
+            finalAXTitle: "Title",
+            walk: everyTop,
+            sites: ["bank.com"],
+            now: 1.0,
+            isSweep: false
+        )
+        #expect(verdict == .pending)
     }
 }

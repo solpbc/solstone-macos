@@ -22,6 +22,15 @@ public enum HostClock: Sendable {
 
     /// Reads display time ticks from SCStream CMSampleBuffer attachments.
     /// Missing or non-numeric means nil. Never samples mach_absolute_time().
+    public static func displayTimeTicks(from sampleBuffer: CMSampleBuffer) -> UInt64? {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]] else {
+            return nil
+        }
+        return displayTimeTicks(from: attachments)
+    }
+
+    /// Reads display time ticks from SCStream CMSampleBuffer attachments.
+    /// Missing or non-numeric means nil. Never samples mach_absolute_time().
     public static func displayTimeTicks(from attachments: [[SCStreamFrameInfo: Any]]?) -> UInt64? {
         guard let first = attachments?.first,
               let value = first[.displayTime] else {
