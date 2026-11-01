@@ -126,7 +126,7 @@ struct SetupChromeWalkFixTests {
         }
     }
 
-    // The founder's 2026-10-20 ruling: the band label sits on a chip of the sheet's fill with the
+    // Operator approval, 2026-10-20: the band label sits on a chip of the sheet's fill with the
     // sheet's hairline, in place of the bare rule beside it.
     @Test func theBandLabelSitsOnASheetChip() throws {
         for (appearance, scheme) in [(NSAppearance.Name.aqua, ColorScheme.light), (.darkAqua, .dark)] {
