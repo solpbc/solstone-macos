@@ -68,8 +68,14 @@
   let paintSequence = 0;
   let appliedCaptureEpoch = -1;
 
+  // The message sits at the end of a popup that scrolls, so bring it into view:
+  // otherwise a refused add or a removal says nothing the owner can see.
   function showActionMessage(message) {
-    $("actionMessage").textContent = message || "";
+    const region = $("actionMessage");
+    region.textContent = message || "";
+    if (message && typeof region.scrollIntoView === "function") {
+      try { region.scrollIntoView({ block: "nearest" }); } catch (_e) {}
+    }
   }
 
   function showActionError(error) {
