@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the solstone extension now uses the list of websites you leave out in settings, in Safari and, from extension 0.5.0, in other browsers. a website you leave out in the extension, including one you'd already left out, shows up in that list. one you include again comes off it. with an older extension, leave a website out in the extension as well.
 - in sources, each browser shows how long ago the last page you shared from it was.
 
+### Fixed
+
+- in Safari, a website you added that sits under another website you added, like mail.example.com under example.com, no longer shows as "paused by Safari" in the solstone extension while its pages are going into your journal. if you remove the wider website, the one under it keeps going into your journal.
+- in Safari, adding a website in the solstone extension while Safari already allows a website under it now says why Safari didn't ask and how to allow it in Safari's settings. before, it didn't say why.
+- in Safari, for a website that covers only its exact address, the solstone extension's settings now say to remove it and add it again to include all its sites and pages. before, they offered a button that did nothing in Safari.
+
 ## [2.0.53] - 2026-10-31
 
 ### Fixed
