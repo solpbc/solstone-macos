@@ -1615,14 +1615,25 @@ public actor BrowserHostListener {
             } else {
                 // An owner's leave-out or include from the extension. Every one is answered with a
                 // state carrying its id, refused or not, and none closes the session.
-                if let ruleID = BrowserPayloadDecoder.siteRuleID(in: frame.body) {
+                var rule: BrowserDecodedSiteRule?
+                var refusedRule: (id: Int?, isSiteRule: Bool)?
+                if case .accept(.siteRule(let accepted)) = decoded {
+                    rule = accepted
+                } else if case .refuse = decoded {
+                    refusedRule = BrowserPayloadDecoder.refusedSiteRule(in: frame.body, maxBytes: projection.caps.control)
+                }
+                if rule != nil || refusedRule != nil {
                     guard authority != nil, live() else { continue }
+                    // A rule without a usable id can't be answered; it is ignored.
+                    guard let ruleID = rule?.id ?? refusedRule?.id else { continue }
                     let allowed = ruleBucket.take(nowMs: DispatchTime.now().uptimeNanoseconds / 1_000_000)
-                    if allowed, case .accept(.siteRule(let rule)) = decoded {
+                    if allowed, let rule {
                         await listener.applySiteRule(host: rule.host, out: rule.out)
                     }
                     await outbound.setSiteRuleAck(ruleID)
-                    await listener.publishSiteListChange()
+                    // A limited rule is answered by the next renewal, so a flood of rules can't
+                    // drive publications faster than the bucket allows.
+                    if allowed { await listener.publishSiteListChange() }
                     continue
                 }
                 guard case .accept(.batch(let batch)) = decoded,

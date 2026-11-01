@@ -71,9 +71,13 @@ public final class BrowserSiteListSource: Sendable {
         guard let snapshot = current,
               var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let type = object["type"] as? String, type == "state" || type == "hello_ack" else { return data }
-        object["left_out"] = snapshot.sites
+        // The extension checks every frame against the contract's bounds and drops the
+        // connection on any breach, so only what the contract allows goes out. The app's
+        // own rules still use the whole list.
+        guard Self.isWireEpoch(snapshot.epoch) else { return data }
+        object["left_out"] = Self.wireSites(snapshot.sites)
         object["left_out_epoch"] = snapshot.epoch
-        object["left_out_rev"] = snapshot.rev
+        object["left_out_rev"] = max(0, snapshot.rev)
         object["desktop"] = [
             "screen": snapshot.screen,
             "activity": snapshot.activity,
@@ -88,6 +92,24 @@ public final class BrowserSiteListSource: Sendable {
             return BrowserPayloadDecoder.encodeHostToExtension(message)
         }
         return data
+    }
+}
+
+extension BrowserSiteListSource {
+    static let wireSiteLimit = 200
+    private static let hostPattern = #"^(\[[0-9a-fA-F:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|[a-z0-9_-]+(?:\.[a-z0-9_-]+)*)$"#
+
+    /// A host the contract's `left_out` items accept: 1..253 characters in the host grammar.
+    static func isWireHost(_ host: String) -> Bool {
+        (1...253).contains(host.utf8.count) && host.range(of: hostPattern, options: .regularExpression) != nil
+    }
+
+    static func wireSites(_ sites: [String]) -> [String] {
+        Array(sites.filter(isWireHost).prefix(wireSiteLimit))
+    }
+
+    static func isWireEpoch(_ epoch: String) -> Bool {
+        (1...64).contains(epoch.utf8.count)
     }
 }
 

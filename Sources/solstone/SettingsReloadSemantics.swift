@@ -20,6 +20,7 @@ public enum SettingsReloadSemantics {
         "excludedApps": .live,
         "excludedTitlePatterns": .live,
         "excludedSites": .live,
+        "excludedSitesState": .live,
         "excludePrivateBrowsing": .live,
         "excludePrivateBrowsingAccessibility": .live,
         "syncPaused": .live,

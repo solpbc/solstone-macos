@@ -847,13 +847,15 @@ public enum BrowserPayloadDecoder {
         return nil
     }
 
-    /// The `id` of a site_rule frame, if it carries a positive integer one, even when the
-    /// rest of the frame is refused, so the session can still answer it.
-    public static func siteRuleID(in bytes: Data) -> Int? {
-        guard let root = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
-              root["type"] as? String == "site_rule", let raw = root["id"], isNonNegativeInteger(raw) else { return nil }
+    /// For a refused frame of at most `maxBytes`: whether it is a site_rule, and its `id` if it
+    /// carries a positive integer one, so the session can still answer it. Nil if it isn't one.
+    public static func refusedSiteRule(in bytes: Data, maxBytes: Int) -> (id: Int?, isSiteRule: Bool)? {
+        guard bytes.count <= maxBytes,
+              let root = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              root["type"] as? String == "site_rule" else { return nil }
+        guard let raw = root["id"], isNonNegativeInteger(raw) else { return (nil, true) }
         let id = (raw as! NSNumber).intValue
-        return id >= 1 ? id : nil
+        return (id >= 1 ? id : nil, true)
     }
 
     private static func decodeSiteRule(root: [String: Any]) -> BrowserDecodeResult {
@@ -867,7 +869,7 @@ public enum BrowserPayloadDecoder {
             return .refuse(BrowserRefusal(code: "bad_type"))
         }
         guard let host = hostRaw as? String, (1...253).contains(host.utf8.count),
-              host.range(of: #"^(\[[0-9a-fA-F:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*)$"#, options: .regularExpression) != nil else {
+              host.range(of: #"^(\[[0-9a-fA-F:.]+\]|(?:\d{1,3}\.){3}\d{1,3}|[a-z0-9_-]+(?:\.[a-z0-9_-]+)*)$"#, options: .regularExpression) != nil else {
             return .refuse(BrowserRefusal(code: "invalid_host"))
         }
         return .accept(.siteRule(BrowserDecodedSiteRule(id: (idRaw as! NSNumber).intValue, host: host, out: out.boolValue)))

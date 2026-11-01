@@ -1177,6 +1177,17 @@ struct BrowserHostSiteListTests {
             let removed = try await physicalMessage("state", from: fd) { $0["site_rule_ack"] as? Int == 9 }
             #expect(removed["left_out"] as? [String] == ["bank.com"])
             #expect(await applied.entries == ["news.com:true", "news.com:false"])
+
+            // A rule with no id is ignored, and the session keeps taking batches.
+            try await physicalWrite(Data(#"{"type":"site_rule","host":"mail.com","out":true}"#.utf8), to: fd)
+            try await physicalWrite(Data(#"{"type":"site_rule","id":10,"host":"Login.Bank.com","out":true}"#.utf8), to: fd)
+            _ = try await physicalMessage("state", from: fd) { $0["site_rule_ack"] as? Int == 10 }
+            #expect(await applied.entries == ["news.com:true", "news.com:false"])
+            let generation = try #require(fixture.owner.store.getDestinationGeneration())
+            try await physicalWrite(physicalBatch(generation: generation, inst: "physical-instance",
+                                                  id: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"), to: fd)
+            let accepted = try await physicalMessage("accepted", from: fd)
+            #expect(accepted["result"] as? String == "accepted")
         }
     }
 

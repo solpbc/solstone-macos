@@ -381,12 +381,13 @@ public final class AppState {
     func refreshBrowserSiteList() {
         guard let listener = browserHostListener else { return }
         let paused = pauseManager.isPaused
+        let away = capture.captureManager.lifecycleManager.isAway
         let snapshot = BrowserSiteListSnapshot(
             sites: config.excludedSites,
             epoch: config.excludedSitesEpoch,
             rev: config.excludedSitesRev,
-            screen: config.isScreenCaptureEnabled && isRecording && !paused,
-            activity: config.isActivitySourceOn && !config.activityHeld(paused: paused, stopped: !isRecording),
+            screen: config.isScreenCaptureEnabled && isRecording && !paused && !away,
+            activity: config.isActivitySourceOn && !away && !config.activityHeld(paused: paused, stopped: !isRecording),
             checkedBrands: [.safari],
             accessibilityWorks: privateWindowAccessibilityMonitor.lastReadWorks == true,
             brandsWithCaution: currentSiteSafariCaution ? [.safari] : []
@@ -431,7 +432,7 @@ public final class AppState {
 
     @discardableResult
     public func addExcludedSite(_ input: String) async -> String? {
-        guard let stored = SiteRule.storedHost(input) else {
+        guard let stored = SiteRule.storedHost(input), stored.utf8.count <= 253 else {
             return UICopy.Websites.ERROR_INVALID_ADDRESS
         }
         guard config.excludedSites.count < 200 else {
@@ -839,10 +840,18 @@ public final class AppState {
     public func updateConfig(_ incoming: AppConfig) {
         let oldConfig = config
         var newConfig = incoming
-        // Every change to the website list moves its revision on, whatever made it.
-        if newConfig.excludedSites != oldConfig.excludedSites {
+        // Every change to the website list moves its revision on, whatever made it. A
+        // different lineage from a reload (wiped or unreadable settings) is taken as it is,
+        // so browser extensions see a new epoch and send back what they had, never an
+        // emptied list under the old one.
+        let sameLineage = newConfig.excludedSitesEpoch.isEmpty || newConfig.excludedSitesEpoch == oldConfig.excludedSitesEpoch
+        if sameLineage {
             newConfig.excludedSitesEpoch = oldConfig.excludedSitesEpoch
-            newConfig.excludedSitesRev = max(newConfig.excludedSitesRev, oldConfig.excludedSitesRev + 1)
+            if newConfig.excludedSites != oldConfig.excludedSites {
+                newConfig.excludedSitesRev = max(newConfig.excludedSitesRev, oldConfig.excludedSitesRev + 1)
+            } else {
+                newConfig.excludedSitesRev = max(newConfig.excludedSitesRev, oldConfig.excludedSitesRev)
+            }
         }
         let oldPriority = oldConfig.microphonePriority
         let oldDisabled = oldConfig.disabledMicrophoneUIDs
@@ -3051,6 +3060,7 @@ public final class AppState {
             previousEligibility?()
             guard let lifecycle else { return }
             store?.setAway(lifecycle.isAway)
+            self?.refreshBrowserSiteList()
             if let listener = self?.browserHostListener {
                 Task { await listener.refreshSnapshot() }
             }

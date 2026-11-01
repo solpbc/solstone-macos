@@ -712,6 +712,10 @@ public struct AppConfig: Sendable, Equatable {
             isMicrophoneCaptureEnabled: !nativeSetupEnabled
         )
         defaultConfig.excludedApps = defaultExclusions
+        let siteState = loadExcludedSitesState(from: defaults)
+        defaultConfig.excludedSites = siteState.sites
+        defaultConfig.excludedSitesEpoch = siteState.epoch
+        defaultConfig.excludedSitesRev = siteState.rev
         try defaultConfig.save(to: defaults)
         defaults.set(true, forKey: Keys.didRecordConfigPresence)
         defaults.set(true, forKey: Keys.didReseedCaptureSourcesOn)

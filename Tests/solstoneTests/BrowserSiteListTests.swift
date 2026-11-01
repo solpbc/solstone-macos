@@ -92,9 +92,66 @@ struct ExcludedSitesLineageTests {
         state.updateConfig(unrelated)
         #expect(state.config.excludedSitesRev == 6)
     }
+
+    @Test @MainActor func aReloadWithANewLineageIsTakenAsItIs() {
+        var config = AppConfig()
+        config.excludedSites = ["bank.com"]
+        config.excludedSitesEpoch = "e1"
+        config.excludedSitesRev = 5
+        let state = AppState.forSnapshot(config: config)
+        var wiped = AppConfig()
+        wiped.excludedSitesEpoch = "e2"
+        state.updateConfig(wiped)
+        #expect(state.config.excludedSites.isEmpty)
+        #expect(state.config.excludedSitesEpoch == "e2")
+        #expect(state.config.excludedSitesRev == 0)
+        var noLineage = state.config
+        noLineage.excludedSitesEpoch = ""
+        noLineage.excludedSites = ["news.com"]
+        state.updateConfig(noLineage)
+        #expect(state.config.excludedSitesEpoch == "e2")
+        #expect(state.config.excludedSitesRev == 1)
+    }
+
+    @Test func aFreshInstallMintsTheListsLineageBeforeAnythingConnects() throws {
+        let (defaults, name) = try suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let created = try AppConfig.loadOrCreateDefault(legacyConfigPaths: [], defaults: defaults)
+        #expect(!created.excludedSitesEpoch.isEmpty)
+        #expect(AppConfig.load(from: defaults).excludedSitesEpoch == created.excludedSitesEpoch)
+    }
 }
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+
+@Suite("BrowserSiteRuleApply")
+@MainActor
+struct BrowserSiteRuleApplyTests {
+    @Test func aRuleEditsTheListAsSettingsWould() {
+        var config = AppConfig()
+        config.excludedSitesEpoch = "e1"
+        let state = AppState.forSnapshot(config: config)
+        state.applyBrowserSiteRule(host: "www.bank.com", out: true)
+        let stored = SiteRule.storedHost("www.bank.com")
+        #expect(state.config.excludedSites == [stored].compactMap { $0 })
+        #expect(state.config.excludedSitesRev == 1)
+        state.applyBrowserSiteRule(host: "www.bank.com", out: true)
+        #expect(state.config.excludedSitesRev == 1)
+        state.applyBrowserSiteRule(host: "www.bank.com", out: false)
+        #expect(state.config.excludedSites.isEmpty)
+        #expect(state.config.excludedSitesRev == 2)
+    }
+
+    @Test func aRuleIsRefusedAtTheCap() {
+        var config = AppConfig()
+        config.excludedSites = (1...200).map { "site\($0).com" }
+        config.excludedSitesEpoch = "e1"
+        let state = AppState.forSnapshot(config: config)
+        state.applyBrowserSiteRule(host: "bank.com", out: true)
+        #expect(state.config.excludedSites.count == 200)
+        #expect(!state.config.excludedSites.contains("bank.com"))
+    }
+}
 
 @Suite("BrowserSiteList")
 struct BrowserSiteListTests {
@@ -142,6 +199,23 @@ struct BrowserSiteListTests {
         #expect(snapshot.sitesValue(for: .safari) == "needs_access")
     }
 
+    @Test func onlyWhatTheContractAllowsGoesOnTheWire() throws {
+        let source = BrowserSiteListSource()
+        var sites = (1...205).map { "site\($0).com" }
+        sites.insert(String(repeating: "a", count: 300) + ".com", at: 0)
+        sites.insert("localhost:3000", at: 1)
+        source.update(BrowserSiteListSnapshot(sites: sites, epoch: "e1", rev: -1))
+        let object = try #require(try JSONSerialization.jsonObject(
+            with: source.decorate(state(), brand: .safari, siteRuleAck: nil, projection: try projection)) as? [String: Any])
+        let wire = try #require(object["left_out"] as? [String])
+        #expect(wire.count == 200)
+        #expect(wire.first == "site1.com")
+        #expect(wire.allSatisfy { $0.utf8.count <= 253 && !$0.contains(":") })
+        #expect(object["left_out_rev"] as? Int == 0)
+        source.update(BrowserSiteListSnapshot(sites: ["bank.com"], epoch: ""))
+        #expect(source.decorate(state(), brand: .safari, siteRuleAck: nil, projection: try projection) == state())
+    }
+
     @Test func otherMessagesPassThrough() throws {
         let source = BrowserSiteListSource()
         source.update(BrowserSiteListSnapshot(sites: ["bank.com"], epoch: "e1", rev: 1))
@@ -175,8 +249,17 @@ struct BrowserSiteListTests {
         if case .refuse(let r) = decode(#"{"type":"site_rule","id":4,"host":"bank.com","out":1}"#) {
             #expect(r.code == "bad_type")
         } else { #expect(Bool(false)) }
-        #expect(BrowserPayloadDecoder.siteRuleID(in: Data(#"{"type":"site_rule","id":9,"host":"bank .com"}"#.utf8)) == 9)
-        #expect(BrowserPayloadDecoder.siteRuleID(in: Data(#"{"type":"batch","id":9}"#.utf8)) == nil)
+        if case .refuse(let r) = decode(#"{"type":"site_rule","id":7,"host":"Login.Bank.com","out":true}"#) {
+            #expect(r.code == "invalid_host")
+        } else { #expect(Bool(false), "an uppercase host is refused") }
+        let probe = BrowserPayloadDecoder.refusedSiteRule(in: Data(#"{"type":"site_rule","id":9,"host":"bank .com"}"#.utf8), maxBytes: 65_536)
+        #expect(probe?.id == 9)
+        #expect(probe?.isSiteRule == true)
+        let noID = BrowserPayloadDecoder.refusedSiteRule(in: Data(#"{"type":"site_rule","host":"a.com","out":true}"#.utf8), maxBytes: 65_536)
+        #expect(noID?.isSiteRule == true)
+        #expect(noID?.id == nil)
+        #expect(BrowserPayloadDecoder.refusedSiteRule(in: Data(#"{"type":"batch","id":9}"#.utf8), maxBytes: 65_536) == nil)
+        #expect(BrowserPayloadDecoder.refusedSiteRule(in: Data(#"{"type":"site_rule","id":9}"#.utf8), maxBytes: 4) == nil)
     }
 
     @Test func sourcesRowSaysWhenTheLastPageWasFrom() {
