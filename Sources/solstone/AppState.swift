@@ -396,6 +396,16 @@ public final class AppState {
         }
     }
 
+    /// Republishes whenever anything the snapshot reads changes: the list, recording, pause,
+    /// the Accessibility sample or the Safari caution.
+    func observeBrowserSiteList() {
+        withObservationTracking {
+            refreshBrowserSiteList()
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.observeBrowserSiteList() }
+        }
+    }
+
     /// A leave-out or include from a browser extension, applied as a Settings edit would be.
     func applyBrowserSiteRule(host: String, out: Bool) {
         guard let stored = SiteRule.storedHost(host) else { return }
@@ -3132,7 +3142,7 @@ public final class AppState {
             await MainActor.run {
                 guard !state.isTerminating, state.appQuitCoordinator.preparationGeneration == generation else { return }
                 state.browserHostListener = listener
-                state.refreshBrowserSiteList()
+                state.observeBrowserSiteList()
             }
             await listener.setSiteRuleHandler { [weak state] host, out in
                 await MainActor.run { state?.applyBrowserSiteRule(host: host, out: out) }
