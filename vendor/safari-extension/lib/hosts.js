@@ -104,7 +104,10 @@
     if (marked) {
       if (live.has(`*://*.${h}/*`)) return "site";
       if (live.has(`*://${h}/*`)) return "exact";
-      return null;
+      // A wider site grant covers it too: Safari keeps only the broadest
+      // pattern, so allowing the parent drops this entry's own. The all-sites
+      // pattern still doesn't count for an entry adopted from a browser grant.
+      return coveredByWiderSite(h, live) ? "site" : null;
     }
     if (live.has(matchPatternFor(h))) return "site";
     if (live.has(exactPatternFor(h))) return "exact";
@@ -112,7 +115,53 @@
     if ((!s || s === "https") && live.has(`https://${h}/*`)) return "exact";
     if ((!s || s === "http") && live.has(`http://${h}/*`)) return "exact";
     if (live.has("*://*/*")) return "site";
-    return null;
+    // A wider site grant covers the names under it. Firefox doesn't record a
+    // request that a wider grant already covers, so it lists only the wider one.
+    return coveredByWiderSite(h, live) ? "site" : null;
+  }
+
+  function coveredByWiderSite(h, live) {
+    for (const pattern of live) {
+      const site = patternSiteHost(pattern);
+      if (site && site !== h && hostCovers(site, h)) return true;
+    }
+    return false;
+  }
+
+  // Which chosen sites cover only their exact address. Whether a site is
+  // granted and how much of it is read are separate: a site widens only when
+  // the browser grants its own whole-site pattern. A wider site's grant, the
+  // all-sites grant, or its own grant lapsing never changes it, so a site
+  // added before sites covered their subdomains is never widened silently.
+  // With no stored answer yet (`priorKnown` false), a site the browser covers
+  // only through someone else's pattern counts as exact until the owner widens it.
+  function exactScope({ chosen, live, prior, priorKnown }) {
+    const liveSet = new Set(live || []);
+    const before = new Set(prior || []);
+    const exact = [];
+    for (const origin of chosen || []) {
+      let host = "";
+      let scheme = "";
+      try {
+        const u = new URL(origin);
+        host = matchHostFor(u.host);
+        scheme = u.protocol.replace(/:$/, "");
+      } catch (_e) {
+        continue;
+      }
+      if (!host) continue;
+      if (liveSet.has(matchPatternFor(host))) continue;
+      const ownExact = liveSet.has(exactPatternFor(host)) ||
+        ((scheme === "https") && liveSet.has(`https://${host}/*`)) ||
+        ((scheme === "http") && liveSet.has(`http://${host}/*`));
+      if (ownExact) { exact.push(origin); continue; }
+      if (priorKnown) {
+        if (before.has(origin)) exact.push(origin);
+        continue;
+      }
+      if (liveSet.has("*://*/*") || coveredByWiderSite(host, liveSet)) exact.push(origin);
+    }
+    return exact.sort();
   }
 
   // The host a site pattern covers (`*://*.bank.com/*` → bank.com), if any.
@@ -345,6 +394,7 @@
     exactPatternFor,
     sitePatternsFor,
     grantLevel,
+    exactScope,
     hostCovers,
     originCoveredBy,
     siteForOrigin,

@@ -47,6 +47,7 @@
       chosen: Array.from(port.chosenOrigins || []),
       granted: Array.from(port.grantedOrigins || []),
       exactOnly: Array.from(port.exactOnlyOrigins || []),
+      exactOnlyKnown: port.exactOnlyKnown !== false,
       siteWide: Array.from(port.siteWideOrigins || current.siteWide || []),
       declinedHosts: new Set(port.declinedHosts || current.declinedHosts || []),
       reservation: current.reservation || null,
@@ -70,7 +71,15 @@
     port.permissionEpoch = state.permissionEpoch;
     port.chosenOrigins = new Set(state.chosen);
     port.grantedOrigins = new Set(state.granted);
+    const priorExact = Array.from(port.exactOnlyOrigins || []).sort();
     port.exactOnlyOrigins = new Set(state.exactOnly || []);
+    const nextExact = Array.from(port.exactOnlyOrigins).sort();
+    const exactChanged = priorExact.length !== nextExact.length || priorExact.some((o, i) => o !== nextExact[i]);
+    if (event.type === "publish-grants" && transition.result?.ok !== false) port.exactOnlyKnown = true;
+    // A removal saves its mark with the rest of the list in one write.
+    if (exactChanged && event.type !== "owner-remove" && typeof port.onExactOnlyChange === "function") {
+      try { port.onExactOnlyChange(nextExact); } catch (_e) {}
+    }
     if (state.siteWide) port.siteWideOrigins = Array.from(state.siteWide);
     if (state.declinedHosts) port.declinedHosts = Array.from(state.declinedHosts);
     port.registration = state.registration;
@@ -950,11 +959,13 @@
               let saved = true;
               if (deps.setCfg) {
                 try {
-                  await deps.setCfg({
+                  const patch = {
                     chosenOrigins: Array.from(port.chosenOrigins || []),
                     siteWideOrigins: Array.from(port.siteWideOrigins || []),
                     declinedHosts: Array.from(port.declinedHosts || []),
-                  });
+                  };
+                  if (port.exactOnlyKnown !== false) patch.exactOnlyOrigins = Array.from(port.exactOnlyOrigins || []).sort();
+                  await deps.setCfg(patch);
                 } catch (_e) {
                   saved = false;
                 }

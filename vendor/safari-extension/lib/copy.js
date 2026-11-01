@@ -190,6 +190,15 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     return !!H?.coversSubdomains?.(H.matchHostFor(String(host || "").replace(/^https?:\/\//i, "")));
   }
   const ADD_DENIED = "permission declined. nothing added.";
+
+  // Safari on a Mac doesn't ask about a site while it allows a site under it,
+  // and says the request succeeded without granting anything. Elsewhere a
+  // failed add is an ordinary decline.
+  function addBlockedBelow(brand, host, under) {
+    if (brand !== "safari" || MOBILE || !host || !under) return "";
+    const h = escapeToken(host);
+    return `Safari won't ask about ${h} while it allows ${escapeToken(under)}. to add ${h}, set it to Allow in Safari's website settings.`;
+  }
   const ADD_NOT_NOW = "can't add a site right now. the status above says why.";
 
   function alreadyAdded(host) {
@@ -237,6 +246,25 @@ no analytics. no telemetry. no phone home. nobody counted.`;
   function exactOnlyCopy(brand, hosts) {
     const bName = browserName(brand);
     const list = Array.from(hosts || []);
+    // Safari can't widen a site it already allows, so there's no button there.
+    if (brand === "safari") {
+      if (list.length === 1) {
+        const host = escapeToken(list[0]);
+        return {
+          line: `${host} covers only that address. to include all ${host} sites and pages, remove it and add it again.`,
+          label: "",
+          declined: "",
+        };
+      }
+      // Named, since each one is removed and added again by hand.
+      const names = list.map((h) => escapeToken(h));
+      const named = `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+      return {
+        line: `${named} cover only their exact address. to include all their sites and pages, remove each one and add it again.`,
+        label: "",
+        declined: "",
+      };
+    }
     if (list.length === 1) {
       const host = escapeToken(list[0]);
       return {
@@ -425,6 +453,7 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     ADD_HELP,
     FIELD_ERROR,
     ADD_DENIED,
+    addBlockedBelow,
     ADD_NOT_NOW,
     alreadyAdded,
     removedAnnouncement,

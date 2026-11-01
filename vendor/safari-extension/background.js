@@ -40,7 +40,7 @@ const PortController = globalThis.SolstoneNativePort;
 const Outbox = globalThis.SolstoneNativeOutbox;
 const Status = globalThis.SolstoneStatus;
 
-const VERSION = "0.5.0";
+const VERSION = "0.5.2";
 const ALARM_NAME = "native-port";
 
 const CONTENT_SCRIPT_FILES = [
@@ -147,6 +147,11 @@ async function getCfg() {
   if (Array.isArray(stored.declinedHosts)) {
     res.declinedHosts = [...stored.declinedHosts];
   }
+  // Which sites cover only their exact address. Absent until first worked out,
+  // which is different from an empty list.
+  if (Array.isArray(stored.exactOnlyOrigins)) {
+    res.exactOnlyOrigins = [...stored.exactOnlyOrigins];
+  }
   if (stored.appLeftOutEpoch !== undefined && stored.appLeftOutEpoch !== null) {
     res.appLeftOutEpoch = stored.appLeftOutEpoch;
   }
@@ -161,6 +166,26 @@ function setCfg(patch) {
   cfgChain = cfgChain.catch(() => {}).then(async () => {
     const current = await getCfg();
     const next = Object.assign({}, current, patch);
+    await chrome.storage.local.set({ cfg: next });
+    return next;
+  });
+  return cfgChain;
+}
+
+// Saves which sites cover only their exact address. The list is read when the
+// write runs, in line with every other config write, so an earlier list never
+// overwrites a later one. Nothing is written until startup has worked the list
+// out once.
+let exactOnlyReady = false;
+function persistExactOnly() {
+  if (!exactOnlyReady || !port) return cfgChain;
+  cfgChain = cfgChain.catch(() => {}).then(async () => {
+    if (!exactOnlyReady || !port) return undefined;
+    const list = Array.from(port.exactOnlyOrigins || []).sort();
+    const current = await getCfg();
+    const stored = Array.isArray(current.exactOnlyOrigins) ? [...current.exactOnlyOrigins].sort() : null;
+    if (stored && stored.length === list.length && stored.every((o, i) => o === list[i])) return current;
+    const next = Object.assign({}, current, { exactOnlyOrigins: list });
     await chrome.storage.local.set({ cfg: next });
     return next;
   });
@@ -827,6 +852,12 @@ async function doInit() {
   port.declinedHostsKnown = Object.prototype.hasOwnProperty.call(cfg, "declinedHosts");
   port.declinedHosts = cfg.declinedHosts ? [...cfg.declinedHosts] : [];
   port.siteWideOrigins = cfg.siteWideOrigins ? [...cfg.siteWideOrigins] : [];
+  // Loaded before the grant pass below, so a permission event during its
+  // awaits works from the stored list, not an empty one.
+  exactOnlyReady = false;
+  port.exactOnlyKnown = Array.isArray(cfg.exactOnlyOrigins);
+  port.exactOnlyOrigins = new Set(cfg.exactOnlyOrigins || []);
+  port.onExactOnlyChange = () => { persistExactOnly(); };
   port.offeredOrigins = cfg.offeredOrigins ? [...cfg.offeredOrigins] : [];
   port.appLeftOut = cfg.appLeftOut ? [...cfg.appLeftOut] : [];
   // The app's list exactly as it sent it; sync compares raw strings (a restart
@@ -856,7 +887,6 @@ async function doInit() {
     if (epoch !== permissionEpoch) continue;
     port.broadGranted = (perms.origins || []).includes("*://*/*");
     const liveGranted = new Set();
-    const exactOnly = new Set();
     const missingPatterns = [];
     for (const origin of latestCfg.chosenOrigins) {
       try {
@@ -866,7 +896,6 @@ async function doInit() {
         const level = H.grantLevel(u.host, perms.origins, isMarked, u.protocol.replace(/:$/, ""));
         if (level) {
           liveGranted.add(origin);
-          if (level === "exact") exactOnly.add(origin);
           if (port.siteMode === "selected") {
             const regRes = await registerSite(u.host);
             await port.setRegistration(origin, regRes);
@@ -880,7 +909,15 @@ async function doInit() {
     if (epoch !== permissionEpoch) continue;
     port.chosenOrigins = new Set(latestCfg.chosenOrigins);
     port.grantedOrigins = liveGranted;
-    port.exactOnlyOrigins = exactOnly;
+    // Nothing is persisted during this pass, so the stored list is still the
+    // prior. A site widens only when its own whole-site grant is live.
+    port.exactOnlyOrigins = new Set(H.exactScope({
+      chosen: latestCfg.chosenOrigins,
+      live: perms.origins || [],
+      prior: latestCfg.exactOnlyOrigins || [],
+      priorKnown: Array.isArray(latestCfg.exactOnlyOrigins),
+    }));
+    port.exactOnlyKnown = true;
     port.ownerSites.registration = port.registration;
     port.ownerSites.enqueue = port.enqueue;
     port.drift = missingPatterns.length ? { patterns: Array.from(new Set(missingPatterns)).sort() } : null;
@@ -888,6 +925,8 @@ async function doInit() {
     break;
   }
   if (!permissionsSettled) throw new Error("permissions_changed_during_init");
+  exactOnlyReady = true;
+  await persistExactOnly();
 
   await pruneOrphanSiteErrors();
   port.lossNotice = (await DB.get("meta", "lossNotice")) || null;
@@ -1029,7 +1068,12 @@ chrome.permissions.onRemoved.addListener(async (details) => {
     try { perms = await chrome.permissions.getAll(); }
     catch (_e) { return; }
     if (permissionEpoch !== epochAtStart || !Array.isArray(perms?.origins)) return;
-    port.broadGranted = perms.origins.includes("*://*/*");
+    // What's left after this removal. A wider site grant still covers the
+    // sites under it, and a snapshot that hasn't caught up with this removal
+    // can't bring the withdrawn grant back.
+    const remaining = perms.origins.filter((pattern) => !removedPatterns.includes(pattern));
+    port.broadGranted = remaining.includes("*://*/*");
+    Router.applyOwnerEvent(port, { type: "publish-grants", livePatterns: remaining, epochAtStart });
     const missing = [];
     for (const o of port.chosenOrigins) {
       try {
@@ -1037,7 +1081,7 @@ chrome.permissions.onRemoved.addListener(async (details) => {
         const host = u.host;
         const scheme = u.protocol.replace(/:$/, "");
         const isMarked = Array.isArray(port.siteWideOrigins) && port.siteWideOrigins.includes(o);
-        if (!H.grantLevel(host, perms.origins, isMarked, scheme)) missing.push(H.matchPatternFor(host));
+        if (!H.grantLevel(host, remaining, isMarked, scheme)) missing.push(H.matchPatternFor(host));
       } catch (_e) {}
     }
     port.drift = missing.length ? { patterns: Array.from(new Set(missing)).sort() } : null;

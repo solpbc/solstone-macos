@@ -41,6 +41,7 @@
   const SITES_CARD_ACTIONS = new Set(["open-settings", "allow-all-sites", "retry-all-sites", "allow-again-all"]);
   let state = null;
   let disclosureResolve = null;
+  let disclosureConfirm = null;
   let allSitesDisclosure = false;
   let disclosureReturnFocus = null;
   let accessCheck = null;
@@ -71,6 +72,7 @@
       status: state,
       cmd,
       requestPermission: (request) => chrome.permissions.request(request),
+      getAllPermissions: () => chrome.permissions.getAll(),
       removePermission: (request) => chrome.permissions.remove(request),
     };
   }
@@ -82,17 +84,23 @@
 
   function closeDisclosure(confirmed) {
     if (!disclosureResolve) return;
+    // Runs inside the confirming click, before anything else, so the
+    // browser's permission prompt opens from the owner's gesture.
+    const confirm = disclosureConfirm;
+    disclosureConfirm = null;
+    const outcome = confirmed && confirm ? confirm() : confirmed;
     if ($("siteDisclosure")) $("siteDisclosure").hidden = true;
     if ($("sitesMain")) $("sitesMain").hidden = false;
     const resolve = disclosureResolve;
     disclosureResolve = null;
     focus(disclosureReturnFocus || "newHost");
     disclosureReturnFocus = null;
-    resolve(confirmed);
+    resolve(outcome);
   }
 
-  function presentDisclosure(host, allSites = false) {
+  function presentDisclosure(host, confirm = null, allSites = false) {
     allSitesDisclosure = allSites;
+    disclosureConfirm = typeof confirm === "function" ? confirm : null;
     const copy = allSites
       ? Copy.allSitesCopy(state?.brand, { excludedCount: (state?.excludedHosts || []).length, chosenCount: chosenList().length })
       : Disclosure.addSite(host, state);
@@ -182,7 +190,8 @@
     await refresh();
     if (inputElement && typeof inputElement.focus === "function") inputElement.focus();
     if (result.denied) {
-      announce(Copy.ADD_DENIED, "bad");
+      const blocked = result.blockedBy ? Copy.addBlockedBelow(state?.brand, rawHost, result.blockedBy) : "";
+      announce(blocked || Copy.ADD_DENIED, "bad");
     } else if (result.error) {
       showActionError(result.error);
     } else if (result.ok) {
@@ -635,6 +644,7 @@
         const words = Copy.exactOnlyCopy(state?.brand, exactOnly.map((origin) => Hosts.displayOrigin(origin)));
         $("exactOnlyLine").textContent = words.line;
         $("exactOnlyBtn").textContent = words.label;
+        $("exactOnlyBtn").hidden = !words.label;
       }
     }
 
@@ -844,7 +854,7 @@
     if (state?.siteMode === "all" && state.allSitesConsent === Hosts.ALL_SITES_CONSENT_VERSION) return;
     clearAnnouncement();
     disclosureReturnFocus = $("modeAllBtn");
-    await presentDisclosure(null, true);
+    await presentDisclosure(null, null, true);
   });
   $("modeSelectedBtn").addEventListener("click", async () => {
     clearAnnouncement();
@@ -899,7 +909,7 @@
   if ($("exactOnlyBtn")) $("exactOnlyBtn").addEventListener("click", async () => {
     clearAnnouncement();
     const exactOnly = state?.exactOnlyOrigins || [];
-    const result = await View.grantChosenSites(exactOnly, siteEffects());
+    const result = await View.grantChosenSites(exactOnly, siteEffects(), { widen: true });
     if (result.denied) announce(Copy.exactOnlyCopy(state?.brand, exactOnly.map((origin) => Hosts.displayOrigin(origin))).declined, "bad");
     else if (result.error) showActionError(result.error);
     await refresh();

@@ -101,7 +101,8 @@
       case "browser-removed":
         state.permissionEpoch++;
         state.granted = state.granted.filter((item) => !event.patterns.some((pattern) => patternMatches(pattern, item)));
-        state.exactOnly = (state.exactOnly || []).filter((item) => state.granted.includes(item));
+        // A lapsed grant doesn't change how much of a site is read; only removal does.
+        state.exactOnly = (state.exactOnly || []).filter((item) => state.chosen.includes(item));
         effects.push("publish-closed");
         break;
       case "browser-added-sync": {
@@ -124,11 +125,23 @@
             grantLevelFor(chosenOrigin, event.livePatterns, siteWideSet.has(chosenOrigin)),
           ]));
           state.granted = state.chosen.filter((chosenOrigin) => levels.get(chosenOrigin));
-          // An exact-only entry whose grant lapsed keeps its mark, so allowing it
-          // again asks for the same exact address, never the whole site.
-          const priorExact = new Set(state.exactOnly || []);
-          state.exactOnly = state.chosen.filter((chosenOrigin) => levels.get(chosenOrigin) === "exact" ||
-            (!levels.get(chosenOrigin) && priorExact.has(chosenOrigin)));
+          // How much of each site is read widens only with its own whole-site
+          // grant. An exact-only entry whose grant lapsed, or that a wider grant
+          // now covers, keeps its mark, so allowing it again asks for the same
+          // exact address, never the whole site.
+          const hosts = globalThis.SolstoneHosts;
+          if (hosts?.exactScope) {
+            state.exactOnly = hosts.exactScope({
+              chosen: state.chosen,
+              live: event.livePatterns,
+              prior: state.exactOnly || [],
+              priorKnown: state.exactOnlyKnown !== false,
+            });
+          } else {
+            const priorExact = new Set(state.exactOnly || []);
+            state.exactOnly = state.chosen.filter((chosenOrigin) => levels.get(chosenOrigin) === "exact" ||
+              (levels.get(chosenOrigin) !== "site" && priorExact.has(chosenOrigin)));
+          }
         }
         break;
       case "begin-add":

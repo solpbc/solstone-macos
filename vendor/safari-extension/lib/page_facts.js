@@ -49,12 +49,10 @@
   }
 
   function mapBrowser({ browserInfo, userAgentData, userAgent } = {}) {
+    // Firefox records name the browser family only. Its add-on data declaration
+    // covers no browser or device details, so its version is never sent.
     if (browserInfo && typeof browserInfo.name === "string" && /^firefox$/i.test(browserInfo.name.trim())) {
-      const vendor = "firefox";
-      const version = (typeof browserInfo.version === "string" && browserInfo.version.trim().length > 0)
-        ? browserInfo.version.trim()
-        : undefined;
-      return version ? { vendor, version } : { vendor };
+      return { vendor: "firefox" };
     }
 
     if (userAgentData && (Array.isArray(userAgentData.fullVersionList) || Array.isArray(userAgentData.brands))) {
