@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.53] - 2026-10-31
+
 ### Fixed
 
 - if solstone's check of a Safari window's address was cut short, that window's title could still go into activity, even when it showed a website you left out. a check that's cut short now keeps the title and address out.
