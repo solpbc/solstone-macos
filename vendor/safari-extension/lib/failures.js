@@ -7,7 +7,7 @@
   function classify(raw, statusOrBrand) {
     const brand = typeof statusOrBrand === "string" ? statusOrBrand : (statusOrBrand && statusOrBrand.brand) || "";
     const C = globalThis.SolstoneCopy;
-    if (C && C.classifyFailure) return C.classifyFailure(raw, brand);
+    if (C && C.actionFailure) return C.actionFailure(raw, brand);
     return `something went wrong: ${raw}`;
   }
 

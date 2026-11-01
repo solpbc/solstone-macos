@@ -97,6 +97,8 @@
         knownKeys = keyOrderMap.block;
       } else if (keyOrderMap && (val.label !== undefined || val.level !== undefined || val.linkHost !== undefined) && keyOrderMap.block_attrs) {
         knownKeys = keyOrderMap.block_attrs;
+      } else if (keyOrderMap && (val.screen !== undefined || val.activity !== undefined || val.sites !== undefined) && keyOrderMap.desktop) {
+        knownKeys = keyOrderMap.desktop;
       }
 
       const allKeys = Object.keys(val);
@@ -518,6 +520,26 @@
         version: "1.0.0",
         brand: "chrome",
         inst: "inst1",
+        pad: "",
+      };
+    } else if (recipeId === "state_payload_max") {
+      targetLen = controlMax;
+      const host253 = "a".repeat(249) + ".com";
+      const left_out = Array(200).fill(host253);
+      baseObj = {
+        type: "state",
+        capture: "permitted",
+        delivery: "idle",
+        freshness_ms: 0,
+        destination_generation: "g",
+        period_id: "p",
+        custody: { full: false, stale: false },
+        version: "1.0.0",
+        left_out,
+        left_out_epoch: "e".repeat(64),
+        left_out_rev: 1000,
+        desktop: { screen: true, activity: true, sites: "on" },
+        site_rule_ack: 1,
         pad: "",
       };
     } else if (recipeId === "batch_delta_cap_3000") {

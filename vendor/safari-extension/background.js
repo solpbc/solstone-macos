@@ -19,9 +19,13 @@ if (typeof importScripts === "function") {
     "lib/native_outbox.js",
     "lib/about.js",
     "lib/safari_port.js",
+    "lib/safari_ios_port.js",
+    "lib/left_out.js",
     "lib/native_port.js",
     "lib/status.js",
     "lib/owner_sites.js",
+    "lib/tab_age.js",
+    "lib/page_facts.js",
     "lib/router.js"
   );
 }
@@ -50,16 +54,21 @@ const CONTENT_SCRIPT_FILES = [
   "skim.js",
   "indicator.js",
   "lib/gate.js",
+  "lib/page_facts.js",
   "content.js",
 ];
 
 const DEFAULT_CFG = {
   paused: false,
   showPageIndicator: false,
+  pauseWithApp: true,
   chosenOrigins: [],
   siteMode: "selected",
   excludedHosts: [],
   allSitesConsent: 0,
+  siteWideOrigins: [],
+  offeredOrigins: [],
+  appLeftOut: [],
 };
 
 let port = null;
@@ -72,6 +81,37 @@ const statusPorts = new Set();
 // Tabs that may hold a lease must receive withdrawal without a fresh query.
 const leaseTabs = new Set();
 
+let browserIdentityPromise = null;
+function getBrowserIdentity() {
+  if (!browserIdentityPromise) {
+    browserIdentityPromise = (async () => {
+      try {
+        let browserInfo = null;
+        if (typeof browser !== "undefined" && browser.runtime?.getBrowserInfo) {
+          try { browserInfo = await browser.runtime.getBrowserInfo(); } catch (_e) {}
+        }
+        let userAgentData = null;
+        if (typeof navigator !== "undefined" && navigator.userAgentData) {
+          userAgentData = navigator.userAgentData;
+          if (typeof userAgentData.getHighEntropyValues === "function") {
+            try {
+              const high = await userAgentData.getHighEntropyValues(["fullVersionList"]);
+              if (high && Array.isArray(high.fullVersionList)) {
+                userAgentData = { ...userAgentData, fullVersionList: high.fullVersionList };
+              }
+            } catch (_e) {}
+          }
+        }
+        const userAgent = typeof navigator !== "undefined" ? navigator.userAgent : "";
+        return globalThis.SolstonePageFacts ? globalThis.SolstonePageFacts.mapBrowser({ browserInfo, userAgentData, userAgent }) : null;
+      } catch (_e) {
+        return null;
+      }
+    })();
+  }
+  return browserIdentityPromise;
+}
+
 async function getCfg() {
   const r = await chrome.storage.local.get("cfg");
   const stored = r.cfg || {};
@@ -81,19 +121,39 @@ async function getCfg() {
     const next = {
       paused: !!stored.paused,
       showPageIndicator: !!stored.showPageIndicator,
+      pauseWithApp: stored.pauseWithApp !== false,
       chosenOrigins,
     };
     await chrome.storage.local.set({ cfg: next });
     return { ...DEFAULT_CFG, ...next };
   }
-  return {
+  const res = {
     paused: !!stored.paused,
     showPageIndicator: !!stored.showPageIndicator,
-    chosenOrigins,
+    pauseWithApp: stored.pauseWithApp !== false,
+    chosenOrigins: [...chosenOrigins],
     siteMode: stored.siteMode === "all" ? "all" : "selected",
-    excludedHosts: Array.isArray(stored.excludedHosts) ? [...new Set(stored.excludedHosts.map(H.excludedHostname).filter(Boolean))].sort() : [],
+    // A stored left-out site covers its subdomains too, and www.bank.com means
+    // bank.com, so older entries now leave out at least as much as before.
+    excludedHosts: Array.isArray(stored.excludedHosts)
+      ? [...new Set(stored.excludedHosts.map(H.storedExcludedHostname).filter(Boolean))].sort()
+      : [],
     allSitesConsent: stored.allSitesConsent === H.ALL_SITES_CONSENT_VERSION ? stored.allSitesConsent : 0,
+    siteWideOrigins: Array.isArray(stored.siteWideOrigins) ? [...stored.siteWideOrigins] : [],
+    offeredOrigins: Array.isArray(stored.offeredOrigins) ? [...stored.offeredOrigins] : [],
+    appLeftOut: Array.isArray(stored.appLeftOut) ? [...stored.appLeftOut] : [],
+    appLeftOutRaw: Array.isArray(stored.appLeftOutRaw) ? [...stored.appLeftOutRaw] : [],
   };
+  if (Array.isArray(stored.declinedHosts)) {
+    res.declinedHosts = [...stored.declinedHosts];
+  }
+  if (stored.appLeftOutEpoch !== undefined && stored.appLeftOutEpoch !== null) {
+    res.appLeftOutEpoch = stored.appLeftOutEpoch;
+  }
+  if (typeof stored.appLeftOutRev === "number") {
+    res.appLeftOutRev = stored.appLeftOutRev;
+  }
+  return res;
 }
 
 let cfgChain = Promise.resolve();
@@ -128,12 +188,20 @@ async function updateBadge(status) {
   const badge = iconInfo.badge || "";
   const title = iconInfo.title || "solstone";
 
+  // A routine host state renewal withdraws authority and re-grants it a moment
+  // later. Content scripts hear the withdrawal; the owner's surfaces wait for
+  // the settled state rather than flash "can't reach the solstone app".
+  const settling = status.hostSettling === true;
+
   // Authority publication never waits for browser action painting.
-  for (const sp of statusPorts) {
-    try { sp.postMessage({ type: "status", status }); }
-    catch (_e) { statusPorts.delete(sp); }
+  if (!settling) {
+    for (const sp of statusPorts) {
+      try { sp.postMessage({ type: "status", status }); }
+      catch (_e) { statusPorts.delete(sp); }
+    }
   }
   broadcastLeaseUpdate(status, currentBadgeEpoch);
+  if (settling) return;
   badgeChain = badgeChain.catch(() => {}).then(async () => {
     if (badgeEpoch !== currentBadgeEpoch) return;
     await chrome.action.setIcon({ path: ICON_SET(prefix) });
@@ -183,13 +251,17 @@ function refreshOpenTabs() {
   }
 }
 
-function broadcastLeaseUpdate(status, epoch = badgeEpoch) {
+function broadcastLeaseUpdate(status = port?.getStatus(), epoch = badgeEpoch) {
   if (!status) return;
   const message = {
     kind: "leaseUpdate", captureEpoch: status.captureEpoch, lease: status.lease,
     paused: status.paused, consentVersion: status.consentVersion,
-    grantedOrigins: status.grantedOrigins || [], showIndicator: status.showPageIndicator,
+    grantedOrigins: status.grantedOrigins || [], exactOnlyOrigins: status.exactOnlyOrigins || [],
+    siteWideOrigins: status.siteWideOrigins || [],
+    pendingRemoveOrigins: status.pendingRemoveOrigins || [],
+    showIndicator: status.showPageIndicator,
     siteMode: status.siteMode, excludedHosts: status.excludedHosts || [],
+    appLeftOut: status.appLeftOut || [],
     allSitesConsent: status.allSitesConsent, broadGranted: status.broadGranted,
     sitePolicyPending: status.sitePolicyPending,
     hostCapture: status.hostCapture, hostDelivery: status.hostDelivery,
@@ -258,15 +330,138 @@ async function removePermission(pattern) {
 async function settlePermissionEffects() {
   while (permissionEffects.size) await Promise.allSettled([...permissionEffects]);
 }
+
+let lapsingReservation = null;
+async function lapseReservation(targetPort = port) {
+  if (!targetPort?.ownerSites?.reservation) return;
+  const res = targetPort.ownerSites.reservation;
+  if (targetPort.now() < res.expiresAt) return;
+  if (lapsingReservation === res) return;
+  lapsingReservation = res;
+  try {
+    if (res.pattern === "*://*/*" && !res.broadAlreadyLive) {
+      try {
+        await removePermission("*://*/*");
+      } catch (_e) {}
+    }
+  } finally {
+    Router.applyOwnerEvent(targetPort, { type: "drop-reservation" });
+    targetPort.notify?.();
+  }
+}
+
+async function walkRemoveSiteGrant(targetHost, options = {}) {
+  let live = Array.isArray(options) ? options : (options?.livePatterns || options?.patterns);
+  if (!live) {
+    try {
+      const perms = await chrome.permissions.getAll();
+      live = perms?.origins || [];
+    } catch (_e) {
+      return [];
+    }
+  }
+  const removed = [];
+  for (const pattern of live) {
+    if (pattern === "*://*/*" || pattern === "<all_urls>") continue;
+    const grant = H.classifySiteGrant(pattern);
+    if (!grant) continue;
+    const matches = grant.host === targetHost || H.hostCovers(targetHost, grant.host);
+    if (matches) {
+      if (patternHeld(pattern)) continue;
+      try {
+        await removePermission(pattern);
+        removed.push(pattern);
+      } catch (_e) {}
+    }
+  }
+  return removed;
+}
+
+async function checkCleanDeclines(hosts, livePatterns = null) {
+  if (!port) return;
+  const toCheck = Array.isArray(hosts) ? hosts : [];
+  if (toCheck.length === 0) return;
+  let live = livePatterns;
+  if (!live) {
+    try {
+      const perms = await chrome.permissions.getAll();
+      live = perms?.origins || [];
+    } catch (_e) {
+      return;
+    }
+  }
+  const coveringGrants = [];
+  for (const pat of live) {
+    const grant = H.classifySiteGrant(pat);
+    if (grant) coveringGrants.push(grant);
+  }
+  const cleanHosts = [];
+  for (const h of toCheck) {
+    const hasCovering = coveringGrants.some((grant) => {
+      if (grant.host === h) return true;
+      if (!grant.exactOnly && H.hostCovers(grant.host, h)) return true;
+      return false;
+    });
+    if (!hasCovering) {
+      cleanHosts.push(h);
+    }
+  }
+  if (cleanHosts.length > 0) {
+    Router.applyOwnerEvent(port, { type: "drop-declines", hosts: cleanHosts });
+  }
+}
+// Chrome removes every grant a removed pattern contains, so a site pattern
+// stays while a chosen site sits under it (bank.com while login.bank.com is
+// chosen). It only keeps the browser grant; nothing is registered or read for
+// the parent once it isn't chosen.
+function patternHeld(pattern) {
+  if (patternNeeded(pattern)) return true;
+  const siteHost = H.patternSiteHost(pattern);
+  if (!siteHost || !port) return false;
+  return [...port.chosenOrigins].some((origin) => {
+    try {
+      const hostname = new URL(origin).hostname;
+      return hostname !== siteHost && H.hostCovers(siteHost, hostname);
+    } catch (_e) { return false; }
+  });
+}
+
 function patternNeeded(pattern) {
   if (!port) return false;
   const reservation = port.ownerSites?.reservation;
   if (reservation?.pattern === pattern && port.now() < reservation.expiresAt) return true;
   if (pattern === "*://*/*" && port.siteMode === "all" && port.allSitesConsent === H.ALL_SITES_CONSENT_VERSION) return true;
+  // A chosen site needs its own pattern and, if the browser still holds one
+  // from before sites covered subdomains, its exact-host pattern. Any other
+  // site grant for a chosen site's own host (such as an owner's
+  // https://login.bank.com/*) is kept too, matching scheme where it names one.
+  const grant = H.classifySiteGrant(pattern);
   return [...port.chosenOrigins].some(origin => {
-    try { return H.matchPatternFor(new URL(origin).host) === pattern; }
-    catch (_e) { return false; }
+    try {
+      const url = new URL(origin);
+      if (H.sitePatternsFor(url.host).includes(pattern)) return true;
+      if (!grant || grant.host !== url.hostname) return false;
+      if (pattern.startsWith("*://")) return true;
+      return new URL(grant.origin).protocol === url.protocol;
+    } catch (_e) { return false; }
   });
+}
+
+// After an update, Safari can leave a tab that was already open bound to the
+// previous copy of the extension: injection resolves, yet nothing in the tab can
+// reach this worker until the page reloads. A loaded, non-private tab that does
+// not answer is treated like one the browser refused, so its site asks for a reload.
+async function tabAnswers(tab) {
+  if (tab.incognito || tab.status !== "complete") return true;
+  try {
+    const reply = await Promise.race([
+      chrome.tabs.sendMessage(tab.id, { kind: "ping" }, { frameId: 0 }),
+      new Promise(resolve => setTimeout(() => resolve(null), 1500)),
+    ]);
+    return reply?.ok === true;
+  } catch (_e) {
+    return false;
+  }
 }
 
 async function registerSite(host) {
@@ -315,6 +510,7 @@ async function registerSite(host) {
       if (tab.id == null) continue;
       try {
         await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, files: CONTENT_SCRIPT_FILES });
+        if (!(await tabAnswers(tab))) hadTabError = true;
       } catch (_e) {
         hadTabError = true;
       }
@@ -368,7 +564,10 @@ async function unregisterSite(host) {
     const tabs = await chrome.tabs.query({ url: pattern });
     for (const tab of tabs) {
       if (patternNeeded(pattern)) { await registerSite(host); return; }
-      if (tab.id != null) {
+      // A tab another chosen site still covers keeps going.
+      let stillShared = false;
+      try { stillShared = !!port && H.originGranted(port, new URL(tab.url).origin); } catch (_e) {}
+      if (tab.id != null && !stillShared) {
         chrome.tabs.sendMessage(tab.id, { kind: "stop" }, () => void chrome.runtime.lastError);
         Router.destroyBinding(tab.id);
       }
@@ -379,7 +578,6 @@ async function unregisterSite(host) {
 
   try {
     if (patternNeeded(pattern)) { await registerSite(host); return; }
-    await removePermission(pattern);
   } catch (_e) {
     /* ignore */
   }
@@ -395,11 +593,8 @@ async function runReconcile() {
     return [];
   }
 
-  let reservation = port?.ownerSites?.reservation || null;
-  if (reservation && port.now() >= reservation.expiresAt) {
-    Router.applyOwnerEvent(port, { type: "drop-reservation" });
-    reservation = null;
-  }
+  await lapseReservation(port);
+  const reservation = port?.ownerSites?.reservation || null;
   const exemptPatterns = reservation ? [reservation.pattern] : [];
 
   const actions = Reconcile.reconcile({
@@ -413,16 +608,6 @@ async function runReconcile() {
     pausedHosts: {},
   });
 
-  for (const action of actions) {
-    if (action.op === "release") {
-      try {
-        if (patternNeeded(action.origin)) continue;
-        await removePermission(action.origin);
-      } catch (_e) {
-        /* ignore */
-      }
-    }
-  }
   return actions;
 }
 
@@ -436,8 +621,9 @@ function syncSiteRegistrations() {
     if (obsolete.length) await chrome.scripting.unregisterContentScripts({ ids: obsolete.map(item => item.id) });
     if (broad) {
       try {
+        const effectiveExcludes = Array.from(new Set([...(port.excludedHosts || []), ...(port.appLeftOut || [])])).sort();
         await chrome.scripting.registerContentScripts([{
-          id: "cs-all-sites", matches: ["*://*/*"], excludeMatches: port.excludedHosts.map(H.matchPatternFor),
+          id: "cs-all-sites", matches: ["*://*/*"], excludeMatches: effectiveExcludes.map(H.matchPatternFor),
           js: CONTENT_SCRIPT_FILES, runAt: "document_idle", allFrames: true, persistAcrossSessions: true,
         }]);
         port.allSitesRegistration = "ready";
@@ -469,6 +655,18 @@ function syncSiteRegistrations() {
 
 let sitePolicyChain = Promise.resolve();
 let sitePolicyPendingCount = 0;
+// An error is only shown on a site the owner shares. One left on a site that
+// was removed, left out, or belonged to the other mode has no row to act on and
+// would hold the toolbar's attention mark forever.
+async function pruneOrphanSiteErrors() {
+  if (!port?.clearSiteErrorsWhere) return;
+  const chosen = new Set(port.chosenOrigins || []);
+  const excluded = new Set(port.excludedHosts || []);
+  await port.clearSiteErrorsWhere((origin) => port.siteMode === "all"
+    ? [...excluded].some((site) => H.hostCovers(site, new URL(origin).hostname))
+    : !chosen.has(origin));
+}
+
 function updateSitePolicy(msg) {
   // Admission withdraws immediately, including while earlier browser work waits.
   sitePolicyPendingCount++;
@@ -476,21 +674,11 @@ function updateSitePolicy(msg) {
   port.ownerSites.grantEpoch++;
   port.notify();
   const change = sitePolicyChain.catch(() => {}).then(async () => {
-    let patch;
-    if (msg.cmd === "setSiteMode") {
-      if (!["selected", "all"].includes(msg.mode)) return { ok: false, error: "invalid_site_mode" };
-      if (msg.mode === "all" && (msg.agreed !== true || port.consentVersion !== globalThis.SolstoneCaptureGate.CONSENT_VERSION)) {
-        return { ok: false, error: "missing_consent" };
-      }
-      patch = { siteMode: msg.mode, allSitesConsent: msg.mode === "all" ? H.ALL_SITES_CONSENT_VERSION : port.allSitesConsent };
-    } else {
-      if (port.siteMode !== "all" || typeof msg.excluded !== "boolean") return { ok: false, error: "wrong_site_mode" };
-      const host = H.excludedHostname(msg.host);
-      if (!host) return { ok: false, error: "invalid_host" };
-      const hosts = new Set(port.excludedHosts);
-      if (msg.excluded) hosts.add(host); else hosts.delete(host);
-      patch = { excludedHosts: [...hosts].sort() };
+    if (msg.cmd !== "setSiteMode" || !["selected", "all"].includes(msg.mode)) return { ok: false, error: "invalid_site_mode" };
+    if (msg.mode === "all" && (msg.agreed !== true || port.consentVersion !== globalThis.SolstoneCaptureGate.CONSENT_VERSION)) {
+      return { ok: false, error: "missing_consent" };
     }
+    const patch = { siteMode: msg.mode, allSitesConsent: msg.mode === "all" ? H.ALL_SITES_CONSENT_VERSION : port.allSitesConsent };
     try {
       const saved = await setCfg(patch);
       port.siteMode = saved.siteMode;
@@ -502,6 +690,7 @@ function updateSitePolicy(msg) {
       return { ok: false, error: "storage_error" };
     }
     port.ownerSites.reservation = null;
+    await pruneOrphanSiteErrors();
     port.browserDeniedOrigins.clear();
     // Do not borrow grants from the previous mode if browser effects or the
     // permission snapshot fail (Safari may omit a removal event).
@@ -522,6 +711,7 @@ function updateSitePolicy(msg) {
     port.notify();
     await syncSiteRegistrations();
     await runReconcile();
+    Router.runAdoptionPass({ port, setCfg, registerSite, refreshOpenTabs, checkCleanDeclines }).catch(() => {});
     return { ok: true, siteMode: port.siteMode, excludedHosts: [...port.excludedHosts], broadGranted: port.broadGranted };
   });
   const settled = change.finally(() => {
@@ -556,6 +746,7 @@ async function refreshSiteAccess() {
   Router.applyOwnerEvent(port, { type: "publish-grants", livePatterns: perms.origins || [], epochAtStart: epoch });
   port.notify();
   await syncSiteRegistrations();
+  Router.runAdoptionPass({ port, setCfg, registerSite, refreshOpenTabs, checkCleanDeclines }).catch(() => {});
   return { ok: true };
 }
 
@@ -625,15 +816,36 @@ async function doInit() {
   port.everConnected = everConnected;
   port.paused = cfg.paused;
   port.showPageIndicator = cfg.showPageIndicator;
+  port.pauseWithApp = cfg.pauseWithApp !== false;
   port.chosenOrigins = new Set(cfg.chosenOrigins || []);
   port.siteMode = cfg.siteMode;
   port.excludedHosts = cfg.excludedHosts;
   port.allSitesConsent = cfg.allSitesConsent;
+  port.persistCfg = setCfg;
+  port.syncSiteRegistrations = syncSiteRegistrations;
+  port.onLapseReservation = () => { lapseReservation(port); };
+  port.declinedHostsKnown = Object.prototype.hasOwnProperty.call(cfg, "declinedHosts");
+  port.declinedHosts = cfg.declinedHosts ? [...cfg.declinedHosts] : [];
+  port.siteWideOrigins = cfg.siteWideOrigins ? [...cfg.siteWideOrigins] : [];
+  port.offeredOrigins = cfg.offeredOrigins ? [...cfg.offeredOrigins] : [];
+  port.appLeftOut = cfg.appLeftOut ? [...cfg.appLeftOut] : [];
+  // The app's list exactly as it sent it; sync compares raw strings (a restart
+  // that lost it would make an app reset drop every app exclusion).
+  port.appLeftOutRaw = Array.isArray(cfg.appLeftOutRaw) ? [...cfg.appLeftOutRaw] : [];
+  port.appLeftOutEpoch = cfg.appLeftOutEpoch ?? null;
+  port.appLeftOutRev = cfg.appLeftOutRev ?? 0;
   port.truncationByOrigin = storedTruncation && typeof storedTruncation === "object" ? storedTruncation : {};
   port.registration = storedSiteErrors?.registration && typeof storedSiteErrors.registration === "object" ? storedSiteErrors.registration : {};
   port.enqueue = storedSiteErrors?.enqueue && typeof storedSiteErrors.enqueue === "object" ? storedSiteErrors.enqueue : {};
   port.siteErrors = { registration: { ...port.registration }, enqueue: { ...port.enqueue } };
-  port.ownerSites = { ...(port.ownerSites || {}), reservation: null, registration: port.registration, enqueue: port.enqueue };
+  port.ownerSites = {
+    ...(port.ownerSites || {}),
+    reservation: null,
+    registration: port.registration,
+    enqueue: port.enqueue,
+    siteWide: new Set(port.siteWideOrigins),
+    declinedHosts: new Set(port.declinedHosts),
+  };
 
   port.permissionEpoch = permissionEpoch;
   let permissionsSettled = false;
@@ -644,13 +856,17 @@ async function doInit() {
     if (epoch !== permissionEpoch) continue;
     port.broadGranted = (perms.origins || []).includes("*://*/*");
     const liveGranted = new Set();
+    const exactOnly = new Set();
     const missingPatterns = [];
     for (const origin of latestCfg.chosenOrigins) {
       try {
         const u = new URL(origin);
         const pattern = H.matchPatternFor(u.host);
-        if (perms.origins?.includes(pattern) || perms.origins?.includes("*://*/*")) {
+        const isMarked = port.siteWideOrigins ? port.siteWideOrigins.includes(origin) : false;
+        const level = H.grantLevel(u.host, perms.origins, isMarked, u.protocol.replace(/:$/, ""));
+        if (level) {
           liveGranted.add(origin);
+          if (level === "exact") exactOnly.add(origin);
           if (port.siteMode === "selected") {
             const regRes = await registerSite(u.host);
             await port.setRegistration(origin, regRes);
@@ -664,6 +880,7 @@ async function doInit() {
     if (epoch !== permissionEpoch) continue;
     port.chosenOrigins = new Set(latestCfg.chosenOrigins);
     port.grantedOrigins = liveGranted;
+    port.exactOnlyOrigins = exactOnly;
     port.ownerSites.registration = port.registration;
     port.ownerSites.enqueue = port.enqueue;
     port.drift = missingPatterns.length ? { patterns: Array.from(new Set(missingPatterns)).sort() } : null;
@@ -672,6 +889,7 @@ async function doInit() {
   }
   if (!permissionsSettled) throw new Error("permissions_changed_during_init");
 
+  await pruneOrphanSiteErrors();
   port.lossNotice = (await DB.get("meta", "lossNotice")) || null;
   const cap = await Outbox.getCapacityStatus();
   port.pressure = cap.pressure;
@@ -680,6 +898,21 @@ async function doInit() {
   port.connect();
   updateBadge();
   refreshOpenTabs();
+  await Router.runAdoptionPass({ port, setCfg, registerSite, refreshOpenTabs, checkCleanDeclines }).catch(() => {});
+  try {
+    const q = chrome.tabs?.query?.({}, (tabs) => {
+      if (!chrome.runtime.lastError && Array.isArray(tabs) && typeof SolstoneTabAge !== "undefined") {
+        SolstoneTabAge.start(tabs, port.wallNow());
+      }
+    });
+    if (q && typeof q.then === "function") {
+      q.then((tabs) => {
+        if (Array.isArray(tabs) && typeof SolstoneTabAge !== "undefined") {
+          SolstoneTabAge.start(tabs, port.wallNow());
+        }
+      }).catch(() => {});
+    }
+  } catch (_e) {}
   return port;
 }
 
@@ -702,7 +935,16 @@ chrome.runtime.onConnect.addListener((p) => {
     }
     statusPorts.add(p);
     ensureInit().then(() => {
-      if (port) p.postMessage({ type: "status", status: port.getStatus() });
+      // Opening the popup or settings is when an owner who just opened the
+      // solstone app looks again, so try the app now rather than at the next
+      // minute's poll.
+      if (port && !port.livePort) port.connect();
+      if (!port) return;
+      Router.runAdoptionPass({ port, setCfg, registerSite, refreshOpenTabs, checkCleanDeclines }).catch(() => {});
+      // Mid-renewal, the settled state reaches this surface through
+      // updateBadge, like every surface already open.
+      const status = port.getStatus();
+      if (!status.hostSettling) p.postMessage({ type: "status", status });
     }).catch(() => {});
     p.onDisconnect.addListener(() => {
       statusPorts.delete(p);
@@ -718,6 +960,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       setCfg,
       registerSite,
       unregisterSite,
+      syncSiteRegistrations,
+      walkRemoveSiteGrant,
+      checkCleanDeclines,
       removeSiteOrigin,
       settlePermissionEffects,
       broadcastPause,
@@ -726,6 +971,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       updateSitePolicy,
       executeBrowserRead,
       refreshSiteAccess,
+      broadcastLeaseUpdate,
+      getBrowserIdentity,
     };
     return Router.route(msg, sender, deps);
   }).then(sendResponse, (err) => {
@@ -738,9 +985,17 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   leaseTabs.delete(tabId);
   port?.pruneTruncationDocuments?.(slot => slot.split(":")[0] !== String(tabId));
   Router.destroyBinding(tabId);
+  if (typeof SolstoneTabAge !== "undefined") {
+    SolstoneTabAge.forget(tabId);
+  }
   refreshOpenTabs();
 });
-chrome.tabs.onCreated?.addListener(() => refreshOpenTabs());
+chrome.tabs.onCreated?.addListener((tab) => {
+  if (port && typeof SolstoneTabAge !== "undefined") {
+    SolstoneTabAge.noteCreated(tab, port.wallNow());
+  }
+  refreshOpenTabs();
+});
 chrome.tabs.onUpdated?.addListener(() => refreshOpenTabs());
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -756,6 +1011,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         await port.poll();
       }
       await runReconcile().catch(() => {});
+      await Router.runAdoptionPass({ port, setCfg, registerSite, refreshOpenTabs, checkCleanDeclines }).catch(() => {});
     }).catch(() => {});
   }
 });
@@ -777,16 +1033,20 @@ chrome.permissions.onRemoved.addListener(async (details) => {
     const missing = [];
     for (const o of port.chosenOrigins) {
       try {
-        const pat = H.matchPatternFor(new URL(o).host);
-        if (!perms.origins.includes(pat) && !perms.origins.includes("*://*/*")) {
-          missing.push(pat);
-        }
+        const u = new URL(o);
+        const host = u.host;
+        const scheme = u.protocol.replace(/:$/, "");
+        const isMarked = Array.isArray(port.siteWideOrigins) && port.siteWideOrigins.includes(o);
+        if (!H.grantLevel(host, perms.origins, isMarked, scheme)) missing.push(H.matchPatternFor(host));
       } catch (_e) {}
     }
     port.drift = missing.length ? { patterns: Array.from(new Set(missing)).sort() } : null;
     port.notify();
     syncSiteRegistrations().catch(() => {});
-    runReconcile().catch(() => {});
+    await runReconcile().catch(() => {});
+    const adoption = Router.runAdoptionPass({ port, setCfg, registerSite, refreshOpenTabs, checkCleanDeclines });
+    if (Router.grantChainBusy()) adoption.catch(() => {});
+    else await adoption;
     return;
   }
   permissionEpoch++;
@@ -796,7 +1056,9 @@ chrome.permissions.onRemoved.addListener(async (details) => {
 chrome.permissions.onAdded.addListener(async (details) => {
   const addedPatterns = details?.origins || [];
   if (port) {
-    const sync = Router.applyOwnerEvent(port, { type: "browser-added-sync", patterns: addedPatterns, now: port.now() });
+    const resPat = port.ownerSites?.reservation?.pattern;
+    const syncPatterns = resPat && addedPatterns.includes(resPat) ? [resPat] : addedPatterns;
+    const sync = Router.applyOwnerEvent(port, { type: "browser-added-sync", patterns: syncPatterns, now: port.now() });
     permissionEpoch = port.permissionEpoch;
     const epochAtStart = sync.result.epochAtStart;
     let perms;
@@ -809,10 +1071,11 @@ chrome.permissions.onAdded.addListener(async (details) => {
     const missing = [];
     for (const o of port.chosenOrigins) {
       try {
-        const pat = H.matchPatternFor(new URL(o).host);
-        if (!perms.origins.includes(pat) && !perms.origins.includes("*://*/*")) {
-          missing.push(pat);
-        }
+        const u = new URL(o);
+        const host = u.host;
+        const scheme = u.protocol.replace(/:$/, "");
+        const isMarked = Array.isArray(port.siteWideOrigins) && port.siteWideOrigins.includes(o);
+        if (!H.grantLevel(host, perms.origins, isMarked, scheme)) missing.push(H.matchPatternFor(host));
       } catch (_e) {}
     }
     port.drift = missing.length ? { patterns: Array.from(new Set(missing)).sort() } : null;
@@ -840,7 +1103,10 @@ chrome.permissions.onAdded.addListener(async (details) => {
     if (permissionEpoch !== epochAtStart) return;
     port.notify();
     refreshOpenTabs();
-    runReconcile().catch(() => {});
+    await runReconcile().catch(() => {});
+    const adoption = Router.runAdoptionPass({ port, setCfg, registerSite, refreshOpenTabs, checkCleanDeclines });
+    if (Router.grantChainBusy()) adoption.catch(() => {});
+    else await adoption;
     return;
   }
   permissionEpoch++;
@@ -875,9 +1141,13 @@ globalThis.SolstoneBackground = {
   doInit,
   ensureInit,
   updateBadge,
+  broadcastLeaseUpdate,
   registerSite,
   unregisterSite,
   removeSiteOrigin,
+  walkRemoveSiteGrant,
+  checkCleanDeclines,
+  updateSitePolicy,
   runReconcile,
   getCfg,
   setCfg,

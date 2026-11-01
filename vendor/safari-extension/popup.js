@@ -34,6 +34,14 @@
   // What kind of page the active tab is. A tab with no address is one the browser
   // didn't show this extension (Safari hides a page it denies), so it's "unknown",
   // never assumed to be a page that could be read.
+  // Store pages: no browser lets an extension read its own add-on store.
+  const STORE_PAGES = [
+    { host: "chromewebstore.google.com", path: "/" },
+    { host: "chrome.google.com", path: "/webstore" },
+    { host: "microsoftedge.microsoft.com", path: "/addons" },
+    { host: "addons.mozilla.org", path: "/" },
+  ];
+
   function pageFor(tab) {
     if (tab?.incognito === true) {
       let host = "";
@@ -43,7 +51,9 @@
     if (!tab || !tab.url) return { origin: "", host: "", ok: false, kind: "unknown" };
     try {
       const parsed = new URL(tab.url);
-      const ok = parsed.protocol === "http:" || parsed.protocol === "https:";
+      const web = parsed.protocol === "http:" || parsed.protocol === "https:";
+      const store = web && STORE_PAGES.some((page) => parsed.hostname === page.host && parsed.pathname.startsWith(page.path));
+      const ok = web && !store;
       return { origin: ok ? parsed.origin : "", host: ok ? parsed.hostname : "", ok, kind: ok ? "web" : "restricted" };
     } catch (_error) {
       return { origin: "", host: "", ok: false, kind: "unknown" };
@@ -78,11 +88,13 @@
       openApp: () => chrome.tabs.create({ url: "https://solstone.app" }),
       reload: () => chrome.runtime.reload(),
       grantSite: (origin) => View.grantSite(origin, siteEffects()),
+      grantChosen: (origins) => View.grantChosenSites(origins, siteEffects()),
+      inactiveOrigins: () => state?.inactiveOrigins || [],
       allowAllSites: () => View.regrantAllSites(siteEffects()),
       showError: showActionError,
       showDenied: (action) => showActionMessage(action?.id === "allow-all-sites"
         ? globalThis.SolstoneCopy.accessCopy(state?.brand).declined
-        : "permission declined. this site stays paused."),
+        : action?.id === "allow-again-all" ? "permission declined. those sites stay paused." : "permission declined. this site stays paused."),
       lossSeq: () => state?.lossNotice?.seq,
     });
   }
@@ -95,6 +107,11 @@
     $("verdictDot").className = `dot ${treatment.dotClass}`;
     $("verdictHeadline").textContent = section.headline;
     $("verdictSub").textContent = section.sub;
+    if ($("verdictNote")) {
+      const note = section.appPausedNote || "";
+      $("verdictNote").textContent = note;
+      $("verdictNote").hidden = !note;
+    }
     $("verdictReason").textContent = section.reason;
     $("verdictReason").hidden = !section.reason;
 
@@ -151,30 +168,33 @@
         button.addEventListener("click", () => runAction(row.action));
         item.append(button);
       }
-      if (typeof row.count === "number") {
-        const count = document.createElement("div");
-        count.className = "count";
-        count.textContent = String(row.count);
-        item.append(count);
-      }
       rows.append(item);
     }
   }
 
   async function runPageSiteAction(action) {
     showActionMessage("");
-    if (action.id === "exclude-site" || action.id === "include-site") {
-      await runAction({ ...action, host: page.host, origin: page.origin });
+    const Copy = globalThis.SolstoneCopy;
+    const Hosts = globalThis.SolstoneHosts;
+    if (action.id === "exclude-site" || action.id === "include-site" || action.id === "leave-out") {
+      if (page.kind === "private" || page.kind === "restricted" || page.kind === "unknown") return;
+      // The site this page belongs to: www.bank.com leaves out all of bank.com.
+      const site = action.site || Hosts.siteHostname(page.host);
+      await runAction({ ...action, host: site, origin: page.origin });
+      if (!$("actionMessage").textContent) {
+        showActionMessage(action.id === "include-site" ? Copy.includedAnnouncement(site) : Copy.leftOutAnnouncement(site));
+      }
       return;
     }
     if (action.id === "remove-site") {
-      const origin = page.origin || `https://${page.host}`;
+      const origin = action.origin || page.origin || `https://${page.host}`;
       const result = await cmd({ cmd: "removeGrantedOrigin", origin });
-      if (result.error) showActionError(result.error);
       await refresh();
+      if (result.error || result.ok === false) showActionError(result.error || "storage_error");
+      else showActionMessage(Copy.removedAnnouncement(Hosts.displayOrigin(origin)));
       return;
     }
-    const result = await View.addSite(page.origin || page.host, Object.assign(siteEffects(), {
+    const result = await View.addSite(Hosts.chosenOrigin(page.origin) || page.origin || page.host, Object.assign(siteEffects(), {
       disclose: presentDisclosure,
     }));
     if (result.cancelled) return;
@@ -200,6 +220,17 @@
       siteAction.disabled = section.siteAction.disabled;
       siteAction.className = section.siteAction.primary ? "primary" : "";
       siteAction.onclick = () => runPageSiteAction(section.siteAction);
+    }
+
+    const siteSecondary = $("pageSiteSecondary");
+    if (siteSecondary) {
+      siteSecondary.hidden = !section.siteSecondary;
+      if (section.siteSecondary) {
+        siteSecondary.textContent = section.siteSecondary.label;
+        siteSecondary.disabled = !!section.siteSecondary.disabled;
+        siteSecondary.className = section.siteSecondary.primary ? "primary" : "";
+        siteSecondary.onclick = () => runPageSiteAction(section.siteSecondary);
+      }
     }
 
     const pauseAction = $("pauseAction");

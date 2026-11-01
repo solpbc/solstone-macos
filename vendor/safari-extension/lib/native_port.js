@@ -22,7 +22,9 @@
     if (
       runtimeId === table.dev?.chrome_id ||
       runtimeId === table.dev?.edge_id ||
-      runtimeId === table.dev?.firefox_id
+      runtimeId === table.dev?.firefox_id ||
+      (table.dev?.safari_id && runtimeId === table.dev.safari_id) ||
+      (table.dev?.safari_ios_id && runtimeId === table.dev.safari_ios_id)
     ) {
       return table.dev.host;
     }
@@ -30,11 +32,22 @@
       runtimeId === table.production?.chrome_id ||
       runtimeId === table.production?.edge_id ||
       runtimeId === table.production?.firefox_id ||
-      (table.production?.safari_id && runtimeId === table.production.safari_id)
+      (table.production?.safari_id && runtimeId === table.production.safari_id) ||
+      (table.production?.safari_ios_id && runtimeId === table.production.safari_ios_id)
     ) {
       return table.production.host;
     }
     return null;
+  }
+
+  function arraysEqual(a, b) {
+    if (a === b) return true;
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
   }
 
   function resolveBrand(runtime = typeof chrome !== "undefined" ? chrome.runtime : null) {
@@ -88,6 +101,8 @@
       this.captureSignature = null;
       this.hostStateDeadline = null;
       this.stateRevision = 0;
+      this.settlingRevision = null;
+      this.settledWaiters = [];
       this.opEpoch = 0;
       this.connectionGeneration = 0;
       this.connectionToken = null;
@@ -117,10 +132,14 @@
       this.retryNotBefore = 0;
 
       this.everConnected = false;
+      // The helper answered a hello this session, even if only to say the app
+      // isn't running: the app is installed, so the owner is told to open it.
+      this.appAnswered = false;
       this.updateCheck = "pending";
       this.paused = false;
       this.chosenOrigins = new Set();
       this.grantedOrigins = new Set();
+      this.exactOnlyOrigins = new Set();
       this.siteMode = "selected";
       this.excludedHosts = [];
       this.allSitesConsent = 0;
@@ -138,6 +157,34 @@
       this.openTabs = { known: false, openOrigins: null, anyGrantedTabOpen: null };
       this.consentVersion = 0;
       this.showPageIndicator = false;
+      this.pauseWithApp = true;
+      this.siteWideOrigins = [];
+      this.pendingRemoveOrigins = [];
+      this.offeredOrigins = [];
+      this.declinedHosts = [];
+      this.declinedHostsKnown = false;
+      this.appLeftOut = [];
+      this.appLeftOutRaw = [];
+      this.appLeftOutEpoch = null;
+      this.appLeftOutRev = null;
+      this.leftOutCapable = false;
+      this.desktop = null;
+      this.adoptionNotices = [];
+      this.includeHolds = new Set();
+      this.ruleQueue = [];
+      this.excludedGen = 0;
+      this.leftOutTail = Promise.resolve();
+      this.syncSiteRegistrations = options.syncSiteRegistrations || null;
+      this.ruleId = 0;
+      this.outstandingRule = null;
+      this.migrationQueue = [];
+      this.refusedHosts = new Set();
+      this.migrationBlocked = false;
+      this.lastRuleSentAt = null;
+      this.migrationTimer = null;
+      this.persistCfg = options.persistCfg || null;
+      this.onLapseReservation = options.onLapseReservation || null;
+      this.lastCaptureMessage = null;
       this.capturePermitted = false;
       this.brand = resolveBrand();
       this.platform = options.platform || "";
@@ -146,7 +193,8 @@
 
     syncCaptureAuthority() {
       const signature = JSON.stringify([this.connectionToken, this.stateRevision, this.paused,
-        this.consentVersion, [...this.chosenOrigins].sort(), [...this.grantedOrigins].sort(), this.pressure.active,
+        this.consentVersion, [...this.chosenOrigins].sort(), [...this.grantedOrigins].sort(),
+        [...(this.exactOnlyOrigins || [])].sort(), this.pressure.active,
         this.siteMode, this.excludedHosts, this.allSitesConsent, this.broadGranted, this.sitePolicyPending, this.permissionEpoch,
         this.capturePermitted, this.hostCapture, this.lease]);
       if (signature !== this.captureSignature) {
@@ -159,9 +207,22 @@
     notify() {
       this.syncCaptureAuthority();
       Outbox.checkAuthorization?.();
+      const status = this.getStatus();
       if (typeof this.onStatusChange === "function") {
-        this.onStatusChange(this.getStatus());
+        this.onStatusChange(status);
       }
+      if (!status.hostSettling && this.settledWaiters.length > 0) {
+        for (const resolve of this.settledWaiters.splice(0)) resolve(status);
+      }
+    }
+
+    // What the owner's surfaces show. A surface opened between withdrawing and
+    // re-granting authority for a host state waits for the settled state, as
+    // the badge does; capture authority itself never waits.
+    settledStatus() {
+      const status = this.getStatus();
+      if (!status.hostSettling) return Promise.resolve(status);
+      return new Promise((resolve) => this.settledWaiters.push(resolve));
     }
 
     async persistSiteMaps() {
@@ -194,6 +255,28 @@
       const saved = await this.persistSiteMaps();
       if (!saved) this.enqueue = previous;
       else if (this.ownerSites) this.ownerSites.enqueue = this.enqueue;
+      return saved;
+    }
+
+    // A removed or left-out site keeps no error behind: nothing would ever
+    // clear it, and the owner would see an alarm with nothing to act on.
+    async clearSiteErrorsWhere(matches) {
+      const pick = (map) => Object.keys(map || {}).filter((origin) => { try { return matches(origin); } catch (_e) { return false; } });
+      const regGone = pick(this.registration);
+      const enqGone = pick(this.enqueue);
+      if (regGone.length === 0 && enqGone.length === 0) return true;
+      const previous = { registration: { ...this.registration }, enqueue: { ...this.enqueue } };
+      for (const origin of regGone) delete this.registration[origin];
+      for (const origin of enqGone) delete this.enqueue[origin];
+      const saved = await this.persistSiteMaps();
+      if (!saved) {
+        this.registration = previous.registration;
+        this.enqueue = previous.enqueue;
+      } else if (this.ownerSites) {
+        this.ownerSites.registration = this.registration;
+        this.ownerSites.enqueue = this.enqueue;
+      }
+      this.notify();
       return saved;
     }
 
@@ -332,7 +415,9 @@
     getStatus() {
       this.syncCaptureAuthority();
       const nowMs = this.now();
-      if (this.ownerSites?.reservation && nowMs >= this.ownerSites.reservation.expiresAt) this.ownerSites.reservation = null;
+      if (this.ownerSites?.reservation && nowMs >= this.ownerSites.reservation.expiresAt) {
+        if (typeof this.onLapseReservation === "function") this.onLapseReservation();
+      }
       const chosenList = Array.from(this.chosenOrigins).sort();
       const grantedList = Array.from(this.grantedOrigins).sort();
       const inactiveOrigins = this.siteMode === "all" ? [] : chosenList.filter((o) => !this.grantedOrigins.has(o)).sort();
@@ -370,6 +455,7 @@
         inst: this.inst,
         captureEpoch: this.captureEpoch,
         everConnected: !!this.everConnected,
+        appAnswered: !!this.appAnswered,
         connected: this.livePort != null,
         handshake: this.handshake,
         brand: this.brand,
@@ -385,6 +471,10 @@
         lease: fresh && this.lease ? { ...this.lease } : null,
         connectionGeneration: this.connectionGeneration,
         connectionToken: this.connectionToken,
+        // Between withdrawing and re-granting authority for a host state. The
+        // withdrawal is real for capture, but not news for the owner's surfaces.
+        hostSettling: this.settlingRevision != null && this.settlingRevision === this.stateRevision &&
+          this.livePort != null && this.handshake === "ready",
         behind: this.behind,
         pressure: { ...this.pressure },
         truncationByOrigin: this.truncationByOrigin || {},
@@ -401,8 +491,20 @@
         consentVersion: this.consentVersion,
         chosenOrigins: chosenList,
         grantedOrigins: grantedList,
+        exactOnlyOrigins: Array.from(this.exactOnlyOrigins || []).filter((o) => this.chosenOrigins.has(o)).sort(),
+        siteWideOrigins: Array.from(this.siteWideOrigins || []).sort(),
+        pendingRemoveOrigins: Array.from(this.pendingRemoveOrigins || []),
+        offeredOrigins: Array.from(this.offeredOrigins || []).sort(),
+        declinedHosts: Array.from(this.declinedHosts || []).sort(),
+        declinedHostsKnown: !!this.declinedHostsKnown,
         siteMode: this.siteMode,
         excludedHosts: [...this.excludedHosts],
+        appLeftOut: Array.from(this.appLeftOut || []).sort(),
+        appLeftOutEpoch: this.appLeftOutEpoch ?? null,
+        appLeftOutRev: this.appLeftOutRev ?? null,
+        leftOutCapable: !!this.leftOutCapable,
+        desktop: this.desktop ? { ...this.desktop } : null,
+        adoptionNotices: Array.from(this.adoptionNotices || []),
         allSitesConsent: this.allSitesConsent,
         broadGranted: this.broadGranted,
         allSitesRegistration: this.allSitesRegistration,
@@ -411,6 +513,8 @@
         inactiveOrigins,
         openTabs: this.openTabs ? { ...this.openTabs, openOrigins: Array.isArray(this.openTabs.openOrigins) ? this.openTabs.openOrigins.slice() : null } : { known: false, openOrigins: null, anyGrantedTabOpen: null },
         showPageIndicator: !!this.showPageIndicator,
+        pauseWithApp: this.pauseWithApp !== false,
+        appReportedPaused: this.appReportedPaused() === true,
         updateCheck: this.updateCheck,
         capturePermitted,
         addSiteEligible,
@@ -423,6 +527,10 @@
       this.about = null;
       this.aboutDestination = null;
       this.aboutDeadline = null;
+      this.desktop = null;
+      this.leftOutCapable = false;
+      this.includeHolds.clear();
+      this.ruleQueue = [];
       this.opEpoch++;
       this.stateRevision++;
       this.hostStateDeadline = null;
@@ -444,6 +552,17 @@
       this.hostFailure = null;
       this.custody = null;
       this.capturePermitted = false;
+      this.leftOutCapable = false;
+      this.ruleId = 0;
+      this.outstandingRule = null;
+      this.migrationQueue = [];
+      this.refusedHosts.clear();
+      this.migrationBlocked = false;
+      this.lastRuleSentAt = null;
+      if (this.migrationTimer) {
+        this.clearSchedule(this.migrationTimer);
+        this.migrationTimer = null;
+      }
 
       if (oldPort) {
         try {
@@ -546,87 +665,9 @@
         if (val.type === "hello_ack") {
           if (this.handshake !== "pending" || codec.handshakeExpired(this.handshakeStartedAt, nowMs, getConsts().HANDSHAKE_MS_BUDGET)) return;
           this.handshake = "ready";
+          this.appAnswered = true;
         } else if (this.handshake !== "ready") return;
-        // Clear the old destination before the first status or any await,
-        // including a new destination with absent or malformed optional facts.
-        if (val.type === "hello_ack" || this.aboutDestination !== (val.destination_generation || null)) {
-          this.about = null;
-          this.aboutDestination = val.destination_generation || null;
-        }
-        this.aboutDeadline = null;
-        const about = globalThis.SolstoneAbout?.decode(val.about) || null;
-        const deliveryContinues = this.destinationGeneration === val.destination_generation &&
-          ["permitted", "paused", "intake_off"].includes(val.capture);
-        const revision = ++this.stateRevision;
-        const current = () => this.opEpoch === epoch && this.connectionGeneration === gen &&
-          this.connectionToken === token && this.stateRevision === revision && this.handshake === "ready";
-        // Withdraw old authority before any durable transition. A newer state
-        // aborts this transition's still-active transaction through notify().
-        this.lease = null;
-        this.capturePermitted = false;
-        this.hostCapture = null;
-        this.hostDelivery = null;
-        this.hostFailure = null;
-        this.custody = null;
-        if (!deliveryContinues) {
-          this.destinationGeneration = null;
-          this.drainOwner = false;
-          this.inflightBatch = null;
-        }
-        this.notify();
-        try {
-          if (typeof val.destination_generation === "string" && val.destination_generation.length > 0) {
-            const promoted = await Outbox.promoteHeldForGeneration(val.destination_generation, current);
-            if (!current()) return;
-            if (promoted?.count) {
-              await this.refreshStorageStatus();
-              if (!current()) return;
-            }
-          }
-          if (!current()) return;
-          if (val.capture !== "unavailable" && !this.everConnected) {
-            await DB.put("meta", true, "everConnected");
-            if (!current()) return;
-            this.everConnected = true;
-          }
-        } catch (_e) { return; }
-        if (!current()) return;
-        this.hostCapture = val.capture;
-        this.hostDelivery = val.delivery || null;
-        this.hostFailure = val.failure || null;
-        this.custody = val.custody ? { ...val.custody } : null;
-        this.destinationGeneration = val.destination_generation || null;
-        this.behind = null;
-        this.capturePermitted = codec.captureIsPermitted(val);
-        this.hostStateDeadline = val.freshness_ms > 0 ? nowMs + val.freshness_ms : null;
-        if (about) {
-          this.about = about;
-          this.aboutDeadline = this.hostStateDeadline;
-        }
-        const expire = () => {
-          if (!current()) return;
-          this.lease = null;
-          this.capturePermitted = false;
-          this.hostCapture = null;
-          this.hostDelivery = null;
-          this.hostFailure = null;
-          this.custody = null;
-          this.notify();
-        };
-        if (this.hostStateDeadline != null && this.now() >= this.hostStateDeadline) {
-          expire();
-        } else {
-          if (this.capturePermitted) {
-            this.lease = { token, generation: val.destination_generation, receivedAt: nowMs, freshnessMs: val.freshness_ms };
-          }
-          if (this.hostStateDeadline != null) this.schedule(expire, this.hostStateDeadline - this.now());
-        }
-        this.notify();
-        if (typeof val.destination_generation === "string" && val.destination_generation.length > 0) {
-          this.retryAfterState = false;
-        }
-        await this.drain();
-        return;
+        return await this.applyCaptureMessage(val, epoch, gen, token);
       }
 
       if (val.type === "unsupported") {
@@ -774,6 +815,396 @@
       }
     }
 
+    async applyCaptureMessage(val, epoch, gen, token) {
+      if (!val) return;
+      this.lastCaptureMessage = val;
+      const codec = globalThis.SolstoneNativeBrowser;
+      const nowMs = this.now();
+
+      if (val.type === "hello_ack" || val.type === "state") {
+        this.leftOutCapable = Object.prototype.hasOwnProperty.call(val, "left_out");
+      }
+
+      if (Object.prototype.hasOwnProperty.call(val, "left_out")) {
+        const res = globalThis.SolstoneLeftOut ? globalThis.SolstoneLeftOut.applyList({
+          epoch: val.left_out_epoch,
+          rev: val.left_out_rev,
+          savedEpoch: this.appLeftOutEpoch,
+          savedRev: this.appLeftOutRev,
+          savedList: this.appLeftOut,
+          savedRawList: this.appLeftOutRaw,
+          localExcluded: this.excludedHosts,
+          frameList: val.left_out,
+          normalizeHost: (h) => (globalThis.SolstoneHosts ? globalThis.SolstoneHosts.excludedHostname(h) : h),
+        }) : { list: val.left_out, rawList: val.left_out, epoch: val.left_out_epoch, rev: val.left_out_rev, localExcluded: this.excludedHosts, migrated: [] };
+
+        const prevExcluded = this.excludedHosts;
+        const prevAppLeftOut = this.appLeftOut;
+        const prevRaw = this.appLeftOutRaw;
+        const prevEpoch = this.appLeftOutEpoch;
+        const prevRev = this.appLeftOutRev;
+
+        const nextExcluded = res.localExcluded;
+        const nextAppLeftOut = res.list;
+        const nextRaw = res.rawList || val.left_out;
+        const nextEpoch = res.epoch;
+        const nextRev = res.rev;
+
+        const excludedChanged = !arraysEqual(nextExcluded, prevExcluded);
+        const appLeftOutChanged = !arraysEqual(nextAppLeftOut, prevAppLeftOut);
+        const rawChanged = !arraysEqual(nextRaw, prevRaw);
+        const epochChanged = nextEpoch !== prevEpoch;
+        const revChanged = nextRev !== prevRev;
+
+        this.appLeftOut = nextAppLeftOut;
+        this.appLeftOutRaw = nextRaw;
+        this.appLeftOutEpoch = nextEpoch;
+        this.appLeftOutRev = nextRev;
+        this.excludedHosts = nextExcluded;
+
+        if (excludedChanged) {
+          this.excludedGen++;
+        }
+
+        const changed = excludedChanged || appLeftOutChanged || rawChanged || epochChanged || revChanged;
+
+        if (changed) {
+          this.commitLeftOut({
+            appLeftOut: this.appLeftOut,
+            appLeftOutRaw: this.appLeftOutRaw,
+            appLeftOutEpoch: this.appLeftOutEpoch,
+            appLeftOutRev: this.appLeftOutRev,
+            excludedHosts: this.excludedHosts,
+          }).catch(() => {});
+        }
+
+        const effectiveChanged = excludedChanged || appLeftOutChanged;
+        if (effectiveChanged && typeof this.syncSiteRegistrations === "function") {
+          this.syncSiteRegistrations().catch(() => {});
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(val, "desktop")) {
+        if (val.desktop && typeof val.desktop === "object") {
+          const knownSites = ["on", "needs_access", "not_checked"];
+          const rawSites = val.desktop.sites;
+          const sites = knownSites.includes(rawSites) ? rawSites : "not_checked";
+          this.desktop = {
+            screen: val.desktop.screen === true,
+            activity: val.desktop.activity === true,
+            sites,
+          };
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(val, "site_rule_ack")) {
+        if (this.outstandingRule && globalThis.SolstoneLeftOut && Object.prototype.hasOwnProperty.call(val, "left_out")) {
+          const ackStatus = globalThis.SolstoneLeftOut.noteAck({
+            outstandingId: this.outstandingRule.id,
+            ackId: val.site_rule_ack,
+          });
+          if (ackStatus === "settled") {
+            const frameList = Array.isArray(val.left_out) ? val.left_out : [];
+            const result = globalThis.SolstoneLeftOut.ruleResult({
+              outstanding: this.outstandingRule,
+              frameList,
+            });
+            if (result === "refused") {
+              this.refusedHosts.add(this.outstandingRule.host);
+            }
+            const settledHost = this.outstandingRule.host;
+            this.outstandingRule = null;
+            const qIdx = this.migrationQueue.indexOf(settledHost);
+            if (qIdx !== -1) this.migrationQueue.splice(qIdx, 1);
+            this.pumpRuleQueue();
+          }
+        }
+      }
+      if (this.outstandingRule && globalThis.SolstoneLeftOut?.migrationBlocked(this.outstandingRule, nowMs)) {
+        this.migrationBlocked = true;
+      }
+
+      // Clear the old destination before the first status or any await,
+      // including a new destination with absent or malformed optional facts.
+      if (val.type === "hello_ack" || this.aboutDestination !== (val.destination_generation || null)) {
+        this.about = null;
+        this.aboutDestination = val.destination_generation || null;
+      }
+      this.aboutDeadline = null;
+      const about = globalThis.SolstoneAbout?.decode(val.about) || null;
+      const deliveryContinues = this.destinationGeneration === val.destination_generation &&
+        ["permitted", "paused", "intake_off"].includes(val.capture);
+      const revision = ++this.stateRevision;
+      this.settlingRevision = revision;
+      const current = () => this.opEpoch === epoch && this.connectionGeneration === gen &&
+        this.connectionToken === token && this.stateRevision === revision && this.handshake === "ready";
+      // Withdraw old authority before any durable transition. A newer state
+      // aborts this transition's still-active transaction through notify().
+      this.lease = null;
+      this.capturePermitted = false;
+      this.hostCapture = null;
+      this.hostDelivery = null;
+      this.hostFailure = null;
+      this.custody = null;
+      if (!deliveryContinues) {
+        this.destinationGeneration = null;
+        this.drainOwner = false;
+        this.inflightBatch = null;
+      }
+      this.notify();
+      try {
+        if (typeof val.destination_generation === "string" && val.destination_generation.length > 0) {
+          const promoted = await Outbox.promoteHeldForGeneration(val.destination_generation, current);
+          if (!current()) return;
+          if (promoted?.count) {
+            await this.refreshStorageStatus();
+            if (!current()) return;
+          }
+        }
+        if (!current()) return;
+        if (val.capture !== "unavailable" && !this.everConnected) {
+          await DB.put("meta", true, "everConnected");
+          if (!current()) return;
+          this.everConnected = true;
+        }
+      } catch (_e) {
+        // The transition failed: the withdrawn state is the true one now.
+        if (current()) {
+          this.settlingRevision = null;
+          this.notify();
+        }
+        return;
+      }
+      if (!current()) return;
+      this.settlingRevision = null;
+
+      const stateForCapture = this.readsThroughAppPause(val)
+        ? { ...val, capture: "permitted" }
+        : val;
+
+      this.hostCapture = stateForCapture.capture;
+      this.hostDelivery = val.delivery || null;
+      this.hostFailure = val.failure || null;
+      this.custody = val.custody ? { ...val.custody } : null;
+      this.destinationGeneration = val.destination_generation || null;
+      this.behind = null;
+      this.capturePermitted = codec.captureIsPermitted(stateForCapture);
+      this.hostStateDeadline = val.freshness_ms > 0 ? nowMs + val.freshness_ms : null;
+      if (about) {
+        this.about = about;
+        this.aboutDeadline = this.hostStateDeadline;
+      }
+      const expire = () => {
+        if (!current()) return;
+        this.lease = null;
+        this.capturePermitted = false;
+        this.hostCapture = null;
+        this.hostDelivery = null;
+        this.hostFailure = null;
+        this.custody = null;
+        this.notify();
+      };
+      if (this.hostStateDeadline != null && this.now() >= this.hostStateDeadline) {
+        expire();
+      } else {
+        if (this.capturePermitted) {
+          this.lease = { token, generation: val.destination_generation, receivedAt: nowMs, freshnessMs: val.freshness_ms };
+        }
+        if (this.hostStateDeadline != null) this.schedule(expire, this.hostStateDeadline - this.now());
+      }
+      this.notify();
+      if (typeof val.destination_generation === "string" && val.destination_generation.length > 0) {
+        this.retryAfterState = false;
+      }
+      if (this.leftOutCapable) {
+        const rawList = Array.isArray(this.appLeftOutRaw) ? this.appLeftOutRaw : [];
+        for (const h of this.excludedHosts) {
+          if (!rawList.includes(h) && !this.migrationQueue.includes(h) && !this.refusedHosts.has(h) && !this.includeHolds.has(h)) {
+            this.migrationQueue.push(h);
+          }
+        }
+        this.pumpRuleQueue();
+      }
+      await this.drain();
+      return;
+    }
+
+    commitLeftOut(patch, setCfg = this.persistCfg) {
+      this.leftOutTail = this.leftOutTail.catch(() => {}).then(async () => {
+        const DB = globalThis.SolstoneDB;
+        let genAtStart = this.excludedGen;
+
+        if (patch.appLeftOut !== undefined && DB) await DB.put("meta", patch.appLeftOut, "appLeftOut");
+        if (patch.appLeftOutRaw !== undefined && DB) await DB.put("meta", patch.appLeftOutRaw, "appLeftOutRaw");
+        if (patch.appLeftOutEpoch !== undefined && DB) await DB.put("meta", patch.appLeftOutEpoch, "appLeftOutEpoch");
+        if (patch.appLeftOutRev !== undefined && DB) await DB.put("meta", patch.appLeftOutRev, "appLeftOutRev");
+        if (patch.excludedHosts !== undefined && DB) await DB.put("meta", patch.excludedHosts, "excludedHosts");
+
+        const persist = typeof setCfg === "function" ? setCfg : this.persistCfg;
+        if (typeof persist === "function") {
+          await persist(patch);
+        }
+
+        while (this.excludedGen !== genAtStart) {
+          genAtStart = this.excludedGen;
+          if (DB) await DB.put("meta", [...this.excludedHosts], "excludedHosts");
+          if (typeof persist === "function") {
+            await persist({ excludedHosts: [...this.excludedHosts] });
+          }
+        }
+      });
+      return this.leftOutTail;
+    }
+
+    async commitInclude(host, setCfg = this.persistCfg) {
+      this.includeHolds.add(host);
+      try {
+        await this.commitLeftOut({ excludedHosts: this.excludedHosts.filter((h) => h !== host) }, setCfg);
+      } catch (err) {
+        this.includeHolds.delete(host);
+        throw err;
+      }
+      this.excludedHosts = this.excludedHosts.filter((h) => h !== host);
+      this.excludedGen++;
+      this.includeHost(host);
+      await this.commitLeftOut({ excludedHosts: [...this.excludedHosts] }, setCfg);
+      this.includeHolds.delete(host);
+      if (typeof this.syncSiteRegistrations === "function") {
+        this.syncSiteRegistrations().catch(() => {});
+      }
+      this.notify();
+      return { ok: true, host, out: false };
+    }
+
+    includeHost(host) {
+      const H = globalThis.SolstoneHosts;
+      const norm = H?.excludedHostname ? H.excludedHostname(host) : host;
+      const toInclude = new Set([host]);
+      if (norm) toInclude.add(norm);
+      for (const raw of this.appLeftOutRaw || []) {
+        if (H?.excludedHostname && H.excludedHostname(raw) === norm) {
+          toInclude.add(raw);
+        }
+      }
+      for (const h of toInclude) {
+        if (!this.ruleQueue.some((item) => item.host === h && item.out === false)) {
+          this.ruleQueue.push({ host: h, out: false });
+        }
+      }
+      this.pumpRuleQueue();
+    }
+
+    // Owner rules wait behind any rule already in flight, so an answer is
+    // never matched to the wrong rule.
+    queueSiteRule(host, out) {
+      if (!this.ruleQueue.some((item) => item.host === host && item.out === !!out)) {
+        this.ruleQueue.push({ host, out: !!out });
+      }
+      this.pumpRuleQueue();
+    }
+
+    pumpRuleQueue() {
+      if (!this.leftOutCapable || !this.livePort || this.handshake !== "ready") return;
+      if (this.outstandingRule) {
+        // A rule unanswered for 10 s stops migration for this connection but
+        // never blocks the owner's own later rules.
+        if (this.now() - this.outstandingRule.sentAt < 10000) return;
+        this.migrationBlocked = true;
+        this.outstandingRule = null;
+      }
+      if (this.ruleQueue.length > 0) {
+        const next = this.ruleQueue.shift();
+        this.sendSiteRule(next.host, next.out);
+        return;
+      }
+      this.pumpMigration();
+    }
+
+    sendSiteRule(host, out) {
+      if (!this.leftOutCapable || !this.livePort || this.handshake !== "ready") return false;
+      const id = ++this.ruleId;
+      const msg = { type: "site_rule", id, host, out: !!out };
+      this.outstandingRule = { id, host, out: !!out, sentAt: this.now() };
+      this.lastRuleSentAt = this.now();
+      try {
+        this.livePort.postMessage(msg);
+        return true;
+      } catch (_e) {
+        return false;
+      }
+    }
+
+    pumpMigration() {
+      if (!this.leftOutCapable || !this.livePort || this.handshake !== "ready" || this.migrationBlocked) return;
+      const now = this.now();
+      if (this.outstandingRule) {
+        if (now - this.outstandingRule.sentAt >= 10000 || globalThis.SolstoneLeftOut?.migrationBlocked(this.outstandingRule, now)) {
+          this.migrationBlocked = true;
+        }
+        return;
+      }
+      const H = globalThis.SolstoneHosts;
+      while (this.migrationQueue.length > 0) {
+        const candidate = this.migrationQueue[0];
+        const valid = this.excludedHosts.includes(candidate) &&
+          !this.includeHolds.has(candidate) &&
+          !(this.appLeftOutRaw && this.appLeftOutRaw.includes(candidate)) &&
+          (H?.excludedHostname ? H.excludedHostname(candidate) === candidate : true) &&
+          !this.refusedHosts.has(candidate);
+        if (!valid) {
+          this.migrationQueue.shift();
+          continue;
+        }
+        break;
+      }
+      if (this.migrationQueue.length === 0) return;
+      const nextHost = globalThis.SolstoneLeftOut?.nextMigration({
+        queue: this.migrationQueue,
+        refused: this.refusedHosts,
+        outstanding: this.outstandingRule,
+        now,
+        lastSentAt: this.lastRuleSentAt,
+        blocked: this.migrationBlocked,
+      });
+      if (!nextHost) {
+        if (!this.outstandingRule && !this.migrationBlocked && this.migrationQueue.length > 0) {
+          const waitMs = Math.max(0, 1000 - (now - (this.lastRuleSentAt || 0)));
+          if (!this.migrationTimer && waitMs > 0) {
+            this.migrationTimer = this.schedule(() => {
+              this.migrationTimer = null;
+              this.pumpMigration();
+            }, waitMs);
+          }
+        }
+        return;
+      }
+      const isValid = this.excludedHosts.includes(nextHost) &&
+        !this.includeHolds.has(nextHost) &&
+        !(this.appLeftOutRaw && this.appLeftOutRaw.includes(nextHost)) &&
+        (H?.excludedHostname ? H.excludedHostname(nextHost) === nextHost : true) &&
+        !this.refusedHosts.has(nextHost);
+      if (!isValid) {
+        const idx = this.migrationQueue.indexOf(nextHost);
+        if (idx !== -1) this.migrationQueue.splice(idx, 1);
+        return;
+      }
+      this.sendSiteRule(nextHost, true);
+    }
+
+    // The setting reaches only the owner's own pause. An app that cannot say
+    // so (no `away` fact) or reports nobody at the computer (locked, asleep)
+    // closes reading whatever the setting says.
+    readsThroughAppPause(val) {
+      return this.pauseWithApp === false && val?.capture === "paused" && val.away === false;
+    }
+
+    appReportedPaused() {
+      return this.readsThroughAppPause(this.lastCaptureMessage);
+    }
+
+    async reapplyLastCapture() {
+      if (!this.lastCaptureMessage || this.handshake !== "ready") return;
+      return await this.applyCaptureMessage(this.lastCaptureMessage, this.opEpoch, this.connectionGeneration, this.connectionToken);
+    }
+
     handlePortDisconnect(epoch, gen, token) {
       if (this.opEpoch !== epoch || this.connectionGeneration !== gen || this.connectionToken !== token) return;
       this.opEpoch++;
@@ -787,12 +1218,17 @@
       this.hostDelivery = null;
       this.hostFailure = null;
       this.custody = null;
+      this.desktop = null;
+      this.leftOutCapable = false;
+      this.includeHolds.clear();
+      this.ruleQueue = [];
       Outbox.markAllSnapshotRequired().catch(() => {});
       this.notify();
     }
 
     async poll(now) {
       const consts = getConsts();
+      this.pumpRuleQueue();
       const codec = globalThis.SolstoneNativeBrowser;
       const monoNow = Number(now !== undefined ? now : this.now());
 
@@ -820,6 +1256,13 @@
           this.capturePermitted = false;
           this.notify();
         }
+      }
+
+      if (this.outstandingRule && globalThis.SolstoneLeftOut?.migrationBlocked(this.outstandingRule, monoNow)) {
+        this.migrationBlocked = true;
+      }
+      if (this.leftOutCapable) {
+        this.pumpMigration();
       }
 
       await this.refreshStorageStatus();
@@ -926,5 +1369,6 @@
     }
   }
 
+  SolstoneNativePortController.resolveHostName = resolveHostName;
   globalThis.SolstoneNativePort = SolstoneNativePortController;
 })();

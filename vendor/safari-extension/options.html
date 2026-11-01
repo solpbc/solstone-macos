@@ -271,6 +271,7 @@
                 <input type="checkbox" id="welcomeShowPageIndicator" />
                 show a small solstone mark on pages you've added
               </label>
+              <div id="welcomeOffersBlock" hidden></div>
               <div id="welcomeSiteList"></div>
             </div>
           </section>
@@ -309,6 +310,7 @@
                 <button id="modeAllBtn" type="button" hidden></button>
               </div>
             </div>
+            <p id="broadInSelectedNote" class="muted" hidden></p>
 
             <div id="accessPanel" class="access" hidden>
               <p id="accessGranted" class="access-granted" hidden></p>
@@ -330,11 +332,16 @@
               </div>
             </div>
 
+            <div id="offersBlock" hidden></div>
             <h3 id="listHeading"></h3>
             <p id="siteModeHelp" class="muted" hidden></p>
             <div id="regrant" class="regrant" hidden>
               <span id="regrantLine"></span>
               <button id="regrantBtn" type="button"></button>
+            </div>
+            <div id="exactOnly" class="regrant" hidden>
+              <span id="exactOnlyLine"></span>
+              <button id="exactOnlyBtn" type="button"></button>
             </div>
             <form id="addForm" novalidate>
               <div class="addrow">
@@ -346,7 +353,12 @@
               </div>
               <p id="siteInputError" class="field-error" hidden></p>
             </form>
+            <div id="actionMessage" class="action-message" aria-live="polite"></div>
             <div id="siteList"></div>
+            <details id="leftOutDetails" hidden>
+              <summary id="leftOutSummary"></summary>
+              <div id="leftOutList"></div>
+            </details>
             <p id="keptNote" class="muted" hidden></p>
           </div>
           <section id="siteDisclosure" class="agreement" aria-labelledby="siteDisclosureTitle" hidden>
@@ -375,6 +387,15 @@
           </label>
         </section>
 
+        <section id="pauseWithAppCard" class="card">
+          <h2>pause with the solstone app</h2>
+          <label class="marker-label">
+            <input type="checkbox" id="pauseWithApp" />
+            pause this extension when the solstone app pauses
+          </label>
+          <p class="field-help" style="margin-top: 8px;">on: when the solstone app on this computer pauses, so does this extension. off: when you pause the solstone app, this extension keeps taking in your shared sites, and all of it goes into your journal.</p>
+        </section>
+
         <section id="disclosureCard" class="card">
           <h2>what the solstone extension takes in</h2>
           <details id="disclosureDetails">
@@ -384,7 +405,6 @@
         </section>
       </div>
 
-      <div id="actionMessage" class="action-message" aria-live="polite"></div>
       <footer id="pageFooter">solstone <span id="ver"></span></footer>
     </div>
     <script src="lib/copy.js"></script>

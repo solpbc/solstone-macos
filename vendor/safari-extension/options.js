@@ -38,7 +38,7 @@
     }
   }
 
-  const SITES_CARD_ACTIONS = new Set(["open-settings", "allow-all-sites", "retry-all-sites"]);
+  const SITES_CARD_ACTIONS = new Set(["open-settings", "allow-all-sites", "retry-all-sites", "allow-again-all"]);
   let state = null;
   let disclosureResolve = null;
   let allSitesDisclosure = false;
@@ -48,16 +48,6 @@
   let step1Action = null;
   let paintSequence = 0;
   let appliedCaptureEpoch = -1;
-
-  function normHost(input) {
-    let host = input.trim();
-    try {
-      if (/^https?:\/\//.test(host)) host = new URL(host).host;
-    } catch (_error) {
-      /* leave as typed */
-    }
-    return host.replace(/\/.*$/, "").toLowerCase();
-  }
 
   function announce(message, tone = "") {
     const region = $("actionMessage");
@@ -148,43 +138,75 @@
     const raw = inputElement ? inputElement.value : "";
     if (state?.siteMode === "all") {
       const host = Hosts.excludedHostname(raw.trim());
-      if (!host) { fieldError("enter a website address, like mail.google.com."); focus(inputElement); return; }
-      const result = await cmd({ cmd: "setExcludedHost", host, excluded: true });
+      if (!host) {
+        if (raw.trim()) { fieldError(Copy.FIELD_ERROR); focus(inputElement); }
+        return;
+      }
+      const result = await cmd({ cmd: "setLeftOut", host, out: true });
       if (result.error) showActionError(result.error);
       else { inputElement.value = ""; announce(Copy.leftOutAnnouncement(host), "ok"); }
       await refresh();
       return;
     }
-    if (!Hosts.isValidHostInput(raw)) {
-      if (raw.trim()) { fieldError("enter a website address, like mail.google.com."); focus(inputElement); }
+    const origin = Hosts.chosenOrigin(raw);
+    if (!origin) {
+      if (raw.trim()) { fieldError(Copy.FIELD_ERROR); focus(inputElement); }
       return;
     }
-    let input = normHost(raw);
-    try {
-      if (/^https?:\/\//i.test(raw.trim())) input = new URL(raw.trim()).origin;
-    } catch (_e) {}
-    const displayHost = input.startsWith("http") ? new URL(input).hostname : input;
-    const result = await View.addSite(input, Object.assign(siteEffects(), { disclose: presentDisclosure }));
+    let rawHost = "";
+    try { rawHost = new URL(origin).hostname; } catch (_e) {}
+    const effectiveList = (state?.excludedHosts || []).concat(state?.appLeftOut || []);
+    // Name the left-out entry that covers it (google.com for mail.google.com).
+    const coveringEntry = rawHost ? effectiveList.find((s) => Hosts?.hostCovers ? Hosts.hostCovers(s, rawHost) : false) : null;
+    if (coveringEntry) {
+      announce(Copy.leftOutRefusal(coveringEntry), "bad");
+      return;
+    }
+    const displayHost = Hosts.displayOrigin(origin);
+    if (chosenList().includes(origin)) {
+      if (inputElement) inputElement.value = "";
+      announce(Copy.alreadyAdded(displayHost), "ok");
+      focus(inputElement);
+      return;
+    }
+    const result = await View.addSite(origin, Object.assign(siteEffects(), { disclose: presentDisclosure }));
+    // Adding needs the solstone app answering and nothing paused; the status
+    // card says which, and the owner is never left with a silent button.
+    if (result.ineligible) {
+      announce(Copy.ADD_NOT_NOW, "bad");
+      focus(inputElement);
+      return;
+    }
     if (result.cancelled) return;
     if (result.ok && inputElement) inputElement.value = "";
     await refresh();
     if (inputElement && typeof inputElement.focus === "function") inputElement.focus();
-    if (result.error) {
+    if (result.denied) {
+      announce(Copy.ADD_DENIED, "bad");
+    } else if (result.error) {
       showActionError(result.error);
     } else if (result.ok) {
-      const origin = input.startsWith("http") ? input : `https://${input}`;
       const row = Status.siteRow(origin, state);
-      if (row.kind === "on-now") {
-        announce(`${displayHost} added. what you share there now goes into your journal.`, "ok");
-      } else {
-        announce(`${displayHost} added.`, "ok");
-      }
+      announce(Copy.addedAnnouncement(displayHost, row.kind === "on-now"), "ok");
     }
   }
 
   async function runSiteAction(action) {
     clearAnnouncement();
-    await Actions.run(action, sharedActionEffects());
+    let failed = false;
+    const effects = sharedActionEffects();
+    const showError = effects.showError;
+    effects.showError = (error) => { failed = true; showError(error); };
+    await Actions.run(action, effects);
+    if (failed) return;
+    // Say what the click did; the row it came from is gone now.
+    if (action.id === "remove-site") {
+      announce(Copy.removedAnnouncement(action.label || action.host), "ok");
+      focus("newHost");
+    } else if (action.id === "include-site") {
+      announce(Copy.includedAnnouncement(action.host), "ok");
+      focus("newHost");
+    }
   }
 
   function sharedActionEffects() {
@@ -194,10 +216,13 @@
       openApp: () => chrome.tabs.create({ url: "https://solstone.app" }),
       reload: () => chrome.runtime.reload(),
       grantSite: (origin) => View.grantSite(origin, siteEffects()),
+      grantChosen: (origins) => View.grantChosenSites(origins, siteEffects()),
+      inactiveOrigins: () => state?.inactiveOrigins || [],
       allowAllSites: () => View.regrantAllSites(siteEffects()),
       showError: showActionError,
       showDenied: (action) => announce(action?.id === "allow-all-sites"
-        ? Copy.accessCopy(state?.brand).declined : "permission declined. this site stays paused.", "bad"),
+        ? Copy.accessCopy(state?.brand).declined
+        : action?.id === "allow-again-all" ? "permission declined. those sites stay paused." : "permission declined. this site stays paused.", "bad"),
       lossSeq: () => state?.lossNotice?.seq,
     };
   }
@@ -214,10 +239,11 @@
     }
 
     for (const entry of allowlist) {
-      let host = entry;
-      try {
-        if (entry.startsWith("http")) host = new URL(entry).hostname;
-      } catch (_e) {}
+      // A chosen origin shows its port and an http:// scheme, so two entries
+      // for one machine never look alike; a left-out entry is a bare host.
+      const host = entry.startsWith("http") ? Hosts.displayOrigin(entry) : entry;
+      let hostname = entry;
+      try { if (entry.startsWith("http")) hostname = new URL(entry).hostname; } catch (_e) {}
 
       const excluded = state?.siteMode === "all";
       const rowState = excluded ? { kind: "excluded", label: "left out" } : Status.siteRow(entry, state);
@@ -239,13 +265,14 @@
         const actionBtn = document.createElement("button");
         actionBtn.type = "button";
         actionBtn.textContent = rowState.action.label;
-        actionBtn.addEventListener("click", () => runSiteAction(Object.assign({ host, origin: entry }, rowState.action)));
+        actionBtn.addEventListener("click", () => runSiteAction(Object.assign({ host: hostname, origin: entry }, rowState.action)));
         actions.append(actionBtn);
       }
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = excluded ? "include again" : "remove";
-      remove.addEventListener("click", () => runSiteAction({ id: excluded ? "include-site" : "remove-site", host, origin: entry }));
+      if (typeof remove.setAttribute === "function") remove.setAttribute("aria-label", `${remove.textContent} ${host}`);
+      remove.addEventListener("click", () => runSiteAction({ id: excluded ? "include-site" : "remove-site", host: hostname, label: host, origin: entry }));
       actions.append(remove);
       row.append(copyEl, actions);
       list.append(row);
@@ -258,17 +285,14 @@
       const sentence = document.createElement("div");
       sentence.className = "w";
       sentence.textContent = Copy.TRUNCATION_ATTENTION;
-      const count = document.createElement("div");
-      count.className = "count";
-      count.textContent = String(notice.count);
       const dismiss = document.createElement("button");
       dismiss.type = "button";
       dismiss.textContent = "dismiss";
       dismiss.addEventListener("click", () => runSiteAction({ id: "dismiss-truncation", origin, bound: notice.newestId }));
       const site = document.createElement("div");
       site.className = "site-host";
-      site.textContent = origin;
-      attention.append(site, sentence, count, dismiss);
+      site.textContent = Hosts.displayOrigin(origin);
+      attention.append(site, sentence, dismiss);
       list.append(attention);
     }
   }
@@ -276,7 +300,7 @@
   function getStep1State(st) {
     if (!st || typeof st !== "object" || st.ok === false || !st.inst) {
       return {
-        heading: "looking for the solstone app on this computer\u2026",
+        heading: `looking for the solstone app on ${Copy.PLACE}\u2026`,
         body: "",
         action: null,
         met: false,
@@ -335,7 +359,7 @@
       if (!step1.met) {
         if ($("step2PendingText")) {
           $("step2PendingText").hidden = false;
-          $("step2PendingText").textContent = "you'll agree to this once step 1 is done.";
+          $("step2PendingText").textContent = Copy.STEP2_PENDING;
         }
         if ($("agreeDisclosureBtn")) $("agreeDisclosureBtn").hidden = true;
       } else {
@@ -367,6 +391,7 @@
       : Array.isArray(state && state.grantedOrigins)
       ? state.grantedOrigins
       : [];
+    renderOffersBlock($("welcomeOffersBlock") || $("offersBlock"));
     renderSiteRowsInto("welcomeSiteList", allowlist);
   }
 
@@ -414,13 +439,35 @@
         button.addEventListener("click", () => Actions.run(derived.action, sharedActionEffects()));
         actions.append(button);
       }
+      // The popup's pause button reads resume; settings needs its own, or an
+      // owner who comes here to turn things back on finds no way to.
+      if (state?.paused) {
+        const resume = document.createElement("button");
+        resume.type = "button";
+        resume.className = "primary";
+        resume.textContent = "resume";
+        resume.addEventListener("click", async () => {
+          clearAnnouncement();
+          const result = await cmd({ cmd: "setPaused", paused: false });
+          if (result.error) showActionError(result.error);
+          await refresh();
+        });
+        actions.append(resume);
+      }
     }
 
     // Sites Section
     renderSites();
 
+    // Adoption Notices
+    if (state?.adoptionNotices && state.adoptionNotices.length > 0) {
+      announce(Copy.adoptedAnnouncement(state.brand, state.adoptionNotices), "ok");
+      cmd({ cmd: "dismissAdoptionNotices" });
+    }
+
     // Indicator Section
     if ($("showPageIndicator")) $("showPageIndicator").checked = !!(state && state.showPageIndicator);
+    if ($("pauseWithApp")) $("pauseWithApp").checked = state?.pauseWithApp !== false;
 
   }
 
@@ -483,6 +530,67 @@
     $("accessDeniedHelp").hidden = !words.deniedHelp;
   }
 
+  function renderOffersBlock(container) {
+    if (!container) return;
+    const allSites = state?.siteMode === "all";
+    // An offer for a site that is now left out (here or in the app) or declined
+    // is not shown: there is nothing to add.
+    const leftOut = [...(state?.excludedHosts || []), ...(state?.appLeftOut || [])];
+    const declined = state?.declinedHosts || [];
+    const offers = (!allSites && Array.isArray(state?.offeredOrigins) ? state.offeredOrigins : []).filter((origin) => {
+      let host = "";
+      try { host = new URL(origin).hostname; } catch (_e) { return false; }
+      return !leftOut.some((site) => Hosts.hostCovers(site, host)) && !declined.includes(host);
+    });
+    if (offers.length === 0) {
+      container.hidden = true;
+      container.replaceChildren();
+      return;
+    }
+    container.hidden = false;
+    container.replaceChildren();
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = Copy.offerLine(state?.brand);
+    container.append(p);
+
+    for (const origin of offers) {
+      const row = document.createElement("div");
+      row.className = "site";
+      const hostSpan = document.createElement("span");
+      hostSpan.className = "site-host";
+      hostSpan.textContent = Hosts.displayOrigin ? Hosts.displayOrigin(origin) : origin;
+      row.append(hostSpan);
+
+      let originHost = "";
+      try { originHost = new URL(origin).hostname; } catch (_e) {}
+
+      const btnGroup = document.createElement("div");
+      btnGroup.className = "site-actions";
+
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "primary";
+      addBtn.textContent = Copy.OFFER_ADD;
+      addBtn.addEventListener("click", async () => {
+        clearAnnouncement();
+        await SolstoneActions.run({ id: "offer-add", origin }, sharedActionEffects());
+      });
+
+      const declineBtn = document.createElement("button");
+      declineBtn.type = "button";
+      declineBtn.textContent = Copy.OFFER_DECLINE;
+      declineBtn.addEventListener("click", async () => {
+        clearAnnouncement();
+        await SolstoneActions.run({ id: "offer-decline", origin, host: originHost }, sharedActionEffects());
+      });
+
+      btnGroup.append(addBtn, declineBtn);
+      row.append(btnGroup);
+      container.append(row);
+    }
+  }
+
   function renderSites() {
     const allSites = state?.siteMode === "all";
     const chosen = chosenList();
@@ -494,9 +602,18 @@
     renderMode("modeAll", "all", agreedAll);
     renderAccess(agreedAll);
 
+    const broadNote = $("broadInSelectedNote");
+    if (broadNote) {
+      const showBroad = !allSites && state?.broadGranted === true;
+      broadNote.hidden = !showBroad;
+      if (showBroad) broadNote.textContent = Copy.broadInSelected(state?.brand);
+    }
+
+    renderOffersBlock($("offersBlock"));
+
     $("listHeading").textContent = allSites ? "sites left out" : "your sites";
-    $("siteModeHelp").textContent = allSites ? Copy.LEAVE_OUT_HELP : "";
-    $("siteModeHelp").hidden = !allSites;
+    $("siteModeHelp").textContent = allSites ? Copy.LEAVE_OUT_HELP : Copy.addHelp(state?.brand);
+    $("siteModeHelp").hidden = false;
     $("siteInputLabel").textContent = allSites ? "leave out a site" : "add a site";
     $("addBtn").textContent = allSites ? "leave out" : "add this site";
 
@@ -509,7 +626,72 @@
       $("regrantBtn").textContent = words.label;
     }
 
+    // Sites added before a site covered its subdomains: one prompt widens them.
+    const exactOnly = !allSites && regrant.hidden ? (state?.exactOnlyOrigins || []).filter((origin) => chosen.includes(origin)) : [];
+    const exactBar = $("exactOnly");
+    if (exactBar) {
+      exactBar.hidden = exactOnly.length === 0;
+      if (!exactBar.hidden) {
+        const words = Copy.exactOnlyCopy(state?.brand, exactOnly.map((origin) => Hosts.displayOrigin(origin)));
+        $("exactOnlyLine").textContent = words.line;
+        $("exactOnlyBtn").textContent = words.label;
+      }
+    }
+
     renderSiteRowsInto("siteList", allSites ? excluded : chosen);
+
+    const leftOutDetails = $("leftOutDetails");
+    if (leftOutDetails) {
+      if (allSites) {
+        leftOutDetails.hidden = true;
+      } else {
+        const localEx = state?.excludedHosts || [];
+        const appEx = state?.appLeftOut || [];
+        const effectiveList = Array.from(new Set([...localEx, ...appEx]));
+        if (effectiveList.length === 0) {
+          leftOutDetails.hidden = true;
+        } else {
+          leftOutDetails.hidden = false;
+          if ($("leftOutSummary")) {
+            $("leftOutSummary").textContent = Copy.leftOutSummary(effectiveList.length);
+          }
+          const listDiv = $("leftOutList");
+          if (listDiv) {
+            listDiv.replaceChildren();
+            for (const host of effectiveList) {
+              const isLocal = localEx.includes(host);
+              const row = document.createElement("div");
+              row.className = "site";
+              const hostSpan = document.createElement("span");
+              hostSpan.className = "site-host";
+              hostSpan.textContent = host;
+              row.append(hostSpan);
+
+              if (isLocal || state?.leftOutCapable) {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.textContent = "include";
+                btn.addEventListener("click", async () => {
+                  clearAnnouncement();
+                  const res = await cmd({ cmd: "setLeftOut", host, out: false });
+                  if (res?.error) showActionError(res.error);
+                  else announce(Copy.includedAnnouncement(host), "ok");
+                  await refresh();
+                });
+                row.append(btn);
+              } else {
+                const span = document.createElement("span");
+                span.className = "muted";
+                span.textContent = Copy.appOnlyLeftOut;
+                row.append(span);
+              }
+              listDiv.append(row);
+            }
+          }
+        }
+      }
+    }
+
     const kept = Copy.keptNote(allSites ? "all" : "selected", allSites ? chosen.length : excluded.length);
     $("keptNote").textContent = kept;
     $("keptNote").hidden = !kept;
@@ -576,8 +758,17 @@
     $("agreeDisclosureBtn").addEventListener("click", async () => {
       clearAnnouncement();
       const result = await cmd({ cmd: "acknowledgeDisclosure", version: 1 });
-      if (result.error) showActionError(result.error);
+      if (result.error) {
+        // The welcome view stays up, so the failure shows where the button was.
+        if ($("step2PendingText")) {
+          $("step2PendingText").hidden = false;
+          $("step2PendingText").textContent = Failures.classify(result.error, state);
+        }
+        return;
+      }
       await refresh();
+      // Settings replaces the welcome page now; put the owner at the first site.
+      focus("newHost");
     });
   }
 
@@ -607,6 +798,17 @@
   if ($("showPageIndicator")) {
     $("showPageIndicator").addEventListener("change", async () => {
       await cmd({ cmd: "setConfig", showPageIndicator: $("showPageIndicator").checked });
+      await refresh();
+    });
+  }
+
+  // Settings Pause With App Checkbox
+  // On iPhone and iPad the solstone app's pause is the Safari source's own pause,
+  // so it always stops this extension and there is nothing to choose.
+  if (Copy.MOBILE && $("pauseWithAppCard")) $("pauseWithAppCard").hidden = true;
+  if ($("pauseWithApp")) {
+    $("pauseWithApp").addEventListener("change", async () => {
+      await cmd({ cmd: "setConfig", pauseWithApp: $("pauseWithApp").checked });
       await refresh();
     });
   }
@@ -694,6 +896,14 @@
       if (document.visibilityState === "visible") onReturn();
     });
   }
+  if ($("exactOnlyBtn")) $("exactOnlyBtn").addEventListener("click", async () => {
+    clearAnnouncement();
+    const exactOnly = state?.exactOnlyOrigins || [];
+    const result = await View.grantChosenSites(exactOnly, siteEffects());
+    if (result.denied) announce(Copy.exactOnlyCopy(state?.brand, exactOnly.map((origin) => Hosts.displayOrigin(origin))).declined, "bad");
+    else if (result.error) showActionError(result.error);
+    await refresh();
+  });
   $("regrantBtn").addEventListener("click", async () => {
     clearAnnouncement();
     const result = await View.grantChosenSites(state?.inactiveOrigins || [], siteEffects());
