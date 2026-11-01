@@ -9,14 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- in Safari, the solstone extension now also takes in whether the tab was in front, whether its window had focus, whether audio or video was playing, the page's language, which browser it is and its version, and how long the tab has been open with the extension running, and all of it goes into your journal.
+- in Safari, choose whether the solstone extension pauses when you pause the solstone app. the setting is on by default; turn it off in the extension's settings and it keeps taking in the websites you share while you've paused the solstone app, and all of it goes into your journal.
 - the solstone extension now uses the list of websites you leave out in settings, in Safari and, from extension 0.5.0, in other browsers. a website you leave out in the extension, including one you'd already left out, shows up in that list. one you include again comes off it. with an older extension, leave a website out in the extension as well.
 - in sources, each browser shows how long ago the last page you shared from it was.
 
+### Changed
+
+- in Safari, adding a website in the solstone extension now shares all its sites and pages, like www.example.com and mail.example.com, and the confirmation says so before anything is shared. a website you added before this update still covers only its exact address, and the extension's settings say to remove it and add it again to include the rest.
+- in Safari, once you've agreed to share, a website you allow the solstone extension on in Safari is added to "sites you add", and the extension tells you. one you allowed before this update is offered first, so you can choose "don't add". removing a website or leaving it out stays that way.
+- in Safari, in "all sites", leaving out bank.com now leaves out all bank.com sites and pages, like www.bank.com and login.bank.com, including websites you left out before this update.
+- in Safari, when a website you added sits under another website you added, like mail.example.com under example.com, removing the wider one keeps the one under it going into your journal. if Safari already allows a website under one you add, the extension says why Safari didn't ask and how to allow it in Safari's settings.
+
 ### Fixed
 
-- in Safari, a website you added that sits under another website you added, like mail.example.com under example.com, no longer shows as "paused by Safari" in the solstone extension while its pages are going into your journal. if you remove the wider website, the one under it keeps going into your journal.
-- in Safari, adding a website in the solstone extension while Safari already allows a website under it now says why Safari didn't ask and how to allow it in Safari's settings. before, it didn't say why.
-- in Safari, for a website that covers only its exact address, the solstone extension's settings now say to remove it and add it again to include all its sites and pages. before, they offered a button that did nothing in Safari.
+- in Safari, after the solstone app updates, a tab you already had open on a website you share could stop being taken in while the solstone extension still showed the website as "on now". the extension now shows "reload this tab to begin" for that website until you reload the tab.
 
 ## [2.0.53] - 2026-10-31
 
