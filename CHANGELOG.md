@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- in Safari, the solstone extension now uses the list of websites you leave out in settings. a website you leave out in the extension, including one you'd already left out, shows up in that list, and one you include again comes off it.
+- the solstone extension now uses the list of websites you leave out in settings, in Safari and, from extension 0.5.0, in other browsers. a website you leave out in the extension, including one you'd already left out, shows up in that list. one you include again comes off it. with an older extension, leave a website out in the extension as well.
 - in sources, each browser shows how long ago the last page you shared from it was.
 
 ## [2.0.53] - 2026-10-31
