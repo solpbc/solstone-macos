@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- if solstone's check of a Safari window's address was cut short, that window's title could still go into activity, even when it showed a website you left out. a check that's cut short now keeps the title and address out.
+
 ## [2.0.52] - 2026-10-31
 
 ### Added
 
-- in settings, you can now leave out websites: while one shows in Safari, screen intake pauses and it stays out of activity. the solstone extension doesn't use this list. limits are listed under the setting.
+- in settings, you can now leave out websites: while one shows in Safari, screen intake pauses and it stays out of activity. if solstone's check of a Safari window's address is cut short, that window's title can still go into activity. the solstone extension doesn't use this list. limits are listed under the setting.
 
 ### Changed
 
