@@ -392,6 +392,35 @@
   }
   subscribeStatus();
 
-  globalThis.SolstonePopup = { refresh };
+  // Safari doesn't always deliver the status channel's messages to an open
+  // popup, and can restart the background without closing the channel. So an
+  // answer from the app, such as a site left out or included, would show only
+  // on reopening. While the popup is open it also reads the state each second,
+  // and repaints only when something changed. A lower epoch means a restarted
+  // background, so the popup resubscribes.
+  function sameState(a, b) {
+    return JSON.stringify({ ...(a || {}), ok: undefined }) === JSON.stringify({ ...(b || {}), ok: undefined });
+  }
+  async function readState() {
+    const sequence = paintSequence;
+    const nextState = await cmd({ cmd: "getState" });
+    if (sequence !== paintSequence || nextState.ok === false || sameState(nextState, state)) return;
+    const epoch = Number.isSafeInteger(nextState.captureEpoch) ? nextState.captureEpoch : appliedCaptureEpoch;
+    if (epoch < appliedCaptureEpoch) subscribeStatus();
+    appliedCaptureEpoch = Math.max(appliedCaptureEpoch, epoch);
+    await paint(nextState, ++paintSequence);
+  }
+  function watchState() {
+    if (typeof document.visibilityState !== "string") return;
+    setTimeout(async () => {
+      if (document.visibilityState === "visible") {
+        try { await readState(); } catch (_e) { /* the next read tries again */ }
+      }
+      watchState();
+    }, 1000);
+  }
+  watchState();
+
+  globalThis.SolstonePopup = { refresh, readState };
   refresh();
 })();
