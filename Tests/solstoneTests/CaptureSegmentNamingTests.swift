@@ -3,6 +3,7 @@
 
 import CoreMedia
 import Foundation
+import os
 @preconcurrency import ScreenCaptureKit
 import SolstoneCore
 import Testing
@@ -304,6 +305,35 @@ struct CaptureSegmentNamingTests {
     /// Activity seen while capture runs is written into the segment it describes and finished with it,
     /// under the finished name, never as a segment of its own.
     @Test func activityRidesItsCaptureSegment() async throws {
+        // Each reading is later than the last, as the app's own sampling is.
+        let clock = OSAllocatedUnfairLock(initialState: Int64((Date().timeIntervalSince1970 * 1000).rounded()))
+        let segments = try await activityAcrossTwoSegments { clock.withLock { $0 += 10; return $0 } }
+        #expect(segments.count == 2)
+        for segment in segments {
+            #expect(segment.name.range(of: #"^\d{6}_300$"#, options: .regularExpression) != nil)
+            #expect(segment.files == 1 && segment.namedForSegment)
+        }
+    }
+
+    /// A row first seen in the same millisecond as a cut has no time before it, so it belongs
+    /// wholly to the next segment: nothing is lost and nothing is filed early.
+    @Test func activityFirstSeenAtTheCutGoesWhollyToTheNextSegment() async throws {
+        let start = Int64((Date().timeIntervalSince1970 * 1000).rounded())
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        // The first observation and the first cut read the same millisecond.
+        let segments = try await activityAcrossTwoSegments {
+            let n = calls.withLock { $0 += 1; return $0 }
+            return n <= 2 ? start : start + Int64(n) * 10
+        }
+        #expect(segments.count == 2)
+        let sorted = segments.sorted { $0.name < $1.name }
+        #expect(sorted.map(\.rows) == [0, 1])
+        #expect(sorted.last?.firstTs == start)
+    }
+
+    private struct SegmentActivity { let name: String; let files: Int; let rows: Int; let firstTs: Int64?; let namedForSegment: Bool }
+
+    private func activityAcrossTwoSegments(now: @escaping @Sendable () -> Int64) async throws -> [SegmentActivity] {
         let previousDuration = SegmentWriter.segmentDuration
         SegmentWriter.segmentDuration = 300
         defer { SegmentWriter.segmentDuration = previousDuration }
@@ -324,23 +354,22 @@ struct CaptureSegmentNamingTests {
             microphoneDevices: { [] }
         )
         let store = DesktopActivityStore(storage: storage)
-        func now() -> Int64 { Int64((Date().timeIntervalSince1970 * 1000).rounded()) }
         manager.onSegmentCaptureEnding = { directory in try? store.place(into: directory, at: now()) }
         let executor = CaptureExecutor(delegate: manager, isScreenLocked: { false }, unlockResumeDelay: {})
         let row = DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "Fixture")
 
         guard case .committed = await executor.enqueue(.start(reason: .user, sources: .screen, disabledMicUIDs: [], enabledMicUIDs: [])) else {
-            Issue.record("expected start to commit"); return
+            Issue.record("expected start to commit"); return []
         }
         try store.observe([row], at: now(), captureOpen: manager.hasOpenSegment)
         guard case .committed = await executor.enqueue(.rotate(reason: .boundary)) else {
-            Issue.record("expected rotate to commit"); return
+            Issue.record("expected rotate to commit"); return []
         }
         try store.observe([row], at: now(), captureOpen: manager.hasOpenSegment)
         // The app closes activity before it stops media, as stopRecording does.
         try store.end(at: now(), captureOpen: manager.hasOpenSegment)
         guard case .committed = await executor.enqueue(.stop(reason: .user)) else {
-            Issue.record("expected stop to commit"); return
+            Issue.record("expected stop to commit"); return []
         }
         await queue.waitForCompletion()
 
@@ -349,12 +378,23 @@ struct CaptureSegmentNamingTests {
             .filter { $0.lastPathComponent.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil }
         let segments = try days.flatMap { try FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: [.isDirectoryKey]) }
             .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
-        #expect(segments.count == 2)
-        for segment in segments {
+        return try segments.map { segment in
             let name = segment.lastPathComponent
-            #expect(name.range(of: #"^\d{6}_300$"#, options: .regularExpression) != nil)
-            let activity = try FileManager.default.contentsOfDirectory(atPath: segment.path).filter { $0.hasSuffix("_desktop_activity.jsonl") }
-            #expect(activity.count == 1 && activity.allSatisfy { $0.hasPrefix("\(name)_") })
+            let files = try FileManager.default.contentsOfDirectory(atPath: segment.path).filter { $0.hasSuffix("_desktop_activity.jsonl") }
+            var rows = 0
+            var firstTs: Int64?
+            for file in files {
+                let text = try String(contentsOf: segment.appendingPathComponent(file), encoding: .utf8)
+                for line in text.split(separator: "\n") {
+                    rows += 1
+                    if let object = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                       let ts = (object["ts"] as? NSNumber)?.int64Value {
+                        firstTs = min(firstTs ?? ts, ts)
+                    }
+                }
+            }
+            return SegmentActivity(name: name, files: files.count, rows: rows, firstTs: firstTs,
+                                   namedForSegment: files.allSatisfy { $0.hasPrefix("\(name)_") })
         }
     }
 
