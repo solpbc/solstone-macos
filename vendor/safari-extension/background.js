@@ -40,7 +40,7 @@ const PortController = globalThis.SolstoneNativePort;
 const Outbox = globalThis.SolstoneNativeOutbox;
 const Status = globalThis.SolstoneStatus;
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 const ALARM_NAME = "native-port";
 
 const CONTENT_SCRIPT_FILES = [
