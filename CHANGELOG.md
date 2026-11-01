@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.54] - 2026-11-01
+
 ### Added
 
 - in Safari, the solstone extension now also takes in whether the tab was in front, whether its window had focus, whether audio or video was playing, the page's language, which browser it is and its version, and how long the tab has been open with the extension running, and all of it goes into your journal.
