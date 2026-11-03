@@ -86,10 +86,15 @@ extension JournalMarkConfirmationStoring {
     /// A pairing this Mac already held before it kept these answers was made and used under
     /// the earlier rule, so the first read settles it as confirmed rather than taking sync
     /// away from an owner who only installed an update. Every pairing made afterwards clears
-    /// the answer first, so it can never be settled this way.
-    func isConfirmed(_ journal: String) -> Bool {
+    /// the answer first, so it can never be settled this way. A pairing whose id isn't its CA's
+    /// isn't settled this way either: it has to be asked.
+    func isConfirmed(_ journal: String, mayGrandfather: Bool = true) -> Bool {
         if !settled {
-            confirm(journal)
+            if mayGrandfather {
+                confirm(journal)
+            } else {
+                clear()
+            }
         }
         return confirmedJournal == journal
     }

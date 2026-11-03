@@ -253,7 +253,6 @@ struct SettingsView: View {
         _ baseURL: String,
         _ deviceLabel: String
     ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>
-    private let markFetch: @MainActor @Sendable (_ baseURL: String, _ expectedInstanceID: String?) async -> JournalMark?
     private let runningJournalController: any RunningJournalController
     private let diagnosticClipboardWrite: @MainActor (String) -> Bool
     private let diagnosticAnnouncement: @MainActor (String) -> Void
@@ -286,15 +285,6 @@ struct SettingsView: View {
         ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
             await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
         },
-        markFetch: @escaping @MainActor @Sendable (_ baseURL: String, _ expectedInstanceID: String?) async -> JournalMark? = { baseURL, expectedInstanceID in
-            switch await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(
-                baseURL: baseURL,
-                expectedInstanceID: expectedInstanceID
-            ) {
-            case .mark(let mark): return mark
-            case .uncommitted, .unavailable: return nil
-            }
-        },
         runningJournalController: any RunningJournalController = LiveRunningJournalController(),
         initialSetupProbeSnapshot: SetupProbeSnapshot = .checking,
         initialDiagnosticsExpanded: Bool = false,
@@ -326,7 +316,6 @@ struct SettingsView: View {
         self.localIdentityFetch = localIdentityFetch
         self.onDiskJournalDiscovery = onDiskJournalDiscovery
         self.sameMachinePairStart = sameMachinePairStart
-        self.markFetch = markFetch
         self.runningJournalController = runningJournalController
         self.diagnosticClipboardWrite = diagnosticClipboardWrite
         self.diagnosticAnnouncement = diagnosticAnnouncement
@@ -467,6 +456,9 @@ struct SettingsView: View {
 #endif
             journalMarkRederiveEligible = appState.confirmedMark == nil && appState.tunnelLifecycleOwner.isTunnelManaged
             startJournalMarkRederiveIfNeeded()
+            if appState.sameComputerLinkAwaitsVerification, !localLinkInProgress {
+                confirmLocalJournalLink()
+            }
             if !appState.setupModel.isPeerSupportingSetup {
                 journalMarkDriver.startIfUnconfirmed(appState: appState)
             }
@@ -482,8 +474,12 @@ struct SettingsView: View {
             appState.refreshBrowserPendingDiscard()
         }
 #endif
-        .onChange(of: appState.pairingCoordinator.tunnelState) { _, _ in
+        .onChange(of: appState.pairingCoordinator.tunnelState) { _, newValue in
             startJournalMarkRederiveIfNeeded()
+            // A same-computer link that ran out of time before the tunnel came up finishes now.
+            if case .connected = newValue, appState.sameComputerLinkAwaitsVerification, !localLinkInProgress {
+                confirmLocalJournalLink()
+            }
             if !appState.setupModel.isPeerSupportingSetup {
                 journalMarkDriver.startIfUnconfirmed(appState: appState)
             }
@@ -683,29 +679,15 @@ struct SettingsView: View {
               !journalMarkRederiveStarted,
               appState.confirmedMark == nil,
               appState.isJournalMarkConfirmed,
-              appState.tunnelLifecycleOwner.isTunnelManaged,
-              case .connected = appState.pairingCoordinator.tunnelState
+              appState.tunnelLifecycleOwner.isTunnelManaged
         else {
             return
         }
 
         journalMarkRederiveStarted = true
-        guard let markRevision = appState.beginJournalMarkConfirmationAttempt() else {
-            journalMarkRederiveStarted = false
-            return
-        }
         journalMarkRederiveTask?.cancel()
         journalMarkRederiveTask = Task { @MainActor in
-            switch await appState.resolveHomeBase() {
-            case .url(let baseURL):
-                guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return }
-                if let mark = await markFetch(baseURL, expected),
-                   appState.isCurrentJournalMarkAttempt(markRevision) {
-                    appState.setConfirmedMark(mark)
-                }
-            case .held:
-                break
-            }
+            await appState.deriveConfirmedMark()
         }
     }
 
@@ -1917,7 +1899,7 @@ struct SettingsView: View {
                             value: ""
                         )
                         HStack {
-                            Button("confirm") {
+                            Button(UICopy.SETUP_CONNECT_TO_YOUR_JOURNAL) {
                                 confirmLocalJournalLink()
                             }
                             .accessibilityIdentifier(AXID.Settings.Service.localJournalConfirm)
@@ -2086,11 +2068,7 @@ struct SettingsView: View {
             }
             Spacer(minLength: 0)
             Button {
-                journalHandoffOrchestrator.start(
-                    appState: appState,
-                    markDriver: journalMarkDriver,
-                    markFetch: { [markFetch] baseURL in await markFetch(baseURL, nil) }
-                )
+                journalHandoffOrchestrator.start(appState: appState)
             } label: {
                 Label("start", systemImage: "arrow.right.circle")
             }
@@ -3128,10 +3106,11 @@ struct SettingsView: View {
         relinkNeedsPairingLink = false
 
         Task { @MainActor in
-            let outcome = await runOwnerSameMachineLink(
+            let outcome = await runSettingsSameComputerLink(
                 appState: appState,
                 journalMarkDriver: journalMarkDriver,
-                startPairing: sameMachinePairStart
+                startPairing: sameMachinePairStart,
+                localIdentity: localIdentityFetch
             )
             localLinkInProgress = false
             showPairingFlow = outcome.offersPairingLink
@@ -5173,11 +5152,9 @@ struct JournalMarkSheetContent: View {
     var body: some View {
         VStack(spacing: 16) {
             switch phase {
-            case .connecting:
+            case .deriving:
                 ProgressView()
                     .controlSize(.small)
-                Text(UICopy.JOURNAL_MARK_CONNECTING)
-                    .font(.headline)
             case .valid(let mark):
                 JournalMarkView(mark: mark)
                 VStack(spacing: 6) {

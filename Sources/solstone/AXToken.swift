@@ -251,7 +251,6 @@ internal enum JournalHandoffAXState: CaseIterable {
     case authGate
     case flippingToExternal
     case triggeringSyncDrain
-    case confirmingMarkBestEffort
     case completed
     case failed
     case aborted
@@ -460,8 +459,6 @@ extension JournalHandoffAXState {
             return "flipping_to_external"
         case .triggeringSyncDrain:
             return "triggering_sync_drain"
-        case .confirmingMarkBestEffort:
-            return "confirming_mark_best_effort"
         case .completed:
             return "completed"
         case .failed:

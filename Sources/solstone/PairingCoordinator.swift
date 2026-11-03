@@ -92,6 +92,8 @@ final class PairingCoordinator {
     private let localPort: @MainActor @Sendable () -> Int?
     @ObservationIgnored
     private var pendingSwitchLink: PairURL?
+    /// Whether the latest ceremony came from Settings' same-computer link.
+    private(set) var lastSubmissionWasSameComputer = false
     @ObservationIgnored
     private let classifiedLog: any ClassifiedLogSinking
     @ObservationIgnored
@@ -256,8 +258,12 @@ final class PairingCoordinator {
         _ = refreshPendingActions(markConfirmed: false)
     }
 
-    func submitPairingLink(_ rawLink: String) async {
+    /// `sameComputer` is only for Settings' same-computer link, after it has verified the link's
+    /// shape. Every other submission resets it, so the exemption from asking can't outlive that
+    /// ceremony or reach a link somebody pasted.
+    func submitPairingLink(_ rawLink: String, sameComputer: Bool = false) async {
         guard state != .pairing else { return }
+        lastSubmissionWasSameComputer = sameComputer
         pendingSwitchLink = nil
         failedAddress = nil
 
@@ -1200,7 +1206,7 @@ final class PairingCoordinator {
                 return .relayUnauthorized
             }
             return .network
-        case .relayInstanceMismatch:
+        case .relayInstanceMismatch, .directInstanceMismatch:
             return .instanceMismatch
         case .relayAccessInvalid:
             return .network

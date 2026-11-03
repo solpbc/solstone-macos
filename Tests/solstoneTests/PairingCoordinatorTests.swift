@@ -1722,6 +1722,7 @@ struct PairingCoordinatorTests {
 
     @Test func relayInstanceMismatchMapsToInstanceMismatch() async throws {
         await expectCeremonyFailure(PairError.relayInstanceMismatch, mapsTo: .instanceMismatch)
+        await expectCeremonyFailure(PairError.directInstanceMismatch, mapsTo: .instanceMismatch)
         #expect(PairingCoordinator.failure(for: DialError.relayInstanceUnknown) == .instanceMismatch)
         #expect(PairingCoordinator.failure(for: DialError.wsHandshakeFailed(httpStatus: 404)) == .instanceMismatch)
     }

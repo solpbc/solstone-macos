@@ -162,6 +162,17 @@ public final class AppState {
     /// An adoption that lands no pairing clears it, and so does every pairing the owner starts.
     /// Settable within the module so both branches can be exercised directly in tests.
     internal var isAdoptingSameMachineHomeAutomatically = false
+    /// Settings' link to the journal on this Mac, from starting until it has verified over the
+    /// tunnel. Kept across a tunnel that takes a while. Not kept across launches: a pairing left
+    /// unverified by a quit is held and asks like any other.
+    internal var pendingSameComputerLink: PendingSameComputerLink?
+
+    /// The same-computer link has landed and is waiting on the tunnel. It says nothing about any
+    /// other pairing, and nothing once the owner has disconnected.
+    internal var sameComputerLinkAwaitsVerification: Bool {
+        guard let pendingSameComputerLink else { return false }
+        return currentDurablePairing?.instanceID == pendingSameComputerLink.instanceID
+    }
     /// Once the owner starts a pairing of their own, the automatic adoption does not run again
     /// in this launch, so it can never re-arm the mark exemption under the owner's pairing.
     private var ownerStartedPairingThisLaunch = false
@@ -1332,9 +1343,9 @@ public final class AppState {
         // using, on this machine, over a link sol verified as direct with exactly one loopback
         // candidate. So suppress the mark for *this* ceremony only.
         //
-        // ⛔ Scope this to the automatic adoption, never to same-machine pairing generally — an
-        // owner-initiated link, including a fresh one to a journal on this same Mac, must still
-        // confirm its mark, and the release gate asserts exactly that.
+        // ⛔ Scope this to the automatic adoption, never to what a pairing looks like. Settings'
+        // own link to this Mac's journal verifies over the tunnel by a path of its own, and every
+        // other owner-initiated link still confirms its mark.
         // ⛔ Deliberately not cleared when this function returns. The ceremony's final state is
         // observed asynchronously, so the mark driver runs *after* the await below completes —
         // a `defer` here closes the window before the thing it is meant to cover ever happens,
@@ -1355,11 +1366,16 @@ public final class AppState {
         )
         sameMachineMigrationLastResult = result
 
-        // The adoption asks no mark question, so it answers it: this is the journal the
-        // owner was already sending to from this Mac.
+        // The adoption asks no mark question, so it answers it, once the journal has answered over
+        // the tunnel as the one this pairing pinned. If it doesn't, the pairing is held and asks.
         if case .pairingStarted = result {
-            recordJournalMarkConfirmed()
             recorder.enqueue(.pairingAdoptionPaired)
+            if let pairing = currentDurablePairing, await (adoptionTunnelVerifier ?? adoptionVerifiedOverTunnel)(pairing) {
+                recordJournalMarkConfirmed(mark: await journalMarkDeriver(pairing))
+            } else {
+                isAdoptingSameMachineHomeAutomatically = false
+                Logger.setup.notice("same-machine home migration did not verify over the tunnel; the pairing is held")
+            }
         }
 
         if case .failed(let failure) = result {
@@ -1370,6 +1386,30 @@ public final class AppState {
             recorder.enqueue(.pairingAdoptionFailed)
             Logger.setup.notice("same-machine home migration did not complete: \(String(describing: failure), privacy: .public)")
         }
+    }
+
+    /// Replaces the adoption's tunnel check in a test.
+    @ObservationIgnored
+    internal var adoptionTunnelVerifier: (@MainActor (StoredPairing) async -> Bool)?
+
+    private func adoptionVerifiedOverTunnel(_ pairing: StoredPairing) async -> Bool {
+        guard pairingIsBoundToItsCA(pairing) else { return false }
+        for _ in 0..<120 {
+            guard isAdoptingSameMachineHomeAutomatically, !Task.isCancelled,
+                  currentDurablePairing?.instanceID == pairing.instanceID else { return false }
+            if let tunnelBase = tunnelIdentityBase(state: tunnelLifecycleOwner.state) {
+                switch await supportingIdentityResolver(tunnelBase, pairing.instanceID) {
+                case .mark(_, let instanceID):
+                    return instanceID == pairing.instanceID
+                case .failed(.instanceMismatch), .failed(.missingInstanceID):
+                    return false
+                case .uncommitted, .absent, .failed:
+                    break
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return false
     }
 
     typealias SupportingIdentityResolver = @MainActor @Sendable (String, String) async -> JournalIdentityResolution
@@ -1450,15 +1490,122 @@ public final class AppState {
                 }
                 return await self.supportingIdentityResolver(tunnelBase, expectedInstanceID)
             },
-            record: { [weak self] mark, revision in
-                guard let self, operationIsCurrent() else { return false }
-                return self.recordSupportingJournalMark(
-                    handoffID: expectedHandoffID,
-                    mark: mark,
-                    expectedRevision: revision
-                )
+            record: { [weak self] revision in
+                guard let self, operationIsCurrent(),
+                      let pairing = self.currentDurablePairing,
+                      let mark = await self.journalMarkDeriver(pairing),
+                      operationIsCurrent(),
+                      self.recordSupportingJournalMark(
+                          handoffID: expectedHandoffID,
+                          mark: mark,
+                          expectedRevision: revision
+                      ) else { return nil }
+                return mark
             }
         )
+    }
+
+    /// The link from Settings to the journal on this Mac: the same checks as same-computer setup,
+    /// with what setup hears from the journal app read from the journal on this Mac instead. It
+    /// verifies over the tunnel and records the answer without asking.
+    @MainActor
+    internal func verifySameComputerLink(
+        expected: PendingSameComputerLink,
+        pairStart: SameMachinePairStartResponse
+    ) async -> SupportingConnectionOutcome {
+        await verifySupportingConnection(
+            expectedInstanceID: expected.instanceID,
+            expectedCAFingerprint: expected.caFingerprint,
+            heldState: tunnelLifecycleOwner.sameMachineStoredPairingState,
+            isMarkAlreadyRecorded: false,
+            operationIsCurrent: { [weak self] in
+                !Task.isCancelled && self?.isTerminating == false && self?.pendingSameComputerLink == expected
+            },
+            mayStartCeremony: { [weak self] in
+                guard let self, !Task.isCancelled, !self.isTerminating,
+                      self.pendingSameComputerLink == expected else { return false }
+                return self.tunnelLifecycleOwner.sameMachineStoredPairingState == .noneHeld &&
+                    self.currentDurablePairing == nil
+            },
+            captureAdmission: { [weak self] in
+                guard let self, self.pendingSameComputerLink == expected,
+                      case .connected = self.tunnelLifecycleOwner.state,
+                      self.tunnelLifecycleOwner.localPort != nil,
+                      !self.tunnelLifecycleOwner.ordinaryRouteRevoked,
+                      let pairing = self.currentDurablePairing,
+                      pairing.instanceID == expected.instanceID,
+                      let revision = self.currentDurablePairingRevision,
+                      PairingCredentialRevision(from: pairing) == revision,
+                      caChainContainsFingerprint(caChainPEM: pairing.caChainPEM, expectedLowerHex: expected.caFingerprint) else {
+                    return nil
+                }
+                self.pendingMarkCredentialRevision = revision
+                return SupportingAdmission(revision: revision, instanceID: pairing.instanceID, caMatches: true)
+            },
+            confirmAdmission: { [weak self] admission in
+                guard let self, let pairing = self.currentDurablePairing,
+                      self.currentDurablePairingRevision == admission.revision,
+                      pairing.instanceID == admission.instanceID else { return false }
+                return caChainContainsFingerprint(caChainPEM: pairing.caChainPEM, expectedLowerHex: expected.caFingerprint)
+            },
+            startPairing: { .success(pairStart) },
+            verifyLink: { verifySameMachinePairLink($0) },
+            submit: { [pairingCoordinator] exactPairLink in
+                await pairingCoordinator.submitPairingLink(exactPairLink, sameComputer: true)
+                return pairingCoordinator.state
+            },
+            durableInstanceID: { [weak self] in
+                self?.currentDurablePairing?.instanceID
+            },
+            resolveIdentity: { [weak self] in
+                guard let self, let tunnelBase = tunnelIdentityBase(state: self.tunnelLifecycleOwner.state) else {
+                    return .absent
+                }
+                return await self.supportingIdentityResolver(tunnelBase, expected.instanceID)
+            },
+            record: { [weak self] revision in
+                guard let self, self.pendingSameComputerLink == expected,
+                      let pairing = self.currentDurablePairing,
+                      let mark = await self.journalMarkDeriver(pairing),
+                      self.pendingSameComputerLink == expected,
+                      self.recordJournalMarkConfirmed(mark: mark, expectedRevision: revision) else { return nil }
+                return mark
+            }
+        )
+    }
+
+    /// Derives the mark of the stored pairing's pinned CA. A test can replace this.
+    typealias JournalMarkDeriver = @MainActor @Sendable (StoredPairing) async -> JournalMark?
+    @ObservationIgnored
+    internal var journalMarkDeriver: JournalMarkDeriver = { pairing in
+        await JournalMarkDerivation.mark(forCAChainPEM: pairing.caChainPEM)
+    }
+
+    /// The mark to ask the owner about, bound to the credential it came from. `nil` draws as
+    /// unavailable. The credential can take a moment to read as current right after it lands.
+    internal func markForAnswer(attempts: Int = 30, interval: Duration = .milliseconds(100)) async -> JournalMark? {
+        var revision = beginJournalMarkConfirmationAttempt()
+        var remaining = attempts
+        while revision == nil, remaining > 0, !Task.isCancelled {
+            try? await Task.sleep(for: interval)
+            revision = beginJournalMarkConfirmationAttempt()
+            remaining -= 1
+        }
+        guard let revision, let pairing = currentDurablePairing,
+              let mark = await journalMarkDeriver(pairing),
+              isCurrentJournalMarkAttempt(revision) else { return nil }
+        return mark
+    }
+
+    /// A confirmed pairing's mark, from its stored CA. No connection is needed, and a pairing made
+    /// before this Mac derived marks gets its mark here without being asked again.
+    internal func deriveConfirmedMark() async {
+        guard let pairing = currentDurablePairing else { return }
+        let revision = PairingCredentialRevision(from: pairing)
+        guard let mark = await journalMarkDeriver(pairing),
+              let current = currentDurablePairing,
+              PairingCredentialRevision(from: current) == revision else { return }
+        setConfirmedMark(mark)
     }
 
     internal func beginSupportingJournalMarkConfirmationAttempt(
@@ -1543,6 +1690,7 @@ public final class AppState {
     internal func beginOwnerPairingAttempt() {
         clearConfirmedMark()
         isAdoptingSameMachineHomeAutomatically = false
+        pendingSameComputerLink = nil
         ownerStartedPairingThisLaunch = true
     }
 
@@ -1732,16 +1880,17 @@ public final class AppState {
         guard let journal = tunnelLifecycleOwner.cachedJournalMarkIdentity else {
             return false
         }
-        return journalMarkConfirmationStore.isConfirmed(journal)
+        let mayGrandfather = tunnelLifecycleOwner.currentStoredPairing().map(pairingIsBoundToItsCA) ?? true
+        return journalMarkConfirmationStore.isConfirmed(journal, mayGrandfather: mayGrandfather)
     }
 
-    /// A pairing whose mark question is still open: connected, so the mark can be fetched,
-    /// and not yet answered. The automatic same-machine adoption never asks.
+    /// A pairing whose mark question is still open: connected and not yet answered. The automatic
+    /// same-machine adoption and a same-computer link still verifying never ask.
     internal var needsJournalMarkConfirmation: Bool {
         Self.needsJournalMarkConfirmation(
             tunnelManaged: tunnelLifecycleOwner.isTunnelManaged,
             lifecycleState: tunnelLifecycleOwner.state,
-            adoptingAutomatically: isAdoptingSameMachineHomeAutomatically,
+            adoptingAutomatically: isAdoptingSameMachineHomeAutomatically || sameComputerLinkAwaitsVerification,
             journalIdentity: tunnelLifecycleOwner.cachedJournalMarkIdentity,
             journalMarkConfirmed: isJournalMarkConfirmed,
             admissionReady: currentDurablePairingAdmissionIsReady && !tunnelLifecycleOwner.ordinaryRouteRevoked
@@ -1836,9 +1985,7 @@ public final class AppState {
 
     internal func beginJournalMarkConfirmationAttempt() -> PairingCredentialRevision? {
         guard !setupModel.isPeerSupportingSetup else { return nil }
-        guard case .connected = tunnelLifecycleOwner.state,
-              tunnelLifecycleOwner.localPort != nil,
-              !tunnelLifecycleOwner.ordinaryRouteRevoked,
+        guard !tunnelLifecycleOwner.ordinaryRouteRevoked,
               let revision = currentDurablePairingRevision else { return nil }
         pendingMarkCredentialRevision = revision
         return revision
@@ -2356,7 +2503,8 @@ public final class AppState {
         pairingOperation: PairingCoordinator.PairOperation? = nil,
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
         pairingSave: PairingCoordinator.SavePairing? = nil,
-        recorder: DiagnosticEvidenceRecorder = .dormant
+        recorder: DiagnosticEvidenceRecorder = .dormant,
+        journalMarkConfirmationStore: (any JournalMarkConfirmationStoring)? = nil
     ) -> AppState {
         snapshotAudioMonitorMode = true
         defer { snapshotAudioMonitorMode = false }
@@ -2373,6 +2521,7 @@ public final class AppState {
             versionReader: versionReader,
             sameMachinePairStart: sameMachinePairStart,
             pairingStoring: pairingStoring,
+            journalMarkConfirmationStore: journalMarkConfirmationStore,
             pairingOperation: pairingOperation,
             pairingLoad: pairingLoad,
             pairingSave: pairingSave,

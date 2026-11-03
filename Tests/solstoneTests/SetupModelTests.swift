@@ -950,6 +950,7 @@ struct SetupModelTests {
             pairingLoad: { try pairingStore.load() }
         )
         state.configSaver = { _ in }
+        state.journalMarkDeriver = { _ in .uiTestSample }
         model.activate()
         state.startTunnelLifecycleOwner()
         do {

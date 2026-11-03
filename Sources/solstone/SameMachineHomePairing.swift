@@ -14,6 +14,11 @@ struct SameMachinePairStartResponse: Decodable, Equatable, Sendable {
     let deviceLabel: String
     let caFingerprint: String
 
+    /// Only for a link that already paired and is finishing its check: it never starts a ceremony.
+    static func resumingVerification(caFingerprint: String) -> SameMachinePairStartResponse {
+        SameMachinePairStartResponse(nonce: "", pairLink: "", expiresIn: 0, deviceLabel: "", caFingerprint: caFingerprint)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case nonce
         case pairLink = "pair_link"
@@ -175,6 +180,13 @@ enum SameMachineHomePairingFailure: Equatable, Sendable {
     case ceremony(PairingFlowState)
     case differentHomeAlreadyPaired
     case pairingUnavailable
+    case notVerified
+}
+
+/// What Settings' link expects of the journal on this Mac, read before it pairs.
+struct PendingSameComputerLink: Equatable, Sendable {
+    let instanceID: String
+    let caFingerprint: String
 }
 
 enum SameMachineHomePairingResult: Equatable, Sendable {
@@ -331,7 +343,7 @@ func verifySupportingConnection(
     submit: (String) async -> PairingFlowState,
     durableInstanceID: () -> String?,
     resolveIdentity: () async -> JournalIdentityResolution,
-    record: (JournalMark, PairingCredentialRevision) async -> Bool
+    record: (PairingCredentialRevision) async -> JournalMark?
 ) async -> SupportingConnectionOutcome {
     guard operationIsCurrent() else { return .notEligible }
     func executeFetchAndAdmission(admission: SupportingAdmission) async -> SupportingConnectionOutcome {
@@ -340,11 +352,13 @@ func verifySupportingConnection(
             return .durableInstanceMismatch
         }
         switch resolution {
-        case .mark(let mark, let instanceID):
+        case .mark(_, let instanceID):
+            // The answer over the tunnel proves this journal is the one on the other end. The mark
+            // that's kept and shown is the one derived from the pinned CA, not the one it served.
             guard instanceID == expectedInstanceID, durableInstanceID() == expectedInstanceID else {
                 return .durableInstanceMismatch
             }
-            guard await record(mark, admission.revision) else {
+            guard let mark = await record(admission.revision) else {
                 return .recordFailed
             }
             return .recorded(mark)

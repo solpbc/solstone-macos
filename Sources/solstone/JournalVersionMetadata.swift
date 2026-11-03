@@ -403,12 +403,22 @@ internal func journalVersionMetadataIdentity(for pairing: StoredPairing) -> Stri
 
 /// Names the journal a pairing reaches, the same across re-pairs to that journal:
 /// its instance and its CA chain, never this device's per-pairing certificate.
+///
+/// A stored pairing whose id isn't its CA's journal id gets a separate name, so an answer given
+/// before pairing checked that doesn't cover it. It is held and asked once more, and its new answer
+/// is kept. Every other pairing's name, and so its answer, is unchanged.
 internal func journalMarkConfirmationIdentity(for pairing: StoredPairing) -> String {
-    opaqueSHA256([
+    let parts = [
         "journal-mark-confirmation-v1",
         pairing.instanceID,
         normalizedCAFingerprint(for: pairing.caChainPEM) ?? pairing.caChainPEM
-    ])
+    ]
+    return opaqueSHA256(pairingIsBoundToItsCA(pairing) ? parts : parts + ["id-not-from-ca"])
+}
+
+/// Whether a stored pairing's id is the journal id of its stored CA. An unreadable CA isn't.
+internal func pairingIsBoundToItsCA(_ pairing: StoredPairing) -> Bool {
+    (try? CertChain.journalID(ofCAChainPEM: pairing.caChainPEM)) == pairing.instanceID
 }
 
 internal func sanitizedJournalVersion(_ value: String) -> String? {

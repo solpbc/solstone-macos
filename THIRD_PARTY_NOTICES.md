@@ -464,3 +464,36 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
+
+---
+
+## Argon2
+
+- project: P-H-C/phc-winner-argon2, the reference implementation, vendored in spl-swift
+- version: commit f57e61e19229e23c4445b85494dbf7c07de721cb
+- license: CC0 1.0 or Apache-2.0, at your option
+- source: https://github.com/P-H-C/phc-winner-argon2
+
+Copyright 2015 Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
+
+---
+
+## Lucide icons
+
+- project: lucide-icons/lucide, a 60-icon subset used by the journal mark
+- license: ISC
+- source: https://github.com/lucide-icons/lucide
+
+Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2022.
+
+Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+---
+
+## EFF Long Wordlist
+
+- project: Electronic Frontier Foundation, "EFF's New Wordlists for Random Passphrases" (2016), used by the journal mark
+- license: Creative Commons Attribution 3.0 US
+- source: https://www.eff.org/dice

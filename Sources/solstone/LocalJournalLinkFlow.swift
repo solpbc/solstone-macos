@@ -338,7 +338,120 @@ private func sameMachineLinkFailureOutcome(
         return error(UICopy.SAME_MACHINE_LINK_CREDENTIALS_UNAVAILABLE, .pairingSameMachineCredentialsUnavailable)
     case .differentHomeAlreadyPaired:
         return error(UICopy.SAME_MACHINE_LINK_OTHER_JOURNAL, .pairingSameMachineOtherJournalPaired)
+    case .notVerified:
+        return error(UICopy.SETUP_COULDNT_VERIFY_MARK, .pairingSameMachineCeremonyFailed)
     }
+}
+
+/// How Settings' same-computer link ended, in the terms of the rest of this flow.
+func sameComputerLinkResult(for outcome: SupportingConnectionOutcome) -> SameMachineHomePairingResult {
+    switch outcome {
+    case .recorded, .alreadyRecorded:
+        return .pairingStarted
+    case .pairStartFailed(let kind):
+        return .failed(.pairStart(kind))
+    case .linkRejected(let rejection):
+        return .failed(.linkShape(rejection))
+    case .ceremonyFailed(let state):
+        return .failed(.ceremony(state))
+    case .durableInstanceMismatch:
+        return .failed(.ceremony(.failed(.instanceMismatch)))
+    case .fingerprintOrPinMismatch:
+        return .failed(.linkShape(.unparsable))
+    case .notEligible:
+        return .failed(.differentHomeAlreadyPaired)
+    case .stillSettingUp, .fetchAbsent, .fetchFailed, .recordFailed:
+        return .failed(.notVerified)
+    }
+}
+
+/// Whether a same-computer link that hasn't verified yet should try again: the pairing landed and
+/// the tunnel hasn't answered. Anything else has been told something, so it stops.
+private func sameComputerLinkShouldKeepTrying(_ outcome: SupportingConnectionOutcome) -> Bool {
+    switch outcome {
+    case .fetchAbsent, .fetchFailed:
+        return true
+    default:
+        return false
+    }
+}
+
+/// Settings' link to the journal on this Mac. It reads what the journal says it is, asks it for a
+/// same-computer pairing link, and runs the checks same-computer setup runs: one direct loopback
+/// candidate, a pin that matches, the same journal over the tunnel. No comparison is asked for, since
+/// there's nothing independent to compare. A remote journal never comes through here.
+@MainActor
+func runSettingsSameComputerLink(
+    appState: AppState,
+    journalMarkDriver: JournalMarkConfirmationDriver,
+    startPairing: @escaping @MainActor @Sendable (
+        _ baseURL: String,
+        _ deviceLabel: String
+    ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>,
+    localIdentity: @escaping @MainActor @Sendable (_ baseURL: String) async -> JournalIdentityResolution,
+    retryAttempts: Int = 60,
+    retryInterval: Duration = .milliseconds(500)
+) async -> SameMachineLinkOutcome {
+    let resuming = appState.sameComputerLinkAwaitsVerification ? appState.pendingSameComputerLink : nil
+    if resuming == nil {
+        resetForJournalRelink(appState: appState, journalMarkDriver: journalMarkDriver)
+    }
+    appState.recordDiagnosticEvidence(.pairingSameMachineStarted)
+
+    func finish(_ result: SameMachineHomePairingResult) -> SameMachineLinkOutcome {
+        let outcome = sameMachineLinkOutcome(for: result, failedAddress: appState.pairingCoordinator.failedAddress)
+        appState.recordDiagnosticEvidence(outcome.evidence)
+        if case .failed(let failure) = result {
+            Logger.setup.notice("same-computer link did not complete: \(String(describing: failure), privacy: .public)")
+        }
+        return outcome
+    }
+
+    var pairStart: SameMachinePairStartResponse?
+    let expected: PendingSameComputerLink
+    if let resuming {
+        expected = resuming
+    } else {
+        switch appState.tunnelLifecycleOwner.sameMachineStoredPairingState {
+        case .noneHeld:
+            break
+        case .pairedHome:
+            journalMarkDriver.startIfUnconfirmed(appState: appState)
+            return finish(.notEligible)
+        case .differentHomeHeld:
+            return finish(.failed(.differentHomeAlreadyPaired))
+        case .unavailable:
+            return finish(.failed(.pairingUnavailable))
+        }
+        guard case .mark(_, let instanceID) = await localIdentity(ServiceMode.bundledServiceURL) else {
+            return finish(.failed(.pairStart(.transport)))
+        }
+        let deviceLabel = await SPLPairingDefaults.deviceLabelOffMainThread()
+        switch await startPairing(ServiceMode.bundledServiceURL, deviceLabel) {
+        case .success(let response):
+            pairStart = response
+            expected = PendingSameComputerLink(instanceID: instanceID, caFingerprint: response.caFingerprint.lowercased())
+        case .failure(let failure):
+            return finish(.failed(.pairStart(failure.kind)))
+        }
+    }
+
+    appState.pendingSameComputerLink = expected
+    let placeholder = SameMachinePairStartResponse.resumingVerification(caFingerprint: expected.caFingerprint)
+    var outcome = await appState.verifySameComputerLink(expected: expected, pairStart: pairStart ?? placeholder)
+    var remaining = retryAttempts
+    while sameComputerLinkShouldKeepTrying(outcome), remaining > 0, !Task.isCancelled {
+        try? await Task.sleep(for: retryInterval)
+        outcome = await appState.verifySameComputerLink(expected: expected, pairStart: pairStart ?? placeholder)
+        remaining -= 1
+    }
+
+    // A pairing that landed but hasn't answered over the tunnel stays pending, so the tunnel coming
+    // up can finish it without asking. Anything else ends this attempt.
+    if !sameComputerLinkShouldKeepTrying(outcome) {
+        appState.pendingSameComputerLink = nil
+    }
+    return finish(sameComputerLinkResult(for: outcome))
 }
 
 /// The owner's re-link or confirm for the journal on this Mac, end to end except for what the

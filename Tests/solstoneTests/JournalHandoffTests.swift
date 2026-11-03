@@ -302,9 +302,7 @@ struct JournalHandoffTests {
         }
 
         let result = await orchestrator.run(
-            appState: world.state,
-            markDriver: world.driver,
-            markFetch: { _ in nil }
+            appState: world.state
         )
         world.driver.cancel()
 
@@ -328,7 +326,6 @@ struct JournalHandoffTests {
             .authGate,
             .flippingToExternal,
             .triggeringSyncDrain,
-            .confirmingMarkBestEffort,
             .completed
         ])
     }
@@ -1232,11 +1229,7 @@ private final class TestWorld {
     let feedResolver: FakeAppcastFeedResolver
     var dependencies: JournalHandoffDependencies
     let state: AppState
-    let driver = JournalMarkConfirmationDriver(
-        deadlineSeconds: 0.05,
-        heldPollInterval: .milliseconds(1),
-        fetchRetryInterval: .milliseconds(1)
-    )
+    let driver = JournalMarkConfirmationDriver()
 
     init(
         appcastData: Data,
@@ -1309,9 +1302,7 @@ private final class TestWorld {
     func run() async -> JournalHandoffStep {
         let orchestrator = JournalHandoffOrchestrator(dependencies: dependencies)
         let result = await orchestrator.run(
-            appState: state,
-            markDriver: driver,
-            markFetch: { _ in nil }
+            appState: state
         )
         driver.cancel()
         return result

@@ -5,6 +5,7 @@ import AppKit
 import CoreAudio
 import os
 import SwiftUI
+import SPLMark
 import Testing
 import UserNotifications
 import SolstoneCore
@@ -728,10 +729,52 @@ struct SnapshotTests {
 
     @Test func journalMarkSheetCouldntVerify() throws {
         try render(
-            markSheet(.unverified(.identityUnavailable)),
+            markSheet(.unverified),
             size: CGSize(width: 380, height: 460),
             to: "journal-mark-sheet-couldnt-verify.png"
         )
+    }
+
+    /// The sheet as an owner sees it: a mark derived from a journal ID, in both appearances.
+    @Test func journalMarkSheetDerivedInBothAppearances() throws {
+        JournalMarkFont.register()
+        let derived = JournalMark(try markFromJournalID("f30ed159-ef46-8e9c-913f-e49f0fe7d201"))
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            try render(
+                markSheet(.valid(derived)),
+                size: CGSize(width: 380, height: 460),
+                to: "journal-mark-sheet-derived-\(name).png",
+                appearance: NSAppearance(named: appearance)
+            )
+            try render(
+                markSheet(.unverified),
+                size: CGSize(width: 380, height: 460),
+                to: "journal-mark-sheet-unavailable-\(name).png",
+                appearance: NSAppearance(named: appearance)
+            )
+        }
+    }
+
+    /// Settings' link to the journal on this Mac, in both appearances: a mark and one action.
+    @Test func settingsSameComputerLinkPanel() throws {
+        JournalMarkFont.register()
+        let mark = JournalMark(try markFromJournalID("f30ed159-ef46-8e9c-913f-e49f0fe7d201"))
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let state = AppState.forSnapshot()
+            let view = SettingsView(
+                appState: state,
+                updateController: makeSnapshotUpdateController(),
+                selectedTab: .service,
+                initialLocalJournalMark: mark,
+                initialLocalDiscoveryCompleted: true
+            )
+            try render(
+                view.background(Color(nsColor: .windowBackgroundColor)),
+                size: settingsSize,
+                to: "settings-same-computer-link-\(name).png",
+                appearance: NSAppearance(named: appearance)
+            )
+        }
     }
 
     @Test func settingsServiceMigrationBanner() throws {

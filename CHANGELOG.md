@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- your journal's mark now has the same colors and layout on this mac as in your journal's network app: darker words, its own colors around each icon. when your journal's mark can't be read, it shows as unavailable.
+- this is a security fix, please update. someone who got you to use a pairing link they made could pair this mac with their journal while it showed your journal's mark. what you share with the solstone app on this mac then goes to their journal. this mac now works out the mark itself, so a link someone else made shows their journal's mark, not yours. if you paired before this update, compare the mark this mac shows with the one in your journal's network app, opened on the computer your journal lives on, not from the solstone app. if they don't match, disconnect this mac from that journal and pair again with a link from your journal.
+- your journal's mark now has the same colors and layout on this mac as in your journal's network app: darker words, its own colors around each icon. when your journal's mark can't be worked out, it shows as unavailable.
 - pressing return no longer answers the mark question.
+- connecting from settings to your journal on this mac checks it for you and no longer asks you to compare marks. pairing with a journal on another computer, or from a pasted link, still asks.
 
 ## [2.0.54] - 2026-11-01
 

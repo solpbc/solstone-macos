@@ -159,16 +159,14 @@ struct JournalClientBehaviorTests {
 
         driver.startIfNeeded(
             for: successKey,
-            resolveHomeBase: { .url(ServiceMode.bundledServiceURL) },
-            fetchMark: { _ in .uiTestSample }
+            deriveMark: { .uiTestSample }
         )
         try await waitForValid(driver)
         driver.cancel()
 
         driver.startIfNeeded(
             for: successKey,
-            resolveHomeBase: { .url(ServiceMode.bundledServiceURL) },
-            fetchMark: { _ in .uiTestSample }
+            deriveMark: { .uiTestSample }
         )
         #expect(!driver.isPresented)
 
@@ -177,8 +175,7 @@ struct JournalClientBehaviorTests {
 
         driver.startIfNeeded(
             for: successKey,
-            resolveHomeBase: { .url(ServiceMode.bundledServiceURL) },
-            fetchMark: { _ in .uiTestSample }
+            deriveMark: { .uiTestSample }
         )
         try await waitForValid(driver)
         #expect(driver.isPresented)
@@ -277,11 +274,7 @@ struct JournalClientBehaviorTests {
     }
 
     private func makeDriver() -> JournalMarkConfirmationDriver {
-        JournalMarkConfirmationDriver(
-            deadlineSeconds: 1,
-            heldPollInterval: .milliseconds(1),
-            fetchRetryInterval: .milliseconds(1)
-        )
+        JournalMarkConfirmationDriver()
     }
 
     private func waitForValid(_ driver: JournalMarkConfirmationDriver) async throws {

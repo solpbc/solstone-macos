@@ -31,7 +31,6 @@ enum JournalHandoffStep: Equatable, Sendable {
     case authGate
     case flippingToExternal
     case triggeringSyncDrain
-    case confirmingMarkBestEffort
     case completed
     case failed(JournalHandoffFailure)
     case aborted(JournalHandoffFailure)
@@ -79,8 +78,6 @@ extension JournalHandoffStep {
             return "linking solstone to the journal app"
         case .triggeringSyncDrain:
             return "sending kept segments to your journal"
-        case .confirmingMarkBestEffort:
-            return "checking your journal mark"
         case .completed:
             return "your journal app is ready"
         case .failed(let failure), .aborted(let failure):
@@ -108,8 +105,6 @@ extension JournalHandoffStep {
             return .flippingToExternal
         case .triggeringSyncDrain:
             return .triggeringSyncDrain
-        case .confirmingMarkBestEffort:
-            return .confirmingMarkBestEffort
         case .completed:
             return .completed
         case .failed:
@@ -470,26 +465,22 @@ final class JournalHandoffOrchestrator {
     }
 
     func start(
-        appState: AppState,
-        markDriver: JournalMarkConfirmationDriver,
-        markFetch: @escaping JournalMarkConfirmationDriver.MarkFetcher
+        appState: AppState
     ) {
         guard task == nil else { return }
 
-        task = Task { @MainActor [weak self, weak appState, weak markDriver] in
-            guard let self, let appState, let markDriver else { return }
+        task = Task { @MainActor [weak self, weak appState] in
+            guard let self, let appState else { return }
             defer {
                 self.task = nil
             }
-            await self.run(appState: appState, markDriver: markDriver, markFetch: markFetch)
+            await self.run(appState: appState)
         }
     }
 
     @discardableResult
     func run(
-        appState: AppState,
-        markDriver: JournalMarkConfirmationDriver,
-        markFetch: @escaping JournalMarkConfirmationDriver.MarkFetcher
+        appState: AppState
     ) async -> JournalHandoffStep {
         appState.journalHandoffActive = true
         defer { appState.journalHandoffActive = false }
@@ -523,13 +514,6 @@ final class JournalHandoffOrchestrator {
             step = .triggeringSyncDrain
             Logger.upload.info("journal handoff: triggering sync drain after external flip")
             dependencies.configFlipper.triggerSync(appState: appState)
-
-            step = .confirmingMarkBestEffort
-            startBestEffortMarkConfirm(
-                appState: appState,
-                markDriver: markDriver,
-                markFetch: markFetch
-            )
 
             step = .completed
             Logger.setup.info("journal handoff completed")
@@ -752,19 +736,6 @@ final class JournalHandoffOrchestrator {
         default:
             return false
         }
-    }
-
-    private func startBestEffortMarkConfirm(
-        appState: AppState,
-        markDriver: JournalMarkConfirmationDriver,
-        markFetch: @escaping JournalMarkConfirmationDriver.MarkFetcher
-    ) {
-        guard let serverKey = appState.config.serverKey else { return }
-        markDriver.startIfNeeded(
-            for: "journal-handoff:\(serverKey)",
-            resolveHomeBase: { .url(ServiceMode.bundledServiceURL) },
-            fetchMark: markFetch
-        )
     }
 }
 

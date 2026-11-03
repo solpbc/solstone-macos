@@ -775,7 +775,6 @@
       "auth_gate",
       "flipping_to_external",
       "triggering_sync_drain",
-      "confirming_mark_best_effort",
       "completed",
       "failed",
       "aborted"

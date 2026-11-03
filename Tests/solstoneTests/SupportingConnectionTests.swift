@@ -32,7 +32,7 @@ struct SupportingConnectionTests {
                     return .success(makePairStartResponse(pairLink: makeValidPairLink(fingerprint: sampleFingerprint), fingerprint: sampleFingerprint))
                 },
                 submit: { _ in submitted += 1; return .paired },
-                durableInstanceID: { nil }, resolveIdentity: { .absent }, record: { _, _ in false }
+                durableInstanceID: { nil }, resolveIdentity: { .absent }, record: { _ in nil }
             )
         }
         try await waitUntil { entered.count == 1 }
@@ -147,9 +147,9 @@ struct SupportingConnectionTests {
                 resolveCalled = true
                 return .mark(JournalMark.uiTestSample, instanceID: expectedInstance)
             },
-            record: { _, _ in
+            record: { _ in
                 recordCalled = true
-                return true
+                return .uiTestSample
             }
         )
 
@@ -186,9 +186,9 @@ struct SupportingConnectionTests {
             resolveIdentity: {
                 .mark(mark, instanceID: expectedInstance)
             },
-            record: { m, _ in
-                recordedMark = m
-                return true
+            record: { _ in
+                recordedMark = mark
+                return mark
             }
         )
 
@@ -221,7 +221,7 @@ struct SupportingConnectionTests {
             resolveIdentity: {
                 .absent
             },
-            record: { _, _ in false }
+            record: { _ in nil }
         )
 
         #expect(outcome == .notEligible)
@@ -248,7 +248,7 @@ struct SupportingConnectionTests {
             },
             durableInstanceID: { nil },
             resolveIdentity: { .absent },
-            record: { _, _ in false }
+            record: { _ in nil }
         )
 
         #expect(outcome == .pairStartFailed(.transport))
@@ -275,7 +275,7 @@ struct SupportingConnectionTests {
             },
             durableInstanceID: { nil },
             resolveIdentity: { .absent },
-            record: { _, _ in false }
+            record: { _ in nil }
         )
 
         #expect(outcome == .linkRejected(.unparsable))
@@ -304,7 +304,7 @@ struct SupportingConnectionTests {
             },
             durableInstanceID: { nil },
             resolveIdentity: { .absent },
-            record: { _, _ in false }
+            record: { _ in nil }
         )
         #expect(outcome1 == .fingerprintOrPinMismatch)
         #expect(!submitCalled)
@@ -327,7 +327,7 @@ struct SupportingConnectionTests {
             },
             durableInstanceID: { nil },
             resolveIdentity: { .absent },
-            record: { _, _ in false }
+            record: { _ in nil }
         )
         #expect(outcome2 == .fingerprintOrPinMismatch)
         #expect(!submitCalled)
@@ -357,7 +357,7 @@ struct SupportingConnectionTests {
                 resolveCalled = true
                 return .absent
             },
-            record: { _, _ in false }
+            record: { _ in nil }
         )
 
         #expect(outcome == .ceremonyFailed(PairingFlowState.failed(.homeUnreachable)))
@@ -391,9 +391,9 @@ struct SupportingConnectionTests {
             resolveIdentity: {
                 .mark(mark, instanceID: expectedInstance)
             },
-            record: { m, _ in
-                recordedMark = m
-                return true
+            record: { _ in
+                recordedMark = mark
+                return mark
             }
         )
 
@@ -418,9 +418,9 @@ struct SupportingConnectionTests {
             resolveIdentity: {
                 .uncommitted(instanceID: expectedInstance)
             },
-            record: { _, _ in
+            record: { _ in
                 recordCalled = true
-                return true
+                return .uiTestSample
             }
         )
 
@@ -442,9 +442,9 @@ struct SupportingConnectionTests {
             submit: { _ in fatalError() },
             durableInstanceID: { expectedInstance },
             resolveIdentity: { .absent },
-            record: { _, _ in
+            record: { _ in
                 recordCalled = true
-                return true
+                return .uiTestSample
             }
         )
         #expect(outcomeAbsent == .fetchAbsent)
@@ -461,9 +461,9 @@ struct SupportingConnectionTests {
             submit: { _ in fatalError() },
             durableInstanceID: { expectedInstance },
             resolveIdentity: { .failed(.httpStatus(500)) },
-            record: { _, _ in
+            record: { _ in
                 recordCalled = true
-                return true
+                return .uiTestSample
             }
         )
         #expect(outcomeFailed == .fetchFailed(.httpStatus(500)))
@@ -486,9 +486,9 @@ struct SupportingConnectionTests {
             resolveIdentity: {
                 .mark(JournalMark.uiTestSample, instanceID: "different-inst")
             },
-            record: { _, _ in
+            record: { _ in
                 recordCalled = true
-                return true
+                return .uiTestSample
             }
         )
 
@@ -510,7 +510,7 @@ struct SupportingConnectionTests {
             resolveIdentity: {
                 .mark(JournalMark.uiTestSample, instanceID: expectedInstance)
             },
-            record: { _, _ in false }
+            record: { _ in nil }
         )
 
         #expect(outcome == .recordFailed)
@@ -538,9 +538,9 @@ struct SupportingConnectionTests {
             resolveIdentity: {
                 .mark(JournalMark.uiTestSample, instanceID: expectedInstance)
             },
-            record: { _, _ in
+            record: { _ in
                 recordCalled = true
-                return true
+                return .uiTestSample
             }
         )
 
@@ -570,9 +570,9 @@ struct SupportingConnectionTests {
             resolveIdentity: {
                 .mark(JournalMark.uiTestSample, instanceID: expectedInstance)
             },
-            record: { _, _ in
+            record: { _ in
                 recordCalled = true
-                return true
+                return .uiTestSample
             }
         )
 

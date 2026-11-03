@@ -141,10 +141,9 @@ struct SameMachineHomeMigrationTests {
     }
 
     @Test func ownerInitiatedSameMachinePairingStillConfirmsItsMark() {
-        // Regression guard. Keying the exemption on "is a same-machine home" instead of "is the
-        // automatic adoption" also silences the mark on a *fresh* local link, which is an
-        // owner-initiated pairing that must confirm — the release gate drives that confirmation
-        // and fails `pairing_mark_absent` without it.
+        // Regression guard. Keying the exemption on "is a same-machine home" would silence the mark
+        // on any pairing whose stored endpoints look local, which a peer controls. Only the
+        // automatic adoption and Settings' own same-computer ceremony skip the question.
         let driver = JournalMarkConfirmationDriver()
         let state = AppState.forSnapshot(initialTunnelPairing: pairing(
             localEndpoints: [LocalEndpoint(host: "127.0.0.1", port: 5015, scope: "local")]
@@ -206,6 +205,39 @@ struct SameMachineHomeMigrationTests {
         driver.startIfNeeded(for: .paired, appState: state)
 
         #expect(driver.isPresented)
+    }
+
+    @Test(arguments: [true, false])
+    func anAdoptionAnswersOnlyOnceItVerifiesOverTheTunnel(verifies: Bool) async throws {
+        let adopted = pairing(instanceID: try CertChain.journalID(ofCAChainPEM: testCACertPEM))
+        let store = PairingStore(pairing: nil)
+        let pairStart = PairStartRecorder(responses: [
+            .success(sameMachinePairStartResponse(pairLink: loopbackDirectPairLink)),
+        ])
+        let confirmation = InMemoryJournalMarkConfirmationStore(settled: true)
+        let state = AppState.forLoginItemTest(
+            config: loopbackRegisteredConfig(),
+            loginService: NoopLoginItemService(),
+            sameMachinePairStart: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            },
+            pairingStoring: store,
+            pairingOperation: { _, _, _ in adopted },
+            pairingLoad: { try store.load() },
+            pairingSave: { try store.save($0) },
+            journalMarkConfirmationStore: confirmation
+        )
+        state.journalMarkDeriver = { _ in .uiTestSample }
+        state.adoptionTunnelVerifier = { _ in verifies }
+
+        state.triggerSameMachineMigrationIfEligible()
+        try await waitUntil(timeout: .seconds(3)) { @MainActor in
+            state.sameMachineMigrationLastResult == .pairingStarted
+                && (state.isJournalMarkConfirmed || !state.isAdoptingSameMachineHomeAutomatically)
+        }
+
+        #expect(state.isJournalMarkConfirmed == verifies)
+        #expect(state.isAdoptingSameMachineHomeAutomatically == verifies)
     }
 
     @Test func failedAutomaticAdoptionLeavesNoMarkExemptionStanding() async throws {
@@ -425,6 +457,8 @@ struct SameMachineHomeMigrationTests {
             pairingLoad: { try store.load() },
             pairingSave: { try store.save($0) }
         )
+        state.journalMarkDeriver = { _ in .uiTestSample }
+        state.adoptionTunnelVerifier = { _ in true }
 
         state.triggerSameMachineMigrationIfEligible()
         try await waitUntil {

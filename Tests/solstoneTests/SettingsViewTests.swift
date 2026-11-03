@@ -58,13 +58,13 @@ struct SettingsViewTests {
         #expect(unavailable.upperBound < title.lowerBound)
     }
 
-    @Test func aLaterMarkReadChecksItIsTheStoredJournal() throws {
+    @Test func aConfirmedPairingsMarkComesFromItsStoredCA() throws {
         let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
         let start = try #require(source.range(of: "private func startJournalMarkRederiveIfNeeded()"))
         let end = try #require(source[start.lowerBound...].range(of: "private func sidebarPlainLabel"))
         let rederive = source[start.lowerBound..<end.lowerBound]
-        #expect(rederive.contains("storedPairingInstanceID"))
-        #expect(rederive.contains("markFetch(baseURL, expected)"))
+        #expect(rederive.contains("deriveConfirmedMark"))
+        #expect(!rederive.contains("resolveHomeBase"))
     }
 
     @Test func aJournalFoundOnDiskSpeaksAPendingRead() throws {

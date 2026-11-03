@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import CryptoKit
 import Foundation
 import Observation
 import JournalMarkKit
@@ -107,9 +108,10 @@ struct JournalMarkConfirmationGateTests {
         #expect(clearNotified.withLock { $0 })
     }
 
-    @Test func readingAnUnsettledMarkDoesNotPublish() {
+    @Test func readingAnUnsettledMarkDoesNotPublish() throws {
+        let bound = pairing(instanceID: try CertChain.journalID(ofCAChainPEM: testCACertPEM))
         let store = InMemoryJournalMarkConfirmationStore(settled: false)
-        let state = AppState.forSnapshot(initialTunnelPairing: pairing(), journalMarkConfirmationStore: store)
+        let state = AppState.forSnapshot(initialTunnelPairing: bound, journalMarkConfirmationStore: store)
         let notified = OSAllocatedUnfairLock(initialState: false)
         withObservationTracking {
             #expect(state.isJournalMarkConfirmed)
@@ -155,9 +157,10 @@ struct JournalMarkConfirmationGateTests {
         #expect(store.confirmedJournal == journalMarkConfirmationIdentity(for: pairing()))
     }
 
-    @Test func thePairingThisMacHeldBeforeKeepingAnswersCountsAsConfirmed() {
+    @Test func thePairingThisMacHeldBeforeKeepingAnswersCountsAsConfirmed() throws {
+        let bound = pairing(instanceID: try CertChain.journalID(ofCAChainPEM: testCACertPEM))
         let store = InMemoryJournalMarkConfirmationStore(settled: false)
-        let state = AppState.forSnapshot(initialTunnelPairing: pairing(), journalMarkConfirmationStore: store)
+        let state = AppState.forSnapshot(initialTunnelPairing: bound, journalMarkConfirmationStore: store)
 
         #expect(state.isJournalMarkConfirmed)
         #expect(store.settled)
@@ -278,18 +281,74 @@ struct JournalMarkConfirmationGateTests {
         #expect(journalMarkConfirmationIdentity(for: pairing(instanceID: "journal-b")) != journalMarkConfirmationIdentity(for: pairing()))
     }
 
+    @Test func aStoredPairingWhoseIDIsNotItsCAsIsHeldUntilAskedAgain() throws {
+        let unbound = pairing(instanceID: "not-this-cas-id")
+        #expect(!pairingIsBoundToItsCA(unbound))
+        // The answer stored by an earlier version named the journal by its id and CA alone.
+        let earlierAnswer = InMemoryJournalMarkConfirmationStore(
+            confirmedJournal: try legacyConfirmationIdentity(for: unbound),
+            settled: true
+        )
+        let state = AppState.forSnapshot(initialTunnelPairing: unbound, journalMarkConfirmationStore: earlierAnswer)
+
+        #expect(!state.isJournalMarkConfirmed)
+
+        // Answering keeps: it isn't asked a third time.
+        earlierAnswer.confirm(journalMarkConfirmationIdentity(for: unbound))
+        let afterRestart = AppState.forSnapshot(initialTunnelPairing: unbound, journalMarkConfirmationStore: earlierAnswer)
+        #expect(afterRestart.isJournalMarkConfirmed)
+    }
+
+    @Test func aStoredPairingBoundToItsCAKeepsItsAnswer() throws {
+        let bound = pairing(instanceID: try CertChain.journalID(ofCAChainPEM: testCACertPEM))
+        #expect(pairingIsBoundToItsCA(bound))
+        let earlierAnswer = InMemoryJournalMarkConfirmationStore(
+            confirmedJournal: try legacyConfirmationIdentity(for: bound),
+            settled: true
+        )
+        let state = AppState.forSnapshot(initialTunnelPairing: bound, journalMarkConfirmationStore: earlierAnswer)
+
+        #expect(state.isJournalMarkConfirmed)
+    }
+
+    @Test func aPairingWithNoReadableCAIsHeld() {
+        let unreadable = pairing(caChainPEM: "not a certificate")
+        #expect(!pairingIsBoundToItsCA(unreadable))
+        let store = InMemoryJournalMarkConfirmationStore(settled: false)
+        let state = AppState.forSnapshot(initialTunnelPairing: unreadable, journalMarkConfirmationStore: store)
+
+        #expect(!state.isJournalMarkConfirmed)
+    }
+
+    @Test func anUnboundPairingFromBeforeAnswersWereKeptIsNotSettledAsConfirmed() {
+        let unbound = pairing(instanceID: "not-this-cas-id")
+        let store = InMemoryJournalMarkConfirmationStore(settled: false)
+        let state = AppState.forSnapshot(initialTunnelPairing: unbound, journalMarkConfirmationStore: store)
+
+        #expect(!state.isJournalMarkConfirmed)
+        #expect(store.settled)
+    }
+
+    private func legacyConfirmationIdentity(for pairing: StoredPairing) throws -> String {
+        func opaque(_ parts: [String]) -> String {
+            "sha256:" + SHA256.hash(data: Data(parts.joined(separator: "\u{1F}").utf8)).map { String(format: "%02x", $0) }.joined()
+        }
+        let certificates = try CertChain.certificates(fromPEM: pairing.caChainPEM)
+        let chain = opaque(["journal-version-ca-chain-v1"] + certificates.map(CertChain.sha256Fingerprint(of:)))
+        return opaque(["journal-mark-confirmation-v1", pairing.instanceID, chain])
+    }
+
     @Test func confirmingAValidMarkRecordsTheAnswer() async throws {
         let store = InMemoryJournalMarkConfirmationStore(settled: true)
         let state = AppState.forSnapshot(initialTunnelPairing: pairing(), journalMarkConfirmationStore: store)
-        let driver = JournalMarkConfirmationDriver(deadlineSeconds: 1)
+        let driver = JournalMarkConfirmationDriver()
 
         driver.confirm(appState: state)
         #expect(!state.isJournalMarkConfirmed)
 
         driver.startIfNeeded(
             for: .paired,
-            resolveHomeBase: { JournalMarkConfirmationDriver.HomeBaseResolution.url("http://127.0.0.1:7071") },
-            fetchMark: { _ in .uiTestSample }
+            deriveMark: { .uiTestSample }
         )
         try await waitUntil(timeout: .seconds(2)) {
             await MainActor.run {
@@ -307,12 +366,11 @@ struct JournalMarkConfirmationGateTests {
     @Test func continuingAfterACheckThatCouldNotFinishRecordsTheAnswer() async throws {
         let store = InMemoryJournalMarkConfirmationStore(settled: true)
         let state = AppState.forSnapshot(initialTunnelPairing: pairing(), journalMarkConfirmationStore: store)
-        let driver = JournalMarkConfirmationDriver(deadlineSeconds: 0.05, heldPollInterval: .milliseconds(10))
+        let driver = JournalMarkConfirmationDriver()
 
         driver.startIfNeeded(
             for: .paired,
-            resolveHomeBase: { JournalMarkConfirmationDriver.HomeBaseResolution.held },
-            fetchMark: { _ in nil }
+            deriveMark: { nil }
         )
         try await waitUntil(timeout: .seconds(2)) {
             await MainActor.run {
