@@ -167,6 +167,7 @@ public struct JournalMarkView: View {
         // children announced separately via .combine.
         .accessibilityElement(children: .ignore)
         .accessibilityValue(JournalMarkAccessibility.spokenValue(mark: self.mark, isReadPending: self.isReadPending))
+        .accessibilityAddTraits(.isStaticText)
     }
 }
 

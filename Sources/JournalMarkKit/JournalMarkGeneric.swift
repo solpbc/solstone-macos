@@ -49,6 +49,7 @@ public struct JournalMarkUnavailableView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityValue(JournalMarkUnavailable.accessibleName)
+        .accessibilityAddTraits(.isStaticText)
     }
 
     private var chip: some View {
