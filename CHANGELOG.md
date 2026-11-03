@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - your journal's mark now has the same colors and layout on this mac as in your journal's network app: darker words, its own colors around each icon. when your journal's mark can't be worked out, it shows as unavailable.
 - pressing return no longer answers the mark question.
 - connecting from settings to your journal on this mac checks it for you and no longer asks you to compare marks. pairing with a journal on another computer, or from a pasted link, still asks.
+- VoiceOver now reads your journal's mark, its colors and then its words, next to "does this match your journal?" and in settings. before, it read nothing there.
 
 ## [2.0.54] - 2026-11-01
 
@@ -420,7 +421,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - adding a device to your journal now shows your journal's mark the whole time you're pairing, next to the qr code, so you can compare it with what the new device shows.
 - before your journal has a mark of its own, settings and the add-a-device window now show the placeholder mark instead of empty space.
 - before your journal has a mark of its own, settings' found-an-existing-journal step now shows the placeholder mark instead of empty space.
-- VoiceOver now reads your journal's mark as one thing (its two colors, then its two words) during pairing and in settings, instead of reading the icons and words separately.
 - the menu bar no longer says "set up your journal" when your journal is paired but can't be reached for a moment. it says it's connecting, or that it can't reach your journal right now.
 
 ## [2.0.10] - 2026-09-16
