@@ -63,6 +63,7 @@ public enum JournalInitSetupProbe: Sendable, Equatable {
 }
 
 public struct JournalInitClient: Sendable {
+    private let dataLoader: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
     private let baseURL: String
     private let session: URLSession
     private let probeSession: URLSession
@@ -70,8 +71,10 @@ public struct JournalInitClient: Sendable {
 
     public init(
         baseURL: String = "http://127.0.0.1:5015",
-        sessionConfiguration: URLSessionConfiguration? = nil
+        sessionConfiguration: URLSessionConfiguration? = nil,
+        dataLoader: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = nil
     ) {
+        self.dataLoader = dataLoader
         self.baseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let config = sessionConfiguration ?? .default
         self.session = URLSession(configuration: config)
@@ -104,7 +107,7 @@ public struct JournalInitClient: Sendable {
         var request = try buildRequest(path: "/init/finalize", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await load(request, probing: false)
         try validate(response: response, data: data)
         let decoded = try JSONDecoder().decode(JournalInitFinalizeResponse.self, from: data)
         guard decoded.success else {
@@ -116,7 +119,7 @@ public struct JournalInitClient: Sendable {
     public func probeSetupComplete() async throws -> JournalInitSetupProbe {
         var request = try buildRequest(path: "/init", method: "GET")
         request.setValue("text/html", forHTTPHeaderField: "Accept")
-        let (_, response) = try await probeSession.data(for: request)
+        let (_, response) = try await load(request, probing: true)
         guard let http = response as? HTTPURLResponse else {
             throw JournalInitClientError.invalidResponse
         }
@@ -128,6 +131,11 @@ public struct JournalInitClient: Sendable {
         default:
             throw JournalInitClientError.serverError(http.statusCode)
         }
+    }
+
+    private func load(_ request: URLRequest, probing: Bool) async throws -> (Data, URLResponse) {
+        if let dataLoader { return try await dataLoader(request) }
+        return try await (probing ? probeSession : session).data(for: request)
     }
 
     func buildRequest(path: String, method: String) throws -> URLRequest {
@@ -147,7 +155,7 @@ public struct JournalInitClient: Sendable {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONEncoder().encode(["proposal_id": proposalID])
         }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await load(request, probing: false)
         try validate(response: response, data: data)
         return try JSONDecoder().decode(JournalInitMarkResponse.self, from: data)
     }

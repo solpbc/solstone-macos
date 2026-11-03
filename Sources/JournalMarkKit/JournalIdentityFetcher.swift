@@ -47,15 +47,18 @@ public enum JournalIdentityRead: Sendable, Equatable {
 public nonisolated struct JournalIdentityFetcher: Sendable {
     private let session: URLSession
     private let noRedirectDelegate = NoRedirectURLSessionDelegate()
+    private let dataLoader: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
     private let prepareRequest: @Sendable (inout URLRequest) -> Void
 
     /// `prepareRequest` runs on every request before it is sent; the app uses it
     /// to attach the loopback capability the tunnel's local proxy requires.
     public init(
         session: URLSession = .shared,
+        dataLoader: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = nil,
         prepareRequest: @escaping @Sendable (inout URLRequest) -> Void = { _ in }
     ) {
         self.session = session
+        self.dataLoader = dataLoader
         self.prepareRequest = prepareRequest
     }
 
@@ -77,7 +80,13 @@ public nonisolated struct JournalIdentityFetcher: Sendable {
         prepareRequest(&request)
 
         do {
-            let (data, response) = try await session.data(for: request, delegate: noRedirectDelegate)
+            let data: Data
+            let response: URLResponse
+            if let dataLoader {
+                (data, response) = try await dataLoader(request)
+            } else {
+                (data, response) = try await session.data(for: request, delegate: noRedirectDelegate)
+            }
             guard let httpResponse = response as? HTTPURLResponse else {
                 return .failed(.networkError)
             }
