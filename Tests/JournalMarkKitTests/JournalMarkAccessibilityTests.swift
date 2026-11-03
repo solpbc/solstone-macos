@@ -32,6 +32,14 @@ struct JournalMarkAccessibilityTests {
         #expect(!JournalMarkAccessibility.spokenValue(mark: nil).contains("gem"))
     }
 
+    @Test func aPendingReadIsNotSpokenAsNotSetUp() {
+        let pending = JournalMarkAccessibility.spokenValue(mark: nil, isReadPending: true)
+        #expect(pending == JournalMarkGeneric.readPendingSpokenValue)
+        #expect(pending != JournalMarkGeneric.spokenValue)
+        #expect(JournalMarkAccessibility.spokenValue(mark: .uiTestSample, isReadPending: true)
+            == JournalMarkAccessibility.spokenValue(mark: .uiTestSample))
+    }
+
     @Test func slotAndUnavailableProperties() {
         #expect(JournalMarkSlot.join(["afoot", "unfixed"]) == "afoot\u{00B7}unfixed")
         #expect(JournalMarkSlot.join(["one"]) == "one")

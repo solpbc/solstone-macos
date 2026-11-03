@@ -316,13 +316,13 @@ private func markObject() -> [String: Any] {
     [
         "icon1": [
             "name": "bug",
-            "color": ["hex": "#f59e0b"],
+            "color": ["hex": "#f59e0b", "name": "amber"],
             "rot": 0,
             "svg": JournalMark.uiTestSample.icon1.svg,
         ],
         "icon2": [
             "name": "gem",
-            "color": ["hex": "#84cc16"],
+            "color": ["hex": "#84cc16", "name": "lime"],
             "rot": 45,
             "svg": JournalMark.uiTestSample.icon2.svg,
         ],

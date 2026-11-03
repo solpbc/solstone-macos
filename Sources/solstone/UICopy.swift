@@ -147,7 +147,7 @@ public enum UICopy {
     public static let SOURCES_BROWSER_HEADLINE_WAITING = "on · waiting for a browser to connect"
 
     // Legend footnote
-    public static let SETTINGS_HELP_BROWSER_FOOTNOTE = "the solstone extension shows the same marks in your browser's toolbar, for what you share from that browser."
+    public static let SETTINGS_HELP_BROWSER_FOOTNOTE = "the solstone extension shows the same icons in your browser's toolbar, for what you share from that browser."
 
     // Diagnostics labels
     public static let DIAGNOSTICS_BROWSER_PAGES_LABEL = "browser pages"
@@ -286,8 +286,8 @@ public enum UICopy {
     public static let JOURNAL_MARK_UNVERIFIED_BODY = "we couldn't confirm your journal's mark in time. you can continue if you're sure this is your journal, or cancel and try again."
     public static let JOURNAL_MARK_UNVERIFIED_CONTINUE_BUTTON = "continue anyway"
     public static let JOURNAL_MARK_UNVERIFIED_CANCEL_BUTTON = "cancel pairing"
-    public static let JOURNAL_MARK_MISMATCH_TITLE = "not connected"
-    public static let JOURNAL_MARK_MISMATCH_BODY = "you said this mark doesn't match the one your journal shows, so we didn't connect this mac. you may have pasted the wrong link, or something isn't right. try again, or reach us and we'll help."
+    public static let JOURNAL_MARK_MISMATCH_TITLE = "not paired"
+    public static let JOURNAL_MARK_MISMATCH_BODY = "nothing this mac has kept went to that journal through this link. you may have pasted the wrong link, or something isn't right. try again, or reach us and we'll help."
     public static let JOURNAL_MARK_MISMATCH_FRESH_LINK = "get a fresh link"
     public static let JOURNAL_MARK_MISMATCH_SUPPORT = "email support@solstone.app"
     public static let SETTINGS_PREREQ_PERMISSIONS = "you'll also need to grant permissions →"

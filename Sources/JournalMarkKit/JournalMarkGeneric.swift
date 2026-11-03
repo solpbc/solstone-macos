@@ -10,6 +10,7 @@ import SwiftUI
 nonisolated enum JournalMarkGeneric {
     static let words = ["your", "journal"]
     static let spokenValue = "your journal, not set up yet"
+    static let readPendingSpokenValue = "your journal, mark not read yet"
 }
 
 public enum JournalMarkSlot {
@@ -34,9 +35,8 @@ public struct JournalMarkUnavailableView: View {
                 chip
             }
 
-            Text(JournalMarkUnavailable.words.joined(separator: " · "))
+            Text(MarkGeometry.markWords(JournalMarkUnavailable.words))
                 .font(JournalMarkFont.isRegistered ? .custom("Comfortaa-Bold", size: MarkGeometry.wordFontSize, relativeTo: .headline) : .system(size: MarkGeometry.wordFontSize, weight: .bold, design: .rounded))
-                .foregroundStyle(MarkGeometry.wordColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
@@ -53,24 +53,24 @@ public struct JournalMarkUnavailableView: View {
 
     private var chip: some View {
         RoundedRectangle(cornerRadius: MarkGeometry.chipRadius, style: .continuous)
-            .fill(MarkGeometry.wordColor)
+            .fill(MarkGeometry.unavailableChipFill)
             .overlay {
                 RoundedRectangle(cornerRadius: MarkGeometry.chipRadius, style: .continuous)
-                    .stroke(MarkGeometry.chipBorder, lineWidth: MarkGeometry.chipBorderWidth)
+                    .stroke(MarkGeometry.unavailableChipBorder, lineWidth: MarkGeometry.chipBorderWidth)
             }
             .overlay {
                 Text("?")
                     .font(.system(size: MarkGeometry.size * MarkGeometry.glyphScale, weight: .bold, design: .rounded))
-                    .foregroundStyle(MarkGeometry.confirmationColor)
+                    .foregroundStyle(MarkGeometry.faintInk)
             }
             .frame(width: MarkGeometry.size, height: MarkGeometry.size)
     }
 }
 
 nonisolated enum JournalMarkAccessibility {
-    static func spokenValue(mark: JournalMark?) -> String {
+    static func spokenValue(mark: JournalMark?, isReadPending: Bool = false) -> String {
         guard let mark, mark.words.count >= 2 else {
-            return JournalMarkGeneric.spokenValue
+            return isReadPending ? JournalMarkGeneric.readPendingSpokenValue : JournalMarkGeneric.spokenValue
         }
         let c1 = mark.icon1.color.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let c2 = mark.icon2.color.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

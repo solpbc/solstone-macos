@@ -253,7 +253,7 @@ struct SettingsView: View {
         _ baseURL: String,
         _ deviceLabel: String
     ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>
-    private let markFetch: @MainActor @Sendable (String) async -> JournalMark?
+    private let markFetch: @MainActor @Sendable (_ baseURL: String, _ expectedInstanceID: String?) async -> JournalMark?
     private let runningJournalController: any RunningJournalController
     private let diagnosticClipboardWrite: @MainActor (String) -> Bool
     private let diagnosticAnnouncement: @MainActor (String) -> Void
@@ -286,8 +286,11 @@ struct SettingsView: View {
         ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
             await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
         },
-        markFetch: @escaping @MainActor @Sendable (String) async -> JournalMark? = { baseURL in
-            switch await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(baseURL: baseURL) {
+        markFetch: @escaping @MainActor @Sendable (_ baseURL: String, _ expectedInstanceID: String?) async -> JournalMark? = { baseURL, expectedInstanceID in
+            switch await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).fetch(
+                baseURL: baseURL,
+                expectedInstanceID: expectedInstanceID
+            ) {
             case .mark(let mark): return mark
             case .uncommitted, .unavailable: return nil
             }
@@ -623,60 +626,13 @@ struct SettingsView: View {
     }
 
     private var journalMarkSheet: some View {
-        VStack(spacing: 16) {
-            switch journalMarkDriver.phase {
-            case .connecting:
-                ProgressView()
-                    .controlSize(.small)
-                Text(UICopy.JOURNAL_MARK_CONNECTING)
-                    .font(.headline)
-            case .valid(let mark):
-                JournalMarkView(mark: mark)
-                VStack(spacing: 6) {
-                    Text(UICopy.JOURNAL_MARK_CONFIRM_QUESTION)
-                        .font(.headline)
-                    Text(UICopy.JOURNAL_MARK_CONFIRM_SUBTEXT)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                HStack {
-                    Button(UICopy.JOURNAL_MARK_MISMATCH_BUTTON) {
-                        rejectJournalMark()
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkMismatch)
-
-                    Button(UICopy.JOURNAL_MARK_CONFIRM_BUTTON) {
-                        confirmJournalMark()
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkConfirm)
-                }
-            case .unverified:
-                VStack(spacing: 6) {
-                    Text(UICopy.JOURNAL_MARK_UNVERIFIED_TITLE)
-                        .font(.headline)
-                    Text(UICopy.JOURNAL_MARK_UNVERIFIED_BODY)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                HStack {
-                    Button(UICopy.JOURNAL_MARK_UNVERIFIED_CANCEL_BUTTON) {
-                        cancelUnverifiedPairing()
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkCancelPairing)
-
-                    Button(UICopy.JOURNAL_MARK_UNVERIFIED_CONTINUE_BUTTON) {
-                        continueUnverifiedMark()
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkContinueAnyway)
-                }
-            }
-        }
-        .padding(24)
-        .frame(width: 380)
+        JournalMarkSheetContent(
+            phase: journalMarkDriver.phase,
+            onMismatch: rejectJournalMark,
+            onConfirm: confirmJournalMark,
+            onCancelPairing: cancelUnverifiedPairing,
+            onContinueAnyway: continueUnverifiedMark
+        )
     }
 
     private func handlePairingStateChange(_ state: PairingFlowState) {
@@ -742,7 +698,8 @@ struct SettingsView: View {
         journalMarkRederiveTask = Task { @MainActor in
             switch await appState.resolveHomeBase() {
             case .url(let baseURL):
-                if let mark = await markFetch(baseURL),
+                guard let expected = appState.tunnelLifecycleOwner.storedPairingInstanceID else { return }
+                if let mark = await markFetch(baseURL, expected),
                    appState.isCurrentJournalMarkAttempt(markRevision) {
                     appState.setConfirmedMark(mark)
                 }
@@ -1749,7 +1706,7 @@ struct SettingsView: View {
     private var configuredJournalPanel: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                LabeledContent("name") {
+                LabeledContent("journal") {
                     Text(resolvedJournalName)
                         .accessibilityIdentifier(AXID.Settings.Service.journalNameState)
                         .accessibilityValue(resolvedJournalName)
@@ -1990,9 +1947,9 @@ struct SettingsView: View {
                             id: AXID.Settings.Service.createJournalState,
                             value: onDiskJournalAdoptionFlow.state.axState.axToken
                         )
-                        // journal-mark.md section 4.3 — the org-wide "no journal identity yet"
-                        // treatment. Never an empty box, never hidden.
-                        JournalMarkView(mark: nil)
+                        // A journal is here but its mark can't be read until it runs: the generic
+                        // mark, spoken as not read yet rather than as not set up.
+                        JournalMarkView(mark: nil, isReadPending: true)
                         Button(localOnDiskAdoptionAction.buttonTitle) {
                             onDiskJournalAdoptionFlow.start(
                                 discoveredPath: path,
@@ -2132,7 +2089,7 @@ struct SettingsView: View {
                 journalHandoffOrchestrator.start(
                     appState: appState,
                     markDriver: journalMarkDriver,
-                    markFetch: markFetch
+                    markFetch: { [markFetch] baseURL in await markFetch(baseURL, nil) }
                 )
             } label: {
                 Label("start", systemImage: "arrow.right.circle")
@@ -5201,5 +5158,71 @@ struct MicrophoneRow: View {
         .padding(.vertical, 2)
         .accessibilityIdentifier(AXID.Settings.Microphones.device(entry.uid))
         .accessibilityValue(axStateValue)
+    }
+}
+
+/// The mark question. Neither answer takes the default action: the owner chooses one on purpose,
+/// and pressing return does not answer for them.
+struct JournalMarkSheetContent: View {
+    let phase: JournalMarkConfirmationDriver.Phase
+    let onMismatch: @MainActor () -> Void
+    let onConfirm: @MainActor () -> Void
+    let onCancelPairing: @MainActor () -> Void
+    let onContinueAnyway: @MainActor () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            switch phase {
+            case .connecting:
+                ProgressView()
+                    .controlSize(.small)
+                Text(UICopy.JOURNAL_MARK_CONNECTING)
+                    .font(.headline)
+            case .valid(let mark):
+                JournalMarkView(mark: mark)
+                VStack(spacing: 6) {
+                    Text(UICopy.JOURNAL_MARK_CONFIRM_QUESTION)
+                        .font(.headline)
+                    Text(UICopy.JOURNAL_MARK_CONFIRM_SUBTEXT)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                HStack {
+                    Button(UICopy.JOURNAL_MARK_MISMATCH_BUTTON) {
+                        onMismatch()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkMismatch)
+
+                    Button(UICopy.JOURNAL_MARK_CONFIRM_BUTTON) {
+                        onConfirm()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkConfirm)
+                }
+            case .unverified:
+                JournalMarkUnavailableView()
+                VStack(spacing: 6) {
+                    Text(UICopy.JOURNAL_MARK_UNVERIFIED_TITLE)
+                        .font(.headline)
+                    Text(UICopy.JOURNAL_MARK_UNVERIFIED_BODY)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                HStack {
+                    Button(UICopy.JOURNAL_MARK_UNVERIFIED_CANCEL_BUTTON) {
+                        onCancelPairing()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkCancelPairing)
+
+                    Button(UICopy.JOURNAL_MARK_UNVERIFIED_CONTINUE_BUTTON) {
+                        onContinueAnyway()
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Service.pairingMarkContinueAnyway)
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 380)
     }
 }

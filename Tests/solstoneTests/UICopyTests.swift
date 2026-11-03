@@ -30,8 +30,6 @@ struct UICopyTests {
         #expect(UICopy.JOURNAL_MARK_CONFIRM_BUTTON == "yes, this is my journal")
         #expect(UICopy.JOURNAL_MARK_MISMATCH_BUTTON == "that doesn\u{0027}t match")
         #expect(UICopy.JOURNAL_MARK_CONNECTING == "connecting\u{2026}")
-        #expect(UICopy.JOURNAL_MARK_MISMATCH_TITLE == "not connected")
-        #expect(UICopy.JOURNAL_MARK_MISMATCH_BODY == "you said this mark doesn\u{0027}t match the one your journal shows, so we didn\u{0027}t connect this mac. you may have pasted the wrong link, or something isn\u{0027}t right. try again, or reach us and we\u{0027}ll help.")
         #expect(UICopy.JOURNAL_MARK_MISMATCH_FRESH_LINK == "get a fresh link")
         #expect(UICopy.JOURNAL_MARK_MISMATCH_SUPPORT == "email support@solstone.app")
     }

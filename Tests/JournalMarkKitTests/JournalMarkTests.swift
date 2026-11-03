@@ -41,6 +41,33 @@ struct JournalMarkTests {
         #expect(Self.decodeAndValidate(Self.sampleData(icon1Color: "#f59e0")) == nil)
     }
 
+    @Test(arguments: [nil, "", "  "] as [String?])
+    func validateRejectsAMarkWithoutItsColorName(name: String?) {
+        let icon = JournalMark.uiTestSample.icon2
+        let unnamed = JournalMark.Icon(
+            name: icon.name,
+            color: JournalMark.MarkColor(hex: icon.color.hex, name: name),
+            rot: icon.rot,
+            svg: icon.svg
+        )
+        let mark = JournalMark(icon1: JournalMark.uiTestSample.icon1, icon2: unnamed, words: JournalMark.uiTestSample.words)
+        #expect(JournalMark.validate(mark) == nil)
+    }
+
+    @Test func wordsAndTheirJoinAreDrawnAsSeparateInks() {
+        let words = JournalMark.uiTestSample.words
+        let line = MarkGeometry.markWords(words)
+        let runs = line.runs.map { (String(line[$0.range].characters), $0.swiftUI.foregroundColor) }
+
+        #expect(runs.count == 3)
+        #expect(runs[0].0 == words[0])
+        #expect(runs[0].1 == MarkGeometry.wordInk)
+        #expect(runs[1].1 == MarkGeometry.faintInk)
+        #expect(runs[2].0 == words[1])
+        #expect(runs[2].1 == MarkGeometry.wordInk)
+        #expect(MarkGeometry.wordInk != MarkGeometry.faintInk)
+    }
+
     @Test(arguments: ["#١٢٣٤٥٦", "#１２３４５６", "#⁰¹²³⁴⁵"])
     func validateRejectsNonAsciiColorDigits(color: String) {
         #expect(Self.decodeAndValidate(Self.sampleData(icon1Color: color)) == nil)
@@ -80,7 +107,7 @@ struct JournalMarkTests {
         var root: [String: Any] = [
             "icon1": [
                 "name": "bug",
-                "color": ["hex": icon1Color],
+                "color": ["hex": icon1Color, "name": "amber"],
                 "rot": 0,
                 "svg": icon1SVG,
             ],
@@ -89,7 +116,7 @@ struct JournalMarkTests {
         if includeIcon2 {
             root["icon2"] = [
                 "name": "gem",
-                "color": ["hex": "#84cc16"],
+                "color": ["hex": "#84cc16", "name": "lime"],
                 "rot": icon2Rot,
                 "svg": JournalMark.uiTestSample.icon2.svg,
             ]

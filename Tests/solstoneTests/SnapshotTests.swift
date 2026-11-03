@@ -677,6 +677,63 @@ struct SnapshotTests {
         )
     }
 
+    private func markStates() -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            JournalMarkView(mark: .uiTestSample)
+            JournalMarkView(mark: .uiTestSample, isConfirmed: true)
+            JournalMarkView(mark: nil)
+            JournalMarkUnavailableView()
+        }
+        .padding(16)
+        .frame(width: 960, height: 240)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @Test func journalMarkStatesLight() throws {
+        try render(
+            markStates(),
+            size: CGSize(width: 960, height: 240),
+            to: "journal-mark-states-light.png",
+            appearance: NSAppearance(named: .aqua)
+        )
+    }
+
+    @Test func journalMarkStatesDark() throws {
+        try render(
+            markStates(),
+            size: CGSize(width: 960, height: 240),
+            to: "journal-mark-states-dark.png",
+            appearance: NSAppearance(named: .darkAqua)
+        )
+    }
+
+    private func markSheet(_ phase: JournalMarkConfirmationDriver.Phase) -> some View {
+        JournalMarkSheetContent(
+            phase: phase,
+            onMismatch: {},
+            onConfirm: {},
+            onCancelPairing: {},
+            onContinueAnyway: {}
+        )
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @Test func journalMarkSheetIdentified() throws {
+        try render(
+            markSheet(.valid(.uiTestSample)),
+            size: CGSize(width: 380, height: 460),
+            to: "journal-mark-sheet-identified.png"
+        )
+    }
+
+    @Test func journalMarkSheetCouldntVerify() throws {
+        try render(
+            markSheet(.unverified(.identityUnavailable)),
+            size: CGSize(width: 380, height: 460),
+            to: "journal-mark-sheet-couldnt-verify.png"
+        )
+    }
+
     @Test func settingsServiceMigrationBanner() throws {
         let config = AppConfig(
             serverURL: ServiceMode.bundledServiceURL,

@@ -59,6 +59,8 @@ public nonisolated struct JournalMark: Codable, Equatable, Sendable {
     private static func isValid(_ icon: Icon) -> Bool {
         guard icon.rot == 0 || icon.rot == 45,
               Self.isValidHexColor(icon.color.hex),
+              // The spoken form needs the served colour name; a mark without one is unreadable.
+              !(icon.color.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !icon.svg.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let path = GlyphParser.parse(innerMarkup: icon.svg),
               !path.isEmpty
@@ -99,10 +101,14 @@ extension JournalMark {
 public struct JournalMarkView: View {
     let mark: JournalMark?
     var isConfirmed = false
+    var isReadPending = false
 
-    public init(mark: JournalMark?, isConfirmed: Bool = false) {
+    /// `isReadPending` is for a journal that exists but whose mark can't be read yet: it draws the
+    /// generic mark and says so, rather than saying the journal isn't set up.
+    public init(mark: JournalMark?, isConfirmed: Bool = false, isReadPending: Bool = false) {
         self.mark = mark
         self.isConfirmed = isConfirmed
+        self.isReadPending = isReadPending
     }
 
     public var body: some View {
@@ -114,9 +120,8 @@ public struct JournalMarkView: View {
                         JournalMarkIconChip(icon: mark.icon2)
                     }
 
-                    Text(mark.words.joined(separator: " · "))
+                    Text(MarkGeometry.markWords(mark.words))
                         .font(JournalMarkFont.isRegistered ? .custom("Comfortaa-Bold", size: MarkGeometry.wordFontSize, relativeTo: .headline) : .system(size: MarkGeometry.wordFontSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(MarkGeometry.wordColor)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
 
@@ -143,9 +148,8 @@ public struct JournalMarkView: View {
                         JournalMarkGenericChip(hex: JournalIconTileGeometry.genericChip2Hex, rotated: true)
                     }
 
-                    Text(JournalMarkGeneric.words.joined(separator: " · "))
+                    Text(MarkGeometry.markWords(JournalMarkGeneric.words))
                         .font(JournalMarkFont.isRegistered ? .custom("Comfortaa-Bold", size: MarkGeometry.wordFontSize, relativeTo: .headline) : .system(size: MarkGeometry.wordFontSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(MarkGeometry.wordColor)
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                 }
@@ -162,7 +166,7 @@ public struct JournalMarkView: View {
         // requires one fixed-order element (chip-1 tint, chip-2 tint, word-1, word-2), never
         // children announced separately via .combine.
         .accessibilityElement(children: .ignore)
-        .accessibilityValue(JournalMarkAccessibility.spokenValue(mark: self.mark))
+        .accessibilityValue(JournalMarkAccessibility.spokenValue(mark: self.mark, isReadPending: self.isReadPending))
     }
 }
 
@@ -175,7 +179,7 @@ private struct JournalMarkIconChip: View {
                 .fill(MarkGeometry.color(hex: self.icon.color.hex).opacity(MarkGeometry.iconFillOpacity))
                 .overlay {
                     RoundedRectangle(cornerRadius: MarkGeometry.chipRadius, style: .continuous)
-                        .stroke(MarkGeometry.chipBorder, lineWidth: MarkGeometry.chipBorderWidth)
+                        .stroke(MarkGeometry.color(hex: self.icon.color.hex), lineWidth: MarkGeometry.chipBorderWidth)
                 }
 
             GeometryReader { proxy in
@@ -228,10 +232,30 @@ enum MarkGeometry {
 
     static let cardFill = Self.color(hex: "#fffdf9")
     static let cardBorder = Self.color(hex: "#e7d8c6")
-    static let chipBorder = Self.color(hex: "#e7d8c6")
-    static let wordColor = Self.color(hex: "#c2b9a6")
+    // The words are the identity claim and the middot is their quiet join: two inks, never one
+    // whole-line colour. Fixed in dark mode because the card is.
+    static let wordInk = Self.color(hex: "#1A1A1A")
+    static let faintInk = Self.color(hex: "#6E6453")
+    // The unavailable state's neutral roles, at the fixed-light card's values.
+    static let unavailableChipFill = Self.color(hex: "#FEFCF8")
+    static let unavailableChipBorder = Self.color(hex: "#ECE3D0")
     static let confirmationColor = Self.color(hex: "#333333")
     static let confirmedBorder = Self.color(hex: "#d1c7b7")
+
+    static func markWords(_ words: [String]) -> AttributedString {
+        var line = AttributedString()
+        for (index, word) in words.enumerated() {
+            if index > 0 {
+                var dot = AttributedString(" · ")
+                dot.swiftUI.foregroundColor = Self.faintInk
+                line += dot
+            }
+            var run = AttributedString(word)
+            run.swiftUI.foregroundColor = Self.wordInk
+            line += run
+        }
+        return line
+    }
 
     static func glyphLineWidth(for rect: CGRect) -> CGFloat {
         max(rect.width / 24 * 2, 1)

@@ -45,6 +45,35 @@ struct SettingsViewTests {
         #expect(replacement.contains("AXID.Settings.Service.migrationReplacementConfirm"))
     }
 
+    @Test func theMarkQuestionTakesNoDefaultActionAndDrawsTheUnavailableMark() throws {
+        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
+        let start = try #require(source.range(of: "struct JournalMarkSheetContent: View"))
+        let sheet = source[start.lowerBound...]
+        #expect(!sheet.contains(".keyboardShortcut"))
+
+        let unverified = try #require(sheet.range(of: "case .unverified:"))
+        let unavailable = try #require(sheet.range(of: "JournalMarkUnavailableView()"))
+        let title = try #require(sheet.range(of: "UICopy.JOURNAL_MARK_UNVERIFIED_TITLE"))
+        #expect(unverified.upperBound < unavailable.lowerBound)
+        #expect(unavailable.upperBound < title.lowerBound)
+    }
+
+    @Test func aLaterMarkReadChecksItIsTheStoredJournal() throws {
+        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
+        let start = try #require(source.range(of: "private func startJournalMarkRederiveIfNeeded()"))
+        let end = try #require(source[start.lowerBound...].range(of: "private func sidebarPlainLabel"))
+        let rederive = source[start.lowerBound..<end.lowerBound]
+        #expect(rederive.contains("storedPairingInstanceID"))
+        #expect(rederive.contains("markFetch(baseURL, expected)"))
+    }
+
+    @Test func aJournalFoundOnDiskSpeaksAPendingRead() throws {
+        let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
+        let start = try #require(source.range(of: "case .foundOnDisk(let path):"))
+        let end = try #require(source[start.lowerBound...].range(of: "case .uncommitted:"))
+        #expect(source[start.lowerBound..<end.lowerBound].contains("JournalMarkView(mark: nil, isReadPending: true)"))
+    }
+
     @Test func tabRawValuesMatchCaseNames() {
         #expect(SettingsView.Tab.permissions.rawValue == "permissions")
         #expect(SettingsView.Tab.observer.rawValue == "observer")

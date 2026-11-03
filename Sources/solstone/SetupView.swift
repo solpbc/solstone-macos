@@ -292,6 +292,8 @@ struct SetupView: View {
                                 .buttonStyle(SetupPrimaryButtonStyle())
                                 .accessibilityIdentifier(AXID.Settings.Setup.Journal.continue)
                             }
+                        } else {
+                            SetupMarkSlot.withoutMark(isConfirmed: appState.isJournalMarkConfirmed)
                         }
                         if showPairingBlock {
                             Divider()
@@ -516,6 +518,7 @@ struct SetupView: View {
                                     .foregroundStyle(SetupChromeColor.softInk(for: colorScheme))
                             }
                         case .failed(let msg):
+                            SetupMarkSlot.afterFailedConnection(message: msg)
                             SetupErrorText(msg)
                             Button(UICopy.SETUP_TRY_AGAIN) {
                                 model.retryConnection()
@@ -529,6 +532,7 @@ struct SetupView: View {
                         if let mark = appState.confirmedMark {
                             JournalMarkView(mark: mark, isConfirmed: true)
                         } else {
+                            SetupMarkSlot.withoutMark(isConfirmed: appState.isJournalMarkConfirmed)
                             Button(UICopy.SETUP_TRY_AGAIN) {
                                 appState.beginOwnerPairingAttempt()
                                 journalMarkDriver.startIfUnconfirmed(appState: appState)
@@ -727,7 +731,7 @@ enum SetupConnectionStep {
                 return SetupConnectionStepContent(
                     headline: mark.words.isEmpty
                         ? UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL
-                        : UICopy.connectedTo(mark: mark.words.joined(separator: " · ")),
+                        : UICopy.connectedTo(mark: JournalMarkSlot.join(mark.words)),
                     showsConnectedCaption: false
                 )
             case .idle, .connecting, .failed:
@@ -741,7 +745,7 @@ enum SetupConnectionStep {
             return SetupConnectionStepContent(
                 headline: words.isEmpty
                     ? UICopy.SETUP_CONNECTED_TO_YOUR_JOURNAL
-                    : UICopy.connectedTo(mark: words.joined(separator: " · ")),
+                    : UICopy.connectedTo(mark: JournalMarkSlot.join(words)),
                 showsConnectedCaption: false
             )
         } else {
@@ -763,6 +767,30 @@ enum SetupJournalStatus {
             return UICopy.SETUP_OPENING_YOUR_JOURNAL
         case .idle, .waitingForJournal, .failed:
             return journalPollingText
+        }
+    }
+}
+
+/// The mark slot when setup has no mark to draw. It never disappears: a confirmed journal whose
+/// read failed is unavailable, and anything else has no identity to show yet.
+enum SetupMarkSlot: Equatable, View {
+    case generic
+    case unavailable
+
+    static func withoutMark(isConfirmed: Bool) -> SetupMarkSlot {
+        isConfirmed ? .unavailable : .generic
+    }
+
+    static func afterFailedConnection(message: String) -> SetupMarkSlot {
+        message == UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP ? .generic : .unavailable
+    }
+
+    var body: some View {
+        switch self {
+        case .generic:
+            JournalMarkView(mark: nil)
+        case .unavailable:
+            JournalMarkUnavailableView()
         }
     }
 }
