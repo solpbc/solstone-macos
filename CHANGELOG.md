@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.55] - 2026-11-03
+
 ### Fixed
 
 - this is a security fix, please update. someone who got you to use a pairing link they made could pair this mac with their journal while it showed your journal's mark. what you share with the solstone app on this mac then goes to their journal. this mac now works out the mark itself, so a link someone else made shows their journal's mark, not yours. if you paired before this update, compare the mark this mac shows with the one in your journal's network app, opened on the computer your journal lives on, not from the solstone app. if they don't match, disconnect this mac from that journal and pair again with a link from your journal.
