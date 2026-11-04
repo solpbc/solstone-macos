@@ -207,8 +207,7 @@ struct SameMachineHomeMigrationTests {
         #expect(driver.isPresented)
     }
 
-    @Test(arguments: [true, false])
-    func anAdoptionAnswersOnlyOnceItVerifiesOverTheTunnel(verifies: Bool) async throws {
+    @Test func anAdoptionLeavesTheMarkQuestionForTheOwner() async throws {
         let adopted = pairing(instanceID: try CertChain.journalID(ofCAChainPEM: testCACertPEM))
         let store = PairingStore(pairing: nil)
         let pairStart = PairStartRecorder(responses: [
@@ -228,16 +227,35 @@ struct SameMachineHomeMigrationTests {
             journalMarkConfirmationStore: confirmation
         )
         state.journalMarkDeriver = { _ in .uiTestSample }
-        state.adoptionTunnelVerifier = { _ in verifies }
 
         state.triggerSameMachineMigrationIfEligible()
         try await waitUntil(timeout: .seconds(3)) { @MainActor in
             state.sameMachineMigrationLastResult == .pairingStarted
-                && (state.isJournalMarkConfirmed || !state.isAdoptingSameMachineHomeAutomatically)
+                && !state.isAdoptingSameMachineHomeAutomatically
         }
 
-        #expect(state.isJournalMarkConfirmed == verifies)
-        #expect(state.isAdoptingSameMachineHomeAutomatically == verifies)
+        #expect(state.isPairedHome)
+        #expect(!state.isJournalMarkConfirmed)
+    }
+
+    @Test func aRefusedOwnerJournalIsNotRetried() async throws {
+        let pairStart = PairStartRecorder(responses: [
+            .failure(SameMachinePairStartFailure(kind: .notOwnJournal)),
+        ])
+        let state = AppState.forLoginItemTest(
+            config: loopbackRegisteredConfig(),
+            loginService: NoopLoginItemService(),
+            sameMachinePairStart: { baseURL, deviceLabel in
+                await pairStart.start(baseURL: baseURL, deviceLabel: deviceLabel)
+            }
+        )
+
+        state.triggerSameMachineMigrationIfEligible()
+        try await waitUntil {
+            state.sameMachineMigrationLastResult == .failed(.pairStart(.notOwnJournal))
+        }
+        #expect(!state.isPairedHome)
+        #expect(await pairStart.callCount == 1)
     }
 
     @Test func failedAutomaticAdoptionLeavesNoMarkExemptionStanding() async throws {
@@ -458,7 +476,6 @@ struct SameMachineHomeMigrationTests {
             pairingSave: { try store.save($0) }
         )
         state.journalMarkDeriver = { _ in .uiTestSample }
-        state.adoptionTunnelVerifier = { _ in true }
 
         state.triggerSameMachineMigrationIfEligible()
         try await waitUntil {
@@ -466,12 +483,6 @@ struct SameMachineHomeMigrationTests {
         }
         #expect(store.savedPairings == [adoptedPairing])
         #expect(state.isPairedHome)
-
-        // The mark suppression must outlive the migration call. The ceremony's final state is
-        // observed asynchronously, so the mark driver runs after this point — clearing the flag
-        // when the migration returns closes the window before the thing it protects happens.
-        // That exact mistake passed its unit tests and still put the mark sheet on the rig.
-        #expect(state.isAdoptingSameMachineHomeAutomatically)
 
         #expect(await pairStart.callCount == 1)
         #expect(state.config.serverURL == ServiceMode.bundledServiceURL)

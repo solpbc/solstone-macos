@@ -7,6 +7,7 @@ import SwiftUI
 import ServiceManagement
 import UserNotifications
 import os
+import JournalLocalAccess
 import JournalMarkKit
 import SolstoneCore
 import SPLTunnel
@@ -1334,7 +1335,7 @@ public final class AppState {
         switch failure {
         case .transport, .httpStatus(503):
             return true
-        case .invalidURL, .requestEncoding, .invalidResponse, .httpStatus(_), .decode, .emptyPairLink:
+        case .invalidURL, .requestEncoding, .notOwnJournal, .invalidResponse, .httpStatus(_), .decode, .emptyPairLink:
             return false
         }
     }
@@ -1345,25 +1346,10 @@ public final class AppState {
             return
         }
 
-        // This adoption runs by itself for a journal the owner already had
-        // linked on this same Mac. It re-uses the pairing ceremony to adopt the existing record
-        // rather than re-mint one, and that ceremony ends by asking the owner to compare journal
-        // marks. Left alone, merely taking an update therefore raises a security question the
-        // owner never started and parks settings behind a modal until they answer it.
-        //
-        // No new trust decision is being made here: the journal is the one they were already
-        // using, on this machine, over a link sol verified as direct with exactly one loopback
-        // candidate. So suppress the mark for *this* ceremony only.
-        //
-        // ⛔ Scope this to the automatic adoption, never to what a pairing looks like. Settings'
-        // own link to this Mac's journal verifies over the tunnel by a path of its own, and every
-        // other owner-initiated link still confirms its mark.
-        // ⛔ Deliberately not cleared when this function returns. The ceremony's final state is
-        // observed asynchronously, so the mark driver runs *after* the await below completes —
-        // a `defer` here closes the window before the thing it is meant to cover ever happens,
-        // which is exactly how the first attempt at this failed on the rig while passing tests.
-        // The flag is cleared instead when this attempt lands no pairing, or by the owner
-        // starting a pairing of their own.
+        // This adoption runs by itself for a journal the owner already had linked on this same
+        // Mac. The ceremony would raise the mark question in the middle of a launch, so the
+        // question waits until the ceremony is over. It is never answered for the owner: the
+        // pairing stays held until they have seen the mark, the next time they open settings.
         isAdoptingSameMachineHomeAutomatically = true
         recorder.enqueue(.pairingAdoptionStarted)
 
@@ -1378,50 +1364,15 @@ public final class AppState {
         )
         sameMachineMigrationLastResult = result
 
-        // The adoption asks no mark question, so it answers it, once the journal has answered over
-        // the tunnel as the one this pairing pinned. If it doesn't, the pairing is held and asks.
         if case .pairingStarted = result {
             recorder.enqueue(.pairingAdoptionPaired)
-            if let pairing = currentDurablePairing, await (adoptionTunnelVerifier ?? adoptionVerifiedOverTunnel)(pairing) {
-                recordJournalMarkConfirmed(mark: await journalMarkDeriver(pairing))
-            } else {
-                isAdoptingSameMachineHomeAutomatically = false
-                Logger.setup.notice("same-machine home migration did not verify over the tunnel; the pairing is held")
-            }
         }
+        isAdoptingSameMachineHomeAutomatically = false
 
         if case .failed(let failure) = result {
-            // No pairing landed, so there is no mark for the exemption to cover. Left standing,
-            // it would silence the mark on the owner's own re-link later in this launch, and
-            // nothing would be sent until the app restarted.
-            isAdoptingSameMachineHomeAutomatically = false
             recorder.enqueue(.pairingAdoptionFailed)
             Logger.setup.notice("same-machine home migration did not complete: \(String(describing: failure), privacy: .public)")
         }
-    }
-
-    /// Replaces the adoption's tunnel check in a test.
-    @ObservationIgnored
-    internal var adoptionTunnelVerifier: (@MainActor (StoredPairing) async -> Bool)?
-
-    private func adoptionVerifiedOverTunnel(_ pairing: StoredPairing) async -> Bool {
-        guard pairingIsBoundToItsCA(pairing) else { return false }
-        for _ in 0..<120 {
-            guard isAdoptingSameMachineHomeAutomatically, !Task.isCancelled,
-                  currentDurablePairing?.instanceID == pairing.instanceID else { return false }
-            if let tunnelBase = tunnelIdentityBase(state: tunnelLifecycleOwner.state) {
-                switch await supportingIdentityResolver(tunnelBase, pairing.instanceID) {
-                case .mark(_, let instanceID):
-                    return instanceID == pairing.instanceID
-                case .failed(.instanceMismatch), .failed(.missingInstanceID):
-                    return false
-                case .uncommitted, .absent, .failed:
-                    break
-                }
-            }
-            try? await Task.sleep(for: .milliseconds(500))
-        }
-        return false
     }
 
     typealias SupportingIdentityResolver = @MainActor @Sendable (String, String) async -> JournalIdentityResolution
@@ -2210,8 +2161,8 @@ public final class AppState {
         var config = config
         config.addPasswordManagerExclusionsIfNeeded()
         self.config = config
-        self.sameMachinePairStart = { baseURL, deviceLabel in
-            await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
+        self.sameMachinePairStart = { _, deviceLabel in
+            await OwnJournalAccess.startPairing(deviceLabel: deviceLabel)
         }
         self.triggerTunnelConnectedSync = triggerTunnelConnectedSync
         self.journalURLOpener = journalURLOpener
@@ -2497,8 +2448,8 @@ public final class AppState {
         sameMachinePairStart: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ deviceLabel: String
-        ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
-            await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
+        ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { _, deviceLabel in
+            await OwnJournalAccess.startPairing(deviceLabel: deviceLabel)
         },
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
             $0.uploadCoordinator.triggerSync()
@@ -2590,8 +2541,8 @@ public final class AppState {
         sameMachinePairStart: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ deviceLabel: String
-        ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
-            await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
+        ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { _, deviceLabel in
+            await OwnJournalAccess.startPairing(deviceLabel: deviceLabel)
         },
         pairingStoring: (any PairingStoring)? = nil,
         pairingOperation: PairingCoordinator.PairOperation? = nil,
@@ -2644,8 +2595,8 @@ public final class AppState {
         sameMachinePairStart: @escaping @MainActor @Sendable (
             _ baseURL: String,
             _ deviceLabel: String
-        ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
-            await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
+        ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { _, deviceLabel in
+            await OwnJournalAccess.startPairing(deviceLabel: deviceLabel)
         },
         pairingStoring: (any PairingStoring)? = nil,
         triggerTunnelConnectedSync: @escaping @MainActor @Sendable (AppState) -> Void = {
@@ -3079,7 +3030,50 @@ public final class AppState {
     }
 
     private func openSameMacJournalInBrowser(_ destination: JournalWindowDestination) {
-        let conveyBase = "http://127.0.0.1:5015/"
+        let anchor: JournalLocalAnchor
+        if tunnelLifecycleOwner.sameMachineStoredPairingState == .pairedHome,
+           let instanceID = currentDurablePairing?.instanceID {
+            anchor = .instance(instanceID)
+        } else {
+            anchor = .ownJournal
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let base = try await self.sameMacBrowserBase(anchor)
+                self.openSameMacJournal(destination, base: base)
+            } catch {
+                Logger.setup.notice("open journal refused: \(String(describing: error), privacy: .public)")
+                self.sameMacJournalOpenRefused(Self.sameMacOpenRefusal(for: error))
+            }
+        }
+    }
+
+    /// Replaced in tests. The browser's address comes from the journal that passed the check.
+    @ObservationIgnored
+    internal var sameMacBrowserBase: @MainActor @Sendable (JournalLocalAnchor) async throws -> String = { anchor in
+        try await OwnJournalAccess.client.browserURL(path: "/", anchor: anchor).absoluteString
+    }
+
+    @ObservationIgnored
+    internal var sameMacJournalOpenRefused: @MainActor @Sendable (String) -> Void = { message in
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = message
+        alert.runModal()
+    }
+
+    internal static func sameMacOpenRefusal(for error: any Error) -> String {
+        switch error {
+        case JournalLocalHTTPError.notOwnJournal, JournalLocalHTTPError.refused:
+            return UICopy.LOCAL_JOURNAL_NOT_YOURS
+        default:
+            return UICopy.SAME_MACHINE_LINK_UNREACHABLE
+        }
+    }
+
+    private func openSameMacJournal(_ destination: JournalWindowDestination, base conveyBase: String) {
         let url: URL
         if destination == .root {
             guard let conveyURL = URL(string: conveyBase) else { return }

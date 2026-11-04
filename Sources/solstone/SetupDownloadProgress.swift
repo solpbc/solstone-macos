@@ -83,14 +83,16 @@ enum SetupDownloadAction: Equatable, Sendable {
     }
 }
 
-/// Setup actions are local-only on the journal, so they go to Journal.app's own
-/// listener, never through the tunnel, and carry no loopback capability.
+/// Setup actions are local-only on the journal, so they go to this account's own
+/// journal directly, never through the tunnel, and carry no loopback capability.
 struct SetupActionClient: Sendable {
-    static let endpoint = URL(string: "http://127.0.0.1:5015/init/api/action")!
-    let session: URLSession
+    static let endpoint = URL(string: "http://localhost/init/api/action")!
+    let load: @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
-    init(session: URLSession = BoundedLoopbackClient.sharedSession) {
-        self.session = session
+    init(load: @escaping @Sendable (URLRequest) async throws -> (Data, URLResponse) = {
+        try await OwnJournalAccess.client.data(for: $0, anchor: .ownJournal)
+    }) {
+        self.load = load
     }
 
     static func request(for action: SetupDownloadAction) -> URLRequest {
@@ -106,10 +108,11 @@ struct SetupActionClient: Sendable {
     /// Every outcome, including a speech admission still pending, is reconciled by re-reading progress.
     func send(_ action: SetupDownloadAction) async {
         do {
-            let result = try await BoundedLoopbackClient.execute(request: Self.request(for: action), session: session)
-            guard (200..<300).contains(result.response.statusCode) else {
-                let reason = (try? JSONDecoder().decode(Refusal.self, from: result.data))?.reasonCode ?? "unknown"
-                Logger.setup.notice("setup download action refused: http \(result.response.statusCode, privacy: .public) \(reason, privacy: .public)")
+            let (data, response) = try await load(Self.request(for: action))
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard (200..<300).contains(status) else {
+                let reason = (try? JSONDecoder().decode(Refusal.self, from: data))?.reasonCode ?? "unknown"
+                Logger.setup.notice("setup download action refused: http \(status, privacy: .public) \(reason, privacy: .public)")
                 return
             }
         } catch {

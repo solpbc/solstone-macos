@@ -9,6 +9,7 @@ import SolstoneCore
 enum LocalJournalDiscoveryResult: Equatable {
     case found(JournalMark)
     case uncommitted
+    case notOwnJournal
     case fork
 }
 
@@ -21,6 +22,7 @@ enum LocalJournalDiscoveryPanelModel: Equatable {
     case none
     case foundRunning(JournalMark)
     case uncommitted
+    case notOwnJournal
     case foundOnDisk(path: String)
 }
 
@@ -97,9 +99,12 @@ func reprobedLocalJournalPanelModel(
     switch probeResult {
     case .foundRunning:
         return probeResult
-    case .uncommitted:
+    case .uncommitted, .notOwnJournal:
         return probeResult
     case .none:
+        if case .notOwnJournal = current {
+            return .none
+        }
         return current
     case .foundOnDisk:
         if case .foundOnDisk = current {
@@ -121,6 +126,8 @@ func discoverLocalJournal(
         return .uncommitted
     case .failed(let failure) where SetupModel.journalIsStillInItsFirstRun(failure):
         return .uncommitted
+    case .failed(.instanceMismatch):
+        return .notOwnJournal
     case .absent, .failed:
         return .fork
     }
@@ -137,6 +144,8 @@ func discoverLocalJournalPanelModel(
         return .foundRunning(mark)
     case .uncommitted:
         return .uncommitted
+    case .notOwnJournal:
+        return .notOwnJournal
     case .fork:
         switch await onDiskDiscovery() {
         case .found(let path):
@@ -324,6 +333,8 @@ private func sameMachineLinkFailureOutcome(
     switch failure {
     case .pairStart(.transport), .pairStart(.httpStatus(503)):
         return error(UICopy.SAME_MACHINE_LINK_UNREACHABLE, .pairingSameMachineUnreachable)
+    case .pairStart(.notOwnJournal):
+        return error(UICopy.LOCAL_JOURNAL_NOT_YOURS, .pairingSameMachineNotOwnJournal)
     case .pairStart(.httpStatus(let status)) where (400..<500).contains(status):
         return error(UICopy.SAME_MACHINE_LINK_REFUSED, offersPairingLink: true, .pairingSameMachineRefused)
     case .pairStart, .linkShape:
@@ -423,7 +434,11 @@ func runSettingsSameComputerLink(
         case .unavailable:
             return finish(.failed(.pairingUnavailable))
         }
-        guard case .mark(_, let instanceID) = await localIdentity(ServiceMode.bundledServiceURL) else {
+        let identity = await localIdentity(ServiceMode.bundledServiceURL)
+        if case .failed(.instanceMismatch) = identity {
+            return finish(.failed(.pairStart(.notOwnJournal)))
+        }
+        guard case .mark(_, let instanceID) = identity else {
             return finish(.failed(.pairStart(.transport)))
         }
         let deviceLabel = await SPLPairingDefaults.deviceLabelOffMainThread()

@@ -512,6 +512,11 @@ struct SetupModelTests {
         #expect(model.journalPollingText == nil)
         #expect(model.journalPollingError == UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL)
 
+        resolutionLock.withLock { $0 = .failed(.instanceMismatch) }
+        try await waitUntil { model.journalPollingError == UICopy.LOCAL_JOURNAL_NOT_YOURS }
+        #expect(model.journalPollingText == nil)
+        #expect(model.olderDiscoveredMark == nil)
+
         let mark = JournalMark.uiTestSample
         resolutionLock.withLock { $0 = .mark(mark, instanceID: "inst-1") }
         try await waitUntil { model.olderDiscoveredMark == mark }

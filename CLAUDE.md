@@ -46,7 +46,7 @@ This is a single-package Swift repository using Swift Package Manager with Swift
 
 - **Sources/solstone/** - The solstone app (app layer + recording engine)
 - **Sources/ObjCHelpers/** - Objective-C exception catcher target
-- **Sources/SolstoneCore/**, **Sources/JournalMarkKit/**, **Sources/UpdateKit/**, **Sources/WatchdogKit/** - Libraries shared with the journal app and exported as package products; `Sources/solstone-watchdog/` is the app's one-line watchdog executable
+- **Sources/SolstoneCore/**, **Sources/JournalMarkKit/**, **Sources/JournalLocalAccess/**, **Sources/UpdateKit/**, **Sources/WatchdogKit/** - Libraries shared with the journal app and exported as package products; `Sources/solstone-watchdog/` is the app's one-line watchdog executable
 - **Tests/solstoneTests/** - App tests; **Tests/JournalMarkKitTests/**, **Tests/UpdateKitTests/** - shared library tests; **Tests/MacTestSupport/** - test helpers both apps use
 
 The journal app for mac is not in this repository. It is built from `solstone-journal` (`platforms/macos`), which depends on the shared libraries here at an exact commit. When you change a shared library, keep its public API source-compatible or land the journal-side change with the pin bump, and run the journal package's `make ci` against the new commit.

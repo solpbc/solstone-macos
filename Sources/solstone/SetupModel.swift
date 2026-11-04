@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import JournalLocalAccess
 import JournalMarkKit
 import Observation
 import os
@@ -551,6 +552,8 @@ final class SetupModel {
                 }
             case .stillSettingUp:
                 self.publishConnectionStepState(.failed(UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP))
+            case .pairStartFailed(.notOwnJournal):
+                self.publishConnectionStepState(.failed(UICopy.LOCAL_JOURNAL_NOT_YOURS))
             case .notEligible, .pairStartFailed, .linkRejected, .fingerprintOrPinMismatch,
                  .ceremonyFailed, .durableInstanceMismatch, .fetchAbsent, .fetchFailed, .recordFailed:
                 self.publishConnectionStepState(.failed(UICopy.SETUP_COULDNT_VERIFY_MARK))
@@ -625,8 +628,7 @@ final class SetupModel {
     }
 
     private static func fetchDirectIdentity(expectedInstanceID: String) async -> JournalIdentityResolution {
-        await JournalIdentityFetcher().resolveIdentity(baseURL: "http://127.0.0.1:5015",
-                                                       expectedInstanceID: expectedInstanceID)
+        await OwnJournalAccess.resolveIdentity(expectedInstanceID: expectedInstanceID)
     }
 
     func stopSupportingTasks() {
@@ -744,8 +746,7 @@ final class SetupModel {
         if let override = resolveIdentityOverride {
             return await override(baseURL, expectedInstanceID)
         }
-        let fetcher = JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
-        return await fetcher.resolveIdentity(baseURL: baseURL, expectedInstanceID: expectedInstanceID)
+        return await OwnJournalAccess.resolveIdentity(expectedInstanceID: expectedInstanceID)
     }
 
     internal func runJournalPhase() async {
@@ -870,6 +871,9 @@ final class SetupModel {
                 case .failed(let failure) where Self.journalIsStillInItsFirstRun(failure):
                     journalPollingText = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
                     journalPollingError = nil
+                case .failed(.instanceMismatch):
+                    journalPollingText = nil
+                    journalPollingError = UICopy.LOCAL_JOURNAL_NOT_YOURS
                 case .failed:
                     journalPollingText = nil
                     journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
@@ -917,6 +921,9 @@ final class SetupModel {
                 case .failed(let failure) where Self.journalIsStillInItsFirstRun(failure):
                     journalPollingText = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
                     journalPollingError = nil
+                case .failed(.instanceMismatch):
+                    journalPollingText = nil
+                    journalPollingError = UICopy.LOCAL_JOURNAL_NOT_YOURS
                 case .failed:
                     journalPollingText = nil
                     journalPollingError = UICopy.SETUP_COULDNT_REACH_YOUR_JOURNAL
@@ -969,6 +976,7 @@ final class SetupModel {
         checkAdmission: () -> Bool,
         fetchTunnelIdentity: () async -> JournalIdentityResolution,
         fetchDirectIdentity: () async -> JournalIdentityResolution,
+        resolveBrowserURL: () async -> URL? = { URL(string: "http://127.0.0.1:\(JournalLocalEndpoint.defaultTCPPort)/") },
         openURL: (URL) -> Bool,
         persistFinish: () -> Bool
     ) async -> Bool {
@@ -1000,8 +1008,8 @@ final class SetupModel {
         if isRemotePeer {
             guard checkAdmission(), openPairedJournal() else { return false }
         } else {
-            guard checkAdmission(),
-                  let targetURL = URL(string: "http://127.0.0.1:5015/"),
+            guard let targetURL = await resolveBrowserURL(),
+                  checkAdmission(),
                   openURL(targetURL) else { return false }
         }
 
@@ -1103,6 +1111,7 @@ final class SetupModel {
             }
 
             let isOlderPeer = !self.isPeerSupportingSetup
+            var directIsNotYours = false
 
             let success = await self.executeSetupFinalOpenCore(
                 expectedInstanceID: expectedInstanceID,
@@ -1136,7 +1145,14 @@ final class SetupModel {
                 fetchTunnelIdentity: { [weak self] in
                     await self?.fetchTunnelIdentity(expectedInstanceID: expectedInstanceID) ?? .absent
                 },
-                fetchDirectIdentity: { await Self.fetchDirectIdentity(expectedInstanceID: expectedInstanceID) },
+                fetchDirectIdentity: {
+                    let resolution = await Self.fetchDirectIdentity(expectedInstanceID: expectedInstanceID)
+                    if case .failed(.instanceMismatch) = resolution { directIsNotYours = true }
+                    return resolution
+                },
+                resolveBrowserURL: {
+                    try? await OwnJournalAccess.client.browserURL(path: "/", anchor: .instance(expectedInstanceID))
+                },
                 openURL: { [weak appState] url in
                     guard let appState else { return false }
                     return appState.openBrowserURLDirectly(url)
@@ -1148,7 +1164,7 @@ final class SetupModel {
             )
 
             if !success {
-                self.finalOpenError = UICopy.SETUP_COULDNT_FINISH
+                self.finalOpenError = directIsNotYours ? UICopy.LOCAL_JOURNAL_NOT_YOURS : UICopy.SETUP_COULDNT_FINISH
             } else {
                 self.finalOpenError = nil
             }

@@ -234,11 +234,14 @@ struct SetupDownloadProgressTests {
                             body: #"{"error":"retry pending","reason_code":"speech_admission_pending","detail":"fixture"}"#)
         let session = BoundedLoopbackClient.makeSession(configuration: observerURLProtocolConfiguration(store: store))
         defer { session.invalidateAndCancel() }
-        await SetupActionClient(session: session).send(action)
+        await SetupActionClient(load: { request in
+            let result = try await BoundedLoopbackClient.execute(request: request, session: session)
+            return (result.data, result.response)
+        }).send(action)
         let requests = store.snapshotRequests()
         let request = try #require(requests.first)
         #expect(requests.count == 1)
-        #expect(request.url?.absoluteString == "http://127.0.0.1:5015/init/api/action")
+        #expect(request.url?.absoluteString == "http://localhost/init/api/action")
         #expect(request.httpMethod == "POST")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(request.value(forHTTPHeaderField: "Cookie") == nil)

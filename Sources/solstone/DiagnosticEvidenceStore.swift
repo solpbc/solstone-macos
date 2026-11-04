@@ -59,6 +59,7 @@ internal enum DiagnosticEvidenceCode: String, Codable, Equatable, Sendable, Case
     case pairingSameMachineAlreadyLinked = "pairing.same_machine.already_linked"
     case pairingSameMachineUnreachable = "pairing.same_machine.unreachable"
     case pairingSameMachineRefused = "pairing.same_machine.refused"
+    case pairingSameMachineNotOwnJournal = "pairing.same_machine.not_own_journal"
     case pairingSameMachineUnexpectedAnswer = "pairing.same_machine.unexpected_answer"
     case pairingSameMachineCeremonyFailed = "pairing.same_machine.ceremony_failed"
     case pairingSameMachineSaveFailed = "pairing.same_machine.save_failed"

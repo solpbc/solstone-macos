@@ -15,6 +15,7 @@ let package = Package(
     products: [
         .library(name: "SolstoneCore", targets: ["SolstoneCore"]),
         .library(name: "JournalMarkKit", targets: ["JournalMarkKit"]),
+        .library(name: "JournalLocalAccess", targets: ["JournalLocalAccess"]),
         .library(name: "SetupChrome", targets: ["SetupChrome"]),
         .library(name: "UpdateKit", targets: ["UpdateKit"]),
         .library(name: "Sparkle", targets: ["Sparkle"]),
@@ -30,6 +31,13 @@ let package = Package(
         .target(
             name: "SolstoneCore",
             path: "Sources/SolstoneCore",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .target(
+            name: "JournalLocalAccess",
+            path: "Sources/JournalLocalAccess",
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
@@ -82,6 +90,7 @@ let package = Package(
             name: "solstone",
             dependencies: [
                 .target(name: "SolstoneCore"),
+                .target(name: "JournalLocalAccess"),
                 .target(name: "JournalMarkKit"),
                 .target(name: "SetupChrome"),
                 .target(name: "UpdateKit"),
@@ -164,6 +173,16 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "JournalLocalAccessTests",
+            dependencies: [
+                .target(name: "JournalLocalAccess")
+            ],
+            path: "Tests/JournalLocalAccessTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .testTarget(
             name: "JournalMarkKitTests",
             dependencies: [
                 .target(name: "JournalMarkKit"),
@@ -195,6 +214,7 @@ let package = Package(
             dependencies: [
                 .target(name: "solstone"),
                 .target(name: "SolstoneCore"),
+                .target(name: "JournalLocalAccess"),
                 .target(name: "JournalMarkKit"),
                 .target(name: "SetupChrome"),
                 .target(name: "UpdateKit"),

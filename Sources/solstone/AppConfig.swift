@@ -1113,6 +1113,10 @@ public struct AppConfig: Sendable, Equatable {
 
     // MARK: - Server Upload Methods
 
+    static var savedJournalPath: String? {
+        UserDefaults.standard.string(forKey: Keys.journalPath)
+    }
+
     /// Check if server upload is configured
     public var isUploadConfigured: Bool {
         guard let url = serverURL, !url.isEmpty,

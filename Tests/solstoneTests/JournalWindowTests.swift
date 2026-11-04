@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import JournalLocalAccess
 import MacTestSupport
 import SolstoneCore
 import SPLTunnel
@@ -59,7 +60,7 @@ struct JournalWindowCompositionTests {
         #expect(command == nil)
     }
 
-    @Test func sameMacDisconnectedOpenJournalUsesBrowserNotWindow() {
+    @Test func sameMacDisconnectedOpenJournalUsesBrowserNotWindow() async {
         let probe = JournalURLOpenProbe()
         let state = AppState.forSnapshot(
             initialTunnelPairing: pairing(),
@@ -68,23 +69,77 @@ struct JournalWindowCompositionTests {
                 return true
             }
         )
+        state.sameMacBrowserBase = { _ in "http://127.0.0.1:15915/" }
         let observer = observeOpenJournalWindow(probe)
         defer { NotificationCenter.default.removeObserver(observer) }
 
         #expect(state.journalOpenIntent == nil)
         state.requestOpenJournal(.root)
-        #expect(probe.opened.map(\.absoluteString) == ["http://127.0.0.1:5015/"])
+        await opened(probe, count: 1)
+        #expect(probe.opened.map(\.absoluteString) == ["http://127.0.0.1:15915/"])
         #expect(state.journalOpenIntent == nil)
         #expect(!probe.posted)
 
         // Door does not read ingest-ready / tunnel connectedness.
         state.requestOpenJournal(.root)
+        await opened(probe, count: 2)
         #expect(probe.opened.map(\.absoluteString) == [
-            "http://127.0.0.1:5015/",
-            "http://127.0.0.1:5015/"
+            "http://127.0.0.1:15915/",
+            "http://127.0.0.1:15915/"
         ])
         #expect(state.journalOpenIntent == nil)
         #expect(!probe.posted)
+    }
+
+    @Test(arguments: [
+        (JournalLocalHTTPError.notOwnJournal as any Error, UICopy.LOCAL_JOURNAL_NOT_YOURS),
+        (JournalLocalHTTPError.refused as any Error, UICopy.LOCAL_JOURNAL_NOT_YOURS),
+        (URLError(.cannotConnectToHost) as any Error, UICopy.SAME_MACHINE_LINK_UNREACHABLE),
+    ])
+    func aSameMacOpenThatFailsItsCheckOpensNothingAndSaysWhy(error: any Error, message: String) async {
+        let probe = JournalURLOpenProbe()
+        let state = AppState.forSnapshot(
+            initialTunnelPairing: pairing(),
+            journalURLOpener: { url in
+                probe.opened.append(url)
+                return true
+            }
+        )
+        let told = RefusalMessages()
+        nonisolated(unsafe) let thrown = error
+        state.sameMacBrowserBase = { _ in throw thrown }
+        state.sameMacJournalOpenRefused = { told.messages.append($0) }
+
+        state.requestOpenJournal(.root)
+        for _ in 0..<200 where told.messages.isEmpty {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(told.messages == [message])
+        #expect(probe.opened.isEmpty)
+        #expect(state.journalOpenIntent == nil)
+    }
+
+    @Test func aPairedSameMacOpenChecksThePairedJournal() async {
+        let probe = JournalURLOpenProbe()
+        let paired = pairing()
+        let state = AppState.forSnapshot(
+            initialTunnelPairing: paired,
+            journalURLOpener: { url in
+                probe.opened.append(url)
+                return true
+            }
+        )
+        let anchors = AnchorLog()
+        state.sameMacBrowserBase = {
+            anchors.anchors.append($0)
+            return "http://127.0.0.1:15915/"
+        }
+
+        state.requestOpenJournal(.root)
+        await opened(probe, count: 1)
+
+        #expect(anchors.anchors == [.instance(paired.instanceID)])
     }
 
     @Test func elsewhereOpenJournalUsesWindowNotOpener() {
@@ -115,7 +170,7 @@ struct JournalWindowCompositionTests {
         #expect(probe.posted)
     }
 
-    @Test func sameMacNonRootOpenJournalComposesOntoConveyBase() {
+    @Test func sameMacNonRootOpenJournalComposesOntoConveyBase() async {
         let probe = JournalURLOpenProbe()
         let state = AppState.forSnapshot(
             initialTunnelPairing: pairing(),
@@ -130,17 +185,19 @@ struct JournalWindowCompositionTests {
             fragment: "event-99"
         )!
         let expected = JournalWindowComposition.composeLoadCommand(
-            base: "http://127.0.0.1:5015/",
+            base: "http://127.0.0.1:15915/",
             destination: destination,
             generation: 0
         )
+        state.sameMacBrowserBase = { _ in "http://127.0.0.1:15915/" }
 
         state.requestOpenJournal(destination)
+        await opened(probe, count: 1)
         #expect(probe.opened == [expected!.url])
         #expect(state.journalOpenIntent == nil)
     }
 
-    @Test func sameMacOpenerFalseDoesNotFallThroughToWindow() {
+    @Test func sameMacOpenerFalseDoesNotFallThroughToWindow() async {
         let probe = JournalURLOpenProbe()
         let state = AppState.forSnapshot(
             initialTunnelPairing: pairing(),
@@ -152,10 +209,18 @@ struct JournalWindowCompositionTests {
         let observer = observeOpenJournalWindow(probe)
         defer { NotificationCenter.default.removeObserver(observer) }
 
+        state.sameMacBrowserBase = { _ in "http://127.0.0.1:15915/" }
         state.requestOpenJournal(.root)
-        #expect(probe.opened.map(\.absoluteString) == ["http://127.0.0.1:5015/"])
+        await opened(probe, count: 1)
+        #expect(probe.opened.map(\.absoluteString) == ["http://127.0.0.1:15915/"])
         #expect(state.journalOpenIntent == nil)
         #expect(!probe.posted)
+    }
+
+    private func opened(_ probe: JournalURLOpenProbe, count: Int) async {
+        for _ in 0..<200 where probe.opened.count < count {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     @Test func rootDestinationLoadsResolvedBase() async {
@@ -2028,4 +2093,14 @@ private actor JournalWindowResolvedBaseSequence {
         }
         return values.first ?? .held
     }
+}
+
+@MainActor
+private final class RefusalMessages {
+    var messages: [String] = []
+}
+
+@MainActor
+private final class AnchorLog {
+    var anchors: [JournalLocalAnchor] = []
 }

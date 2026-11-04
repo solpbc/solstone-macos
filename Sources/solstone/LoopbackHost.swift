@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import Foundation
+import JournalLocalAccess
 import SolstoneCore
 
 public enum LoopbackHost {
@@ -40,13 +41,19 @@ public enum LoopbackHost {
 }
 
 public enum BundledJournalEndpoint {
-    public static func isBundledServiceURL(_ serverURL: String?) -> Bool {
+    /// A loopback address on this account's journal's port: the one its runtime record names, or the
+    /// default browser port. This only classifies a saved address. Nothing is trusted on the strength
+    /// of it, because every call to the journal on this Mac checks who answers first.
+    public static func isBundledServiceURL(
+        _ serverURL: String?,
+        runtimePort: Int? = JournalLocalEndpoint.runtimeTCPPort()
+    ) -> Bool {
         guard let serverURL,
               let candidate = URL(string: serverURL),
               let port = candidate.port,
-              let bundledPort = URL(string: ServiceMode.bundledServiceURL)?.port else {
+              LoopbackHost.isLoopbackHost(candidate.host) else {
             return false
         }
-        return LoopbackHost.isLoopbackHost(candidate.host) && port == bundledPort
+        return port == JournalLocalEndpoint.defaultTCPPort || port == runtimePort
     }
 }

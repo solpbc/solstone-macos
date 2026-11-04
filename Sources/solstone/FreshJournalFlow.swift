@@ -97,10 +97,7 @@ struct FreshJournalFlowDependencies {
             acquirer: .live(defaults: defaults, trustVerifier: trustVerifier, runningJournal: runningJournal),
             runningJournal: runningJournal,
             trustVerifier: trustVerifier,
-            fetchIdentity: { baseURL in
-                await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() })
-                    .resolveIdentity(baseURL: baseURL, expectedInstanceID: nil)
-            },
+            fetchIdentity: { _ in await OwnJournalAccess.resolveIdentity() },
             waitingPollInterval: .seconds(3),
             sleep: { duration in
                 try await Task.sleep(for: duration)

@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - from this version on, when you choose "continue anyway" because your journal's mark couldn't be checked, settings no longer says "this is your journal".
 - the app now includes its license and third-party notices.
 - the solstone extension's setup page no longer says the solstone app is paired with your journal while you still have to confirm your journal's mark.
+- on a shared mac, the solstone app checks that a journal on this mac is yours before it connects to it, opens it or shows its mark. if it's someone else's journal, the app says so and leaves it alone.
+- when an update links this mac to your journal on its own, the app now asks you to confirm your journal's mark instead of answering for you. what you've shared waits on this mac until you answer, then goes into your journal.
 
 ## [2.0.55] - 2026-11-03
 

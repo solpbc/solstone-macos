@@ -240,6 +240,7 @@ struct SettingsView: View {
     @State private var localLinkInProgress = false
     @State private var localLinkError: String?
     @State private var localLinkNotice: String?
+    @State private var localJournalIsNotYours = false
     /// Re-link found this Mac set to send somewhere a same-machine link can't reach.
     @State private var relinkNeedsPairingLink = false
     @State private var showPairingFlow = false
@@ -273,8 +274,8 @@ struct SettingsView: View {
         journalHandoffOrchestrator: JournalHandoffOrchestrator = JournalHandoffOrchestrator(),
         freshFlow: FreshJournalFlow = FreshJournalFlow(dependencies: .live()),
         onDiskJournalAdoptionFlow: OnDiskJournalAdoptionFlow = OnDiskJournalAdoptionFlow(),
-        localIdentityFetch: @escaping @MainActor @Sendable (String) async -> JournalIdentityResolution = { baseURL in
-            await JournalIdentityFetcher(prepareRequest: { $0.attachLoopbackCapability() }).resolveIdentity(baseURL: baseURL)
+        localIdentityFetch: @escaping @MainActor @Sendable (String) async -> JournalIdentityResolution = { _ in
+            await OwnJournalAccess.resolveIdentity()
         },
         onDiskJournalDiscovery: @escaping @MainActor @Sendable () async -> OnDiskJournalDiscovery = {
             await discoverOnDiskJournal()
@@ -283,7 +284,7 @@ struct SettingsView: View {
             _ baseURL: String,
             _ deviceLabel: String
         ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure> = { baseURL, deviceLabel in
-            await SameMachinePairStartClient().start(baseURL: baseURL, deviceLabel: deviceLabel)
+            await OwnJournalAccess.startPairing(deviceLabel: deviceLabel)
         },
         runningJournalController: any RunningJournalController = LiveRunningJournalController(),
         initialSetupProbeSnapshot: SetupProbeSnapshot = .checking,
@@ -1977,6 +1978,20 @@ struct SettingsView: View {
                         )
                         localJournalPairButton
 
+                    case .notOwnJournal:
+                        Text(UICopy.LOCAL_JOURNAL_NOT_YOURS)
+                            .font(.headline)
+                        JournalMarkView(mark: nil)
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.localJournalDiscoveryState,
+                            value: LocalJournalDiscoveryAXState.notFound.axToken
+                        )
+                        AXStateCompanion(
+                            id: AXID.Settings.Service.localJournalDiscoveryPathState,
+                            value: ""
+                        )
+                        localJournalPairButton
+
                     case .none:
                         AXStateCompanion(
                             id: AXID.Settings.Service.localJournalDiscoveryState,
@@ -2039,6 +2054,9 @@ struct SettingsView: View {
         }
         if localLinkNotice == UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP {
             return .uncommitted
+        }
+        if localJournalIsNotYours {
+            return .notOwnJournal
         }
         return .none
     }
@@ -3030,6 +3048,7 @@ struct SettingsView: View {
         localOnDiskDiscoveryPath = nil
         localOnDiskAdoptionAction = .install
         localLinkError = nil
+        localJournalIsNotYours = false
         localDiscoveryInFlight = true
         localDiscoveryTask = Task { @MainActor in
             let model = await discoverLocalJournalPanelModel(
@@ -3042,6 +3061,10 @@ struct SettingsView: View {
                 localJournalMark = mark
             case .uncommitted:
                 localLinkNotice = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
+                localJournalMark = nil
+                localOnDiskDiscoveryPath = nil
+            case .notOwnJournal:
+                localJournalIsNotYours = true
                 localJournalMark = nil
                 localOnDiskDiscoveryPath = nil
             case .foundOnDisk(let path):
@@ -3094,6 +3117,10 @@ struct SettingsView: View {
                 localLinkNotice = UICopy.SETUP_JOURNAL_STILL_BEING_SET_UP
                 localJournalMark = nil
                 localOnDiskDiscoveryPath = nil
+            case .notOwnJournal:
+                localJournalIsNotYours = true
+                localJournalMark = nil
+                localOnDiskDiscoveryPath = nil
             case .foundOnDisk(let path):
                 let action = await onDiskJournalAdoptionFlow.resolveOfferAction()
                 guard !Task.isCancelled else { return }
@@ -3104,7 +3131,7 @@ struct SettingsView: View {
                     localOnDiskAdoptionAction = action
                 }
             case .none:
-                break
+                localJournalIsNotYours = false
             }
             localDiscoveryInFlight = false
             lastProbeFinishedAt = Date()

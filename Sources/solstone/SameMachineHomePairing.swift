@@ -3,6 +3,7 @@
 
 import Foundation
 import os
+import JournalLocalAccess
 import JournalMarkKit
 import SolstoneCore
 import SPLTunnel
@@ -32,6 +33,8 @@ enum SameMachinePairStartFailureKind: Equatable, Sendable {
     case invalidURL
     case requestEncoding
     case transport
+    /// Something answered for the journal on this Mac and it isn't this account's.
+    case notOwnJournal
     case invalidResponse
     case httpStatus(Int)
     case decode
@@ -60,9 +63,14 @@ struct SameMachinePairStartClient: Sendable {
     }
 
     private let session: URLSession
+    private let loader: (@Sendable (URLRequest) async throws -> (Data, URLResponse))?
 
-    init(session: URLSession = .shared) {
+    init(
+        session: URLSession = .shared,
+        loader: (@Sendable (URLRequest) async throws -> (Data, URLResponse))? = nil
+    ) {
         self.session = session
+        self.loader = loader
     }
 
     func start(
@@ -93,9 +101,15 @@ struct SameMachinePairStartClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            if let loader {
+                (data, response) = try await loader(request)
+            } else {
+                (data, response) = try await session.data(for: request)
+            }
         } catch is CancellationError {
             return fail(.transport, "same-machine pair-start cancelled")
+        } catch JournalLocalHTTPError.notOwnJournal, JournalLocalHTTPError.refused {
+            return fail(.notOwnJournal, "same-machine pair-start refused: the answering journal is not this account's")
         } catch {
             return fail(.transport, "same-machine pair-start request failed: \(error)")
         }

@@ -70,10 +70,7 @@ struct JournalUpdateDestinationView: View {
             expected: expected,
             currentPairing: { owner.cachedPairingIdentity },
             fetchIdentity: { instanceID in
-                if case .mark = await JournalIdentityFetcher().fetch(
-                    baseURL: ServiceMode.bundledServiceURL,
-                    expectedInstanceID: instanceID
-                ) {
+                if case .mark = await OwnJournalAccess.resolveIdentity(expectedInstanceID: instanceID) {
                     return true
                 }
                 return false
