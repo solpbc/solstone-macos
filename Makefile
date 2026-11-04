@@ -1,4 +1,4 @@
-.PHONY: build release release-universal safari-appex debug-universal release-universal-adhoc release-browser-preview run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
+.PHONY: check-app-notices build release release-universal safari-appex debug-universal release-universal-adhoc release-browser-preview run clean test ax-contract snapshot integration-native install setup reset reset-full icons check-icons-deps check-brand-assets-fresh check-dev-deps ci \
         signing-check notary-restore unlock-signing bundle-dist bundle-dist-debug bundle-adhoc bundle-adhoc-debug dmg dmg-both notarize notarize-both staple staple-both verify-notarization verify-notarization-both release-dmg seal-both \
         supply-chain-check release-dmg-smoke both-resolve both-compose both-verify both-publish brand-sync \
         release-preflight bump-release publish-preflight publish-appcast publish-appcast-staging github-release
@@ -360,6 +360,7 @@ bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 	@# before the app is signed so it is sealed into the signature.
 	@cp Sources/solstone/embedded.provisionprofile solstone.app/Contents/embedded.provisionprofile
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
+	@cp $(APP_NOTICE_FILES) solstone.app/Contents/Resources/
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
 	@cp -r .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone_solstone.bundle solstone.app/Contents/Resources/
@@ -429,6 +430,7 @@ endif
 	@codesign -d --entitlements - --xml solstone.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q '7QCG8V4M6H.app.solstone.observer.spl' || { echo "error: keychain-access-group entitlement missing from signed app (DP keychain would -34018)"; exit 1; }
 	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
 		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
+	@$(MAKE) --no-print-directory check-app-notices
 	@echo "✓ Signed: solstone.app (keychain-access-group + embedded profile verified)"
 
 # Debug-only app bundle for the live v3 fixture probe. It intentionally keeps
@@ -436,6 +438,16 @@ endif
 # Protection keychain entitlement so it can read the normal paired identity.
 bundle-dist-debug:
 	@$(MAKE) bundle-dist BUNDLE_BUILD_TARGET=debug-universal BUNDLE_CONFIGURATION=Debug
+
+# What every solstone.app carries, because an owner can open both in Finder. They're copied before
+# the app is signed, so they're sealed into its signature.
+APP_NOTICE_FILES := THIRD_PARTY_NOTICES.md LICENSE
+NOTICES_APP ?= solstone.app
+
+check-app-notices:
+	@for file in $(APP_NOTICE_FILES); do \
+		cmp -s "$$file" "$(NOTICES_APP)/Contents/Resources/$$file" || { echo "error: $(NOTICES_APP)/Contents/Resources/$$file is missing or differs from $$file"; exit 1; }; \
+	done
 
 # Local ad-hoc test bundle only; never shipped, never update-served, never production.
 # Keep in lockstep with bundle-dist; only signing, provisioning, and entitlements differ.
@@ -447,6 +459,7 @@ bundle-adhoc: release-universal-adhoc
 	@cp .build/apple/Products/Release/solstone-watchdog solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
+	@cp $(APP_NOTICE_FILES) solstone.app/Contents/Resources/
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
 	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
@@ -502,6 +515,7 @@ endif
 		--entitlements "$(ADHOC_ENTITLEMENTS)" \
 		solstone.app
 	@codesign --verify --strict --deep --verbose=2 solstone.app
+	@$(MAKE) --no-print-directory check-app-notices
 	@echo "✓ Signed: solstone.app (local ad-hoc signing)"
 
 # Local ad-hoc debug bundle only; never shipped, never update-served, never production.
@@ -521,6 +535,7 @@ bundle-adhoc-debug:
 # Requires: brew install create-dmg
 dmg:
 	@test -d "$(DMG_APP)" || { echo "error: $(DMG_APP) not found — run make bundle-dist* first"; exit 1; }
+	@$(MAKE) --no-print-directory check-app-notices NOTICES_APP="$(DMG_APP)"
 	@rm -f $(DMG_NAME)
 	@create-dmg \
 	  --volname "$(DMG_VOLNAME)" \
@@ -664,6 +679,7 @@ supply-chain-check: check-sparkle
 	@test -f THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing"; exit 1; }
 	@grep -qiE '^##[[:space:]]+Sparkle' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing Sparkle entry"; exit 1; }
 	@grep -qiE '^##[[:space:]]+swift-crypto' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing swift-crypto entry"; exit 1; }
+	@grep -qiE '^##[[:space:]]+Inter' THIRD_PARTY_NOTICES.md || { echo "error: THIRD_PARTY_NOTICES.md missing Inter entry"; exit 1; }
 	@if grep -qiE '^##[[:space:]]+(uv|python-build-standalone)$$' THIRD_PARTY_NOTICES.md; then \
 	    echo "error: THIRD_PARTY_NOTICES.md still lists the retired python-era runtime"; exit 1; \
 	fi
