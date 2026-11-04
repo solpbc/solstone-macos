@@ -1241,6 +1241,15 @@ struct SnapshotTests {
         timeZone: TimeZone(identifier: "America/Denver")!
     )
 
+    @Test func switchNotChangedPane() throws {
+        try render(
+            PairingSwitchNotChangedPane().padding(16).frame(width: 520).background(Color.white),
+            size: CGSize(width: 520, height: 100),
+            to: "settings-pairing-switch-not-changed.png",
+            appearance: NSAppearance(named: .aqua)
+        )
+    }
+
     private func renderOnboarding(model: SetupModel, state: AppState, to baseFilename: String) throws {
         JournalMarkFont.register()
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {

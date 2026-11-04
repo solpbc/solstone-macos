@@ -454,7 +454,8 @@ struct JournalMarkConfirmationGateTests {
             },
             relayEndpoint: { URL(string: "https://relay.test")! },
             deviceLabel: { "test mac" },
-            clearJournalMarkConfirmation: { events.record("clear") }
+            clearJournalMarkConfirmation: { events.record("clear") },
+            switchAsksMark: { false }
         )
         return coordinator
     }

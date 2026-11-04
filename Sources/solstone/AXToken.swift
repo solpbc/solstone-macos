@@ -332,6 +332,8 @@ extension PairingFlowState {
         "idle",
         "pairing",
         "switch_confirm_pending",
+        "switch_mark_pending",
+        "switch_declined",
         "paired",
         "already_connected",
         "switched",
@@ -347,6 +349,10 @@ extension PairingFlowState {
             return "pairing"
         case .switchConfirmPending:
             return "switch_confirm_pending"
+        case .switchMarkPending:
+            return "switch_mark_pending"
+        case .switchDeclined:
+            return "switch_declined"
         case .paired:
             return "paired"
         case .alreadyConnected:

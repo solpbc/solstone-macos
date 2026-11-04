@@ -288,6 +288,8 @@ public enum UICopy {
     public static let JOURNAL_MARK_MISMATCH_TITLE = "not paired"
     public static let JOURNAL_MARK_MISMATCH_BODY = "nothing this mac has kept went to that journal through this link. you may have pasted the wrong link, or something isn't right. try again, or reach us and we'll help."
     public static let JOURNAL_MARK_MISMATCH_FRESH_LINK = "get a fresh link"
+    public static let JOURNAL_MARK_SWITCH_NOT_CHANGED_TITLE = "not changed"
+    public static let JOURNAL_MARK_SWITCH_NOT_CHANGED_BODY = "your current pairing stays in use. nothing this mac has kept went to that journal through this link."
     public static let JOURNAL_MARK_MISMATCH_SUPPORT = "email support@solstone.app"
     public static let SETTINGS_PREREQ_PERMISSIONS = "you'll also need to grant permissions →"
     public static let SETTINGS_NEXT_CONNECT_JOURNAL = "next: connect your journal →"

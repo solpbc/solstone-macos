@@ -24,10 +24,10 @@ struct JournalMarkConfirmationDriverTests {
         #expect(paired.isPresented)
         paired.cancel()
 
+        // A switch asks before it lands, so landing asks nothing.
         let switched = makeDriver()
         switched.startIfNeeded(for: .switched, deriveMark: neverDerive())
-        #expect(switched.isPresented)
-        switched.cancel()
+        #expect(!switched.isPresented)
     }
 
     @Test func resetAndCancelWhileConnectingHideWithoutEnteringUnverified() async {
@@ -40,7 +40,8 @@ struct JournalMarkConfirmationDriverTests {
         #expect(!driver.isPresented)
         #expect(driver.phase == .deriving)
 
-        driver.startIfNeeded(for: .switched, deriveMark: neverDerive())
+        driver.resetForNewPairAttempt()
+        driver.startIfNeeded(for: .paired, deriveMark: neverDerive())
         #expect(driver.isPresented)
         #expect(driver.phase == .deriving)
 
@@ -429,6 +430,9 @@ struct JournalMarkConfirmationDriverTests {
             .idle,
             .pairing,
             .switchConfirmPending,
+            .switchMarkPending,
+            .switchDeclined,
+            .switched,
             .alreadyConnected,
             .saveFailed,
             .failed(.network),

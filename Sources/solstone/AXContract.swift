@@ -127,6 +127,7 @@ enum AXContract {
         AXID.Settings.Service.pairingRetry,
         AXID.Settings.Service.pairingSwitchConfirm,
         AXID.Settings.Service.pairingSwitchCancel,
+        AXID.Settings.Service.pairingSwitchNotChanged,
         AXID.Settings.Service.pairingFlowState,
         AXID.Settings.Service.pairingFailureState,
         AXID.Settings.Service.pairingPaidPlanLink,

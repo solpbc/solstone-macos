@@ -678,7 +678,7 @@ enum SetupPairingLinkOffer {
         switch state {
         case .paired, .alreadyConnected, .switched:
             return true
-        case .idle, .pairing, .switchConfirmPending, .saveFailed, .failed:
+        case .idle, .pairing, .switchConfirmPending, .switchMarkPending, .switchDeclined, .saveFailed, .failed:
             return false
         }
     }

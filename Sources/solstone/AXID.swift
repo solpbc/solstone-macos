@@ -177,6 +177,7 @@ enum AXID {
             static let pairingRetry = "settings.service.pairing.retry"
             static let pairingSwitchConfirm = "settings.service.pairing.switchConfirm"
             static let pairingSwitchCancel = "settings.service.pairing.switchCancel"
+            static let pairingSwitchNotChanged = "settings.service.pairing.switchNotChanged"
             static let pairingFlowState = "settings.service.pairing.flow.state"
             static let pairingFailureState = "settings.service.pairing.failure.state"
             static let pairingPaidPlanLink = "settings.service.pairing.paidPlanLink"

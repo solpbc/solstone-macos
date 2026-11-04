@@ -240,7 +240,7 @@ func performSameMachineHomePairing(
     switch finalState {
     case .paired, .alreadyConnected:
         return .pairingStarted
-    case .idle, .pairing, .switchConfirmPending, .switched, .saveFailed, .failed:
+    case .idle, .pairing, .switchConfirmPending, .switchMarkPending, .switchDeclined, .switched, .saveFailed, .failed:
         return .failed(.ceremony(finalState))
     }
 }

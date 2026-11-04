@@ -2296,6 +2296,7 @@ struct PairingCoordinatorTests {
             endSelfRetirement: endSelfRetirement,
             carriedPairingControl: carriedPairingControl,
             localPort: localPort,
+            switchAsksMark: { false },
             classifiedLog: classifiedLog
         )
     }
@@ -2338,6 +2339,7 @@ struct PairingCoordinatorTests {
             endSelfRetirement: endSelfRetirement,
             carriedPairingControl: carriedPairingControl,
             localPort: localPort,
+            switchAsksMark: { false },
             classifiedLog: classifiedLog
         )
         return coordinator

@@ -3,7 +3,40 @@ import JournalMarkKit
 import os
 
 extension JournalMarkConfirmationDriver {
-    func confirm(appState: AppState) {
+    private static let heldSwitchKeyPrefix = "switch-held:"
+
+    /// The held switch this question is about, or nil when it's about the stored pairing. An answer
+    /// follows this and never the coordinator's current state, so it can't reach another pairing.
+    var heldSwitchAttempt: UUID? {
+        guard let key = activeQuestionKey, key.hasPrefix(Self.heldSwitchKeyPrefix) else { return nil }
+        return UUID(uuidString: String(key.dropFirst(Self.heldSwitchKeyPrefix.count)))
+    }
+
+    /// The question closed without an answer. Only its own held pairing goes with it.
+    func closeQuestion(appState: AppState) {
+        let attempt = heldSwitchAttempt
+        cancel()
+        appState.pairingCoordinator.abandonHeldSwitch(attempt: attempt)
+    }
+
+    /// The sheet finished closing. A newer question may already be open, and it stays.
+    func sheetDismissed() {
+        guard !isPresented else { return }
+        cancel()
+    }
+
+    @discardableResult
+    func confirm(appState: AppState) -> Task<Void, Never>? {
+        if let attempt = heldSwitchAttempt {
+            guard case .valid(let mark) = phase else { return nil }
+            complete()
+            return Task { await appState.commitHeldSwitch(attempt: attempt, mark: mark) }
+        }
+        confirmStoredPairing(appState: appState)
+        return nil
+    }
+
+    private func confirmStoredPairing(appState: AppState) {
         guard !appState.setupModel.isPeerSupportingSetup else { return }
         guard case .valid(let mark) = phase,
               appState.recordJournalMarkConfirmed(
@@ -14,7 +47,18 @@ extension JournalMarkConfirmationDriver {
     }
 
     /// Continuing after a check that could not finish is the owner's answer too.
-    func continueAnyway(appState: AppState) {
+    @discardableResult
+    func continueAnyway(appState: AppState) -> Task<Void, Never>? {
+        if let attempt = heldSwitchAttempt {
+            guard case .unverified = phase else { return nil }
+            continueAnyway()
+            return Task { await appState.commitHeldSwitch(attempt: attempt, mark: nil) }
+        }
+        continueAnywayOnStoredPairing(appState: appState)
+        return nil
+    }
+
+    private func continueAnywayOnStoredPairing(appState: AppState) {
         guard !appState.setupModel.isPeerSupportingSetup else { return }
         guard case .unverified = phase,
               appState.recordJournalMarkConfirmed(
@@ -49,7 +93,13 @@ extension JournalMarkConfirmationDriver {
     }
 
     func cancelPairing(appState: AppState) async -> Bool {
-        await cancelPairing(
+        if let attempt = heldSwitchAttempt {
+            return await cancelPairing(
+                clearConfirmedMark: {},
+                unpair: { appState.pairingCoordinator.declineHeldSwitch(attempt: attempt) }
+            )
+        }
+        return await cancelPairing(
             clearConfirmedMark: {
                 appState.clearConfirmedMark()
             },
@@ -60,7 +110,14 @@ extension JournalMarkConfirmationDriver {
     }
 
     func reject(appState: AppState, onMismatch: @MainActor () -> Void) async -> Bool {
-        await reject(
+        if let attempt = heldSwitchAttempt {
+            return await reject(
+                clearConfirmedMark: {},
+                unpair: { appState.pairingCoordinator.declineHeldSwitch(attempt: attempt) },
+                onMismatch: {}
+            )
+        }
+        return await reject(
             clearConfirmedMark: {
                 appState.clearConfirmedMark()
             },
@@ -73,6 +130,17 @@ extension JournalMarkConfirmationDriver {
 
     func startIfNeeded(for state: PairingFlowState, appState: AppState) {
         guard !appState.setupModel.isPeerSupportingSetup else { return }
+        if heldSwitchAttempt != nil, state != .switchMarkPending {
+            cancel()
+        }
+        if state == .switchMarkPending {
+            guard let held = appState.pairingCoordinator.heldSwitch else { return }
+            startIfNeeded(
+                for: Self.heldSwitchKeyPrefix + held.attempt.uuidString,
+                deriveMark: { await appState.markForHeldSwitch(held) }
+            )
+            return
+        }
         // The automatic same-machine adoption re-uses this ceremony to take over a journal the
         // owner already had linked on this Mac. It runs automatically during launch, so leaving the mark
         // question in place means an owner who merely took an update is asked to make a security
@@ -103,9 +171,9 @@ extension JournalMarkConfirmationDriver {
         switch state {
         case .paired:
             return "paired"
-        case .switched:
-            return "switched"
-        case .idle, .pairing, .switchConfirmPending, .alreadyConnected, .saveFailed, .failed:
+        case .idle, .pairing, .switchConfirmPending, .switchMarkPending, .switchDeclined, .switched, .alreadyConnected, .saveFailed, .failed:
+            // A switch asked before it landed. If its answer somehow didn't stick,
+            // `startIfUnconfirmed` still asks, because the pairing reads as unanswered.
             return nil
         }
     }

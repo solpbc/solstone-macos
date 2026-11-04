@@ -502,7 +502,7 @@ func pairingLinkEvidence(for state: PairingFlowState) -> DiagnosticEvidenceCode?
         return .pairingLinkFailed
     case .saveFailed:
         return .pairingLinkSaveFailed
-    case .idle, .pairing, .switchConfirmPending:
+    case .idle, .pairing, .switchConfirmPending, .switchMarkPending, .switchDeclined:
         return nil
     }
 }

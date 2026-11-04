@@ -67,6 +67,25 @@ enum JournalMarkDerivation {
             return nil
         }
     }
+
+    /// The mark for a CA this Mac hasn't committed to. Keeps nothing, so a pairing the owner
+    /// declines leaves no trace and the stored pairing's kept mark stays in place.
+    static func markKeepingNothing(
+        forCAChainPEM caChainPEM: String,
+        derive: @Sendable (String) async throws -> MarkRenderSpec = { try await deriveMark(fromJournalID: $0) }
+    ) async -> JournalMark? {
+        do {
+            let journalID = try CertChain.journalID(ofCAChainPEM: caChainPEM)
+            guard let mark = JournalMark.validate(JournalMark(try await derive(journalID))) else {
+                log.error("derived journal mark was invalid")
+                return nil
+            }
+            return mark
+        } catch {
+            log.error("journal mark derivation failed: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }
 }
 
 extension JournalMark {

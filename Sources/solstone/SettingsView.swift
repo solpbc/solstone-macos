@@ -98,7 +98,7 @@ func pairingResultText(
         return "already paired ✓"
     case .switched:
         return "switched ✓"
-    case .idle, .pairing, .switchConfirmPending, .saveFailed, .failed:
+    case .idle, .pairing, .switchConfirmPending, .switchMarkPending, .switchDeclined, .saveFailed, .failed:
         return nil
     }
 }
@@ -460,6 +460,10 @@ struct SettingsView: View {
                 confirmLocalJournalLink()
             }
             if !appState.setupModel.isPeerSupportingSetup {
+                // A ceremony that finished while settings was closed asks now.
+                if appState.pairingCoordinator.state == .switchMarkPending {
+                    journalMarkDriver.startIfNeeded(for: .switchMarkPending, appState: appState)
+                }
                 journalMarkDriver.startIfUnconfirmed(appState: appState)
             }
         }
@@ -528,11 +532,11 @@ struct SettingsView: View {
             get: { journalMarkDriver.isPresented },
             set: { newValue in
                 if !newValue {
-                    journalMarkDriver.cancel()
+                    journalMarkDriver.closeQuestion(appState: appState)
                 }
             }
         ), onDismiss: {
-            journalMarkDriver.cancel()
+            journalMarkDriver.sheetDismissed()
         }) {
             journalMarkSheet
                 .allowsAppQuitWhilePresented()
@@ -541,7 +545,8 @@ struct SettingsView: View {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             appState.browserPendingDiscard.closeSettings()
 #endif
-            journalMarkDriver.cancel()
+            journalMarkDriver.closeQuestion(appState: appState)
+            appState.pairingCoordinator.clearSwitchDeclined()
             journalMarkRederiveTask?.cancel()
             journalMarkRederiveTask = nil
         }
@@ -646,12 +651,12 @@ struct SettingsView: View {
     }
 
     private func confirmJournalMark() {
-        journalMarkDriver.confirm(appState: appState)
+        _ = journalMarkDriver.confirm(appState: appState)
         pairingMismatch = false
     }
 
     private func continueUnverifiedMark() {
-        journalMarkDriver.continueAnyway(appState: appState)
+        _ = journalMarkDriver.continueAnyway(appState: appState)
         pairingMismatch = false
     }
 
@@ -2345,6 +2350,10 @@ struct SettingsView: View {
                     }
                 }
 
+                if appState.pairingCoordinator.state == .switchDeclined {
+                    PairingSwitchNotChangedPane()
+                }
+
                 pairingFailureRow
 
                 if !appState.showsConfiguredJournal {
@@ -2762,7 +2771,7 @@ struct SettingsView: View {
                 .disabled(pairingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pairingIsBusy)
                 .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
             }
-        case .idle, .pairing, .switchConfirmPending, .paired, .alreadyConnected, .switched:
+        case .idle, .pairing, .switchConfirmPending, .switchMarkPending, .switchDeclined, .paired, .alreadyConnected, .switched:
             EmptyView()
         }
     }
@@ -5142,6 +5151,23 @@ struct MicrophoneRow: View {
 
 /// The mark question. Neither answer takes the default action: the owner chooses one on purpose,
 /// and pressing return does not answer for them.
+/// What an owner sees after declining a switch: their pairing is still the one in use.
+struct PairingSwitchNotChangedPane: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(UICopy.JOURNAL_MARK_SWITCH_NOT_CHANGED_TITLE)
+                .font(.headline)
+            Text(UICopy.JOURNAL_MARK_SWITCH_NOT_CHANGED_BODY)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(AXID.Settings.Service.pairingSwitchNotChanged)
+    }
+}
+
 struct JournalMarkSheetContent: View {
     let phase: JournalMarkConfirmationDriver.Phase
     let onMismatch: @MainActor () -> Void

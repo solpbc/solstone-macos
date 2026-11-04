@@ -278,6 +278,8 @@ struct AXIDTests {
             .idle,
             .pairing,
             .switchConfirmPending,
+            .switchMarkPending,
+            .switchDeclined,
             .paired,
             .alreadyConnected,
             .switched,

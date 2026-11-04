@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- answering "that doesn't match" while switching journals now keeps your current pairing.
+
 ## [2.0.55] - 2026-11-03
 
 ### Fixed

@@ -13,11 +13,23 @@ enum PairingFlowState: Equatable, Sendable {
     case idle
     case pairing
     case switchConfirmPending
+    /// A switch's ceremony finished. Its pairing is held in memory and the owner is being asked
+    /// about its mark. The pairing already stored stays in use.
+    case switchMarkPending
+    /// The owner said no to a held pairing's mark, or cancelled when it couldn't be worked out.
+    /// Nothing changed.
+    case switchDeclined
     case paired
     case alreadyConnected
     case switched
     case saveFailed
     case failed(PairingFailure)
+}
+
+/// The pairing a switch's ceremony produced, kept in memory until the owner answers about its mark.
+struct HeldSwitch: Equatable, Sendable {
+    let attempt: UUID
+    let pairing: StoredPairing
 }
 
 enum PairingFailure: Equatable, Sendable {
@@ -46,8 +58,16 @@ final class PairingCoordinator {
     typealias RetireOwnCredential = @MainActor @Sendable (StoredPairing, String) async -> Bool
     typealias FenceOrdinaryTraffic = @MainActor @Sendable (StoredPairing) async -> Void
     typealias EndSelfRetirement = @MainActor @Sendable () -> Void
+    typealias SwitchAsksMark = @MainActor @Sendable () -> Bool
 
-    private(set) var state: PairingFlowState = .idle
+    private(set) var state: PairingFlowState = .idle {
+        didSet {
+            // A held pairing lives only while its question is open, so no later state can commit it.
+            if state != .switchMarkPending { heldSwitch = nil }
+        }
+    }
+    /// Never written anywhere. Quitting loses it, and the stored pairing simply carries on.
+    private(set) var heldSwitch: HeldSwitch?
     private(set) var pendingMigrationDecision: CarriedPairingDecision?
     private(set) var replacementTargets: [CarriedPairingClientRow] = []
     private(set) var replacementOfferVisible = false
@@ -91,6 +111,8 @@ final class PairingCoordinator {
     @ObservationIgnored
     private let localPort: @MainActor @Sendable () -> Int?
     @ObservationIgnored
+    private let switchAsksMark: SwitchAsksMark
+    @ObservationIgnored
     private var pendingSwitchLink: PairURL?
     /// Whether the latest ceremony came from Settings' same-computer link.
     private(set) var lastSubmissionWasSameComputer = false
@@ -125,6 +147,7 @@ final class PairingCoordinator {
         fenceOrdinaryTraffic: @escaping FenceOrdinaryTraffic = { _ in },
         carriedPairingControl: any CarriedPairingControlRequesting = URLSessionCarriedPairingControlClient(),
         localPort: @escaping @MainActor @Sendable () -> Int? = { nil },
+        switchAsksMark: @escaping SwitchAsksMark = { true },
         classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink(logger: pairingLog)
     ) {
         let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
@@ -149,6 +172,7 @@ final class PairingCoordinator {
         self.fenceOrdinaryTraffic = fenceOrdinaryTraffic
         self.carriedPairingControl = carriedPairingControl
         self.localPort = localPort
+        self.switchAsksMark = switchAsksMark
         self.classifiedLog = classifiedLog
     }
 
@@ -321,10 +345,67 @@ final class PairingCoordinator {
         guard let newPairing = await runCeremony(link) else {
             return
         }
+        // The mark comes from the new pairing's CA on this device, so asking needs nothing stored.
+        // The paths that don't ask commit now.
+        guard switchAsksMark() else {
+            await commitSwitch(to: newPairing)
+            return
+        }
+        pendingSwitchLink = nil
+        heldSwitch = HeldSwitch(attempt: UUID(), pairing: newPairing)
+        state = .switchMarkPending
+    }
+
+    /// The owner said yes, or continued when the mark couldn't be worked out. `recordAnswer` runs
+    /// once the new credential is durable and before anything starts using it, so the owner isn't
+    /// asked about it again.
+    func commitHeldSwitch(attempt: UUID, recordAnswer: @escaping @MainActor (StoredPairing) -> Void) async {
+        guard state == .switchMarkPending, let held = heldSwitch, held.attempt == attempt else { return }
+        state = .pairing
+        await commitSwitch(to: held.pairing, recordAnswer: recordAnswer)
+    }
+
+    /// The owner said no. The held pairing is dropped, and nothing is retired anywhere.
+    @discardableResult
+    func declineHeldSwitch(attempt: UUID) -> Bool {
+        guard state == .switchMarkPending, heldSwitch?.attempt == attempt else { return false }
+        state = .switchDeclined
+        return true
+    }
+
+    /// The question for this attempt went away without an answer: settings closed, or its sheet
+    /// was dismissed. Another attempt's held pairing stays.
+    func abandonHeldSwitch(attempt: UUID?) {
+        guard state == .switchMarkPending, let attempt, heldSwitch?.attempt == attempt else { return }
+        state = .idle
+    }
+
+    /// `not changed` answers the moment it follows, so it doesn't outlive settings.
+    func clearSwitchDeclined() {
+        guard state == .switchDeclined else { return }
+        state = .idle
+    }
+
+    /// An old pairing's retirement has begun and hasn't finished, so its mark no longer stands.
+    var hasOpenInvalidation: Bool {
+        guard let credentialStore, let record = try? credentialStore.carriedPairingRecord() else { return false }
+        return record.invalidation != nil
+    }
+
+    private func commitSwitch(
+        to newPairing: StoredPairing,
+        recordAnswer: (@MainActor (StoredPairing) -> Void)? = nil
+    ) async {
         let stored: StoredPairing
         do {
             guard let loaded = try loadPairing() else {
-                state = .failed(.localSetup)
+                // The old pairing went away during the question, so there's nothing to retire and
+                // the owner's yes still stands.
+                if let recordAnswer {
+                    await activate(newPairing, successState: .switched, recordAnswer: recordAnswer)
+                } else {
+                    state = .failed(.localSetup)
+                }
                 return
             }
             stored = loaded
@@ -335,7 +416,7 @@ final class PairingCoordinator {
         }
         guard let invalidation = await beginInvalidation(for: stored),
               await retireInvalidatedCredential(stored, invalidation: invalidation) else { return }
-        await activate(newPairing, successState: .switched, invalidation: invalidation)
+        await activate(newPairing, successState: .switched, invalidation: invalidation, recordAnswer: recordAnswer)
     }
 
     func cancelSwitch() {
@@ -1088,7 +1169,8 @@ final class PairingCoordinator {
     private func activate(
         _ pairing: StoredPairing,
         successState: PairingFlowState,
-        invalidation: CarriedPairingInvalidation? = nil
+        invalidation: CarriedPairingInvalidation? = nil,
+        recordAnswer: (@MainActor (StoredPairing) -> Void)? = nil
     ) async {
         do {
             if let invalidation, let credentialStore {
@@ -1115,6 +1197,7 @@ final class PairingCoordinator {
         if successState != .alreadyConnected {
             clearJournalMarkConfirmation()
         }
+        recordAnswer?(pairing)
 
         do {
             if successState == .alreadyConnected {

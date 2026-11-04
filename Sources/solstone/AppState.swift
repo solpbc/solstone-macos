@@ -1581,6 +1581,56 @@ public final class AppState {
         await JournalMarkDerivation.mark(forCAChainPEM: pairing.caChainPEM)
     }
 
+    /// The paths that never ask commit a switch at once: Settings' same-computer link, the automatic
+    /// adoption, and peer-supporting setup.
+    internal var switchAsksMark: Bool {
+        !setupModel.isPeerSupportingSetup
+            && !isAdoptingSameMachineHomeAutomatically
+            && !pairingCoordinator.lastSubmissionWasSameComputer
+    }
+
+    /// Derives a held switch's mark and keeps nothing. A test can replace this.
+    @ObservationIgnored
+    internal var heldSwitchMarkDeriver: JournalMarkDeriver = { pairing in
+        await JournalMarkDerivation.markKeepingNothing(forCAChainPEM: pairing.caChainPEM)
+    }
+
+    /// The mark to ask about for a held switch, from its own CA. `nil` draws as unavailable.
+    internal func markForHeldSwitch(_ held: HeldSwitch) async -> JournalMark? {
+        guard pairingCoordinator.heldSwitch == held,
+              let mark = await heldSwitchMarkDeriver(held.pairing),
+              pairingCoordinator.heldSwitch == held else { return nil }
+        return mark
+    }
+
+    /// The owner answered for a held switch: commit it and record the answer against that pairing.
+    /// `mark` is nil when it couldn't be worked out and the owner chose to continue.
+    internal func commitHeldSwitch(attempt: UUID, mark: JournalMark?) async {
+        await pairingCoordinator.commitHeldSwitch(attempt: attempt) { pairing in
+            self.recordAnswerForNewPairing(pairing, mark: mark)
+        }
+        guard pairingCoordinator.state == .switched else {
+            // The old pairing retired and the new one didn't land: its mark no longer stands.
+            if pairingCoordinator.hasOpenInvalidation { clearConfirmedMark() }
+            return
+        }
+        // The tunnel's own connect also lets held work go. This covers a tunnel already up.
+        recordJournalMarkConfirmed(mark: mark)
+    }
+
+    private func recordAnswerForNewPairing(_ pairing: StoredPairing, mark: JournalMark?) {
+        withMutation(keyPath: \.isJournalMarkConfirmed) {
+            confirmedMark = mark
+            journalMarkConfirmationStore.confirm(journalMarkConfirmationIdentity(for: pairing))
+        }
+    }
+
+    /// A switch that hasn't landed leaves the stored pairing in use, so its mark stays on screen.
+    private func restoreKeptJournalMark() async {
+        guard confirmedMark == nil, isJournalMarkConfirmed else { return }
+        await deriveConfirmedMark()
+    }
+
     /// The mark to ask the owner about, bound to the credential it came from. `nil` draws as
     /// unavailable. The credential can take a moment to read as current right after it lands.
     internal func markForAnswer(attempts: Int = 30, interval: Duration = .milliseconds(100)) async -> JournalMark? {
@@ -1677,6 +1727,9 @@ public final class AppState {
             beginOwnerPairingAttempt()
             await pairingCoordinator.submitPairingLink(canonical)
             let resultState = pairingCoordinator.state
+            if resultState == .switchConfirmPending {
+                await restoreKeptJournalMark()
+            }
             if setupModel.phase != nil,
                resultState == .paired || resultState == .switched || resultState == .alreadyConnected {
                 setupModel.armBringFrontAfterPairingDial()
@@ -2004,6 +2057,7 @@ public final class AppState {
         // A cleared answer also ends any mark attempt for the old credential, so a
         // later pairing never compares its answer against a stale revision.
         pendingMarkCredentialRevision = nil
+        confirmedMark = nil
         withMutation(keyPath: \.isJournalMarkConfirmed) {
             journalMarkConfirmationStore.clear()
             uploadCoordinator?.updatePairedIngestIdentity(currentPairedIngestIdentity())
@@ -2201,6 +2255,9 @@ public final class AppState {
             localPort: { [owner = tunnelLifecycleOwner] in
                 owner.localPort
             },
+            switchAsksMark: { [fingerprintTarget] in
+                fingerprintTarget.state?.switchAsksMark ?? true
+            }
         )
         let homeBaseURLResolver = Self.makeHomeBaseURLResolver(target: homeBaseURLTarget)
         self.homeBaseURLResolver = homeBaseURLResolver
@@ -2501,6 +2558,7 @@ public final class AppState {
         },
         pairingStoring: (any PairingStoring)? = nil,
         pairingOperation: PairingCoordinator.PairOperation? = nil,
+        pairingRetire: @escaping PairingCoordinator.RetireOwnCredential = { _, _ in true },
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
         pairingSave: PairingCoordinator.SavePairing? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
@@ -2523,6 +2581,7 @@ public final class AppState {
             pairingStoring: pairingStoring,
             journalMarkConfirmationStore: journalMarkConfirmationStore,
             pairingOperation: pairingOperation,
+            pairingRetire: pairingRetire,
             pairingLoad: pairingLoad,
             pairingSave: pairingSave,
             recorder: recorder
@@ -2560,6 +2619,7 @@ public final class AppState {
         lastDeliveryStore providedLastDeliveryStore: (any LastJournalDeliveryStoring)? = nil,
         journalMarkConfirmationStore providedJournalMarkConfirmationStore: (any JournalMarkConfirmationStoring)? = nil,
         pairingOperation: PairingCoordinator.PairOperation? = nil,
+        pairingRetire: @escaping PairingCoordinator.RetireOwnCredential = { _, _ in true },
         pairingLoad: PairingCoordinator.LoadPairing? = nil,
         pairingSave: PairingCoordinator.SavePairing? = nil,
         recorder: DiagnosticEvidenceRecorder = .dormant,
@@ -2722,11 +2782,14 @@ public final class AppState {
                     journalMarkConfirmationStore.clear()
                 }
             },
-            retireOwnCredential: { _, _ in true },
+            retireOwnCredential: pairingRetire,
             endSelfRetirement: { [owner = tunnelLifecycleOwner] in
                 owner.endSelfRetirement()
             },
-            fenceOrdinaryTraffic: { _ in }
+            fenceOrdinaryTraffic: { _ in },
+            switchAsksMark: { [fingerprintTarget] in
+                fingerprintTarget.state?.switchAsksMark ?? true
+            }
         )
 
         uploadCoordinator = UploadCoordinator(

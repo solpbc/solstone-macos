@@ -21,6 +21,8 @@ public final class JournalMarkConfirmationDriver {
 
     public var isPresented = false
     public private(set) var phase: Phase = .deriving
+    /// The key of the question on screen, so an answer goes to the pairing it was asked about.
+    public private(set) var activeQuestionKey: String?
 
     @ObservationIgnored
     private var task: Task<Void, Never>?
@@ -35,6 +37,7 @@ public final class JournalMarkConfirmationDriver {
         task?.cancel()
         task = nil
         activeAttemptID = nil
+        activeQuestionKey = nil
         handledSuccessKey = nil
         phase = .deriving
         isPresented = false
@@ -44,6 +47,7 @@ public final class JournalMarkConfirmationDriver {
         task?.cancel()
         task = nil
         activeAttemptID = nil
+        activeQuestionKey = nil
         phase = .deriving
         isPresented = false
     }
@@ -52,6 +56,7 @@ public final class JournalMarkConfirmationDriver {
         task?.cancel()
         task = nil
         activeAttemptID = nil
+        activeQuestionKey = nil
         phase = .deriving
         isPresented = false
     }
@@ -105,6 +110,7 @@ public final class JournalMarkConfirmationDriver {
         guard handledSuccessKey != successKey else { return }
 
         handledSuccessKey = successKey
+        activeQuestionKey = successKey
         phase = .deriving
         isPresented = true
 
