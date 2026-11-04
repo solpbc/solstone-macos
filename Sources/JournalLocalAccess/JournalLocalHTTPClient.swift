@@ -69,13 +69,80 @@ public struct JournalLocalHTTPClient: Sendable {
         try await send(request, via: verify(anchor))
     }
 
-    /// The address to open in a browser, once the journal behind it has been checked.
-    public func browserURL(path: String, anchor: JournalLocalAnchor) async throws -> URL {
+    /// A one-time link that opens `target` (path, query and fragment) in a browser, made by the checked
+    /// journal over its owner socket. Each call makes a live link: call it only to open one, and open the
+    /// result unchanged. A journal with no socket, or whose socket answers 404 for links, predates the gate
+    /// and gets its plain address. Any other failure throws `linkFailed`, never a plain address, because a
+    /// gated journal answers a plain address with a page that only says how to open it.
+    public func browserLink(path target: String, anchor: JournalLocalAnchor) async throws -> URL {
         let route = try await verify(anchor)
-        guard let url = URL(string: "http://127.0.0.1:\(route.port)\(path)") else {
-            throw JournalLocalHTTPError.unavailable
+        let plain = URL(string: "http://127.0.0.1:\(route.port)\(target)")
+        guard route.socket != nil else {
+            guard let plain else { throw JournalLocalHTTPError.unavailable }
+            return plain
         }
-        return url
+        var request = Self.request(Self.linkRoute)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["path": target])
+        let answer: (Data, URLResponse)
+        do {
+            answer = try await send(request, via: route)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw JournalLocalHTTPError.linkFailed("no answer: \(error)")
+        }
+        let status = (answer.1 as? HTTPURLResponse)?.statusCode ?? 0
+        switch Self.linkAnswer(status: status, body: answer.0, port: route.port) {
+        case .link(let link):
+            return link
+        case .noLinks:
+            guard let plain else { throw JournalLocalHTTPError.unavailable }
+            return plain
+        case .failed(let cause):
+            throw JournalLocalHTTPError.linkFailed(cause)
+        }
+    }
+
+    static let linkRoute = "/_solstone/browser-link"
+
+    enum LinkAnswer: Equatable {
+        /// A one-time link to open unchanged.
+        case link(URL)
+        /// The journal predates links and its port has no gate.
+        case noLinks
+        /// Anything else. Never a reason to open a plain address.
+        case failed(String)
+    }
+
+    /// What the journal's answer to a link request means.
+    static func linkAnswer(status: Int, body: Data, port: Int) -> LinkAnswer {
+        switch status {
+        case 200:
+            return oneTimeLink(in: body, port: port).map(LinkAnswer.link) ?? .failed("the answer held no usable link")
+        case 404:
+            return .noLinks
+        default:
+            let reason = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["error"] as? String
+            return .failed("status \(status): \(reason ?? "no reason given")")
+        }
+    }
+
+    /// Only a one-time link to the checked journal's own port is opened.
+    static func oneTimeLink(in body: Data, port: Int) -> URL? {
+        guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let text = object["url"] as? String,
+              let components = URLComponents(string: text),
+              components.scheme == "http",
+              components.host == "localhost" || components.host == "127.0.0.1",
+              components.port == port,
+              components.path == "/",
+              components.fragment == nil,
+              let items = components.queryItems, items.count == 1, items[0].name == "auth",
+              let token = items[0].value, !token.isEmpty
+        else { return nil }
+        return URL(string: text)
     }
 
     public func send(_ request: URLRequest, via route: JournalLocalRoute) async throws -> (Data, URLResponse) {

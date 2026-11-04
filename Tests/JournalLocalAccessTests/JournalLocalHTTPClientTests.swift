@@ -10,6 +10,7 @@ private final class FakeJournal: @unchecked Sendable {
     private let lock = NSLock()
     private var routes: [String: (Int, String)]
     private var calls: [(path: String, route: JournalLocalRoute)] = []
+    private var bodies: [String] = []
     var unreachable = false
 
     init(_ routes: [String: (Int, String)] = [:]) { self.routes = routes }
@@ -18,6 +19,7 @@ private final class FakeJournal: @unchecked Sendable {
         try lock.withLock {
             let path = request.url!.path
             calls.append((path, route))
+            bodies.append(String(decoding: request.httpBody ?? Data(), as: UTF8.self))
             if unreachable { throw URLError(.cannotConnectToHost) }
             let (status, body) = routes[path] ?? (404, "")
             return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!)
@@ -26,6 +28,7 @@ private final class FakeJournal: @unchecked Sendable {
 
     var tcpCalls: Int { lock.withLock { calls.filter { $0.route.socket == nil }.count } }
     var paths: [String] { lock.withLock { calls.map(\.path) } }
+    var sentBodies: [String] { lock.withLock { bodies } }
 }
 
 private let socket = "/tmp/solstone-test/journal.sock"
@@ -59,14 +62,58 @@ private func journalFolder(instanceID: String?, relative: String = "link/state.j
 }
 
 struct JournalLocalAccessRouteTests {
-    @Test func ownSocketIsUsedAndTheBrowserGetsTheRecordsPort() async throws {
+    @Test func aLinkIsMadeOverTheOwnSocketForTheWholeDestinationAndReturnedUnchanged() async throws {
+        let journal = FakeJournal([
+            "/_solstone/local-runtime": (200, liveBody),
+            "/_solstone/browser-link": (200, #"{"url":"http://localhost:15915/?auth=one-time","expires_in":60}"#),
+        ])
+        let client = client(journal, record: record, socketExists: { _ in true })
+
+        let url = try await client.browserLink(path: "/app/chat?pane=owner#event-9", anchor: .ownJournal)
+
+        #expect(url.absoluteString == "http://localhost:15915/?auth=one-time")
+        #expect(journal.paths == ["/_solstone/local-runtime", "/_solstone/browser-link"])
+        let body = try #require(journal.sentBodies.last.flatMap { try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: String] })
+        #expect(body == ["path": "/app/chat?pane=owner#event-9"])
+        #expect(journal.tcpCalls == 0)
+    }
+
+    @Test func aSocketJournalWithoutLinksGetsItsPlainAddress() async throws {
         let journal = FakeJournal(["/_solstone/local-runtime": (200, liveBody)])
         let client = client(journal, record: record, socketExists: { _ in true })
 
-        let url = try await client.browserURL(path: "/app/backup", anchor: .ownJournal)
+        let url = try await client.browserLink(path: "/app/backup", anchor: .ownJournal)
 
         #expect(url.absoluteString == "http://127.0.0.1:15915/app/backup")
         #expect(journal.tcpCalls == 0)
+    }
+
+    @Test(arguments: [
+        (400, #"{"error":"too many unused links; try again in a minute"}"#),
+        (500, ""),
+        (200, #"{"url":"http://localhost:15916/?auth=x"}"#),
+        (200, #"{"url":"http://127.0.0.1:15915/app/backup"}"#),
+        (200, "not json"),
+    ])
+    func anyOtherAnswerFailsWithoutAPlainAddress(status: Int, body: String) async throws {
+        let journal = FakeJournal(["/_solstone/local-runtime": (200, liveBody), "/_solstone/browser-link": (status, body)])
+        let client = client(journal, record: record, socketExists: { _ in true })
+
+        await #expect {
+            _ = try await client.browserLink(path: "/", anchor: .ownJournal)
+        } throws: { error in
+            if case JournalLocalHTTPError.linkFailed = error { return true }
+            return false
+        }
+    }
+
+    @Test func aJournalWithNoSocketIsOpenedAtItsPlainAddressWithoutAskingForALink() async throws {
+        let journal = FakeJournal(["/app/link/api/identity": (200, #"{"committed":true,"instance_id":"abc"}"#)])
+
+        let url = try await client(journal).browserLink(path: "/", anchor: .instance("abc"))
+
+        #expect(url.absoluteString == "http://127.0.0.1:5015/")
+        #expect(!journal.paths.contains("/_solstone/browser-link"))
     }
 
     @Test func aSocketAnsweringForAnotherGenerationNeverFallsBackToTCP() async throws {

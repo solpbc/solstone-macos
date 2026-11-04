@@ -79,5 +79,6 @@ struct OwnJournalAccessTests {
     @Test func refusalsWordedForTheOwner() {
         #expect(AppState.sameMacOpenRefusal(for: JournalLocalHTTPError.notOwnJournal) == UICopy.LOCAL_JOURNAL_NOT_YOURS)
         #expect(AppState.sameMacOpenRefusal(for: URLError(.cannotConnectToHost)) == UICopy.SAME_MACHINE_LINK_UNREACHABLE)
+        #expect(AppState.sameMacOpenRefusal(for: JournalLocalHTTPError.linkFailed("status 400")) == UICopy.JOURNAL_LINK_FAILED)
     }
 }

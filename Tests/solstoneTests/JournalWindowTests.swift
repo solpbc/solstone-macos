@@ -69,14 +69,14 @@ struct JournalWindowCompositionTests {
                 return true
             }
         )
-        state.sameMacBrowserBase = { _ in "http://127.0.0.1:15915/" }
+        state.sameMacBrowserLink = { _, _ in URL(string: "http://localhost:15915/?auth=one-time")! }
         let observer = observeOpenJournalWindow(probe)
         defer { NotificationCenter.default.removeObserver(observer) }
 
         #expect(state.journalOpenIntent == nil)
         state.requestOpenJournal(.root)
         await opened(probe, count: 1)
-        #expect(probe.opened.map(\.absoluteString) == ["http://127.0.0.1:15915/"])
+        #expect(probe.opened.map(\.absoluteString) == ["http://localhost:15915/?auth=one-time"])
         #expect(state.journalOpenIntent == nil)
         #expect(!probe.posted)
 
@@ -84,8 +84,8 @@ struct JournalWindowCompositionTests {
         state.requestOpenJournal(.root)
         await opened(probe, count: 2)
         #expect(probe.opened.map(\.absoluteString) == [
-            "http://127.0.0.1:15915/",
-            "http://127.0.0.1:15915/"
+            "http://localhost:15915/?auth=one-time",
+            "http://localhost:15915/?auth=one-time"
         ])
         #expect(state.journalOpenIntent == nil)
         #expect(!probe.posted)
@@ -95,6 +95,7 @@ struct JournalWindowCompositionTests {
         (JournalLocalHTTPError.notOwnJournal as any Error, UICopy.LOCAL_JOURNAL_NOT_YOURS),
         (JournalLocalHTTPError.refused as any Error, UICopy.LOCAL_JOURNAL_NOT_YOURS),
         (URLError(.cannotConnectToHost) as any Error, UICopy.SAME_MACHINE_LINK_UNREACHABLE),
+        (JournalLocalHTTPError.linkFailed("status 400") as any Error, UICopy.JOURNAL_LINK_FAILED),
     ])
     func aSameMacOpenThatFailsItsCheckOpensNothingAndSaysWhy(error: any Error, message: String) async {
         let probe = JournalURLOpenProbe()
@@ -107,7 +108,7 @@ struct JournalWindowCompositionTests {
         )
         let told = RefusalMessages()
         nonisolated(unsafe) let thrown = error
-        state.sameMacBrowserBase = { _ in throw thrown }
+        state.sameMacBrowserLink = { _, _ in throw thrown }
         state.sameMacJournalOpenRefused = { told.messages.append($0) }
 
         state.requestOpenJournal(.root)
@@ -131,9 +132,9 @@ struct JournalWindowCompositionTests {
             }
         )
         let anchors = AnchorLog()
-        state.sameMacBrowserBase = {
-            anchors.anchors.append($0)
-            return "http://127.0.0.1:15915/"
+        state.sameMacBrowserLink = {
+            anchors.anchors.append($1)
+            return URL(string: "http://localhost:15915/?auth=one-time")!
         }
 
         state.requestOpenJournal(.root)
@@ -170,7 +171,7 @@ struct JournalWindowCompositionTests {
         #expect(probe.posted)
     }
 
-    @Test func sameMacNonRootOpenJournalComposesOntoConveyBase() async {
+    @Test func sameMacNonRootOpenPutsTheDestinationInTheLinkRequestAndOpensTheLinkUnchanged() async {
         let probe = JournalURLOpenProbe()
         let state = AppState.forSnapshot(
             initialTunnelPairing: pairing(),
@@ -184,17 +185,21 @@ struct JournalWindowCompositionTests {
             query: "pane=owner",
             fragment: "event-99"
         )!
-        let expected = JournalWindowComposition.composeLoadCommand(
-            base: "http://127.0.0.1:15915/",
-            destination: destination,
-            generation: 0
-        )
-        state.sameMacBrowserBase = { _ in "http://127.0.0.1:15915/" }
+        let targets = TargetLog()
+        state.sameMacBrowserLink = { target, _ in
+            targets.targets.append(target)
+            return URL(string: "http://localhost:15915/?auth=one-time")!
+        }
 
         state.requestOpenJournal(destination)
         await opened(probe, count: 1)
-        #expect(probe.opened == [expected!.url])
+        #expect(targets.targets == ["/app/chat/2026-05-09?pane=owner#event-99"])
+        #expect(probe.opened.map(\.absoluteString) == ["http://localhost:15915/?auth=one-time"])
         #expect(state.journalOpenIntent == nil)
+    }
+
+    @Test func theLinkTargetIsTheRootForTheRootDestination() {
+        #expect(AppState.browserLinkTarget(for: .root) == "/")
     }
 
     @Test func sameMacOpenerFalseDoesNotFallThroughToWindow() async {
@@ -209,10 +214,10 @@ struct JournalWindowCompositionTests {
         let observer = observeOpenJournalWindow(probe)
         defer { NotificationCenter.default.removeObserver(observer) }
 
-        state.sameMacBrowserBase = { _ in "http://127.0.0.1:15915/" }
+        state.sameMacBrowserLink = { _, _ in URL(string: "http://localhost:15915/?auth=one-time")! }
         state.requestOpenJournal(.root)
         await opened(probe, count: 1)
-        #expect(probe.opened.map(\.absoluteString) == ["http://127.0.0.1:15915/"])
+        #expect(probe.opened.map(\.absoluteString) == ["http://localhost:15915/?auth=one-time"])
         #expect(state.journalOpenIntent == nil)
         #expect(!probe.posted)
     }
@@ -2103,4 +2108,9 @@ private final class RefusalMessages {
 @MainActor
 private final class AnchorLog {
     var anchors: [JournalLocalAnchor] = []
+}
+
+@MainActor
+private final class TargetLog {
+    var targets: [String] = []
 }

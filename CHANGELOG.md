@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - when something other than your journal answers, the app now tells you and shows both marks to compare.
+- when your journal is on this mac, open journal now opens it in your browser with a one-time link, so it still opens after you close local access in your journal's settings.
 
 ### Changed
 

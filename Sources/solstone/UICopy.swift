@@ -267,6 +267,7 @@ public enum UICopy {
     public static let SAME_MACHINE_LINK_ALREADY_LINKED = "already linked to your journal on this mac."
     public static let LOCAL_JOURNAL_NOT_YOURS = "the journal running on this mac isn't yours, so the solstone app won't connect to it, open it or show its mark. on a shared mac, it's usually someone else's journal."
     public static let SAME_MACHINE_LINK_UNREACHABLE = "couldn't reach your journal on this mac. make sure the journal app is open, then try again."
+    public static let JOURNAL_LINK_FAILED = "couldn't open your journal in your browser. try again."
     public static let SAME_MACHINE_LINK_REFUSED = "your journal on this mac didn't accept the request to link. try again, or paste a pairing link from your journal's network app below."
     public static let SAME_MACHINE_LINK_UNEXPECTED = "your journal on this mac sent back something the solstone app couldn't use. try again, or paste a pairing link from your journal's network app below."
     public static let SAME_MACHINE_LINK_UNFINISHED = "linking didn't finish. try again."

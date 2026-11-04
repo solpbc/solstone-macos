@@ -3037,11 +3037,17 @@ public final class AppState {
         } else {
             anchor = .ownJournal
         }
+        guard let target = Self.browserLinkTarget(for: destination) else {
+            Logger.setup.error("same-Mac journal destination could not be composed")
+            return
+        }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let base = try await self.sameMacBrowserBase(anchor)
-                self.openSameMacJournal(destination, base: base)
+                let link = try await self.sameMacBrowserLink(target, anchor)
+                if !self.journalURLOpener(link) {
+                    Logger.setup.error("open journal in browser failed")
+                }
             } catch {
                 Logger.setup.notice("open journal refused: \(String(describing: error), privacy: .public)")
                 self.sameMacJournalOpenRefused(Self.sameMacOpenRefusal(for: error))
@@ -3049,10 +3055,24 @@ public final class AppState {
         }
     }
 
-    /// Replaced in tests. The browser's address comes from the journal that passed the check.
+    /// The destination's path, query and fragment, as the link request carries them. The journal puts
+    /// them behind the one-time link, so nothing is added to the link it returns.
+    internal static func browserLinkTarget(for destination: JournalWindowDestination) -> String? {
+        guard let command = JournalWindowComposition.composeLoadCommand(
+            base: "http://localhost/",
+            destination: destination,
+            generation: 0
+        ), let parts = URLComponents(url: command.url, resolvingAgainstBaseURL: false) else { return nil }
+        var target = parts.percentEncodedPath.isEmpty ? "/" : parts.percentEncodedPath
+        if let query = parts.percentEncodedQuery { target += "?" + query }
+        if let fragment = parts.percentEncodedFragment { target += "#" + fragment }
+        return target
+    }
+
+    /// Replaced in tests. The journal is checked first; each call makes one live link.
     @ObservationIgnored
-    internal var sameMacBrowserBase: @MainActor @Sendable (JournalLocalAnchor) async throws -> String = { anchor in
-        try await OwnJournalAccess.client.browserURL(path: "/", anchor: anchor).absoluteString
+    internal var sameMacBrowserLink: @MainActor @Sendable (String, JournalLocalAnchor) async throws -> URL = { target, anchor in
+        try await OwnJournalAccess.client.browserLink(path: target, anchor: anchor)
     }
 
     @ObservationIgnored
@@ -3068,29 +3088,10 @@ public final class AppState {
         switch error {
         case JournalLocalHTTPError.notOwnJournal, JournalLocalHTTPError.refused:
             return UICopy.LOCAL_JOURNAL_NOT_YOURS
+        case JournalLocalHTTPError.linkFailed:
+            return UICopy.JOURNAL_LINK_FAILED
         default:
             return UICopy.SAME_MACHINE_LINK_UNREACHABLE
-        }
-    }
-
-    private func openSameMacJournal(_ destination: JournalWindowDestination, base conveyBase: String) {
-        let url: URL
-        if destination == .root {
-            guard let conveyURL = URL(string: conveyBase) else { return }
-            url = conveyURL
-        } else if let command = JournalWindowComposition.composeLoadCommand(
-            base: conveyBase,
-            destination: destination,
-            generation: 0
-        ) {
-            url = command.url
-        } else {
-            Logger.setup.error("same-Mac journal URL could not be composed")
-            return
-        }
-        guard journalURLOpener(url) else {
-            Logger.setup.error("open journal in browser failed: \(url.absoluteString, privacy: .public)")
-            return
         }
     }
 

@@ -11,6 +11,9 @@ public enum JournalLocalHTTPError: Error, Equatable, Sendable {
     /// Nothing usable is answering yet.
     case unavailable
     case invalidResponse, timedOut
+    /// The checked journal's owner socket didn't give a one-time link. The cause is for the log; it never
+    /// holds the link or its token. Never a reason to open a plain address.
+    case linkFailed(String)
 }
 
 /// The owner-only runtime record the journal writes beside its socket.

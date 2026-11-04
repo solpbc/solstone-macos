@@ -976,7 +976,7 @@ final class SetupModel {
         checkAdmission: () -> Bool,
         fetchTunnelIdentity: () async -> JournalIdentityResolution,
         fetchDirectIdentity: () async -> JournalIdentityResolution,
-        resolveBrowserURL: () async -> URL? = { URL(string: "http://127.0.0.1:\(JournalLocalEndpoint.defaultTCPPort)/") },
+        resolveBrowserURL: () async -> URL?,
         openURL: (URL) -> Bool,
         persistFinish: () -> Bool
     ) async -> Bool {
@@ -1032,6 +1032,7 @@ final class SetupModel {
         checkAdmission: () -> Bool,
         fetchTunnelIdentity: () async -> JournalIdentityResolution,
         fetchDirectIdentity: () async -> JournalIdentityResolution,
+        resolveBrowserURL: () async -> URL? = { URL(string: "http://127.0.0.1:\(JournalLocalEndpoint.defaultTCPPort)/") },
         openURL: (URL) -> Bool,
         persistFinish: () -> Bool
     ) async -> Bool {
@@ -1048,6 +1049,7 @@ final class SetupModel {
             checkAdmission: checkAdmission,
             fetchTunnelIdentity: fetchTunnelIdentity,
             fetchDirectIdentity: fetchDirectIdentity,
+            resolveBrowserURL: resolveBrowserURL,
             openURL: openURL,
             persistFinish: persistFinish
         )
@@ -1112,6 +1114,7 @@ final class SetupModel {
 
             let isOlderPeer = !self.isPeerSupportingSetup
             var directIsNotYours = false
+            var linkFailed = false
 
             let success = await self.executeSetupFinalOpenCore(
                 expectedInstanceID: expectedInstanceID,
@@ -1151,7 +1154,13 @@ final class SetupModel {
                     return resolution
                 },
                 resolveBrowserURL: {
-                    try? await OwnJournalAccess.client.browserURL(path: "/", anchor: .instance(expectedInstanceID))
+                    do {
+                        return try await OwnJournalAccess.client.browserLink(path: "/", anchor: .instance(expectedInstanceID))
+                    } catch {
+                        Logger.setup.notice("setup final open refused: \(String(describing: error), privacy: .public)")
+                        if case JournalLocalHTTPError.linkFailed = error { linkFailed = true }
+                        return nil
+                    }
                 },
                 openURL: { [weak appState] url in
                     guard let appState else { return false }
@@ -1164,7 +1173,8 @@ final class SetupModel {
             )
 
             if !success {
-                self.finalOpenError = directIsNotYours ? UICopy.LOCAL_JOURNAL_NOT_YOURS : UICopy.SETUP_COULDNT_FINISH
+                self.finalOpenError = directIsNotYours ? UICopy.LOCAL_JOURNAL_NOT_YOURS
+                    : linkFailed ? UICopy.JOURNAL_LINK_FAILED : UICopy.SETUP_COULDNT_FINISH
             } else {
                 self.finalOpenError = nil
             }
