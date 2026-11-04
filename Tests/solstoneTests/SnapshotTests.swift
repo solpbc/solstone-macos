@@ -7,6 +7,7 @@ import os
 import ServiceManagement
 import SwiftUI
 import SPLMark
+import SPLTunnel
 import Testing
 import UserNotifications
 import SolstoneCore
@@ -1289,6 +1290,84 @@ struct SnapshotTests {
                 to: filename
             )
         }
+    }
+
+    private func renderUnknownJournal(
+        _ notices: [UnknownJournalNotice],
+        expanded: Set<UnknownJournalSite>,
+        size: CGSize,
+        to filename: String,
+        appearance: NSAppearance
+    ) throws {
+        try render(
+            UnknownJournalNoticeList(
+                notices: notices,
+                yourJournal: .mark(.uiTestSample),
+                initiallyExpanded: expanded,
+                onPairAgain: {}
+            )
+            .padding(16)
+            .frame(width: 560, alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: .windowBackgroundColor)),
+            size: size,
+            to: filename,
+            appearance: appearance
+        )
+    }
+
+    @Test func menuUnknownJournal() throws {
+        let state = AppState.forSnapshot(initialTunnelPairing: pairing())
+        markPermissionsReady(state)
+        let notices = state.tunnelLifecycleOwner.unknownJournals
+        notices.record(
+            UnknownJournalSighting(dialled: .lanDirect(host: "192.168.4.63", port: 7657), claimedJournalID: nil),
+            pairing: pairing()
+        )
+        notices.record(
+            UnknownJournalSighting(dialled: URL(string: "https://relay.example")!.relayConnectedVia, claimedJournalID: nil),
+            pairing: pairing()
+        )
+        try render(
+            MenuContent(appState: state, updateController: makeSnapshotUpdateController()),
+            size: menuSize,
+            to: "menu-unknown-journal.png"
+        )
+    }
+
+    @Test func unknownJournalNotices() throws {
+        let address = UnknownJournalSite.address("192.168.4.63:7657")
+        let claimedMark = JournalMark(
+            icon1: JournalMark.uiTestSample.icon2,
+            icon2: JournalMark.uiTestSample.icon1,
+            words: ["bramble", "quokka"]
+        )
+        let claimed = UnknownJournalNotice(site: address, claimedJournalID: "jid", whatAnswered: .claimed(claimedMark))
+        let noJID = UnknownJournalNotice(site: address, claimedJournalID: nil, whatAnswered: .notPresented)
+        let relay = UnknownJournalNotice(site: .relay, claimedJournalID: nil, whatAnswered: .notPresented)
+        let light = try #require(NSAppearance(named: .aqua))
+        let dark = try #require(NSAppearance(named: .darkAqua))
+
+        try renderUnknownJournal(
+            [claimed, relay], expanded: [], size: CGSize(width: 560, height: 150),
+            to: "settings-unknown-journal-rows.png", appearance: light
+        )
+        try renderUnknownJournal(
+            [claimed], expanded: [address], size: CGSize(width: 560, height: 470),
+            to: "settings-unknown-journal-detail-claimed.png", appearance: light
+        )
+        try renderUnknownJournal(
+            [noJID], expanded: [address], size: CGSize(width: 560, height: 470),
+            to: "settings-unknown-journal-detail-no-jid.png", appearance: light
+        )
+        try renderUnknownJournal(
+            [noJID], expanded: [address], size: CGSize(width: 560, height: 470),
+            to: "settings-unknown-journal-detail-no-jid-dark.png", appearance: dark
+        )
+        try renderUnknownJournal(
+            [relay], expanded: [.relay], size: CGSize(width: 560, height: 430),
+            to: "settings-unknown-journal-detail-relay.png", appearance: light
+        )
     }
 
     private func renderOnboarding(model: SetupModel, state: AppState, to baseFilename: String) throws {

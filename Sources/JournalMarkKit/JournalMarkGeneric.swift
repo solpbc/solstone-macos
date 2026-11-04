@@ -26,7 +26,12 @@ public enum JournalMarkUnavailable {
 }
 
 public struct JournalMarkUnavailableView: View {
-    public init() {}
+    private let accessibleName: String
+
+    /// `accessibleName` is for a slot that isn't the owner's own journal.
+    public init(accessibleName: String = JournalMarkUnavailable.accessibleName) {
+        self.accessibleName = accessibleName
+    }
 
     public var body: some View {
         VStack(spacing: MarkGeometry.verticalGap) {
@@ -48,7 +53,7 @@ public struct JournalMarkUnavailableView: View {
                 .stroke(MarkGeometry.cardBorder, lineWidth: 1)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityValue(JournalMarkUnavailable.accessibleName)
+        .accessibilityValue(accessibleName)
         .accessibilityAddTraits(.isStaticText)
     }
 
@@ -65,6 +70,43 @@ public struct JournalMarkUnavailableView: View {
                     .foregroundStyle(MarkGeometry.faintInk)
             }
             .frame(width: MarkGeometry.size, height: MarkGeometry.size)
+    }
+}
+
+public enum JournalMarkNotPresented {
+    public static let words = ["not", "presented"]
+    public static let accessibleName = "no identity presented"
+    /// Neutral ink. Brand colour here would claim an affiliation with whatever answered.
+    static let chipHex = "#6E6453"
+}
+
+/// The slot for a peer that presented no identity. Same geometry as every other mark state, so the
+/// layout never jumps.
+public struct JournalMarkNotPresentedView: View {
+    public init() {}
+
+    public var body: some View {
+        VStack(spacing: MarkGeometry.verticalGap) {
+            HStack(spacing: MarkGeometry.iconGap) {
+                JournalMarkGenericChip(hex: JournalMarkNotPresented.chipHex, rotated: false)
+                JournalMarkGenericChip(hex: JournalMarkNotPresented.chipHex, rotated: true)
+            }
+
+            Text(MarkGeometry.markWords(JournalMarkNotPresented.words))
+                .font(JournalMarkFont.isRegistered ? .custom("Comfortaa-Bold", size: MarkGeometry.wordFontSize, relativeTo: .headline) : .system(size: MarkGeometry.wordFontSize, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .padding(.horizontal, MarkGeometry.cardHorizontalPadding)
+        .padding(.vertical, MarkGeometry.cardVerticalPadding)
+        .background(MarkGeometry.cardFill, in: RoundedRectangle(cornerRadius: MarkGeometry.cardRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: MarkGeometry.cardRadius, style: .continuous)
+                .stroke(MarkGeometry.cardBorder, lineWidth: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityValue(JournalMarkNotPresented.accessibleName)
+        .accessibilityAddTraits(.isStaticText)
     }
 }
 

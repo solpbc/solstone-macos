@@ -3,6 +3,7 @@
 
 import Foundation
 import AppKit
+import JournalMarkKit
 import Observation
 import SolstoneCore
 import SPLTunnel
@@ -258,6 +259,11 @@ final class TunnelLifecycleOwner {
         }
     }
 
+    /// Published to the Settings service view. Never read into the connection's own state.
+    let unknownJournals: UnknownJournalNotices
+
+    @ObservationIgnored
+    private var sightingObservations: [ObjectIdentifier: (token: UUID, task: Task<Void, Never>)] = [:]
     @ObservationIgnored
     let credentialStore: PairingCredentialStore
     @ObservationIgnored
@@ -354,10 +360,12 @@ final class TunnelLifecycleOwner {
         optionalJobDeadline: Duration = .seconds(15),
         retirementControlBudget: Duration = .seconds(20),
         unlockNotificationCenter: NotificationCenter = DistributedNotificationCenter.default(),
-        unlockNotificationName: Notification.Name = Notification.Name("com.apple.screenIsUnlocked")
+        unlockNotificationName: Notification.Name = Notification.Name("com.apple.screenIsUnlocked"),
+        unknownJournals: UnknownJournalNotices? = nil
     ) {
         let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
         self.credentialStore = store
+        self.unknownJournals = unknownJournals ?? UnknownJournalNotices()
         self.recorder = recorder
         self.loadPairing = loadPairing ?? { try store.load() }
         self.tokenRefresher = tokenRefresher ?? .live(clientInfo: clientInfo)
@@ -457,6 +465,7 @@ final class TunnelLifecycleOwner {
 
     func stop() async {
         running = false
+        unknownJournals.clearAll()
         transportAttemptID &+= 1
         let stoppingAttempt = transportAttemptID
         removeWakeUnlockObservers()
@@ -496,6 +505,11 @@ final class TunnelLifecycleOwner {
         liveRelayEligible = true
         pendingDurableClear = nil
         refreshTunnelManagedFromStoredPairing()
+        switch loadPairingCached() {
+        case .loaded(let pairing): unknownJournals.pairingChanged(to: pairing)
+        case .absent: unknownJournals.pairingChanged(to: nil)
+        case .failed: break
+        }
         guard running else {
             return
         }
@@ -951,6 +965,7 @@ final class TunnelLifecycleOwner {
         let attempt = transportAttemptID
         let (pGen, aGen) = credentialStore.currentGenerations()
         let candidate = makeTransport()
+        observeUnknownJournalSightings(of: candidate)
         let wait = CandidateConnectionWait()
         let connection: TunnelTransportConnection
         // A speculative replacement does not own the installed transport's
@@ -1211,6 +1226,7 @@ final class TunnelLifecycleOwner {
         let (pGen, aGen) = credentialStore.currentGenerations()
         let candidate = retainedCandidate ?? makeTransport()
         retainedCandidate = candidate
+        observeUnknownJournalSightings(of: candidate)
         attemptObservationTask?.cancel()
         attemptObservationTask = Task { @MainActor [weak self] in
             for await attemptState in candidate.attemptStateUpdates {
@@ -1502,6 +1518,7 @@ final class TunnelLifecycleOwner {
                 }()
                 state = .connected(localPort: port, via: Self.route(for: via))
                 connectedThrough = JournalConnectedThrough(via)
+                unknownJournals.clear(at: via)
                 if case .lanDirect(let host, let port) = via {
                     connectedDirectEndpoint = LocalEndpoint(host: host, port: port, scope: "lan")
                 } else {
@@ -1540,6 +1557,26 @@ final class TunnelLifecycleOwner {
                 health = .unknown
             }
         }
+    }
+
+    /// A candidate is watched from before its first dial, because the sightings that matter most
+    /// come from a journal that never connects and so is never installed. A retained candidate that
+    /// reconnects has finished its earlier stream, so each call subscribes afresh.
+    private func observeUnknownJournalSightings(of candidate: any TunnelTransporting) {
+        let key = ObjectIdentifier(candidate)
+        let token = UUID()
+        let sightings = candidate.unknownJournalSightings
+        let previous = sightingObservations[key]?.task
+        let task = Task { @MainActor [weak self] in
+            for await sighting in sightings {
+                guard let self, self.running, !Task.isCancelled else { return }
+                self.unknownJournals.record(sighting, pairing: self.currentStoredPairing())
+            }
+            guard let self, self.sightingObservations[key]?.token == token else { return }
+            self.sightingObservations.removeValue(forKey: key)
+        }
+        sightingObservations[key] = (token, task)
+        previous?.cancel()
     }
 
     /// `.tlsHandshaking` is forwarded at each candidate's dial start, so it is
@@ -2000,6 +2037,7 @@ final class TunnelLifecycleOwner {
                 setCachedPairingOutcome(.loaded(remaining))
             } else {
                 setCachedPairingOutcome(.absent)
+                unknownJournals.pairingChanged(to: nil)
             }
         } catch {
             setCachedPairingOutcome(.failed)

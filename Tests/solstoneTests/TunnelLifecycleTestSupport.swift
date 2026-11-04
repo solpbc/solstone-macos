@@ -215,6 +215,13 @@ final class FakeTransportFactory: @unchecked Sendable {
 }
 
 actor FakeTunnelReconnectingSession: TunnelReconnecting {
+    nonisolated let unknownJournalSightings: AsyncStream<UnknownJournalSighting>
+    private nonisolated let sightingContinuation: AsyncStream<UnknownJournalSighting>.Continuation
+
+    nonisolated func emitSighting(_ sighting: UnknownJournalSighting) {
+        sightingContinuation.yield(sighting)
+    }
+
     private final class StateBox: @unchecked Sendable {
         var stateContinuations: [UUID: AsyncStream<TunnelState>.Continuation] = [:]
         var modeContinuations: [UUID: AsyncStream<ConnectionMode?>.Continuation] = [:]
@@ -281,6 +288,9 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
         shouldThrowOnConnect: Error? = nil,
         armConnectGate: Bool = false
     ) {
+        let sightings = AsyncStream<UnknownJournalSighting>.makeStream()
+        self.unknownJournalSightings = sightings.stream
+        self.sightingContinuation = sightings.continuation
         self.connectionModeValue = connectionMode
         self.connectedVia = connectedVia
         self.pairing = pairing
@@ -451,10 +461,27 @@ final class FakeTunnelTransport: TunnelTransporting {
     private var stateContinuations: [UUID: AsyncStream<TunnelState>.Continuation] = [:]
     private var modeContinuations: [UUID: AsyncStream<ConnectionMode?>.Continuation] = [:]
     private var attemptContinuations: [UUID: AsyncStream<TunnelSupervisorAttemptState>.Continuation] = [:]
+    private var sightingContinuations: [UUID: AsyncStream<UnknownJournalSighting>.Continuation] = [:]
     private var lastState: TunnelState = .disconnected
     private var lastAttemptState: TunnelSupervisorAttemptState = .idle
     private(set) var connectionMode: ConnectionMode?
     var inboundSnapshots: [UInt64] = []
+
+    var unknownJournalSightings: AsyncStream<UnknownJournalSighting> {
+        AsyncStream { continuation in
+            let id = UUID()
+            self.sightingContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.sightingContinuations.removeValue(forKey: id)
+                }
+            }
+        }
+    }
+
+    func emitSighting(_ sighting: UnknownJournalSighting) {
+        sightingContinuations.values.forEach { $0.yield(sighting) }
+    }
 
     var stateUpdates: AsyncStream<TunnelState> {
         AsyncStream { continuation in
@@ -638,6 +665,8 @@ final class FakeTunnelTransport: TunnelTransporting {
         modeContinuations.removeAll()
         attemptContinuations.values.forEach { $0.finish() }
         attemptContinuations.removeAll()
+        sightingContinuations.values.forEach { $0.finish() }
+        sightingContinuations.removeAll()
     }
 
     func requestReconnect() async {

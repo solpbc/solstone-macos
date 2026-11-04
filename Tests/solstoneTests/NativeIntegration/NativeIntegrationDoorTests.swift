@@ -225,7 +225,7 @@ struct NativeIntegrationDoorTests {
     }
 }
 
-private enum DoorTestError: Error, CustomStringConvertible {
+enum DoorTestError: Error, CustomStringConvertible {
     case pairStart(String)
     case pairLink(String)
     case socket(String)
@@ -245,7 +245,7 @@ private enum DoorTestError: Error, CustomStringConvertible {
 /// runtime named by SOLSTONE_NATIVE_RUNTIME_DIR under the Journal app's supervisor in an
 /// isolated home, and owns stopping it and removing that home. The tier fails, rather than
 /// skips, when it is enabled without a fixture.
-private final class NativeJournalFixture: @unchecked Sendable {
+final class NativeJournalFixture: @unchecked Sendable {
     static let enableEnvironmentKey = "SOLSTONE_NATIVE_INTEGRATION"
     static let fixtureEnvironmentKey = "SOLSTONE_JOURNAL_INTEGRATION_FIXTURE"
 

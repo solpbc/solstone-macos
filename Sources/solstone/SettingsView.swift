@@ -1752,6 +1752,8 @@ struct SettingsView: View {
                     }
                 }
 
+                unknownJournalNotices
+
                 carriedPairingMigrationPane
 
                 if Self.journalMarkHeldLineVisible(
@@ -2326,6 +2328,10 @@ struct SettingsView: View {
                 }
 
                 if !appState.showsConfiguredJournal {
+                    unknownJournalNotices
+                }
+
+                if !appState.showsConfiguredJournal {
                     pairingDisconnectControls
                 }
 
@@ -2651,6 +2657,15 @@ struct SettingsView: View {
                     .textSelection(.enabled)
             }
         }
+    }
+
+    private var unknownJournalNotices: some View {
+        UnknownJournalNoticeList(
+            notices: appState.tunnelLifecycleOwner.unknownJournals.notices,
+            yourJournal: appState.tunnelLifecycleOwner.unknownJournals.yourJournal,
+            pairAgainDisabled: localLinkInProgress || pairingIsBusy,
+            onPairAgain: openPastedLinkFlow
+        )
     }
 
     private var pairingMismatchPane: some View {
@@ -3102,10 +3117,18 @@ struct SettingsView: View {
             appState.config.serviceMode == .bundled {
             confirmLocalJournalLink()
         } else {
-            appState.recordDiagnosticEvidence(.pairingRelinkNeedsPairingLink)
-            relinkNeedsPairingLink = true
-            showPairingFlow = true
+            openPastedLinkFlow()
         }
+    }
+
+    /// Asks for a pasted link and changes nothing else, so the pairing in use and its mark stand
+    /// until a link actually lands.
+    private func openPastedLinkFlow() {
+        appState.recordDiagnosticEvidence(.pairingRelinkNeedsPairingLink)
+        localLinkError = nil
+        localLinkNotice = nil
+        relinkNeedsPairingLink = true
+        showPairingFlow = true
     }
 
     private func confirmLocalJournalLink() {

@@ -16,6 +16,11 @@ enum AXID {
         static let localOnlyButton = "menubar.status.localOnly"
         static let offlineButton = "menubar.status.offline"
         static let journalMarkHeldButton = "menubar.status.journalMarkHeld"
+
+        static func unknownJournal(_ site: String) -> String {
+            "menubar.status.unknownJournal.\(site)"
+        }
+
         static let pauseMenu = "menubar.pause.menu"
         static let pauseFifteenMinutes = "menubar.pause.fifteenMinutes"
         static let pauseThirtyMinutes = "menubar.pause.thirtyMinutes"
@@ -178,6 +183,32 @@ enum AXID {
             static let pairingSwitchConfirm = "settings.service.pairing.switchConfirm"
             static let pairingSwitchCancel = "settings.service.pairing.switchCancel"
             static let pairingSwitchNotChanged = "settings.service.pairing.switchNotChanged"
+            static let unknownJournalList = "settings.service.unknownJournal.list"
+
+            static func unknownJournalRow(_ site: String) -> String {
+                "settings.service.unknownJournal.row.\(site)"
+            }
+
+            static func unknownJournalExpand(_ site: String) -> String {
+                "settings.service.unknownJournal.expand.\(site)"
+            }
+
+            static func unknownJournalDetail(_ site: String) -> String {
+                "settings.service.unknownJournal.detail.\(site)"
+            }
+
+            static func unknownJournalWhatAnswered(_ site: String) -> String {
+                "settings.service.unknownJournal.whatAnswered.\(site)"
+            }
+
+            static func unknownJournalYourJournal(_ site: String) -> String {
+                "settings.service.unknownJournal.yourJournal.\(site)"
+            }
+
+            static func unknownJournalPairAgain(_ site: String) -> String {
+                "settings.service.unknownJournal.pairAgain.\(site)"
+            }
+
             static let pairingFlowState = "settings.service.pairing.flow.state"
             static let pairingFailureState = "settings.service.pairing.failure.state"
             static let pairingPaidPlanLink = "settings.service.pairing.paidPlanLink"

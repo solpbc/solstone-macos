@@ -289,6 +289,20 @@ public enum UICopy {
     public static let JOURNAL_MARK_MISMATCH_BODY = "nothing this mac has kept went to that journal through this link. you may have pasted the wrong link, or something isn't right. try again, or reach us and we'll help."
     public static let JOURNAL_MARK_MISMATCH_FRESH_LINK = "get a fresh link"
     public static let JOURNAL_MARK_SWITCH_NOT_CHANGED_TITLE = "not changed"
+    public static let UNKNOWN_JOURNAL_ROW_RELAY = "unknown journal seen through the relay"
+    public static let UNKNOWN_JOURNAL_VIEW_DETAILS = "view details"
+    public static let UNKNOWN_JOURNAL_HEADING = "something answered instead of your journal"
+    public static let UNKNOWN_JOURNAL_BODY_RELAY = "something answered this mac through the relay, and it isn't the journal this mac is paired with. this is less certain than a direct connection."
+    public static let UNKNOWN_JOURNAL_LABEL_WHAT_ANSWERED = "what answered"
+    public static let UNKNOWN_JOURNAL_LABEL_YOUR_JOURNAL = "your journal"
+    public static let UNKNOWN_JOURNAL_CAPTION_CLAIMED = "claimed, not verified"
+    public static let UNKNOWN_JOURNAL_CAPTION_NOT_PRESENTED = "no identity presented"
+    public static func unknownJournalRow(address: String) -> String {
+        "unknown journal seen at \(address)"
+    }
+    public static func unknownJournalBody(address: String) -> String {
+        "something answered this mac at \(address), and it isn't the journal this mac is paired with. this could be another device now using that address, or your journal, if its identity was reset. if the mark under \"what answered\" matches the one your journal shows now, pair this mac again."
+    }
     public static let JOURNAL_MARK_SWITCH_NOT_CHANGED_BODY = "your current pairing stays in use. nothing this mac has kept went to that journal through this link."
     public static let JOURNAL_MARK_MISMATCH_SUPPORT = "email support@solstone.app"
     public static let SETTINGS_PREREQ_PERMISSIONS = "you'll also need to grant permissions →"

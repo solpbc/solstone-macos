@@ -292,6 +292,7 @@
       "settings.service.pairing.switchNotChanged",
       "settings.service.pairing.unpair",
       "settings.service.prereq.permissions",
+      "settings.service.unknownJournal.list",
       "settings.setup.connection.loginItem",
       "settings.setup.connection.openJournal",
       "settings.setup.connection.retry",

@@ -29,6 +29,9 @@ protocol TunnelTransporting: AnyObject, Sendable {
     var stateUpdates: AsyncStream<TunnelState> { get }
     var connectionModeUpdates: AsyncStream<ConnectionMode?> { get }
     var attemptStateUpdates: AsyncStream<TunnelSupervisorAttemptState> { get }
+    /// Peers that answered where the paired journal was expected, for as long as this transport
+    /// is connecting or connected. Delivered even when another path then connects.
+    var unknownJournalSightings: AsyncStream<UnknownJournalSighting> { get }
     var connectionMode: ConnectionMode? { get }
 
     func connect(
@@ -44,6 +47,10 @@ protocol TunnelTransporting: AnyObject, Sendable {
 }
 
 extension TunnelTransporting {
+    var unknownJournalSightings: AsyncStream<UnknownJournalSighting> {
+        AsyncStream { $0.finish() }
+    }
+
     func connect(
         pairing: StoredPairing,
         candidates: [TransportEndpoint]
@@ -53,6 +60,7 @@ extension TunnelTransporting {
 }
 
 protocol TunnelReconnecting: TunnelSessioning, MuxStreamOpening {
+    var unknownJournalSightings: AsyncStream<UnknownJournalSighting> { get }
     func requestReconnect() async
     func requestUpgrade() async
     func attemptStateUpdates() async -> AsyncStream<TunnelSupervisorAttemptState>
@@ -65,6 +73,7 @@ final class SPLTunnelTransport: TunnelTransporting {
     private var stateContinuations: [UUID: AsyncStream<TunnelState>.Continuation] = [:]
     private var connectionModeContinuations: [UUID: AsyncStream<ConnectionMode?>.Continuation] = [:]
     private var attemptContinuations: [UUID: AsyncStream<TunnelSupervisorAttemptState>.Continuation] = [:]
+    private var sightingContinuations: [UUID: AsyncStream<UnknownJournalSighting>.Continuation] = [:]
     private var lastState: TunnelState = .disconnected
     private var lastAttemptState: TunnelSupervisorAttemptState = .idle
     private(set) var connectionMode: ConnectionMode?
@@ -108,6 +117,19 @@ final class SPLTunnelTransport: TunnelTransporting {
         }
     }
 
+    /// Subscribe before connecting: a sighting is delivered once, to whoever is listening.
+    var unknownJournalSightings: AsyncStream<UnknownJournalSighting> {
+        AsyncStream { continuation in
+            let id = UUID()
+            self.sightingContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.sightingContinuations.removeValue(forKey: id)
+                }
+            }
+        }
+    }
+
     /// How long a silent carrier may stay quiet before it counts as gone: a ping
     /// every 2 s, and loss once five go unanswered (about 10 s). Wi-Fi, VPN and
     /// relay paths routinely stall for a second or two; a tighter limit tore down
@@ -135,6 +157,7 @@ final class SPLTunnelTransport: TunnelTransporting {
     private var stateForwardTask: Task<Void, Never>?
     private var connectionModeForwardTask: Task<Void, Never>?
     private var attemptStateForwardTask: Task<Void, Never>?
+    private var sightingForwardTask: Task<Void, Never>?
 
     init(
         clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
@@ -208,6 +231,8 @@ final class SPLTunnelTransport: TunnelTransporting {
         connectionModeForwardTask = nil
         attemptStateForwardTask?.cancel()
         attemptStateForwardTask = nil
+        sightingForwardTask?.cancel()
+        sightingForwardTask = nil
 
         connectionMode = nil
         lastState = .disconnected
@@ -218,6 +243,8 @@ final class SPLTunnelTransport: TunnelTransporting {
         connectionModeContinuations.removeAll()
         attemptContinuations.values.forEach { $0.finish() }
         attemptContinuations.removeAll()
+        sightingContinuations.values.forEach { $0.finish() }
+        sightingContinuations.removeAll()
 
         // Retire reconnect eligibility before waiting for local proxy drainage.
         await oldSession?.disconnect()
@@ -249,7 +276,20 @@ final class SPLTunnelTransport: TunnelTransporting {
         observe(session)
         observeConnectionMode(session)
         observeAttemptState(session)
+        observeSightings(session)
         return session
+    }
+
+    private func observeSightings(_ session: any TunnelReconnecting) {
+        sightingForwardTask?.cancel()
+        let capturedGeneration = generation
+        let sightings = session.unknownJournalSightings
+        sightingForwardTask = Task { @MainActor [weak self] in
+            for await sighting in sightings {
+                guard let self, self.generation == capturedGeneration, !Task.isCancelled else { return }
+                self.sightingContinuations.values.forEach { $0.yield(sighting) }
+            }
+        }
     }
 
     private func observe(_ session: any TunnelSessioning) {

@@ -46,6 +46,14 @@ struct MenuContent: View {
             }
             .accessibilityIdentifier(AXID.Menubar.shortcutUnavailable)
         }
+        // A sibling of the status row, one line per place. It never feeds the icon or the row's
+        // state, because an unknown journal doesn't change whether the journal is reachable.
+        ForEach(appState.tunnelLifecycleOwner.unknownJournals.notices) { notice in
+            Button(UnknownJournalNoticeCopy(site: notice.site).row) {
+                openSettings(tab: "journal")
+            }
+            .accessibilityIdentifier(AXID.Menubar.unknownJournal(notice.site.axKey))
+        }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         Button(menubarBrowserRowTitle(snapshot: appState.browserHostSnapshot.value, now: Date())) {
             openSettings(tab: "sources")
