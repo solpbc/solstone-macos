@@ -80,13 +80,12 @@ struct JournalAddressVisibilityTests {
         // The plan lists A twice (pinned and unpinned) and the relay. A plan is not a dial.
         child.emitState(.connecting(candidates: [addressA, addressA, relayVia]))
         child.emitAttemptState(retrying)
-        try await waitUntil { owner.connectionVerdict.axToken == PairingConnectionAXState.unreachable.axToken }
+        try await waitUntil { owner.supervisorAttemptState == retrying }
         try await Task.sleep(for: .milliseconds(50))
-        #expect(owner.connectionVerdict.caption == nil)
         #expect(owner.triedAddresses.isEmpty)
 
         child.emitAttemptState(.attempting)
-        try await waitUntil { owner.connectionVerdict.axToken == PairingConnectionAXState.connecting.axToken }
+        try await waitUntil { owner.supervisorAttemptState == .attempting }
         child.emitState(.connecting(candidates: [addressA, addressA, relayVia]))
         child.emitState(.tlsHandshaking(via: addressA))
         child.emitState(.tlsHandshaking(via: addressA))
@@ -94,10 +93,18 @@ struct JournalAddressVisibilityTests {
         child.emitState(.awaitingBroker(via: relayVia))
         child.emitAttemptState(retrying)
 
-        try await waitUntil { owner.connectionVerdict.caption == "tried 192.168.1.20:7657" }
-        #expect(owner.triedAddresses == ["192.168.1.20:7657"])
-        #expect(owner.connectionVerdict.message == "can't reach your journal right now")
-        #expect(owner.connectionVerdict.failureCause == .unreachable(nil))
+        try await waitUntil { owner.triedAddresses == ["192.168.1.20:7657"] }
+        // Once it reads offline, the caption names what was dialed.
+        let offline = TunnelLifecycleOwner.reduceConnectionVerdict(
+            state: owner.state,
+            presented: .offline,
+            hasPersistedPairing: owner.hasPersistedPairing,
+            isTunnelManaged: owner.isTunnelManaged,
+            triedAddresses: owner.triedAddresses
+        )
+        #expect(offline.caption == "tried 192.168.1.20:7657")
+        #expect(offline.message == "can't reach your journal right now")
+        #expect(offline.failureCause == .unreachable(nil))
         await owner.stop()
     }
 
@@ -116,7 +123,7 @@ struct JournalAddressVisibilityTests {
         transport.emit(.tlsHandshaking(via: relayVia))
         transport.emitAttemptState(retrying)
 
-        try await waitUntil { owner.connectionVerdict.caption == "tried 192.168.1.20:7657 and [fd00::1]:7657" }
+        try await waitUntil { owner.triedAddresses == ["192.168.1.20:7657", "[fd00::1]:7657"] }
         #expect(owner.connectedThrough == nil)
 
         transport.emit(.connected(via: relayVia))
@@ -152,7 +159,7 @@ struct JournalAddressVisibilityTests {
             transport.emit(.connecting(candidates: [addressA]))
             transport.emit(.tlsHandshaking(via: addressA))
             transport.emitAttemptState(retrying)
-            try await waitUntil { owner.connectionVerdict.caption == "tried 192.168.1.20:7657" }
+            try await waitUntil { owner.triedAddresses == ["192.168.1.20:7657"] }
 
             await owner.reevaluatePairing()
             #expect(owner.triedAddresses.isEmpty)
@@ -165,12 +172,9 @@ struct JournalAddressVisibilityTests {
         let stale = ["192.168.1.20:7657"]
         let unmanaged = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .connecting,
+            presented: .offline,
             hasPersistedPairing: true,
             isTunnelManaged: false,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false,
             triedAddresses: stale
         )
         #expect(unmanaged.caption == "waiting for a direct network route or relay connection")
@@ -178,12 +182,9 @@ struct JournalAddressVisibilityTests {
 
         let managed = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .connecting,
+            presented: .offline,
             hasPersistedPairing: true,
             isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false,
             triedAddresses: stale
         )
         #expect(managed.caption == "tried 192.168.1.20:7657")

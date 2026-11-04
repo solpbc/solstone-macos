@@ -15,7 +15,8 @@ internal func classifyObservationRowState(
     isPairedIngestReady: Bool,
     uploadStatus: UploadCoordinator.Status,
     hasJournalOnRecord: Bool = true,
-    journalConnectionAXToken: String? = nil,
+    presentedConnection: PresentedJournalConnection = .connected,
+    lastHealthReason: ObserverHealthFailureReason? = nil,
     journalFailureCause: JournalConnectionFailureCause? = nil,
     browserIntakePermitted: Bool = false,
     browserIntakePaused: Bool = false,
@@ -60,38 +61,55 @@ internal func classifyObservationRowState(
     }
     return classifyJournalConnection(
         isPairedIngestReady: isPairedIngestReady,
+        presentedConnection: presentedConnection,
         uploadStatus: uploadStatus,
-        journalConnectionAXToken: journalConnectionAXToken
+        lastHealthReason: lastHealthReason
     )
 }
 
-/// Shared by the menu and Settings: upload success is delivery evidence,
-/// never proof that the current tunnel is still ready.
+/// Shared by the menu bar icon, the menu's status row and the Settings card.
+/// Whether the journal is reachable comes only from the presented connection;
+/// the upload status adds what the journal itself said (a refusal, a day it
+/// could not read) and blocked local capture. Upload success is delivery
+/// evidence, never proof that the connection is still up, and one upload that
+/// could not get through is not a drop.
 internal func classifyJournalConnection(
     isPairedIngestReady: Bool,
+    presentedConnection: PresentedJournalConnection,
     uploadStatus: UploadCoordinator.Status,
-    journalConnectionAXToken: String?
+    lastHealthReason: ObserverHealthFailureReason? = nil
 ) -> MenubarStatusRowState {
     if !isPairedIngestReady {
-        if journalConnectionAXToken == PairingConnectionAXState.connecting.axToken {
-            return .connectionWaiting
-        }
-        return .offline
+        return presentedConnection == .connecting ? .connectionWaiting : .offline
     }
-    switch uploadStatus {
-    case .blocked:
+    if case .blocked = uploadStatus {
         return .error
-    case .synced, .syncing, .uploading:
-        return .observing
-    case .notSynced where isPairedIngestReady, .retrying where isPairedIngestReady:
-        // Connected and the first pass hasn't run yet, as right after the mark is
-        // answered, or an upload is being tried again over a working connection:
-        // nothing is offline. A pass that cannot reach the journal reports offline.
-        return .observing
-    case .awaitingTunnel:
+    }
+    switch presentedConnection {
+    case .connecting:
         return .connectionWaiting
-    case .notSynced, .retrying, .offline:
+    case .offline:
         return .offline
+    case .connected:
+        if case .offline = uploadStatus, !(lastHealthReason?.isReachabilityFailure ?? false) {
+            return .offline
+        }
+        return .observing
+    }
+}
+
+extension ObserverHealthFailureReason {
+    /// The upload never got an answer from the journal. Whether the journal can be
+    /// reached is the connection's to say; every other failure is the journal's
+    /// own answer or a local problem, and keeps its reading.
+    var isReachabilityFailure: Bool {
+        switch self {
+        case .urlErrorCode, .uploadFailed:
+            return true
+        case .httpStatus, .uploadInvalidURL, .uploadNoFiles, .uploadInvalidResponse, .configChanged,
+             .notConfigured, .journalRejectedDay, .pairingRevoked, .journalNotServing, .journalRefused:
+            return false
+        }
     }
 }
 
@@ -336,7 +354,8 @@ extension AppState {
             uploadStatus: uploadCoordinator.status,
             hasJournalOnRecord: tunnelLifecycleOwner.pairingIdentityRead != .absent
                 || config.isUploadConfigured,
-            journalConnectionAXToken: verdict.axToken,
+            presentedConnection: tunnelLifecycleOwner.presentedConnection,
+            lastHealthReason: uploadCoordinator.lastHealthReason,
             journalFailureCause: verdict.failureCause,
             browserIntakePermitted: browserRowPermitted,
             browserIntakePaused: browserRowPaused,

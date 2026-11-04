@@ -581,7 +581,7 @@ extension StatusHealthSummary {
         setupVerdict: SetupGroupVerdict? = nil,
         lastHealthReason: ObserverHealthFailureReason? = nil,
         isPairedIngestReady: Bool = true,
-        journalConnectionAXToken: String? = nil,
+        presentedConnection: PresentedJournalConnection = .connected,
         startDeferredForProtectedVideo: Bool = false,
         screenFailure: ScreenFailureKind? = nil,
         snapshot: BrowserHostSnapshotValue
@@ -604,7 +604,7 @@ extension StatusHealthSummary {
             setupVerdict: setupVerdict,
             lastHealthReason: lastHealthReason,
             isPairedIngestReady: isPairedIngestReady,
-            journalConnectionAXToken: journalConnectionAXToken,
+            presentedConnection: presentedConnection,
             startDeferredForProtectedVideo: startDeferredForProtectedVideo,
             screenFailure: screenFailure
         )

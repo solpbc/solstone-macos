@@ -1947,26 +1947,21 @@ private final class JournalWindowLiveBase {
 @MainActor
 private func journalWindowReducerVerdict(
     state: TunnelLifecycleState,
+    presented: PresentedJournalConnection = .offline,
     hasPersistedPairing: Bool = true,
-    isTunnelManaged: Bool = true,
-    isProxyStarting: Bool = false,
-    establishedLoopbackPort: Int? = nil,
-    hasTransport: Bool = false
+    isTunnelManaged: Bool = true
 ) -> JournalConnectionVerdict {
     TunnelLifecycleOwner.reduceConnectionVerdict(
         state: state,
+        presented: presented,
         hasPersistedPairing: hasPersistedPairing,
-        isTunnelManaged: isTunnelManaged,
-        supervisorAttemptState: .idle,
-        isProxyStarting: isProxyStarting,
-        establishedLoopbackPort: establishedLoopbackPort,
-        hasTransport: hasTransport
+        isTunnelManaged: isTunnelManaged
     )
 }
 
 @MainActor
 private func journalWindowConnectingVerdict() -> JournalConnectionVerdict {
-    journalWindowReducerVerdict(state: .connecting, isProxyStarting: true)
+    journalWindowReducerVerdict(state: .connecting, presented: .connecting)
 }
 
 @MainActor
@@ -1976,11 +1971,7 @@ private func journalWindowDisconnectedVerdict() -> JournalConnectionVerdict {
 
 @MainActor
 private func journalWindowConnectedVerdict() -> JournalConnectionVerdict {
-    journalWindowReducerVerdict(
-        state: .connected(localPort: 41000, via: .relay),
-        establishedLoopbackPort: 41000,
-        hasTransport: true
-    )
+    journalWindowReducerVerdict(state: .connected(localPort: 41000, via: .relay), presented: .connected)
 }
 
 @MainActor

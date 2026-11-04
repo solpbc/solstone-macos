@@ -194,7 +194,7 @@ struct MenuContentTests {
             ("wedge", classified(isRecording: false)),
             ("paused", classified(isPaused: true)),
             ("journalMigrationNeeded", classified(serviceMode: .bundled, uploadStatus: .synced)),
-            ("connectionWaiting", classified(uploadStatus: .awaitingTunnel)),
+            ("connectionWaiting", classified(presentedConnection: .connecting)),
             ("syncPaused", classified(syncPaused: true)),
             ("localOnly", classified(hasJournalOnRecord: false)),
             ("offline", classified(isPairedIngestReady: false, uploadStatus: .notSynced)),
@@ -231,10 +231,9 @@ struct MenuContentTests {
         // Red-first: cached identity without on-record is still never-set-up (pre-fix tree).
         #expect(classified(hasJournalOnRecord: false, uploadStatus: .synced) == .localOnly)
 
-        let connecting = connectingVerdict()
         let connectingRow = classified(
             hasJournalOnRecord: true,
-            journalConnectionAXToken: connecting.axToken,
+            presentedConnection: .connecting,
             isPairedIngestReady: false,
             uploadStatus: .synced
         )
@@ -270,6 +269,12 @@ struct MenuContentTests {
         #expect(classified(isPairedIngestReady: true, uploadStatus: .notSynced) == .observing)
         #expect(classified(isPairedIngestReady: false, uploadStatus: .notSynced) == .offline)
         #expect(classified(isPairedIngestReady: true, uploadStatus: .offline("offline")) == .offline)
+        // An upload that got no answer is not a drop while the journal is heard;
+        // a journal that answered and refused keeps its reading.
+        #expect(classified(isPairedIngestReady: true, uploadStatus: .offline("offline"), lastHealthReason: .urlErrorCode(-1001)) == .observing)
+        #expect(classified(isPairedIngestReady: true, uploadStatus: .offline("offline"), lastHealthReason: .journalRefused(reasonCode: "x")) == .offline)
+        #expect(classified(presentedConnection: .connecting, isPairedIngestReady: true, uploadStatus: .synced) == .connectionWaiting)
+        #expect(classified(presentedConnection: .offline, isPairedIngestReady: true, uploadStatus: .synced) == .offline)
         #expect(classified(isPairedIngestReady: true, uploadStatus: .retrying(segment: "s1", attempts: 2)) == .observing)
         #expect(classified(isPairedIngestReady: false, uploadStatus: .retrying(segment: "s1", attempts: 2)) == .offline)
     }
@@ -500,7 +505,7 @@ struct MenuContentTests {
         }
 
         #expect(classified(
-            journalConnectionAXToken: PairingConnectionAXState.connecting.axToken,
+            presentedConnection: .connecting,
             journalMarkHeld: true
         ) == .awaitingMarkConfirmation)
         #expect(classified(
@@ -673,10 +678,11 @@ private func classified(
     serviceMode: ServiceMode? = .external,
     syncPaused: Bool = false,
     hasJournalOnRecord: Bool = true,
-    journalConnectionAXToken: String? = nil,
+    presentedConnection: PresentedJournalConnection = .connected,
     journalFailureCause: JournalConnectionFailureCause? = nil,
     isPairedIngestReady: Bool = true,
     uploadStatus: UploadCoordinator.Status = .synced,
+    lastHealthReason: ObserverHealthFailureReason? = nil,
     journalMarkHeld: Bool = false,
     browserIntakePermitted: Bool = false,
     browserIntakePaused: Bool = false,
@@ -693,7 +699,8 @@ private func classified(
         isPairedIngestReady: isPairedIngestReady,
         uploadStatus: uploadStatus,
         hasJournalOnRecord: hasJournalOnRecord,
-        journalConnectionAXToken: journalConnectionAXToken,
+        presentedConnection: presentedConnection,
+        lastHealthReason: lastHealthReason,
         journalFailureCause: journalFailureCause,
         browserIntakePermitted: browserIntakePermitted,
         browserIntakePaused: browserIntakePaused,
@@ -723,26 +730,11 @@ private func row(forUploadStatus status: UploadCoordinator.Status) -> MenubarSta
     switch status {
     case .blocked:
         return .error
-    case .synced, .syncing, .uploading, .notSynced, .retrying:
+    case .synced, .syncing, .uploading, .notSynced, .retrying, .awaitingTunnel:
         return .observing
-    case .awaitingTunnel:
-        return .connectionWaiting
     case .offline:
         return .offline
     }
-}
-
-@MainActor
-private func connectingVerdict() -> JournalConnectionVerdict {
-    TunnelLifecycleOwner.reduceConnectionVerdict(
-        state: .connecting,
-        hasPersistedPairing: true,
-        isTunnelManaged: true,
-        supervisorAttemptState: .idle,
-        isProxyStarting: true,
-        establishedLoopbackPort: nil,
-        hasTransport: false
-    )
 }
 
 private func ownerProducedFailureCauses() -> [JournalConnectionFailureCause] {
@@ -800,62 +792,44 @@ private func journalVerdict(for cause: JournalConnectionFailureCause) -> Journal
     case .noRoute:
         return TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .disconnected,
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: false,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: false
         )
     case .revoked:
         return TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.revoked),
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
     case .notEntitled:
         return TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.notEntitled),
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
     case .keychainUnavailable:
         return TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.keychainUnavailable),
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
     case .loopbackUnavailable:
         return TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.loopbackUnavailable),
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
     case .unreachable:
         return TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .disconnected,
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
     case .mismatch:
         return journalConnectionVerdictPresentation(tunnel: .neutral, pairingMismatch: true)

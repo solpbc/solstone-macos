@@ -56,12 +56,6 @@ struct JournalConnectionVerdict: Sendable, Equatable {
     )
 }
 
-enum TunnelHealth: Sendable, Equatable {
-    case unknown
-    case healthy
-    case degraded
-}
-
 enum PairingRelayAccessStatus: Sendable, Equatable {
     case noPairing
     case available
@@ -107,9 +101,15 @@ func tunnelIdentityBase(state: TunnelLifecycleState) -> String? {
 @MainActor
 @Observable
 final class TunnelLifecycleOwner {
-    static let probeInterval: Duration = .seconds(30)
-    private static let probeTimeout: Duration = .seconds(3)
-    static let degradedProbeInterval: Duration = .seconds(5)
+    /// How often the carrier's inbound counter is read. Reading it sends nothing:
+    /// the keepalive answers every couple of seconds, and every inbound byte
+    /// counts as hearing the journal.
+    static let livenessSampleInterval: Duration = .seconds(1)
+    /// After this much silence the journal is asked directly, over the open tunnel.
+    nonisolated static let probeAfterSilence: TimeInterval = 3
+    /// One such check may take this long. Silence, then one slow check, fits inside
+    /// the presenter's lease: 3 s + 6 s + 1 s.
+    static let probeTimeout: Duration = .seconds(6)
     private static let loopbackRetryDelays: [Duration] = [.milliseconds(100), .milliseconds(300)]
     private static let establishmentRetryDelays: [Duration] = [.seconds(1), .seconds(5), .seconds(10), .seconds(30)]
 
@@ -119,11 +119,8 @@ final class TunnelLifecycleOwner {
             handleStateTransition(old: oldValue, new: state)
         }
     }
-    private(set) var health: TunnelHealth = .unknown {
-        didSet {
-            updateConnectionVerdict()
-        }
-    }
+    /// What every surface shows about the connection. Derived only by `presenter`.
+    private(set) var presentedConnection: PresentedJournalConnection = .connecting
     private(set) var hasPersistedPairing = false
     private(set) var carriedPairingAdmission: CarriedPairingAdmission = .ready
     private(set) var supervisorAttemptState: TunnelSupervisorAttemptState = .idle
@@ -340,6 +337,20 @@ final class TunnelLifecycleOwner {
     private var cachedPairingOutcome: PairingLoadOutcome?
     @ObservationIgnored
     private var probeGeneration: UInt64 = 0
+    @ObservationIgnored
+    private let livenessSleep: @Sendable (Duration) async throws -> Void
+    @ObservationIgnored
+    private var presenter: JournalConnectionPresenter
+    /// When the journal was last heard over the installed connection. Cleared
+    /// whenever that connection stops being the live route.
+    @ObservationIgnored
+    private var lastHeardAt: Date?
+    @ObservationIgnored
+    private var networkAvailable = true
+    @ObservationIgnored
+    private var presentationTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var livenessProbeGeneration: UInt64?
 
     init(
         keychainStore: any PairingStoring = SPLPairingKeychain.store(),
@@ -353,6 +364,7 @@ final class TunnelLifecycleOwner {
         pathMonitoringSource: (any PathMonitoringSource)? = nil,
         probe: @escaping @Sendable (Int, Duration) async -> Bool = TunnelLifecycleOwner.httpStatusProbe(localPort:timeout:),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+        livenessSleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         now: @escaping @Sendable () -> Date = { Date() },
         clientSelfSequencer: JournalClientSelfSequencer? = nil,
         relayAccessSequencer: JournalRelayAccessSequencer? = nil,
@@ -376,7 +388,9 @@ final class TunnelLifecycleOwner {
         self.probe = probe
         self.retirementControlBudget = retirementControlBudget
         self.sleep = sleep
+        self.livenessSleep = livenessSleep
         self.now = now
+        self.presenter = JournalConnectionPresenter(now: now())
         self.unlockNotificationCenter = unlockNotificationCenter
         self.unlockNotificationName = unlockNotificationName
 
@@ -453,9 +467,10 @@ final class TunnelLifecycleOwner {
             return
         }
         running = true
+        presenter = JournalConnectionPresenter(now: now())
+        lastHeardAt = nil
         refreshTunnelManagedFromStoredPairing()
         state = .disconnected
-        health = .unknown
         installWakeUnlockObservers()
         startPathMonitor()
         startTask = Task { @MainActor [weak self] in
@@ -474,13 +489,15 @@ final class TunnelLifecycleOwner {
         cancelReactiveTokenRefresh()
         pathMonitor.stop()
         currentPathSignature = nil
+        networkAvailable = true
+        presentationTask?.cancel()
+        presentationTask = nil
         await clientSelfSequencer.cancel()
         await relayAccessSequencer.cancel()
         guard !running, transportAttemptID == stoppingAttempt else { return }
         await disconnectCurrentTransport()
         guard !running, transportAttemptID == stoppingAttempt else { return }
         state = .disconnected
-        health = .unknown
     }
 
     func beginProxyStart(attempt: UInt64) {
@@ -613,7 +630,6 @@ final class TunnelLifecycleOwner {
         cancelReactiveTokenRefresh()
         stopProbe()
         state = .disconnected
-        health = .unknown
     }
 
     func completeOrdinaryTrafficFence() async {
@@ -665,13 +681,18 @@ final class TunnelLifecycleOwner {
         await retirePairingAndFailRevoked(expectedPairing: pGen, expectedAccess: aGen)
     }
 
+    /// A wake or unlock holds what is shown for a moment and checks the journal at
+    /// once. A failed check reconnects nothing: the keepalive owns carrier loss.
     func handleWakeOrUnlock() async {
-        guard running, case .connected(let localPort, _) = state else { return }
+        guard running else { return }
+        presenter.resume(at: now())
+        updateConnectionVerdict()
+        guard case .connected(let localPort, _) = state else { return }
         let generation = probeGeneration
         let incarnation = transportIncarnation
         let succeeded = await probe(localPort, Self.probeTimeout)
         guard probeResultIsCurrent(localPort: localPort, generation: generation, incarnation: incarnation) else { return }
-        health = succeeded ? .healthy : .degraded
+        if succeeded { noteJournalHeard(at: now()) }
         splOwnerLog.notice("wake probe ok=\(succeeded, privacy: .public) local_port=\(localPort, privacy: .public) reconnect=false")
     }
 
@@ -682,12 +703,12 @@ final class TunnelLifecycleOwner {
         if case .connected = new, credentialStore.admission(for: currentStoredPairing()) != .ready {
             if isSelfRetiring { return }
             state = .disconnected
-            health = .unknown
             return
         }
         if case .connected = new {} else {
             connectedThrough = nil
             connectedDirectEndpoint = nil
+            lastHeardAt = nil
         }
         updateConnectionVerdict()
         if case .connected(let port, _) = new {
@@ -919,7 +940,6 @@ final class TunnelLifecycleOwner {
         await disconnectCurrentTransport(deadline: deadline)
         guard operationIsCurrent(pairing: pGen, access: aGen, attempt: attempt) else { return }
         state = .disconnected
-        health = .unknown
         guard ContinuousClock.now < deadline else {
             pendingDurableClear = (pairingGen: pGen, accessGen: aGen)
             return
@@ -1020,8 +1040,7 @@ final class TunnelLifecycleOwner {
         pairing: StoredPairing,
         pairingGeneration: UInt64,
         attemptID: UInt64? = nil,
-        burstID: UInt64? = nil,
-        initialHealth: TunnelHealth = .healthy
+        burstID: UInt64? = nil
     ) {
         guard credentialStore.admission(for: pairing) == .ready else {
             Task { await candidate.disconnect() }
@@ -1048,9 +1067,10 @@ final class TunnelLifecycleOwner {
         if let oldTransport, oldTransport !== candidate { Task { await oldTransport.disconnect() } }
         publishingOptionalBurstID = burstID
         ordinaryRouteRevoked = false
+        // The handshake just finished: the journal has been heard on this connection.
+        lastHeardAt = now()
         state = .connected(localPort: connection.localPort, via: connection.via)
         publishingOptionalBurstID = nil
-        health = initialHealth
         startProbe()
     }
 
@@ -1154,7 +1174,6 @@ final class TunnelLifecycleOwner {
             case .retry:
                 coalescedReconnectInFlight = false
                 state = .connecting
-                health = .unknown
                 isBackingOff = true
                 updateConnectionVerdict()
                 let delay = Self.jitter(Self.establishmentBackoff(forAttempt: establishmentAttempt))
@@ -1217,7 +1236,6 @@ final class TunnelLifecycleOwner {
 
         if transport == nil {
             state = .connecting
-            health = .unknown
             stopProbe()
         }
 
@@ -1275,7 +1293,7 @@ final class TunnelLifecycleOwner {
                     await candidate.disconnect()
                     return .cancelled
                 }
-                install(candidate, connection: connection, pairing: pairing, pairingGeneration: pGen, attemptID: attemptID, initialHealth: .unknown)
+                install(candidate, connection: connection, pairing: pairing, pairingGeneration: pGen, attemptID: attemptID)
                 return .connected
             } catch {
                 inFlightConnectTask = nil
@@ -1311,7 +1329,6 @@ final class TunnelLifecycleOwner {
                 if error is LoopbackProxyError {
                     retainedCandidate = nil
                     state = .error(.loopbackUnavailable)
-                    health = .unknown
                     return .terminal
                 }
                 if let sessionError = error as? SessionError {
@@ -1445,7 +1462,6 @@ final class TunnelLifecycleOwner {
         await disconnectCurrentTransport()
         guard running else { return }
         state = .disconnected
-        health = .unknown
         updateConnectionVerdict()
     }
 
@@ -1501,12 +1517,10 @@ final class TunnelLifecycleOwner {
         case .disconnected:
             stopProbe()
             state = .disconnected
-            health = .unknown
 
         case .connecting, .tlsHandshaking, .awaitingBroker:
             stopProbe()
             state = .connecting
-            health = .unknown
 
         case .connected(let via):
             if let port = establishedLoopbackPort {
@@ -1516,6 +1530,8 @@ final class TunnelLifecycleOwner {
                     }
                     return false
                 }()
+                // The supervisor publishes connected once a handshake has finished.
+                lastHeardAt = now()
                 state = .connected(localPort: port, via: Self.route(for: via))
                 connectedThrough = JournalConnectedThrough(via)
                 unknownJournals.clear(at: via)
@@ -1554,7 +1570,6 @@ final class TunnelLifecycleOwner {
                 // all keep the pairing and keep connecting.
                 stopProbe()
                 state = .connecting
-                health = .unknown
             }
         }
     }
@@ -1622,7 +1637,6 @@ final class TunnelLifecycleOwner {
         }()
         if !hasLiveRoute {
             state = .connecting
-            health = .unknown
         }
         authRefreshGeneration += 1
         let generation = authRefreshGeneration
@@ -1715,7 +1729,6 @@ final class TunnelLifecycleOwner {
                 if pendingReactiveRefresh {
                     pendingReactiveRefresh = false
                     state = .connecting
-                    health = .unknown
                     let delay = Self.jitter(Self.establishmentBackoff(forAttempt: attempt))
                     attempt += 1
                     do {
@@ -1737,7 +1750,6 @@ final class TunnelLifecycleOwner {
                 }()
                 if !hasLiveRoute {
                     state = .connecting
-                    health = .unknown
                 }
                 let delay = Self.jitter(Self.establishmentBackoff(forAttempt: attempt))
                 attempt += 1
@@ -1785,6 +1797,10 @@ final class TunnelLifecycleOwner {
     private func handlePathStatus(_ status: NetworkPathStatus) {
         let previous = currentPathSignature
         currentPathSignature = status.signature
+        if networkAvailable != status.isSatisfied {
+            networkAvailable = status.isSatisfied
+            updateConnectionVerdict()
+        }
         guard case .connected(let localPort, _) = state,
               status.isSatisfied,
               let previous,
@@ -1793,40 +1809,79 @@ final class TunnelLifecycleOwner {
             return
         }
 
-        // HTTP journal health cannot establish carrier liveness. Try a better
-        // route without tearing down the working carrier, even if HTTP is slow.
+        // A slow HTTP answer says nothing about the carrier. Try a better route
+        // without tearing down the working carrier.
         let incarnation = transportIncarnation
         let generation = probeGeneration
         Task { @MainActor [weak self] in
             guard let self else { return }
             let answered = await self.probe(localPort, Self.probeTimeout)
             guard self.probeResultIsCurrent(localPort: localPort, generation: generation, incarnation: incarnation) else { return }
-            self.health = answered ? .healthy : .degraded
+            if answered { self.noteJournalHeard(at: self.now()) }
             splOwnerLog.notice("path change probe ok=\(answered, privacy: .public) reconnect=false")
             await self.transport?.requestUpgrade()
         }
     }
 
+    /// Gathers evidence that the journal is still there for as long as the
+    /// connection is up. Each sample reads the carrier's inbound counter, which
+    /// moves on every keepalive answer and every reply, so a healthy connection
+    /// is heard without sending anything extra. Only after `probeAfterSilence`
+    /// of silence is the journal asked directly over the open tunnel, and only
+    /// its answer counts. A failed check changes nothing by itself: the lease
+    /// runs out, or the keepalive declares the carrier lost and reconnects.
     private func startProbe() {
         guard probeTask == nil else {
             return
         }
         probeTask = Task { @MainActor [weak self] in
-            var interval = Self.probeInterval
-            while let self, !Task.isCancelled {
+            var lastCount: UInt64?
+            var lastSampleAt: Date?
+            let generation = self?.probeGeneration
+            while let self, self.running, !Task.isCancelled, self.probeGeneration == generation {
+                // Every way out of the connected state stops this loop; until then it
+                // must not end on its own, or the lease would lapse on a live connection.
+                if case .connected(let localPort, _) = self.state,
+                   self.establishedLoopbackPort == localPort,
+                   let transport = self.transport {
+                    let incarnation = self.transportIncarnation
+                    let count = await transport.inboundActivitySnapshot()
+                    if self.probeResultIsCurrent(localPort: localPort, generation: self.probeGeneration, incarnation: incarnation) {
+                        let sampledAt = self.now()
+                        // The bytes came in after the previous reading; credit them no later than that.
+                        if let lastCount, let lastSampleAt, count != lastCount, count != 0 {
+                            self.noteJournalHeard(at: lastSampleAt)
+                        }
+                        lastCount = count
+                        lastSampleAt = sampledAt
+                        if self.livenessProbeGeneration != self.probeGeneration,
+                           sampledAt.timeIntervalSince(self.lastHeardAt ?? .distantPast) >= Self.probeAfterSilence {
+                            self.runLivenessProbe(localPort: localPort, generation: self.probeGeneration, incarnation: incarnation)
+                        }
+                    }
+                }
                 do {
-                    try await self.sleep(interval)
+                    try await self.livenessSleep(Self.livenessSampleInterval)
                 } catch {
                     return
                 }
-                guard !Task.isCancelled,
-                      self.running,
-                      case .connected = self.state,
-                      let localPort = self.establishedLoopbackPort
-                else {
-                    return
-                }
-                interval = await self.runProbe(localPort: localPort)
+            }
+        }
+    }
+
+    private func runLivenessProbe(localPort: Int, generation: UInt64, incarnation: UInt64) {
+        livenessProbeGeneration = generation
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let answered = await self.probe(localPort, Self.probeTimeout)
+            if self.livenessProbeGeneration == generation {
+                self.livenessProbeGeneration = nil
+            }
+            guard self.probeResultIsCurrent(localPort: localPort, generation: generation, incarnation: incarnation) else { return }
+            if answered {
+                self.noteJournalHeard(at: self.now())
+            } else {
+                splOwnerLog.notice("liveness check unanswered local_port=\(localPort, privacy: .public) reconnect=false")
             }
         }
     }
@@ -1845,17 +1900,12 @@ final class TunnelLifecycleOwner {
             establishedLoopbackPort == localPort && transport != nil
     }
 
-    private func runProbe(localPort: Int) async -> Duration {
-        let generation = probeGeneration
-        let incarnation = transportIncarnation
-        let succeeded = await probe(localPort, Self.probeTimeout)
-        guard probeResultIsCurrent(localPort: localPort, generation: generation, incarnation: incarnation) else {
-            return Self.probeInterval
-        }
-        // The SDK keepalive owns carrier loss. A slow HTTP endpoint only
-        // degrades journal health and shortens the next health check.
-        health = succeeded ? .healthy : .degraded
-        return succeeded ? Self.probeInterval : Self.degradedProbeInterval
+    /// The journal was heard over the installed connection at `time`.
+    private func noteJournalHeard(at time: Date) {
+        guard case .connected = state else { return }
+        if let lastHeardAt, lastHeardAt >= time { return }
+        lastHeardAt = time
+        updateConnectionVerdict()
     }
 
     private func usableCandidates(for pairing: StoredPairing) -> [TransportEndpoint] {
@@ -1970,7 +2020,6 @@ final class TunnelLifecycleOwner {
         inFlightConnectTask = nil
         retainedCandidate = nil
         state = .disconnected
-        health = .unknown
         updateConnectionVerdict()
     }
 
@@ -2048,7 +2097,6 @@ final class TunnelLifecycleOwner {
         guard running, transportAttemptID == attempt,
               credentialStore.matches(pairing: revision.pairingGeneration, access: revision.accessMutationGeneration) else { return }
         state = .error(.revoked)
-        health = .unknown
         if removalComplete { endSelfRetirement() }
     }
 
@@ -2057,7 +2105,6 @@ final class TunnelLifecycleOwner {
         await disconnectCurrentTransport()
         guard running, transportAttemptID == attempt else { return }
         state = .error(.keychainUnavailable)
-        health = .unknown
     }
 
     /// Keeps the credential, unlike `.revoked`: the stop holds until a new
@@ -2067,7 +2114,6 @@ final class TunnelLifecycleOwner {
         await disconnectCurrentTransport()
         guard running, transportAttemptID == attempt else { return }
         state = .error(.refusalsExhausted)
-        health = .unknown
     }
 
     private func failWithNotEntitled() async {
@@ -2075,7 +2121,6 @@ final class TunnelLifecycleOwner {
         await disconnectCurrentTransport()
         guard running, transportAttemptID == attempt else { return }
         state = .error(.notEntitled)
-        health = .unknown
     }
 
     private func disconnectCurrentTransport(deadline: ContinuousClock.Instant? = nil) async {
@@ -2140,38 +2185,75 @@ final class TunnelLifecycleOwner {
     }
 
     func updateConnectionVerdict() {
-        connectionVerdict = reduceConnectionVerdict()
+        refreshPresentation()
+        let verdict = reduceConnectionVerdict()
+        if verdict != connectionVerdict {
+            connectionVerdict = verdict
+        }
     }
 
     func reduceConnectionVerdict() -> JournalConnectionVerdict {
         Self.reduceConnectionVerdict(
             state: state,
+            presented: presentedConnection,
             hasPersistedPairing: hasPersistedPairing,
             isTunnelManaged: isTunnelManaged,
             isPairedHome: isPairedHome,
-            supervisorAttemptState: supervisorAttemptState,
-            isProxyStarting: isProxyStarting,
-            establishedLoopbackPort: establishedLoopbackPort,
-            hasTransport: transport != nil,
             triedAddresses: triedAddresses
         )
     }
 
+    private var connectionEvidence: JournalConnectionEvidence {
+        let linkUp: Bool
+        if case .connected(let localPort, _) = state, establishedLoopbackPort == localPort, transport != nil {
+            linkUp = true
+        } else {
+            linkUp = false
+        }
+        let stopped: Bool
+        if case .error = state { stopped = true } else { stopped = false }
+        return JournalConnectionEvidence(
+            trying: running && hasPersistedPairing && isTunnelManaged && !stopped,
+            linkUp: linkUp,
+            lastHeardAt: lastHeardAt,
+            // A journal on this Mac does not need the network.
+            networkAvailable: networkAvailable || isPairedHome
+        )
+    }
+
+    private func refreshPresentation() {
+        let at = now()
+        let shown = presenter.update(connectionEvidence, at: at)
+        if presentedConnection != shown {
+            presentedConnection = shown
+        }
+        presentationTask?.cancel()
+        presentationTask = nil
+        guard running, let deadline = presenter.nextChange(after: at) else { return }
+        let delay = Duration.milliseconds(Int((deadline.timeIntervalSince(at) * 1_000).rounded(.up)))
+        presentationTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled, self.running else { return }
+            self.updateConnectionVerdict()
+        }
+    }
+
+    /// The owner-facing verdict. Connected and connecting… come from the presented
+    /// state, so this agrees with the menu bar and the Settings card; a stop the
+    /// owner has to act on, or having no route at all, says so instead.
     static func reduceConnectionVerdict(
         state: TunnelLifecycleState,
+        presented: PresentedJournalConnection,
         hasPersistedPairing: Bool,
         isTunnelManaged: Bool,
         isPairedHome: Bool = false,
-        supervisorAttemptState: TunnelSupervisorAttemptState,
-        isProxyStarting: Bool,
-        establishedLoopbackPort: Int?,
-        hasTransport: Bool,
         triedAddresses: [String] = []
     ) -> JournalConnectionVerdict {
-        // Layer (a): Live Installed Route
-        if case .connected(let localPort, _) = state,
-           establishedLoopbackPort == localPort,
-           hasTransport {
+        if presented == .connected {
             let msg = isPairedHome ? "connected to your journal on this mac" : "sync can connect through your journal"
             return JournalConnectionVerdict(
                 severity: .good,
@@ -2182,20 +2264,6 @@ final class TunnelLifecycleOwner {
             )
         }
 
-        // Layer (b): Active Attempt In Flight
-        let isAttempting: Bool = isProxyStarting || supervisorAttemptState == .attempting
-
-        if isAttempting {
-            return JournalConnectionVerdict(
-                severity: .warn,
-                message: "connecting to your journal…",
-                caption: nil,
-                axToken: PairingConnectionAXState.connecting.axToken,
-                failureCause: nil
-            )
-        }
-
-        // Layer (c): Failure / Backoff / Redrive Sleep / No Route / Owner Action Error
         guard hasPersistedPairing else {
             return .neutral
         }
@@ -2244,6 +2312,16 @@ final class TunnelLifecycleOwner {
                 caption: "waiting for a direct network route or relay connection",
                 axToken: PairingConnectionAXState.noRoute.axToken,
                 failureCause: .noRoute
+            )
+        }
+
+        if presented == .connecting {
+            return JournalConnectionVerdict(
+                severity: .warn,
+                message: "connecting to your journal…",
+                caption: nil,
+                axToken: PairingConnectionAXState.connecting.axToken,
+                failureCause: nil
             )
         }
 

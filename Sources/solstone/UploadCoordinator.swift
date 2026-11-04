@@ -97,7 +97,12 @@ public final class UploadCoordinator {
 
     // MARK: - Observable State
 
-    public internal(set) var status: Status = .notSynced
+    public internal(set) var status: Status = .notSynced {
+        didSet { refreshPresentedStatus() }
+    }
+    /// `status` as the Settings card shows it: a catch-up keeps reading as one
+    /// for a moment after the queue drains.
+    internal private(set) var presentedStatus: Status = .notSynced
     public internal(set) var pendingCount: Int = 0
     public internal(set) var lastError: String?
     public internal(set) var lastSyncedAt: Date?
@@ -114,6 +119,8 @@ public final class UploadCoordinator {
     // MARK: - Retry State
 
     private var retryTask: Task<Void, Never>?
+    private var syncingPresenter = SyncingPresenter()
+    private var presentedStatusTask: Task<Void, Never>?
 
     /// Whether syncing is paused - reads from config as single source of truth
     public var syncPaused: Bool {
@@ -548,6 +555,23 @@ public final class UploadCoordinator {
 
     private func incrementRecentErrorCount() {
         recentErrorCount = min(recentErrorCount + 1, 99)
+    }
+
+    private func refreshPresentedStatus() {
+        let now = nowProvider()
+        let shown = syncingPresenter.update(status, at: now)
+        if presentedStatus != shown {
+            presentedStatus = shown
+        }
+        presentedStatusTask?.cancel()
+        presentedStatusTask = nil
+        guard let deadline = syncingPresenter.nextChange(after: now) else { return }
+        let delay = Duration.milliseconds(Int((deadline.timeIntervalSince(now) * 1_000).rounded(.up)))
+        presentedStatusTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            self.refreshPresentedStatus()
+        }
     }
 
     private func scheduleRetry() {

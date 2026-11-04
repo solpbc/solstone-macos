@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- the menu bar icon, the menu and settings now agree on whether you're connected, and say connected only once the app has reached your journal in the last few seconds. while the app reconnects, the status stays on connecting instead of flickering to offline between tries, and says offline after about 30 seconds without reaching your journal.
 - with a website left out and no Accessibility access, Safari's window titles no longer go into activity. before, they did, so a website you left out could reach your journal through its title.
 - in Safari, some pages the solstone extension takes in, like ones on news and documentation sites, could reach your journal with almost none of their text. their text now goes into your journal.
 - answering "that doesn't match" while switching journals now keeps your current pairing.

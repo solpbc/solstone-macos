@@ -13,12 +13,9 @@ struct PairingOverlayTests {
     @Test func notEntitledRendersDistinctPairedButTierAttention() {
         let presentation = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.notEntitled),
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
 
         #expect(presentation.message == "can't sync over the internet yet")
@@ -33,12 +30,9 @@ struct PairingOverlayTests {
         state.isRecording = true
         let presentation = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.revoked),
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
 
         #expect(presentation.message == "pairing was revoked. pair again to reconnect.")

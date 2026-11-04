@@ -137,7 +137,7 @@ struct HeldIdlePresentationTests {
             setupVerdict: nil,
             lastHealthReason: state.uploadCoordinator.lastHealthReason,
             isPairedIngestReady: state.isPairedIngestReady,
-            journalConnectionAXToken: state.tunnelLifecycleOwner.connectionVerdict.axToken
+            presentedConnection: state.tunnelLifecycleOwner.presentedConnection
         )
     }
 
@@ -161,7 +161,7 @@ struct HeldIdlePresentationTests {
             setupVerdict: nil,
             lastHealthReason: state.uploadCoordinator.lastHealthReason,
             isPairedIngestReady: state.isPairedIngestReady,
-            journalConnectionAXToken: state.tunnelLifecycleOwner.connectionVerdict.axToken,
+            presentedConnection: state.tunnelLifecycleOwner.presentedConnection,
             snapshot: state.browserHostSnapshot.value
         )
     }

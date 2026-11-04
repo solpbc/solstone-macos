@@ -88,7 +88,7 @@ extension StatusHealthSummary {
         setupVerdict: SetupGroupVerdict? = nil,
         lastHealthReason: ObserverHealthFailureReason? = nil,
         isPairedIngestReady: Bool = true,
-        journalConnectionAXToken: String? = nil,
+        presentedConnection: PresentedJournalConnection = .connected,
         startDeferredForProtectedVideo: Bool = false,
         screenFailure: ScreenFailureKind? = nil
     ) -> StatusHealthSummary {
@@ -179,7 +179,8 @@ extension StatusHealthSummary {
             uploadStatus: statusForCurrentConnection(
                 uploadStatus,
                 ready: isPairedIngestReady,
-                axToken: journalConnectionAXToken
+                presented: presentedConnection,
+                lastHealthReason: lastHealthReason
             ),
             pendingCount: pendingCount,
             lastDeliveryOutcome: lastDeliveryOutcome,
@@ -379,10 +380,11 @@ extension StatusHealthSummary {
                 ) {
                     return summary
                 }
+                // Only reached while connected: the first pass has not reported yet.
                 return .init(
-                    severity: .warn,
-                    title: "connecting…",
-                    subtitle: "reaching your journal",
+                    severity: .calm,
+                    title: UICopy.SETTINGS_OBSERVATION_OBSERVING,
+                    subtitle: nil,
                     axValue: "external_connecting"
                 )
             case .synced:
@@ -431,14 +433,30 @@ extension StatusHealthSummary {
         }
     }
 
+    /// The upload status as the menu reads it, so the card never contradicts the
+    /// menu about the connection.
     private static func statusForCurrentConnection(
         _ status: UploadCoordinator.Status,
         ready: Bool,
-        axToken: String?
+        presented: PresentedJournalConnection,
+        lastHealthReason: ObserverHealthFailureReason?
     ) -> UploadCoordinator.Status {
-        switch classifyJournalConnection(isPairedIngestReady: ready, uploadStatus: status, journalConnectionAXToken: axToken) {
+        switch classifyJournalConnection(
+            isPairedIngestReady: ready,
+            presentedConnection: presented,
+            uploadStatus: status,
+            lastHealthReason: lastHealthReason
+        ) {
         case .connectionWaiting: return .awaitingTunnel
         case .offline: return .offline("connection unavailable")
+        case .observing:
+            switch status {
+            // Connected, and an upload that could not get through waits for its retry.
+            case .offline: return .retrying(segment: "", attempts: 0)
+            // Connected, and the first pass has not reported yet.
+            case .awaitingTunnel: return .notSynced
+            default: return status
+            }
         default: return status
         }
     }

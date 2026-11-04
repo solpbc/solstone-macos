@@ -4033,7 +4033,7 @@ struct SettingsView: View {
             ownerPauseHeldIdle: appState.ownerPauseHeldIdle,
             held: appState.needsJournalMarkConfirmation,
             hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
-            uploadStatus: appState.uploadCoordinator.status,
+            uploadStatus: appState.uploadCoordinator.presentedStatus,
             pendingCount: appState.uploadCoordinator.pendingCount,
             lastDeliveryOutcome: statusPrimaryDelivery(
                 media: appState.uploadCoordinator.lastJournalDeliveryOutcome,
@@ -4047,7 +4047,7 @@ struct SettingsView: View {
             setupVerdict: setupPresentation.verdict,
             lastHealthReason: appState.uploadCoordinator.lastHealthReason,
             isPairedIngestReady: appState.isPairedIngestReady,
-            journalConnectionAXToken: appState.tunnelLifecycleOwner.connectionVerdict.axToken,
+            presentedConnection: appState.tunnelLifecycleOwner.presentedConnection,
             startDeferredForProtectedVideo: appState.capture.isStartDeferredForProtectedVideo,
             screenFailure: appState.screenFailure,
             snapshot: appState.browserHostSnapshot.value
@@ -4060,7 +4060,7 @@ struct SettingsView: View {
             ownerPauseHeldIdle: appState.ownerPauseHeldIdle,
             held: appState.needsJournalMarkConfirmation,
             hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
-            uploadStatus: appState.uploadCoordinator.status,
+            uploadStatus: appState.uploadCoordinator.presentedStatus,
             pendingCount: appState.uploadCoordinator.pendingCount,
             lastDeliveryOutcome: appState.uploadCoordinator.lastJournalDeliveryOutcome,
             journalSlot: resolvedJournalName,
@@ -4071,7 +4071,7 @@ struct SettingsView: View {
             setupVerdict: setupPresentation.verdict,
             lastHealthReason: appState.uploadCoordinator.lastHealthReason,
             isPairedIngestReady: appState.isPairedIngestReady,
-            journalConnectionAXToken: appState.tunnelLifecycleOwner.connectionVerdict.axToken,
+            presentedConnection: appState.tunnelLifecycleOwner.presentedConnection,
             startDeferredForProtectedVideo: appState.capture.isStartDeferredForProtectedVideo,
             screenFailure: appState.screenFailure
         )

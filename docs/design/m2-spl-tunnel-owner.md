@@ -9,11 +9,14 @@ Status: design only. No implementation in this document.
 > the goal "keep exactly one reconnect loop: `TunnelSession.monitorAndReconnect`" (the
 > package splits this into a single-shot `TunnelSession` plus a `TunnelSupervisor` that
 > owns the reconnect loop), and the `SPLTunnelTests` test plan. The app-layer
-> lifecycle-owner design also predates the 2026-10-02 probe change: HTTP probe
-> failures now report degraded health without reconnecting; satisfied path changes
-> request a safe upgrade. SDK keepalive owns carrier-loss recovery. The probe and
-> path reconnect instructions below are historical. Keep the original design body
-> as a point-in-time record.
+> lifecycle-owner design also predates two later changes. HTTP probe failures never
+> reconnect; satisfied path changes request a safe upgrade, and SDK keepalive owns
+> carrier-loss recovery. What the app shows comes from `JournalConnectionPresenter`:
+> connected needs the journal heard within a 10 s lease (the handshake, any inbound
+> frame counted by `inboundActivitySnapshot()`, or a status check answered after 3 s
+> of silence), and one failed check changes nothing. The probe and path reconnect
+> instructions below are historical. Keep the original design body as a
+> point-in-time record.
 
 ## Goals
 

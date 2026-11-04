@@ -132,69 +132,51 @@ struct SettingsViewTests {
     @Test @MainActor func connectionVerdictCaptionsPinned() {
         let notEntitled = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.notEntitled),
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
         #expect(notEntitled.caption != nil)
         #expect(notEntitled.caption == "your journal is paired, but it isn't on the paid plan, so it can't sync over the internet. you can still reach it directly, without the plan, whenever your journal is reachable.")
 
         let noRoute = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .disconnected,
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: false,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: false
         )
         #expect(noRoute.caption != nil)
         #expect(noRoute.caption == "waiting for a direct network route or relay connection")
 
         let unreachable = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .disconnected,
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
         #expect(unreachable.caption == nil)
 
         let loopback = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.loopbackUnavailable),
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
         #expect(loopback.caption == nil)
 
         let revoked = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.revoked),
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
         #expect(revoked.caption == nil)
 
         let keychain = TunnelLifecycleOwner.reduceConnectionVerdict(
             state: .error(.keychainUnavailable),
+            presented: .offline,
             hasPersistedPairing: true,
-            isTunnelManaged: true,
-            supervisorAttemptState: .idle,
-            isProxyStarting: false,
-            establishedLoopbackPort: nil,
-            hasTransport: false
+            isTunnelManaged: true
         )
         #expect(keychain.caption == nil)
     }

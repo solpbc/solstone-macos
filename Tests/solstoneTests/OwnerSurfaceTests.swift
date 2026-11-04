@@ -388,6 +388,7 @@ struct OwnerSurfaceStatusTests {
             now: now,
             selectedSources: sources,
             permittedSources: sources,
+            presentedConnection: .connecting,
             snapshot: snapshot
         )
     }

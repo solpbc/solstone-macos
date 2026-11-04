@@ -15,26 +15,26 @@ struct StatusHealthSummaryTests {
         #expect(summary.severity == .attention)
         #expect(summary.title == "upload exceeds journal limits")
         #expect(summary.axValue == "external_blocked")
-        #expect(classifyJournalConnection(isPairedIngestReady: true, uploadStatus: status, journalConnectionAXToken: nil) == .error)
+        #expect(classifyJournalConnection(isPairedIngestReady: true, presentedConnection: .connected, uploadStatus: status) == .error)
         #expect(observationRecoveryPresentation(observationRowState: .error, errorMessage: nil, tryAgainInFlight: false, uploadStatus: status) == nil)
         #expect(observationRecoveryPresentation(observationRowState: .error, errorMessage: "capture stopped", tryAgainInFlight: false, uploadStatus: status) != nil)
     }
     @Test func currentConnectionOverridesStaleDeliverySuccessInBothSurfaces() {
         for connecting in [true, false] {
-            let token = connecting ? PairingConnectionAXState.connecting.axToken : nil
+            let presented: PresentedJournalConnection = connecting ? .connecting : .offline
             let summary = StatusHealthSummary.make(
                 serviceMode: .external, isRecording: true, isPaused: false, held: false,
                 hasPersistedPairing: true,
                 uploadStatus: .synced, pendingCount: 0,
                 lastDeliveryOutcome: .delivered(statusSummaryRecentDelivery),
                 journalSlot: "x.example", now: statusSummaryNow,
-                isPairedIngestReady: false, journalConnectionAXToken: token
+                isPairedIngestReady: false, presentedConnection: presented
             )
             #expect(summary.severity == (connecting ? .warn : .attention))
             #expect(summary.axValue == (connecting ? "external_awaiting_tunnel" : "external_offline"))
-            #expect(classifyJournalConnection(isPairedIngestReady: false, uploadStatus: .synced, journalConnectionAXToken: token) == (connecting ? .connectionWaiting : .offline))
+            #expect(classifyJournalConnection(isPairedIngestReady: false, presentedConnection: presented, uploadStatus: .synced) == (connecting ? .connectionWaiting : .offline))
         }
-        #expect(classifyJournalConnection(isPairedIngestReady: true, uploadStatus: .retrying(segment: "s", attempts: 1), journalConnectionAXToken: nil) == .observing)
+        #expect(classifyJournalConnection(isPairedIngestReady: true, presentedConnection: .connected, uploadStatus: .retrying(segment: "s", attempts: 1)) == .observing)
         let retry = makeSummary(uploadStatus: .retrying(segment: "s", attempts: 1))
         #expect(retry.severity == .warn)
         #expect(retry.axValue == "external_retrying")
@@ -108,8 +108,16 @@ struct StatusHealthSummaryTests {
         #expect(empty.subtitle?.contains("bytes") == false)
     }
 
+    @Test func anUploadWithNoAnswerWhileConnectedReadsAsRetryingNotOffline() {
+        let summary = makeSummary(uploadStatus: .offline("offline"), pendingCount: 2, lastHealthReason: .urlErrorCode(-1001))
+        #expect(summary.axValue == "external_retrying")
+        #expect(summary.severity == .warn)
+        let lapsed = makeSummary(uploadStatus: .offline("offline"), lastHealthReason: .urlErrorCode(-1001), presentedConnection: .offline)
+        #expect(lapsed.axValue == "external_offline")
+    }
+
     @Test func externalAwaitingTunnelReportsConnectionWait() {
-        let waiting = makeSummary(uploadStatus: .awaitingTunnel, pendingCount: 2)
+        let waiting = makeSummary(uploadStatus: .awaitingTunnel, pendingCount: 2, presentedConnection: .connecting)
 
         #expect(waiting.severity == .warn)
         #expect(waiting.axValue == "external_awaiting_tunnel")
@@ -176,10 +184,11 @@ struct StatusHealthSummaryTests {
         #expect(uploading.axValue == "external_uploading")
         #expect(uploading.subtitle?.contains("4 more waiting") == true)
 
-        let connecting = makeSummary(uploadStatus: .notSynced)
-        #expect(connecting.severity == .warn)
-        #expect(connecting.axValue == "external_connecting")
-        #expect(connecting.subtitle == "reaching your journal")
+        // Connected with no pass reported yet: nothing about it says connecting.
+        let firstPass = makeSummary(uploadStatus: .notSynced)
+        #expect(firstPass.severity == .calm)
+        #expect(firstPass.axValue == "external_connecting")
+        #expect(makeSummary(uploadStatus: .awaitingTunnel) == firstPass)
     }
 
     @Test func externalGreenRequiresBothSyncedUploadStatusAndConfirmedDelivery() {
@@ -194,7 +203,7 @@ struct StatusHealthSummaryTests {
         #expect(contactOnly.subtitle == "nothing added yet · nothing waiting")
 
         let notSynced = makeSummary(uploadStatus: .notSynced)
-        #expect(notSynced.severity == .warn)
+        #expect(notSynced.severity == .calm)
         #expect(notSynced.axValue == "external_connecting")
 
         let uploading = makeSummary(uploadStatus: .uploading(segment: "s1"))
@@ -452,7 +461,8 @@ struct StatusHealthSummaryTests {
         permittedSources: CaptureSources = .all,
         errorMessage: String? = nil,
         setupVerdict: SetupGroupVerdict? = nil,
-        lastHealthReason: ObserverHealthFailureReason? = nil
+        lastHealthReason: ObserverHealthFailureReason? = nil,
+        presentedConnection: PresentedJournalConnection = .connected
     ) -> StatusHealthSummary {
         StatusHealthSummary.make(
             serviceMode: serviceMode,
@@ -469,7 +479,8 @@ struct StatusHealthSummaryTests {
             permittedSources: permittedSources,
             errorMessage: errorMessage,
             setupVerdict: setupVerdict,
-            lastHealthReason: lastHealthReason
+            lastHealthReason: lastHealthReason,
+            presentedConnection: presentedConnection
         )
     }
 }
