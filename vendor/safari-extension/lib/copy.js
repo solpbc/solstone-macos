@@ -131,7 +131,7 @@ no analytics. no telemetry. no phone home. nobody counted.`;
   }
 
   function leftOutRefusal(site) {
-    return `${escapeToken(site)} is left out. include it first.`;
+    return `${escapeToken(site)} is left out. stop leaving it out first.`;
   }
 
   function offerLine(brand) {
@@ -141,10 +141,15 @@ no analytics. no telemetry. no phone home. nobody counted.`;
   const appOnlyLeftOut = "left out in the solstone app";
   const desktopScreenOn = "the solstone extension isn't taking in this site. your screen still goes into your journal.";
   const desktopActivityOn = "the solstone extension isn't taking in this site. this browser's activity still goes into your journal.";
-  function appLeftOutSitesOn(brand) {
-    return `kept out of your journal, ${browserName(brand)} windows on your screen and activity included.`;
+  function desktopNeedsAccess(brand) {
+    return `the solstone extension isn't taking in this site. the solstone app can't check addresses right now, so this page may not go into your journal from your screen. the solstone app's settings say why.`;
   }
-  const appLeftOutNeedsAccess = "the solstone extension leaves it out, but it can still go into activity. the solstone app's settings say why.";
+  function appLeftOutSitesOn(brand) {
+    return `${browserName(brand)} windows showing it stay out of your journal, on your screen and in activity.`;
+  }
+  function appLeftOutNeedsAccess(brand) {
+    return `${browserName(brand)} windows showing it stay out of your journal, on your screen and in activity. the solstone app can't check addresses right now, so it's keeping out more than this site. its settings say why.`;
+  }
   function appLeftOutNotChecked(brand) {
     return `the solstone extension leaves it out. ${browserName(brand)} windows showing it can still go into your journal, on your screen and in activity.`;
   }
@@ -164,6 +169,8 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     const desktop = status.desktop;
 
     if (kind === "not-added") {
+      const appHasList = Array.isArray(status.appLeftOut) && status.appLeftOut.length > 0;
+      if (desktop?.screen === true && desktop?.sites === "needs_access" && appHasList) return "desktopNeedsAccess";
       if (desktop?.screen === true) return "desktopScreenOn";
       if (desktop?.screen !== true && desktop?.activity === true) return "desktopActivityOn";
       return "";
@@ -211,8 +218,8 @@ no analytics. no telemetry. no phone home. nobody counted.`;
 
   function includedAnnouncement(host) {
     return wholeSite(host)
-      ? `all ${escapeToken(host)} sites and pages are included again.`
-      : `${escapeToken(host)} included again.`;
+      ? `all ${escapeToken(host)} sites and pages are no longer left out.`
+      : `${escapeToken(host)} is no longer left out.`;
   }
 
   function addedAnnouncement(host, onNow) {
@@ -425,7 +432,7 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     if (["capture_unavailable", "permission_not_granted", "registration_failed", "invalid_phase"].includes(s)) return "couldn't add the site. try again.";
     if (s === "missing_consent") return "finish setting up first.";
     if (s === "invalid_host" || s === "invalid_origin") return FIELD_ERROR;
-    if (s === "site_excluded") return "this site is left out. include it first.";
+    if (s === "site_excluded") return "this site is left out. stop leaving it out first.";
     if (s === "declined") return `you chose not to add this site. to add it, allow it in ${browserName(brandInput)} again.`;
     if (s === "permissions_unavailable") return `couldn't check what ${browserName(brandInput)} allows. try again.`;
     return "something went wrong. try again.";
@@ -483,6 +490,7 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     desktopActivityOn,
     appLeftOutSitesOn,
     appLeftOutNeedsAccess,
+    desktopNeedsAccess,
     appLeftOutNotChecked,
     appLeftOutAppAway,
     extensionLeftOut,

@@ -203,13 +203,20 @@ struct DesktopActivitySiteRuleTests {
 
     @Test func shortSafariReadKeepsTitleAndAddressOutOfThatSample() {
         typealias R = DesktopActivityReader
-        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: ["https://example.com"], completeness: .timedOut), accessibilityDenied: false))
-        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: [], completeness: .axError), accessibilityDenied: false))
-        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: [nil], completeness: .complete), accessibilityDenied: false))
-        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: ["https://a.com"], completeness: .childListCut), accessibilityDenied: false))
-        #expect(!R.siteReadIsShort(WebAreaWalkResult(urls: ["https://example.com"], completeness: .complete), accessibilityDenied: false))
-        #expect(!R.siteReadIsShort(WebAreaWalkResult(urls: [], completeness: .complete), accessibilityDenied: false))
-        #expect(!R.siteReadIsShort(WebAreaWalkResult(urls: [], completeness: .axError), accessibilityDenied: true))
+        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: ["https://example.com"], completeness: .timedOut)))
+        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: [], completeness: .axError)))
+        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: [nil], completeness: .complete)))
+        #expect(R.siteReadIsShort(WebAreaWalkResult(urls: ["https://a.com"], completeness: .childListCut)))
+        #expect(!R.siteReadIsShort(WebAreaWalkResult(urls: ["https://example.com"], completeness: .complete)))
+        #expect(!R.siteReadIsShort(WebAreaWalkResult(urls: [], completeness: .complete)))
+    }
+
+    @Test func deniedAccessibilityKeepsSafariTitleOutWhateverTheWalkSays() {
+        typealias R = DesktopActivityReader
+        #expect(R.siteUndecided(WebAreaWalkResult(urls: [], completeness: .axError), accessibilityDenied: true))
+        #expect(R.siteUndecided(WebAreaWalkResult(urls: [], completeness: .complete), accessibilityDenied: true))
+        #expect(R.siteUndecided(WebAreaWalkResult(urls: ["https://a.com"], completeness: .complete), accessibilityDenied: true))
+        #expect(!R.siteUndecided(WebAreaWalkResult(urls: ["https://a.com"], completeness: .complete), accessibilityDenied: false))
     }
 
     @Test func shortSafariReadStillWritesTheForegroundRowWithoutAnAddress() {

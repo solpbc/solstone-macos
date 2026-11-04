@@ -70,7 +70,7 @@ public protocol SegmentScreenshotCapturing: AnyObject, Sendable {
     func discardPendingSiteFrames()
     func start() async throws
     func stop() async
-    func updateContentFilter(_ filter: SCContentFilter) async
+    func updateContentFilter(_ filter: SCContentFilter) async throws
     func finishWithTimeout(seconds: Double) async -> Result<(URL, Int), Error>?
 }
 
@@ -625,15 +625,31 @@ public final class SegmentWriter {
     /// Note: System audio filter is managed by CaptureManager via SystemAudioCaptureManager
     /// - Parameter filters: New content filters keyed by display ID
     public func updateContentFilter(_ filters: [CGDirectDisplayID: SCContentFilter]) async throws {
-        // Update all screenshot capturers
-        for (displayID, capturer) in screenshotCapturers {
+        try await Self.applyContentFilters(filters, to: screenshotCapturers)
+    }
+
+    /// Updates every capturer, then reports the first failure. A capturer with no filter here keeps
+    /// the one it has, and its vouch stays true of that filter. While a segment is starting there
+    /// are no capturers yet, so nothing has taken the filter.
+    internal static func applyContentFilters(
+        _ filters: [CGDirectDisplayID: SCContentFilter],
+        to capturers: [CGDirectDisplayID: any SegmentScreenshotCapturing]
+    ) async throws {
+        guard !capturers.isEmpty else { throw CaptureFilterUpdateError.noRunningStream }
+        var firstFailure: Error?
+        for (displayID, capturer) in capturers {
             guard let filter = filters[displayID] else {
                 let keyList = filters.keys.sorted().map(String.init).joined(separator: ",")
                 Logger.capture.error("Missing SCContentFilter for display \(displayID, privacy: .public); available filter keys=[\(keyList, privacy: .public)]")
                 continue
             }
-            await capturer.updateContentFilter(filter)
+            do {
+                try await capturer.updateContentFilter(filter)
+            } catch {
+                firstFailure = firstFailure ?? error
+            }
         }
+        if let firstFailure { throw firstFailure }
     }
 
     /// Finishes capture and returns data for background remix

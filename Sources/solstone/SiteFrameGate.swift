@@ -8,10 +8,12 @@ import Foundation
 public struct SitePollWindow: Sendable, Equatable {
     public let windowID: CGWindowID
     public let title: String
+    public let pid: pid_t
 
-    public init(windowID: CGWindowID, title: String) {
+    public init(windowID: CGWindowID, title: String, pid: pid_t = 0) {
         self.windowID = windowID
         self.title = title
+        self.pid = pid
     }
 }
 
@@ -33,8 +35,11 @@ public struct SiteHeldFrame: Sendable, Equatable {
     public let displayTicks: UInt64?
     public let c: TimeInterval?
     public let originTicks: UInt64
+    /// Applications the stream that captured this frame had confirmed it keeps out whole at `c`.
+    public let keptOutPIDs: Set<pid_t>
 
-    public init(id: UInt64, owner: UInt64 = 0, displayTicks: UInt64?, c: TimeInterval?, originTicks: UInt64) {
+    public init(id: UInt64, owner: UInt64 = 0, displayTicks: UInt64?, c: TimeInterval?, originTicks: UInt64, keptOutPIDs: Set<pid_t> = []) {
+        self.keptOutPIDs = keptOutPIDs
         self.id = id
         self.owner = owner
         self.displayTicks = displayTicks
@@ -87,7 +92,44 @@ public final class SiteFrameGate {
     public private(set) var stallCount: Int = 0
     public private(set) var endCount: Int = 0
 
+    /// `c` of the first frame dropped since each display's last release.
+    private var heldSince: [CGDirectDisplayID: TimeInterval] = [:]
+    /// What each display's stream has confirmed it keeps out right now. Idle frames never reach
+    /// the gate, so this comes from the stream, not from the last frame seen.
+    private var liveKeptOut: [CGDirectDisplayID: Set<pid_t>] = [:]
+
     public init() {}
+
+    /// Whether the rule is holding the screen now, for long enough to say so. A drop alone can't
+    /// say: idle frames never reach the gate, so a quiet screen would stay held after one drop.
+    /// So it also takes a window in the latest poll that would hold a frame now.
+    public func isHoldingNow(now: TimeInterval, holdFor: TimeInterval = 3.0) -> Bool {
+        guard !heldSince.isEmpty, let poll = polls.last else { return false }
+        for (display, since) in heldSince {
+            let keptOut = liveKeptOut[display] ?? []
+            let blocking = poll.windows.contains { window in
+                guard !keptOut.contains(window.pid) else { return false }
+                guard currentAXAvailable else { return true }
+                let key = SiteDecisionKey(windowID: window.windowID, title: window.title)
+                return currentDecisions.verdict(for: key, at: now) != .ordinary
+            }
+            if !blocking {
+                heldSince[display] = nil
+            } else if now - since >= holdFor {
+                return true
+            }
+        }
+        return false
+    }
+
+    public func updateLiveKeptOut(displayID: CGDirectDisplayID, pids: Set<pid_t>) {
+        liveKeptOut[displayID] = pids
+    }
+
+    private func noteHoldDrop(displayID: CGDirectDisplayID, c: TimeInterval?) {
+        guard let c, heldSince[displayID] == nil else { return }
+        heldSince[displayID] = c
+    }
 
     public func addPoll(_ poll: SitePollSnapshot) {
         polls.append(poll)
@@ -110,6 +152,7 @@ public final class SiteFrameGate {
         if queue.count >= Self.capacityPerDisplay {
             let oldest = queue.removeFirst()
             stallCount += 1
+            noteHoldDrop(displayID: displayID, c: oldest.c)
             let drop = SiteFrameAction.drop(id: oldest.id, reason: .stall)
             let effectiveOwner = owner != 0 ? owner : frame.owner
             if oldest.owner == effectiveOwner {
@@ -169,6 +212,7 @@ public final class SiteFrameGate {
             guard let earlyIdx = pEarlyIndex, let lateIdx = pLateIndex, earlyIdx <= lateIdx else {
                 if now - c >= Self.holdLimitSites {
                     holdDropCount += 1
+                    noteHoldDrop(displayID: displayID, c: c)
                     actions.append(.drop(id: frame.id, reason: .hold))
                     continue
                 } else {
@@ -179,7 +223,10 @@ public final class SiteFrameGate {
                 }
             }
 
-            let bracketRange = Array(polls[earlyIdx...lateIdx])
+            // A window this frame's stream confirmed it keeps out can't be in this frame.
+            let bracketRange = polls[earlyIdx...lateIdx].map { poll in
+                SitePollSnapshot(start: poll.start, end: poll.end, windows: poll.windows.filter { !frame.keptOutPIDs.contains($0.pid) })
+            }
 
             // Check consecutive poll gaps > 0.3 s
             var hasGap = false
@@ -193,6 +240,7 @@ public final class SiteFrameGate {
 
             if hasGap {
                 gapCount += 1
+                noteHoldDrop(displayID: displayID, c: c)
                 actions.append(.drop(id: frame.id, reason: .gap))
                 continue
             }
@@ -203,6 +251,7 @@ public final class SiteFrameGate {
                 if hasSafari {
                     if now - c >= Self.holdLimitSites {
                         holdDropCount += 1
+                        noteHoldDrop(displayID: displayID, c: c)
                         actions.append(.drop(id: frame.id, reason: .hold))
                         continue
                     } else {
@@ -215,6 +264,7 @@ public final class SiteFrameGate {
                     // No Safari window in range -> release
                     let pts = makeClampedPTS(displayID: displayID, displayTicks: displayTicks, originTicks: frame.originTicks)
                     relCount += 1
+                    heldSince[displayID] = nil
                     actions.append(.release(id: frame.id, pts: pts))
                     continue
                 }
@@ -248,6 +298,7 @@ public final class SiteFrameGate {
 
             if hasCovered {
                 covCount += 1
+                noteHoldDrop(displayID: displayID, c: c)
                 actions.append(.drop(id: frame.id, reason: .cov))
                 continue
             }
@@ -270,6 +321,7 @@ public final class SiteFrameGate {
 
             if hasPendingDisappeared {
                 holdDropCount += 1
+                noteHoldDrop(displayID: displayID, c: c)
                 actions.append(.drop(id: frame.id, reason: .hold))
                 continue
             }
@@ -290,6 +342,7 @@ public final class SiteFrameGate {
             if hasOtherPending {
                 if now - c >= Self.holdLimitSites {
                     holdDropCount += 1
+                    noteHoldDrop(displayID: displayID, c: c)
                     actions.append(.drop(id: frame.id, reason: .hold))
                     continue
                 } else {
@@ -303,6 +356,7 @@ public final class SiteFrameGate {
             // All windows ordinary across bracket range -> release
             let pts = makeClampedPTS(displayID: displayID, displayTicks: displayTicks, originTicks: frame.originTicks)
             relCount += 1
+            heldSince[displayID] = nil
             actions.append(.release(id: frame.id, pts: pts))
         }
 
@@ -338,6 +392,7 @@ public final class SiteFrameGate {
 
     /// Deactivating drops held frames immediately without releasing them.
     public func deactivate(displayID: CGDirectDisplayID, owner: UInt64 = 0) -> [SiteFrameAction] {
+        heldSince[displayID] = nil
         guard let queue = heldFrames[displayID] else { return [] }
         var dropped: [SiteFrameAction] = []
         var remaining: [SiteHeldFrame] = []
@@ -364,6 +419,8 @@ public final class SiteFrameGate {
         }
         heldFrames.removeAll()
         stashedStallDrops.removeAll()
+        heldSince.removeAll()
+        liveKeptOut.removeAll()
         updateHeldCount()
         return actions
     }

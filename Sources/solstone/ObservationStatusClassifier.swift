@@ -95,6 +95,26 @@ internal func classifyJournalConnection(
     }
 }
 
+/// What the website rule is doing to the screen, for the menu. Neither needs the owner, so
+/// neither is a badge, and sound keeps going in, so neither is the paused glyph.
+internal enum SiteIntakeNote: Equatable {
+    case safariKeptOut, screenHeld
+}
+
+internal func classifySiteIntakeNotes(
+    isRecording: Bool,
+    isPaused: Bool,
+    screenActive: Bool,
+    safariKeptOut: Bool,
+    screenHeld: Bool
+) -> [SiteIntakeNote] {
+    guard isRecording, !isPaused, screenActive else { return [] }
+    var notes: [SiteIntakeNote] = []
+    if safariKeptOut { notes.append(.safariKeptOut) }
+    if screenHeld { notes.append(.screenHeld) }
+    return notes
+}
+
 internal enum AttentionReason: Equatable, CaseIterable {
     case permissions, privateWindows, safariExtension, journal, updateAvailable, updateCheckFailed
 }

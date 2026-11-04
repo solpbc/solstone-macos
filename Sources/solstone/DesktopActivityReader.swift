@@ -81,9 +81,14 @@ struct DesktopActivityReader: Sendable {
     }
 
     /// A Safari read that can't vouch for the window: cut short, or with a page whose address
-    /// didn't come back. Not counted when Accessibility is denied outright.
-    static func siteReadIsShort(_ walk: WebAreaWalkResult, accessibilityDenied: Bool) -> Bool {
-        !accessibilityDenied && (walk.completeness != .complete || walk.urls.contains { $0 == nil })
+    /// didn't come back.
+    static func siteReadIsShort(_ walk: WebAreaWalkResult) -> Bool {
+        walk.completeness != .complete || walk.urls.contains { $0 == nil }
+    }
+
+    /// With Accessibility denied, no read can vouch for a window, whatever the walk reports.
+    static func siteUndecided(_ walk: WebAreaWalkResult, accessibilityDenied: Bool) -> Bool {
+        accessibilityDenied || siteReadIsShort(walk)
     }
 
     func read(app: DesktopActivityApp, settings: DesktopActivitySettings) -> DesktopActivityObservation {
@@ -148,10 +153,9 @@ struct DesktopActivityReader: Sendable {
                     }
                 }
             }
-            // A read that came back short can't vouch for this window, so its title and
-            // address stay out of this sample, as its frames stay off the screen. Without
-            // Accessibility at all, the owner is told left-out websites can still go in.
-            if Self.siteReadIsShort(walk, accessibilityDenied: axDenied) {
+            // A read that can't vouch for this window keeps its title and address out of this
+            // sample, as its frames stay off the screen.
+            if Self.siteUndecided(walk, accessibilityDenied: axDenied) {
                 siteUndecided = true
             } else if settings.urls && settings.accessibility {
                 documentURL = walk.urls.compactMap({ $0 }).first

@@ -187,7 +187,13 @@ final class FakeScreenshotCapturer: SegmentScreenshotCapturing, @unchecked Senda
         }
     }
 
-    func updateContentFilter(_ filter: SCContentFilter) async {}
+    var updateFilterError: Error?
+    private(set) var updatedFilters: [SCContentFilter] = []
+
+    func updateContentFilter(_ filter: SCContentFilter) async throws {
+        updatedFilters.append(filter)
+        if let updateFilterError { throw updateFilterError }
+    }
 
     func finishWithTimeout(seconds: Double) async -> Result<(URL, Int), Error>? {
         finishCount.increment()

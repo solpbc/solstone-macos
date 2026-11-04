@@ -489,7 +489,10 @@ struct SettingsView: View {
             }
         }
         .onChange(of: selectedTab) { _, newValue in
-            if newValue != .privacy { appState.pendingPrivateWindowSettingsTarget = nil }
+            if newValue != .privacy {
+                appState.pendingPrivateWindowSettingsTarget = nil
+                appState.pendingWebsiteSettingsTarget = nil
+            }
             if newValue == .status {
                 refreshSetupProbes()
             }
@@ -3533,32 +3536,17 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_2)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text(UICopy.Websites.ACCESSIBILITY_EXPLANATION)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    DisclosureGroup("limits") {
-                        Text(UICopy.Websites.LIMITS_DISCLOSURE)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Privacy.websiteLimits)
-
                     if appState.siteAccessibilityCaution {
-                        HStack(alignment: .top) {
-                            Text(UICopy.Websites.ACCESSIBILITY_CAUTION)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(UICopy.Websites.accessibilityCaution(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Spacer()
-                            Button("open System Settings") {
-                                AccessibilityTitleReader.openSystemSettings()
+                            Button(UICopy.Websites.OPEN_SYSTEM_SETTINGS) {
+                                appState.askForWebsiteAccessibility()
                             }
+                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteAllowAccessibility)
                         }
+                        .accessibilityElement(children: .contain)
                         .accessibilityIdentifier(AXID.Settings.Privacy.websiteAccessibilityCaution)
                     }
 
@@ -3613,8 +3601,28 @@ struct SettingsView: View {
                             .foregroundStyle(.red)
                             .accessibilityIdentifier(AXID.Settings.Privacy.websiteFieldError)
                     }
+
+                    DisclosureGroup(UICopy.Websites.HOW_THIS_WORKS) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_2)
+                            Text(UICopy.Websites.ACCESSIBILITY_EXPLANATION)
+                            Text(UICopy.Websites.LIMITS_DISCLOSURE)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Privacy.websiteLimits)
                 }
                 .padding(.vertical, 4)
+            }
+            .id(AXID.Settings.Privacy.websitesList + ".group")
+            .task(id: appState.pendingWebsiteSettingsTarget) {
+                guard appState.pendingWebsiteSettingsTarget != nil else { return }
+                await Task.yield()
+                guard !Task.isCancelled, selectedTab == .privacy else { return }
+                scrollProxy.scrollTo(AXID.Settings.Privacy.websitesList + ".group", anchor: .top)
+                appState.pendingWebsiteSettingsTarget = nil
             }
 
             GroupBox("protected video") {

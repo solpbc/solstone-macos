@@ -604,7 +604,7 @@
       const appCovers = (status.appLeftOut || []).some((site) => globalThis.SolstoneHosts?.hostCovers ? globalThis.SolstoneHosts.hostCovers(site, host) : false);
       let action = null;
       if (!(appCovers && !status.leftOutCapable)) {
-        action = { id: "include-site", host: coveringSite, label: `include ${coveringSite}` };
+        action = { id: "include-site", host: coveringSite, label: `stop leaving ${coveringSite} out` };
       }
       return { kind: "excluded", label: "left out", action };
     }
@@ -701,9 +701,11 @@
       };
       return { met: false, heading: item.headline, body: bodies[item.kind] || item.reason || "", action: item.action || null };
     }
+    // The app answering says nothing about whether the owner has confirmed the
+    // pairing: a held pairing reports the same capture state as a confirmed one.
     const heading = status.hostCapture === "paused"
-      ? (mobile() ? "found the solstone app, paired with your journal. Safari is paused in it right now." : "found the solstone app, paired with your journal. it's paused right now.")
-      : "found the solstone app, paired with your journal";
+      ? (mobile() ? "found the solstone app. Safari is paused in it right now." : "found the solstone app. it's paused right now.")
+      : "found the solstone app";
     return { met: true, heading, body: "", action: null };
   }
 

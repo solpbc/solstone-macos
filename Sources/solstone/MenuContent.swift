@@ -40,6 +40,18 @@ struct MenuContent: View {
             }
             .accessibilityIdentifier(AXID.Menubar.screenIntake)
         }
+        ForEach(appState.siteIntakeNotes, id: \.self) { note in
+            switch note {
+            case .safariKeptOut:
+                Button(UICopy.MENUBAR_SAFARI_KEPT_OUT) {
+                    appState.requestWebsiteSettings()
+                }
+                .accessibilityIdentifier(AXID.Menubar.safariKeptOut)
+            case .screenHeld:
+                Text(UICopy.MENUBAR_SITE_SCREEN_HELD)
+                    .accessibilityIdentifier(AXID.Menubar.siteScreenHeld)
+            }
+        }
         if appState.shortcutController.isUnavailableOrConflict {
             Button(UICopy.SHORTCUT_MENU_RECOVERY) {
                 openSettings(tab: "observer")

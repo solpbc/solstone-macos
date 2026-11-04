@@ -75,6 +75,7 @@ struct SiteVisibleWindow: Sendable, Equatable {
 
 struct SiteSamplerHooks: Sendable {
     var safariPIDs: @Sendable () -> Set<pid_t>
+    var pipPIDs: @Sendable () -> Set<pid_t>
     var copyOnScreen: @Sendable () -> [SiteVisibleWindow]
     var nowTicks: @Sendable () -> UInt64
     var observe: @Sendable (CGWindowID, pid_t, String) -> (initialAXTitle: String?, walk: WebAreaWalkResult, finalAXTitle: String?, windowMissing: Bool)
@@ -84,6 +85,10 @@ struct SiteSamplerHooks: Sendable {
             let safariBundleID = PrivateBrowser.safari.bundleIdentifier
             let apps = NSWorkspace.shared.runningApplications
             return Set(apps.filter { $0.bundleIdentifier == safariBundleID }.map(\.processIdentifier))
+        },
+        pipPIDs: @escaping @Sendable () -> Set<pid_t> = {
+            let apps = NSWorkspace.shared.runningApplications
+            return Set(apps.filter { $0.bundleIdentifier == ExclusionPlanner.pictureInPictureBundleID }.map(\.processIdentifier))
         },
         copyOnScreen: @escaping @Sendable () -> [SiteVisibleWindow] = {
             let raw = OnScreenWindowList.copyOnScreenInfo()
@@ -105,6 +110,7 @@ struct SiteSamplerHooks: Sendable {
         }
     ) {
         self.safariPIDs = safariPIDs
+        self.pipPIDs = pipPIDs
         self.copyOnScreen = copyOnScreen
         self.nowTicks = nowTicks
         self.observe = observe
@@ -120,7 +126,9 @@ struct AccessibilityProbe: Sendable {
             AccessibilityTitleReader().health() == .working
         },
         prompt: @escaping @MainActor @Sendable () -> Void = {
+            // macOS lists an app in that pane only after it has asked.
             AccessibilityTitleReader.ask()
+            AccessibilityTitleReader.openSystemSettings()
         }
     ) {
         self.readWorks = readWorks
@@ -313,6 +321,7 @@ actor SiteSampler {
 
     private func performPoll() async {
         let safariPids = hooks.safariPIDs()
+        let pipPids = hooks.pipPIDs()
 
         let startTicks = hooks.nowTicks()
         let rawWindows = hooks.copyOnScreen()
@@ -324,18 +333,25 @@ actor SiteSampler {
         var safariWindows: [SitePollWindow] = []
         var pollPids: [CGWindowID: pid_t] = [:]
 
+        // Picture in Picture holds a frame until its stream has it out, but it has no page to read,
+        // so it never joins the windows that get walked.
+        var pipWindows: [SitePollWindow] = []
         for w in rawWindows {
+            if pipPids.contains(w.pid) {
+                pipWindows.append(SitePollWindow(windowID: w.windowID, title: w.title, pid: w.pid))
+                continue
+            }
             guard w.layer == 0, safariPids.contains(w.pid) else {
                 continue
             }
-            safariWindows.append(SitePollWindow(windowID: w.windowID, title: w.title))
+            safariWindows.append(SitePollWindow(windowID: w.windowID, title: w.title, pid: w.pid))
             pollPids[w.windowID] = w.pid
         }
 
         latestSafariWindows = safariWindows
         pidsByWindowID = pollPids
 
-        let snapshot = SitePollSnapshot(start: startSec, end: endSec, windows: safariWindows)
+        let snapshot = SitePollSnapshot(start: startSec, end: endSec, windows: safariWindows + pipWindows)
         await onPoll(snapshot)
 
         // Track pending keys for scheduler (newest first). fresh pending only, cap 64.

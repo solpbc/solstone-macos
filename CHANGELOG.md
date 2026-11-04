@@ -11,11 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - when something other than your journal answers, the app now tells you and shows both marks to compare.
 
+### Changed
+
+- with a website left out and no Accessibility access, only Safari stays out of screen intake now. before, your whole screen stopped going into your journal whenever a Safari window was open, even behind other apps.
+- while any website is left out, Picture in Picture from Safari, and from other apps that use macos's own player, stays out of screen intake.
+- in Safari, when the solstone extension takes in a page, a link inside a sentence now stays in that sentence, and the site that link points to no longer goes into your journal. before, the sentence went into your journal with a gap and the link went in alone on its own line, and long pages got cut off sooner.
+- adding a website no longer brings up the macos permission prompt. settings says what it's for, and asks only when you press its button.
+- the menu now says when Safari is out of screen intake, and when screen intake is paused for websites you left out.
+- in Safari, the solstone extension's button that takes a site off your left-out list now says stop leaving out. before, it said include, which read like adding the site to your shared sites.
+
 ### Fixed
 
+- with a website left out and no Accessibility access, Safari's window titles no longer go into activity. before, they did, so a website you left out could reach your journal through its title.
+- in Safari, some pages the solstone extension takes in, like ones on news and documentation sites, could reach your journal with almost none of their text. their text now goes into your journal.
 - answering "that doesn't match" while switching journals now keeps your current pairing.
 - from this version on, when you choose "continue anyway" because your journal's mark couldn't be checked, settings no longer says "this is your journal".
 - the app now includes its license and third-party notices.
+- the solstone extension's setup page no longer says the solstone app is paired with your journal while you still have to confirm your journal's mark.
 
 ## [2.0.55] - 2026-11-03
 

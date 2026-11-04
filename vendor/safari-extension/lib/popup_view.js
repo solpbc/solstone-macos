@@ -121,9 +121,9 @@
       const rawLeftOutNote = pageNoteKey && Copy ? Copy[pageNoteKey] : "";
       pageNote = typeof rawLeftOutNote === "function" ? rawLeftOutNote(state.brand) : (rawLeftOutNote || "");
       const site = coveringExcludedSite;
-      const includeLabel = site === H.siteHostname(page.host) ? "include this site" : `include ${site}`;
-      // Including can't reach the app while it can't be told, so a site its
-      // list also covers offers no include (same rule as the site row).
+      const includeLabel = site === H.siteHostname(page.host) ? "stop leaving this site out" : `stop leaving ${site} out`;
+      // Taking it off the list can't reach the app while it can't be told, so a
+      // site its list also covers offers no such button (same rule as the site row).
       const appCovers = (state.appLeftOut || []).some((s2) => H.hostCovers(s2, page.host));
       if ((appCovers || !isLocalLeftOut) && !state.leftOutCapable) {
         siteAction = null;

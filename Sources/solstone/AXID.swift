@@ -34,6 +34,8 @@ enum AXID {
         static let browsers = "menubar.navigation.browsers"
         static let shortcutUnavailable = "menubar.shortcut.unavailable"
         static let screenIntake = "menubar.screen.intake"
+        static let safariKeptOut = "menubar.websites.safariKeptOut"
+        static let siteScreenHeld = "menubar.websites.screenHeld"
     }
 
     enum Journal {
@@ -286,6 +288,7 @@ enum AXID {
             static let websiteAdd = "settings.privacy.websites.add"
             static let websiteFieldError = "settings.privacy.websites.field.error"
             static let websiteAccessibilityCaution = "settings.privacy.websites.accessibilityCaution"
+            static let websiteAllowAccessibility = "settings.privacy.websites.allowAccessibility"
             static let websiteBrowserCaution = "settings.privacy.websites.browserCaution"
             static let websiteLimits = "settings.privacy.websites.limits"
 

@@ -12,6 +12,18 @@ protocol DisplayIDProvider {
 
 extension SCDisplay: DisplayIDProvider {}
 
+@MainActor private var contentFilterKeptOutKey: UInt8 = 0
+
+extension SCContentFilter {
+    /// The applications this exact filter keeps out whole. The claim travels with the object a
+    /// stream runs, so it can't drift from what that stream holds. A filter never tagged keeps
+    /// out nothing.
+    @MainActor var keptOutPIDs: Set<pid_t> {
+        get { objc_getAssociatedObject(self, &contentFilterKeptOutKey) as? Set<pid_t> ?? [] }
+        set { objc_setAssociatedObject(self, &contentFilterKeptOutKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+}
+
 /// Keeps excluded apps, private browser windows and title-pattern windows out of screen capture.
 ///
 /// The capture filter keeps whole applications out and lets chosen windows of theirs back in
@@ -23,6 +35,15 @@ extension SCDisplay: DisplayIDProvider {}
 final class WindowExclusionManager {
     private var settings: ExclusionSettings
     private var readsAccessibilityTitles: Bool
+    /// The website rule's additions to what capture keeps out. Picture in Picture is drawn by a
+    /// system agent, not the browser, so no page check can vouch for it, and while the rule can't
+    /// read Safari's addresses, Safari sits out whole.
+    private var siteRuleNames: Set<String> = []
+    /// An apply reached a stream, or may have, without committing. The stream's filter is unknown,
+    /// so an equal plan can't be skipped.
+    private var needsReapply = false
+    /// Rises when a new segment takes its filter, so a tick that straddled it can't commit.
+    private var filterEpoch: UInt64 = 0
     private var planner = ExclusionPlanner()
     private(set) var currentPlan: ExclusionPlan = .empty
     /// The filters last applied, reused if content cannot be listed when a segment starts.
@@ -91,13 +112,26 @@ final class WindowExclusionManager {
     }
 
     var hasExclusions: Bool {
-        !settings.excludedAppNames.isEmpty || settings.excludePrivateBrowsing || !settings.titlePatterns.isEmpty
+        !settings.excludedAppNames.isEmpty || !siteRuleNames.isEmpty || settings.excludePrivateBrowsing || !settings.titlePatterns.isEmpty
     }
 
-    var excludedAppNames: Set<String> { settings.excludedAppNames }
+    var excludedAppNames: Set<String> { settings.excludedAppNames.union(siteRuleNames) }
     var excludePrivateBrowsing: Bool { settings.excludePrivateBrowsing }
     var excludedTitlePatterns: [String] { settings.titlePatterns }
     var isReadingAccessibilityTitles: Bool { readsAccessibilityTitles }
+
+    /// Bundle identifiers and owner names, lowercased as `ExclusionSettings` holds them.
+    private static let pictureInPictureNames: Set<String> = ["com.apple.pipagent", "picture in picture"]
+    private static let safariNames: Set<String> = ["com.apple.safari", "safari"]
+
+    func setSiteRule(active: Bool, safariKeptOut: Bool) {
+        var names: Set<String> = active ? Self.pictureInPictureNames : []
+        if active && safariKeptOut { names.formUnion(Self.safariNames) }
+        guard names != siteRuleNames else { return }
+        siteRuleNames = names
+        Logger.capture.info("Website rule: active=\(active, privacy: .public) safariKeptOut=\(safariKeptOut, privacy: .public)")
+        Task { await tick() }
+    }
 
     func updateExclusions(
         excludedAppNames: [String],
@@ -124,16 +158,19 @@ final class WindowExclusionManager {
         base: [CGDirectDisplayID: SCContentFilter]
     ) async -> [CGDirectDisplayID: SCContentFilter] {
         isStreamReady = false
+        filterEpoch &+= 1
         let plan = await computePlan()
         guard plan.hiddenPIDs.isEmpty == false else {
             currentPlan = plan
             lastFilters = base
+            needsReapply = false
             return base
         }
         do {
             let (filters, complete) = try await Self.filters(for: plan, displays: displays)
             // An app or window ScreenCaptureKit did not list yet is retried on the first tick.
             currentPlan = complete ? plan : .empty
+            needsReapply = !complete
             lastFilters = filters
             return filters
         } catch {
@@ -141,6 +178,7 @@ final class WindowExclusionManager {
             let reuse = keys.isSubset(of: Set(lastFilters.keys))
             Logger.capture.error("Window exclusion: could not list shareable content for a new segment, reusing last filters=\(reuse, privacy: .public): \(error, privacy: .public)")
             currentPlan = .empty  // re-applied on the first tick
+            needsReapply = true
             return reuse ? lastFilters : base
         }
     }
@@ -170,12 +208,16 @@ final class WindowExclusionManager {
     /// that the stream is still capturing. (A just-launched app can be missing from shareable content
     /// for a moment; committing that plan would leave the app captured until the plan next changed.)
     func reconcile(plan: ExclusionPlan, apply: () async throws -> Bool) async {
-        guard plan != currentPlan else { return }
+        guard plan != currentPlan || needsReapply else { return }
         do {
             if try await apply() {
                 currentPlan = plan
+                needsReapply = false
+            } else {
+                needsReapply = true
             }
         } catch {
+            needsReapply = true
             Logger.capture.warning("Failed to update content filter: \(error, privacy: .public)")
         }
     }
@@ -198,14 +240,22 @@ final class WindowExclusionManager {
         isTicking = true
         defer { isTicking = false }
 
+        let epoch = filterEpoch
         let plan = await computePlan()
         await reconcile(plan: plan) { [self] in
             let (filters, complete) = try await Self.filters(for: plan, displays: displays)
             try await onFiltersChanged?(filters)
+            guard epoch == filterEpoch else { return false }
             lastFilters = filters
             return complete
         }
         logPlan(plan)
+    }
+
+    internal var plannedSettings: ExclusionSettings {
+        var planned = settings
+        planned.excludedAppNames.formUnion(siteRuleNames)
+        return planned
     }
 
     private func computePlan() async -> ExclusionPlan {
@@ -231,7 +281,7 @@ final class WindowExclusionManager {
                 return all
             }.value
         }
-        return planner.plan(windows: windows, apps: apps, settings: settings, accessibilityTitles: titles, now: Date())
+        return planner.plan(windows: windows, apps: apps, settings: plannedSettings, accessibilityTitles: titles, now: Date())
     }
 
     private static func onScreenWindows() -> [ExclusionWindow] {
@@ -258,8 +308,11 @@ final class WindowExclusionManager {
             listedPIDs: Set(apps.map(\.processID)),
             listedWindowIDs: Set(excepted.map(\.windowID))
         )
-        let filters = Dictionary(uniqueKeysWithValues: displays.map { display in
-            (display.displayID, SCContentFilter(display: display, excludingApplications: apps, exceptingWindows: excepted))
+        let keptOut = plan.keptOutWhole(listedPIDs: Set(apps.map(\.processID)))
+        let filters = Dictionary(uniqueKeysWithValues: displays.map { display -> (CGDirectDisplayID, SCContentFilter) in
+            let filter = SCContentFilter(display: display, excludingApplications: apps, exceptingWindows: excepted)
+            filter.keptOutPIDs = keptOut
+            return (display.displayID, filter)
         })
         return (filters, complete)
     }

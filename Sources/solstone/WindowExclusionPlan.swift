@@ -126,6 +126,8 @@ struct ExclusionSettings: Equatable, Sendable {
 /// window that did not exist when the filter was made. That is what closes the first-frame race.
 struct ExclusionPlan: Equatable, Sendable {
     var hiddenPIDs: Set<pid_t> = []
+    /// Applications kept out whole: none of their windows are let back in.
+    var wholeAppPIDs: Set<pid_t> = []
     var exceptedWindowIDs: Set<CGWindowID> = []
     var excludedAppCount = 0
     var privateWindowCount = 0
@@ -139,6 +141,12 @@ struct ExclusionPlan: Equatable, Sendable {
     func isFullyResolved(listedPIDs: Set<pid_t>, listedWindowIDs: Set<CGWindowID>) -> Bool {
         hiddenPIDs.isSubset(of: listedPIDs) && exceptedWindowIDs.isSubset(of: listedWindowIDs)
     }
+
+    /// What a filter built from this plan actually keeps out whole, given what ScreenCaptureKit
+    /// listed. An application it didn't list stays captured, so it isn't claimed.
+    func keptOutWhole(listedPIDs: Set<pid_t>) -> Set<pid_t> {
+        wholeAppPIDs.intersection(listedPIDs)
+    }
 }
 
 /// Decides, tick by tick, which applications are kept out of capture and which of their windows are
@@ -148,6 +156,7 @@ struct ExclusionPlanner {
     /// Past this it is let in (nothing is excluded on a signal the app cannot read), and it is
     /// re-checked every tick.
     static let holdLimit: TimeInterval = 2.0
+    static let pictureInPictureBundleID = "com.apple.PIPAgent"
 
     private enum Cached {
         case pending(since: Date)
@@ -194,12 +203,18 @@ struct ExclusionPlanner {
         var excludedPIDs = Set<pid_t>()
         for app in apps where settings.excludedAppNames.contains(app.name.lowercased())
             || app.bundleIdentifier.map({ settings.excludedAppNames.contains($0.lowercased()) }) == true {
+            // macOS's Picture in Picture agent keeps running after its window closes, unlisted by
+            // ScreenCaptureKit, so a plan naming it then could never be said in full.
+            if app.bundleIdentifier == Self.pictureInPictureBundleID, !windows.contains(where: { $0.pid == app.pid }) {
+                continue
+            }
             excludedPIDs.insert(app.pid)
         }
         for w in windows where settings.excludedAppNames.contains(w.ownerName.lowercased()) {
             excludedPIDs.insert(w.pid)
         }
         plan.excludedAppCount = excludedPIDs.count
+        plan.wholeAppPIDs = excludedPIDs
 
         // 2. Held browsers: kept out, each top-level window let back in once it reads ordinary.
         var heldBrowser: [pid_t: PrivateBrowser] = [:]

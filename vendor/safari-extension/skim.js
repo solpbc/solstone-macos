@@ -14,7 +14,9 @@
   function isVisible(el) {
     if (!el || el.nodeType !== 1) return false;
     if (typeof el.checkVisibility === "function") {
-      return el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+      if (el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return true;
+      // An element with no box of its own still shows its children, each checked in turn.
+      return globalThis.getComputedStyle?.(el)?.display === "contents";
     }
     if (el.getClientRects && el.getClientRects().length === 0) return false;
     if ("offsetParent" in el && el.offsetParent === null) {
@@ -39,6 +41,41 @@
 
   function directText(el) {
     return directTextResult(el).text;
+  }
+
+  // Elements a reader sees as part of the sentence around them. A link inside a
+  // paragraph stays in the paragraph, so its text does not leave a hole there.
+  const INLINE_TAGS = new Set([
+    "A", "ABBR", "B", "BDI", "BDO", "CITE", "CODE", "DATA", "DFN", "EM", "FONT", "I", "KBD",
+    "MARK", "Q", "S", "SAMP", "SMALL", "SPAN", "STRONG", "SUB", "SUP", "TIME", "TT", "U", "VAR",
+  ]);
+
+  function isInlineRun(el, adapter) {
+    if (!INLINE_TAGS.has(el.tagName) || el.shadowRoot) return false;
+    if (!isVisible(el) || matchesAny(el, adapter.skip) || matchesAny(el, adapter.boundary)) return false;
+    for (const child of el.children) if (!isInlineRun(child, adapter)) return false;
+    return true;
+  }
+
+  // An element's own text joined with the inline elements inside it, and the
+  // elements that text now holds. Null when it has no sentence of its own to
+  // join, or when joining would pass the block cap: it then reads as before.
+  function sentenceResult(el, adapter) {
+    const own = directTextResult(el);
+    if (own.truncated || B.visibleLen(own.text) <= 1) return null;
+    const joined = new Set();
+    for (const child of el.children) if (isInlineRun(child, adapter)) joined.add(child);
+    if (joined.size === 0) return null;
+    const builder = B.createTextResultBuilder(B.MAX_TEXT);
+    const append = (node, top) => {
+      for (const child of node.childNodes || []) {
+        if (child.nodeType === 3) builder.append(child.nodeValue);
+        else if (child.nodeType === 1 && (!top || joined.has(child))) append(child, false);
+      }
+    };
+    append(el, true);
+    const result = builder.result();
+    return result.truncated ? null : { text: result.text, joined };
   }
 
   function matchesAny(el, selector) {
@@ -83,7 +120,8 @@
       if (sid) nextBoundaryId = sid;
     }
 
-    const textRes = directTextResult(el);
+    const sentence = sentenceResult(el, adapter);
+    const textRes = sentence ? { text: sentence.text, truncated: false } : directTextResult(el);
     const text = textRes.text;
     if (textRes.truncated) {
       state.omitted = true;
@@ -114,6 +152,7 @@
       }
     }
     for (const child of el.children) {
+      if (sentence && sentence.joined.has(child)) continue;
       walk(child, adapter, out, depth + 1, nextBoundaryId, maxBlocks, state);
     }
   }

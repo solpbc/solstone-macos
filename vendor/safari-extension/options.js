@@ -279,7 +279,7 @@
       }
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.textContent = excluded ? "include again" : "remove";
+      remove.textContent = excluded ? "stop leaving out" : "remove";
       if (typeof remove.setAttribute === "function") remove.setAttribute("aria-label", `${remove.textContent} ${host}`);
       remove.addEventListener("click", () => runSiteAction({ id: excluded ? "include-site" : "remove-site", host: hostname, label: host, origin: entry }));
       actions.append(remove);
@@ -680,7 +680,7 @@
               if (isLocal || state?.leftOutCapable) {
                 const btn = document.createElement("button");
                 btn.type = "button";
-                btn.textContent = "include";
+                btn.textContent = "stop leaving out";
                 btn.addEventListener("click", async () => {
                   clearAnnouncement();
                   const res = await cmd({ cmd: "setLeftOut", host, out: false });

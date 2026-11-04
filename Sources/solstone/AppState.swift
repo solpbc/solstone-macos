@@ -247,6 +247,7 @@ public final class AppState {
     }
 
     internal var pendingPrivateWindowSettingsTarget: UUID?
+    internal var pendingWebsiteSettingsTarget: UUID?
 
     public func handleIngressURL(_ url: URL) {
         handleIngressURLString(url.absoluteString)
@@ -370,6 +371,30 @@ public final class AppState {
         )
     }
 
+    func requestWebsiteSettings() {
+        pendingSettingsTab = "privacy"
+        pendingWebsiteSettingsTarget = UUID()
+        NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+    }
+
+    /// The owner's own act, after Settings has said what it's for. Adding a website doesn't ask.
+    func askForWebsiteAccessibility() {
+        accessibilityProbe.prompt()
+    }
+
+    internal var currentSafariKeptOut = false
+    internal var currentSiteScreenHeld = false
+
+    internal var siteIntakeNotes: [SiteIntakeNote] {
+        classifySiteIntakeNotes(
+            isRecording: isRecording,
+            isPaused: isPaused,
+            screenActive: captureManager.activeSources.contains(.screen),
+            safariKeptOut: currentSafariKeptOut,
+            screenHeld: currentSiteScreenHeld
+        )
+    }
+
     public var siteAccessibilityCaution: Bool {
         guard !config.excludedSites.isEmpty else { return false }
         if isSnapshot {
@@ -451,19 +476,6 @@ public final class AppState {
         }
         if config.excludedSites.contains(stored) {
             return nil
-        }
-        let works = await Task.detached { [probe = self.accessibilityProbe] in
-            probe.readWorks()
-        }.value
-        if !works {
-            accessibilityProbe.prompt()
-        }
-        // Re-check after the await: a second submit may have added it, or filled the list.
-        if config.excludedSites.contains(stored) {
-            return nil
-        }
-        guard config.excludedSites.count < 200 else {
-            return UICopy.Websites.ERROR_LIMIT_REACHED
         }
         var newConfig = config
         newConfig.excludedSites.append(stored)
@@ -2191,8 +2203,7 @@ public final class AppState {
         self.isSnapshot = false
         self.automaticObservationPipelineEnabled = automaticObservationPipelineEnabled
         let probe = AccessibilityProbe(
-            readWorks: { AccessibilityTitleReader().health() == .working },
-            prompt: { AccessibilityTitleReader.ask() }
+            readWorks: { AccessibilityTitleReader().health() == .working }
         )
         self.accessibilityProbe = probe
         // Before capture is built below, so the first frame already leaves these apps out.
@@ -2322,6 +2333,12 @@ public final class AppState {
         captureManager.isSnapshot = false
         captureManager.onSiteSafariCaution = { [weak captureTarget] caution in
             if captureTarget?.state?.currentSiteSafariCaution != caution { captureTarget?.state?.currentSiteSafariCaution = caution }
+        }
+        captureManager.onSafariKeptOut = { [weak captureTarget] keptOut in
+            captureTarget?.state?.currentSafariKeptOut = keptOut
+        }
+        captureManager.onSiteScreenHeld = { [weak captureTarget] held in
+            captureTarget?.state?.currentSiteScreenHeld = held
         }
         if !config.excludedSites.isEmpty {
             captureManager.updateSiteRule(config.excludedSites)

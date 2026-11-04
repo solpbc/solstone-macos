@@ -332,6 +332,9 @@ public enum UICopy {
     public static let MENUBAR_OBSERVING_OFFLINE_SAVED_LOCALLY = "on, offline (saved locally) →"
     public static let MENUBAR_LOCAL_ONLY_SETUP_JOURNAL = "on · set up your journal →"
     public static let MENUBAR_SYNC_PAUSED = "on, sync paused"
+    public static let MENUBAR_SAFARI_KEPT_OUT = "Safari is out of screen intake →"
+    public static let MENUBAR_SITE_SCREEN_HELD = "screen paused for websites you left out"
+    public static let MENUBAR_A11Y_SAFARI_KEPT_OUT = "Safari is out of screen intake"
     public static let MENUBAR_STARTING = "starting…"
     public static let MENUBAR_AWAITING_MARK_CONFIRMATION = "on · confirm your journal's mark →"
     public static let MENUBAR_A11Y_PERMISSIONS_NEEDED = "solstone · permissions needed"
@@ -525,13 +528,21 @@ public enum UICopy {
 
     public enum Websites {
         public static let DESCRIPTION_PARAGRAPH_1 = "while a website you leave out shows in Safari, screen intake pauses, and its title and address stay out of activity. leaving out bank.com leaves out login.bank.com too."
+        public static let HOW_THIS_WORKS = "how this works"
         public static let DESCRIPTION_PARAGRAPH_2 = "to check, solstone reads the address of the page each Safari window shows, through Accessibility, and compares it with this list on this mac. the address goes into activity only if you turned on browser addresses."
-        public static let LIMITS_DISCLOSURE = "checked in Safari. other browsers and web apps added to the Dock aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, screen intake pauses for a moment while solstone checks. a website shown inside another website's page isn't recognized. a left-out website's tab title can still show in a browser's tab bar. a page that changes without changing its window title, or a page shown for less than a quarter of a second, can be missed. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you include again there comes off this list, so Safari windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well."
-        public static let ACCESSIBILITY_CAUTION = "solstone needs Accessibility to check websites. until then, screen intake pauses whenever a Safari window is showing, and left-out websites can still go into activity."
-        public static func browserCaution(browser: String) -> String {
-            "solstone can't read page addresses in \(browser), so screen intake pauses while it's showing a page, and left-out websites in it can still go into activity."
+        public static let LIMITS_DISCLOSURE = "checked in Safari. other browsers and web apps added to the Dock aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, screen intake pauses for a moment while solstone checks. a website shown inside another website's page isn't recognized. a left-out website's tab title can still show in a browser's tab bar. a minimized Safari window's picture in the Dock can still show. a page that changes without changing its window title, or a page shown for less than a quarter of a second, can be missed. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you stop leaving out there comes off this list, so Safari windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well. while any website is left out, Picture in Picture from Safari, and from other apps that use macOS's own player, stays out of screen intake."
+        /// What System Settings calls this list on the owner's macOS.
+        public static func accessibilityName(macOSMajor: Int) -> String {
+            macOSMajor >= 27 ? "Device Control and Data Access" : "Accessibility"
         }
-        public static let ACCESSIBILITY_EXPLANATION = "Accessibility (called Device Control and Data Access on macOS 27) lets an app see and control everything on this mac. here solstone uses it only to read the title and page address of each Safari window. adding your first website asks for it."
+        public static func accessibilityCaution(macOSMajor: Int) -> String {
+            "macOS describes \(accessibilityName(macOSMajor: macOSMajor)) as control of your computer, but here solstone uses it only to read the title and address of each Safari window. until solstone can use it, Safari stays out of screen intake and its titles stay out of activity. the rest of your screen isn't affected."
+        }
+        public static let OPEN_SYSTEM_SETTINGS = "open System Settings"
+        public static func browserCaution(browser: String) -> String {
+            "solstone can't read page addresses in \(browser), so screen intake pauses while it's showing a page."
+        }
+        public static let ACCESSIBILITY_EXPLANATION = "Accessibility (called Device Control and Data Access on macOS 27) lets an app see and control everything on this mac. here solstone uses it only to read the title and page address of each Safari window."
         public static let ERROR_INVALID_ADDRESS = "enter a website address, like bank.com."
         public static let ERROR_LIMIT_REACHED = "you can leave out up to 200 websites."
     }

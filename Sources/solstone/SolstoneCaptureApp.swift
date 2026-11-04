@@ -335,6 +335,7 @@ internal func statusAccessibilityLabel(
     presentation: MenubarPresentation,
     errorMessage: String?,
     sourceStatus: String? = nil,
+    siteNotes: [SiteIntakeNote] = [],
     journalVerdict: JournalConnectionVerdict? = nil
 ) -> String {
     let baseLabel: String = switch presentation.observation {
@@ -368,6 +369,12 @@ internal func statusAccessibilityLabel(
 
     var components = [baseLabel]
     if let sourceStatus { components.append(sourceStatus) }
+    for note in siteNotes {
+        switch note {
+        case .safariKeptOut: components.append(UICopy.MENUBAR_A11Y_SAFARI_KEPT_OUT)
+        case .screenHeld: components.append(UICopy.MENUBAR_SITE_SCREEN_HELD)
+        }
+    }
     if let attention = attentionToSurface(
         presentation.attention,
         alreadySaidBy: presentation.observation,
@@ -530,6 +537,7 @@ private struct StatusIcon: View {
                 presentation: presentation,
                 errorMessage: appState.errorMessage,
                 sourceStatus: appState.captureSourcesStatusText,
+                siteNotes: appState.siteIntakeNotes,
                 journalVerdict: appState.tunnelLifecycleOwner.connectionVerdict
             ))
             .task {

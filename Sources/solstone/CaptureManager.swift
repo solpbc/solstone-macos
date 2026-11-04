@@ -230,6 +230,12 @@ public final class CaptureManager {
     public private(set) var siteRuleActive: Bool = false
     internal let siteRuleLock: OSAllocatedUnfairLock<Bool>
     public var onSiteSafariCaution: (@MainActor (Bool) -> Void)?
+    public var onSafariKeptOut: (@MainActor (Bool) -> Void)?
+    public var onSiteScreenHeld: (@MainActor (Bool) -> Void)?
+    /// The website rule can't read Safari's addresses, so Safari sits out of capture whole.
+    public private(set) var safariKeptOut = false
+    /// The website rule is dropping whole frames, for long enough to say so.
+    public private(set) var siteScreenHeld = false
 #if DEBUG || SOLSTONE_TEST_SUPPORT
     internal var displayInfosForTesting: [DisplayInfo]? = nil
 #endif
@@ -798,12 +804,28 @@ public final class CaptureManager {
     func receiveSitePoll(_ poll: SitePollSnapshot) {
         siteFrameGate.addPoll(poll)
         currentSegment?.reevaluateSiteFrames()
+        publishSiteScreenHeld(siteFrameGate.isHoldingNow(now: poll.end))
+    }
+
+    private func publishSiteScreenHeld(_ held: Bool) {
+        guard held != siteScreenHeld else { return }
+        siteScreenHeld = held
+        onSiteScreenHeld?(held)
+    }
+
+    private func publishSafariKeptOut(_ keptOut: Bool) {
+        windowExclusionManager.setSiteRule(active: siteRuleActive, safariKeptOut: keptOut)
+        guard keptOut != safariKeptOut else { return }
+        safariKeptOut = keptOut
+        onSafariKeptOut?(keptOut)
     }
 
     func receiveSiteDecision(_ decisions: SiteDecision, axAvailable: Bool, generation: UInt64) {
         guard generation == siteListGeneration else { return }
         siteFrameGate.updateDecisions(decisions, axAvailable: axAvailable)
-        onSiteSafariCaution?(decisions.hasSafariCaution)
+        // Without Accessibility every read fails, and Settings already says why.
+        onSiteSafariCaution?(axAvailable && decisions.hasSafariCaution)
+        publishSafariKeptOut(siteRuleActive && !axAvailable)
         currentSegment?.reevaluateSiteFrames()
     }
 
@@ -816,7 +838,9 @@ public final class CaptureManager {
         siteFrameGate.updateDecisions(SiteDecision(), axAvailable: false)
         if !active {
             _ = siteFrameGate.deactivateAll()
+            publishSiteScreenHeld(false)
         }
+        publishSafariKeptOut(active && safariKeptOut)
 
         if siteSampler == nil {
             let sampler = SiteSampler(

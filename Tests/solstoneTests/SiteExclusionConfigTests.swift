@@ -64,43 +64,21 @@ struct SiteExclusionConfigTests {
         #expect(state.config.excludedSites.count == 200)
     }
 
-    @Test func firstValidAddPromptsBeforeWorkingReadAndSecondAddDoesNotPrompt() async {
+    @Test func addingASiteNeverAsksAndTheOwnersButtonDoes() async {
         let promptCalled = OSAllocatedUnfairLock(initialState: 0)
-        let isWorking = OSAllocatedUnfairLock(initialState: false)
-        let readWorksThreadIsMain = OSAllocatedUnfairLock<[Bool]>(initialState: [])
         let probe = AccessibilityProbe(
-            readWorks: {
-                readWorksThreadIsMain.withLock { $0.append(Thread.isMainThread) }
-                return isWorking.withLock { $0 }
-            },
+            readWorks: { false },
             prompt: { promptCalled.withLock { $0 += 1 } }
         )
         let state = AppState.forSnapshot(config: AppConfig())
         state.accessibilityProbe = probe
 
-        // First valid add before any working read -> prompts once
-        let err1 = await state.addExcludedSite("bank.com")
-        #expect(err1 == nil)
+        #expect(await state.addExcludedSite("bank.com") == nil)
+        #expect(state.config.excludedSites == ["bank.com"])
+        #expect(promptCalled.withLock { $0 } == 0)
+
+        state.askForWebsiteAccessibility()
         #expect(promptCalled.withLock { $0 } == 1)
-
-        let threads = readWorksThreadIsMain.withLock { $0 }
-        #expect(!threads.isEmpty)
-        for isMain in threads {
-            #expect(!isMain)
-        }
-
-        // Simulate read now working
-        isWorking.withLock { $0 = true }
-
-        // Second valid add -> does not prompt again
-        let err2 = await state.addExcludedSite("other.com")
-        #expect(err2 == nil)
-        #expect(promptCalled.withLock { $0 } == 1)
-
-        let finalThreads = readWorksThreadIsMain.withLock { $0 }
-        for isMain in finalThreads {
-            #expect(!isMain)
-        }
     }
 
     @Test func forSnapshotWithSitesInitializesRuleAndUpdatesOnReconfig() {
@@ -309,7 +287,7 @@ struct SiteExclusionConfigTests {
         }
         #expect(decision.hasSafariCaution == true)
 
-        state.captureManager.receiveSiteDecision(decision, axAvailable: false, generation: state.captureManager.siteListGeneration)
+        state.captureManager.receiveSiteDecision(decision, axAvailable: true, generation: state.captureManager.siteListGeneration)
 
         #expect(trackingFired.withLock { $0 } == true)
         #expect(state.siteSafariCaution == true)

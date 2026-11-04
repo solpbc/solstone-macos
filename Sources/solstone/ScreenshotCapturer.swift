@@ -10,6 +10,10 @@ import CoreVideo
 import CoreGraphics
 import VideoToolbox
 
+enum CaptureFilterUpdateError: Error {
+    case noRunningStream
+}
+
 /// Captures periodic screenshots for a single display using a persistent SCStream
 @MainActor
 public final class ScreenshotCapturer {
@@ -21,6 +25,11 @@ public final class ScreenshotCapturer {
     public var currentPreviewEpoch: (@Sendable () -> UInt64)?
     public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
     public var siteFrameGate: SiteFrameGate?
+    /// How long after a filter update returns its vouch starts. Measured at most 15 ms between the
+    /// update returning and the last frame under the old filter, idle and under load.
+    public static let filterSettle: TimeInterval = 1.0
+    /// What this stream has confirmed it keeps out whole, and the first capture time each covers.
+    private var liveKeptOut: [pid_t: TimeInterval] = [:]
     public let siteRuleLock: OSAllocatedUnfairLock<Bool>
     public let appendsClosedLock: OSAllocatedUnfairLock<Bool>
     public var hasStream: Bool { stream != nil }
@@ -49,6 +58,7 @@ public final class ScreenshotCapturer {
     public func reevaluateHeldFrames() {
         guard let gate = siteFrameGate else { return }
         let now = HostClock.seconds(ticks: mach_absolute_time())
+        gate.updateLiveKeptOut(displayID: displayID, pids: keptOutPIDs(at: now))
         let actions = gate.evaluate(displayID: displayID, now: now, owner: ownerID)
         applyGateActions(actions)
     }
@@ -198,16 +208,48 @@ public final class ScreenshotCapturer {
 
     /// Updates the content filter for window exclusion
     /// Uses SCStream.updateContentFilter for efficiency (no stream recreation)
-    public func updateContentFilter(_ filter: SCContentFilter) async {
-        self.contentFilter = filter
-        if let stream = stream {
-            do {
-                try await stream.updateContentFilter(filter)
-                if verbose { Logger.capture.debug("ScreenshotCapturer: Updated content filter for display \(self.displayID, privacy: .public)") }
-            } catch {
-                Logger.capture.error("Failed to update SCStream config for display \(self.displayID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+    ///
+    /// Throws unless the running stream took `filter`, so the caller doesn't commit a plan the
+    /// stream isn't running, and calls it again. `WindowExclusionManager.tick`, under its
+    /// `isTicking`, is the only caller, so there is one update at a time.
+    public func updateContentFilter(_ filter: SCContentFilter) async throws {
+        // Narrow first: an application this filter lets back in loses its vouch before any stream
+        // can show it.
+        let wanted = filter.keptOutPIDs
+        liveKeptOut = liveKeptOut.filter { wanted.contains($0.key) }
+        guard let stream else {
+            guard isRunning else {
+                contentFilter = filter
+                return
             }
+            // A restart is in progress. The new stream starts on the filter it was built from and
+            // vouches for that one.
+            throw CaptureFilterUpdateError.noRunningStream
         }
+        do {
+            try await stream.updateContentFilter(filter)
+        } catch {
+            Logger.capture.error("Failed to update SCStream config for display \(self.displayID, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+        guard self.stream === stream else { throw CaptureFilterUpdateError.noRunningStream }
+        contentFilter = filter
+        let from = HostClock.seconds(ticks: mach_absolute_time()) + Self.filterSettle
+        for pid in wanted where liveKeptOut[pid] == nil {
+            liveKeptOut[pid] = from
+        }
+        if verbose { Logger.capture.debug("ScreenshotCapturer: Updated content filter for display \(self.displayID, privacy: .public)") }
+    }
+
+    /// What this stream had confirmed it keeps out whole at capture time `c`.
+    internal func keptOutPIDs(at c: TimeInterval) -> Set<pid_t> {
+        Set(liveKeptOut.filter { $0.value <= c }.keys)
+    }
+
+    /// A new stream's first frame already has its filter, so its vouch runs from before it starts.
+    private func vouchForNewStream(filter: SCContentFilter) {
+        let from = HostClock.seconds(ticks: mach_absolute_time())
+        liveKeptOut = Dictionary(uniqueKeysWithValues: filter.keptOutPIDs.map { ($0, from) })
     }
 
     /// Starts the persistent video capture stream
@@ -248,9 +290,11 @@ public final class ScreenshotCapturer {
             }
             let newStream = streamFactory(contentFilter, configuration, delegate)
             try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
+            vouchForNewStream(filter: contentFilter)
             try await newStream.startCapture()
             guard streamGeneration == gen, !appendsClosedLock.withLock({ $0 }) else {
                 isRunning = false
+                liveKeptOut = [:]
                 Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
                 appendRestartSuppressedTraceForTesting()
                 try? await newStream.stopCapture()
@@ -263,6 +307,7 @@ public final class ScreenshotCapturer {
 
             Logger.capture.info("ScreenshotCapturer: Started persistent stream for display \(self.displayID, privacy: .public)")
         } catch {
+            liveKeptOut = [:]
             Logger.capture.error("ScreenshotCapturer: Failed to start stream for display \(self.displayID, privacy: .public): \(error, privacy: .public)")
             guard streamGeneration == gen else { return }
             isRunning = false
@@ -349,7 +394,8 @@ public final class ScreenshotCapturer {
             owner: ownerID,
             displayTicks: displayTimeTicks,
             c: c,
-            originTicks: captureOriginTicks
+            originTicks: captureOriginTicks,
+            keptOutPIDs: c.map(keptOutPIDs(at:)) ?? []
         )
 
         var actions = gate.enqueue(displayID: displayID, frame: held, owner: ownerID)
@@ -530,6 +576,7 @@ public final class ScreenshotCapturer {
         _teardownTraceForTesting.append("dropOutput")
 #endif
         stream = nil
+        liveKeptOut = [:]
         streamOutput = nil
         streamDelegate = nil
     }
@@ -614,9 +661,11 @@ public final class ScreenshotCapturer {
                 appendRestartProceedTraceForTesting()
                 let newStream = streamFactory(contentFilter, configuration, delegate)
                 try newStream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .global(qos: .userInitiated))
+                vouchForNewStream(filter: contentFilter)
                 try await newStream.startCapture()
                 guard streamGeneration == gen, !appendsClosedLock.withLock({ $0 }) else {
                     isRunning = false
+                    liveKeptOut = [:]
                     Logger.capture.info("ScreenshotCapturer: restart suppressed - stream generation changed for display \(self.displayID, privacy: .public)")
                     appendRestartSuppressedTraceForTesting()
                     try? await newStream.stopCapture()
@@ -632,6 +681,7 @@ public final class ScreenshotCapturer {
                 Logger.capture.info("ScreenshotCapturer: Stream restarted successfully for display \(self.displayID, privacy: .public)")
                 return
             } catch {
+                liveKeptOut = [:]
                 guard streamGeneration == gen, isRunning else {
                     appendRestartSuppressedTraceForTesting()
                     return
