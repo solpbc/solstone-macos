@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - answering "that doesn't match" while switching journals now keeps your current pairing.
+- from this version on, when you choose "continue anyway" because your journal's mark couldn't be checked, settings no longer says "this is your journal".
 
 ## [2.0.55] - 2026-11-03
 

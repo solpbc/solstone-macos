@@ -1615,13 +1615,18 @@ public final class AppState {
             return
         }
         // The tunnel's own connect also lets held work go. This covers a tunnel already up.
-        recordJournalMarkConfirmed(mark: mark)
+        recordJournalMarkConfirmed(mark: mark, compared: mark != nil)
     }
 
     private func recordAnswerForNewPairing(_ pairing: StoredPairing, mark: JournalMark?) {
         withMutation(keyPath: \.isJournalMarkConfirmed) {
             confirmedMark = mark
-            journalMarkConfirmationStore.confirm(journalMarkConfirmationIdentity(for: pairing))
+            let journal = journalMarkConfirmationIdentity(for: pairing)
+            if mark != nil {
+                journalMarkConfirmationStore.confirm(journal)
+            } else {
+                journalMarkConfirmationStore.confirmWithoutComparison(journal)
+            }
         }
     }
 
@@ -1967,11 +1972,22 @@ public final class AppState {
         return journalIdentity != nil && !journalMarkConfirmed
     }
 
-    /// Records the owner's answer for the paired journal and lets held work go.
+    /// Whether the owner's answer for the paired journal came from matching its mark, which is
+    /// what lets a surface say this is their journal. Continuing with no mark to compare doesn't.
+    internal var isJournalMarkCompared: Bool {
+        access(keyPath: \.isJournalMarkConfirmed)
+        guard isJournalMarkConfirmed,
+              let journal = tunnelLifecycleOwner.cachedJournalMarkIdentity else { return false }
+        return journalMarkConfirmationStore.uncomparedJournal != journal
+    }
+
+    /// Records the owner's answer for the paired journal and lets held work go. `compared` is false
+    /// when they continued with no mark to compare.
     @discardableResult
     internal func recordJournalMarkConfirmed(
         mark: JournalMark? = nil,
-        expectedRevision: PairingCredentialRevision? = nil
+        expectedRevision: PairingCredentialRevision? = nil,
+        compared: Bool = true
     ) -> Bool {
         guard !setupModel.isPeerSupportingSetup else { return false }
         guard let revision = currentDurablePairingRevision,
@@ -1987,7 +2003,11 @@ public final class AppState {
               journalMarkConfirmationIdentity(for: pairing) == journal else { return false }
         withMutation(keyPath: \.isJournalMarkConfirmed) {
             if let mark { confirmedMark = mark }
-            journalMarkConfirmationStore.confirm(journal)
+            if compared {
+                journalMarkConfirmationStore.confirm(journal)
+            } else {
+                journalMarkConfirmationStore.confirmWithoutComparison(journal)
+            }
             uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
             _ = pairingCoordinator.refreshPendingActions(markConfirmed: true)
             guard isPairedIngestReady else { return }

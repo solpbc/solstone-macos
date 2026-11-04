@@ -4,6 +4,7 @@
 import AppKit
 import CoreAudio
 import os
+import ServiceManagement
 import SwiftUI
 import SPLMark
 import Testing
@@ -1248,6 +1249,46 @@ struct SnapshotTests {
             to: "settings-pairing-switch-not-changed.png",
             appearance: NSAppearance(named: .aqua)
         )
+    }
+
+    private final class SnapshotLoginItems: LoginItemService {
+        var watchdogStatus: SMAppService.Status { .notRegistered }
+        var mainAppStatus: SMAppService.Status { .notRegistered }
+        func registerWatchdog() throws {}
+        func unregisterWatchdog() throws {}
+        func unregisterWatchdogAwaitingCompletion() async throws {}
+        func unregisterMainApp() throws {}
+    }
+
+    @Test func settingsServiceMarkByHowItWasAnswered() throws {
+        let paired = pairing(instanceID: "11111111-1111-1111-1111-111111111111", caChainPEM: testCACertPEM)
+        let journal = journalMarkConfirmationIdentity(for: paired)
+        for (compared, filename) in [
+            (true, "settings-service-mark-compared.png"),
+            (false, "settings-service-mark-continued-without-comparing.png")
+        ] {
+            let answers = InMemoryJournalMarkConfirmationStore()
+            if compared {
+                answers.confirm(journal)
+            } else {
+                answers.confirmWithoutComparison(journal)
+            }
+            let store = PairingStore(pairing: paired)
+            let state = AppState.forLoginItemTest(
+                config: AppConfig(serverURL: "https://solstone.example.com"),
+                loginService: SnapshotLoginItems(),
+                pairingStoring: store,
+                pairingLoad: { try store.load() },
+                journalMarkConfirmationStore: answers
+            )
+            state.setConfirmedMark(.uiTestSample)
+            #expect(state.isJournalMarkCompared == compared)
+            try render(
+                SettingsView(appState: state, updateController: makeSnapshotUpdateController(), selectedTab: .service, initialStorageUsedMB: 42),
+                size: settingsSize,
+                to: filename
+            )
+        }
     }
 
     private func renderOnboarding(model: SetupModel, state: AppState, to baseFilename: String) throws {

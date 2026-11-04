@@ -268,7 +268,7 @@ struct SetupView: View {
                 SetupCard {
                     VStack(alignment: .leading, spacing: 12) {
                         if let mark = appState.confirmedMark ?? model.olderDiscoveredMark {
-                            JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkConfirmed)
+                            JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkCompared)
                             HStack {
                                 if !appState.isJournalMarkConfirmed {
                                     Button("pair") {
@@ -530,7 +530,7 @@ struct SetupView: View {
                         }
                     } else {
                         if let mark = appState.confirmedMark {
-                            JournalMarkView(mark: mark, isConfirmed: true)
+                            JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkCompared)
                         } else {
                             SetupMarkSlot.withoutMark(isConfirmed: appState.isJournalMarkConfirmed)
                             Button(UICopy.SETUP_TRY_AGAIN) {

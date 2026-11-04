@@ -62,7 +62,8 @@ extension JournalMarkConfirmationDriver {
         guard !appState.setupModel.isPeerSupportingSetup else { return }
         guard case .unverified = phase,
               appState.recordJournalMarkConfirmed(
-                expectedRevision: appState.currentJournalMarkAttemptRevision
+                expectedRevision: appState.currentJournalMarkAttemptRevision,
+                compared: false
               ) else { return }
         continueAnyway()
     }

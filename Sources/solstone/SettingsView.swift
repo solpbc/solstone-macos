@@ -1701,7 +1701,7 @@ struct SettingsView: View {
 
                 if appState.isJournalMarkConfirmed {
                     if let mark = appState.confirmedMark {
-                        JournalMarkView(mark: mark, isConfirmed: true)
+                        JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkCompared)
                         AXStateCompanion(
                             id: AXID.Settings.Service.journalMarkState,
                             value: mark.words.joined(separator: " ")
@@ -2565,7 +2565,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var pairingResultView: some View {
         if let mark = appState.confirmedMark, pairingCanUnpair {
-            JournalMarkView(mark: mark, isConfirmed: true)
+            JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkCompared)
         } else if let result = pairingResultText {
             LabeledContent("pairing") {
                 HStack(spacing: 6) {

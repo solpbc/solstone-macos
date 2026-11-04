@@ -12,14 +12,19 @@ import Foundation
 internal protocol JournalMarkConfirmationStoring: AnyObject, Sendable {
     /// The confirmed journal, or nil when none is.
     var confirmedJournal: String? { get }
+    /// The journal whose answer was "continue" with no mark to compare. It may send, and nothing
+    /// says the owner matched its mark, even once one can be drawn.
+    var uncomparedJournal: String? { get }
     /// Whether this Mac has decided what a pairing held from an earlier version counts as.
     var settled: Bool { get }
     func confirm(_ journal: String)
+    func confirmWithoutComparison(_ journal: String)
     func clear()
 }
 
 internal final class UserDefaultsJournalMarkConfirmationStore: JournalMarkConfirmationStoring, @unchecked Sendable {
     static let confirmedJournalKey = "journalMarkConfirmedJournal"
+    static let uncomparedJournalKey = "journalMarkUncomparedJournal"
     static let settledKey = "journalMarkConfirmationSettled"
 
     private let defaults: UserDefaults
@@ -32,17 +37,29 @@ internal final class UserDefaultsJournalMarkConfirmationStore: JournalMarkConfir
         defaults.string(forKey: Self.confirmedJournalKey)
     }
 
+    var uncomparedJournal: String? {
+        defaults.string(forKey: Self.uncomparedJournalKey)
+    }
+
     var settled: Bool {
         defaults.bool(forKey: Self.settledKey)
     }
 
     func confirm(_ journal: String) {
         defaults.set(journal, forKey: Self.confirmedJournalKey)
+        defaults.removeObject(forKey: Self.uncomparedJournalKey)
+        defaults.set(true, forKey: Self.settledKey)
+    }
+
+    func confirmWithoutComparison(_ journal: String) {
+        defaults.set(journal, forKey: Self.confirmedJournalKey)
+        defaults.set(journal, forKey: Self.uncomparedJournalKey)
         defaults.set(true, forKey: Self.settledKey)
     }
 
     func clear() {
         defaults.removeObject(forKey: Self.confirmedJournalKey)
+        defaults.removeObject(forKey: Self.uncomparedJournalKey)
         defaults.set(true, forKey: Self.settledKey)
     }
 }
@@ -50,6 +67,7 @@ internal final class UserDefaultsJournalMarkConfirmationStore: JournalMarkConfir
 internal final class InMemoryJournalMarkConfirmationStore: JournalMarkConfirmationStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var journal: String?
+    private var uncompared: String?
     private var isSettled: Bool
 
     init(confirmedJournal: String? = nil, settled: Bool = true) {
@@ -61,6 +79,10 @@ internal final class InMemoryJournalMarkConfirmationStore: JournalMarkConfirmati
         lock.withLock { journal }
     }
 
+    var uncomparedJournal: String? {
+        lock.withLock { uncompared }
+    }
+
     var settled: Bool {
         lock.withLock { isSettled }
     }
@@ -68,6 +90,15 @@ internal final class InMemoryJournalMarkConfirmationStore: JournalMarkConfirmati
     func confirm(_ journal: String) {
         lock.withLock {
             self.journal = journal
+            uncompared = nil
+            isSettled = true
+        }
+    }
+
+    func confirmWithoutComparison(_ journal: String) {
+        lock.withLock {
+            self.journal = journal
+            uncompared = journal
             isSettled = true
         }
     }
@@ -75,6 +106,7 @@ internal final class InMemoryJournalMarkConfirmationStore: JournalMarkConfirmati
     func clear() {
         lock.withLock {
             journal = nil
+            uncompared = nil
             isSettled = true
         }
     }
