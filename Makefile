@@ -62,6 +62,7 @@ ADHOC_SIGN_ID      ?= $(shell scripts/adhoc-dev-cert.sh identity 2>/dev/null || 
 ADHOC_ENTITLEMENTS ?= $(ENTITLEMENTS_PLIST)
 BUNDLE_BUILD_TARGET ?= release-universal
 BUNDLE_CONFIGURATION ?= Release
+BUNDLE_SWIFT_CONFIGURATION = $(if $(filter Debug,$(BUNDLE_CONFIGURATION)),debug,release)
 # Re-vendor brand SVGs from the canonical source. `make ci` gates on the
 # committed *generated* output staying current with these SVGs (via
 # check-brand-assets-fresh below) — it does not run brand-sync itself, since
@@ -349,11 +350,17 @@ unlock-signing:
 # Build a universal .app bundle signed with Developer ID Application + hardened runtime.
 # Separate from `bundle-adhoc`, which is the local-only unsigned/dev-cert path.
 bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
+	@products=$$(swift build -c $(BUNDLE_SWIFT_CONFIGURATION) --arch arm64 --arch x86_64 $(SWIFT_BUILD_FLAGS) --show-bin-path) && \
+		$(MAKE) --no-print-directory assemble-dist-bundle SWIFT_PRODUCTS_DIR="$$products"
+
+.PHONY: assemble-dist-bundle
+assemble-dist-bundle:
+	@test -n "$(SWIFT_PRODUCTS_DIR)" && test -d "$(SWIFT_PRODUCTS_DIR)" || { echo "error: Swift build products directory is missing" >&2; exit 1; }
 	@echo "Creating distribution app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
-	@cp .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone solstone.app/Contents/MacOS/
-	@cp .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone-watchdog solstone.app/Contents/MacOS/
+	@cp "$(SWIFT_PRODUCTS_DIR)/solstone" solstone.app/Contents/MacOS/
+	@cp "$(SWIFT_PRODUCTS_DIR)/solstone-watchdog" solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@# Embedded Developer ID provisioning profile authorizes the keychain-access-groups
 	@# entitlement (Data Protection keychain for the SPL pairing bundle). Must be in place
@@ -363,9 +370,9 @@ bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 	@cp $(APP_NOTICE_FILES) solstone.app/Contents/Resources/
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
-	@cp -r .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@cp -r .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
-	@cp -r .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone_SetupChrome.bundle solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_solstone.bundle" solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_JournalMarkKit.bundle" solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_SetupChrome.bundle" solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp \
@@ -397,7 +404,7 @@ bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		solstone.app/Contents/MacOS/solstone-watchdog
 ifeq ($(BROWSER_PREVIEW),1)
-	@cp .build/apple/Products/$(BUNDLE_CONFIGURATION)/solstone-browser-host solstone.app/Contents/MacOS/
+	@cp "$(SWIFT_PRODUCTS_DIR)/solstone-browser-host" solstone.app/Contents/MacOS/
 	@mkdir -p solstone.app/Contents/Resources/vendor/contracts/native-browser/registration solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src
 	@cp vendor/contracts/native-browser/authority.json vendor/contracts/native-browser/envelope.schema.json vendor/contracts/native-browser/browser.schema.json vendor/contracts/native-browser/manifest.json solstone.app/Contents/Resources/vendor/contracts/native-browser/
 	@cp vendor/crates/native-browser-frame/src/constants.rs solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src/
@@ -452,19 +459,25 @@ check-app-notices:
 # Local ad-hoc test bundle only; never shipped, never update-served, never production.
 # Keep in lockstep with bundle-dist; only signing, provisioning, and entitlements differ.
 bundle-adhoc: release-universal-adhoc
+	@products=$$(swift build -c release --arch arm64 --arch x86_64 $(SWIFT_BUILD_FLAGS) --show-bin-path) && \
+		$(MAKE) --no-print-directory assemble-adhoc-bundle SWIFT_PRODUCTS_DIR="$$products"
+
+.PHONY: assemble-adhoc-bundle
+assemble-adhoc-bundle:
+	@test -n "$(SWIFT_PRODUCTS_DIR)" && test -d "$(SWIFT_PRODUCTS_DIR)" || { echo "error: Swift build products directory is missing" >&2; exit 1; }
 	@echo "Creating local ad-hoc app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
-	@cp .build/apple/Products/Release/solstone solstone.app/Contents/MacOS/
-	@cp .build/apple/Products/Release/solstone-watchdog solstone.app/Contents/MacOS/
+	@cp "$(SWIFT_PRODUCTS_DIR)/solstone" solstone.app/Contents/MacOS/
+	@cp "$(SWIFT_PRODUCTS_DIR)/solstone-watchdog" solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp $(APP_NOTICE_FILES) solstone.app/Contents/Resources/
 	@mkdir -p solstone.app/Contents/Library/LaunchAgents
 	@cp Sources/solstone/app.solstone.observer.watchdog.plist solstone.app/Contents/Library/LaunchAgents/
-	@cp -r .build/apple/Products/Release/solstone_solstone.bundle solstone.app/Contents/Resources/
-	@cp -r .build/apple/Products/Release/solstone_JournalMarkKit.bundle solstone.app/Contents/Resources/
-	@cp -r .build/apple/Products/Release/solstone_SetupChrome.bundle solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_solstone.bundle" solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_JournalMarkKit.bundle" solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_SetupChrome.bundle" solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp=none \
@@ -496,7 +509,7 @@ bundle-adhoc: release-universal-adhoc
 		--sign "$(ADHOC_SIGN_ID)" \
 		solstone.app/Contents/MacOS/solstone-watchdog
 ifeq ($(BROWSER_PREVIEW),1)
-	@cp .build/apple/Products/Release/solstone-browser-host solstone.app/Contents/MacOS/
+	@cp "$(SWIFT_PRODUCTS_DIR)/solstone-browser-host" solstone.app/Contents/MacOS/
 	@mkdir -p solstone.app/Contents/Resources/vendor/contracts/native-browser/registration solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src
 	@cp vendor/contracts/native-browser/authority.json vendor/contracts/native-browser/envelope.schema.json vendor/contracts/native-browser/browser.schema.json vendor/contracts/native-browser/manifest.json solstone.app/Contents/Resources/vendor/contracts/native-browser/
 	@cp vendor/crates/native-browser-frame/src/constants.rs solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src/

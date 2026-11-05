@@ -282,7 +282,9 @@ func makeEvidenceCoordinator(
         isTerminating: isTerminating,
         configProvider: { (sources: sources, disabled: [], enabled: []) },
         bannerSink: { _ in },
-        startOperation: startOperation,
+        // Evidence tests exercise admission and logging, not the host's devices.
+        // A nil operation falls through to real microphone/screen capture.
+        startOperation: startOperation ?? { _, _, _ in .committed },
         recorder: recorder,
         screenPermissionProvider: screenPermissionProvider,
         permissionPollScheduler: permissionPollScheduler,

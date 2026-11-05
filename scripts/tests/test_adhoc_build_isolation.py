@@ -12,6 +12,7 @@ MARKER_KEY = "SolstoneSPLKeychainPlane"
 ADHOC_TARGETS = {
     "release-universal-adhoc",
     "bundle-adhoc",
+    "assemble-adhoc-bundle",
     "bundle-adhoc-debug",
 }
 
@@ -20,6 +21,7 @@ PRODUCTION_TARGETS = {
     "release-preflight",
     "release-universal",
     "bundle-dist",
+    "assemble-dist-bundle",
     "dmg",
     "dmg-both",
     "notarize",
@@ -119,7 +121,7 @@ class AdhocBuildIsolationTest(unittest.TestCase):
 
     def test_production_bundle_keeps_keychain_access_group_gate(self):
         blocks = parse_makefile()
-        recipe = "\n".join(blocks["bundle-dist"]["recipe"])
+        recipe = "\n".join(blocks["assemble-dist-bundle"]["recipe"])
         self.assertIn("codesign -d --entitlements", recipe)
         self.assertIn("grep -q", recipe)
         self.assertIn("keychain-access-group entitlement missing", recipe)

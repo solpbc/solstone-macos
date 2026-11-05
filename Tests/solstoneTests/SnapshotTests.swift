@@ -83,7 +83,8 @@ struct SnapshotTests {
         _ view: V,
         size: CGSize,
         to filename: String,
-        appearance: NSAppearance? = nil
+        appearance: NSAppearance? = nil,
+        maximumWhiteRatio: Double? = nil
     ) throws {
         let hostingView = NSHostingView(rootView: view)
         hostingView.appearance = appearance
@@ -117,8 +118,9 @@ struct SnapshotTests {
             }
         }
         let whiteRatio = Double(backgroundCount) / Double(width * height)
-        if whiteRatio > emptinessThreshold {
-            throw RenderError.emptyContent(filename: filename, whiteRatio: whiteRatio, threshold: emptinessThreshold)
+        let threshold = maximumWhiteRatio ?? emptinessThreshold
+        if whiteRatio > threshold {
+            throw RenderError.emptyContent(filename: filename, whiteRatio: whiteRatio, threshold: threshold)
         }
     }
 
@@ -1312,7 +1314,10 @@ struct SnapshotTests {
             .background(Color(nsColor: .windowBackgroundColor)),
             size: size,
             to: filename,
-            appearance: appearance
+            appearance: appearance,
+            // Two collapsed text rows are 96% near-white on macOS 27. They are
+            // intentionally sparse; a missing view still fails this local limit.
+            maximumWhiteRatio: expanded.isEmpty ? 0.98 : nil
         )
     }
 
@@ -1865,9 +1870,9 @@ struct SnapshotTests {
         )
     }
 
-    @Test func emptinessGuardFiresOnBlankView() {
+    @Test(arguments: [0.95, 0.98]) func emptinessGuardFiresOnBlankView(threshold: Double) {
         #expect {
-            try render(Color.white, size: settingsSize, to: "blank-view-guard.png")
+            try render(Color.white, size: settingsSize, to: "blank-view-guard.png", maximumWhiteRatio: threshold)
         } throws: { error in
             guard case RenderError.emptyContent = error else { return false }
             return true
