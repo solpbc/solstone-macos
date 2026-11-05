@@ -49,6 +49,11 @@
   let step1Action = null;
   let paintSequence = 0;
   let appliedCaptureEpoch = -1;
+  // The latest status from the background; state is what the page shows of
+  // it, with the toolbar's timing for the app connection.
+  let latest = null;
+  let link = null;
+  let linkTimer = null;
 
   function announce(message, tone = "") {
     const region = $("actionMessage");
@@ -715,7 +720,20 @@
 
   function paint(nextState, sequence) {
     if (sequence !== paintSequence) return;
-    state = nextState;
+    latest = nextState;
+    return show();
+  }
+
+  function show() {
+    link = Status.present(link, latest, undefined, Date.now());
+    if (linkTimer != null) clearTimeout(linkTimer);
+    linkTimer = link.wakeAt == null ? null : setTimeout(() => {
+      linkTimer = null;
+      show();
+    }, Math.max(0, link.wakeAt - Date.now()));
+    // Nothing heard yet: the page keeps its first look.
+    if (!link.status) return;
+    state = link.status;
     if ($("ver")) $("ver").textContent = state && state.version ? `v${state.version}` : "";
 
     const derived = Status.derive(state);
@@ -926,25 +944,29 @@
   let reconnectTimer = null;
   let statusPort = null;
   let lastStatusAt = Date.now();
+  let subscribedAt = 0;
   function subscribeStatus() {
     const generation = ++subscriptionEpoch;
     appliedCaptureEpoch = -1;
     lastStatusAt = Date.now();
+    subscribedAt = lastStatusAt;
     try { statusPort?.disconnect?.(); } catch (_e) {}
     statusPort = null;
+    // The channel closes when the background restarts. What the page knew is
+    // void, but it holds what it shows briefly while the new background
+    // answers, and resubscribes at once (a channel that fails again right away
+    // waits a second).
     const disconnected = () => {
       if (generation !== subscriptionEpoch) return;
       subscriptionEpoch++;
       appliedCaptureEpoch = -1;
-      const closed = { ...(state || {}), connected: false, handshake: "closed",
-        lease: null, hostCapture: null, hostDelivery: null, hostFailure: null,
-        custody: null, capturePermitted: false, addSiteEligible: false };
-      paint(closed, ++paintSequence);
-      refresh();
       if (reconnectTimer == null) reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         subscribeStatus();
-      }, 1000);
+      }, Date.now() - subscribedAt >= 1000 ? 0 : 1000);
+      link = Status.resume(link, Date.now());
+      paint(Status.withdrawn(latest, true), ++paintSequence);
+      refresh();
     };
     try {
       const port = chrome.runtime.connect({ name: "status" });

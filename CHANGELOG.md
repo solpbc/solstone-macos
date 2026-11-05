@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- in Safari, the solstone extension's toolbar icon, popup and settings no longer say "on" before the solstone app has answered, and no longer flash "can't reach the solstone app" while the extension restarts in the background.
+
 ## [2.0.57] - 2026-11-05
 
 ### Added

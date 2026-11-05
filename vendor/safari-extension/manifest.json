@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "solstone",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "on sites you choose, the solstone extension takes in page text, addresses and rough layout, and all of it goes into your journal.",
   "incognito": "not_allowed",
   "permissions": [
@@ -57,9 +57,9 @@
     "default_popup": "popup.html",
     "default_title": "solstone",
     "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
+      "16": "icons/icon-connecting-16.png",
+      "48": "icons/icon-connecting-48.png",
+      "128": "icons/icon-connecting-128.png"
     }
   },
   "options_page": "options.html",

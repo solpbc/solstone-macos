@@ -113,7 +113,9 @@
       }
 
       // Layer 2: Transport & Host Reachability
-      const isHandshakeConnecting = (connected && handshake === "pending") ||
+      // A background that hasn't tried the app yet has heard nothing either way.
+      const untried = status.connectionGeneration === 0;
+      const isHandshakeConnecting = untried || (connected && handshake === "pending") ||
         (hostCapture === "permitted" && !capturePermitted && custody?.full !== true &&
           (!lease || lease.freshnessMs === 0));
 
@@ -556,6 +558,96 @@
     }
   }
 
+  // When a surface says the app is reached, connecting or not reached. The
+  // evidence is the app's own frames: derive() shows "on" only under a fresh
+  // app lease. present() adds the timing every surface shares, so the toolbar,
+  // popup and settings page never blink:
+  // - not reached shows at once; reached shows at once, except that a drop
+  //   from reached stays up for at least LINK.downDwellMs;
+  // - connecting from nothing (a fresh surface) or from not reached keeps what
+  //   is on screen for LINK.graceMs while the app answers, so a retry that
+  //   fails at once never flashes connecting;
+  // - resume() holds the last shown state for LINK.graceMs while a surface
+  //   resubscribes after its background restarted;
+  // - connecting for LINK.offlineAfterMs becomes not reached.
+  // Its memo carries what to show (null keeps what is on screen) and when to
+  // look again.
+  const LINK = Object.freeze({ graceMs: 500, downDwellMs: 1000, offlineAfterMs: 30000 });
+  const LINK_FIELDS = ["connected", "handshake", "connectionGeneration", "hostSettling", "hostCapture", "hostDelivery",
+    "hostFailure", "custody", "lease", "capturePermitted", "addSiteEligible", "gate"];
+
+  // "up" is everything that isn't the app connection's own connecting or not
+  // reached, including a surface that can't read its status at all.
+  function linkOf(derived) {
+    if (derived.kind === "connecting" && derived.connecting === "handshake") return "connecting";
+    if (derived.kind === "cant-reach-app") return "down";
+    return "up";
+  }
+
+  // The status with nothing heard from the app. untried: the background hasn't
+  // tried it yet (it restarted), rather than tried and failed.
+  function withdrawn(status, untried) {
+    const base = status && typeof status === "object" ? status : {};
+    const generation = Number(base.connectionGeneration) || 0;
+    return {
+      ...base,
+      connected: false,
+      handshake: "closed",
+      connectionGeneration: untried ? 0 : Math.max(1, generation),
+      hostSettling: false,
+      about: base.about ? { ...base.about, journal_current: false } : null,
+      lease: null,
+      hostCapture: null,
+      hostDelivery: null,
+      hostFailure: null,
+      custody: null,
+      capturePermitted: false,
+      addSiteEligible: false,
+    };
+  }
+
+  function holding(status, shown) {
+    if (!shown) return null;
+    const next = { ...status };
+    for (const key of LINK_FIELDS) next[key] = shown[key];
+    return next;
+  }
+
+  function present(memo, status, extras, now) {
+    memo = memo || {};
+    const heard = linkOf(derive(status, extras));
+    const connectingSince = heard === "connecting" ? (memo.connectingSince ?? now) : null;
+    const holdUntil = memo.holdUntil != null && now < memo.holdUntil ? memo.holdUntil : null;
+    let shown = status;
+    let link = heard;
+    let wakeAt = null;
+    if (heard === "connecting") {
+      const offlineAt = connectingSince + LINK.offlineAfterMs;
+      let holdEnd = holdUntil;
+      if (memo.link == null || memo.link === "down") holdEnd = Math.max(holdEnd ?? 0, connectingSince + LINK.graceMs);
+      if (now >= offlineAt) {
+        shown = withdrawn(status, false);
+        link = "down";
+      } else if (holdEnd != null && now < holdEnd) {
+        shown = holding(status, memo.status);
+        link = memo.link ?? null;
+        wakeAt = holdEnd;
+      } else {
+        wakeAt = offlineAt;
+      }
+    } else if (heard === "up" && memo.droppedAt != null && now < memo.droppedAt + LINK.downDwellMs) {
+      shown = holding(status, memo.status);
+      link = memo.link;
+      wakeAt = memo.droppedAt + LINK.downDwellMs;
+    }
+    const droppedAt = link == null || link === "up" ? null : (memo.link === "up" ? now : (memo.droppedAt ?? null));
+    return { status: shown, link, connectingSince, droppedAt, holdUntil, wakeAt };
+  }
+
+  function resume(memo, now) {
+    return { ...(memo || {}), holdUntil: now + LINK.graceMs };
+  }
+
   function iconState(status, extras) {
     const result = derive(status, extras);
     const prefix = PREFIX_BY_MARK[result.mark] || "icon-error-";
@@ -711,6 +803,10 @@
 
   globalThis.SolstoneStatus = {
     derive,
+    LINK,
+    present,
+    resume,
+    withdrawn,
     iconState,
     siteRow,
     projectOpenTabs,

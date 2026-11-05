@@ -67,6 +67,9 @@
   let previousActiveElement = null;
   let paintSequence = 0;
   let appliedCaptureEpoch = -1;
+  // What the popup shows of the app connection, with the toolbar's timing.
+  let link = null;
+  let linkTimer = null;
 
   // The message sits at the end of a popup that scrolls, so bring it into view:
   // otherwise a refused add or a removal says nothing the owner can see.
@@ -310,8 +313,17 @@
       $("aboutMessage").textContent = "";
     }
     const extras = {};
-    const derived = Status.derive(state, extras);
-    const sections = View.arrange(derived, state, page, extras);
+    link = Status.present(link, state, extras, Date.now());
+    if (linkTimer != null) clearTimeout(linkTimer);
+    linkTimer = link.wakeAt == null ? null : setTimeout(() => {
+      linkTimer = null;
+      renderCurrent();
+    }, Math.max(0, link.wakeAt - Date.now()));
+    // Nothing heard yet: the popup keeps its neutral first look.
+    if (!link.status) return;
+    const shown = link.status;
+    const derived = Status.derive(shown, extras);
+    const sections = View.arrange(derived, shown, page, extras);
     renderVerdict(sections.find((section) => section.id === "verdict"));
     renderSiteIssues(sections.find((section) => section.id === "siteIssues"));
     renderPage(sections.find((section) => section.id === "page"));
@@ -381,23 +393,26 @@
 
   let subscriptionEpoch = 0;
   let reconnectTimer = null;
+  let subscribedAt = 0;
   function subscribeStatus() {
     const generation = ++subscriptionEpoch;
     appliedCaptureEpoch = -1;
+    subscribedAt = Date.now();
+    // The channel closes when the background restarts. What the popup knew is
+    // void, but it holds what it shows briefly while the new background
+    // answers, and resubscribes at once (a channel that fails again right away
+    // waits a second).
     const disconnected = () => {
       if (generation !== subscriptionEpoch) return;
       subscriptionEpoch++;
       appliedCaptureEpoch = -1;
-      const closed = { ...(state || {}), connected: false, handshake: "closed",
-        about: state?.about ? { ...state.about, journal_current: false } : null,
-        lease: null, hostCapture: null, hostDelivery: null, hostFailure: null,
-        custody: null, capturePermitted: false, addSiteEligible: false };
-      paint(closed, ++paintSequence);
-      refresh();
       if (reconnectTimer == null) reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         subscribeStatus();
-      }, 1000);
+      }, Date.now() - subscribedAt >= 1000 ? 0 : 1000);
+      link = Status.resume(link, Date.now());
+      paint(Status.withdrawn(state, true), ++paintSequence);
+      refresh();
     };
     try {
       const port = chrome.runtime.connect({ name: "status" });

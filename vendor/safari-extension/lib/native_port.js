@@ -102,6 +102,7 @@
       this.hostStateDeadline = null;
       this.stateRevision = 0;
       this.settlingRevision = null;
+      this.settleUntil = 0;
       this.settledWaiters = [];
       this.opEpoch = 0;
       this.connectionGeneration = 0;
@@ -474,7 +475,7 @@
         // Between withdrawing and re-granting authority for a host state. The
         // withdrawal is real for capture, but not news for the owner's surfaces.
         hostSettling: this.settlingRevision != null && this.settlingRevision === this.stateRevision &&
-          this.livePort != null && this.handshake === "ready",
+          this.livePort != null && this.handshake === "ready" && nowMs < this.settleUntil,
         behind: this.behind,
         pressure: { ...this.pressure },
         truncationByOrigin: this.truncationByOrigin || {},
@@ -932,8 +933,22 @@
       const about = globalThis.SolstoneAbout?.decode(val.about) || null;
       const deliveryContinues = this.destinationGeneration === val.destination_generation &&
         ["permitted", "paused", "intake_off"].includes(val.capture);
+      // Surfaces keep showing the last settled state while this settles, but
+      // only while that state is still earned: never past its own lease, and
+      // never past the next renewal, so a transition that never ends can't
+      // hold the owner's surfaces either.
+      const stillSettling = this.settlingRevision != null && this.settlingRevision === this.stateRevision &&
+        nowMs < this.settleUntil;
+      if (!stillSettling) {
+        this.settleUntil = Math.min(nowMs + getConsts().STATE_RENEWAL_MS_INTERVAL, this.hostStateDeadline ?? Infinity);
+      }
       const revision = ++this.stateRevision;
       this.settlingRevision = revision;
+      if (nowMs < this.settleUntil) {
+        this.schedule(() => {
+          if (this.settlingRevision === revision && this.stateRevision === revision) this.notify();
+        }, this.settleUntil - nowMs);
+      }
       const current = () => this.opEpoch === epoch && this.connectionGeneration === gen &&
         this.connectionToken === token && this.stateRevision === revision && this.handshake === "ready";
       // Withdraw old authority before any durable transition. A newer state

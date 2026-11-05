@@ -40,7 +40,7 @@ const PortController = globalThis.SolstoneNativePort;
 const Outbox = globalThis.SolstoneNativeOutbox;
 const Status = globalThis.SolstoneStatus;
 
-const VERSION = "0.5.4";
+const VERSION = "0.5.5";
 const ALARM_NAME = "native-port";
 
 const CONTENT_SCRIPT_FILES = [
@@ -77,6 +77,12 @@ let permissionEpoch = 0;
 let badgeEpoch = 0;
 let openTabsGeneration = 0;
 let badgeChain = Promise.resolve();
+// The toolbar's own sequence: only a paint supersedes a paint, so a status
+// that publishes authority without painting never leaves icon and title apart.
+let paintEpoch = 0;
+let toolbarLink = null;
+let toolbarWake = null;
+let lastAppNudgeAt = -Infinity;
 const statusPorts = new Set();
 // Tabs that may hold a lease must receive withdrawal without a fresh query.
 const leaseTabs = new Set();
@@ -205,14 +211,6 @@ async function updateBadge(status) {
   if (!status && port) status = port.getStatus();
   if (!status) return;
 
-  const iconInfo = Status && Status.iconState
-    ? Status.iconState(status)
-    : { prefix: "icon-offline-", badge: "", title: "solstone" };
-
-  const prefix = iconInfo.prefix;
-  const badge = iconInfo.badge || "";
-  const title = iconInfo.title || "solstone";
-
   // A routine host state renewal withdraws authority and re-grants it a moment
   // later. Content scripts hear the withdrawal; the owner's surfaces wait for
   // the settled state rather than flash "can't reach the solstone app".
@@ -227,17 +225,56 @@ async function updateBadge(status) {
   }
   broadcastLeaseUpdate(status, currentBadgeEpoch);
   if (settling) return;
+  await paintToolbar(status);
+}
+
+async function paintToolbar(status) {
+  const now = port ? port.now() : Date.now();
+  toolbarLink = Status.present(toolbarLink, status, undefined, now);
+  if (toolbarWake != null && port) port.clearSchedule(toolbarWake);
+  toolbarWake = null;
+  if (toolbarLink.wakeAt != null && port) {
+    const target = port;
+    toolbarWake = target.schedule(() => {
+      toolbarWake = null;
+      if (port !== target) return;
+      const current = target.getStatus();
+      if (current.hostSettling !== true) paintToolbar(current);
+    }, Math.max(0, toolbarLink.wakeAt - now));
+  }
+  // Nothing to paint yet: the toolbar keeps what it shows.
+  if (!toolbarLink.status) return;
+
+  const iconInfo = Status.iconState(toolbarLink.status);
+  const prefix = iconInfo.prefix;
+  const badge = iconInfo.badge || "";
+  const title = iconInfo.title || "solstone";
+  const currentPaint = ++paintEpoch;
   badgeChain = badgeChain.catch(() => {}).then(async () => {
-    if (badgeEpoch !== currentBadgeEpoch) return;
+    if (paintEpoch !== currentPaint) return;
     await chrome.action.setIcon({ path: ICON_SET(prefix) });
-    if (badgeEpoch !== currentBadgeEpoch) return;
+    if (paintEpoch !== currentPaint) return;
     await chrome.action.setBadgeText({ text: badge });
-    if (badgeEpoch !== currentBadgeEpoch) return;
+    if (paintEpoch !== currentPaint) return;
     if (badge) await chrome.action.setBadgeBackgroundColor({ color: "#9F2D2D" });
-    if (badgeEpoch !== currentBadgeEpoch) return;
+    if (paintEpoch !== currentPaint) return;
     await chrome.action.setTitle({ title });
   });
   await badgeChain.catch(() => {});
+}
+
+// The owner coming back to the browser, often straight from opening the
+// solstone app, tries the app now rather than at the next minute's poll. The
+// app is on this computer, so a try is cheap; it still waits a few seconds
+// between tries.
+function tryAppNow() {
+  ensureInit().then(() => {
+    if (!port || port.livePort || port.behind) return;
+    const now = port.now();
+    if (now - lastAppNudgeAt < 5000) return;
+    lastAppNudgeAt = now;
+    port.connect();
+  }).catch(() => {});
 }
 
 function refreshOpenTabs() {
@@ -1036,6 +1073,9 @@ chrome.tabs.onCreated?.addListener((tab) => {
   refreshOpenTabs();
 });
 chrome.tabs.onUpdated?.addListener(() => refreshOpenTabs());
+chrome.windows?.onFocusChanged?.addListener((windowId) => {
+  if (windowId !== chrome.windows.WINDOW_ID_NONE) tryAppNow();
+});
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
