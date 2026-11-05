@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.57] - 2026-11-05
+
 ### Added
 
 - when something other than your journal answers, the app now tells you and shows both marks to compare.
