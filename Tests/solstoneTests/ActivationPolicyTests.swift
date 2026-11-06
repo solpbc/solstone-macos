@@ -51,4 +51,17 @@ struct ActivationPolicyTests {
         #expect(state.computeDesiredPolicy(now: now.addingTimeInterval(2)) == .regular)
     }
 
+    @Test func aWindowOpenedDuringLaunchSuppressionIsRereadWhenItEnds() {
+        let state = AppState.forSnapshot()
+        let now = Date()
+        state.loginLaunchSuppressionExpires = now.addingTimeInterval(1.5)
+
+        #expect(state.launchSuppressionRecheckDelay(now: now) == nil)
+
+        state.openSceneIds = [.settings]
+
+        #expect(state.launchSuppressionRecheckDelay(now: now) == 1.5)
+        #expect(state.launchSuppressionRecheckDelay(now: now.addingTimeInterval(2)) == nil)
+    }
+
 }

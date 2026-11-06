@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- when the solstone app opens its settings window as it starts, it now shows in the Dock and when you press command-tab. before, it could stay missing until you reopened settings from the menu bar.
+
 ## [2.0.60] - 2026-11-06
 
 ### Fixed

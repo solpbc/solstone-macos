@@ -3116,18 +3116,32 @@ public final class AppState {
         activationPolicyWorkItem = nil
 
         if debounced {
-            let workItem = DispatchWorkItem { [weak self] in
-                MainActor.assumeIsolated {
-                    self?.reevaluateActivationPolicy(debounced: false)
-                }
-            }
-            activationPolicyWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500), execute: workItem)
+            scheduleActivationPolicyReevaluation(after: 0.5)
             return
         }
 
-        let desiredPolicy = computeDesiredPolicy(now: Date())
-        applyPolicy(desiredPolicy)
+        let now = Date()
+        applyPolicy(computeDesiredPolicy(now: now))
+        if let delay = launchSuppressionRecheckDelay(now: now) {
+            scheduleActivationPolicyReevaluation(after: delay)
+        }
+    }
+
+    /// A window opened during the launch suppression stays open after it ends, and nothing else
+    /// re-reads the policy then, so the app would stay out of the Dock and the app switcher.
+    func launchSuppressionRecheckDelay(now: Date) -> TimeInterval? {
+        guard now < loginLaunchSuppressionExpires, !openSceneIds.isEmpty else { return nil }
+        return loginLaunchSuppressionExpires.timeIntervalSince(now)
+    }
+
+    private func scheduleActivationPolicyReevaluation(after delay: TimeInterval) {
+        let workItem = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.reevaluateActivationPolicy(debounced: false)
+            }
+        }
+        activationPolicyWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     func computeDesiredPolicy(now: Date = Date()) -> NSApplication.ActivationPolicy {
