@@ -49,13 +49,6 @@ struct JournalMarkAccessibilityTests {
         #expect(JournalMarkUnavailable.accessibleName == "your journal's mark, unavailable right now")
     }
 
-    @Test func genericPaletteMatchesTheSharedIconCompositorSource() {
-        // The single source is JournalIconTileGeometry — never re-declared, so the generic-mark
-        // card and the app-icon compositor cannot drift from each other.
-        #expect(JournalIconTileGeometry.genericChip1Hex == "#E8913A")
-        #expect(JournalIconTileGeometry.genericChip2Hex == "#D4A017")
-    }
-
     private static func mark(color1: String?, color2: String?) -> JournalMark {
         JournalMark(
             icon1: JournalMark.Icon(

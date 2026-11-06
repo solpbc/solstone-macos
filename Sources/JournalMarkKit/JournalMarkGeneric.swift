@@ -132,17 +132,25 @@ struct JournalMarkGenericChip: View {
 
     var body: some View {
         let color = MarkGeometry.color(hex: self.hex)
-        return RoundedRectangle(cornerRadius: MarkGeometry.chipRadius, style: .continuous)
-            .fill(color.opacity(JournalIconTileGeometry.genericFillOpacity))
+        let paper = MarkGeometry.color(hex: JournalIconTileGeometry.genericPaperHex)
+        let shape = RoundedRectangle(cornerRadius: MarkGeometry.chipRadius, style: .continuous)
+        return shape
+            .fill(paper)
             .overlay {
-                RoundedRectangle(cornerRadius: MarkGeometry.chipRadius, style: .continuous)
-                    .stroke(
-                        color,
-                        style: StrokeStyle(
-                            lineWidth: MarkGeometry.chipBorderWidth,
-                            dash: JournalIconTileGeometry.genericDashLengths(chipSide: MarkGeometry.size)
-                        )
+                // Paper under the dashes too, so the gaps never show the ground behind the mark.
+                shape.stroke(
+                    paper,
+                    lineWidth: MarkGeometry.chipBorderWidth * JournalIconTileGeometry.genericBackingWidthRatio
+                )
+            }
+            .overlay {
+                shape.stroke(
+                    color,
+                    style: StrokeStyle(
+                        lineWidth: MarkGeometry.chipBorderWidth,
+                        dash: JournalIconTileGeometry.genericDashLengths(chipSide: MarkGeometry.size)
                     )
+                )
             }
             .frame(width: MarkGeometry.size, height: MarkGeometry.size)
             .rotationEffect(.degrees(self.rotated ? 45 : 0))

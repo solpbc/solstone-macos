@@ -189,16 +189,21 @@ public enum JournalIconCompositor {
         in context: CGContext
     ) {
         guard let stroke = JournalIconTileGeometry.cgColor(hex: colorHex),
-              let fill = JournalIconTileGeometry.cgColor(hex: colorHex, alpha: JournalIconTileGeometry.genericFillOpacity) else {
+              let paper = JournalIconTileGeometry.cgColor(hex: JournalIconTileGeometry.genericPaperHex) else {
             return
         }
         let path = JournalIconTileGeometry.chipPath(center: center, side: chipSide, rotationDegrees: rotation)
+        let border = JournalIconTileGeometry.ownerChipBorderWidth(chipSide: chipSide)
         context.addPath(path)
-        context.setFillColor(fill)
+        context.setFillColor(paper)
         context.fillPath()
         context.addPath(path)
+        context.setStrokeColor(paper)
+        context.setLineWidth(border * JournalIconTileGeometry.genericBackingWidthRatio)
+        context.strokePath()
+        context.addPath(path)
         context.setStrokeColor(stroke)
-        context.setLineWidth(JournalIconTileGeometry.ownerChipBorderWidth(chipSide: chipSide))
+        context.setLineWidth(border)
         context.setLineDash(phase: 0, lengths: JournalIconTileGeometry.genericDashLengths(chipSide: chipSide))
         context.strokePath()
         context.setLineDash(phase: 0, lengths: [])

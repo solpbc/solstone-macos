@@ -19,9 +19,13 @@ public enum JournalIconTileGeometry {
 
     static let plateFillHex = "#FCF3E4"
     public static let wordInkHex = "#3F3830"
-    public static let genericChip1Hex = "#E8913A"
-    public static let genericChip2Hex = "#D4A017"
-    static let genericFillOpacity: CGFloat = 0.07
+    public static let genericChip1Hex = "#B06A1A"
+    public static let genericChip2Hex = "#A57F0E"
+    /// The generic chip's paper. It fills the chip and runs under the dashed border, so every
+    /// dash and gap sits on paper rather than on whatever ground the mark is on.
+    public static let genericPaperHex = "#FEFCF8"
+    /// The paper backing under the border, as a multiple of the border width.
+    public static let genericBackingWidthRatio: CGFloat = 3
 
     static let platePathD = "M 527.36 0 c 103.834 0 155.751 0 195.41 20.207 a 185.4 185.4 0 0 1 81.023 81.023 c 20.207 39.659 20.207 91.576 20.207 195.41 L 824 527.36 c 0 103.834 0 155.751 -20.207 195.41 a 185.4 185.4 0 0 1 -81.023 81.023 c -39.659 20.207 -91.576 20.207 -195.41 20.207 L 296.64 824 c -103.834 0 -155.751 0 -195.41 -20.207 a 185.4 185.4 0 0 1 -81.023 -81.023 c -20.207 -39.659 -20.207 -91.576 -20.207 -195.41 L 0 296.64 c 0 -103.834 0 -155.751 20.207 -195.41 a 185.4 185.4 0 0 1 81.023 -81.023 c 39.659 -20.207 91.576 -20.207 195.41 -20.207 Z"
     public static var platePathElement: String {
