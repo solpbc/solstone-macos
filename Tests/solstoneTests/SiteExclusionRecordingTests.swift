@@ -1179,12 +1179,17 @@ struct SiteExclusionRecordingTests {
             return ("T", WebAreaWalkResult(urls: ["https://a.com/page"], completeness: .complete), "T", false)
         }
 
-        let reportedGens = OSAllocatedUnfairLock(initialState: [UInt64]())
+        // The initial accessibility probe may report the first list's generation at any point,
+        // so the generations a report carries say nothing about the walk. What the walk would
+        // leak is its decision.
+        let reportedAWalkDecision = OSAllocatedUnfairLock(initialState: false)
         let sampler = SiteSampler(
             hooks: hooks,
             onPoll: { _ in },
-            onDecisionUpdate: { _, _, gen in
-                reportedGens.withLock { $0.append(gen) }
+            onDecisionUpdate: { decision, _, _ in
+                if !decision.entries.isEmpty {
+                    reportedAWalkDecision.withLock { $0 = true }
+                }
             }
         )
 
@@ -1209,12 +1214,7 @@ struct SiteExclusionRecordingTests {
         #expect(dec.entries.isEmpty)
         #expect(dec.consecutiveFailures == 0)
 
-        let gens = reportedGens.withLock { $0 }
-        if let idx2 = gens.firstIndex(of: 2) {
-            #expect(!gens[idx2...].contains(1))
-        } else {
-            #expect(!gens.contains(1))
-        }
+        #expect(!reportedAWalkDecision.withLock { $0 })
     }
 
     @MainActor
