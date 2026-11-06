@@ -843,8 +843,12 @@ struct SettingsView: View {
                         Text("addresses include the site and path, without query strings or fragments.")
                             .font(.subheadline).foregroundStyle(.secondary)
                         Toggle("allow accessibility for activity", isOn: Binding(
-                            get: { appState.config.activityAccessibilityEnabled },
+                            get: { appState.config.activityAccessibilityEnabled && !appState.activityAccessibilityOffInMacOS },
                             set: { enabled in
+                                if enabled && appState.activityAccessibilityOffInMacOS {
+                                    AccessibilityTitleReader.openSystemSettings()
+                                    return
+                                }
                                 var config = appState.config; config.activityAccessibilityEnabled = enabled
                                 appState.updateConfig(config)
                                 if enabled {
@@ -852,8 +856,16 @@ struct SettingsView: View {
                                 }
                             }
                         ))
-                        Text("when screen recording is unavailable, accessibility lets activity include window titles. browser addresses also use accessibility. only window titles and page addresses are used.")
+                        .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibility)
+                        Text(UICopy.Websites.ACTIVITY_ACCESSIBILITY_HELP)
                             .font(.subheadline).foregroundStyle(.secondary)
+                        if appState.activityAccessibilityOffInMacOS {
+                            Text(UICopy.Websites.activityAccessibilityOffInMacOS(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
+                                .font(.subheadline)
+                                .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibilityOff)
+                            Button(UICopy.Websites.OPEN_SYSTEM_SETTINGS) { AccessibilityTitleReader.openSystemSettings() }
+                                .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibilityOpenSettings)
+                        }
                         Text("activity follows your exclusions. it continues while screen and audio step aside for protected video. a title does not mean you watched or read it.")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }

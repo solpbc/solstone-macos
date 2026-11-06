@@ -37,6 +37,7 @@ public struct SiteDecision: Sendable {
 
     public private(set) var entries: [SiteDecisionKey: SiteDecisionEntry] = [:]
     public private(set) var emptyWalkTimes: [SiteDecisionKey: TimeInterval] = [:]
+    public private(set) var ordinaryAfterCoveredTimes: [SiteDecisionKey: TimeInterval] = [:]
     public private(set) var consecutiveFailures: Int = 0
     public private(set) var titleMismatchStreaks: [SiteDecisionKey: Int] = [:]
 
@@ -44,6 +45,14 @@ public struct SiteDecision: Sendable {
 
     public var hasSafariCaution: Bool {
         consecutiveFailures >= 10 || titleMismatchStreaks.values.contains { $0 >= 5 }
+    }
+
+    /// A streak describes a window and title on screen, and failures describe the windows being
+    /// read. Once they're gone they say nothing about reads now, and the caution they raise would
+    /// outlast Safari coming back in.
+    public mutating func forgetCautions(notIn onScreen: Set<SiteDecisionKey>) {
+        titleMismatchStreaks = titleMismatchStreaks.filter { onScreen.contains($0.key) }
+        if onScreen.isEmpty { consecutiveFailures = 0 }
     }
 
     /// Looks up verdict for a (windowID, title) pair at frame host-time `c`.
@@ -129,7 +138,17 @@ public struct SiteDecision: Sendable {
             }
         }
 
-        // 6. Otherwise ordinary
+        // 6. A title last read on a left-out page takes a second ordinary read a second later.
+        // Through a page change the title trails the address, so one read can pair that title with
+        // the next page's address.
+        if entries[key]?.verdict == .covered {
+            guard let firstTime = ordinaryAfterCoveredTimes[key], now - firstTime >= Self.emptyWalkMinGap else {
+                if ordinaryAfterCoveredTimes[key] == nil { ordinaryAfterCoveredTimes[key] = now }
+                return .pending
+            }
+        }
+
+        // 7. Otherwise ordinary
         emptyWalkTimes.removeValue(forKey: key)
         recordSuccess(for: key, verdict: .ordinary, now: now)
         return .ordinary
@@ -137,6 +156,7 @@ public struct SiteDecision: Sendable {
 
     private mutating func recordSuccess(for key: SiteDecisionKey, verdict: SiteVerdict, now: TimeInterval) {
         consecutiveFailures = 0
+        ordinaryAfterCoveredTimes.removeValue(forKey: key)
         insertEntry(key: key, entry: SiteDecisionEntry(verdict: verdict, decisionTime: now))
     }
 
@@ -154,6 +174,7 @@ public struct SiteDecision: Sendable {
             if let oldest = entries.min(by: { $0.value.decisionTime < $1.value.decisionTime }) {
                 entries.removeValue(forKey: oldest.key)
                 emptyWalkTimes.removeValue(forKey: oldest.key)
+                ordinaryAfterCoveredTimes.removeValue(forKey: oldest.key)
                 titleMismatchStreaks.removeValue(forKey: oldest.key)
             }
         }

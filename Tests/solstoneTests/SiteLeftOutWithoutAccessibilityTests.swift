@@ -551,6 +551,153 @@ struct SiteLeftOutWithoutAccessibilityTests {
         #expect(!capture.safariKeptOut)
     }
 
+    // MARK: Safari sits out with Accessibility working
+
+    private func onePoll(_ gate: SiteFrameGate, at time: TimeInterval, _ windows: [SitePollWindow]) {
+        gate.addPoll(SitePollSnapshot(start: time, end: time + 0.05, windows: windows))
+    }
+
+    private func decided(_ verdict: SiteVerdict, _ key: SiteDecisionKey, at time: TimeInterval) -> SiteDecision {
+        var decisions = SiteDecision()
+        decisions.evaluate(
+            key: key, initialAXTitle: key.title, finalAXTitle: key.title,
+            walk: WebAreaWalkResult(urls: [verdict == .covered ? "https://bank.com/" : "https://example.com/"], completeness: .complete),
+            sites: ["bank.com"], now: time, isSweep: false
+        )
+        return decisions
+    }
+
+    @Test func aLeftOutPageTakesSafariOutAtOnceAndAnOrdinaryReadBringsItBack() {
+        let gate = SiteFrameGate()
+        let key = SiteDecisionKey(windowID: 1, title: "Bank")
+        let window = SitePollWindow(windowID: 1, title: "Bank", pid: safari)
+        onePoll(gate, at: 10.0, [window])
+        gate.updateDecisions(decided(.covered, key, at: 10.0), axAvailable: true)
+        #expect(gate.safariShouldSitOut(isOutNow: false))
+
+        gate.updateDecisions(decided(.ordinary, key, at: 11.0), axAvailable: true)
+        onePoll(gate, at: 11.0, [window])
+        #expect(!gate.safariShouldSitOut(isOutNow: true))
+    }
+
+    @Test func anUnreadWindowWaitsForTheLimitThenStaysOutUntilItReads() {
+        let gate = SiteFrameGate()
+        let window = SitePollWindow(windowID: 1, title: "Unread", pid: safari)
+        gate.updateDecisions(SiteDecision(), axAvailable: true)
+        onePoll(gate, at: 10.0, [window])
+        #expect(!gate.safariShouldSitOut(isOutNow: false))
+        onePoll(gate, at: 10.0 + SiteFrameGate.unreadLimit - 0.5, [window])
+        #expect(!gate.safariShouldSitOut(isOutNow: false))
+        onePoll(gate, at: 10.0 + SiteFrameGate.unreadLimit, [window])
+        #expect(gate.safariShouldSitOut(isOutNow: false))
+
+        let later = 10.0 + SiteFrameGate.unreadLimit + 1
+        onePoll(gate, at: later, [window])
+        #expect(gate.safariShouldSitOut(isOutNow: true))
+        gate.updateDecisions(decided(.ordinary, SiteDecisionKey(windowID: 1, title: "Unread"), at: later), axAvailable: true)
+        onePoll(gate, at: later + 0.25, [window])
+        #expect(!gate.safariShouldSitOut(isOutNow: true))
+    }
+
+    @Test func aTabSwitchThatReadsInTimeLeavesSafariIn() {
+        let gate = SiteFrameGate()
+        let first = SiteDecisionKey(windowID: 1, title: "One")
+        let second = SiteDecisionKey(windowID: 1, title: "Two")
+        gate.updateDecisions(decided(.ordinary, first, at: 10.0), axAvailable: true)
+        onePoll(gate, at: 10.0, [SitePollWindow(windowID: 1, title: "One", pid: safari)])
+        #expect(!gate.safariShouldSitOut(isOutNow: false))
+        onePoll(gate, at: 10.5, [SitePollWindow(windowID: 1, title: "Two", pid: safari)])
+        #expect(!gate.safariShouldSitOut(isOutNow: false))
+        gate.updateDecisions(decided(.ordinary, second, at: 11.0), axAvailable: true)
+        onePoll(gate, at: 11.25, [SitePollWindow(windowID: 1, title: "Two", pid: safari)])
+        #expect(!gate.safariShouldSitOut(isOutNow: false))
+        // The clock restarted with the ordinary read, so a later unread stretch gets its full limit.
+        onePoll(gate, at: 20.0, [SitePollWindow(windowID: 1, title: "Three", pid: safari)])
+        #expect(!gate.safariShouldSitOut(isOutNow: false))
+    }
+
+    @Test func pictureInPictureAloneDoesNotTakeSafariOut() {
+        let gate = SiteFrameGate()
+        let window = SitePollWindow(windowID: 2, title: "Picture in Picture", pid: pip, hasPage: false)
+        gate.updateDecisions(SiteDecision(), axAvailable: true)
+        onePoll(gate, at: 10.0, [window])
+        onePoll(gate, at: 10.0 + SiteFrameGate.unreadLimit + 1, [window])
+        #expect(!gate.safariShouldSitOut(isOutNow: false))
+    }
+
+    @Test func noWindowsOnScreenBringsSafariBack() {
+        let gate = SiteFrameGate()
+        #expect(!gate.safariShouldSitOut(isOutNow: true))
+        gate.updateDecisions(SiteDecision(), axAvailable: true)
+        onePoll(gate, at: 10.0, [])
+        #expect(!gate.safariShouldSitOut(isOutNow: true))
+    }
+
+    @Test func aVouchedFrameIsReleasedBesideALeftOutPageAndAnUnvouchedOneIsNot() {
+        let gate = SiteFrameGate()
+        let key = SiteDecisionKey(windowID: 1, title: "Bank")
+        polls(gate, [SitePollWindow(windowID: 1, title: "Bank", pid: safari)])
+        let decisions = decided(.covered, key, at: 9.9)
+        _ = gate.enqueue(displayID: display, frame: frame(keptOut: [safari]))
+        #expect(isReleased(gate.evaluate(displayID: display, now: 11.0, decisions: decisions, axAvailable: true)))
+        _ = gate.enqueue(displayID: display, frame: frame())
+        #expect(isDropped(gate.evaluate(displayID: display, now: 11.0, decisions: decisions, axAvailable: true)))
+    }
+
+    @Test func aTitleLastReadOnALeftOutPageTakesASecondOrdinaryRead() {
+        let key = SiteDecisionKey(windowID: 1, title: "Bank")
+        var decisions = SiteDecision()
+        func read(_ url: String, at now: TimeInterval) -> SiteVerdict {
+            decisions.evaluate(key: key, initialAXTitle: "Bank", finalAXTitle: "Bank",
+                               walk: WebAreaWalkResult(urls: [url], completeness: .complete), sites: ["bank.com"], now: now, isSweep: true)
+        }
+        #expect(read("https://bank.com/", at: 10.0) == .covered)
+        #expect(read("https://example.com/", at: 13.0) == .pending)
+        #expect(decisions.verdict(for: key, at: 13.1) == .covered)
+        #expect(read("https://example.com/", at: 13.5) == .pending)
+        #expect(read("https://example.com/", at: 14.0) == .ordinary)
+        // Back on the left-out page, the next change waits for its own second read.
+        #expect(read("https://bank.com/", at: 15.0) == .covered)
+        #expect(read("https://example.com/", at: 16.0) == .pending)
+    }
+
+    @Test func failuresEndWhenNoSafariWindowIsLeft() {
+        var decisions = failing(10)
+        #expect(decisions.hasSafariCaution)
+        decisions.forgetCautions(notIn: [SiteDecisionKey(windowID: 1, title: "Page")])
+        #expect(decisions.hasSafariCaution)
+        decisions.forgetCautions(notIn: [])
+        #expect(!decisions.hasSafariCaution)
+    }
+
+    @Test func aMismatchStreakEndsWithItsWindowAndTitle() {
+        let key = SiteDecisionKey(windowID: 1, title: "Page")
+        var decisions = SiteDecision()
+        for i in 0..<5 {
+            decisions.evaluate(key: key, initialAXTitle: "Other", finalAXTitle: "Other",
+                               walk: WebAreaWalkResult(urls: [], completeness: .complete), sites: ["bank.com"], now: Double(i), isSweep: false)
+        }
+        #expect(decisions.hasSafariCaution)
+        decisions.forgetCautions(notIn: [key])
+        #expect(decisions.hasSafariCaution)
+        decisions.forgetCautions(notIn: [SiteDecisionKey(windowID: 1, title: "Next page")])
+        #expect(!decisions.hasSafariCaution)
+    }
+
+    @Test func captureKeepsSafariOutForALeftOutPageWithAccessibilityWorking() {
+        let state = AppState.forSnapshot(config: AppConfig())
+        let capture = state.captureManager
+        capture.updateSiteRule(["bank.com"])
+        let key = SiteDecisionKey(windowID: 1, title: "Bank")
+        let window = SitePollWindow(windowID: 1, title: "Bank", pid: safari)
+        capture.receiveSitePoll(SitePollSnapshot(start: 10.0, end: 10.05, windows: [window]))
+        capture.receiveSiteDecision(decided(.covered, key, at: 10.0), axAvailable: true, generation: capture.siteListGeneration)
+        #expect(capture.safariKeptOut)
+
+        capture.receiveSiteDecision(decided(.ordinary, key, at: 10.05), axAvailable: true, generation: capture.siteListGeneration)
+        #expect(!capture.safariKeptOut)
+    }
+
     private func failing(_ count: Int) -> SiteDecision {
         var decisions = SiteDecision()
         for i in 0..<count {

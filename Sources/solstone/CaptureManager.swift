@@ -804,6 +804,9 @@ public final class CaptureManager {
     func receiveSitePoll(_ poll: SitePollSnapshot) {
         siteFrameGate.addPoll(poll)
         currentSegment?.reevaluateSiteFrames()
+        if siteFrameGate.currentAXAvailable {
+            publishSafariKeptOut(siteRuleActive && siteFrameGate.safariShouldSitOut(isOutNow: safariKeptOut))
+        }
         publishSiteScreenHeld(siteFrameGate.isHoldingNow(now: poll.end))
     }
 
@@ -825,7 +828,7 @@ public final class CaptureManager {
         siteFrameGate.updateDecisions(decisions, axAvailable: axAvailable)
         // Without Accessibility every read fails, and Settings already says why.
         onSiteSafariCaution?(axAvailable && decisions.hasSafariCaution)
-        publishSafariKeptOut(siteRuleActive && !axAvailable)
+        publishSafariKeptOut(siteRuleActive && (!axAvailable || siteFrameGate.safariShouldSitOut(isOutNow: safariKeptOut)))
         currentSegment?.reevaluateSiteFrames()
     }
 

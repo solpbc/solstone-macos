@@ -201,6 +201,52 @@ struct DesktopActivitySiteRuleTests {
         #expect(!observation.rows.isEmpty)
     }
 
+    @Test func aTitleGoesWithAnAddressOnlyWhenTwoReadsAgree() {
+        typealias R = DesktopActivityReader
+        typealias P = DesktopActivityPairRead
+        func pair(_ cg: String?, _ ax: String?, _ urls: [String?], complete: Bool = true) -> P {
+            P(cgTitle: cg, axTitle: ax, urls: urls, complete: complete)
+        }
+        let shared = "https://shared.example/"
+        let steady = pair("Shared", "Shared", [shared])
+        #expect(R.titleGoesWithAddress(steady, steady, titlesMustMatch: true))
+        // A tab switch: Accessibility and the address have moved, the window list hasn't.
+        let trailing = pair("Other tab", "Shared", [shared])
+        #expect(!R.titleGoesWithAddress(trailing, trailing, titlesMustMatch: true))
+        #expect(!R.titleGoesWithAddress(trailing, steady, titlesMustMatch: true))
+        // A page change: the address has moved, both titles haven't, until the second read.
+        let committed = pair("Left out", "Left out", [shared])
+        #expect(!R.titleGoesWithAddress(committed, steady, titlesMustMatch: true))
+        // The next page beside the one it replaces.
+        let replacing = pair("Left out", "Left out", [shared, "https://left.example/"])
+        #expect(!R.titleGoesWithAddress(replacing, replacing, titlesMustMatch: true))
+        // A read that came back short vouches for nothing, either time.
+        let short = pair("Shared", "Shared", [shared], complete: false)
+        #expect(!R.titleGoesWithAddress(steady, short, titlesMustMatch: true))
+        #expect(!R.titleGoesWithAddress(short, short, titlesMustMatch: true))
+        let noAXTitle = pair("A", nil, ["https://a.example/"])
+        #expect(!R.titleGoesWithAddress(noAXTitle, noAXTitle, titlesMustMatch: true))
+        // Chromium adds its own name to one of the two titles.
+        let chromium = pair("Page", "Page - Google Chrome", ["https://a.example/"])
+        #expect(R.titleGoesWithAddress(chromium, chromium, titlesMustMatch: false))
+        #expect(!R.titleGoesWithAddress(chromium, pair("Next", "Page - Google Chrome", ["https://a.example/"]), titlesMustMatch: false))
+        // No screen recording: Accessibility's title stands alone.
+        let axOnly = pair(nil, "Shared", [shared])
+        #expect(R.titleGoesWithAddress(axOnly, axOnly, titlesMustMatch: true))
+    }
+
+    @Test func addressesAreUnavailableOnlyWhereABrowserIsInFront() {
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), walkSeam: { _, _, _, _ in
+            WebAreaWalkResult(urls: [], completeness: .complete)
+        })
+        var settings = makeSettings()
+        settings.urls = true
+        let finder = DesktopActivityApp(pid: 1234, name: "Finder", bundleID: "com.apple.finder")
+        #expect(!reader.read(app: finder, settings: settings).urlUnavailable)
+        let firefox = DesktopActivityApp(pid: 1234, name: "Firefox", bundleID: "org.mozilla.firefox")
+        #expect(reader.read(app: firefox, settings: settings).urlUnavailable)
+    }
+
     @Test func shortSafariReadKeepsTitleAndAddressOutOfThatSample() {
         typealias R = DesktopActivityReader
         #expect(R.siteReadIsShort(WebAreaWalkResult(urls: ["https://example.com"], completeness: .timedOut)))

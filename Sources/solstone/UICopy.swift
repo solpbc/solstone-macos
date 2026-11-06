@@ -529,7 +529,7 @@ public enum UICopy {
     public static let MICROPHONES_EMPTY_OPEN_SOUND = "open sound settings"
 
     public enum Websites {
-        public static let DESCRIPTION_PARAGRAPH_1 = "while a website you leave out shows in Safari, screen intake pauses, and its title and address stay out of activity. leaving out bank.com leaves out login.bank.com too."
+        public static let DESCRIPTION_PARAGRAPH_1 = "while a website you leave out shows in Safari, Safari stays out of screen intake, and the website's title and address stay out of activity. the rest of your screen keeps going into your journal. leaving out bank.com leaves out login.bank.com too."
         public static let HOW_THIS_WORKS = "how this works"
         public static let DESCRIPTION_PARAGRAPH_2 = "to check, solstone reads the address of the page each Safari window shows, through Accessibility, and compares it with this list on this mac. the address goes into activity only if you turned on browser addresses."
         public static let LIMITS_DISCLOSURE = "checked in Safari. other browsers and web apps added to the Dock aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, screen intake pauses for a moment while solstone checks. a website shown inside another website's page isn't recognized. a left-out website's tab title can still show in a browser's tab bar. a minimized Safari window's picture in the Dock can still show. a page that changes without changing its window title, or a page shown for less than a quarter of a second, can be missed. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you stop leaving out there comes off this list, so Safari windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well. while any website is left out, Picture in Picture from Safari, and from other apps that use macOS's own player, stays out of screen intake."
@@ -540,9 +540,13 @@ public enum UICopy {
         public static func accessibilityCaution(macOSMajor: Int) -> String {
             "macOS describes \(accessibilityName(macOSMajor: macOSMajor)) as control of your computer, but here solstone uses it only to read the title and address of each Safari window. until solstone can use it, Safari stays out of screen intake and its titles stay out of activity. the rest of your screen isn't affected."
         }
+        public static let ACTIVITY_ACCESSIBILITY_HELP = "macOS describes Accessibility (called Device Control and Data Access on macOS 27) as control of your computer, but here solstone uses it only to read window titles and page addresses. with this on, activity can include browser addresses, and window titles when screen recording is unavailable. checking Safari for the websites you leave out uses the same access, whether this is on or off."
+        public static func activityAccessibilityOffInMacOS(macOSMajor: Int) -> String {
+            "macOS has \(accessibilityName(macOSMajor: macOSMajor)) off for solstone."
+        }
         public static let OPEN_SYSTEM_SETTINGS = "open System Settings"
         public static func browserCaution(browser: String) -> String {
-            "solstone can't read page addresses in \(browser), so screen intake pauses while it's showing a page."
+            "solstone can't read page addresses in \(browser) right now, so \(browser) stays out of screen intake until it can."
         }
         public static let ACCESSIBILITY_EXPLANATION = "Accessibility (called Device Control and Data Access on macOS 27) lets an app see and control everything on this mac. here solstone uses it only to read the title and page address of each Safari window."
         public static let ERROR_INVALID_ADDRESS = "enter a website address, like bank.com."

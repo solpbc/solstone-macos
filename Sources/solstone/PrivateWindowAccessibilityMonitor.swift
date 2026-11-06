@@ -12,6 +12,7 @@ final class PrivateWindowAccessibilityMonitor {
 
     private(set) var isEnabled = false
     private(set) var sitesEnabled = false
+    private(set) var activityEnabled = false
     private(set) var lastReadWorks: Bool?
     private(set) var askedThisSession = false
     private(set) var hasWorkedSinceAsking = false
@@ -47,6 +48,8 @@ final class PrivateWindowAccessibilityMonitor {
 
     var needsAttention: Bool { isEnabled && lastReadWorks == false }
 
+    private var isReadNeeded: Bool { isEnabled || sitesEnabled || activityEnabled }
+
     /// Called by the setting before configuration starts polling, never by menu recovery.
     func prepareForOwnerEnable() {
         askedThisSession = true
@@ -54,13 +57,14 @@ final class PrivateWindowAccessibilityMonitor {
         lastReadWorks = nil
     }
 
-    func setInterests(privateWindows: Bool, sites: Bool) {
+    func setInterests(privateWindows: Bool, sites: Bool, activity: Bool = false) {
         guard !isStopped else { return }
-        guard privateWindows != isEnabled || sites != sitesEnabled else { return }
-        let wasActive = isEnabled || sitesEnabled
-        let isActive = privateWindows || sites
+        guard privateWindows != isEnabled || sites != sitesEnabled || activity != activityEnabled else { return }
+        let wasActive = isReadNeeded
+        let isActive = privateWindows || sites || activity
         isEnabled = privateWindows
         sitesEnabled = sites
+        activityEnabled = activity
 
         if wasActive && !isActive {
             generation &+= 1
@@ -85,12 +89,12 @@ final class PrivateWindowAccessibilityMonitor {
     }
 
     private func readIfNeeded(generation readGeneration: UInt64) async {
-        guard !isStopped, isEnabled || sitesEnabled, generation == readGeneration, !isReading else { return }
+        guard !isStopped, isReadNeeded, generation == readGeneration, !isReading else { return }
         isReading = true
         let works = await readWorks()
         isReading = false
 
-        guard !isStopped, isEnabled || sitesEnabled else { return }
+        guard !isStopped, isReadNeeded else { return }
         guard generation == readGeneration else {
             // A cancelled arm cannot start a read. Once an obsolete read drains, however,
             // the enabled generation needs its own immediate read, without waiting for a tick.

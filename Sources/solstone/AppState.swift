@@ -368,8 +368,17 @@ public final class AppState {
         guard !isSnapshot else { return }
         privateWindowAccessibilityMonitor.setInterests(
             privateWindows: privateWindowAccessibilityEnabled,
-            sites: !config.excludedSites.isEmpty
+            sites: !config.excludedSites.isEmpty,
+            activity: config.activityAccessibilityEnabled
         )
+    }
+
+    /// The owner has this on in solstone and macOS has it off. Judged by a read, because
+    /// `AXIsProcessTrusted()` stays stale in a running process.
+    var activityAccessibilityOffInMacOS: Bool {
+        config.activityAccessibilityEnabled
+            && privateWindowAccessibilityMonitor.activityEnabled
+            && privateWindowAccessibilityMonitor.lastReadWorks == false
     }
 
     func requestWebsiteSettings() {

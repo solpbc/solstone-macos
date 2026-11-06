@@ -9,11 +9,14 @@ public struct SitePollWindow: Sendable, Equatable {
     public let windowID: CGWindowID
     public let title: String
     public let pid: pid_t
+    /// Picture in Picture has no page to read, so it never gets a verdict of its own.
+    public let hasPage: Bool
 
-    public init(windowID: CGWindowID, title: String, pid: pid_t = 0) {
+    public init(windowID: CGWindowID, title: String, pid: pid_t = 0, hasPage: Bool = true) {
         self.windowID = windowID
         self.title = title
         self.pid = pid
+        self.hasPage = hasPage
     }
 }
 
@@ -69,6 +72,9 @@ public final class SiteFrameGate {
     public static let maxPollGap: TimeInterval = 0.3
     public static let holdLimitSites: TimeInterval = 2.0
     public static let capacityPerDisplay = 4
+    /// How long a Safari window can stay unread before Safari sits out. Long enough that an
+    /// ordinary tab switch, read within a second or so, doesn't change the filter.
+    public static let unreadLimit: TimeInterval = 3.0
 
     private var polls: [SitePollSnapshot] = []
     private var heldFrames: [CGDirectDisplayID: [SiteHeldFrame]] = [:]
@@ -98,7 +104,33 @@ public final class SiteFrameGate {
     /// the gate, so this comes from the stream, not from the last frame seen.
     private var liveKeptOut: [CGDirectDisplayID: Set<pid_t>] = [:]
 
+    /// When a Safari window on screen last stopped being one the rule has read as ordinary.
+    private var notOrdinarySince: TimeInterval?
+
     public init() {}
+
+    /// Whether Safari should sit out of capture now, so a left-out page costs Safari and not the
+    /// whole screen. A left-out page takes it out at once, a window that stays unread takes it out
+    /// after `unreadLimit`, and only every window reading as ordinary brings it back. A frame still
+    /// needs its own stream's vouch or an ordinary verdict, so being wrong here costs time.
+    public func safariShouldSitOut(isOutNow: Bool) -> Bool {
+        guard let poll = polls.last else {
+            notOrdinarySince = nil
+            return false
+        }
+        let now = poll.end
+        let verdicts = poll.windows.filter(\.hasPage).map { window in
+            let key = SiteDecisionKey(windowID: window.windowID, title: window.title)
+            return currentDecisions.verdict(for: key, at: max(now, currentDecisions.entries[key]?.decisionTime ?? now))
+        }
+        guard verdicts.contains(where: { $0 != .ordinary }) else {
+            notOrdinarySince = nil
+            return false
+        }
+        let since = notOrdinarySince ?? now
+        notOrdinarySince = since
+        return isOutNow || verdicts.contains(.covered) || now - since >= Self.unreadLimit
+    }
 
     /// Whether the rule is holding the screen now, for long enough to say so. A drop alone can't
     /// say: idle frames never reach the gate, so a quiet screen would stay held after one drop.
@@ -421,6 +453,7 @@ public final class SiteFrameGate {
         stashedStallDrops.removeAll()
         heldSince.removeAll()
         liveKeptOut.removeAll()
+        notOrdinarySince = nil
         updateHeldCount()
         return actions
     }

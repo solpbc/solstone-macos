@@ -338,7 +338,7 @@ actor SiteSampler {
         var pipWindows: [SitePollWindow] = []
         for w in rawWindows {
             if pipPids.contains(w.pid) {
-                pipWindows.append(SitePollWindow(windowID: w.windowID, title: w.title, pid: w.pid))
+                pipWindows.append(SitePollWindow(windowID: w.windowID, title: w.title, pid: w.pid, hasPage: false))
                 continue
             }
             guard w.layer == 0, safariPids.contains(w.pid) else {
@@ -350,6 +350,7 @@ actor SiteSampler {
 
         latestSafariWindows = safariWindows
         pidsByWindowID = pollPids
+        decisions.forgetCautions(notIn: Set(safariWindows.map { SiteDecisionKey(windowID: $0.windowID, title: $0.title) }))
 
         let snapshot = SitePollSnapshot(start: startSec, end: endSec, windows: safariWindows + pipWindows)
         await onPoll(snapshot)

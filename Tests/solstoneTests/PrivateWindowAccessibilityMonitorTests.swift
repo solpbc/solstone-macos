@@ -21,6 +21,20 @@ struct PrivateWindowAccessibilityMonitorTests {
         #expect(!monitor.needsAttention)
     }
 
+    @Test func activityInterestAloneReadsAndDropsTheStateWhenItGoes() async {
+        let polling = ManualAccessibilityPolling()
+        let reader = AccessibilitySampleReader(false)
+        let monitor = PrivateWindowAccessibilityMonitor(readWorks: { await reader.read() }, scheduler: polling.scheduler)
+        monitor.setInterests(privateWindows: false, sites: false, activity: true)
+        await polling.passes[0]()
+        #expect(monitor.activityEnabled)
+        #expect(monitor.lastReadWorks == false)
+        #expect(monitor.state == .off)
+        monitor.setInterests(privateWindows: false, sites: false, activity: false)
+        #expect(monitor.lastReadWorks == nil)
+        monitor.stop()
+    }
+
     @Test func savedOnStartsUnknownAndFailedReadRaisesAttention() async {
         let polling = ManualAccessibilityPolling()
         let reader = AccessibilitySampleReader(false)
