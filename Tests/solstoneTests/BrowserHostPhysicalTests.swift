@@ -1008,9 +1008,15 @@ struct BrowserHostListenerRestartTests {
             let oldGenerationBatch = try await physicalMessage("accepted", from: new)
             #expect(oldGenerationBatch["result"] as? String == "accepted")
             #expect(try fixture.owner.store.lookupReceipt(generation: generationA, inst: "physical-instance", batchId: laterID)?.result == "accepted")
-            let afterOldGenerationBatch = try Data(contentsOf: payloadURL)
-            #expect(afterOldGenerationBatch.starts(with: payload))
-            #expect(afterOldGenerationBatch.count > payload.count)
+            // Periods rotate on a five-minute clock, so this batch can land in the next one's file.
+            let laterPeriodID = try #require(oldGenerationBatch["period_id"] as? String)
+            let laterPayload = try Data(contentsOf: fixture.owner.store.periodFileURL(for: laterPeriodID))
+            if laterPeriodID == periodID {
+                #expect(laterPayload.starts(with: payload))
+                #expect(laterPayload.count > payload.count)
+            } else {
+                #expect(!laterPayload.isEmpty)
+            }
         }
     }
     @Test func realScheduledRenewalKeepsIdleSessionLive() async throws {
