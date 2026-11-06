@@ -439,6 +439,8 @@ final class UnixHTTPExchange: @unchecked Sendable {
 
 /// A complete frame wins over an EOF/Network error delivered with the final bytes.
 enum JournalHTTPFraming {
+    private static let framingHeaders: Set<String> = ["content-length", "transfer-encoding"]
+
     static func parse(_ bytes: Data, url: URL, method: String = "GET") throws -> (Data, URLResponse)? {
         let boundary = Data("\r\n\r\n".utf8)
         guard bytes.count <= 16 * 1024 * 1024 else { throw JournalLocalHTTPError.invalidResponse }
@@ -460,8 +462,14 @@ enum JournalHTTPFraming {
             guard let colon = line.firstIndex(of: ":") else { throw JournalLocalHTTPError.invalidResponse }
             let key = line[..<colon].lowercased()
             let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-            guard !key.isEmpty, headers[key] == nil else { throw JournalLocalHTTPError.invalidResponse }
-            headers[key] = value
+            guard !key.isEmpty else { throw JournalLocalHTTPError.invalidResponse }
+            if let existing = headers[key] {
+                // A repeated list header reads as one comma-joined value (RFC 9110). A repeated framing header is a broken message.
+                guard !framingHeaders.contains(key) else { throw JournalLocalHTTPError.invalidResponse }
+                headers[key] = existing + ", " + value
+            } else {
+                headers[key] = value
+            }
         }
         guard let response = HTTPURLResponse(url: url, statusCode: code, httpVersion: "HTTP/1.1", headerFields: headers) else {
             throw JournalLocalHTTPError.invalidResponse
