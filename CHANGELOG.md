@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.60] - 2026-11-06
+
+### Fixed
+
+- on some setups, the solstone app couldn't reach your journal on this mac, even while it was running. this resolves it.
+
 ## [2.0.59] - 2026-11-05
 
 ### Fixed
