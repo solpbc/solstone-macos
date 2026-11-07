@@ -7,11 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.61] - 2026-11-06
+
 ### Changed
 
 - with Accessibility on in macos (Device Control and Data Access on macos 27), a website you leave out now keeps only Safari out of screen intake while it shows. the rest of your screen keeps going into your journal, as it already did without Accessibility.
 - "allow accessibility for activity" in settings › sources now says that checking Safari for the websites you leave out uses the same access, whether the toggle is on or off. if macos has the permission off, the toggle shows it's off and links to System Settings.
-- the empty "your · journal" mark is now easy to see on any background.
+- the "your · journal" mark is now easy to see on any background.
 
 ### Fixed
 
