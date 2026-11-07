@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- settings › help now says "need a hand? reach us." it used to say "reach a human", but an AI agent reads your request and drafts our answer, and a person at sol pbc may read it too.
+
 ## [2.0.61] - 2026-11-06
 
 ### Changed

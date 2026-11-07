@@ -4535,7 +4535,7 @@ struct SettingsView: View {
         return VStack(alignment: .leading, spacing: 20) {
             GroupBox("get help") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("need a hand? reach a human. we're happy to help.")
+                    Text("need a hand? reach us. we're happy to help.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Link("get help", destination: SupportReportURL.help)
