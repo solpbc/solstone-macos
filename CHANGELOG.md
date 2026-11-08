@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- the solstone extension in Safari now takes in the websites Safari allows it on, except the ones you leave out, and all of it goes into your journal. if you added websites in the extension before this update, only those go in until you choose otherwise.
+
 ## [2.0.62] - 2026-11-07
 
 ### Changed
