@@ -127,9 +127,10 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     };
   }
 
-  function fenceQuiet(brand) {
+  function fenceQuiet(brand, allowsMore = true) {
     const browser = browserName(brand);
-    return `${browser} allows more than your sites. this extension takes in only the sites you added, and all of it goes into your journal.`;
+    const kept = "this extension takes in only the sites you added, and all of it goes into your journal.";
+    return allowsMore ? `${browser} allows more than your sites. ${kept}` : kept;
   }
 
   function clearedStorageNotice() {

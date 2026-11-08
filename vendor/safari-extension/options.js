@@ -572,10 +572,13 @@
     } else if (st.fence && st.fence.answered) {
       // Safari can't be asked, so its offer shows only while Safari allows every site.
       const canShare = st.brand !== "safari" || H?.everySiteLive?.(st.livePatterns || []) === true;
+      // Say the browser allows more only while it still does: an owner can set it back after keeping their sites.
+      const leftOutHosts = Array.from(new Set([...(st.excludedHosts || []), ...(st.appLeftOut || [])]));
+      const allowsMore = !H?.beyondExample || H.beyondExample(st.fence, st.livePatterns || [], leftOutHosts) !== null;
       sections.push({
         id: "upgradeQuiet",
         kind: "upgrade-quiet",
-        text: Copy.fenceQuiet(st.brand),
+        text: Copy.fenceQuiet(st.brand, allowsMore),
         action: canShare ? {
           id: "share-every-site",
           label: Copy.SHARE_EVERY_SITE,
