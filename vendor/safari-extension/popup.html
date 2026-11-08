@@ -172,7 +172,13 @@
         outline-offset: 2px;
       }
       a { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
-      .action-message { min-height: 0; margin-top: 7px; color: var(--bad); font-size: 12px; }
+      .action-message { min-height: 0; margin-top: 7px; color: var(--soft); font-size: 12px; }
+      .action-message.bad { color: var(--bad); }
+      .question { padding: 12px; border-radius: 12px; background: var(--surface); }
+      .question p { margin: 0 0 10px; }
+      .qact { display: flex; gap: 8px; }
+      .qact button { flex: 1 1 0; min-width: 0; }
+      .about-details summary { cursor: pointer; color: var(--soft); font-size: 12px; }
       .about-block { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: inherit; margin: 0 0 8px; }
       .about-block:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
       .sheet { padding: 0 14px 14px; }
@@ -293,6 +299,7 @@
           <button id="pageSiteSecondary" type="button" hidden></button>
           <button id="pauseAction" type="button"></button>
         </div>
+        <div id="actionMessage" class="action-message" aria-live="polite"></div>
       <p id="pageHint" class="page-hint" hidden>Safari asks next. choose Always Allow.</p>
         <details id="pageLearn" class="page-learn" hidden>
           <summary>what it takes in</summary>
@@ -311,12 +318,13 @@
       </section>
 
       <section id="about" class="blk">
-        <h2 class="blk-h">about</h2>
-        <pre id="aboutBlock" class="about-block" tabindex="0"></pre>
-        <button id="aboutCopy" type="button">copy</button>
-        <div id="aboutMessage" class="action-message" aria-live="polite"></div>
+        <details class="about-details">
+          <summary>about</summary>
+          <pre id="aboutBlock" class="about-block" tabindex="0"></pre>
+          <button id="aboutCopy" type="button">copy</button>
+          <div id="aboutMessage" class="action-message" aria-live="polite"></div>
+        </details>
       </section>
-      <div id="actionMessage" class="action-message" aria-live="polite"></div>
     </main>
 
     <section id="disclosure" class="sheet" hidden>

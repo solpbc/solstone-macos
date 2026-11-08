@@ -317,6 +317,14 @@
     }
   }
 
+  // Each answer keeps its words with its own button, so neither reads as the other's.
+  function firstRunOption(...parts) {
+    const group = document.createElement("div");
+    group.className = "first-run-option";
+    group.append(...parts);
+    return group;
+  }
+
   function renderFirstRunQuestion(st, step1Met) {
     const welcome = $("welcomeView");
     if (!welcome) return;
@@ -353,13 +361,13 @@
         const already = document.createElement("p");
         already.id = "firstRunAlreadyAllowed";
         already.textContent = Copy.alreadyAllowedBody(st?.brand);
-        block.append(everyBody, already, every);
+        block.append(firstRunOption(everyBody, already, every));
       } else {
-        block.append(everyBody, every);
+        block.append(firstRunOption(everyBody, every));
       }
       return;
     }
-    block.append(everyBody, every);
+    block.append(firstRunOption(everyBody, every));
     const oneBody = document.createElement("p");
     oneBody.textContent = Copy.oneSiteQuestionBody();
     const one = document.createElement("button");
@@ -369,7 +377,7 @@
     one.textContent = rules === "chrome" ? "agree and add sites one at a time" : "add sites one at a time";
     if (rules === "chrome") one.dataset.act = "agree";
     one.addEventListener("click", () => runFirstRunOneSite());
-    block.append(oneBody, one);
+    block.append(firstRunOption(oneBody, one));
   }
 
   function renderWelcome(derived) {
@@ -539,7 +547,8 @@
               {
                 id: q.shareId,
                 label: q.shareLabel,
-                primary: true,
+                // Taking in more is never the visually preselected answer.
+                primary: false,
               },
               {
                 id: q.keepId || "keep-my-sites",
@@ -550,7 +559,7 @@
             action: {
               id: q.shareId,
               label: q.shareLabel,
-              primary: true,
+              primary: false,
             },
             secondaryAction: {
               id: q.keepId || "keep-my-sites",
@@ -568,7 +577,7 @@
         action: {
           id: "share-every-site",
           label: Copy.SHARE_EVERY_SITE,
-          primary: true,
+          primary: false,
         },
       });
     }
@@ -736,7 +745,7 @@
     const offerShare = offersShareEverySite();
     if (state?.fence && !offerShare) {
       panel.hidden = true;
-      syncSettingsEverySiteOn(Hosts?.everySiteLive?.(state?.livePatterns) === true);
+      syncSettingsEverySiteOn(false);
       return;
     }
     panel.hidden = false;
@@ -803,7 +812,7 @@
         }
         if ($("accessChecking")) $("accessChecking").textContent = accessCheck ? words.checking : "";
       } else {
-        if ($("accessTitle")) $("accessTitle").textContent = words.missingTitle;
+        if ($("accessTitle")) $("accessTitle").textContent = "";
         if ($("accessBody")) $("accessBody").textContent = words.missingBody;
         if ($("accessSteps")) {
           $("accessSteps").replaceChildren();
@@ -819,7 +828,7 @@
         }
       }
     }
-    syncSettingsEverySiteOn(Hosts?.everySiteLive?.(state?.livePatterns) === true);
+    syncSettingsEverySiteOn(false);
   }
 
   function renderSites() {
@@ -835,15 +844,20 @@
     if ($("keptNote")) $("keptNote").hidden = true;
 
     renderAccess(everySite);
-    syncSettingsEverySiteOn(H?.everySiteLive?.(state?.livePatterns) === true);
+    syncSettingsEverySiteOn(false);
 
-    if ($("listHeading")) $("listHeading").textContent = "your sites";
+    if ($("listHeading")) {
+      $("listHeading").textContent = "your sites";
+      $("listHeading").hidden = everySite;
+    }
     if ($("siteModeHelp")) {
       $("siteModeHelp").textContent = state?.permissionsUnavailable === true
         ? Copy.actionFailure("permissions_unavailable", state?.brand)
         : Copy.addHelp(state?.brand);
-      $("siteModeHelp").hidden = false;
+      // With every site on there is nothing to add, so the form and its help step aside.
+      $("siteModeHelp").hidden = everySite && state?.permissionsUnavailable !== true;
     }
+    if ($("addForm")) $("addForm").hidden = everySite;
     if ($("siteInputLabel")) $("siteInputLabel").textContent = "add a site";
     if ($("addBtn")) $("addBtn").textContent = "add this site";
 
@@ -876,6 +890,7 @@
         leftOutDetails.hidden = true;
       } else {
         leftOutDetails.hidden = false;
+        if (everySite) leftOutDetails.open = true;
         if ($("leftOutSummary")) {
           $("leftOutSummary").textContent = Copy.leftOutSummary(effectiveList.length);
         }

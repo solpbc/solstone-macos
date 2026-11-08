@@ -225,7 +225,8 @@
               {
                 id: q.shareId,
                 label: q.shareLabel,
-                primary: true,
+                // Taking in more is never the visually preselected answer.
+                primary: false,
               },
               {
                 id: q.keepId || "keep-my-sites",
@@ -236,7 +237,7 @@
             action: {
               id: q.shareId,
               label: q.shareLabel,
-              primary: true,
+              primary: false,
             },
             secondaryAction: {
               id: q.keepId || "keep-my-sites",

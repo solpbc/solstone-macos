@@ -70,16 +70,18 @@
 
   // The message sits at the end of a popup that scrolls, so bring it into view:
   // otherwise a refused add or a removal says nothing the owner can see.
-  function showActionMessage(message) {
+  // A confirmation reads in plain text; only a failure is coloured as one.
+  function showActionMessage(message, tone = "ok") {
     const region = $("actionMessage");
     region.textContent = message || "";
+    region.classList?.toggle?.("bad", tone === "bad");
     if (message && typeof region.scrollIntoView === "function") {
       try { region.scrollIntoView({ block: "nearest" }); } catch (_e) {}
     }
   }
 
   function showActionError(error) {
-    showActionMessage(Failures.classify(error, state));
+    showActionMessage(Failures.classify(error, state), "bad");
   }
 
   function openSettings() {
@@ -98,7 +100,7 @@
       showError: showActionError,
       brand: state?.brand,
       requestPermission: (request) => chrome.permissions.request(request),
-      showDenied: () => showActionMessage(globalThis.SolstoneCopy.accessCopy(state?.brand).declined),
+      showDenied: () => showActionMessage(globalThis.SolstoneCopy.accessCopy(state?.brand).declined, "bad"),
       showOk: (message) => showActionMessage(message),
       lossSeq: () => state?.lossNotice?.seq,
     });
@@ -207,7 +209,7 @@
     if (result.cancelled) return;
     if (result.denied) {
       const blocked = result.blockedBy ? Copy.addBlockedBelow(state?.brand, Hosts.matchHostFor(page.host), result.blockedBy) : "";
-      showActionMessage(blocked || "permission declined. nothing added.");
+      showActionMessage(blocked || "permission declined. nothing added.", "bad");
     }
     else if (result.error) showActionError(result.error);
     await refresh();
@@ -258,7 +260,8 @@
     }
 
     const pauseAction = $("pauseAction");
-    pauseAction.hidden = !section.pauseAction;
+    // The Clear Storage notice carries its own resume; one is enough.
+    pauseAction.hidden = !section.pauseAction || state?.clearedNotice === true;
     if (section.pauseAction) {
       pauseAction.textContent = section.pauseAction.label;
       pauseAction.className = section.pauseAction.primary ? "primary" : "";
@@ -353,13 +356,14 @@
       if (!block) {
         block = document.createElement("section");
         block.id = "upgradeQuestion";
-        block.className = "blk";
+        block.className = "blk question";
       }
       block.hidden = false;
       block.replaceChildren();
       const body = document.createElement("p");
       body.textContent = question.body;
       const actions = document.createElement("div");
+      actions.className = "qact";
       for (const spec of question.buttons || []) {
         const button = document.createElement("button");
         button.type = "button";

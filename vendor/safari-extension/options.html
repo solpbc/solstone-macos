@@ -69,6 +69,8 @@
         border-top: 0;
       }
       .muted { color: var(--muted); font-size: 13px; }
+      .first-run-option { margin-top: 18px; }
+      .first-run-option p { margin: 0 0 8px; }
       .strongish { color: var(--ink); }
       label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 3px; }
       input {
@@ -419,7 +421,7 @@
                 <ol id="accessSteps" class="access-steps"></ol>
                 <p id="accessReturn" class="muted" hidden></p>
                 <div class="actions">
-                  <button id="accessAllow" class="primary" type="button" hidden></button>
+                  <button id="accessAllow" type="button" hidden></button>
                   <button id="accessCheck" type="button" hidden></button>
                 </div>
                 <p id="accessChecking" class="muted" aria-live="polite"></p>
@@ -491,7 +493,7 @@
             <input type="checkbox" id="pauseWithApp" />
             pause this extension when the solstone app pauses
           </label>
-          <p class="field-help" style="margin-top: 8px;">on: when the solstone app on this computer pauses, so does this extension. off: when you pause the solstone app, this extension keeps taking in your shared sites, and all of it goes into your journal.</p>
+          <p class="muted" style="margin-top: 8px;">on: when the solstone app on this computer pauses, so does this extension. off: when you pause the solstone app, this extension keeps taking in your shared sites, and all of it goes into your journal.</p>
         </section>
 
         <section id="disclosureCard" class="card">
