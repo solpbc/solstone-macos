@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.62] - 2026-11-07
+
 ### Changed
 
 - settings › help now says "need a hand? reach us." an AI agent reads your request and drafts our answer, and a person at sol pbc may read it too.
