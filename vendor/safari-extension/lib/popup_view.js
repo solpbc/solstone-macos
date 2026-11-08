@@ -178,6 +178,9 @@
       siteAction = { id: "remove-site", origin: pageSite, label: pageSite === page.origin ? "remove this site" : `remove ${siteName}`, disabled: false, primary: false };
     }
 
+    // While paused, resume is the one filled button.
+    if (state.paused && siteAction) siteAction.primary = false;
+
     if (state.permissionsUnavailable === true && siteAction?.id === "add-site") {
       if (pageState === "not added") {
         pageState = Copy.actionFailure("permissions_unavailable", state.brand);

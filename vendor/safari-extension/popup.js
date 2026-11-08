@@ -526,6 +526,22 @@
   }
   watchState();
 
+  // Safari focuses the popup's first keyboard stop as it opens, which drew a
+  // focus ring around "about" on every open. Nobody chose it, so drop focus
+  // that arrives before the owner presses a key or the pointer.
+  let ownerActed = false;
+  const acted = () => { ownerActed = true; };
+  function dropOpeningFocus() {
+    const active = document.activeElement;
+    if (!ownerActed && active && active !== document.body && typeof active.blur === "function") active.blur();
+  }
+  if (typeof document.addEventListener === "function") {
+    document.addEventListener("keydown", acted, { capture: true, once: true });
+    document.addEventListener("pointerdown", acted, { capture: true, once: true });
+    document.addEventListener("focusin", dropOpeningFocus);
+    dropOpeningFocus();
+  }
+
   globalThis.SolstonePopup = { refresh, readState };
   refresh();
 })();
