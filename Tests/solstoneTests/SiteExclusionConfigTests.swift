@@ -77,7 +77,7 @@ struct SiteExclusionConfigTests {
         #expect(state.config.excludedSites == ["bank.com"])
         #expect(promptCalled.withLock { $0 } == 0)
 
-        state.askForWebsiteAccessibility()
+        state.askForAccessibility()
         #expect(promptCalled.withLock { $0 } == 1)
     }
 

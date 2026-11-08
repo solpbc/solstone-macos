@@ -387,8 +387,8 @@ public final class AppState {
         NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
     }
 
-    /// The owner's own act, after Settings has said what it's for. Adding a website doesn't ask.
-    func askForWebsiteAccessibility() {
+    /// The owner's own act, from a setting that has said what it's for. Adding a website doesn't ask.
+    func askForAccessibility() {
         accessibilityProbe.prompt()
     }
 

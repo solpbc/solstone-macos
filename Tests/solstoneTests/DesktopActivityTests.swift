@@ -37,9 +37,9 @@ struct DesktopActivityTests {
         defer { defaults.removePersistentDomain(forName: name) }
         let original = AppConfig.load(from: defaults)
         #expect(original.isActivityEnabled && original.activityTitlesEnabled && original.activityURLsEnabled)
-        #expect(!original.activityContinuesThroughPause && !original.activityAccessibilityEnabled)
+        #expect(!original.activityContinuesThroughPause && original.activityAccessibilityEnabled)
         let settings = DesktopActivitySettings(original)
-        #expect(settings.enabled && settings.titles && settings.urls && !settings.accessibility)
+        #expect(settings.enabled && settings.titles && settings.urls && settings.accessibility)
 
         // Saving a config nobody changed writes none of these, so a missing key keeps the code default.
         try original.save(to: defaults)

@@ -236,10 +236,11 @@ public struct AppConfig: Sendable, Equatable {
         set { activityThroughPauseChoice = newValue }
     }
 
-    /// The Accessibility reader for activity is its own permission ask, off until the owner turns it on.
+    /// macOS's Accessibility grant is the switch: activity uses it once macOS allows it, unless the
+    /// owner turns this off. Nothing asks for the grant at install or first run.
     private var activityAccessibilityChoice: Bool?
     public var activityAccessibilityEnabled: Bool {
-        get { activityAccessibilityChoice ?? false }
+        get { activityAccessibilityChoice ?? true }
         set { activityAccessibilityChoice = newValue }
     }
 

@@ -846,7 +846,7 @@ struct SettingsView: View {
                             get: { appState.config.activityAccessibilityEnabled && !appState.activityAccessibilityOffInMacOS },
                             set: { enabled in
                                 if enabled && appState.activityAccessibilityOffInMacOS {
-                                    AccessibilityTitleReader.openSystemSettings()
+                                    appState.askForAccessibility()
                                     return
                                 }
                                 var config = appState.config; config.activityAccessibilityEnabled = enabled
@@ -863,7 +863,7 @@ struct SettingsView: View {
                             Text(UICopy.Websites.activityAccessibilityOffInMacOS(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
                                 .font(.subheadline)
                                 .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibilityOff)
-                            Button(UICopy.Websites.OPEN_SYSTEM_SETTINGS) { AccessibilityTitleReader.openSystemSettings() }
+                            Button(UICopy.Websites.OPEN_SYSTEM_SETTINGS) { appState.askForAccessibility() }
                                 .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibilityOpenSettings)
                         }
                         Text("activity follows your exclusions. it continues while screen and audio step aside for protected video. a title does not mean you watched or read it.")
@@ -3581,7 +3581,7 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Button(UICopy.Websites.OPEN_SYSTEM_SETTINGS) {
-                                appState.askForWebsiteAccessibility()
+                                appState.askForAccessibility()
                             }
                             .accessibilityIdentifier(AXID.Settings.Privacy.websiteAllowAccessibility)
                         }
@@ -3644,7 +3644,6 @@ struct SettingsView: View {
                     DisclosureGroup(UICopy.Websites.HOW_THIS_WORKS) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_2)
-                            Text(UICopy.Websites.ACCESSIBILITY_EXPLANATION)
                             Text(UICopy.Websites.LIMITS_DISCLOSURE)
                         }
                         .font(.caption)
@@ -3733,7 +3732,7 @@ struct SettingsView: View {
                             .disabled(!appState.config.excludePrivateBrowsing)
                             .focused($privateWindowKeyboardFocused)
                             .accessibilityFocused($privateWindowAccessibilityFocused)
-                            .accessibilityHint("turning this on asks for Accessibility access, which lets an app see and control everything on this mac. solstone uses it only to read these browsers' window titles and to check that the access works.")
+                            .accessibilityHint("turning this on asks for Accessibility access. solstone uses it to read these browsers' window titles and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity.")
                             .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibility)
                         Text(Self.privateWindowAccessibilityExplanation)
                             .font(.caption)
@@ -3779,7 +3778,7 @@ struct SettingsView: View {
         .padding(.vertical, 4)
     }
 
-    private static let privateWindowAccessibilityExplanation = "this needs Accessibility access (called Device Control and Data Access on macOS 27), which lets an app see and control everything on this mac, far more than window titles. solstone uses it only to read the window titles these browsers give to accessibility tools, and to check that the access works; those titles stay on this mac. turning this on asks for it, and allowing it needs your mac's password."
+    private static let privateWindowAccessibilityExplanation = "this needs Accessibility access (called Device Control and Data Access on macOS 27). solstone uses it to read the window titles these browsers give to accessibility tools, and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity. turning this on asks for it."
 
     @ViewBuilder
     private var privateWindowAccessibilityStatus: some View {

@@ -79,7 +79,7 @@ public enum UICopy {
     // Group & store
     public static let SOURCES_BROWSERS_GROUP_TITLE = "browsers"
     public static let SOURCES_BROWSERS_NO_HISTORY = "no browser connected yet"
-    public static let SOURCES_BROWSERS_STORES_CONFIGURED = "add the solstone extension to a browser on this mac, then choose which sites to share. what you share goes into your journal."
+    public static let SOURCES_BROWSERS_STORES_CONFIGURED = "add the solstone extension to a browser on this mac. what you share goes into your journal."
     public static func sourcesBrowserAddAction(browser: String) -> String { "add to \(browser)" }
     public static func sourcesBrowserLaunchFailure(browser: String) -> String { "couldn't open the store page in \(browser)." }
 
@@ -128,7 +128,7 @@ public enum UICopy {
         default: return "the setup couldn't be checked"
         }
     }
-    public static let SOURCES_BROWSER_FOOTNOTE = "the solstone extension works in Chrome, Edge, Firefox and Safari. it takes in nothing from private windows. that covers this extension only."
+    public static let SOURCES_BROWSER_FOOTNOTE = "the solstone extension works in Chrome, Edge, Firefox and Safari."
     public static let SOURCES_BROWSER_SAFARI_SETTINGS_ACTION = "open Safari settings"
     public static let SOURCES_BROWSER_SAFARI_UNAVAILABLE = "can't check the solstone extension in Safari"
     public static let SOURCES_BROWSER_SAFARI_ON = "on in Safari"
@@ -538,9 +538,9 @@ public enum UICopy {
             macOSMajor >= 27 ? "Device Control and Data Access" : "Accessibility"
         }
         public static func accessibilityCaution(macOSMajor: Int) -> String {
-            "macOS describes \(accessibilityName(macOSMajor: macOSMajor)) as control of your computer, but here solstone uses it only to read the title and address of each Safari window. until solstone can use it, Safari stays out of screen intake and its titles stay out of activity. the rest of your screen isn't affected."
+            "solstone uses \(accessibilityName(macOSMajor: macOSMajor)) to read the title and address of each Safari window. once it's allowed, activity also adds browser addresses to your journal, unless you turn that off under activity. until solstone can use it, Safari stays out of screen intake and its titles stay out of activity. the rest of your screen isn't affected."
         }
-        public static let ACTIVITY_ACCESSIBILITY_HELP = "macOS describes Accessibility (called Device Control and Data Access on macOS 27) as control of your computer, but here solstone uses it only to read window titles and page addresses. with this on, activity can include browser addresses, and window titles when screen recording is unavailable. checking Safari for the websites you leave out uses the same access, whether this is on or off."
+        public static let ACTIVITY_ACCESSIBILITY_HELP = "with Accessibility (called Device Control and Data Access on macOS 27), activity can add browser addresses to your journal, and window titles when screen recording is unavailable. checking Safari for the websites you leave out uses the same access, whether this setting is on or off."
         public static func activityAccessibilityOffInMacOS(macOSMajor: Int) -> String {
             "macOS has \(accessibilityName(macOSMajor: macOSMajor)) off for solstone."
         }
@@ -548,7 +548,6 @@ public enum UICopy {
         public static func browserCaution(browser: String) -> String {
             "solstone can't read page addresses in \(browser) right now, so \(browser) stays out of screen intake until it can."
         }
-        public static let ACCESSIBILITY_EXPLANATION = "Accessibility (called Device Control and Data Access on macOS 27) lets an app see and control everything on this mac. here solstone uses it only to read the title and page address of each Safari window."
         public static let ERROR_INVALID_ADDRESS = "enter a website address, like bank.com."
         public static let ERROR_LIMIT_REACHED = "you can leave out up to 200 websites."
     }
