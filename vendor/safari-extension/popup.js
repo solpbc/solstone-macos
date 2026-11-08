@@ -6,7 +6,7 @@
 
   const Status = globalThis.SolstoneStatus;
   const Failures = globalThis.SolstoneFailures;
-  const Disclosure = globalThis.SolstoneDisclosure;
+  if (globalThis.SolstoneCopy?.MOBILE === true) document.documentElement.classList.add("mobile");
   const View = globalThis.SolstonePopupView;
   const Actions = globalThis.SolstoneActions;
   const $ = (id) => document.getElementById(id);
@@ -62,9 +62,6 @@
 
   let state = null;
   let page = { origin: "", host: "", ok: false, kind: "" };
-  let disclosureResolve = null;
-  let disclosureConfirm = null;
-  let previousActiveElement = null;
   let paintSequence = 0;
   let appliedCaptureEpoch = -1;
   // What the popup shows of the app connection, with the toolbar's timing.
@@ -98,13 +95,11 @@
       openApp: () => chrome.tabs.create({ url: "https://solstone.app" }),
       reload: () => chrome.runtime.reload(),
       grantSite: (origin) => View.grantSite(origin, siteEffects()),
-      grantChosen: (origins) => View.grantChosenSites(origins, siteEffects()),
-      inactiveOrigins: () => state?.inactiveOrigins || [],
-      allowAllSites: () => View.regrantAllSites(siteEffects()),
       showError: showActionError,
-      showDenied: (action) => showActionMessage(action?.id === "allow-all-sites"
-        ? globalThis.SolstoneCopy.accessCopy(state?.brand).declined
-        : action?.id === "allow-again-all" ? "permission declined. those sites stay paused." : "permission declined. this site stays paused."),
+      brand: state?.brand,
+      requestPermission: (request) => chrome.permissions.request(request),
+      showDenied: () => showActionMessage(globalThis.SolstoneCopy.accessCopy(state?.brand).declined),
+      showOk: (message) => showActionMessage(message),
       lossSeq: () => state?.lossNotice?.seq,
     });
   }
@@ -114,6 +109,7 @@
     const treatment = TONE[section.tone] || TONE.unavailable;
     const verdict = $("verdict");
     verdict.className = `verdict ${treatment.bandClass}`;
+    verdict.hidden = section.quiet === true;
     $("verdictDot").className = `dot ${treatment.dotClass}`;
     $("verdictHeadline").textContent = section.headline;
     $("verdictSub").textContent = section.sub;
@@ -201,13 +197,13 @@
       const origin = action.origin || page.origin || `https://${page.host}`;
       const result = await cmd({ cmd: "removeGrantedOrigin", origin });
       await refresh();
+      const named = Hosts.displayOrigin(origin);
       if (result.error || result.ok === false) showActionError(result.error || "storage_error");
-      else showActionMessage(Copy.removedAnnouncement(Hosts.displayOrigin(origin)));
+      else if (result.result === "left_out_instead") showActionMessage(Copy.leftOutAnnouncement(named));
+      else showActionMessage(Copy.removedAnnouncement(named));
       return;
     }
-    const result = await View.addSite(Hosts.chosenOrigin(page.origin) || page.origin || page.host, Object.assign(siteEffects(), {
-      disclose: presentDisclosure,
-    }));
+    const result = await View.addSite(Hosts.chosenOrigin(page.origin) || page.origin || page.host, siteEffects());
     if (result.cancelled) return;
     if (result.denied) {
       const blocked = result.blockedBy ? Copy.addBlockedBelow(state?.brand, Hosts.matchHostFor(page.host), result.blockedBy) : "";
@@ -215,6 +211,18 @@
     }
     else if (result.error) showActionError(result.error);
     await refresh();
+  }
+
+  // On a phone adding takes one tap. What it takes in is there for whoever wants it.
+  function renderPageLearn(section) {
+    if (!$("pageLearn")) return;
+    const adding = globalThis.SolstoneCopy.MOBILE === true && section.siteAction?.id === "add-site";
+    $("pageLearn").hidden = !adding;
+    $("pageHint").hidden = !adding || section.siteAction.disabled === true;
+    if (!adding) return;
+    $("pageLearnWhat").textContent = globalThis.SolstoneCopy.DISCLOSURE_BODY;
+    $("pageLearnUnsent").textContent = "";
+    $("pageLearnWhere").textContent = "";
   }
 
   function renderPage(section) {
@@ -226,6 +234,8 @@
       $("pageNote").textContent = section.note || "";
       $("pageNote").hidden = !section.note;
     }
+
+    renderPageLearn(section);
 
     const siteAction = $("pageSiteAction");
     siteAction.hidden = !section.siteAction;
@@ -266,43 +276,105 @@
     if (section) $("siteCountText").textContent = section.text;
   }
 
-  function closeDisclosure(confirmed) {
-    if (!disclosureResolve) return;
-    // Runs inside the confirming click, before anything else, so the
-    // browser's permission prompt opens from the owner's gesture.
-    const confirm = disclosureConfirm;
-    disclosureConfirm = null;
-    const outcome = confirmed && confirm ? confirm() : confirmed;
-    $("disclosure").hidden = true;
-    $("popupMain").hidden = false;
-    $("popupFooter").hidden = false;
-    const resolve = disclosureResolve;
-    disclosureResolve = null;
-    if (previousActiveElement && typeof previousActiveElement.focus === "function") {
-      previousActiveElement.focus();
+  function childById(parent, id) {
+    if (!parent || !parent.children) return null;
+    for (const child of parent.children) {
+      if (child.id === id) return child;
     }
-    resolve(outcome);
+    return null;
   }
 
-  function presentDisclosure(host, confirm = null) {
-    previousActiveElement = document.activeElement;
-    disclosureConfirm = typeof confirm === "function" ? confirm : null;
-    const copy = Disclosure.addSite(host, state);
-    $("disclosureTitle").textContent = copy.title;
-    $("disclosureWhat").textContent = copy.what;
-    $("disclosureUnsent").textContent = copy.unsent;
-    $("disclosureDestination").textContent = copy.destination;
-    $("disclosureDestinationDetail").textContent = copy.destinationDetail;
-    $("disclosureChrome").textContent = copy.browser;
-    $("disclosureConfirm").textContent = copy.confirmLabel;
-    $("disclosureCancel").textContent = copy.cancelLabel;
-    $("popupMain").hidden = true;
-    $("popupFooter").hidden = true;
-    $("disclosure").hidden = false;
-    $("disclosureConfirm").focus();
-    return new Promise((resolve) => {
-      disclosureResolve = resolve;
-    });
+  function detach(parent, node) {
+    if (!parent || !node) return;
+    if (typeof node.remove === "function") node.remove();
+    if (Array.isArray(parent.children)) {
+      parent.children = parent.children.filter((child) => child !== node);
+    }
+  }
+
+  // Real pages anchor on the existing sections. The test document keeps those
+  // sections by id and not as children, so a missing anchor uses a stable index.
+  function placePinned(parent, node, before, fallbackIndex) {
+    if (!parent || !node) return;
+    if (before && before.parentNode === parent && typeof parent.insertBefore === "function") {
+      parent.insertBefore(node, before);
+      return;
+    }
+    if (!Array.isArray(parent.children)) {
+      if (typeof parent.insertBefore === "function") parent.insertBefore(node, before || null);
+      return;
+    }
+    parent.children = parent.children.filter((child) => child !== node);
+    const at = before ? parent.children.indexOf(before) : -1;
+    const index = at >= 0 ? at : Math.min(fallbackIndex, parent.children.length);
+    parent.children.splice(index, 0, node);
+    node.parentNode = parent;
+  }
+
+  function fillNotice(section, text, onResume) {
+    section.replaceChildren();
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "resume";
+    button.addEventListener("click", onResume);
+    section.append(paragraph, button);
+  }
+
+  async function resumeFromNotice() {
+    showActionMessage("");
+    const result = await cmd({ cmd: "setPaused", paused: false });
+    if (result?.error) showActionError(result.error);
+    await refresh();
+  }
+
+  function renderPopupExtras(shown, sections) {
+    const main = $("popupMain");
+    if (!main) return;
+    const Copy = globalThis.SolstoneCopy;
+    let notice = childById(main, "clearedNotice");
+    if (shown?.clearedNotice) {
+      if (!notice) {
+        notice = document.createElement("section");
+        notice.id = "clearedNotice";
+        notice.className = "blk";
+      }
+      notice.hidden = false;
+      fillNotice(notice, Copy.clearedStorageNotice(), resumeFromNotice);
+      placePinned(main, notice, $("verdict"), 0);
+    } else {
+      detach(main, notice);
+    }
+
+    const question = sections.find((section) => section.id === "upgradeQuestion");
+    let block = childById(main, "upgradeQuestion");
+    if (question) {
+      if (!block) {
+        block = document.createElement("section");
+        block.id = "upgradeQuestion";
+        block.className = "blk";
+      }
+      block.hidden = false;
+      block.replaceChildren();
+      const body = document.createElement("p");
+      body.textContent = question.body;
+      const actions = document.createElement("div");
+      for (const spec of question.buttons || []) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.id = spec.id;
+        button.dataset.shareId = spec.id;
+        button.textContent = spec.label;
+        button.className = spec.primary ? "primary" : "";
+        button.addEventListener("click", () => runAction({ id: spec.id, label: spec.label, primary: spec.primary, shown: question.shown }));
+        actions.append(button);
+      }
+      block.append(body, actions);
+      placePinned(main, block, $("page"), 1);
+    } else {
+      detach(main, block);
+    }
   }
 
   function renderCurrent() {
@@ -324,6 +396,7 @@
     const shown = link.status;
     const derived = Status.derive(shown, extras);
     const sections = View.arrange(derived, shown, page, extras);
+    renderPopupExtras(shown, sections);
     renderVerdict(sections.find((section) => section.id === "verdict"));
     renderSiteIssues(sections.find((section) => section.id === "siteIssues"));
     renderPage(sections.find((section) => section.id === "page"));
@@ -362,7 +435,6 @@
     await paint(nextState, sequence);
   }
 
-  $("disclosureConfirm").addEventListener("click", () => closeDisclosure(true));
   $("aboutCopy").addEventListener("click", async () => {
     const displayed = $("aboutBlock").textContent;
     try {
@@ -378,10 +450,7 @@
       }
     }
   });
-  $("disclosureCancel").addEventListener("click", () => closeDisclosure(false));
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !$("disclosure").hidden) closeDisclosure(false);
-  });
+  if (globalThis.SolstoneCopy?.MOBILE === true) $("allSitesLink").textContent = "settings \u203a";
   $("allSitesLink").addEventListener("click", (event) => {
     event.preventDefault();
     openSettings();

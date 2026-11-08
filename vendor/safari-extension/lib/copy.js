@@ -41,11 +41,11 @@
   })();
   const MOBILE = PLACE !== "this computer";
 
-  const DESKTOP_DISCLOSURE = `you choose which sites to share. by default, you add sites one at a time. you can also choose all sites after a separate agreement and leave sites out. on the sites you choose, the solstone extension takes in the page's text and rough layout whenever a tab is open, and all of it goes into your journal:
+  const DESKTOP_DISCLOSURE = `the sites you allow in your browser are the sites the solstone extension takes in, and that can be every site. on those sites, it takes in the page's text and rough layout whenever a tab is open, and all of it goes into your journal:
 - the text you can see, the text you'd see by scrolling, text in background tabs, some labels pages provide for screen readers and tooltips, and text the page has but doesn't show you
 - each page's address, without anything after a ? or #, its title, when you were on it, and the sites its links point to
 - whether the tab was in front, whether its window had focus, whether audio or video was playing, the page's language, which browser it is, and how long the tab has been open
-- on a mail or chat site you choose, your messages
+- on a mail or chat site, your messages
 - some words you've typed but haven't sent, and anything a site shows, even something you'd consider secret, like a code in an email
 
 never pixels. never raw HTML. sites you leave out aren't taken in, but other sites shown inside those pages still are.
@@ -57,13 +57,23 @@ the solstone extension takes in nothing from private windows, even where your br
 pause any time in the solstone extension. pausing the solstone app stops this extension too, unless you turn that off in settings. pausing doesn't hold back what's already taken in. if you remove a site, nothing new comes from it; what's already in your journal stays there.
 
 no analytics. no telemetry. no phone home. nobody counted.`;
-  const MOBILE_WHILE_CLOSED = `the solstone extension keeps taking in the sites you choose while the solstone app is closed. what it takes in waits on ${PLACE} and goes into your journal the next time you open the solstone app.`;
+  const MOBILE_WHILE_CLOSED = `the solstone extension keeps taking in the sites you allow while the solstone app is closed. what it takes in waits on ${PLACE} and goes into your journal the next time you open the solstone app.`;
+  const MOBILE_DISCLOSURE_EDITS = [
+    [
+      "to the solstone app on this computer. from there it goes into your journal over the link the solstone app already uses.",
+      `to the solstone app on ${PLACE}. from there it goes into your journal over the link the solstone app already uses. ${MOBILE_WHILE_CLOSED}`,
+    ],
+    [
+      " pausing the solstone app stops this extension too, unless you turn that off in settings.",
+      "",
+    ],
+    [
+      "the solstone extension takes in nothing from private windows, even where your browser lets it run there.",
+      "the solstone extension takes in nothing from private browsing, even where Safari lets it run there.",
+    ],
+  ];
   const DISCLOSURE_BODY = MOBILE
-    ? DESKTOP_DISCLOSURE
-      .replace("to the solstone app on this computer. from there it goes into your journal over the link the solstone app already uses.",
-        `to the solstone app on ${PLACE}. from there it goes into your journal over the link the solstone app already uses. ${MOBILE_WHILE_CLOSED}`)
-      .replace("pausing the solstone app stops this extension too, unless you turn that off in settings.", "pausing Safari in the solstone app stops this extension too.")
-      .replace("the solstone extension takes in nothing from private windows, even where your browser lets it run there.", "the solstone extension takes in nothing from private browsing, even where Safari lets it run there.")
+    ? MOBILE_DISCLOSURE_EDITS.reduce((text, edit) => text.replace(edit[0], edit[1]), DESKTOP_DISCLOSURE)
     : DESKTOP_DISCLOSURE;
 
   const STEP1_CANT_REACH_BODY = `the solstone extension works with the solstone app on ${PLACE}, and nothing is taken in without it. if the solstone app isn't on ${PLACE} yet, get it at solstone.app. this page moves on by itself once the solstone app answers.`;
@@ -81,49 +91,92 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     return n === 1 ? one : many.replace("{n}", String(n));
   }
 
-  // The separate all-sites agreement. `context` carries the counts that carry over
-  // between modes, so the owner sees what is kept before agreeing.
-  function allSitesCopy(brand, context) {
-    const bName = browserName(brand);
-    const excluded = Number(context?.excludedCount) || 0;
-    const chosen = Number(context?.chosenCount) || 0;
-    const kept = [];
-    if (excluded > 0) kept.push(plural(excluded, "the site you left out before stays left out.", "the {n} sites you left out before stay left out."));
-    if (chosen > 0) kept.push(plural(chosen, "your added site is kept for when you switch back.", "your {n} added sites are kept for when you switch back."));
+  const SHARE_EVERY_SITE = "share every site";
+  const STOP_SHARING_EVERY_SITE = "stop sharing every site";
+
+  function fenceQuestion(brand, kind, host) {
+    const browser = browserName(brand);
+    let body = "";
+    let shareId = "share-them-too";
+    let shareLabel = "share them too";
+
+    if (kind === "every") {
+      body = `${browser} allows the solstone extension on every website, but only the sites you added are taken in. sharing every site includes messages on mail and chat sites, and words you've typed but haven't sent, and all of it goes into your journal.`;
+      shareId = "share-every-site";
+      shareLabel = "share every site";
+    } else if (kind === "wider") {
+      body = `${browser} allows all of ${host}, but the solstone extension takes in only the part of it you added. sharing all of it can include messages on mail and chat sites, and words you've typed but haven't sent, and all of it goes into your journal.`;
+      shareId = "share-them-too";
+      shareLabel = "share all of it";
+    } else if (kind === "more") {
+      body = `${browser} allows more of some sites you added, like ${host}, but the solstone extension takes in only the parts of them you added. sharing all of them can include messages on mail and chat sites, and words you've typed but haven't sent, and all of it goes into your journal.`;
+      shareId = "share-them-too";
+      shareLabel = "share them too";
+    } else {
+      body = `${browser} allows the solstone extension on sites you didn't add, like ${host}, but only the sites you added are taken in. sharing them can include messages on mail and chat sites, and words you've typed but haven't sent, and all of it goes into your journal.`;
+      shareId = "share-them-too";
+      shareLabel = "share them too";
+    }
+
     return {
-      title: "share all sites?",
-      what: "on every website your browser allows, including sites you visit later, the solstone extension takes in the page's text, address and rough layout whenever a tab is open, and all of it goes into your journal. this includes background tabs, text the page has but doesn't show you, whether the tab was in front, whether its window had focus, whether audio or video was playing, the page's language, which browser it is, and how long the tab has been open.",
-      unsent: "that includes messages on mail and chat sites, words you've typed into a page's editor but haven't sent, and anything a site shows, even something you'd consider secret.",
-      leaveOut: [MOBILE ? "you can leave sites out at any time. private browsing is still left out." : "you can leave sites out at any time. private windows are still left out.", ...kept].join(" "),
-      destination: `your journal, through the solstone app on ${PLACE}`,
-      destinationDetail: `nothing leaves this browser except to the solstone app on ${PLACE}.`,
-      browser: brand === "safari"
-        ? "next, you allow it in Safari's own settings, and this page shows you how. nothing new is taken in until you do."
-        : `${bName} asks you to allow access to all websites next. if you don't, nothing changes.`,
-      confirmLabel: "agree and share all sites", cancelLabel: "cancel",
+      body,
+      shareId,
+      shareLabel,
+      keepId: "keep-my-sites",
+      keepLabel: "keep my sites",
     };
   }
 
-  // The two ways of choosing what to share, as the settings page offers them.
-  const SITE_MODES = {
-    selected: { title: "sites you add", body: "only the sites you add, one at a time." },
-    all: { title: "all sites", body: "every website, including ones you visit later, except sites you leave out. it has its own agreement." },
-    current: "sharing this way",
-    chooseAll: "choose all sites",
-    chooseSelected: "switch to sites you add",
-  };
+  function fenceQuiet(brand) {
+    const browser = browserName(brand);
+    return `${browser} allows more than your sites. this extension takes in only the sites you added, and all of it goes into your journal.`;
+  }
+
+  function clearedStorageNotice() {
+    if (MOBILE) {
+      return "you cleared this extension's storage, so it's paused, and sites you left out aren't left out any more. when you resume, every site Safari allows goes into your journal.";
+    }
+    return "you cleared this extension's storage, so it's paused. when you resume, every site Safari allows goes into your journal, except what you've left out in the solstone app.";
+  }
+
+  function stopResultCopy(brand, code) {
+    if (code === undefined && typeof brand === "string") {
+      code = brand;
+      brand = undefined;
+    }
+    const browser = browserName(brand);
+    if (code === "still_every_site") {
+      return `${browser} still allows every website.`;
+    }
+    if (code === "every_site_off_none") {
+      return "every site is off, including sites you added one at a time. add a site to share it again.";
+    }
+    if (code === "every_site_off_some") {
+      return "every site is off, except sites you added one at a time.";
+    }
+    return "";
+  }
+
+  function everySiteOnLine(brand) {
+    const browser = browserName(brand);
+    return `${browser} allows every website, so every site is on, except what you leave out.`;
+  }
+
+  function safariStopLine() {
+    if (MOBILE) {
+      return "to stop sharing every site, set Other Websites to Ask in Settings, under Apps, Safari, Extensions, solstone.";
+    }
+    return "to stop sharing every site, set For other websites to Ask in Safari's website settings.";
+  }
 
   // A named site covers every address under it (see hosts.js coversSubdomains).
   const LEAVE_OUT_HELP = "leaving out bank.com leaves out all bank.com sites and pages, like www.bank.com and login.bank.com, even inside another page. other sites shown inside its pages are still shared, unless you leave them out too.";
-  const ADD_HELP = "adding bank.com shares all bank.com sites and pages, like www.bank.com and login.bank.com. to share only part, add that address, like mail.google.com.";
+  const ADD_HELP = "adding bank.com shares every bank.com site and page, like www.bank.com and login.bank.com. to share only part, add that address, like mail.google.com.";
   const FIELD_ERROR = "enter a website address, like mail.google.com.";
 
   function addHelp(brand) {
-    return `${ADD_HELP} a site you allow in ${browserName(brand)}'s own settings is added here too.`;
-  }
-
-  function broadInSelected(brand) {
-    return `${browserName(brand)} allows the solstone extension on all websites. only the sites you add are taken in.`;
+    if (MOBILE) return "adding a site covers every site and page under it.";
+    return `${ADD_HELP} a site you allow in ${browserName(brand)}'s own settings is on too.`;
   }
 
   function leftOutSummary(n) {
@@ -134,29 +187,17 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     return `${escapeToken(site)} is left out. stop leaving it out first.`;
   }
 
-  function offerLine(brand) {
-    return `${browserName(brand)} already allows the solstone extension on these sites:`;
-  }
-
   const appOnlyLeftOut = "left out in the solstone app";
   const desktopScreenOn = "the solstone extension isn't taking in this site. your screen still goes into your journal.";
   const desktopActivityOn = "the solstone extension isn't taking in this site. this browser's activity still goes into your journal.";
-  function desktopNeedsAccess(brand) {
-    return `the solstone extension isn't taking in this site. the solstone app can't check addresses right now, so this page may not go into your journal from your screen. the solstone app's settings say why.`;
-  }
-  function appLeftOutSitesOn(brand) {
-    return `${browserName(brand)} windows showing it stay out of your journal, on your screen and in activity.`;
-  }
-  function appLeftOutNeedsAccess(brand) {
-    return `${browserName(brand)} windows showing it stay out of your journal, on your screen and in activity. the solstone app can't check addresses right now, so it's keeping out more than this site. its settings say why.`;
-  }
+  const appLeftOutSitesOn = "kept out of your journal, including this browser window on your screen and activity.";
+  const appLeftOutNeedsAccess = "the solstone extension leaves it out. the solstone app needs Accessibility to keep it off your screen and out of activity.";
   function appLeftOutNotChecked(brand) {
-    return `the solstone extension leaves it out. ${browserName(brand)} windows showing it can still go into your journal, on your screen and in activity.`;
+    return `the solstone extension leaves it out. the solstone app doesn't check ${browserName(brand)} windows on your screen.`;
   }
   const appLeftOutAppAway = "the solstone app leaves it out too.";
   const extensionLeftOut = "the solstone extension leaves it out.";
-  const OFFER_ADD = "add";
-  const OFFER_DECLINE = "don't add";
+  const desktopNeedsAccess = "the solstone app needs access before it shares sites on this computer.";
 
   function popupNoteKey(status, page, kind) {
     status = status || {};
@@ -227,92 +268,23 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     return onNow ? `${named} what you share there now goes into your journal.` : named;
   }
 
-  function adoptedAnnouncement(brand, sites) {
-    const bName = browserName(brand);
-    const list = Array.isArray(sites) ? sites : [sites].filter(Boolean);
-    if (list.length > 1) {
-      return `${list.length} sites added. you allowed them in ${bName}. what you share there goes into your journal.`;
-    }
-    if (list.length === 1) {
-      const item = list[0];
-      const host = typeof item === "string" ? item : (item.host || item.site || "");
-      const H = globalThis.SolstoneHosts;
-      const isLocal = H?.isLocalHostname ? H.isLocalHostname(host) : false;
-      const isSiteWide = typeof item === "object" && item.siteWide !== undefined ? item.siteWide : (H?.coversSubdomains ? H.coversSubdomains(host) : false);
-      const escaped = escapeToken(host);
-      if (isSiteWide && !isLocal) {
-        return `all ${escaped} sites and pages added. you allowed them in ${bName}. what you share there goes into your journal.`;
-      }
-      return `${escaped} added. you allowed it in ${bName}. what you share there goes into your journal.`;
-    }
-    return "";
-  }
-
-  // A site added before sites covered their subdomains, which the browser still
-  // allows on its exact address alone.
-  function exactOnlyCopy(brand, hosts) {
-    const bName = browserName(brand);
-    const list = Array.from(hosts || []);
-    // Safari can't widen a site it already allows, so there's no button there.
-    if (brand === "safari") {
-      if (list.length === 1) {
-        const host = escapeToken(list[0]);
-        return {
-          line: `${host} covers only that address. to include all ${host} sites and pages, remove it and add it again.`,
-          label: "",
-          declined: "",
-        };
-      }
-      // Named, since each one is removed and added again by hand.
-      const names = list.map((h) => escapeToken(h));
-      const named = `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-      return {
-        line: `${named} cover only their exact address. to include all their sites and pages, remove each one and add it again.`,
-        label: "",
-        declined: "",
-      };
-    }
-    if (list.length === 1) {
-      const host = escapeToken(list[0]);
-      return {
-        line: `${host} covers only that address. to include all ${host} sites and pages, allow them in ${bName}.`,
-        label: `allow all ${host} sites`,
-        declined: `permission declined. ${host} keeps its exact address only.`,
-      };
-    }
-    return {
-      line: `${list.length} of your sites cover only their exact address. to include all their sites and pages, allow them in ${bName}.`,
-      label: "allow them",
-      declined: "permission declined. those sites keep their exact address only.",
-    };
-  }
-
-
-
-  function keptNote(mode, count) {
-    if (!(count > 0)) return "";
-    return mode === "all"
-      ? plural(count, "your added site is kept for when you switch back.", "your {n} added sites are kept for when you switch back.")
-      : plural(count, "the site you left out stays left out if you choose all sites again.", "the {n} sites you left out stay left out if you choose all sites again.");
-  }
-
   function leftOutAnnouncement(host) {
     return wholeSite(host)
       ? `all ${escapeToken(host)} sites and pages left out. other sites shown inside them are still shared.`
       : `${escapeToken(host)} left out. other sites shown inside its pages are still shared.`;
   }
 
-  // What the settings page says about the browser's own grant in all-sites mode.
+  // What the settings page says about the browser's own grant.
   function accessCopy(brand) {
     const bName = browserName(brand);
     const safari = brand === "safari";
     return {
-      granted: `${bName} allows solstone on all websites.`,
+      granted: everySiteOnLine(brand),
       grantedNote: safari ? (MOBILE ? "in Settings, under Apps, Safari, Extensions, solstone, a site set to Deny stays off." : "a site set to Deny in Safari's website settings stays off.") : "",
-      missingTitle: safari ? "allow all websites in Safari" : `${bName} isn't allowing all websites`,
+      missingTitle: safari ? "allow every website in Safari" : `${bName} isn't allowing every website`,
       missingBody: safari
-        ? "Safari allows this only in its own settings. nothing new is taken in until you allow it:"
-        : "nothing new is taken in until it does. allow it, or switch back to sites you add.",
+        ? "until you do, only the sites Safari already allows are on:"
+        : `only the sites ${bName} already allows are on.`,
       steps: safari && MOBILE ? [
         "in Settings, open Apps, then Safari, then Extensions, then solstone.",
         "set Other Websites to Allow.",
@@ -322,16 +294,16 @@ no analytics. no telemetry. no phone home. nobody counted.`;
         "set For other websites to Allow.",
       ] : [],
       returnNote: safari ? "this page checks again when you come back to it." : "",
-      allowLabel: `allow in ${bName}`,
+      allowLabel: safari ? `allow in ${bName}` : "share every site",
       checkLabel: "check again",
       checking: `checking ${bName}\u2026`,
-      nowAllowed: `${bName} now allows all websites. all sites are on.`,
+      nowAllowed: `${bName} now allows every website. every site is on, except what you leave out.`,
       stillMissing: safari
-        ? (MOBILE ? "Safari still isn't allowing all websites. set Other Websites to Allow." : "Safari still isn't allowing all websites. set For other websites to Allow.")
-        : `${bName} still isn't allowing all websites.`,
-      declined: "permission declined. nothing new is taken in until you allow it.",
+        ? (MOBILE ? "Safari still isn't allowing every website. set Other Websites to Allow." : "Safari still isn't allowing every website. set For other websites to Allow.")
+        : `${bName} still isn't allowing every website.`,
+      declined: `permission declined. only the sites ${bName} already allows are on. to add a site, open it, open solstone from your browser's toolbar or extensions menu, and choose add this site.`,
       failedTitle: "couldn't start on your sites",
-      failedBody: `something went wrong turning on all sites in ${bName}.`,
+      failedBody: `something went wrong turning on every site in ${bName}.`,
       retryLabel: "try again",
       deniedTitle: safari ? "Safari is denying these sites, so they aren't taken in:" : `${bName} doesn't let this extension take in these sites:`,
       deniedHelp: safari ? (MOBILE ? "to include one, set it to Allow in Settings, under Apps, Safari, Extensions, solstone." : "to include one, set it to Allow in Safari's website settings for solstone.") : "",
@@ -356,16 +328,11 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     };
   }
 
-  function regrantCopy(brand, count) {
-    return {
-      line: plural(count, `${browserName(brand)} needs to allow 1 of your sites again.`, `${browserName(brand)} needs to allow {n} of your sites again.`),
-      label: count === 1 ? "allow it again" : "allow them again",
-    };
-  }
-
-  function sharingSummary(mode, excludedCount, siteLine) {
-    if (mode === "all") return excludedCount > 0 ? `all sites \u00b7 ${excludedCount} left out` : "all sites";
-    return `sites you add \u00b7 ${siteLine || "none yet"}`;
+  function sharingSummary(isEverySite, siteCount, excludedCount = 0) {
+    if (isEverySite) return excludedCount > 0 ? `every site \u00b7 ${excludedCount} left out` : "every site";
+    if (siteCount === 0) return "no sites yet";
+    if (siteCount === 1) return "1 site";
+    return `${siteCount} sites`;
   }
 
   function step3Body(brand) {
@@ -392,21 +359,19 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     return `turn them on with ${escapeToken(cmd)}.`;
   }
 
-  function sheetCopy(hostInput, brandInput) {
-    const host = escapeToken(hostInput);
-    const bName = browserName(brandInput);
-    const whole = wholeSite(hostInput);
-    return {
-      title: whole ? `add all ${host} sites and pages?` : `add ${host}?`,
-      what: `${whole ? `on every ${host} site and page` : `on ${host}`}, the solstone extension takes in the page's text and rough layout whenever a tab is open, and all of it goes into your journal: what you can see, what you'd see by scrolling, background tabs, some labels meant for screen readers, text the page has but doesn't show you, each page's address, title and time, the sites its links point to. it also takes in whether the tab was in front, whether its window had focus, whether audio or video was playing, the page's language, which browser it is, and how long the tab has been open. never pixels.`,
-      unsent: `that can include words you've typed but haven't sent, and anything the site shows, even something you'd consider secret.`,
-      destinationLabel: `it goes to`,
-      destination: `your journal, through the solstone app on ${PLACE}`,
-      destinationDetail: `nothing leaves this browser except to the solstone app on ${PLACE}.`,
-      browser: `${bName} will ask you to allow this next. you can remove the site any time; what's already in your journal stays there.`,
-      confirmLabel: `add this site`,
-      cancelLabel: `cancel`,
-    };
+  const VERSION_ONE_SHARE_NOTE = "sharing every site includes messages on mail and chat sites, and words you've typed but haven't sent, and all of it goes into your journal.";
+
+  function everySiteQuestionBody() {
+    return "every website, including ones you visit later, once your browser allows it. you can leave sites out.";
+  }
+
+  function oneSiteQuestionBody() {
+    return "only the sites you allow. open a site, open solstone from your browser's toolbar or extensions menu, and choose add this site.";
+  }
+
+  function alreadyAllowedBody(brand) {
+    const browser = browserName(brand);
+    return `${browser} already allows every website, so agreeing shares every site. to choose sites one at a time instead, change that in ${browser} first.`;
   }
 
   const RESTRICTED = /Cannot access|chrome:\/\/|moz-extension:\/\/|about:|Web Store|match pattern/i;
@@ -433,7 +398,6 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     if (s === "missing_consent") return "finish setting up first.";
     if (s === "invalid_host" || s === "invalid_origin") return FIELD_ERROR;
     if (s === "site_excluded") return "this site is left out. stop leaving it out first.";
-    if (s === "declined") return `you chose not to add this site. to add it, allow it in ${browserName(brandInput)} again.`;
     if (s === "permissions_unavailable") return `couldn't check what ${browserName(brandInput)} allows. try again.`;
     return "something went wrong. try again.";
   }
@@ -444,15 +408,17 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     escapeToken,
     browserName,
     WARM_CARD,
+    DESKTOP_DISCLOSURE,
+    MOBILE_DISCLOSURE_EDITS,
     DISCLOSURE_BODY,
-    allSitesCopy,
-    SITE_MODES,
+    VERSION_ONE_SHARE_NOTE,
+    everySiteQuestionBody,
+    oneSiteQuestionBody,
+    alreadyAllowedBody,
     LEAVE_OUT_HELP,
-    keptNote,
     leftOutAnnouncement,
     accessCopy,
     pageCopy,
-    regrantCopy,
     sharingSummary,
     STEP1_CANT_REACH_BODY,
     STEP1_OPEN_APP_BODY,
@@ -466,7 +432,6 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     removedAnnouncement,
     includedAnnouncement,
     addedAnnouncement,
-    exactOnlyCopy,
     actionFailure,
     STEP1_NOT_PAIRED_BODY,
     STEP1_INTAKE_OFF_BODY,
@@ -476,14 +441,10 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     linuxCantReachAppReason,
     linuxIntakeOffReason,
     linuxStep1IntakeOffBody,
-    sheetCopy,
     classifyFailure,
     addHelp,
-    adoptedAnnouncement,
-    broadInSelected,
     leftOutSummary,
     leftOutRefusal,
-    offerLine,
     popupNoteKey,
     appOnlyLeftOut,
     desktopScreenOn,
@@ -494,7 +455,13 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     appLeftOutNotChecked,
     appLeftOutAppAway,
     extensionLeftOut,
-    OFFER_ADD,
-    OFFER_DECLINE,
+    SHARE_EVERY_SITE,
+    STOP_SHARING_EVERY_SITE,
+    stopResultCopy,
+    fenceQuestion,
+    fenceQuiet,
+    clearedStorageNotice,
+    everySiteOnLine,
+    safariStopLine,
   };
 })();

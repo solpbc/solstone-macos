@@ -38,13 +38,11 @@
     }
   }
 
-  const SITES_CARD_ACTIONS = new Set(["open-settings", "allow-all-sites", "retry-all-sites", "allow-again-all"]);
+  const SITES_CARD_ACTIONS = new Set(["open-settings", "allow-all-sites", "retry-all-sites"]);
   let state = null;
-  let disclosureResolve = null;
-  let disclosureConfirm = null;
-  let allSitesDisclosure = false;
-  let disclosureReturnFocus = null;
   let accessCheck = null;
+  let everySiteRequestPending = false;
+  let firstRunAutoSent = false;
   let lastBroadReady = null;
   let step1Action = null;
   let paintSequence = 0;
@@ -87,55 +85,19 @@
     if (element && !element.hidden && typeof element.focus === "function") element.focus();
   }
 
-  function closeDisclosure(confirmed) {
-    if (!disclosureResolve) return;
-    // Runs inside the confirming click, before anything else, so the
-    // browser's permission prompt opens from the owner's gesture.
-    const confirm = disclosureConfirm;
-    disclosureConfirm = null;
-    const outcome = confirmed && confirm ? confirm() : confirmed;
-    if ($("siteDisclosure")) $("siteDisclosure").hidden = true;
-    if ($("sitesMain")) $("sitesMain").hidden = false;
-    const resolve = disclosureResolve;
-    disclosureResolve = null;
-    focus(disclosureReturnFocus || "newHost");
-    disclosureReturnFocus = null;
-    resolve(outcome);
-  }
-
-  function presentDisclosure(host, confirm = null, allSites = false) {
-    allSitesDisclosure = allSites;
-    disclosureConfirm = typeof confirm === "function" ? confirm : null;
-    const copy = allSites
-      ? Copy.allSitesCopy(state?.brand, { excludedCount: (state?.excludedHosts || []).length, chosenCount: chosenList().length })
-      : Disclosure.addSite(host, state);
-    if ($("siteDisclosureLeaveOut")) {
-      $("siteDisclosureLeaveOut").textContent = copy.leaveOut || "";
-      $("siteDisclosureLeaveOut").hidden = !copy.leaveOut;
-    }
-    if ($("siteDisclosureTitle")) $("siteDisclosureTitle").textContent = copy.title;
-    if ($("siteDisclosureWhat")) $("siteDisclosureWhat").textContent = copy.what;
-    if ($("siteDisclosureUnsent")) $("siteDisclosureUnsent").textContent = copy.unsent;
-    if ($("siteDisclosureDestination")) $("siteDisclosureDestination").textContent = copy.destination;
-    if ($("siteDisclosureDestinationDetail")) $("siteDisclosureDestinationDetail").textContent = copy.destinationDetail;
-    if ($("siteDisclosureChrome")) $("siteDisclosureChrome").textContent = copy.browser;
-    if ($("siteDisclosureConfirm")) $("siteDisclosureConfirm").textContent = copy.confirmLabel;
-    if ($("siteDisclosureCancel")) $("siteDisclosureCancel").textContent = copy.cancelLabel;
-    if ($("sitesMain")) $("sitesMain").hidden = true;
-    if ($("siteDisclosure")) $("siteDisclosure").hidden = false;
-    // A wider agreement is read from its title, never confirmed by a stray Enter.
-    focus(allSites ? "siteDisclosureTitle" : "siteDisclosureConfirm");
-    return new Promise((resolve) => {
-      disclosureResolve = resolve;
-    });
-  }
-
   function chosenList() {
-    return Array.isArray(state && state.chosenOrigins)
-      ? state.chosenOrigins
-      : Array.isArray(state && state.grantedOrigins)
-      ? state.grantedOrigins
-      : [];
+    if (state?.fence && Array.isArray(state.fence.entries)) return state.fence.entries;
+    if (Array.isArray(state && state.livePatterns)) {
+      const H = globalThis.SolstoneHosts;
+      const res = [];
+      for (const p of state.livePatterns) {
+        if (H?.isBroadPattern?.(p)) continue;
+        const row = H?.grantRowOrigin?.(p);
+        if (row) res.push(row);
+      }
+      return res;
+    }
+    return [];
   }
 
   function fieldError(message) {
@@ -149,18 +111,6 @@
     clearAnnouncement();
     fieldError("");
     const raw = inputElement ? inputElement.value : "";
-    if (state?.siteMode === "all") {
-      const host = Hosts.excludedHostname(raw.trim());
-      if (!host) {
-        if (raw.trim()) { fieldError(Copy.FIELD_ERROR); focus(inputElement); }
-        return;
-      }
-      const result = await cmd({ cmd: "setLeftOut", host, out: true });
-      if (result.error) showActionError(result.error);
-      else { inputElement.value = ""; announce(Copy.leftOutAnnouncement(host), "ok"); }
-      await refresh();
-      return;
-    }
     const origin = Hosts.chosenOrigin(raw);
     if (!origin) {
       if (raw.trim()) { fieldError(Copy.FIELD_ERROR); focus(inputElement); }
@@ -182,7 +132,7 @@
       focus(inputElement);
       return;
     }
-    const result = await View.addSite(origin, Object.assign(siteEffects(), { disclose: presentDisclosure }));
+    const result = await View.addSite(origin, siteEffects());
     // Adding needs the solstone app answering and nothing paused; the status
     // card says which, and the owner is never left with a silent button.
     if (result.ineligible) {
@@ -211,11 +161,15 @@
     const effects = sharedActionEffects();
     const showError = effects.showError;
     effects.showError = (error) => { failed = true; showError(error); };
-    await Actions.run(action, effects);
+    const outcome = await Actions.run(action, effects);
     if (failed) return;
     // Say what the click did; the row it came from is gone now.
     if (action.id === "remove-site") {
-      announce(Copy.removedAnnouncement(action.label || action.host), "ok");
+      const named = action.label || action.host;
+      const said = outcome?.result === "left_out_instead"
+        ? Copy.leftOutAnnouncement(named)
+        : Copy.removedAnnouncement(named);
+      announce(said, "ok");
       focus("newHost");
     } else if (action.id === "include-site") {
       announce(Copy.includedAnnouncement(action.host), "ok");
@@ -230,13 +184,11 @@
       openApp: () => chrome.tabs.create({ url: "https://solstone.app" }),
       reload: () => chrome.runtime.reload(),
       grantSite: (origin) => View.grantSite(origin, siteEffects()),
-      grantChosen: (origins) => View.grantChosenSites(origins, siteEffects()),
-      inactiveOrigins: () => state?.inactiveOrigins || [],
-      allowAllSites: () => View.regrantAllSites(siteEffects()),
       showError: showActionError,
-      showDenied: (action) => announce(action?.id === "allow-all-sites"
-        ? Copy.accessCopy(state?.brand).declined
-        : action?.id === "allow-again-all" ? "permission declined. those sites stay paused." : "permission declined. this site stays paused.", "bad"),
+      brand: state?.brand,
+      requestPermission: (request) => chrome.permissions.request(request),
+      showDenied: () => announce(Copy.accessCopy(state?.brand).declined, "bad"),
+      showOk: (message) => announce(message, "ok"),
       lossSeq: () => state?.lossNotice?.seq,
     };
   }
@@ -245,12 +197,6 @@
     const list = $(containerId);
     if (!list) return;
     list.replaceChildren();
-    if (state?.siteMode === "all" && allowlist.length === 0 && containerId === "siteList") {
-      const empty = document.createElement("p");
-      empty.className = "muted";
-      empty.textContent = "no sites left out.";
-      list.append(empty);
-    }
 
     for (const entry of allowlist) {
       // A chosen origin shows its port and an http:// scheme, so two entries
@@ -259,8 +205,7 @@
       let hostname = entry;
       try { if (entry.startsWith("http")) hostname = new URL(entry).hostname; } catch (_e) {}
 
-      const excluded = state?.siteMode === "all";
-      const rowState = excluded ? { kind: "excluded", label: "left out" } : Status.siteRow(entry, state);
+      const rowState = Status.siteRow(entry, state);
       const row = document.createElement("div");
       row.className = "site";
       const copyEl = document.createElement("div");
@@ -284,9 +229,9 @@
       }
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.textContent = excluded ? "stop leaving out" : "remove";
+      remove.textContent = "remove";
       if (typeof remove.setAttribute === "function") remove.setAttribute("aria-label", `${remove.textContent} ${host}`);
-      remove.addEventListener("click", () => runSiteAction({ id: excluded ? "include-site" : "remove-site", host: hostname, label: host, origin: entry }));
+      remove.addEventListener("click", () => runSiteAction({ id: "remove-site", host: hostname, label: host, origin: entry }));
       actions.append(remove);
       row.append(copyEl, actions);
       list.append(row);
@@ -329,19 +274,118 @@
     };
   }
 
+  function heldRules(st) {
+    const rules = st && st.agreementRules;
+    return rules === "firefox" || rules === "safari" ? rules : "chrome";
+  }
+
+  function questionShown(st) {
+    if (Copy.MOBILE === true) return false;
+    const rules = heldRules(st);
+    if (!st || st.ok !== true) return rules === "chrome";
+    if (rules === "chrome") return st.consentAccepted !== true;
+    if (st.firstRunAnswered === true) return false;
+    if (Hosts?.everySiteLive?.(st.livePatterns) === true) return false;
+    return true;
+  }
+
+  function welcomeShown(st) {
+    if (Copy.MOBILE === true) return false;
+    if (!st || st.ok !== true) return true;
+    const rules = heldRules(st);
+    if (rules === "chrome") {
+      const accepted = st.consentAccepted === true;
+      return !accepted;
+    }
+    return questionShown(st);
+  }
+
+  function placeDisclosureCard(inQuestion) {
+    const card = $("disclosureCard");
+    const settings = $("settingsView");
+    const welcome = $("welcomeView");
+    if (!card || !settings || !welcome) return;
+    const summary = $("disclosureSummary");
+    if (inQuestion) {
+      if (card.parentNode !== welcome) welcome.append(card);
+      card.hidden = false;
+      // Nobody has read it yet on a first run.
+      if (summary) summary.textContent = "what it takes in";
+    } else {
+      if (card.parentNode !== settings) settings.append(card);
+      if (summary && !Copy.MOBILE) summary.textContent = "read it again";
+    }
+  }
+
+  function renderFirstRunQuestion(st, step1Met) {
+    const welcome = $("welcomeView");
+    if (!welcome) return;
+    let block = findChild(welcome, "firstRunQuestion");
+    if (!questionShown(st)) {
+      if (block) removeChild(welcome, block);
+      return;
+    }
+    if (!block) {
+      block = document.createElement("section");
+      block.id = "firstRunQuestion";
+      block.className = "card";
+      welcome.append(block);
+    }
+    block.replaceChildren();
+    const rules = heldRules(st);
+    const heading = document.createElement("h2");
+    heading.id = "firstRunHeading";
+    heading.textContent = "which sites do you want in your journal?";
+    block.append(heading);
+    const buttonsLive = rules !== "chrome" || step1Met === true;
+    const everyBody = document.createElement("p");
+    everyBody.textContent = Copy.everySiteQuestionBody();
+    const every = document.createElement("button");
+    every.type = "button";
+    every.id = "firstRunEverySite";
+    every.hidden = !buttonsLive;
+    every.textContent = rules === "chrome" ? "agree and share every site" : "share every site";
+    if (rules === "chrome") every.dataset.act = "agree";
+    every.addEventListener("click", () => runFirstRunEverySite());
+    if (Hosts?.everySiteLive?.(st?.livePatterns) === true) {
+      // One-at-a-time would be a false promise. Chrome says so before the agreeing click.
+      if (rules === "chrome") {
+        const already = document.createElement("p");
+        already.id = "firstRunAlreadyAllowed";
+        already.textContent = Copy.alreadyAllowedBody(st?.brand);
+        block.append(everyBody, already, every);
+      } else {
+        block.append(everyBody, every);
+      }
+      return;
+    }
+    block.append(everyBody, every);
+    const oneBody = document.createElement("p");
+    oneBody.textContent = Copy.oneSiteQuestionBody();
+    const one = document.createElement("button");
+    one.type = "button";
+    one.id = "firstRunOneSite";
+    one.hidden = !buttonsLive;
+    one.textContent = rules === "chrome" ? "agree and add sites one at a time" : "add sites one at a time";
+    if (rules === "chrome") one.dataset.act = "agree";
+    one.addEventListener("click", () => runFirstRunOneSite());
+    block.append(oneBody, one);
+  }
+
   function renderWelcome(derived) {
     if ($("pageSubTitle")) $("pageSubTitle").textContent = "in your browser";
-    if ($("welcomeView")) $("welcomeView").hidden = false;
+    if ($("welcomeView")) {
+      $("welcomeView").hidden = false;
+      $("welcomeView").dataset.rules = heldRules(state);
+    }
     if ($("settingsView")) $("settingsView").hidden = true;
 
-    // Warm Card
     if (Copy && Copy.WARM_CARD) {
       if ($("warmKinship0")) $("warmKinship0").textContent = Copy.WARM_CARD[0];
       if ($("warmKinship1")) $("warmKinship1").textContent = Copy.WARM_CARD[1];
       if ($("warmKinship2")) $("warmKinship2").textContent = Copy.WARM_CARD[2];
     }
 
-    // Step 1
     const step1 = getStep1State(state);
     step1Action = step1.action;
     if ($("step1Heading")) $("step1Heading").textContent = step1.heading;
@@ -358,63 +402,47 @@
       }
     }
 
-    // Step 2
-    const consentGiven = state && state.consentVersion === 1;
+    const rules = heldRules(state);
+    const chromeAgreement = rules === "chrome";
+    if ($("step2Section")) $("step2Section").hidden = !chromeAgreement;
+    if ($("step3Section")) $("step3Section").hidden = true;
+    if ($("agreeDisclosureBtn")) $("agreeDisclosureBtn").hidden = true;
     if ($("step2Heading")) $("step2Heading").textContent = "what the solstone extension takes in";
-
-    if (consentGiven) {
-      if ($("step2Check")) $("step2Check").hidden = false;
-      if ($("step2Content")) $("step2Content").hidden = true;
-      if ($("step2Completed")) $("step2Completed").hidden = false;
-    } else {
-      if ($("step2Check")) $("step2Check").hidden = true;
-      if ($("step2Content")) $("step2Content").hidden = false;
-      if ($("step2Completed")) $("step2Completed").hidden = true;
-      if (!step1.met) {
-        if ($("step2PendingText")) {
-          $("step2PendingText").hidden = false;
-          $("step2PendingText").textContent = Copy.STEP2_PENDING;
-        }
-        if ($("agreeDisclosureBtn")) $("agreeDisclosureBtn").hidden = true;
-      } else {
-        if ($("step2PendingText")) $("step2PendingText").hidden = true;
-        if ($("agreeDisclosureBtn")) {
-          $("agreeDisclosureBtn").hidden = false;
-          $("agreeDisclosureBtn").textContent = "agree and go on";
-        }
-      }
-    }
-
-    // Step 3
     if ($("step3Heading")) $("step3Heading").textContent = "choose your first site";
-    const step3Open = consentGiven;
-    if ($("step3Content")) $("step3Content").hidden = !step3Open;
-    if ($("step3Check")) {
-      const chosenList = Array.isArray(state && state.chosenOrigins) ? state.chosenOrigins : [];
-      $("step3Check").hidden = !step3Open || chosenList.length === 0;
-    }
-    if ($("step3Body") && Copy) {
-      $("step3Body").textContent = Copy.step3Body(state ? state.brand : "");
-    }
-    if ($("welcomeShowPageIndicator")) {
-      $("welcomeShowPageIndicator").checked = !!(state && state.showPageIndicator);
+    if ($("step3Body") && Copy) $("step3Body").textContent = Copy.step3Body(state ? state.brand : "");
+    if ($("step2Check")) $("step2Check").hidden = true;
+    if ($("step2Completed")) $("step2Completed").hidden = true;
+    if ($("step2Content")) $("step2Content").hidden = !chromeAgreement;
+    if (chromeAgreement && !step1.met) {
+      if ($("step2PendingText")) {
+        $("step2PendingText").hidden = false;
+        $("step2PendingText").textContent = Copy.STEP2_PENDING;
+      }
+      if ($("step2DisclosureBody")) $("step2DisclosureBody").hidden = true;
+    } else {
+      if ($("step2PendingText")) $("step2PendingText").hidden = true;
+      if ($("step2DisclosureBody")) $("step2DisclosureBody").hidden = !chromeAgreement;
     }
 
-    const allowlist = Array.isArray(state && state.chosenOrigins)
-      ? state.chosenOrigins
-      : Array.isArray(state && state.grantedOrigins)
-      ? state.grantedOrigins
-      : [];
-    renderOffersBlock($("welcomeOffersBlock") || $("offersBlock"));
-    renderSiteRowsInto("welcomeSiteList", allowlist);
+    renderFirstRunQuestion(state, step1.met);
+    placeDisclosureCard(!chromeAgreement);
   }
 
   function renderSettings(derived) {
     if ($("pageSubTitle")) $("pageSubTitle").textContent = "in your browser";
-    if ($("welcomeView")) $("welcomeView").hidden = true;
+    const welcome = $("welcomeView");
+    if (welcome) {
+      welcome.hidden = true;
+      const block = findChild(welcome, "firstRunQuestion");
+      if (block) removeChild(welcome, block);
+    }
+    placeDisclosureCard(false);
     if ($("settingsView")) $("settingsView").hidden = false;
 
     // Status Section
+    // On a phone the card is only for what needs the owner; the list says the rest.
+    if ($("statusCard")) $("statusCard").hidden = Copy.MOBILE === true && ["no-sites", "on", "idle"].includes(derived.kind);
+    if ($("pauseSwitch")) $("pauseSwitch").checked = state?.paused === true;
     if ($("statusLead")) $("statusLead").textContent = derived.sub || derived.headline;
     if ($("statusStateChip")) {
       $("statusStateChip").textContent = derived.headline;
@@ -470,258 +498,644 @@
       }
     }
 
+    // Top sections (clearedNotice, upgradeQuestion, upgradeQuiet, stopResult)
+    renderTopSections(optionsModel(state));
+
     // Sites Section
     renderSites();
 
-    // Adoption Notices
-    if (state?.adoptionNotices && state.adoptionNotices.length > 0) {
-      announce(Copy.adoptedAnnouncement(state.brand, state.adoptionNotices), "ok");
-      cmd({ cmd: "dismissAdoptionNotices" });
-    }
-
-    // Indicator Section
-    if ($("showPageIndicator")) $("showPageIndicator").checked = !!(state && state.showPageIndicator);
     if ($("pauseWithApp")) $("pauseWithApp").checked = state?.pauseWithApp !== false;
 
   }
 
-  function renderMode(id, mode, current) {
-    const words = Copy.SITE_MODES[mode];
-    $(`${id}Title`).textContent = words.title;
-    $(`${id}Body`).textContent = words.body;
-    $(id).className = `mode${current ? " current" : ""}`;
-    $(`${id}Current`).textContent = Copy.SITE_MODES.current;
-    $(`${id}Current`).hidden = !current;
-    const button = $(`${id}Btn`);
-    button.hidden = current || state?.sitePolicyPending === true;
-    button.textContent = mode === "all" ? Copy.SITE_MODES.chooseAll : Copy.SITE_MODES.chooseSelected;
-  }
+  let stopResultCode = null;
 
-  function renderAccess(allSites) {
-    const panel = $("accessPanel");
-    if (!panel) return;
-    panel.hidden = !allSites || state?.sitePolicyPending === true;
-    if (panel.hidden) return;
-    const words = Copy.accessCopy(state?.brand);
-    const safari = state?.brand === "safari";
-    const granted = state.broadGranted === true;
-    const failed = granted && state.allSitesRegistration === "failed";
+  function optionsModel(st) {
+    st = st || {};
+    const H = globalThis.SolstoneHosts;
+    const isBroad = !st.fence && (st.broadGrant === true || (Array.isArray(st.livePatterns) && H?.broadLive(st.livePatterns)));
+    const sections = [];
 
-    $("accessGranted").hidden = !granted || failed;
-    $("accessGranted").textContent = [words.granted, words.grantedNote].filter(Boolean).join(" ");
-
-    $("accessMissing").hidden = granted && !failed;
-    $("accessTitle").textContent = failed ? words.failedTitle : words.missingTitle;
-    $("accessBody").textContent = failed ? words.failedBody : words.missingBody;
-    const steps = $("accessSteps");
-    steps.replaceChildren();
-    for (const step of failed ? [] : words.steps) {
-      const item = document.createElement("li");
-      item.textContent = step;
-      steps.append(item);
-    }
-    steps.hidden = failed || words.steps.length === 0;
-    $("accessReturn").textContent = words.returnNote;
-    $("accessReturn").hidden = failed || !words.returnNote;
-    // Chrome, Edge and Firefox ask in a prompt; Safari only answers in its settings.
-    $("accessAllow").hidden = failed || safari;
-    $("accessAllow").textContent = words.allowLabel;
-    $("accessCheck").hidden = !failed && !safari;
-    $("accessCheck").textContent = failed ? words.retryLabel : words.checkLabel;
-    $("accessChecking").textContent = accessCheck ? words.checking : "";
-
-    const denied = granted ? (state.browserDeniedOrigins || []) : [];
-    $("accessDenied").hidden = denied.length === 0;
-    $("accessDeniedTitle").textContent = words.deniedTitle;
-    const list = $("accessDeniedList");
-    list.replaceChildren();
-    for (const origin of denied) {
-      const item = document.createElement("li");
-      try { item.textContent = new URL(origin).hostname; } catch (_e) { item.textContent = origin; }
-      list.append(item);
-    }
-    $("accessDeniedHelp").textContent = words.deniedHelp;
-    $("accessDeniedHelp").hidden = !words.deniedHelp;
-  }
-
-  function renderOffersBlock(container) {
-    if (!container) return;
-    const allSites = state?.siteMode === "all";
-    // An offer for a site that is now left out (here or in the app) or declined
-    // is not shown: there is nothing to add.
-    const leftOut = [...(state?.excludedHosts || []), ...(state?.appLeftOut || [])];
-    const declined = state?.declinedHosts || [];
-    const offers = (!allSites && Array.isArray(state?.offeredOrigins) ? state.offeredOrigins : []).filter((origin) => {
-      let host = "";
-      try { host = new URL(origin).hostname; } catch (_e) { return false; }
-      return !leftOut.some((site) => Hosts.hostCovers(site, host)) && !declined.includes(host);
-    });
-    if (offers.length === 0) {
-      container.hidden = true;
-      container.replaceChildren();
-      return;
-    }
-    container.hidden = false;
-    container.replaceChildren();
-    const p = document.createElement("p");
-    p.className = "muted";
-    p.textContent = Copy.offerLine(state?.brand);
-    container.append(p);
-
-    for (const origin of offers) {
-      const row = document.createElement("div");
-      row.className = "site";
-      const hostSpan = document.createElement("span");
-      hostSpan.className = "site-host";
-      hostSpan.textContent = Hosts.displayOrigin ? Hosts.displayOrigin(origin) : origin;
-      row.append(hostSpan);
-
-      let originHost = "";
-      try { originHost = new URL(origin).hostname; } catch (_e) {}
-
-      const btnGroup = document.createElement("div");
-      btnGroup.className = "site-actions";
-
-      const addBtn = document.createElement("button");
-      addBtn.type = "button";
-      addBtn.className = "primary";
-      addBtn.textContent = Copy.OFFER_ADD;
-      addBtn.addEventListener("click", async () => {
-        clearAnnouncement();
-        await SolstoneActions.run({ id: "offer-add", origin }, sharedActionEffects());
+    if (st.clearedNotice) {
+      sections.push({
+        id: "clearedNotice",
+        kind: "cleared-notice",
+        text: Copy.clearedStorageNotice(),
       });
+    }
 
-      const declineBtn = document.createElement("button");
-      declineBtn.type = "button";
-      declineBtn.textContent = Copy.OFFER_DECLINE;
-      declineBtn.addEventListener("click", async () => {
-        clearAnnouncement();
-        await SolstoneActions.run({ id: "offer-decline", origin, host: originHost }, sharedActionEffects());
+    if (st.fence && st.fence.sawMore && !st.fence.answered) {
+      const leftOutHosts = Array.from(new Set([...(st.excludedHosts || []), ...(st.appLeftOut || [])]));
+      const beyond = H?.beyondExample ? H.beyondExample(st.fence, st.livePatterns || [], leftOutHosts) : null;
+      if (beyond) {
+        const q = Copy?.fenceQuestion ? Copy.fenceQuestion(st.brand, beyond.kind, beyond.host) : null;
+        if (q) {
+          sections.push({
+            id: "upgradeQuestion",
+            kind: "upgrade-question",
+            shown: beyond.shown,
+            body: q.body,
+            buttons: [
+              {
+                id: q.shareId,
+                label: q.shareLabel,
+                primary: true,
+              },
+              {
+                id: q.keepId || "keep-my-sites",
+                label: q.keepLabel || "keep my sites",
+                primary: false,
+              },
+            ],
+            action: {
+              id: q.shareId,
+              label: q.shareLabel,
+              primary: true,
+            },
+            secondaryAction: {
+              id: q.keepId || "keep-my-sites",
+              label: q.keepLabel || "keep my sites",
+              primary: false,
+            },
+          });
+        }
+      }
+    } else if (st.fence && st.fence.answered) {
+      sections.push({
+        id: "upgradeQuiet",
+        kind: "upgrade-quiet",
+        text: Copy.fenceQuiet(st.brand),
+        action: {
+          id: "share-every-site",
+          label: Copy.SHARE_EVERY_SITE,
+          primary: true,
+        },
       });
-
-      btnGroup.append(addBtn, declineBtn);
-      row.append(btnGroup);
-      container.append(row);
-    }
-  }
-
-  function renderSites() {
-    const allSites = state?.siteMode === "all";
-    const chosen = chosenList();
-    const excluded = state?.excludedHosts || [];
-    // All sites is current only under the current agreement; an older one is
-    // agreed again from the all-sites tile.
-    const agreedAll = allSites && state.allSitesConsent === Hosts.ALL_SITES_CONSENT_VERSION;
-    renderMode("modeSelected", "selected", !allSites);
-    renderMode("modeAll", "all", agreedAll);
-    renderAccess(agreedAll);
-
-    const broadNote = $("broadInSelectedNote");
-    if (broadNote) {
-      const showBroad = !allSites && state?.broadGranted === true;
-      broadNote.hidden = !showBroad;
-      if (showBroad) broadNote.textContent = Copy.broadInSelected(state?.brand);
     }
 
-    renderOffersBlock($("offersBlock"));
-
-    $("listHeading").textContent = allSites ? "sites left out" : "your sites";
-    $("siteModeHelp").textContent = allSites ? Copy.LEAVE_OUT_HELP : Copy.addHelp(state?.brand);
-    $("siteModeHelp").hidden = false;
-    $("siteInputLabel").textContent = allSites ? "leave out a site" : "add a site";
-    $("addBtn").textContent = allSites ? "leave out" : "add this site";
-
-    const inactive = !allSites ? (state?.inactiveOrigins || []).filter(origin => chosen.includes(origin)) : [];
-    const regrant = $("regrant");
-    regrant.hidden = inactive.length < 2;
-    if (!regrant.hidden) {
-      const words = Copy.regrantCopy(state?.brand, inactive.length);
-      $("regrantLine").textContent = words.line;
-      $("regrantBtn").textContent = words.label;
-    }
-
-    // Sites added before a site covered its subdomains: one prompt widens them.
-    const exactOnly = !allSites && regrant.hidden ? (state?.exactOnlyOrigins || []).filter((origin) => chosen.includes(origin)) : [];
-    const exactBar = $("exactOnly");
-    if (exactBar) {
-      exactBar.hidden = exactOnly.length === 0;
-      if (!exactBar.hidden) {
-        const words = Copy.exactOnlyCopy(state?.brand, exactOnly.map((origin) => Hosts.displayOrigin(origin)));
-        $("exactOnlyLine").textContent = words.line;
-        $("exactOnlyBtn").textContent = words.label;
-        $("exactOnlyBtn").hidden = !words.label;
+    if (stopResultCode) {
+      const kind = stopResultCode === "still_every_site" ? "stop-still"
+        : stopResultCode === "every_site_off_none" ? "stop-none"
+        : stopResultCode === "every_site_off_some" ? "stop-some" : null;
+      if (kind) {
+        sections.push({
+          id: "stopResult",
+          kind,
+          text: Copy?.stopResultCopy ? Copy.stopResultCopy(st.brand, stopResultCode) : "",
+        });
       }
     }
 
-    renderSiteRowsInto("siteList", allSites ? excluded : chosen);
+    if (isBroad) {
+      sections.push({
+        id: "access",
+        kind: "access",
+        brand: st.brand,
+        safari: st.brand === "safari",
+        steps: st.brand === "safari",
+        stopSharing: st.brand !== "safari",
+      });
+    }
+
+    return sections;
+  }
+
+  function renderTopSections(modelSections) {
+    let topContainer = $("optionsTopSections");
+    if (!topContainer) {
+      topContainer = document.createElement("div");
+      topContainer.id = "optionsTopSections";
+      const settingsView = $("settingsView");
+      if (settingsView && settingsView.firstChild) {
+        settingsView.insertBefore(topContainer, settingsView.firstChild);
+      } else if (settingsView) {
+        settingsView.appendChild(topContainer);
+      }
+    }
+    topContainer.replaceChildren();
+    for (const sec of modelSections) {
+      if (["cleared-notice", "upgrade-question", "upgrade-quiet", "stop-still", "stop-none", "stop-some"].includes(sec.kind)) {
+        const div = document.createElement("section");
+        div.className = `card ${sec.kind}`;
+        div.dataset.kind = sec.kind;
+        if (sec.kind === "cleared-notice") {
+          const p = document.createElement("p");
+          p.textContent = sec.text;
+          div.append(p);
+        } else if (sec.kind === "upgrade-question") {
+          const p = document.createElement("p");
+          p.textContent = sec.body;
+          const actions = document.createElement("div");
+          actions.className = "actions";
+          for (const btn of (sec.buttons || [])) {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.id = btn.id;
+            b.dataset.shareId = btn.id;
+            b.className = btn.primary ? "primary" : "";
+            b.textContent = btn.label;
+            b.addEventListener("click", async () => {
+              if (btn.id === "share-every-site") {
+                await runShareEverySite();
+                return;
+              }
+              if (btn.id === "share-them-too") {
+                const shown = sec.shown;
+                const result = await cmd({ cmd: "shareThemToo", shown });
+                const held = result?.result === "share_held" || result?.result === "question_every_site" || result?.result === "question_changed";
+                if (!held && (result?.error || result?.ok === false)) {
+                  showActionError(result?.error || "storage_error");
+                }
+                await refresh();
+                return;
+              }
+              if (btn.id === "keep-my-sites") await cmd({ cmd: "keepMySites" });
+              await refresh();
+            });
+            actions.append(b);
+          }
+          div.append(p, actions);
+        } else if (sec.kind === "upgrade-quiet") {
+          const p = document.createElement("p");
+          p.textContent = sec.text;
+          const actions = document.createElement("div");
+          actions.className = "actions";
+          const b = document.createElement("button");
+          b.type = "button";
+          b.id = sec.action.id;
+          b.dataset.shareId = sec.action.id;
+          b.className = "primary";
+          b.textContent = sec.action.label;
+          b.addEventListener("click", () => runShareEverySite());
+          actions.append(b);
+          div.append(p, actions);
+          mountVersionOneNote(div, actions);
+        } else if (["stop-still", "stop-none", "stop-some"].includes(sec.kind)) {
+          const p = document.createElement("p");
+          p.textContent = sec.text;
+          div.append(p);
+        }
+        topContainer.append(div);
+      }
+    }
+    if (modelSections.some((sec) => sec.id === "stopResult")) stopResultCode = null;
+  }
+
+  // The request starts before this handler awaits, while the click still counts.
+  function requestShareEverySite() {
+    if (state?.brand === "safari") return null;
+    try {
+      return chrome.permissions.request({ origins: ["*://*/*"] });
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  // Announce after refresh, so the next paint does not wipe the sentence.
+  // A request that resolves false is a decline. Safari does not ask.
+  async function runShareEverySite() {
+    const requested = requestShareEverySite();
+    let granted = null;
+    if (requested && typeof requested.then === "function") {
+      try { granted = await requested; }
+      catch (_e) { granted = null; }
+    }
+    if (granted === false) {
+      await refresh();
+      announce(Copy.accessCopy(state?.brand).declined, "bad");
+      return;
+    }
+    const result = await cmd({ cmd: "shareEverySite" });
+    await refresh();
+    const held = result?.result === "share_held" || result?.result === "question_every_site";
+    if (!held && !result?.error && result?.ok !== false) {
+      announce(Copy.accessCopy(state?.brand).nowAllowed, "ok");
+    }
+  }
+
+  function offersShareEverySite() {
+    if (!state?.fence || state.fence.sawMore === true) return false;
+    return Hosts?.everySiteLive?.(state.livePatterns || []) !== true;
+  }
+
+  function clearDeniedList() {
+    if ($("accessDenied")) $("accessDenied").hidden = true;
+    if ($("accessDeniedTitle")) $("accessDeniedTitle").textContent = "";
+    if ($("accessDeniedList")) $("accessDeniedList").replaceChildren();
+    if ($("accessDeniedHelp")) {
+      $("accessDeniedHelp").textContent = "";
+      $("accessDeniedHelp").hidden = true;
+    }
+  }
+
+  function renderAccess(isBroad) {
+    clearDeniedList();
+    const panel = $("accessPanel");
+    if (!panel) return;
+    dropVersionOneNote($("accessAllow")?.parentNode || panel);
+    const offerShare = offersShareEverySite();
+    if (state?.fence && !offerShare) {
+      panel.hidden = true;
+      syncSettingsEverySiteOn(Hosts?.everySiteLive?.(state?.livePatterns) === true);
+      return;
+    }
+    panel.hidden = false;
+    const words = Copy.accessCopy(state?.brand);
+    const safari = state?.brand === "safari";
+
+    if (isBroad) {
+      if ($("accessGranted")) $("accessGranted").hidden = true;
+      if ($("accessMissing")) $("accessMissing").hidden = false;
+      if ($("accessTitle")) $("accessTitle").textContent = "";
+      if (safari) {
+        if ($("accessBody")) {
+          const parts = [Copy.everySiteOnLine(state?.brand), Copy.safariStopLine()];
+          if (words.grantedNote) parts.push(words.grantedNote);
+          $("accessBody").textContent = parts.join(" ");
+        }
+        if ($("accessSteps")) {
+          $("accessSteps").replaceChildren();
+          $("accessSteps").hidden = true;
+        }
+        if ($("accessReturn")) $("accessReturn").hidden = true;
+        if ($("accessCheck")) $("accessCheck").hidden = true;
+        if ($("accessChecking")) $("accessChecking").textContent = "";
+        if ($("accessAllow")) $("accessAllow").hidden = true;
+      } else {
+        if ($("accessBody")) $("accessBody").textContent = Copy.everySiteOnLine(state?.brand);
+        if ($("accessSteps")) {
+          $("accessSteps").replaceChildren();
+          $("accessSteps").hidden = true;
+        }
+        if ($("accessReturn")) $("accessReturn").hidden = true;
+        if ($("accessCheck")) $("accessCheck").hidden = true;
+        if ($("accessChecking")) $("accessChecking").textContent = "";
+        if ($("accessAllow")) {
+          $("accessAllow").hidden = false;
+          $("accessAllow").textContent = Copy.STOP_SHARING_EVERY_SITE;
+          dropVersionOneNote($("accessAllow").parentNode);
+        }
+      }
+    } else {
+      if ($("accessGranted")) $("accessGranted").hidden = true;
+      if ($("accessMissing")) $("accessMissing").hidden = false;
+      if (safari && !offerShare) {
+        if ($("accessTitle")) $("accessTitle").textContent = words.missingTitle;
+        if ($("accessBody")) $("accessBody").textContent = words.missingBody;
+        const steps = $("accessSteps");
+        if (steps) {
+          steps.replaceChildren();
+          for (const step of words.steps) {
+            const item = document.createElement("li");
+            item.textContent = step;
+            steps.append(item);
+          }
+          steps.hidden = words.steps.length === 0;
+        }
+        if ($("accessReturn")) {
+          $("accessReturn").textContent = words.returnNote;
+          $("accessReturn").hidden = !words.returnNote;
+        }
+        if ($("accessAllow")) $("accessAllow").hidden = true;
+        if ($("accessCheck")) {
+          $("accessCheck").hidden = false;
+          $("accessCheck").textContent = words.checkLabel;
+        }
+        if ($("accessChecking")) $("accessChecking").textContent = accessCheck ? words.checking : "";
+      } else {
+        if ($("accessTitle")) $("accessTitle").textContent = words.missingTitle;
+        if ($("accessBody")) $("accessBody").textContent = words.missingBody;
+        if ($("accessSteps")) {
+          $("accessSteps").replaceChildren();
+          $("accessSteps").hidden = true;
+        }
+        if ($("accessReturn")) $("accessReturn").hidden = true;
+        if ($("accessCheck")) $("accessCheck").hidden = true;
+        if ($("accessChecking")) $("accessChecking").textContent = "";
+        if ($("accessAllow")) {
+          $("accessAllow").hidden = false;
+          $("accessAllow").textContent = "share every site";
+          mountVersionOneNote($("accessAllow").parentNode, $("accessAllow"));
+        }
+      }
+    }
+    syncSettingsEverySiteOn(Hosts?.everySiteLive?.(state?.livePatterns) === true);
+  }
+
+  function renderSites() {
+    const H = globalThis.SolstoneHosts;
+    const everySite = !state?.fence && H?.everySiteLive?.(state?.livePatterns) === true;
+
+    if ($("modeSelected")) $("modeSelected").hidden = true;
+    if ($("modeAll")) $("modeAll").hidden = true;
+    if ($("offersBlock")) $("offersBlock").hidden = true;
+    if ($("broadInSelectedNote")) $("broadInSelectedNote").hidden = true;
+    if ($("regrant")) $("regrant").hidden = true;
+    if ($("exactOnly")) $("exactOnly").hidden = true;
+    if ($("keptNote")) $("keptNote").hidden = true;
+
+    renderAccess(everySite);
+    syncSettingsEverySiteOn(H?.everySiteLive?.(state?.livePatterns) === true);
+
+    if ($("listHeading")) $("listHeading").textContent = "your sites";
+    if ($("siteModeHelp")) {
+      $("siteModeHelp").textContent = state?.permissionsUnavailable === true
+        ? Copy.actionFailure("permissions_unavailable", state?.brand)
+        : Copy.addHelp(state?.brand);
+      $("siteModeHelp").hidden = false;
+    }
+    if ($("siteInputLabel")) $("siteInputLabel").textContent = "add a site";
+    if ($("addBtn")) $("addBtn").textContent = "add this site";
+
+    let visibleSites = [];
+    if (state?.fence) {
+      visibleSites = state.fence.entries || [];
+    } else if (everySite) {
+      visibleSites = [];
+    } else if (Array.isArray(state?.livePatterns)) {
+      const origins = new Set();
+      for (const pattern of state.livePatterns) {
+        if (!H.isBroadPattern(pattern)) {
+          const row = H.grantRowOrigin?.(pattern);
+          if (row) origins.add(row);
+        }
+      }
+      visibleSites = Array.from(origins);
+    } else {
+      visibleSites = [];
+    }
+
+    renderSiteRowsInto("siteList", visibleSites);
 
     const leftOutDetails = $("leftOutDetails");
     if (leftOutDetails) {
-      if (allSites) {
+      const localEx = state?.excludedHosts || [];
+      const appEx = state?.appLeftOut || [];
+      const effectiveList = Array.from(new Set([...localEx, ...appEx]));
+      if (effectiveList.length === 0) {
         leftOutDetails.hidden = true;
       } else {
-        const localEx = state?.excludedHosts || [];
-        const appEx = state?.appLeftOut || [];
-        const effectiveList = Array.from(new Set([...localEx, ...appEx]));
-        if (effectiveList.length === 0) {
-          leftOutDetails.hidden = true;
-        } else {
-          leftOutDetails.hidden = false;
-          if ($("leftOutSummary")) {
-            $("leftOutSummary").textContent = Copy.leftOutSummary(effectiveList.length);
-          }
-          const listDiv = $("leftOutList");
-          if (listDiv) {
-            listDiv.replaceChildren();
-            for (const host of effectiveList) {
-              const isLocal = localEx.includes(host);
-              const row = document.createElement("div");
-              row.className = "site";
-              const hostSpan = document.createElement("span");
-              hostSpan.className = "site-host";
-              hostSpan.textContent = host;
-              row.append(hostSpan);
+        leftOutDetails.hidden = false;
+        if ($("leftOutSummary")) {
+          $("leftOutSummary").textContent = Copy.leftOutSummary(effectiveList.length);
+        }
+        const listDiv = $("leftOutList");
+        if (listDiv) {
+          listDiv.replaceChildren();
+          for (const host of effectiveList) {
+            const isLocal = localEx.includes(host);
+            const row = document.createElement("div");
+            row.className = "site";
+            const hostSpan = document.createElement("span");
+            hostSpan.className = "site-host";
+            hostSpan.textContent = host;
+            row.append(hostSpan);
 
-              if (isLocal || state?.leftOutCapable) {
-                const btn = document.createElement("button");
-                btn.type = "button";
-                btn.textContent = "stop leaving out";
-                btn.addEventListener("click", async () => {
-                  clearAnnouncement();
-                  const res = await cmd({ cmd: "setLeftOut", host, out: false });
-                  if (res?.error) showActionError(res.error);
-                  else announce(Copy.includedAnnouncement(host), "ok");
-                  await refresh();
-                });
-                row.append(btn);
-              } else {
-                const span = document.createElement("span");
-                span.className = "muted";
-                span.textContent = Copy.appOnlyLeftOut;
-                row.append(span);
-              }
-              listDiv.append(row);
+            if (isLocal || state?.leftOutCapable) {
+              const btn = document.createElement("button");
+              btn.type = "button";
+              btn.textContent = "stop leaving out";
+              btn.addEventListener("click", async () => {
+                clearAnnouncement();
+                const res = await cmd({ cmd: "setLeftOut", host, out: false });
+                if (res?.error) showActionError(res.error);
+                else announce(Copy.includedAnnouncement(host), "ok");
+                await refresh();
+              });
+              row.append(btn);
+            } else {
+              const span = document.createElement("span");
+              span.className = "muted";
+              span.textContent = Copy.appOnlyLeftOut;
+              row.append(span);
             }
+            listDiv.append(row);
           }
         }
       }
     }
-
-    const kept = Copy.keptNote(allSites ? "all" : "selected", allSites ? chosen.length : excluded.length);
-    $("keptNote").textContent = kept;
-    $("keptNote").hidden = !kept;
-
-    // Coming back from the browser's settings: say so once access arrives.
-    const broadReady = agreedAll && state.broadGranted === true && state.allSitesRegistration !== "failed" &&
-      state.sitePolicyPending !== true;
-    if (lastBroadReady === false && broadReady) announce(Copy.accessCopy(state?.brand).nowAllowed, "ok");
-    lastBroadReady = agreedAll && state.sitePolicyPending !== true ? broadReady : null;
   }
 
   function paint(nextState, sequence) {
     if (sequence !== paintSequence) return;
     latest = nextState;
     return show();
+  }
+
+  function findChild(parent, id) {
+    if (!parent || !parent.children) return null;
+    for (const child of parent.children) {
+      if (child.id === id) return child;
+    }
+    return null;
+  }
+
+  function removeChild(parent, node) {
+    if (!parent || !node) return;
+    if (typeof node.remove === "function") node.remove();
+    if (Array.isArray(parent.children)) {
+      parent.children = parent.children.filter((child) => child !== node);
+    }
+  }
+
+  // The notice sits above the welcome view. Settings keeps its own copy.
+  function renderWelcomeClearedNotice() {
+    const welcome = $("welcomeView");
+    if (!welcome) return;
+    const parent = welcome.parentNode;
+    const notice = parent ? findChild(parent, "welcomeClearedNotice") : null;
+    const show = state?.clearedNotice === true && welcome.hidden !== true;
+    if (!show) {
+      removeChild(parent, notice);
+      return;
+    }
+    let section = notice;
+    if (!section) {
+      section = document.createElement("section");
+      section.id = "welcomeClearedNotice";
+      section.className = "card cleared-notice";
+    }
+    section.replaceChildren();
+    const text = document.createElement("p");
+    text.textContent = Copy.clearedStorageNotice();
+    const resume = document.createElement("button");
+    resume.type = "button";
+    resume.textContent = "resume";
+    resume.addEventListener("click", async () => {
+      clearAnnouncement();
+      const result = await cmd({ cmd: "setPaused", paused: false });
+      if (result?.error) showActionError(result.error);
+      await refresh();
+    });
+    section.append(text, resume);
+    if (parent && typeof parent.insertBefore === "function") {
+      parent.insertBefore(section, welcome);
+    } else if (parent && Array.isArray(parent.children)) {
+      parent.children = parent.children.filter((child) => child !== section);
+      const at = parent.children.indexOf(welcome);
+      parent.children.splice(at < 0 ? 0 : at, 0, section);
+      section.parentNode = parent;
+    }
+  }
+
+  function paintedState(shown, raw) {
+    if (!shown || typeof shown !== "object") return shown;
+    if (shown.ok === false || (raw && raw.ok === false)) return shown;
+    if (shown.ok === true || (raw && raw.ok === true)) {
+      return shown.ok === true ? shown : Object.assign({}, shown, { ok: true });
+    }
+    if (raw && typeof raw === "object" && raw.ok !== false &&
+        (typeof raw.inst === "string" || typeof raw.captureEpoch === "number")) {
+      return Object.assign({}, shown, { ok: true });
+    }
+    return shown;
+  }
+
+  function maybeAutoAnswer(st) {
+    if (Copy.MOBILE === true) return;
+    if (!st || st.ok !== true) return;
+    const rules = heldRules(st);
+    if (rules !== "firefox" && rules !== "safari") return;
+    if (st.firstRunAnswered === true) return;
+    if (Hosts?.everySiteLive?.(st.livePatterns) !== true) return;
+    if (firstRunAutoSent) return;
+    firstRunAutoSent = true;
+    cmd({ cmd: "answerFirstRun" }).then(() => refresh());
+  }
+
+  function dropVersionOneNote(parent) {
+    if (!parent) return;
+    const note = findChild(parent, "versionOneShareNote");
+    if (note) removeChild(parent, note);
+  }
+
+  function mountVersionOneNote(parent, before) {
+    if (!parent) return;
+    dropVersionOneNote(parent);
+    if (state?.versionOneFence !== true || !state.fence || typeof state.fence !== "object") return;
+    const note = document.createElement("p");
+    note.id = "versionOneShareNote";
+    note.hidden = false;
+    note.textContent = Copy.VERSION_ONE_SHARE_NOTE;
+    if (typeof parent.insertBefore === "function") parent.insertBefore(note, before || null);
+    else parent.append(note);
+  }
+
+  function syncSettingsEverySiteOn(live) {
+    const host = $("sitesMain") || $("settingsView");
+    if (!host) return;
+    const existing = findChild(host, "settingsEverySiteOn");
+    if (live !== true) {
+      if (existing) removeChild(host, existing);
+      return;
+    }
+    if (existing) {
+      existing.hidden = false;
+      return;
+    }
+    const line = document.createElement("p");
+    line.id = "settingsEverySiteOn";
+    line.hidden = false;
+    line.textContent = Copy.everySiteOnLine(state?.brand);
+    host.append(line);
+  }
+
+  function appendActionNote(id, text) {
+    // While the welcome shows, settings is hidden, so a note there would never be seen.
+    const welcome = $("welcomeView");
+    const region = welcome && welcome.hidden === false && $("welcomeMessage") ? $("welcomeMessage") : $("actionMessage");
+    if (!region) return;
+    const note = document.createElement("p");
+    note.id = id;
+    note.hidden = false;
+    note.textContent = text || "";
+    region.append(note);
+  }
+
+  async function runFirstRunEverySite() {
+    if (state?.ok !== true) return;
+    const rules = heldRules(state);
+    const live = Hosts?.everySiteLive?.(state?.livePatterns) === true;
+    if (live) {
+      if (rules === "chrome") {
+        await cmd({ cmd: "acknowledgeDisclosure" });
+        await refresh();
+        appendActionNote("firstRunAlreadyAllowed", Copy.alreadyAllowedBody(state?.brand));
+        return;
+      }
+      await cmd({ cmd: "answerFirstRun" });
+      await refresh();
+      return;
+    }
+    if (rules === "safari") {
+      await cmd({ cmd: "answerFirstRun" });
+      await refresh();
+      return;
+    }
+    everySiteRequestPending = true;
+    const hadFence = !!(state?.fence && typeof state.fence === "object");
+    try {
+      let granted = false;
+      let failed = false;
+      try {
+        const pending = chrome.permissions.request({ origins: ["*://*/*"] });
+        if (pending && typeof pending.then === "function") granted = (await pending) === true;
+        else granted = pending === true;
+      } catch (_e) {
+        failed = true;
+      }
+      if (!granted) failed = true;
+      let result = null;
+      if (rules === "chrome") result = await cmd({ cmd: "acknowledgeDisclosure" });
+      else if (!failed) result = await cmd({ cmd: "answerFirstRun" });
+      await refresh();
+      if (failed) {
+        appendActionNote("firstRunDeclined", Copy.accessCopy(state?.brand).declined);
+        return;
+      }
+      if (result?.result === "agreed_fence_kept") {
+        announce(Failures.classify("permissions_unavailable", state), "bad");
+        return;
+      }
+      const everyLive = Hosts?.everySiteLive?.(state?.livePatterns) === true;
+      const fenceEnded = hadFence && !state?.fence;
+      if (fenceEnded || everyLive) {
+        appendActionNote("everySiteNowOn", Copy.accessCopy(state?.brand).nowAllowed);
+      }
+    } finally {
+      everySiteRequestPending = false;
+    }
+  }
+
+  async function runFirstRunOneSite() {
+    if (state?.ok !== true) return;
+    if (everySiteRequestPending) return;
+    const rules = heldRules(state);
+    if (Hosts?.everySiteLive?.(state?.livePatterns) === true) {
+      if (rules === "chrome") {
+        appendActionNote("firstRunAlreadyAllowed", Copy.alreadyAllowedBody(state?.brand));
+        return;
+      }
+      await cmd({ cmd: "answerFirstRun" });
+      await refresh();
+      return;
+    }
+    if (rules === "chrome") {
+      const result = await cmd({ cmd: "acknowledgeDisclosure" });
+      await refresh();
+      if (result?.result === "agreed_fence_kept") {
+        announce(Failures.classify("permissions_unavailable", state), "bad");
+        return;
+      }
+      if (result?.ok === false) {
+        if (result?.error) showActionError(result.error);
+        return;
+      }
+      focus("newHost");
+      return;
+    }
+    await cmd({ cmd: "answerFirstRun" });
+    await refresh();
   }
 
   function show() {
@@ -733,28 +1147,22 @@
     }, Math.max(0, link.wakeAt - Date.now()));
     // Nothing heard yet: the page keeps its first look.
     if (!link.status) return;
-    state = link.status;
+    state = paintedState(link.status, latest);
     if ($("ver")) $("ver").textContent = state && state.version ? `v${state.version}` : "";
 
     const derived = Status.derive(state);
 
     if ($("optionsMark")) {
-      $("optionsMark").src = `brand/mark-${derived.mark || "healthy"}.svg`;
+      $("optionsMark").src = `brand/mark-${Copy.MOBILE === true ? "healthy" : derived.mark || "healthy"}.svg`;
     }
 
-    const chosen = Array.isArray(state && state.chosenOrigins)
-      ? state.chosenOrigins
-      : Array.isArray(state && state.grantedOrigins)
-      ? state.grantedOrigins
-      : [];
-
-    const isWelcome = !state || state.consentVersion !== 1;
-
-    if (isWelcome) {
+    if (welcomeShown(state)) {
       renderWelcome(derived);
     } else {
+      maybeAutoAnswer(state);
       renderSettings(derived);
     }
+    renderWelcomeClearedNotice();
 
     return { derived };
   }
@@ -781,36 +1189,9 @@
     renderDisclosure($(id));
   }
 
-  // Welcome Step 2 Agree Button
-  if ($("agreeDisclosureBtn")) {
-    $("agreeDisclosureBtn").addEventListener("click", async () => {
-      clearAnnouncement();
-      const result = await cmd({ cmd: "acknowledgeDisclosure", version: 1 });
-      if (result.error) {
-        // The welcome view stays up, so the failure shows where the button was.
-        if ($("step2PendingText")) {
-          $("step2PendingText").hidden = false;
-          $("step2PendingText").textContent = Failures.classify(result.error, state);
-        }
-        return;
-      }
-      await refresh();
-      // Settings replaces the welcome page now; put the owner at the first site.
-      focus("newHost");
-    });
-  }
-
   if ($("step1ActionBtn")) {
     $("step1ActionBtn").addEventListener("click", () => {
       if (step1Action) Actions.run(step1Action, sharedActionEffects());
-    });
-  }
-
-  // Welcome Step 3 Marker Checkbox
-  if ($("welcomeShowPageIndicator")) {
-    $("welcomeShowPageIndicator").addEventListener("change", async () => {
-      await cmd({ cmd: "setConfig", showPageIndicator: $("welcomeShowPageIndicator").checked });
-      await refresh();
     });
   }
 
@@ -822,18 +1203,20 @@
     });
   }
 
-  // Settings Marker Checkbox
-  if ($("showPageIndicator")) {
-    $("showPageIndicator").addEventListener("change", async () => {
-      await cmd({ cmd: "setConfig", showPageIndicator: $("showPageIndicator").checked });
+  // Settings Pause With App Checkbox
+  // On iPhone and iPad the solstone app has no pause, so there is nothing to choose.
+  if (Copy.MOBILE && $("pauseWithAppCard")) $("pauseWithAppCard").hidden = true;
+  // A phone's settings are one list: its sites, the pause switch, and what it takes in.
+  if (Copy.MOBILE) {
+    document.documentElement.classList.add("mobile");
+    document.querySelector("#disclosureCard summary").textContent = "what it takes in";
+    $("newHost").placeholder = "eff.org";
+    $("pauseCard").hidden = false;
+    $("pauseSwitch").addEventListener("change", async () => {
+      await cmd({ cmd: "setPaused", paused: $("pauseSwitch").checked });
       await refresh();
     });
   }
-
-  // Settings Pause With App Checkbox
-  // On iPhone and iPad the solstone app's pause is the Safari source's own pause,
-  // so it always stops this extension and there is nothing to choose.
-  if (Copy.MOBILE && $("pauseWithAppCard")) $("pauseWithAppCard").hidden = true;
   if ($("pauseWithApp")) {
     $("pauseWithApp").addEventListener("change", async () => {
       await cmd({ cmd: "setConfig", pauseWithApp: $("pauseWithApp").checked });
@@ -841,65 +1224,33 @@
     });
   }
 
-  // Site Disclosure confirmation
-  if ($("siteDisclosureConfirm")) {
-    $("siteDisclosureConfirm").addEventListener("click", () => {
-      if (allSitesDisclosure) {
-        // Invoke permission request in this actual confirming gesture.
-        const result = View.grantAllSites(siteEffects());
-        closeDisclosure(true);
-        result.then(async value => {
-          await refresh();
-          if (value.denied) announce("permission declined. your mode hasn't changed.", "bad");
-          else if (value.error) showActionError(value.error);
-          else if (state?.siteMode === "all" && state.broadGranted !== true) focus("accessTitle");
-          else if (state?.siteMode === "all") {
-            announce("all sites are shared now. leave out any site below.", "ok");
-            focus("sitesHeading");
-          }
-        });
-      } else closeDisclosure(true);
-    });
-  }
-  if ($("siteDisclosureCancel")) {
-    $("siteDisclosureCancel").addEventListener("click", () => closeDisclosure(false));
-  }
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && $("siteDisclosure") && !$("siteDisclosure").hidden) closeDisclosure(false);
-  });
-
-  $("modeAllBtn").addEventListener("click", async () => {
-    if (state?.siteMode === "all" && state.allSitesConsent === Hosts.ALL_SITES_CONSENT_VERSION) return;
+  $("modeAllBtn")?.addEventListener("click", async () => {});
+  $("modeSelectedBtn")?.addEventListener("click", async () => {});
+  $("accessAllow")?.addEventListener("click", async () => {
     clearAnnouncement();
-    disclosureReturnFocus = $("modeAllBtn");
-    await presentDisclosure(null, null, true);
-  });
-  $("modeSelectedBtn").addEventListener("click", async () => {
-    clearAnnouncement();
-    const result = await cmd({ cmd: "setSiteMode", mode: "selected" });
-    if (result.error) showActionError(result.error);
-    await refresh();
-    if (!result.error) {
-      const lost = (state?.inactiveOrigins || []).length;
-      announce(lost > 0
-        ? `only the sites you add are shared now. ${Copy.regrantCopy(state?.brand, lost).line}`
-        : "only the sites you add are shared now.", "ok");
+    const H = globalThis.SolstoneHosts;
+    const isBroad = !state?.fence && (state?.broadGrant === true || (Array.isArray(state?.livePatterns) && H?.broadLive(state.livePatterns)));
+    const everySite = !state?.fence && H?.everySiteLive?.(state?.livePatterns) === true;
+    if (isBroad && everySite) {
+      const result = await cmd({ cmd: "stopSharingEverySite" });
+      if (result?.result) {
+        stopResultCode = result.result;
+        announce(Copy?.stopResultCopy(state?.brand, result.result), "ok");
+      }
+    } else {
+      await runShareEverySite();
+      return;
     }
-    focus("sitesHeading");
-  });
-  $("accessAllow").addEventListener("click", async () => {
-    clearAnnouncement();
-    await Actions.run({ id: "allow-all-sites" }, sharedActionEffects());
+    await refresh();
   });
 
   // Safari's grant is made in its own settings window, so this page re-reads the
   // browser whenever the owner comes back to it, and on request.
   async function checkAccess(explicit) {
-    if (state?.siteMode !== "all") { await refresh(); return; }
     if (accessCheck) return;
     // A check that doesn't answer gives up, so check again always works; the
     // status channel still brings the answer whenever the browser gives it.
-    accessCheck = Promise.race([cmd({ cmd: "refreshSiteAccess" }),
+    accessCheck = Promise.race([cmd({ cmd: "checkEverySite" }),
       new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 10000))]);
     renderSites();
     const result = await accessCheck;
@@ -907,11 +1258,11 @@
     await refresh();
     if (result?.timedOut) renderSites();
     else if (result?.error) showActionError(result.error);
-    else if (explicit && state?.siteMode === "all" && state.broadGranted !== true) {
+    else if (explicit && state?.broadGrant !== true) {
       announce(Copy.accessCopy(state?.brand).stillMissing, "bad");
     }
   }
-  $("accessCheck").addEventListener("click", () => checkAccess(true));
+  $("accessCheck")?.addEventListener("click", () => checkAccess(true));
   // Safari can unload and restart the background without closing this page's
   // status channel, so coming back reconnects before trusting what is shown.
   function onReturn() {
@@ -925,19 +1276,10 @@
     });
   }
   if ($("exactOnlyBtn")) $("exactOnlyBtn").addEventListener("click", async () => {
-    clearAnnouncement();
-    const exactOnly = state?.exactOnlyOrigins || [];
-    const result = await View.grantChosenSites(exactOnly, siteEffects(), { widen: true });
-    if (result.denied) announce(Copy.exactOnlyCopy(state?.brand, exactOnly.map((origin) => Hosts.displayOrigin(origin))).declined, "bad");
-    else if (result.error) showActionError(result.error);
-    await refresh();
+    $("exactOnlyBtn").hidden = true;
   });
-  $("regrantBtn").addEventListener("click", async () => {
-    clearAnnouncement();
-    const result = await View.grantChosenSites(state?.inactiveOrigins || [], siteEffects());
-    if (result.denied) announce("permission declined. those sites stay paused.", "bad");
-    else if (result.error) showActionError(result.error);
-    await refresh();
+  if ($("regrantBtn")) $("regrantBtn").addEventListener("click", async () => {
+    $("regrantBtn").hidden = true;
   });
 
   let subscriptionEpoch = 0;
@@ -997,6 +1339,6 @@
   }
   watchStatus();
 
-  globalThis.SolstoneOptions = { refresh };
+  globalThis.SolstoneOptions = { refresh, optionsModel, model: optionsModel };
   refresh();
 })();

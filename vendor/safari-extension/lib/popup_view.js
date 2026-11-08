@@ -21,19 +21,31 @@
     extras = extras || {};
     derived = derived || (globalThis.SolstoneStatus ? globalThis.SolstoneStatus.derive(state, extras) : {});
 
-    const chosenOrigins = Array.isArray(state.chosenOrigins)
-      ? state.chosenOrigins
-      : Array.isArray(state.grantedOrigins)
-      ? state.grantedOrigins
-      : Array.isArray(state.allowlist)
-      ? state.allowlist
-      : [];
-
-    const allSites = state.siteMode === "all";
+    const H = globalThis.SolstoneHosts;
     const Copy = globalThis.SolstoneCopy;
-    const siteRows = (allSites ? [] : chosenOrigins).map((entry) => {
-      const host = entry.startsWith("http") && globalThis.SolstoneHosts?.displayOrigin
-        ? globalThis.SolstoneHosts.displayOrigin(entry) : entry;
+
+    const isEverySite = !state.fence && H?.everySiteLive?.(state.livePatterns) === true;
+
+    let entriesForRows = [];
+    if (state.fence) {
+      entriesForRows = state.fence.entries || [];
+    } else if (!isEverySite) {
+      if (Array.isArray(state.livePatterns)) {
+        const seen = new Set();
+        for (const p of state.livePatterns) {
+          if (H.isBroadPattern(p)) continue;
+          const row = H.grantRowOrigin ? H.grantRowOrigin(p) : null;
+          if (row && !seen.has(row)) {
+            seen.add(row);
+            entriesForRows.push(row);
+          }
+        }
+      }
+    }
+
+    const siteRows = entriesForRows.map((entry) => {
+      const host = entry.startsWith("http") && H?.displayOrigin
+        ? H.displayOrigin(entry) : entry;
       const row = globalThis.SolstoneStatus
         ? globalThis.SolstoneStatus.siteRow(entry, state, extras)
         : { kind: "added-idle", label: "added", action: null };
@@ -78,12 +90,26 @@
       }
     }
 
-    // The chosen site this page falls under: bank.com for login.bank.com.
-    const H = globalThis.SolstoneHosts;
-    const pageSite = page.origin && H?.siteForOrigin
-      ? H.siteForOrigin(chosenOrigins, page.origin, state.exactOnlyOrigins, state.siteWideOrigins)
-      : (chosenOrigins.includes(page.origin) ? page.origin : null);
-    const isPageChosen = !!pageSite;
+    // Determine if the current page is covered by an allowed site entry
+    let pageSite = null;
+    if (state.fence) {
+      const fenceEntries = state.fence.entries || [];
+      const fenceExact = state.fence.exact || [];
+      const fenceSiteWide = state.fence.siteWide || [];
+      pageSite = page.origin && H?.siteForOrigin
+        ? H.siteForOrigin(fenceEntries, page.origin, fenceExact, fenceSiteWide)
+        : (fenceEntries.includes(page.origin) ? page.origin : null);
+    } else if (!isEverySite) {
+      if (page.origin && Array.isArray(state.livePatterns)) {
+        for (const p of state.livePatterns) {
+          if (!H.isBroadPattern(p) && H.plainAllow(p, page.origin)) {
+            pageSite = H.patternSiteHost(p) ? `https://${H.patternSiteHost(p)}` : page.origin;
+            break;
+          }
+        }
+      }
+    }
+    const isPageAllowed = !!pageSite;
     const pageWords = Copy ? Copy.pageCopy(state.brand) : null;
 
     let pageState;
@@ -98,8 +124,6 @@
     const isEffectivelyLeftOut = !!coveringExcludedSite;
     const isLocalLeftOut = page.host ? ((state.excludedHosts || []).some((s) => H?.hostCovers ? H.hostCovers(s, page.host) : false)) : false;
 
-    // A page the extension never reads gets its reason, not an add button that
-    // can't work. An unseen page in all-sites mode is an honest "can't tell".
     if (pageKind === "private" && pageWords) {
       pageState = pageWords.privateState;
       pageNote = pageWords.privateNote;
@@ -107,7 +131,7 @@
     } else if (pageKind === "restricted" && pageWords) {
       pageState = pageWords.restrictedState;
       siteAction = null;
-    } else if (allSites && pageKind !== "web" && pageWords) {
+    } else if (isEverySite && pageKind !== "web" && pageWords) {
       pageKind = "unknown";
       pageState = pageWords.unknownState;
       pageNote = pageWords.unknownNote;
@@ -122,29 +146,27 @@
       pageNote = typeof rawLeftOutNote === "function" ? rawLeftOutNote(state.brand) : (rawLeftOutNote || "");
       const site = coveringExcludedSite;
       const includeLabel = site === H.siteHostname(page.host) ? "stop leaving this site out" : `stop leaving ${site} out`;
-      // Taking it off the list can't reach the app while it can't be told, so a
-      // site its list also covers offers no such button (same rule as the site row).
       const appCovers = (state.appLeftOut || []).some((s2) => H.hostCovers(s2, page.host));
       if ((appCovers || !isLocalLeftOut) && !state.leftOutCapable) {
         siteAction = null;
       } else {
         siteAction = { id: "include-site", site, label: includeLabel, disabled: false, primary: false };
       }
-    } else if (allSites) {
+    } else if (isEverySite) {
       const site = H.siteHostname(page.host);
       const row = globalThis.SolstoneStatus.siteRow(page.origin, state, extras);
       pageState = row.label;
       if (row.kind === "denied-by-browser" && pageWords) pageNote = pageWords.deniedNote;
-      else if (pageWords && state.broadGranted === true) pageNote = pageWords.leaveOutNote(site);
-      siteAction = { id: "exclude-site", site, label: "leave this site out", disabled: false, primary: false };
-    } else if (!isPageChosen) {
+      else if (pageWords && (state.broadGranted === true || state.broadGrant === true)) pageNote = pageWords.leaveOutNote(site);
+      siteAction = { id: "exclude-site", site, label: "leave this site out", disabled: false, primary: true };
+    } else if (!isPageAllowed) {
       pageState = "not added";
       pageNoteKey = Copy?.popupNoteKey ? Copy.popupNoteKey(state, page, "not-added") : "";
       const rawNotAddedNote = pageNoteKey && Copy ? Copy[pageNoteKey] : "";
       pageNote = typeof rawNotAddedNote === "function" ? rawNotAddedNote(state.brand) : (rawNotAddedNote || "");
-      const canAdd = state.addSiteEligible === true && state.consentVersion === 1;
+      const canAdd = state.addSiteEligible === true && state.consentAccepted === true;
       siteAction = { id: "add-site", label: "add this site", disabled: !canAdd, primary: true };
-      if (pageKind === "web" && page.ok) {
+      if (pageKind === "web" && page.ok && Copy?.MOBILE !== true) {
         siteSecondary = { id: "leave-out", label: "leave this site out" };
       }
     } else {
@@ -152,9 +174,15 @@
         ? globalThis.SolstoneStatus.siteRow(pageSite, state, extras)
         : { label: "" });
       pageState = pageRow.label;
-      // Removing it removes the whole site the page belongs to, so say which.
       const siteName = H?.displayOrigin ? H.displayOrigin(pageSite) : pageSite;
       siteAction = { id: "remove-site", origin: pageSite, label: pageSite === page.origin ? "remove this site" : `remove ${siteName}`, disabled: false, primary: false };
+    }
+
+    if (state.permissionsUnavailable === true && siteAction?.id === "add-site") {
+      if (pageState === "not added") {
+        pageState = Copy.actionFailure("permissions_unavailable", state.brand);
+      }
+      siteAction = null;
     }
 
     const tone = derived.mark === "healthy"
@@ -176,8 +204,68 @@
       reason: derived.reason,
       action: derived.action || null,
       appPausedNote: derived.appPausedNote || "",
+      quiet: Copy?.MOBILE === true && ["no-sites", "on", "idle"].includes(derived.kind),
     }];
-    if (attentionRows.length > 0) sections.push({ id: "siteIssues", rows: attentionRows });
+
+    const issues = Copy?.MOBILE === true ? attentionRows.filter((row) => row.kind !== "no-sites") : attentionRows;
+    if (issues.length > 0) sections.push({ id: "siteIssues", rows: issues });
+
+    if (state.fence && state.fence.sawMore && state.fence.answered !== true) {
+      const leftOutHosts = Array.from(new Set([...(state.excludedHosts || []), ...(state.appLeftOut || [])]));
+      const beyond = H?.beyondExample ? H.beyondExample(state.fence, state.livePatterns || [], leftOutHosts) : null;
+      if (beyond) {
+        const q = Copy?.fenceQuestion ? Copy.fenceQuestion(state.brand, beyond.kind, beyond.host) : null;
+        if (q) {
+          sections.push({
+            id: "upgradeQuestion",
+            kind: "upgrade-question",
+            shown: beyond.shown,
+            body: q.body,
+            buttons: [
+              {
+                id: q.shareId,
+                label: q.shareLabel,
+                primary: true,
+              },
+              {
+                id: q.keepId || "keep-my-sites",
+                label: q.keepLabel || "keep my sites",
+                primary: false,
+              },
+            ],
+            action: {
+              id: q.shareId,
+              label: q.shareLabel,
+              primary: true,
+            },
+            secondaryAction: {
+              id: q.keepId || "keep-my-sites",
+              label: q.keepLabel || "keep my sites",
+              primary: false,
+            },
+          });
+        }
+      }
+    }
+
+    let siteCount = 0;
+    const excludedCount = (state.excludedHosts || []).length;
+    if (state.fence) {
+      siteCount = (state.fence.entries || []).length;
+    } else if (isEverySite) {
+      siteCount = 1;
+    } else if (Array.isArray(state.livePatterns)) {
+      const rows = new Set();
+      for (const pattern of state.livePatterns) {
+        if (H.isBroadPattern(pattern)) continue;
+        const row = H.grantRowOrigin ? H.grantRowOrigin(pattern) : null;
+        if (row) rows.add(row);
+      }
+      siteCount = rows.size;
+    } else {
+      siteCount = 0;
+    }
+
     sections.push({
       id: "page",
       kind: pageKind,
@@ -187,17 +275,16 @@
       pageNoteKey,
       siteAction,
       siteSecondary,
-      pauseAction: !allSites && chosenOrigins.length === 0 && !state.paused ? null : {
+      pauseAction: (Copy?.MOBILE === true && !state.paused) || (!isEverySite && siteCount === 0 && !state.paused) ? null : {
         id: "set-paused",
         label: state.paused ? "resume" : "pause all",
         primary: !!state.paused,
       },
     });
-    // What is shared, always named, so the mode is visible without opening settings.
-    if (state.consentVersion === 1) {
-      const line = Copy ? Copy.sharingSummary(allSites ? "all" : "selected", (state.excludedHosts || []).length, siteCountLine(siteRows))
-        : siteCountLine(siteRows);
-      sections.push({ id: "siteCount", mode: allSites ? "all" : "selected", text: line });
+
+    if (state.consentAccepted === true) {
+      const line = Copy ? Copy.sharingSummary(isEverySite, siteCount, excludedCount) : `${siteCount} sites`;
+      sections.push({ id: "siteCount", mode: isEverySite ? "all" : "selected", text: line });
     }
     sections.push({ id: "footer" });
     return sections;
@@ -206,31 +293,39 @@
   async function grantSite(input, effects) {
     let origin;
     let host;
+    let scheme = "https";
     try {
       if (input.startsWith("http://") || input.startsWith("https://")) {
         const u = new URL(input);
         origin = u.origin;
-        host = u.host;
+        host = u.hostname;
+        scheme = u.protocol.replace(/:$/, "");
       } else {
         const u = new URL("https://" + input);
         origin = u.origin;
-        host = u.host;
+        host = u.hostname;
+        scheme = "https";
       }
     } catch (_e) {
       return { ok: false, error: "invalid_origin" };
     }
 
     const H = globalThis.SolstoneHosts;
-    const pattern = H ? H.matchPatternFor(host) : `*://${host}/*`;
-
     const inHand = effects ? (effects.status || effects.state) : null;
-    if (inHand && (inHand.consentVersion !== 1 || inHand.addSiteEligible !== true)) {
+    if (inHand && (inHand.consentAccepted !== true || inHand.addSiteEligible !== true)) {
       return { ok: false, denied: true, ineligible: true };
     }
 
-    try {
-      effects.cmd({ cmd: "intendAddOrigin", origin });
-    } catch (_e) {}
+    const pattern = H ? H.matchPatternFor(host) : `*://${host}/*`;
+    if (inHand && inHand.fence !== null && inHand.fence !== undefined) {
+      const livePatterns = inHand.livePatterns || [];
+      if (H && H.grantLevel(host, livePatterns, false, scheme)) {
+        return effects.cmd({ cmd: "addGrantedOrigin", origin });
+      }
+      try {
+        effects.cmd({ cmd: "intendAddOrigin", origin });
+      } catch (_e) {}
+    }
 
     let granted = false;
     try {
@@ -241,13 +336,13 @@
       granted = false;
     }
     if (!granted) {
-      try { effects.cmd({ cmd: "clearAddIntent" }); } catch (_e) {}
+      try { effects.cmd({ cmd: "clearAddIntent", origin }); } catch (_e) {}
       return withBlockedBy({ ok: false, denied: true }, host, effects);
     }
 
     const freshState = await effects.cmd({ cmd: "getState" });
-    if (!freshState || freshState.consentVersion !== 1) {
-      try { effects.cmd({ cmd: "clearAddIntent" }); } catch (_e) {}
+    if (!freshState || freshState.consentAccepted !== true) {
+      try { effects.cmd({ cmd: "clearAddIntent", origin }); } catch (_e) {}
       return { ok: false, denied: true, ineligible: true };
     }
 
@@ -282,86 +377,12 @@
     return result;
   }
 
-  // The sheet names the site by host; a caller may hand in a full origin for the grant.
-  function sheetHost(input) {
-    if (!/^https?:\/\//i.test(input)) return input;
-    try {
-      return new URL(input).host;
-    } catch (_e) {
-      return input;
-    }
-  }
-
   async function addSite(host, effects) {
-    if (effects.status?.consentVersion !== 1 || effects.status?.addSiteEligible !== true) {
+    if (effects.status?.consentAccepted !== true || effects.status?.addSiteEligible !== true) {
       return { ok: false, cancelled: true, ineligible: true };
     }
-    // The sheet calls confirm inside the owner's confirming click, so the
-    // browser's prompt opens from that click. Firefox refuses a permission
-    // request made after the click's handler has returned.
-    const outcome = await effects.disclose(sheetHost(host), () => grantSite(host, effects));
-    if (!outcome) return { ok: false, cancelled: true };
-    return outcome;
+    return grantSite(host, effects);
   }
 
-  async function grantAllSites(effects) {
-    if (effects.status?.consentVersion !== 1) return { ok: false, error: "missing_consent" };
-    // Request synchronously from the confirming owner gesture.
-    effects.cmd({ cmd: "intendAllSites" });
-    let granted = false;
-    try { granted = await effects.requestPermission({ origins: ["*://*/*"] }); } catch (_e) {}
-    if (!granted && effects.status.brand !== "safari") {
-      await effects.cmd({ cmd: "clearAddIntent" });
-      return { ok: false, denied: true };
-    }
-    return effects.cmd({ cmd: "setSiteMode", mode: "all", agreed: true });
-  }
-
-  // Asks again for a broad grant the owner already agreed to, without touching
-  // the mode. The reservation keeps the grant through reconciliation if the
-  // browser's prompt closes the popup before the answer arrives.
-  async function regrantAllSites(effects) {
-    const agreed = (s) => s?.siteMode === "all" && s?.allSitesConsent === globalThis.SolstoneHosts.ALL_SITES_CONSENT_VERSION;
-    if (!agreed(effects.status)) return { ok: false, error: "wrong_site_mode" };
-    effects.cmd({ cmd: "intendAllSites" });
-    let granted = false;
-    try { granted = await effects.requestPermission({ origins: ["*://*/*"] }); } catch (_e) {}
-    await effects.cmd({ cmd: "clearAddIntent" });
-    if (!granted) return { ok: false, denied: true };
-    // The snapshot that offered this may be stale: if the owner left all sites
-    // meanwhile, the broad grant goes straight back.
-    const fresh = await effects.cmd({ cmd: "getState" });
-    if (!agreed(fresh)) {
-      try { await effects.removePermission?.({ origins: ["*://*/*"] }); } catch (_e) {}
-      return { ok: false, error: "wrong_site_mode" };
-    }
-    return effects.cmd({ cmd: "refreshSiteAccess" });
-  }
-
-  // One browser prompt for the owner's own chosen sites that lost their grant,
-  // such as after switching back from all sites. Only already-chosen origins are
-  // asked for, so nothing new joins the list.
-  // `widen` asks for each site's whole-site pattern: the settings bar for sites
-  // that cover only their exact address. Allowing again restores what was there.
-  async function grantChosenSites(origins, effects, options = {}) {
-    const H = globalThis.SolstoneHosts;
-    const chosen = new Set(effects.status?.chosenOrigins || []);
-    const exactOnly = new Set(effects.status?.exactOnlyOrigins || []);
-    const widen = options?.widen === true;
-    const patterns = [];
-    for (const origin of origins || []) {
-      if (!chosen.has(origin)) continue;
-      try {
-        const host = new URL(origin).host;
-        patterns.push(exactOnly.has(origin) && !widen ? H.exactPatternFor(host) : H.matchPatternFor(host));
-      } catch (_e) {}
-    }
-    if (effects.status?.siteMode === "all" || patterns.length === 0) return { ok: false, error: "wrong_site_mode" };
-    let granted = false;
-    try { granted = await effects.requestPermission({ origins: [...new Set(patterns)] }); } catch (_e) {}
-    if (!granted) return { ok: false, denied: true };
-    return effects.cmd({ cmd: "refreshSiteAccess" });
-  }
-
-  globalThis.SolstonePopupView = { arrange, siteCountLine, grantSite, addSite, grantAllSites, regrantAllSites, grantChosenSites };
+  globalThis.SolstonePopupView = { arrange, siteCountLine, grantSite, addSite };
 })();

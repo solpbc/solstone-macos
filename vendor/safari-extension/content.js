@@ -11,7 +11,6 @@
 
   const A = globalThis.SolstoneAdapters;
   const Skim = globalThis.SolstoneSkim;
-  const Indicator = globalThis.SolstoneIndicator;
   const Gate = globalThis.SolstoneCaptureGate;
 
   const realmTokenBytes = new Uint8Array(16);
@@ -28,12 +27,12 @@
   let consentVersion = 0;
   let originGranted = false;
   let browserMediated = false;
+  let refusedReadCount = 0;
   let injectedRead = null;
   let browserReadPending = false;
   let readSequence = 0;
   let readRequestedAt = 0;
   let readTimer = null;
-  let showIndicator = false;
   let hostCapture = null;
   let capturePermitted = false;
   let pressure = { active: false };
@@ -173,14 +172,7 @@
       // In broad mode a retained listener only schedules browser-authorized
       // execution. Safari can retain it after a denial with no removal event.
       if (browserMediated) { scheduleSkim(); return; }
-      const indicatorHost = document.getElementById("solstone-observer-indicator-host");
-      const filtered = mutations.filter((m) => {
-        if (!indicatorHost) return true;
-        return m.target !== indicatorHost && !indicatorHost.contains(m.target);
-      });
-      if (filtered.length > 0) {
-        scheduleSkim();
-      }
+      if (mutations.length > 0) scheduleSkim();
     });
 
     observer.observe(rootEl, {
@@ -191,18 +183,7 @@
       attributeFilter: ["aria-label", "aria-level", "role"],
     });
 
-    if (showIndicator) Indicator.show(false);
     doSkim("initial");
-  }
-
-  // The marker's word is a promise about this page: "on" only while it is
-  // read, "paused" only on a shared page during a pause, and gone otherwise,
-  // so a left-out page or a lost app never shows "on".
-  function syncIndicator() {
-    if (!showIndicator) { Indicator.remove(); return; }
-    if (paused && originGranted) { Indicator.show(true); return; }
-    if (getDecision().open) { Indicator.show(false); return; }
-    Indicator.remove();
   }
 
   function stopObserving() {
@@ -231,9 +212,13 @@
   function handleSolicitedGrant(response, reqTime) {
     if (typeof response.paused === "boolean") paused = response.paused;
     if (typeof response.consentVersion === "number") consentVersion = response.consentVersion;
-    browserMediated = response.siteMode === "all";
-    originGranted = globalThis.SolstoneHosts.originGranted(response, location.origin);
-    if (typeof response.showPageIndicator === "boolean") showIndicator = response.showPageIndicator;
+    const nextMediated = response.broadGrant ?? (globalThis.SolstoneHosts?.broadLive ? globalThis.SolstoneHosts.broadLive(response.livePatterns) : false);
+    const nextGranted = globalThis.SolstoneHosts.originGranted(response, location.origin);
+    if (nextMediated !== browserMediated || nextGranted !== originGranted) {
+      refusedReadCount = 0;
+    }
+    browserMediated = nextMediated;
+    originGranted = nextGranted;
     hostCapture = response.hostCapture || null;
     capturePermitted = response.capturePermitted === true;
     if (response.pressure) pressure = response.pressure;
@@ -243,7 +228,8 @@
 
     if (response.lease) {
       const freshnessMs = Number(response.lease.freshnessMs || 0);
-      if (now() >= reqTime + freshnessMs) {
+      const standing = response.lease.standing === true;
+      if (!standing && now() >= reqTime + freshnessMs) {
         lease = null;
       } else {
         lease = {
@@ -251,6 +237,7 @@
           generation: response.lease.generation,
           freshnessMs,
           receivedAt: reqTime,
+          ...(standing ? { standing } : {}),
         };
       }
     } else {
@@ -261,26 +248,29 @@
     clearTimeout(leaseTimer);
     if (decision.open) {
       const grantedLease = lease;
-      leaseTimer = setTimeout(() => {
+      if (lease.standing !== true) leaseTimer = setTimeout(() => {
         if (lease !== grantedLease) return;
         lease = null;
         stopObserving();
-        syncIndicator();
       }, Math.max(0, lease.receivedAt + lease.freshnessMs - now()));
-      if (!observer && !rootEl) waitForRoot();
-      else if (!observer && rootEl) startObserving();
+      if (!observer && !rootEl) {
+        if (refusedReadCount < 3) waitForRoot();
+      } else if (!observer && rootEl) startObserving();
     } else {
       stopObserving();
-      syncIndicator();
     }
   }
 
   function handleLeaseUpdate(msg) {
     if (typeof msg.paused === "boolean") paused = msg.paused;
     if (typeof msg.consentVersion === "number") consentVersion = msg.consentVersion;
-    browserMediated = msg.siteMode === "all";
-    originGranted = globalThis.SolstoneHosts.originGranted(msg, location.origin);
-    if (typeof msg.showIndicator === "boolean") showIndicator = msg.showIndicator;
+    const nextMediated = msg.broadGrant ?? (globalThis.SolstoneHosts?.broadLive ? globalThis.SolstoneHosts.broadLive(msg.livePatterns) : false);
+    const nextGranted = globalThis.SolstoneHosts.originGranted(msg, location.origin);
+    if (nextMediated !== browserMediated || nextGranted !== originGranted) {
+      refusedReadCount = 0;
+    }
+    browserMediated = nextMediated;
+    originGranted = nextGranted;
     hostCapture = msg.hostCapture || null;
     capturePermitted = msg.capturePermitted === true;
     if (msg.pressure) pressure = msg.pressure;
@@ -292,7 +282,6 @@
     if (isClosed) {
       lease = null;
       stopObserving();
-      syncIndicator();
       return;
     }
 
@@ -309,6 +298,13 @@
   }
 
   function waitForRoot() {
+    if (refusedReadCount >= 3) {
+      if (rootInterval !== null) {
+        clearInterval(rootInterval);
+        rootInterval = null;
+      }
+      return;
+    }
     let tries = 0;
     if (rootInterval) clearInterval(rootInterval);
     const check = () => {
@@ -342,6 +338,7 @@
 
   let rootCheck = null;
   function requestBrowserRead(action, reason) {
+    if (refusedReadCount >= 3) return;
     if (browserReadPending || !getDecision().open) return;
     browserReadPending = true;
     const requestId = ++readSequence;
@@ -354,11 +351,18 @@
     try {
       chrome.runtime.sendMessage({ kind: "read", action, reason, requestId,
         realmToken: REALM_TOKEN, documentKey: DOCUMENT_KEY,
-        captureEpoch, leaseToken: lease?.token || null }, () => {
+        captureEpoch, leaseToken: lease?.token || null }, (res) => {
         if (readSequence !== requestId) return;
         browserReadPending = false;
         clearTimeout(readTimer);
         void chrome.runtime.lastError;
+        if (res && res.ok === false && (res.error === "browser_access_denied" || res.error === "read_not_executed")) {
+          refusedReadCount++;
+          if (refusedReadCount >= 3 && rootInterval !== null) {
+            clearInterval(rootInterval);
+            rootInterval = null;
+          }
+        }
       });
     } catch (_e) { browserReadPending = false; }
   }
@@ -370,6 +374,7 @@
     if (!browserMediated || realm !== REALM_TOKEN || documentKey !== DOCUMENT_KEY ||
         !browserReadPending || read.requestId !== readSequence || now() >= readRequestedAt + 5000 ||
         read.captureEpoch !== captureEpoch || read.leaseToken !== lease?.token || !getDecision().open) return false;
+    refusedReadCount = 0;
     injectedRead = read;
     try {
       if (read.action === "root") rootCheck?.();
@@ -413,17 +418,12 @@
       const decision = getDecision();
       if (decision.open) startObserving();
       else stopObserving();
-      syncIndicator();
     } else if (msg.kind === "resnapshot") {
       if (!getDecision().open) requestGrant();
       else doSkim("change");
     } else if (msg.kind === "stop" || msg.kind === "permissionRemoved") {
       lease = null;
       stopObserving();
-      Indicator.remove();
-    } else if (msg.kind === "setIndicator") {
-      showIndicator = !!msg.show;
-      syncIndicator();
     } else if (msg.kind === "ping") {
       sendResponse({ ok: true });
     }
@@ -446,6 +446,7 @@
   }, { capture: true });
   window.addEventListener("pageshow", (e) => {
     if (e.persisted) {
+      refusedReadCount = 0;
       requestGrant();
     }
   });

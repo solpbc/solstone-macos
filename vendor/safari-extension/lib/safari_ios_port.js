@@ -10,16 +10,16 @@
   // Safari on iPhone and iPad has no app-to-extension dispatch, so each exchange is a
   // request the extension's native handler answers. The handler is part of the
   // solstone app and works from the store the app shares with it, whether or not
-  // the app is running.
+  // the app is running. Exchanges happen when something needs one: a hello, a batch,
+  // or refresh(). Nothing runs on a timer, because iOS gives a closed app no
+  // connection to keep alive and Safari redraws its page menu for an extension's activity.
   function connect(runtime, hostName) {
     const id = crypto.randomUUID();
     const messages = [], disconnects = [];
     let open = true, chain = Promise.resolve(), queued = 0;
-    let timer;
     function close() {
       if (!open) return;
       open = false;
-      clearInterval(timer);
       for (const listener of disconnects) listener();
     }
     function send(frame) {
@@ -37,15 +37,13 @@
         if (parsed?.closed) close();
       }).catch(close).finally(() => { queued--; });
     }
-    // Safari may unload the nonpersistent background at any time. This timer
-    // renews authority only while Safari gives this page execution time.
-    timer = setInterval(() => send(), 2000);
     return {
       id,
       onMessage: { addListener(fn) { messages.push(fn); } },
       onDisconnect: { addListener(fn) { disconnects.push(fn); } },
       postMessage(value) { if (!open) throw new Error("disconnected"); send(JSON.stringify(value)); },
-      disconnect() { open = false; clearInterval(timer); },
+      refresh() { if (open) send(); },
+      disconnect() { open = false; },
     };
   }
   globalThis.SolstoneSafariPort = { ...mac, connect, ios: true };

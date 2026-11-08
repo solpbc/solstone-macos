@@ -4,6 +4,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>solstone settings</title>
     <style>
       @font-face { font-family: "Comfortaa"; src: url("fonts/comfortaa.woff2") format("woff2"); font-weight: 700; font-display: swap; }
@@ -205,6 +206,107 @@
         .site { align-items: flex-start; flex-direction: column; }
         .modes { grid-template-columns: 1fr; }
       }
+      /* iPhone and iPad: one grouped list, in the system's own type and light or dark. */
+      :root.mobile { color-scheme: light dark; }
+      .mobile body { padding: 8px 16px 32px; font: 17px/1.35 -apple-system, system-ui, sans-serif; }
+      .mobile #pageSubTitle, .mobile #pageFooter, .mobile #sitesHeading, .mobile .modes,
+      .mobile #disclosureCard h2 { display: none; }
+      .mobile h1 { font-size: 28px; padding: 8px 0 4px; }
+      .mobile h3 { margin: 0 0 6px; font-size: 15px; font-weight: 400; color: var(--soft); }
+      .mobile .card { margin: 12px 0; padding: 12px 16px; border: 0; border-radius: 14px; }
+      .mobile #sitesCard { background: none; padding: 0; }
+      .mobile #siteModeHelp { margin: 0 0 12px; font-size: 15px; }
+      .mobile #addForm .addrow { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+      .mobile #addForm label { display: none; }
+      .mobile #newHost {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 44px;
+        font-size: 17px;
+        border-radius: 10px;
+        background: var(--surface);
+        color: var(--ink);
+      }
+      .mobile button { min-height: 44px; border-radius: 12px; font-size: 17px; }
+      .mobile #addBtn { width: 100%; min-height: 50px; border-radius: 14px; }
+      .mobile #siteList { margin-top: 16px; border-radius: 14px; background: var(--surface); overflow: hidden; }
+      .mobile #siteList:empty { display: none; }
+      /* A settings row: the site and its state on the left, its action on the right. */
+      .mobile .site {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 60px;
+        margin: 0;
+        padding: 8px 16px;
+        border: 0;
+        border-top: 1px solid var(--line);
+      }
+      .mobile .site:first-child { border-top: 0; }
+      .mobile .site-host { font-size: 17px; font-weight: 400; }
+      .mobile .site-state { font-size: 13px; }
+      .mobile .site button {
+        min-height: 44px;
+        padding: 0 4px;
+        border: 0;
+        background: none;
+        color: var(--bad);
+        font-size: 17px;
+      }
+      .mobile .marker-label {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-direction: row-reverse;
+        min-height: 32px;
+        gap: 12px;
+        font-size: 17px;
+      }
+      /* A native-looking switch from the same checkbox. */
+      .mobile .marker-label input {
+        appearance: none;
+        -webkit-appearance: none;
+        flex: none;
+        position: relative;
+        width: 51px;
+        height: 31px;
+        margin: 0;
+        border-radius: 16px;
+        background: rgba(120, 120, 128, .32);
+        transition: background .15s;
+      }
+      .mobile .marker-label input::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 27px;
+        height: 27px;
+        border-radius: 50%;
+        background: #fff;
+        transition: transform .15s;
+      }
+      .mobile .marker-label input:checked { background: var(--success); }
+      .mobile .marker-label input:checked::after { transform: translateX(20px); }
+      .mobile details { margin-top: 0; border-top: 0; padding-top: 0; }
+      .mobile #disclosureCard summary { min-height: 32px; display: flex; align-items: center; color: var(--ink); font-size: 17px; }
+      .mobile #disclosureCard .disclosure { margin-top: 8px; font-size: 15px; }
+      @media (prefers-color-scheme: dark) {
+        :root.mobile {
+          --ground: #1c1c1e;
+          --surface: #2c2c2e;
+          --ink: #f5f5f7;
+          --soft: #aeaeb2;
+          --muted: #8e8e93;
+          --line: #3a3a3c;
+          --field-line: #636366;
+          --bad-wash: #3a2422;
+          --success-ink: #5fd38d;
+          --bad: #ff6961;
+        }
+        .mobile button.primary { color: #1a1a1a; }
+      }
     </style>
   </head>
   <body>
@@ -267,15 +369,12 @@
             </h2>
             <div id="step3Content" hidden>
               <p id="step3Body" class="muted"></p>
-              <label class="marker-label" style="margin-top: 14px;">
-                <input type="checkbox" id="welcomeShowPageIndicator" />
-                show a small solstone icon on pages you've added
-              </label>
               <div id="welcomeOffersBlock" hidden></div>
               <div id="welcomeSiteList"></div>
             </div>
           </section>
         </div>
+        <div id="welcomeMessage" class="action-message" aria-live="polite"></div>
       </div>
 
       <div id="settingsView">
@@ -379,11 +478,10 @@
           </section>
         </section>
 
-        <section id="indicatorCard" class="card">
-          <h2>on-page icon</h2>
+        <section id="pauseCard" class="card" hidden>
           <label class="marker-label">
-            <input type="checkbox" id="showPageIndicator" />
-            show a small solstone icon on pages you share
+            <input type="checkbox" id="pauseSwitch" />
+            pause
           </label>
         </section>
 
@@ -399,7 +497,7 @@
         <section id="disclosureCard" class="card">
           <h2>what the solstone extension takes in</h2>
           <details id="disclosureDetails">
-            <summary>read it again</summary>
+            <summary id="disclosureSummary">read it again</summary>
             <div id="settingsDisclosureBody" class="disclosure"></div>
           </details>
         </section>

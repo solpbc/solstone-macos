@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "solstone",
-  "version": "0.5.5",
-  "description": "on sites you choose, the solstone extension takes in page text, addresses and rough layout, and all of it goes into your journal.",
+  "version": "0.5.10",
+  "description": "on sites you allow, it takes in page text, addresses and rough layout, and all of it goes into your journal.",
   "incognito": "not_allowed",
   "permissions": [
     "storage",
@@ -30,7 +30,6 @@
       "lib/blocks.js",
       "lib/hosts.js",
       "lib/failures.js",
-      "lib/reconcile.js",
       "lib/segment.js",
       "lib/gate.js",
       "lib/native_outbox.js",
@@ -40,7 +39,6 @@
       "lib/left_out.js",
       "lib/native_port.js",
       "lib/status.js",
-      "lib/owner_sites.js",
       "lib/tab_age.js",
       "lib/page_facts.js",
       "lib/router.js",
