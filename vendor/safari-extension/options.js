@@ -570,15 +570,17 @@
         }
       }
     } else if (st.fence && st.fence.answered) {
+      // Safari can't be asked, so its offer shows only while Safari allows every site.
+      const canShare = st.brand !== "safari" || H?.everySiteLive?.(st.livePatterns || []) === true;
       sections.push({
         id: "upgradeQuiet",
         kind: "upgrade-quiet",
         text: Copy.fenceQuiet(st.brand),
-        action: {
+        action: canShare ? {
           id: "share-every-site",
           label: Copy.SHARE_EVERY_SITE,
           primary: false,
-        },
+        } : null,
       });
     }
 
@@ -667,18 +669,21 @@
         } else if (sec.kind === "upgrade-quiet") {
           const p = document.createElement("p");
           p.textContent = sec.text;
-          const actions = document.createElement("div");
-          actions.className = "actions";
-          const b = document.createElement("button");
-          b.type = "button";
-          b.id = sec.action.id;
-          b.dataset.shareId = sec.action.id;
-          b.className = "primary";
-          b.textContent = sec.action.label;
-          b.addEventListener("click", () => runShareEverySite());
-          actions.append(b);
-          div.append(p, actions);
-          mountVersionOneNote(div, actions);
+          div.append(p);
+          if (sec.action) {
+            const actions = document.createElement("div");
+            actions.className = "actions";
+            const b = document.createElement("button");
+            b.type = "button";
+            b.id = sec.action.id;
+            b.dataset.shareId = sec.action.id;
+            b.className = sec.action.primary ? "primary" : "";
+            b.textContent = sec.action.label;
+            b.addEventListener("click", () => runShareEverySite());
+            actions.append(b);
+            div.append(actions);
+            mountVersionOneNote(div, actions);
+          }
         } else if (["stop-still", "stop-none", "stop-some"].includes(sec.kind)) {
           const p = document.createElement("p");
           p.textContent = sec.text;
@@ -788,7 +793,10 @@
     } else {
       if ($("accessGranted")) $("accessGranted").hidden = true;
       if ($("accessMissing")) $("accessMissing").hidden = false;
-      if (safari && !offerShare) {
+      // Safari can't be asked for every site, so a button here would do nothing.
+      // Its own steps are the way, fence or not; once Safari allows every site,
+      // a held owner gets the upgrade question.
+      if (safari) {
         if ($("accessTitle")) $("accessTitle").textContent = words.missingTitle;
         if ($("accessBody")) $("accessBody").textContent = words.missingBody;
         const steps = $("accessSteps");
