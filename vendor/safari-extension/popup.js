@@ -7,6 +7,8 @@
   const Status = globalThis.SolstoneStatus;
   const Failures = globalThis.SolstoneFailures;
   if (globalThis.SolstoneCopy?.MOBILE === true) document.documentElement.classList.add("mobile");
+  // Safari on iPad opens the popup in a popover that shrinks to its content, so it takes a width of its own.
+  if (globalThis.SolstoneCopy?.PLACE === "this ipad") document.documentElement.classList.add("ipad");
   const View = globalThis.SolstonePopupView;
   const Actions = globalThis.SolstoneActions;
   const $ = (id) => document.getElementById(id);

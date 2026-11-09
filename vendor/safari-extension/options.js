@@ -921,6 +921,7 @@
               const btn = document.createElement("button");
               btn.type = "button";
               btn.textContent = "stop leaving out";
+              btn.className = "include";
               btn.addEventListener("click", async () => {
                 clearAnnouncement();
                 const res = await cmd({ cmd: "setLeftOut", host, out: false });

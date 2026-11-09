@@ -40,6 +40,8 @@
     return "this computer";
   })();
   const MOBILE = PLACE !== "this computer";
+  // Safari on iPad opens extensions from a button in its address bar; its page menu lists none.
+  const SAFARI_MENU = PLACE === "this ipad" ? "the extensions button in Safari's address bar" : "Safari's page menu";
 
   const DESKTOP_DISCLOSURE = `the sites you allow in your browser are the sites the solstone extension takes in, and that can be every site. on those sites, it takes in the page's text and rough layout whenever a tab is open, and all of it goes into your journal:
 - the text you can see, the text you'd see by scrolling, text in background tabs, some labels pages provide for screen readers and tooltips, and text the page has but doesn't show you
@@ -165,7 +167,7 @@ no analytics. no telemetry. no phone home. nobody counted.`;
 
   function safariStopLine() {
     if (MOBILE) {
-      return "to stop sharing every site, set Other Websites to Ask in Settings, under Apps, Safari, Extensions, solstone.";
+      return "to stop sharing every site, set All Websites (or Other Websites) to Ask in Settings, under Apps, Safari, Extensions, solstone.";
     }
     return "to stop sharing every site, set For other websites to Ask in Safari's website settings.";
   }
@@ -281,7 +283,7 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     const safari = brand === "safari";
     return {
       granted: everySiteOnLine(brand),
-      grantedNote: safari ? (MOBILE ? "in Settings, under Apps, Safari, Extensions, solstone, a site set to Deny stays off." : "a site set to Deny in Safari's website settings stays off.") : "",
+      grantedNote: safari ? (MOBILE ? "a site set to Deny there stays off." : "a site set to Deny in Safari's website settings stays off.") : "",
       // No title on Safari either: an owner who chose one site at a time reads
       // this too, and it isn't a step they owe.
       missingTitle: safari ? "" : `${bName} isn't allowing every website`,
@@ -290,7 +292,7 @@ no analytics. no telemetry. no phone home. nobody counted.`;
         : `only the sites ${bName} already allows are on.`,
       steps: safari && MOBILE ? [
         "in Settings, open Apps, then Safari, then Extensions, then solstone.",
-        "set Other Websites to Allow.",
+        "set All Websites (or Other Websites) to Allow.",
       ] : safari ? [
         "in Safari, choose Safari \u203a Settings, then Websites.",
         "under Extensions on the left, choose solstone.",
@@ -302,9 +304,9 @@ no analytics. no telemetry. no phone home. nobody counted.`;
       checking: `checking ${bName}\u2026`,
       nowAllowed: `${bName} now allows every website. every site is on, except what you leave out.`,
       stillMissing: safari
-        ? (MOBILE ? "Safari still isn't allowing every website. set Other Websites to Allow." : "Safari still isn't allowing every website. set For other websites to Allow.")
+        ? (MOBILE ? "Safari still isn't allowing every website. set All Websites (or Other Websites) to Allow." : "Safari still isn't allowing every website. set For other websites to Allow.")
         : `${bName} still isn't allowing every website.`,
-      declined: `permission declined. only the sites ${bName} already allows are on. to add a site, open it, open solstone from your browser's toolbar or extensions menu, and choose add this site.`,
+      declined: `permission declined. only the sites ${bName} already allows are on. to add a site, open it, open solstone from ${safari && MOBILE ? SAFARI_MENU : "your browser's toolbar or extensions menu"}, and choose add this site.`,
       failedTitle: "couldn't start on your sites",
       failedBody: `something went wrong turning on every site in ${bName}.`,
       retryLabel: "try again",
@@ -340,7 +342,7 @@ no analytics. no telemetry. no phone home. nobody counted.`;
 
   function step3Body(brand) {
     return MOBILE
-      ? `open a site you want to share, open solstone from Safari's page menu, and choose add this site. ${browserName(brand)} will ask you to allow it.`
+      ? `open a site you want to share, open solstone from ${SAFARI_MENU}, and choose add this site. ${browserName(brand)} will ask you to allow it.`
       : `open a site you want to share, open solstone from your browser's toolbar or extensions menu, and choose add this site. ${browserName(brand)} will ask you to allow it.`;
   }
 
