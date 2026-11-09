@@ -43,8 +43,10 @@ public enum IngestProtocolV3 {
     static let headerValue = "3"
     static let maxPartBytes = 64 * 1024 * 1024
     static let maxConnectionBodyBytes = 128 * 1024 * 1024
-    static let maxFiles = 8
-    static let maxParts = 12
+    /// A terminal segment carries one screen file per tmux session, so this has to
+    /// fit a computer with many sessions open. Matches the journal.
+    static let maxFiles = 64
+    static let maxParts = maxFiles + 4
     static let maxFilenameBytes = 128
     static let maxHeaders = 16
 

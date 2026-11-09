@@ -94,6 +94,34 @@ struct TerminalSourceTests {
         #expect(found[0].zone?["tz"] == .string("Asia/Kolkata"))
     }
 
+    @Test func aSegmentFromManyTmuxSessionsIsOneUpload() throws {
+        let root = try tempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = try writeSegment(root: root)
+        try Data("{}\n".utf8).write(to: directory.appendingPathComponent("101500_desktop_activity.jsonl"))
+        for index in 0..<12 {
+            try Data("{}\n".utf8).write(to: directory.appendingPathComponent("tmux_session\(index)_screen.jsonl"))
+        }
+        let found = TerminalSpool.finished(root: root)
+        #expect(found.count == 1)
+        #expect(found[0].files.count == 14)
+        let bodyURL = root.appendingPathComponent("body.tmp")
+        _ = try IngestV3UploadRequestBuilder.build(
+            baseURL: "http://journal.example",
+            day: day,
+            segment: name,
+            selectedFiles: found[0].files,
+            meta: found[0].zone,
+            source: TerminalUploadPlanner.source,
+            boundary: "terminal-boundary",
+            bodyURL: bodyURL
+        )
+        let body = try String(contentsOf: bodyURL, encoding: .utf8)
+        for file in found[0].files {
+            #expect(body.contains("filename=\"\(file.lastPathComponent)\""))
+        }
+    }
+
     @Test func aSegmentWhoseFinishHasNotCompletedIsNotDeliverable() throws {
         let root = try tempRoot()
         let directory = try writeSegment(root: root, zone: false)
