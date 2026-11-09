@@ -265,7 +265,7 @@ struct SettingsView: View {
     init(
         appState: AppState,
         updateController: UpdateController,
-        selectedTab: Tab = .observer,
+        selectedTab: Tab = .status,
         initialStorageUsedMB: Int? = nil,
         initialLocalJournalMark: JournalMark? = nil,
         initialLocalOnDiskDiscoveryPath: String? = nil,
@@ -4072,8 +4072,8 @@ struct SettingsView: View {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         return StatusHealthSummary.makeIncludingBrowser(
             serviceMode: appState.config.serviceMode,
-            isRecording: appState.isRecording,
-            isPaused: appState.isPaused,
+            isRecording: appState.isRecording || appState.nonMediaIntakeState == .active,
+            isPaused: appState.isPaused || (appState.config.selectedSources.isEmpty && appState.nonMediaIntakeState == .paused),
             ownerPauseHeldIdle: appState.ownerPauseHeldIdle,
             held: appState.needsJournalMarkConfirmation,
             hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
@@ -4086,7 +4086,7 @@ struct SettingsView: View {
             journalSlot: resolvedJournalName,
             now: Date(),
             selectedSources: appState.config.selectedSources,
-            otherSourceOn: appState.obsidianSource?.isOn == true,
+            otherSourceOn: appState.nonMediaIntakeState != .off,
             permittedSources: appState.capture.permittedSources,
             errorMessage: appState.errorMessage,
             setupVerdict: setupPresentation.verdict,
@@ -4100,8 +4100,8 @@ struct SettingsView: View {
 #else
         return StatusHealthSummary.make(
             serviceMode: appState.config.serviceMode,
-            isRecording: appState.isRecording,
-            isPaused: appState.isPaused,
+            isRecording: appState.isRecording || appState.nonMediaIntakeState == .active,
+            isPaused: appState.isPaused || (appState.config.selectedSources.isEmpty && appState.nonMediaIntakeState == .paused),
             ownerPauseHeldIdle: appState.ownerPauseHeldIdle,
             held: appState.needsJournalMarkConfirmation,
             hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
@@ -4111,7 +4111,7 @@ struct SettingsView: View {
             journalSlot: resolvedJournalName,
             now: Date(),
             selectedSources: appState.config.selectedSources,
-            otherSourceOn: appState.obsidianSource?.isOn == true,
+            otherSourceOn: appState.nonMediaIntakeState != .off,
             permittedSources: appState.capture.permittedSources,
             errorMessage: appState.errorMessage,
             setupVerdict: setupPresentation.verdict,

@@ -326,21 +326,53 @@ internal func observationRecoveryPresentation(
     )
 }
 
-extension AppState {
-    internal var observationRowState: MenubarStatusRowState {
-        // Activity can observe while every media source is off. Its source-only icon
-        // must follow the same state as its visible menu and settings status.
-        if config.selectedSources.isEmpty, let activity = activitySource, activity.enabled {
-            // The source displays its storage failure itself; media's recovery action
-            // cannot repair that queue. No activity is collected while failed.
-            if activity.failed { return .stopped }
-            return activity.paused ? .paused : .observing
+/// A source can be active even when none of the media sources is selected.
+internal enum NonMediaIntakeState: Equatable {
+    case off, paused, starting, active
+
+    init(terminal: TerminalSource.State) {
+        switch terminal {
+        case .running: self = .active
+        case .paused: self = .paused
+        case .restarting: self = .starting
+        case .off, .tmuxNotFound, .oldAppInstalled: self = .off
         }
-        if config.selectedSources.isEmpty, let obsidianSource, obsidianSource.isOn {
+    }
+
+    static func aggregate(_ states: [Self]) -> Self {
+        if states.contains(.active) { return .active }
+        if states.contains(.paused) { return .paused }
+        if states.contains(.starting) { return .starting }
+        return .off
+    }
+}
+
+extension AppState {
+    internal var nonMediaIntakeState: NonMediaIntakeState {
+        var states: [NonMediaIntakeState] = []
+        if let activity = activitySource, activity.enabled {
+            states.append(activity.failed ? .off : activity.paused ? .paused : .active)
+        }
+        if let obsidianSource, obsidianSource.isOn {
             switch obsidianSource.phase {
+            case .paused: states.append(.paused)
+            case .needsAttention: states.append(.off)
+            case .off, .on, .waitingForJournalUpdate: states.append(.active)
+            }
+        }
+        if config.isTerminalEnabled, let terminalSource {
+            states.append(NonMediaIntakeState(terminal: terminalSource.state))
+        }
+        return .aggregate(states)
+    }
+
+    internal var observationRowState: MenubarStatusRowState {
+        if config.selectedSources.isEmpty {
+            switch nonMediaIntakeState {
+            case .active: return .observing
             case .paused: return .paused
-            case .needsAttention: return .stopped
-            case .off, .on, .waitingForJournalUpdate: return .observing
+            case .starting: return .starting
+            case .off: break
             }
         }
         let verdict = tunnelLifecycleOwner.connectionVerdict

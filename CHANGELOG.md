@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- when terminal is the only source running, the menu and status now say so. opening settings starts on status.
 - a terminal segment from eight or more tmux sessions now goes into your journal instead of waiting on your mac. your journal needs its matching update too.
 - settings now calls its website list "websites you leave out", and its button says `leave out`, so it's clearer that a site you type there stays out from the first time you open it. thanks @dvanduzer.
 - settings now says that a left-out website keeps Safari out of screen intake even when the page is in a window behind other windows, and that switching onto a left-out page pauses screen intake for a few seconds.

@@ -9,6 +9,19 @@ private let statusSummaryServerURL = "https://x.example:5015"
 
 @Suite("StatusHealthSummary")
 struct StatusHealthSummaryTests {
+    @Test func nonMediaActivityWinsOverInactiveAndPausedSources() {
+        #expect(NonMediaIntakeState(terminal: .running) == .active)
+        #expect(NonMediaIntakeState(terminal: .paused) == .paused)
+        #expect(NonMediaIntakeState(terminal: .restarting) == .starting)
+        for state in [TerminalSource.State.off, .tmuxNotFound, .oldAppInstalled] {
+            #expect(NonMediaIntakeState(terminal: state) == .off)
+        }
+        #expect(NonMediaIntakeState.aggregate([.off, .paused, .active]) == .active)
+        #expect(NonMediaIntakeState.aggregate([.off, .paused]) == .paused)
+        #expect(NonMediaIntakeState.aggregate([.off, .starting]) == .starting)
+        #expect(NonMediaIntakeState.aggregate([.off]) == .off)
+    }
+
     @Test func blockedUploadNamesTheCauseAndDoesNotOfferCaptureRestart() {
         let status = UploadCoordinator.Status.blocked("upload exceeds journal limits")
         let summary = makeSummary(uploadStatus: status, pendingCount: 1)
