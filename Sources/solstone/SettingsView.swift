@@ -3601,7 +3601,7 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("websites") {
+            GroupBox("websites you leave out") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_1)
                         .font(.caption)
@@ -3629,7 +3629,7 @@ struct SettingsView: View {
                     }
 
                     if appState.config.excludedSites.isEmpty {
-                        Text("no websites added")
+                        Text("no websites left out")
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.vertical, 20)
@@ -3644,7 +3644,7 @@ struct SettingsView: View {
                                             .foregroundStyle(.red)
                                     }
                                     .buttonStyle(.plain)
-                                    .help("remove website")
+                                    .help("stop leaving out")
                                     .accessibilityIdentifier(AXID.Settings.Privacy.websiteRemove(site))
                                 }
                                 .padding(.vertical, 2)
@@ -3661,7 +3661,7 @@ struct SettingsView: View {
                             .onSubmit { addWebsite() }
                             .onChange(of: newWebsite) { websiteError = nil }
                             .accessibilityIdentifier(AXID.Settings.Privacy.websiteField)
-                        Button("add") { addWebsite() }
+                        Button("leave out") { addWebsite() }
                             .disabled(newWebsite.trimmingCharacters(in: .whitespaces).isEmpty)
                             .accessibilityIdentifier(AXID.Settings.Privacy.websiteAdd)
                     }
