@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- a terminal segment from eight or more tmux sessions now goes into your journal instead of waiting on your mac. your journal needs its matching update too.
+
 ## [2.0.63] - 2026-11-08
 
 ### Added
