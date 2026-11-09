@@ -69,6 +69,7 @@ struct ObsidianVaultMemo: Codable, Equatable, Sendable {
 struct ObsidianEngineSnapshot: Equatable, Sendable {
     var state = ObsidianSourceState()
     var lastCheckedMs: Int64?
+    var lastWalkSeconds: Double = 0
     var vaultUnreadable = false
     var partUnreadable = false
     var waiting = 0
@@ -103,6 +104,7 @@ actor ObsidianEngine {
     private var outboxLines = 0
     private var setAsideCount = 0
     private var lastCheckedMs: Int64?
+    private var lastWalkSeconds: Double = 0
     private var vaultUnreadable = false
     private var partUnreadable = false
     private var scanReadFailed = false
@@ -177,7 +179,7 @@ actor ObsidianEngine {
 
     func snapshot() -> ObsidianEngineSnapshot {
         ObsidianEngineSnapshot(
-            state: state, lastCheckedMs: lastCheckedMs, vaultUnreadable: vaultUnreadable, partUnreadable: partUnreadable,
+            state: state, lastCheckedMs: lastCheckedMs, lastWalkSeconds: lastWalkSeconds, vaultUnreadable: vaultUnreadable, partUnreadable: partUnreadable,
             waiting: pendingCount + outboxLines, notOnDevice: notOnDevice,
             tooLarge: tooLarge, setAside: setAsideCount
         )
@@ -340,7 +342,13 @@ actor ObsidianEngine {
     @discardableResult
     func scan(now: Date) -> ObsidianEngineSnapshot {
         guard state.enabled, let rootPath = state.vaultPath else { return snapshot() }
-        guard case .scanned(let walk) = walker(URL(fileURLWithPath: rootPath, isDirectory: true)) else {
+        // Only the walk sets the pace: saving what it found waits on the disk,
+        // and a stalled write says nothing about the size of the vault.
+        let walkBegan = ContinuousClock.now
+        let walked = walker(URL(fileURLWithPath: rootPath, isDirectory: true))
+        let walkTime = ContinuousClock.now - walkBegan
+        lastWalkSeconds = Double(walkTime.components.seconds) + Double(walkTime.components.attoseconds) / 1e18
+        guard case .scanned(let walk) = walked else {
             vaultUnreadable = true
             return snapshot()
         }

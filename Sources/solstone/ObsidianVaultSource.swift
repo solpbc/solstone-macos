@@ -327,11 +327,8 @@ final class ObsidianVaultSource {
         defer { tickRunning = false }
         let now = clock()
         if now >= nextScanAt {
-            let began = ContinuousClock.now
             snapshot = await engine.scan(now: now)
-            let elapsed = ContinuousClock.now - began
-            let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-            nextScanAt = now.addingTimeInterval(Self.scanInterval(afterScanTaking: seconds))
+            nextScanAt = now.addingTimeInterval(Self.scanInterval(afterScanTaking: snapshot.lastWalkSeconds))
         }
         if !isHeld() {
             let serverURL = await journalReadyForDelivery()
