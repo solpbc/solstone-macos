@@ -16,6 +16,8 @@ struct MenuContent: View {
         Section {
             if appState.config.selectedSources.isEmpty, let activity = appState.activitySource, activity.enabled {
                 Text(activity.statusText)
+            } else if let obsidianStatus = appState.obsidianOnlyStatusText {
+                Text(obsidianStatus)
             } else {
                 statusRow
                     .accessibilityValue(statusRowAXValue)

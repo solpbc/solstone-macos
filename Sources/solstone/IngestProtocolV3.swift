@@ -49,6 +49,8 @@ public enum IngestProtocolV3 {
     static let maxHeaders = 16
 
     static let uploadPath = "/app/devices/ingest"
+    static let obsidianVaultsPath = "/app/devices/ingest/obsidian/vaults"
+    static let systemStatusPath = "/api/system/status"
 
     static func exactString(_ lhs: String, _ rhs: String) -> Bool {
         Data(lhs.utf8) == Data(rhs.utf8)

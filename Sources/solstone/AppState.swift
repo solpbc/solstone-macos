@@ -58,6 +58,7 @@ public final class AppState {
     public let shortcutController: PauseShortcutController
     public let storageManager: StorageManager
     var activitySource: DesktopActivitySource?
+    var obsidianSource: ObsidianVaultSource?
     public let audioDeviceMonitor: AudioDeviceMonitor
     public var captureManager: CaptureManager { capture.captureManager }
     public private(set) var uploadCoordinator: UploadCoordinator!
@@ -587,10 +588,17 @@ public final class AppState {
         return capture.captureManager.recentMicrophoneInputPeak()
     }
 
+    /// Obsidian's own status line, when it's on and every media source is off.
+    var obsidianOnlyStatusText: String? {
+        guard config.selectedSources.isEmpty, let obsidianSource, obsidianSource.isOn else { return nil }
+        return UICopy.Obsidian.stateLine(obsidianSource.phase, vaultName: obsidianSource.snapshot.state.vaultName)
+    }
+
     public var captureSourcesStatusText: String {
         if config.selectedSources.isEmpty, let activitySource, activitySource.enabled {
             return activitySource.statusText
         }
+        if let obsidianOnlyStatusText { return obsidianOnlyStatusText }
         if isRecording || isPaused {
             guard !captureManager.activeSources.isEmpty else { return UICopy.SOURCES_UNAVAILABLE }
             return UICopy.sourceStatus(captureManager.activeSources, isPaused: isPaused)
@@ -713,6 +721,7 @@ public final class AppState {
         browserIntakeOwner?.stop()
 #endif
         shortcutController.unregister()
+        obsidianSource?.shutdown()
         await stopRecording(reason: .quit)
         await drainRemixQueueForTermination()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
@@ -729,6 +738,7 @@ public final class AppState {
         await browserIntakeOwner?.stopAndDrain()
         guard appQuitCoordinator.preparationGeneration == generation else { return }
 #endif
+        obsidianSource?.shutdown()
         await stopRecording(reason: .update)
         await drainRemixQueueForTermination()
     }
@@ -911,6 +921,7 @@ public final class AppState {
         }
 #endif
         silenceMusicHolder.value = newConfig.silenceMusic
+        if oldConfig.syncPaused != newConfig.syncPaused { obsidianSource?.nudge() }
 
         let modeSelectionChanged = (newConfig.disabledMicrophoneUIDs != oldDisabled ||
                                     newConfig.enabledMicrophoneUIDs != oldEnabled)
@@ -2399,6 +2410,7 @@ public final class AppState {
         capture.onMicrophonesChanged = { [weak self] in self?.syncMicrophonePriorityList() }
         configureScreenPreviewInvalidation()
         configureDesktopActivity()
+        configureObsidianSource()
         syncMicrophonePriorityList()
 
         if automaticObservationPipelineEnabled {
@@ -2883,6 +2895,25 @@ public final class AppState {
             return true
         }
         return false
+    }
+
+    private func configureObsidianSource() {
+        guard automaticObservationPipelineEnabled,
+              let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let source = ObsidianVaultSource.make(
+            appSupportDirectory: appSupport,
+            resolver: ingestBaseURLResolver,
+            isHeld: { [weak self] in
+                guard let self else { return true }
+                return self.pauseManager.isPaused || self.config.syncPaused
+            }
+        )
+        obsidianSource = source
+        let previousPause = pauseManager.onPauseIntake
+        pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.nudge() }
+        let previousResume = pauseManager.onResumeIntake
+        pauseManager.onResumeIntake = { [weak source] in previousResume?(); source?.nudge() }
+        Task { await source.start() }
     }
 
     private func configureDesktopActivity() {

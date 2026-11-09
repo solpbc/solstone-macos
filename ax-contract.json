@@ -330,6 +330,21 @@
       "settings.sources.browsers.waiting.discard",
       "settings.sources.browsers.waiting.failure",
       "settings.sources.microphoneCapture.enabled",
+      "settings.sources.obsidian.alreadySynced",
+      "settings.sources.obsidian.attention",
+      "settings.sources.obsidian.cancel",
+      "settings.sources.obsidian.chooseFolder",
+      "settings.sources.obsidian.continue",
+      "settings.sources.obsidian.foundVault",
+      "settings.sources.obsidian.lastChecked",
+      "settings.sources.obsidian.notOnDevice",
+      "settings.sources.obsidian.progress",
+      "settings.sources.obsidian.refusal",
+      "settings.sources.obsidian.state",
+      "settings.sources.obsidian.status",
+      "settings.sources.obsidian.tooLarge",
+      "settings.sources.obsidian.turnOff",
+      "settings.sources.obsidian.waiting",
       "settings.sources.screenCapture.enabled",
       "settings.sources.segments",
       "settings.sources.status",
@@ -547,6 +562,10 @@
     "settings.sidebar.tab.{tab}.state" : {
       "kind" : "enum",
       "vocabulary" : "SidebarBadgeState"
+    },
+    "settings.sources.obsidian.state" : {
+      "kind" : "enum",
+      "vocabulary" : "ObsidianSourceAXState"
     },
     "settings.status.health.summary.state" : {
       "kind" : "freeform"
@@ -774,6 +793,14 @@
       "protected_video",
       "on",
       "awaiting_mark_confirmation"
+    ],
+    "ObsidianSourceAXState" : [
+      "off",
+      "on",
+      "paused",
+      "confirming",
+      "waiting_for_journal_update",
+      "needs_attention"
     ],
     "PairingConnectionAXState" : [
       "disconnected",

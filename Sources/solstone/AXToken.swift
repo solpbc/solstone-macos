@@ -9,6 +9,14 @@
 import SwiftUI
 import SolstoneCore
 
+public enum ObsidianSourceAXState: String, CaseIterable, Sendable {
+    case off, on, paused, confirming
+    case waitingForJournalUpdate = "waiting_for_journal_update"
+    case needsAttention = "needs_attention"
+
+    public var axToken: String { rawValue }
+}
+
 internal enum SetupScreenFrameAXState: String, CaseIterable {
     case live
     case off

@@ -912,7 +912,7 @@ struct SettingsView: View {
                     Text(appState.captureSourcesStatusText)
                         .accessibilityIdentifier(AXID.Settings.Sources.sourceStatus)
 #endif
-                    if appState.config.selectedSources.isEmpty && !appState.config.isActivitySourceOn {
+                    if appState.config.selectedSources.isEmpty && !appState.config.isActivitySourceOn && appState.obsidianSource?.isOn != true {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
                         if sourcesLead != .draining && !appState.config.isBrowserIntakeEnabled {
                             Text(UICopy.SOURCES_NONE_REASON).foregroundStyle(.secondary)
@@ -938,6 +938,10 @@ struct SettingsView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 4)
+            }
+
+            if let obsidianSource = appState.obsidianSource {
+                GroupBox { ObsidianSourceSettingsView(source: obsidianSource) }
             }
         }
     }
@@ -3955,7 +3959,8 @@ struct SettingsView: View {
     /// True when the health card above has already claimed the source state as its verdict and
     /// this group would render an empty box under its own heading.
     private var statusGroupIsFullyClaimedByVerdict: Bool {
-        guard !appState.isRecording, !appState.isPaused, appState.config.selectedSources.isEmpty else {
+        guard !appState.isRecording, !appState.isPaused, appState.config.selectedSources.isEmpty,
+              appState.obsidianSource?.isOn != true else {
             return false
         }
         return observationRecoveryPresentation(
@@ -4053,6 +4058,7 @@ struct SettingsView: View {
             journalSlot: resolvedJournalName,
             now: Date(),
             selectedSources: appState.config.selectedSources,
+            otherSourceOn: appState.obsidianSource?.isOn == true,
             permittedSources: appState.capture.permittedSources,
             errorMessage: appState.errorMessage,
             setupVerdict: setupPresentation.verdict,
@@ -4077,6 +4083,7 @@ struct SettingsView: View {
             journalSlot: resolvedJournalName,
             now: Date(),
             selectedSources: appState.config.selectedSources,
+            otherSourceOn: appState.obsidianSource?.isOn == true,
             permittedSources: appState.capture.permittedSources,
             errorMessage: appState.errorMessage,
             setupVerdict: setupPresentation.verdict,

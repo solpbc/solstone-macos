@@ -69,6 +69,21 @@ enum AXContract {
         AXID.Settings.Sources.browserWaitingCancel,
         AXID.Settings.Sources.browserWaitingFailure,
         AXID.Settings.Sources.segments,
+        AXID.Settings.Sources.obsidianState,
+        AXID.Settings.Sources.obsidianStatus,
+        AXID.Settings.Sources.obsidianFoundVault,
+        AXID.Settings.Sources.obsidianChooseFolder,
+        AXID.Settings.Sources.obsidianRefusal,
+        AXID.Settings.Sources.obsidianAlreadySynced,
+        AXID.Settings.Sources.obsidianContinue,
+        AXID.Settings.Sources.obsidianCancel,
+        AXID.Settings.Sources.obsidianTurnOff,
+        AXID.Settings.Sources.obsidianAttention,
+        AXID.Settings.Sources.obsidianLastChecked,
+        AXID.Settings.Sources.obsidianWaiting,
+        AXID.Settings.Sources.obsidianProgress,
+        AXID.Settings.Sources.obsidianNotOnDevice,
+        AXID.Settings.Sources.obsidianTooLarge,
         AXID.Settings.Permissions.screenRecordingState,
         AXID.Settings.Permissions.screenRecordingEnable,
         AXID.Settings.Permissions.screenRecordingRestartNow,
@@ -428,7 +443,8 @@ enum AXContract {
             "PrivateWindowAccessibilityState": PrivateWindowAccessibilityState.allCases.map(\.axToken),
             "SetupPhase": SetupPhase.allCases.map(\.rawValue),
             "SetupScreenFrameAXState": SetupScreenFrameAXState.allCases.map(\.rawValue),
-            "PermissionSourceLiveAXState": PermissionSourceLiveAXState.allCases.map(\.axToken)
+            "PermissionSourceLiveAXState": PermissionSourceLiveAXState.allCases.map(\.axToken),
+            "ObsidianSourceAXState": ObsidianSourceAXState.allCases.map(\.axToken)
         ]
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         result["BrowserProfileAXState"] = BrowserProfileAXState.allCases.map(\.axToken)
@@ -451,6 +467,7 @@ enum AXContract {
             AXID.Menubar.journalState: .enum("MenubarStatusRowState"),
             AXID.Journal.Browser.navigationState: .enum("JournalWindowAXState"),
             "settings.sidebar.tab.{tab}.state": .enum("SidebarBadgeState"),
+            AXID.Settings.Sources.obsidianState: .enum("ObsidianSourceAXState"),
             AXID.Settings.Permissions.screenRecordingState: .enum("AXPermissionState"),
             AXID.Settings.Permissions.screenRecordingRestartPending: .freeform,
             AXID.Settings.Permissions.screenRecordingLiveState: .enum("PermissionSourceLiveAXState"),

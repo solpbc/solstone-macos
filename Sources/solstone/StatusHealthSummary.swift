@@ -83,6 +83,7 @@ extension StatusHealthSummary {
         journalSlot: String,
         now: Date,
         selectedSources: CaptureSources = .all,
+        otherSourceOn: Bool = false,
         permittedSources: CaptureSources = .all,
         errorMessage: String? = nil,
         setupVerdict: SetupGroupVerdict? = nil,
@@ -114,7 +115,7 @@ extension StatusHealthSummary {
         // state in which nothing reaches the journal at all, so it leads the card and says why.
         // It outranks the setup rollup below, which reads green precisely BECAUSE an unselected
         // source cannot fail a setup check.
-        if !isRecording, !isPaused, selectedSources.isEmpty {
+        if !isRecording, !isPaused, selectedSources.isEmpty, !otherSourceOn {
             return .init(
                 severity: .calm,
                 title: UICopy.SOURCES_NONE,
@@ -124,7 +125,7 @@ extension StatusHealthSummary {
             )
         }
 
-        if !isRecording, !isPaused, !startDeferredForProtectedVideo, selectedSources.intersection(permittedSources).isEmpty {
+        if !isRecording, !isPaused, !startDeferredForProtectedVideo, !otherSourceOn, selectedSources.intersection(permittedSources).isEmpty {
             return .init(
                 severity: .attention,
                 title: UICopy.SOURCES_NONE_GRANTED,

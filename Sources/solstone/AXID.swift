@@ -115,6 +115,21 @@ enum AXID {
             static let browserWaitingCancel = "settings.sources.browsers.waiting.cancel"
             static let browserWaitingFailure = "settings.sources.browsers.waiting.failure"
             static let segments = "settings.sources.segments"
+            static let obsidianState = "settings.sources.obsidian.state"
+            static let obsidianStatus = "settings.sources.obsidian.status"
+            static let obsidianFoundVault = "settings.sources.obsidian.foundVault"
+            static let obsidianChooseFolder = "settings.sources.obsidian.chooseFolder"
+            static let obsidianRefusal = "settings.sources.obsidian.refusal"
+            static let obsidianAlreadySynced = "settings.sources.obsidian.alreadySynced"
+            static let obsidianContinue = "settings.sources.obsidian.continue"
+            static let obsidianCancel = "settings.sources.obsidian.cancel"
+            static let obsidianTurnOff = "settings.sources.obsidian.turnOff"
+            static let obsidianAttention = "settings.sources.obsidian.attention"
+            static let obsidianLastChecked = "settings.sources.obsidian.lastChecked"
+            static let obsidianWaiting = "settings.sources.obsidian.waiting"
+            static let obsidianProgress = "settings.sources.obsidian.progress"
+            static let obsidianNotOnDevice = "settings.sources.obsidian.notOnDevice"
+            static let obsidianTooLarge = "settings.sources.obsidian.tooLarge"
         }
 
         enum Permissions {

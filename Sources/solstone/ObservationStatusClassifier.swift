@@ -336,6 +336,13 @@ extension AppState {
             if activity.failed { return .stopped }
             return activity.paused ? .paused : .observing
         }
+        if config.selectedSources.isEmpty, let obsidianSource, obsidianSource.isOn {
+            switch obsidianSource.phase {
+            case .paused: return .paused
+            case .needsAttention: return .stopped
+            case .off, .on, .waitingForJournalUpdate: return .observing
+            }
+        }
         let verdict = tunnelLifecycleOwner.connectionVerdict
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         let browserOnly = config.selectedSources.isEmpty && config.isBrowserIntakeEnabled

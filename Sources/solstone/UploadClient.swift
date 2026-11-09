@@ -6,6 +6,14 @@ import CryptoKit
 import os
 import SolstoneCore
 
+private struct JournalSystemStatus: Decodable {
+    let capabilities: [String]?
+}
+
+private struct ObsidianVaultList: Decodable {
+    let vaults: [ObsidianJournalVault]
+}
+
 /// File info returned by the server for a segment
 struct ServerFileInfo: Sendable {
     let name: String           // Simplified name, e.g., "audio.m4a"
@@ -228,6 +236,22 @@ public struct UploadClient: Sendable {
         }
     }
 
+    /// What this journal says it understands, from its status over the paired connection.
+    /// An older journal lists nothing, which is an answer rather than a failure.
+    func journalCapabilities(serverURL: String) async throws -> [String] {
+        try await get(serverURL: serverURL, path: IngestProtocolV3.systemStatusPath, as: JournalSystemStatus.self).capabilities ?? []
+    }
+
+    /// The Obsidian vaults this journal has from other devices. A journal without the
+    /// route answers 404, which reads as an empty list.
+    func obsidianVaults(serverURL: String) async throws -> [ObsidianJournalVault] {
+        do {
+            return try await get(serverURL: serverURL, path: IngestProtocolV3.obsidianVaultsPath, as: ObsidianVaultList.self).vaults
+        } catch UploadError.serverError(let serverError) where serverError.statusCode == 404 {
+            return []
+        }
+    }
+
     // MARK: - Upload
 
     /// Prepares the multipart upload request and staging file once.
@@ -254,6 +278,17 @@ public struct UploadClient: Sendable {
             boundary: boundary,
             bodyURL: bodyURL
         )
+    }
+
+    /// Uploads a staged note file. Its answer is read by the Obsidian answers table alone.
+    func uploadObsidianStaged(prepared: PreparedIngestV3Upload) async -> ObsidianSendOutcome {
+        do {
+            let (data, response) = try await session.upload(for: prepared.request, fromFile: prepared.bodyURL)
+            guard let httpResponse = response as? HTTPURLResponse else { return .retry }
+            return ObsidianDelivery.classify(statusCode: httpResponse.statusCode, body: data)
+        } catch {
+            return .retry
+        }
     }
 
     /// Uploads an already staged body file and validates the complete response.

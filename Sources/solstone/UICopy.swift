@@ -33,6 +33,60 @@ public enum UICopy {
     }
 
     public static let SOURCES_TITLE = "sources"
+    enum Obsidian {
+        static let TITLE = "Obsidian"
+        static let EXPLAINER = "the solstone app takes in the notes in one vault on this mac. all of them go into your journal, then each one as it changes. your vault stays as it is."
+        static let FOUND_VAULTS = "vaults on this mac"
+        static let CHOOSE_FOLDER = "choose a folder…"
+        static let PANEL_PROMPT = "choose"
+        static let PANEL_MESSAGE = "choose your Obsidian vault"
+        static let TURN_OFF_HELP = "turning this off removes nothing from your journal."
+        static let TURN_OFF = "turn off"
+        static let CONTINUE = "continue"
+        static let CANCEL = "cancel"
+        static let REFUSED_NOT_A_VAULT = "that folder isn't an Obsidian vault, so nothing was sent."
+        static let REFUSED_UNUSABLE_NAME = "this folder's name can't be used. rename it, then try again."
+        static let REFUSED_UNREADABLE = "the solstone app couldn't read that folder. check its access in System Settings, under Privacy & Security."
+
+        static func stateLine(_ phase: ObsidianVaultSource.Phase, vaultName: String?) -> String {
+            switch phase {
+            case .off: return TITLE
+            case .on:
+                if let vaultName { return "Obsidian is on · \(vaultName)" }
+                return "Obsidian is on"
+            case .paused: return "Obsidian is paused. your notes wait on this mac."
+            case .waitingForJournalUpdate: return "waiting for a journal update. your notes wait on this mac."
+            case .needsAttention: return "Obsidian needs attention"
+            }
+        }
+
+        static func attentionLine(vaultUnreadable: Bool, partUnreadable: Bool) -> String {
+            if vaultUnreadable {
+                return "the solstone app can't read this vault. check that the folder is still there, and its access in System Settings, under Privacy & Security."
+            }
+            if partUnreadable {
+                return "part of this vault can't be read. the rest of the vault keeps going into your journal."
+            }
+            return "some notes couldn't go into your journal. the solstone app tries them again the next time it restarts."
+        }
+
+        static func lastChecked(_ time: String) -> String { "last checked \(time)" }
+
+        static func waiting(_ count: Int) -> String { "\(count) waiting to sync" }
+
+        static func progress(sent: Int, found: Int) -> String { "\(sent) of \(found) notes in your journal" }
+
+        static func notOnThisMac(_ count: Int) -> String { "\(count) not on this mac yet" }
+
+        static func tooLarge(_ count: Int) -> String { "\(count) over 4 MB, not sent" }
+
+        static func alreadySynced(vault: String, device: String?, date: String?) -> String {
+            let from = device.map { "from \($0)" } ?? "from another device"
+            let when = date.map { ", last updated \($0)" } ?? ""
+            return "your journal already has a vault named \(vault) \(from)\(when). if you continue, changes from both devices go into your journal."
+        }
+    }
+
     // Audio health
     public static let AUDIO_SOURCE_SYSTEM = "system audio"
     public static let AUDIO_SOURCE_MICROPHONE = "a microphone"
