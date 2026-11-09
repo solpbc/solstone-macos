@@ -125,7 +125,9 @@ struct IngestV3UploadRequestBuilder {
         for fileURL in selectedFiles {
             let filename = fileURL.lastPathComponent
             let mimeType: String
-            if source == "browser" && filename == "browser_pages.jsonl" {
+            if source == TerminalUploadPlanner.source && fileURL.pathExtension == "jsonl" {
+                mimeType = "application/jsonl"
+            } else if source == "browser" && filename == "browser_pages.jsonl" {
                 mimeType = "application/jsonl"
             } else if source == ObsidianWire.source {
                 mimeType = "application/jsonl"

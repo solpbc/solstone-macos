@@ -153,7 +153,7 @@ public struct AppConfig: Sendable, Equatable {
     // MARK: - UserDefaults Keys
 
     public static let knownKeys: [String] = [
-        "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled", "isBrowserIntakeEnabled",
+        "isScreenCaptureEnabled", "isMicrophoneCaptureEnabled", "isBrowserIntakeEnabled", "isTerminalEnabled",
         "isActivityEnabled", "activityTitlesEnabled", "activityURLsEnabled", "activityAccessibilityEnabled",
         "activityContinuesThroughPause",
         "microphonePriority", "excludedApps", "excludedTitlePatterns", "excludedSites", "excludedSitesState",
@@ -174,6 +174,7 @@ public struct AppConfig: Sendable, Equatable {
         static let isScreenCaptureEnabled = "isScreenCaptureEnabled"
         static let isMicrophoneCaptureEnabled = "isMicrophoneCaptureEnabled"
         static let isBrowserIntakeEnabled = "isBrowserIntakeEnabled"
+        static let isTerminalEnabled = "isTerminalEnabled"
         static let microphonePriority = "microphonePriority"
         static let excludedApps = "excludedApps"
         static let excludedTitlePatterns = "excludedTitlePatterns"
@@ -267,6 +268,13 @@ public struct AppConfig: Sendable, Equatable {
 
     /// When true, microphone capture is enabled by the owner
     public var isMicrophoneCaptureEnabled: Bool
+
+    private var isTerminalChoice: Bool?
+    /// When true, the owner's tmux sessions are taken in. Off until they turn it on.
+    public var isTerminalEnabled: Bool {
+        get { isTerminalChoice ?? false }
+        set { isTerminalChoice = newValue }
+    }
 
     private var isBrowserIntakeChoice: Bool?
     /// When true, browser-host intake is enabled for the owner.
@@ -416,6 +424,7 @@ public struct AppConfig: Sendable, Equatable {
         isScreenCaptureEnabled: Bool = true,
         isMicrophoneCaptureEnabled: Bool = true,
         isBrowserIntakeEnabled: Bool? = nil,
+        isTerminalEnabled: Bool? = nil,
         microphonePriority: [MicrophoneEntry] = [],
         excludedApps: [AppEntry] = [],
         excludedTitlePatterns: [String] = [],
@@ -441,6 +450,7 @@ public struct AppConfig: Sendable, Equatable {
         self.isScreenCaptureEnabled = isScreenCaptureEnabled
         self.isMicrophoneCaptureEnabled = isMicrophoneCaptureEnabled
         self.isBrowserIntakeChoice = isBrowserIntakeEnabled
+        self.isTerminalChoice = isTerminalEnabled
         self.microphonePriority = microphonePriority
         self.excludedApps = excludedApps
         self.excludedTitlePatterns = excludedTitlePatterns
@@ -552,6 +562,7 @@ public struct AppConfig: Sendable, Equatable {
             isScreenCaptureEnabled: defaults.object(forKey: Keys.isScreenCaptureEnabled) as? Bool ?? true,
             isMicrophoneCaptureEnabled: defaults.object(forKey: Keys.isMicrophoneCaptureEnabled) as? Bool ?? true,
             isBrowserIntakeEnabled: defaults.object(forKey: Keys.isBrowserIntakeEnabled) as? Bool,
+            isTerminalEnabled: defaults.object(forKey: Keys.isTerminalEnabled) as? Bool,
             microphonePriority: microphonePriority,
             excludedApps: excludedApps,
             excludedTitlePatterns: defaults.stringArray(forKey: Keys.excludedTitlePatterns) ?? [],
@@ -740,6 +751,7 @@ public struct AppConfig: Sendable, Equatable {
         defaults.set(isScreenCaptureEnabled, forKey: Keys.isScreenCaptureEnabled)
         defaults.set(isMicrophoneCaptureEnabled, forKey: Keys.isMicrophoneCaptureEnabled)
         saveScalarChoice(isBrowserIntakeChoice, forKey: Keys.isBrowserIntakeEnabled, in: defaults)
+        saveScalarChoice(isTerminalChoice, forKey: Keys.isTerminalEnabled, in: defaults)
 
         // Save complex types as JSON data
         if let data = try? JSONEncoder().encode(microphonePriority) {

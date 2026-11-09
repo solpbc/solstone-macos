@@ -31,6 +31,7 @@ public enum SettingsReloadSemantics {
         "isScreenCaptureEnabled": .live,
         "isMicrophoneCaptureEnabled": .live,
         "isBrowserIntakeEnabled": .live,
+        "isTerminalEnabled": .live,
         "isActivityEnabled": .live,
         "activityTitlesEnabled": .live,
         "activityURLsEnabled": .live,

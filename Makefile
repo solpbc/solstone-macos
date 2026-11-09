@@ -353,14 +353,33 @@ bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 	@products=$$(swift build -c $(BUNDLE_SWIFT_CONFIGURATION) --arch arm64 --arch x86_64 $(SWIFT_BUILD_FLAGS) --show-bin-path) && \
 		$(MAKE) --no-print-directory assemble-dist-bundle SWIFT_PRODUCTS_DIR="$$products"
 
+# The terminal helper is built from a pinned revision of the shared engine, with that
+# revision's own lockfile.
+TERMINAL_CRATE_REV := ee568cee3e8f051ddff0c79243417a189d9706b0
+TERMINAL_RUST_TOOLCHAIN := 1.97.1
+TERMINAL_HELPER_DIR := .build/terminal-helper
+
+.PHONY: terminal-helper
+terminal-helper:
+	@rustup target add --toolchain $(TERMINAL_RUST_TOOLCHAIN) aarch64-apple-darwin x86_64-apple-darwin
+	@for target in aarch64-apple-darwin x86_64-apple-darwin; do \
+		RUSTUP_TOOLCHAIN=$(TERMINAL_RUST_TOOLCHAIN) SOLSTONE_TERMINAL_SOURCE_COMMIT=$(TERMINAL_CRATE_REV) \
+			cargo install --locked --force --git https://github.com/solpbc/solstone-linux --rev $(TERMINAL_CRATE_REV) \
+			--bin solstone-terminal --target $$target --root $(TERMINAL_HELPER_DIR)/$$target solstone-terminal || exit 1; \
+	done
+	@lipo -create -output $(TERMINAL_HELPER_DIR)/solstone-terminal \
+		$(TERMINAL_HELPER_DIR)/aarch64-apple-darwin/bin/solstone-terminal \
+		$(TERMINAL_HELPER_DIR)/x86_64-apple-darwin/bin/solstone-terminal
+
 .PHONY: assemble-dist-bundle
-assemble-dist-bundle:
+assemble-dist-bundle: terminal-helper
 	@test -n "$(SWIFT_PRODUCTS_DIR)" && test -d "$(SWIFT_PRODUCTS_DIR)" || { echo "error: Swift build products directory is missing" >&2; exit 1; }
 	@echo "Creating distribution app bundle..."
 	@rm -rf solstone.app
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
 	@cp "$(SWIFT_PRODUCTS_DIR)/solstone" solstone.app/Contents/MacOS/
 	@cp "$(SWIFT_PRODUCTS_DIR)/solstone-watchdog" solstone.app/Contents/MacOS/
+	@cp "$(TERMINAL_HELPER_DIR)/solstone-terminal" solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@# Embedded Developer ID provisioning profile authorizes the keychain-access-groups
 	@# entitlement (Data Protection keychain for the SPL pairing bundle). Must be in place
@@ -403,6 +422,10 @@ assemble-dist-bundle:
 		--identifier app.solstone.observer.watchdog \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
 		solstone.app/Contents/MacOS/solstone-watchdog
+	@codesign --force --options runtime --timestamp \
+		--identifier app.solstone.observer.terminal \
+		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
+		solstone.app/Contents/MacOS/solstone-terminal
 ifeq ($(BROWSER_PREVIEW),1)
 	@cp "$(SWIFT_PRODUCTS_DIR)/solstone-browser-host" solstone.app/Contents/MacOS/
 	@mkdir -p solstone.app/Contents/Resources/vendor/contracts/native-browser/registration solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src
@@ -435,6 +458,18 @@ endif
 	@codesign --verify --strict --deep --verbose=2 solstone.app
 	@test -f solstone.app/Contents/embedded.provisionprofile || { echo "error: embedded.provisionprofile missing from bundle"; exit 1; }
 	@codesign -d --entitlements - --xml solstone.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q '7QCG8V4M6H.app.solstone.observer.spl' || { echo "error: keychain-access-group entitlement missing from signed app (DP keychain would -34018)"; exit 1; }
+	@codesign --verify --strict --verbose=2 solstone.app/Contents/MacOS/solstone-terminal || \
+		{ echo "terminal helper signature invalid"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/MacOS/solstone-terminal 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || \
+		{ echo "terminal helper missing Team ID 7QCG8V4M6H"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/MacOS/solstone-terminal 2>&1 | grep -q 'flags=0x10000(runtime)' || \
+		{ echo "terminal helper missing hardened runtime flag"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/MacOS/solstone-terminal 2>&1 | grep -q 'Identifier=app.solstone.observer.terminal' || \
+		{ echo "terminal helper identifier mismatch"; exit 1; }
+	@lipo -archs solstone.app/Contents/MacOS/solstone-terminal | grep -q 'arm64' || \
+		{ echo "terminal helper missing arm64 slice"; exit 1; }
+	@lipo -archs solstone.app/Contents/MacOS/solstone-terminal | grep -q 'x86_64' || \
+		{ echo "terminal helper missing x86_64 slice"; exit 1; }
 	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
 		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@$(MAKE) --no-print-directory check-app-notices
@@ -448,7 +483,7 @@ bundle-dist-debug:
 
 # What every solstone.app carries, because an owner can open both in Finder. They're copied before
 # the app is signed, so they're sealed into its signature.
-APP_NOTICE_FILES := THIRD_PARTY_NOTICES.md LICENSE
+APP_NOTICE_FILES := THIRD_PARTY_NOTICES.md RUST_DEPENDENCY_NOTICES.txt LICENSE
 NOTICES_APP ?= solstone.app
 
 check-app-notices:
@@ -470,6 +505,7 @@ assemble-adhoc-bundle:
 	@mkdir -p solstone.app/Contents/MacOS solstone.app/Contents/Resources solstone.app/Contents/Frameworks
 	@cp "$(SWIFT_PRODUCTS_DIR)/solstone" solstone.app/Contents/MacOS/
 	@cp "$(SWIFT_PRODUCTS_DIR)/solstone-watchdog" solstone.app/Contents/MacOS/
+	@cp "$(TERMINAL_HELPER_DIR)/solstone-terminal" solstone.app/Contents/MacOS/
 	@cp Sources/solstone/Info.plist solstone.app/Contents/
 	@cp Sources/solstone/Resources/AppIcon.icns solstone.app/Contents/Resources/
 	@cp $(APP_NOTICE_FILES) solstone.app/Contents/Resources/
@@ -508,6 +544,10 @@ assemble-adhoc-bundle:
 		--identifier app.solstone.observer.watchdog \
 		--sign "$(ADHOC_SIGN_ID)" \
 		solstone.app/Contents/MacOS/solstone-watchdog
+	@codesign --force --options runtime --timestamp=none \
+		--identifier app.solstone.observer.terminal \
+		--sign "$(ADHOC_SIGN_ID)" \
+		solstone.app/Contents/MacOS/solstone-terminal
 ifeq ($(BROWSER_PREVIEW),1)
 	@cp "$(SWIFT_PRODUCTS_DIR)/solstone-browser-host" solstone.app/Contents/MacOS/
 	@mkdir -p solstone.app/Contents/Resources/vendor/contracts/native-browser/registration solstone.app/Contents/Resources/vendor/crates/native-browser-frame/src

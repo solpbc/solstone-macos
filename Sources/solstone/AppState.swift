@@ -59,6 +59,9 @@ public final class AppState {
     public let storageManager: StorageManager
     var activitySource: DesktopActivitySource?
     var obsidianSource: ObsidianVaultSource?
+    var terminalSource: TerminalSource?
+    /// Set when the owner tried to turn terminal on and the old app is still here.
+    var terminalOldAppRefusal = false
     public let audioDeviceMonitor: AudioDeviceMonitor
     public var captureManager: CaptureManager { capture.captureManager }
     public private(set) var uploadCoordinator: UploadCoordinator!
@@ -722,6 +725,7 @@ public final class AppState {
 #endif
         shortcutController.unregister()
         obsidianSource?.shutdown()
+        await terminalSource?.shutdown()
         await stopRecording(reason: .quit)
         await drainRemixQueueForTermination()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
@@ -739,6 +743,7 @@ public final class AppState {
         guard appQuitCoordinator.preparationGeneration == generation else { return }
 #endif
         obsidianSource?.shutdown()
+        await terminalSource?.shutdown()
         await stopRecording(reason: .update)
         await drainRemixQueueForTermination()
     }
@@ -922,6 +927,7 @@ public final class AppState {
 #endif
         silenceMusicHolder.value = newConfig.silenceMusic
         if oldConfig.syncPaused != newConfig.syncPaused { obsidianSource?.nudge() }
+        if oldConfig.isTerminalEnabled != newConfig.isTerminalEnabled { terminalSource?.reconcile() }
 
         let modeSelectionChanged = (newConfig.disabledMicrophoneUIDs != oldDisabled ||
                                     newConfig.enabledMicrophoneUIDs != oldEnabled)
@@ -1115,6 +1121,37 @@ public final class AppState {
                 self.refreshBrowserPendingDiscard()
             }
         }
+    }
+
+    /// Turning terminal on while the old app is still installed changes nothing.
+    public func setTerminalEnabled(_ enabled: Bool) {
+        terminalOldAppRefusal = false
+        guard enabled else {
+            applyTerminalEnabled(false)
+            return
+        }
+        Task { [weak self] in
+            let installed = await Task.detached { TerminalLegacyInstall.isPresent() }.value
+            guard let self else { return }
+            if installed {
+                self.terminalOldAppRefusal = true
+            } else {
+                self.applyTerminalEnabled(true)
+            }
+        }
+    }
+
+    private func applyTerminalEnabled(_ enabled: Bool) {
+        var newConfig = config
+        newConfig.isTerminalEnabled = enabled
+        updateConfig(newConfig)
+    }
+
+    /// One line on what terminal is doing, when it has something to say.
+    var terminalStatusLine: String? {
+        if terminalOldAppRefusal { return UICopy.Terminal.oldAppInstalled }
+        guard config.isTerminalEnabled, let terminalSource else { return nil }
+        return UICopy.Terminal.statusLine(terminalSource.state)
     }
 
     public func setBrowserIntakeEnabled(_ enabled: Bool) {
@@ -2411,6 +2448,7 @@ public final class AppState {
         configureScreenPreviewInvalidation()
         configureDesktopActivity()
         configureObsidianSource()
+        configureTerminalSource()
         syncMicrophonePriorityList()
 
         if automaticObservationPipelineEnabled {
@@ -2914,6 +2952,49 @@ public final class AppState {
         let previousResume = pauseManager.onResumeIntake
         pauseManager.onResumeIntake = { [weak source] in previousResume?(); source?.nudge() }
         Task { await source.start() }
+    }
+
+    private func configureTerminalSource() {
+        guard automaticObservationPipelineEnabled,
+              let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let spool = TerminalSpool.rootURL(appSupport: appSupport)
+        let resolver = ingestBaseURLResolver
+        let planner = TerminalUploadPlanner(
+            root: spool,
+            transport: UploadClient(),
+            serverURL: {
+                guard case .url(let url) = await resolver.resolve() else { return nil }
+                return url
+            },
+            isHeld: { [weak self] in
+                await MainActor.run {
+                    guard let self else { return true }
+                    return self.pauseManager.isPaused || self.config.syncPaused
+                }
+            },
+            activity: { [weak self] working in
+                await MainActor.run { self?.terminalSource?.setUploading(working) }
+            },
+            reportDelivery: { [weak self] in
+                await MainActor.run {
+                    guard let self, case .identified(let fingerprint) = self.currentJournalIdentity() else { return }
+                    self.uploadCoordinator.noteBrowserDelivery(captured: fingerprint)
+                }
+            }
+        )
+        let source = TerminalSource(
+            helperURL: Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/solstone-terminal"),
+            spool: spool,
+            planner: planner,
+            isEnabled: { [weak self] in self?.config.isTerminalEnabled ?? false },
+            isPaused: { [weak self] in self?.pauseManager.isPaused ?? true }
+        )
+        terminalSource = source
+        let previousPause = pauseManager.onPauseIntake
+        pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.reconcile() }
+        let previousResume = pauseManager.onResumeIntake
+        pauseManager.onResumeIntake = { [weak source] in previousResume?(); source?.reconcile() }
+        source.start()
     }
 
     private func configureDesktopActivity() {

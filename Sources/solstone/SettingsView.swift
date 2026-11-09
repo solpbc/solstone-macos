@@ -881,6 +881,23 @@ struct SettingsView: View {
                         }
                     }
 
+                    Toggle(isOn: Binding(
+                        get: { appState.config.isTerminalEnabled },
+                        set: { appState.setTerminalEnabled($0) }
+                    )) {
+                        Text(UICopy.Terminal.sourceTitle)
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Sources.terminalEnabled)
+                    Text(UICopy.Terminal.sourceHelp)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let line = appState.terminalStatusLine {
+                        Text(line)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier(AXID.Settings.Sources.terminalStatus)
+                    }
+
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
                     Toggle(isOn: Binding(
                         get: { appState.config.isBrowserIntakeEnabled },

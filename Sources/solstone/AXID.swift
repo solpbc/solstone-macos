@@ -5,6 +5,7 @@ import Foundation
 
 enum AXID {
     enum Menubar {
+        static let terminal = "menubar.terminal"
         static let audioHealthNote = "menubar.audio.health"
         static let statusIconState = "menubar.status.icon.state"
         static let statusIconOverlayState = "menubar.status.icon.overlay.state"
@@ -96,6 +97,8 @@ enum AXID {
             static let screenCaptureEnabled = "settings.sources.screenCapture.enabled"
             static let microphoneCaptureEnabled = "settings.sources.microphoneCapture.enabled"
             static let browserIntakeEnabled = "settings.sources.browserIntake.enabled"
+            static let terminalEnabled = "settings.sources.terminal.enabled"
+            static let terminalStatus = "settings.sources.terminal.status"
             static let activityAccessibility = "settings.sources.activity.accessibility"
             static let activityAccessibilityOff = "settings.sources.activity.accessibility.off"
             static let activityAccessibilityOpenSettings = "settings.sources.activity.accessibility.openSettings"

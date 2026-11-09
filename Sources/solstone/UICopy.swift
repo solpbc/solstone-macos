@@ -33,6 +33,24 @@ public enum UICopy {
     }
 
     public static let SOURCES_TITLE = "sources"
+    enum Terminal {
+        static let sourceTitle = "terminal"
+        static let sourceHelp = "takes in your tmux sessions, and all of it goes into your journal. needs tmux on this Mac, and works in any terminal session, including over SSH."
+        static let oldAppInstalled = "solstone for tmux is still installed on this Mac, so terminal stays off for now."
+
+        @MainActor
+        static func statusLine(_ state: TerminalSource.State) -> String? {
+            switch state {
+            case .off: return nil
+            case .running: return "terminal: running"
+            case .paused: return "terminal: paused"
+            case .tmuxNotFound: return "terminal: tmux isn't installed"
+            case .oldAppInstalled: return "terminal: waiting, solstone for tmux is still installed"
+            case .restarting: return "terminal: stopped by an error, restarting"
+            }
+        }
+    }
+
     enum Obsidian {
         static let TITLE = "Obsidian"
         static let EXPLAINER = "the solstone app takes in the notes in one vault on this mac. all of them go into your journal, then each one as it changes. your vault stays as it is."

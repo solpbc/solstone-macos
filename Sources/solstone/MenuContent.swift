@@ -68,6 +68,9 @@ struct MenuContent: View {
             }
             .accessibilityIdentifier(AXID.Menubar.unknownJournal(notice.site.axKey))
         }
+        if let line = appState.terminalStatusLine {
+            Text(line).accessibilityIdentifier(AXID.Menubar.terminal)
+        }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         Button(menubarBrowserRowTitle(snapshot: appState.browserHostSnapshot.value, now: Date())) {
             openSettings(tab: "sources")

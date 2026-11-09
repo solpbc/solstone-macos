@@ -6,6 +6,13 @@ note: this file ships inside solstone.app. its source repository, github.com/sol
 
 ---
 
+## solstone-terminal helper (Rust crates)
+
+- project: the terminal helper bundled at `Contents/MacOS/solstone-terminal`, built from solpbc/solstone-linux
+- license: the license texts for its Rust crate dependencies are in `RUST_DEPENDENCY_NOTICES.txt`, which ships beside this file
+
+---
+
 ## Sparkle
 
 - project: sparkle-project/Sparkle
