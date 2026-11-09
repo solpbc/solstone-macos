@@ -607,6 +607,14 @@ public final class AppState {
             return activitySource.statusText
         }
         if let obsidianOnlyStatusText { return obsidianOnlyStatusText }
+        if config.selectedSources.isEmpty, config.isTerminalEnabled, let terminalSource {
+            switch terminalSource.state {
+            case .running, .paused, .restarting:
+                return UICopy.Terminal.statusLine(terminalSource.state) ?? UICopy.SOURCES_STARTING
+            case .off, .tmuxNotFound, .oldAppInstalled:
+                break
+            }
+        }
         if isRecording || isPaused {
             guard !captureManager.activeSources.isEmpty else { return UICopy.SOURCES_UNAVAILABLE }
             return UICopy.sourceStatus(captureManager.activeSources, isPaused: isPaused)

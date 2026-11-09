@@ -9,6 +9,34 @@ private let statusSummaryServerURL = "https://x.example:5015"
 
 @Suite("StatusHealthSummary")
 struct StatusHealthSummaryTests {
+    @MainActor
+    @Test func runningTerminalAloneKeepsTheMenuAndSourceSummaryActive() async throws {
+        var config = AppConfig(isScreenCaptureEnabled: false, isMicrophoneCaptureEnabled: false)
+        config.isTerminalEnabled = true
+        let state = AppState.forSnapshot(config: config)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let helper = root.appendingPathComponent("helper")
+        try Data("#!/bin/sh\nread line\nexit 0\n".utf8).write(to: helper)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+        let spool = root.appendingPathComponent("spool")
+        let planner = TerminalUploadPlanner(root: spool, transport: UploadClient(), serverURL: { nil }, isHeld: { true })
+        let source = TerminalSource(helperURL: helper, spool: spool, planner: planner,
+            isEnabled: { true }, isPaused: { false }, oldAppInstalled: { false }, locateTmux: { "/bin/true" })
+        state.terminalSource = source
+        source.reconcile()
+        for _ in 0..<40 {
+            if source.state == .running { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(source.state == .running)
+        #expect(state.nonMediaIntakeState == .active)
+        #expect(state.observationRowState == .observing)
+        #expect(state.captureSourcesStatusText == UICopy.Terminal.statusLine(.running))
+        await source.shutdown()
+    }
+
     @Test func nonMediaActivityWinsOverInactiveAndPausedSources() {
         #expect(NonMediaIntakeState(terminal: .running) == .active)
         #expect(NonMediaIntakeState(terminal: .paused) == .paused)

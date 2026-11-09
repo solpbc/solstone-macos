@@ -940,7 +940,7 @@ struct SettingsView: View {
                     Text(appState.captureSourcesStatusText)
                         .accessibilityIdentifier(AXID.Settings.Sources.sourceStatus)
 #endif
-                    if appState.config.selectedSources.isEmpty && !appState.config.isActivitySourceOn && appState.obsidianSource?.isOn != true {
+                    if appState.config.selectedSources.isEmpty && !appState.config.isActivitySourceOn && appState.obsidianSource?.isOn != true && !appState.config.isTerminalEnabled {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
                         if sourcesLead != .draining && !appState.config.isBrowserIntakeEnabled {
                             Text(UICopy.SOURCES_NONE_REASON).foregroundStyle(.secondary)
