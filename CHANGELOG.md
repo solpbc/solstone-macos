@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.63] - 2026-11-08
+
 ### Added
 
 - terminal is now a source. turn it on in settings › sources and the app takes in your tmux sessions, and all of it goes into your journal. it needs tmux on this mac, and it works in any terminal session, including when you SSH into this mac. pausing or quitting the app stops it.
@@ -15,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- once macOS allows solstone to use Accessibility (called Device Control and Data Access on macOS 27), activity uses it for browser addresses, and for window titles when screen recording is unavailable. they go into your journal, with no separate step. if macOS already allows it, this starts with this update. solstone doesn't ask for it during setup, and you can turn it off under activity in settings › sources.
+- once macOS allows solstone to use Accessibility (called Device Control and Data Access on macOS 27), activity uses it for browser addresses, and for window titles when screen recording is unavailable. they go into your journal, with no separate step. if macOS already allows it and you haven't turned it off, this starts with this update. solstone doesn't ask for it during setup, and you can turn it off under activity in settings › sources.
 - the solstone extension in Safari now takes in the websites Safari allows it on, except the ones you leave out, and all of it goes into your journal. if you added websites in the extension before this update, only those go in until you choose otherwise.
 
 ## [2.0.62] - 2026-11-07
