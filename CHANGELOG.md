@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- when Safari allows the solstone extension on every website, the extension's settings now have a field to leave a site out by typing its address, so it stays out before you ever open it. they also say that Safari's own settings don't show the sites you leave out. thanks @dvanduzer.
+
 ### Fixed
 
 - a terminal segment from eight or more tmux sessions now goes into your journal instead of waiting on your mac. your journal needs its matching update too.

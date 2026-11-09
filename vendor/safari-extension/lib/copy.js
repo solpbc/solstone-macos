@@ -176,6 +176,12 @@ no analytics. no telemetry. no phone home. nobody counted.`;
   const LEAVE_OUT_HELP = "leaving out bank.com leaves out all bank.com sites and pages, like www.bank.com and login.bank.com, even inside another page. other sites shown inside its pages are still shared, unless you leave them out too.";
   const ADD_HELP = "adding bank.com shares every bank.com site and page, like www.bank.com and login.bank.com. to share only part, add that address, like mail.google.com.";
   const FIELD_ERROR = "enter a website address, like mail.google.com.";
+  const LEAVE_OUT_FIELD_ERROR = "enter a website address, like bank.com.";
+
+  // Leaving a site out is solstone's list, not the browser's, so the browser's own settings can't show it.
+  function leftOutListNote(brand) {
+    return `${browserName(brand)}'s own settings don't show the sites you leave out. they're on solstone's own list.`;
+  }
 
   function addHelp(brand) {
     if (MOBILE) return "adding a site covers every site and page under it.";
@@ -430,6 +436,8 @@ no analytics. no telemetry. no phone home. nobody counted.`;
     STEP2_PENDING,
     ADD_HELP,
     FIELD_ERROR,
+    LEAVE_OUT_FIELD_ERROR,
+    leftOutListNote,
     ADD_DENIED,
     addBlockedBelow,
     ADD_NOT_NOW,

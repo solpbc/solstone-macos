@@ -52,6 +52,8 @@
   let latest = null;
   let link = null;
   let linkTimer = null;
+  // With every site on there is nothing to add, so the site field leaves a site out instead.
+  let fieldLeavesOut = false;
 
   function announce(message, tone = "") {
     const region = $("actionMessage");
@@ -105,6 +107,29 @@
     if (!error) return;
     error.textContent = message || "";
     error.hidden = !message;
+  }
+
+  // Typing a site to leave out keeps it out before it's ever opened.
+  async function leaveOutFromInput(inputElement) {
+    clearAnnouncement();
+    fieldError("");
+    const raw = inputElement ? inputElement.value.trim() : "";
+    // Leaving out is whole-site, so a typed path names its site.
+    const host = raw ? Hosts.excludedHostname(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`) : null;
+    if (!host) {
+      if (raw) { fieldError(Copy.LEAVE_OUT_FIELD_ERROR); focus(inputElement); }
+      return;
+    }
+    const result = await cmd({ cmd: "setLeftOut", host, out: true });
+    if (result?.error || result?.ok === false) {
+      showActionError(result?.error || "storage_error");
+      focus(inputElement);
+      return;
+    }
+    if (inputElement) inputElement.value = "";
+    await refresh();
+    announce(Copy.leftOutAnnouncement(host), "ok");
+    focus(inputElement);
   }
 
   async function addSiteFromInput(inputElement) {
@@ -869,9 +894,11 @@
       // With every site on there is nothing to add, so the form and its help step aside.
       $("siteModeHelp").hidden = everySite && state?.permissionsUnavailable !== true;
     }
-    if ($("addForm")) $("addForm").hidden = everySite;
-    if ($("siteInputLabel")) $("siteInputLabel").textContent = "add a site";
-    if ($("addBtn")) $("addBtn").textContent = "add this site";
+    fieldLeavesOut = everySite;
+    if ($("addForm")) $("addForm").hidden = false;
+    if ($("siteInputLabel")) $("siteInputLabel").textContent = fieldLeavesOut ? "leave out a site" : "add a site";
+    if ($("addBtn")) $("addBtn").textContent = fieldLeavesOut ? "leave out" : "add this site";
+    if ($("newHost")) $("newHost").placeholder = fieldLeavesOut ? "bank.com" : (Copy.MOBILE ? "eff.org" : "mail.google.com");
 
     let visibleSites = [];
     if (state?.fence) {
@@ -898,6 +925,10 @@
       const localEx = state?.excludedHosts || [];
       const appEx = state?.appLeftOut || [];
       const effectiveList = Array.from(new Set([...localEx, ...appEx]));
+      if ($("leftOutNote")) {
+        $("leftOutNote").textContent = Copy.leftOutListNote(state?.brand);
+        $("leftOutNote").hidden = !everySite && effectiveList.length === 0;
+      }
       if (effectiveList.length === 0) {
         leftOutDetails.hidden = true;
       } else {
@@ -1227,7 +1258,8 @@
   if ($("addForm")) {
     $("addForm").addEventListener("submit", async (event) => {
       event.preventDefault();
-      await addSiteFromInput($("newHost"));
+      if (fieldLeavesOut) await leaveOutFromInput($("newHost"));
+      else await addSiteFromInput($("newHost"));
     });
   }
 
@@ -1238,7 +1270,6 @@
   if (Copy.MOBILE) {
     document.documentElement.classList.add("mobile");
     document.querySelector("#disclosureCard summary").textContent = "what it takes in";
-    $("newHost").placeholder = "eff.org";
     $("pauseCard").hidden = false;
     $("pauseSwitch").addEventListener("change", async () => {
       await cmd({ cmd: "setPaused", paused: $("pauseSwitch").checked });
