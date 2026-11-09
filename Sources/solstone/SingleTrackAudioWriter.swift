@@ -473,8 +473,9 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
                     recordFailure(stage: "timeline", error: nil, dropped: numSamples)
                     lock.unlock(); return
                 }
-                // Trimmed frames repeat time already written; they are not new audio.
-                statistics.receivedFrames -= overlap
+                // Trimmed frames repeat time already written: received, but neither accepted
+                // nor dropped. They were counted, and may have been reported, before the
+                // overlap was known; a received count that went back down could never be complete.
                 sampleBuffer = trimmed; numSamples -= overlap; duration = sampleDuration(trimmed)
             }
             currentTime = priorEnd; gap = 0

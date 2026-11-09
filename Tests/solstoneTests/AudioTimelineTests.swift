@@ -392,9 +392,40 @@ struct AudioTimelineTests {
         _ = await writer.finish()
         let statistics = writer.statisticsSnapshot
         #expect(statistics.failures.isEmpty)
-        #expect(statistics.receivedFrames == 12_000 && statistics.acceptedFrames == 12_000 && statistics.droppedFrames == 0)
+        #expect(statistics.receivedFrames == 14_400 && statistics.acceptedFrames == 12_000 && statistics.droppedFrames == 0)
         #expect(statistics.generatedFrames == 0)
         #expect(try await timelineDecode(writer.url).first?.count == 12_000)
+    }
+
+    /// A device clock running fast against the host leaves the writer's timeline ahead of
+    /// host time, so the last audio before a cutoff can land slightly before what was
+    /// already written. Trimming it must not cost the source its finished record.
+    @Test func overlapTrimmedAfterItWasReportedStillSealsFinished() async throws {
+        let root = try makeTempDirectory("timeline-overlap-sealed")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recorder = try AudioCaptureRecorder(directory: root, timePrefix: "120000", expected: [("mic", "microphone")])
+        try recorder.admitSource("mic", kind: "microphone")
+        let reportedBoth = LockedCounter(), entered = LockedCounter(), gate = DispatchSemaphore(value: 0)
+        let writer = try SingleTrackAudioWriter(url: root.appendingPathComponent("120000_audio_mic.m4a"),
+            trackType: .microphone(name: "mic", deviceUID: "mic"), segmentStartTime: .zero,
+            onStatistics: { recorder.statistics("mic", $0); if $0.receivedFrames >= 9600 { reportedBoth.increment() } })
+        writer._nativeAppendHookForTesting = { if entered.count == 0 { entered.increment(); gate.wait() } }
+        defer { gate.signal() }
+        writer.enqueuePCMBuffer(try timelinePCM(frames: 4800, frequency: 220), presentationTime: .zero)
+        await entered.waitUntilCount(1)
+        // 2 ms early: past the jitter tolerance, so 96 frames repeat time already written.
+        writer.enqueuePCMBuffer(try timelinePCM(frames: 4800, frequency: 440), presentationTime: CMTime(value: 4800 - 96, timescale: 48_000))
+        await reportedBoth.waitUntilCount(1)
+        gate.signal()
+        _ = await writer.finish()
+        try recorder.seal()
+        let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("120000_meta.json"))) as? [String: Any]
+        let capture = try #require(meta?["audio_capture"] as? [String: Any])
+        let row = try #require((capture["sources"] as? [[String: Any]])?.first)
+        #expect(row["received_frames"] as? Int == 9600 && row["accepted_frames"] as? Int == 9504 && row["dropped_frames"] as? Int == 0)
+        #expect((row["failures"] as? [Any])?.isEmpty == true)
+        #expect(row["statistics_complete"] as? Bool == true && row["writer_status"] as? String == "completed")
+        #expect(row["state"] as? String == "finished" && capture["state"] as? String == "finished")
     }
 
     @Test func hugeOrInvalidTimesNeverAllocatePaddingOrErasePrefix() async throws {
