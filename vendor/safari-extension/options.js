@@ -146,7 +146,8 @@
     if (inputElement && typeof inputElement.focus === "function") inputElement.focus();
     if (result.denied) {
       const blocked = result.blockedBy ? Copy.addBlockedBelow(state?.brand, rawHost, result.blockedBy) : "";
-      announce(blocked || Copy.ADD_DENIED, "bad");
+      // Declining Safari's prompt is the owner's answer, not a failure, so it reads plain; a policy block stays red.
+      announce(blocked || Copy.ADD_DENIED, blocked ? "bad" : "");
     } else if (result.error) {
       showActionError(result.error);
     } else if (result.ok) {
@@ -187,7 +188,7 @@
       showError: showActionError,
       brand: state?.brand,
       requestPermission: (request) => chrome.permissions.request(request),
-      showDenied: () => announce(Copy.accessCopy(state?.brand).declined, "bad"),
+      showDenied: () => announce(Copy.accessCopy(state?.brand).declined),
       showOk: (message) => announce(message, "ok"),
       lossSeq: () => state?.lossNotice?.seq,
     };
@@ -719,7 +720,7 @@
     }
     if (granted === false) {
       await refresh();
-      announce(Copy.accessCopy(state?.brand).declined, "bad");
+      announce(Copy.accessCopy(state?.brand).declined);
       return;
     }
     const result = await cmd({ cmd: "shareEverySite" });

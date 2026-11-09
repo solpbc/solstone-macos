@@ -102,7 +102,7 @@
       showError: showActionError,
       brand: state?.brand,
       requestPermission: (request) => chrome.permissions.request(request),
-      showDenied: () => showActionMessage(globalThis.SolstoneCopy.accessCopy(state?.brand).declined, "bad"),
+      showDenied: () => showActionMessage(globalThis.SolstoneCopy.accessCopy(state?.brand).declined),
       showOk: (message) => showActionMessage(message),
       lossSeq: () => state?.lossNotice?.seq,
     });
@@ -211,7 +211,8 @@
     if (result.cancelled) return;
     if (result.denied) {
       const blocked = result.blockedBy ? Copy.addBlockedBelow(state?.brand, Hosts.matchHostFor(page.host), result.blockedBy) : "";
-      showActionMessage(blocked || "permission declined. nothing added.", "bad");
+      // Declining the browser's prompt is the owner's answer, not a failure; a policy block stays red.
+      showActionMessage(blocked || "permission declined. nothing added.", blocked ? "bad" : "ok");
     }
     else if (result.error) showActionError(result.error);
     await refresh();
