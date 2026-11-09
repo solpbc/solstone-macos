@@ -20,6 +20,14 @@ enum SolstoneEntryPoint {
             exit(Int32(exitCode))
         }
 #endif
+        if case .usage(let exitCode) = AppCommandLine.decision(arguments: CommandLine.arguments) {
+            print(UICopy.COMMAND_LINE_USAGE)
+            exit(exitCode)
+        }
+        if case .heldElsewhere = AppInstanceLock.acquire() {
+            print(UICopy.COMMAND_LINE_ALREADY_RUNNING)
+            exit(0)
+        }
         SolstoneCaptureApp.main()
     }
 }

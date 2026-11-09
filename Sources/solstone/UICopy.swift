@@ -1,6 +1,13 @@
 import SolstoneCore
 
 public enum UICopy {
+    static let COMMAND_LINE_USAGE = """
+    solstone is the app in your menu bar, and it has no commands to run here.
+    to open it: open -a solstone
+    for journal commands, choose "open admin terminal" in the journal app's menu.
+    """
+    static let COMMAND_LINE_ALREADY_RUNNING = "solstone is already running. look for it in your menu bar."
+
     enum Migration {
         static let deferChoice = "not now"
         static let replaceOfferTitle = "is this replacing one of your devices?"
