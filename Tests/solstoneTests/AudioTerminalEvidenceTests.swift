@@ -87,21 +87,23 @@ struct AudioTerminalEvidenceTests {
         await queue.enqueue(terminalJob(result))
         await queue.waitForCompletion()
         #expect(callbacks.count == 1 && probes.count == 0 && remixes.count == 0)
-        let preserved = collision ? dir : failedDir
+        // A taken .failed name sets the folder aside under the next free one, never leaves it incomplete.
+        let preserved = collision ? day.appendingPathComponent("120000.2.failed") : failedDir
         #expect(FileManager.default.fileExists(atPath: preserved.appendingPathComponent("120000_audio_system.m4a").path))
         let capture = try terminalCapture(preserved)
         #expect(capture["state"] as? String == "failed")
         #expect((capture["failures"] as? [[String: Any]])?.first?["stage"] as? String == "native_ownership")
         let scanner = IncompleteSegmentRecovery(capturesDirectory: root, finalizer: queue)
         #expect(await scanner.recoverAll() == 0)
-        #expect(await queue.inFlightPaths().contains(dir.standardizedFileURL.path) == collision)
+        #expect(!(await queue.inFlightPaths().contains(dir.standardizedFileURL.path)))
         let sidecar = preserved.appendingPathComponent("120000_meta.json")
         let frozen = try Data(contentsOf: sidecar)
         gate.release()
         await completed.waitUntilCount(1)
         #expect(try Data(contentsOf: sidecar) == frozen)
         #expect(!FileManager.default.fileExists(atPath: day.appendingPathComponent("120000_1").path))
-        if !collision { #expect(!FileManager.default.fileExists(atPath: dir.path)) }
+        #expect(!FileManager.default.fileExists(atPath: dir.path))
+        if collision { #expect(FileManager.default.fileExists(atPath: failedDir.path)) }
     }
 
     @MainActor

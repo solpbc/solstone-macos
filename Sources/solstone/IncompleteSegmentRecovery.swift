@@ -6,7 +6,8 @@ import os
 
 /// Discovers orphaned .incomplete segment directories on app startup and in-session via the capture heartbeat
 /// and enqueues them as orphan finalize jobs to the RemixQueue committer, skipping the active recording
-/// segment by full standardized path, in-flight jobs, and segments too recent to be stale.
+/// segment by full standardized path, in-flight jobs, and segments too recent to be stale. The same pass
+/// removes stale .failed folders that hold no recording.
 public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Sendable {
     private let verbose: Bool
     private let capturesDirectory: URL?
@@ -42,6 +43,12 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
         }
 
         var enqueuedCount = 0
+        var removedCount = 0
+        defer {
+            if removedCount > 0 {
+                Logger.storage.notice("Removed \(removedCount, privacy: .public) set-aside segment folder(s) that held no recording")
+            }
+        }
         let minimumStaleAge = await Self.minimumStaleAge
         let inFlight = await finalizer.inFlightPaths()
 
@@ -65,6 +72,16 @@ public final class IncompleteSegmentRecovery: IncompleteSegmentRecovering, Senda
             }
 
             for segmentDir in segmentDirs {
+                if segmentDir.lastPathComponent.hasSuffix(".failed") {
+                    // A set-aside folder with no recording in it has nothing to deliver or keep.
+                    let creationDate = (try? fm.attributesOfItem(atPath: segmentDir.path))?[.creationDate] as? Date
+                    if !Self.shouldSkipAsTooRecent(creationDate: creationDate, now: Date(), minimumAge: minimumStaleAge),
+                       setAsideFolderHoldsNoRecording(segmentDir),
+                       (try? fm.removeItem(at: segmentDir)) != nil {
+                        removedCount += 1
+                    }
+                    continue
+                }
                 guard segmentDir.lastPathComponent.hasSuffix(".incomplete") else {
                     continue
                 }

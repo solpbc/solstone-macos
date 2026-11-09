@@ -1345,14 +1345,7 @@ public actor SyncService {
     /// clock hour never collides. Discovery skips every `.failed` suffix. An existing quarantine folder
     /// is never replaced.
     private func quarantineSegmentDirectory(_ segmentURL: URL, segment: String) -> Bool {
-        let parent = segmentURL.deletingLastPathComponent()
-        var failedURL = parent.appendingPathComponent("\(segment).failed")
-        var suffix = 1
-        var info = stat()
-        while lstat(failedURL.path, &info) == 0 {
-            suffix += 1
-            failedURL = parent.appendingPathComponent("\(segment).\(suffix).failed")
-        }
+        let failedURL = freeFailedSegmentURL(parent: segmentURL.deletingLastPathComponent(), stem: segment)
         do {
             try renameItem(segmentURL, failedURL)
         } catch {
