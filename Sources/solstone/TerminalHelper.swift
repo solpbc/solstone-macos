@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import Darwin
 import Foundation
 import os
 
@@ -57,11 +58,18 @@ final class TerminalHelperProcess: @unchecked Sendable {
         helper: URL,
         spool: URL,
         tmux: String,
+        settings: URL?,
+        environment: [String: String],
         onEvent: @escaping @Sendable (TerminalHelperEvent) -> Void,
         onExit: @escaping @Sendable (Int32) -> Void
     ) {
         process.executableURL = helper
-        process.arguments = ["run", "--spool", spool.path, "--tmux", tmux]
+        var arguments = ["run", "--spool", spool.path, "--tmux", tmux]
+        if let settings { arguments += ["--settings", settings.path] }
+        process.arguments = arguments
+        if !environment.isEmpty {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        }
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -80,6 +88,8 @@ final class TerminalHelperProcess: @unchecked Sendable {
     }
 
     func start() throws {
+        // A write to a helper that has exited must come back as an error, not a signal.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         try process.run()
     }
 
@@ -96,8 +106,9 @@ final class TerminalHelperProcess: @unchecked Sendable {
         send("{\"cmd\":\"stop\"}")
     }
 
+    /// Past the bounded wait for a stop, nothing short of this ends a wedged helper.
     func kill() {
-        if process.isRunning { process.terminate() }
+        if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
     }
 }
 
@@ -125,34 +136,30 @@ enum TerminalTmuxLocator {
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return nil }
+        // A shell profile that hangs must not keep terminal from starting.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+            if process.isRunning { process.terminate() }
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
-        return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+        return String(data: data, encoding: .utf8)
     }
 }
 
-/// Whether the separate solstone for tmux app is still on this Mac.
-enum TerminalLegacyInstall {
-    static func isPresent(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
-        let manager = FileManager.default
-        if manager.fileExists(atPath: home.appendingPathComponent("Library/LaunchAgents/com.solstone.tmux.plist").path) {
-            return true
-        }
-        let captures = home.appendingPathComponent("Library/Application Support/solstone-tmux/captures")
-        if let entries = try? manager.contentsOfDirectory(atPath: captures.path), !entries.isEmpty {
-            return true
-        }
-        return launchAgentIsLoaded()
-    }
-
-    private static func launchAgentIsLoaded() -> Bool {
+/// Runs the helper's `legacy` command and waits for what it lists.
+enum TerminalLegacyRunner {
+    static func run(helper: URL, root: URL) -> TerminalLegacyListing {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["print", "gui/\(getuid())/com.solstone.tmux"]
-        process.standardOutput = FileHandle.nullDevice
+        let output = Pipe()
+        process.executableURL = helper
+        process.arguments = ["legacy", "--from", root.path]
+        process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return false }
+        process.standardInput = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return .failed(UICopy.Terminal.oldSpoolUnreadable) }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return process.terminationStatus == 0
+        return TerminalLegacyListing.parse(status: process.terminationStatus, output: data)
     }
 }

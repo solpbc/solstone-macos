@@ -60,8 +60,13 @@ public final class AppState {
     var activitySource: DesktopActivitySource?
     var obsidianSource: ObsidianVaultSource?
     var terminalSource: TerminalSource?
-    /// Set when the owner tried to turn terminal on and the old app is still here.
-    var terminalOldAppRefusal = false
+    /// The owner turned terminal on and solstone for tmux is still here: ask first.
+    var terminalMoveOffer = false
+    /// A move that could not start, for the Terminal row.
+    var terminalMoveRefusal: String?
+    @ObservationIgnored var terminalTakeoverStore: TerminalTakeoverStore?
+    @ObservationIgnored var terminalTakeoverDriver: TerminalTakeoverDriver?
+    @ObservationIgnored var terminalTakeoverHost: TerminalTakeoverHost = .live()
     public let audioDeviceMonitor: AudioDeviceMonitor
     public var captureManager: CaptureManager { capture.captureManager }
     public private(set) var uploadCoordinator: UploadCoordinator!
@@ -734,6 +739,84 @@ public final class AppState {
 #endif
     }
 
+    /// Turning terminal on with solstone for tmux still here asks first.
+    public func setTerminalEnabled(_ enabled: Bool) {
+        terminalMoveRefusal = nil
+        guard enabled else {
+            terminalTakeoverStore?.update { $0.ownerTurnedOff = true }
+            applyTerminalEnabled(false)
+            return
+        }
+        terminalTakeoverStore?.update { $0.ownerTurnedOff = false }
+        let store = terminalTakeoverStore
+        let host = terminalTakeoverHost
+        Task { [weak self] in
+            let needsAsking = await Task.detached {
+                store?.load() == .absent && TerminalTakeoverSteps.isInstalled(host)
+            }.value
+            guard let self else { return }
+            if needsAsking {
+                self.terminalMoveOffer = true
+            } else {
+                self.applyTerminalEnabled(true)
+                await self.terminalTakeoverDriver?.advance()
+            }
+        }
+    }
+
+    /// The owner agreed: record what the old app is, then move it.
+    func confirmTerminalMove() {
+        terminalMoveOffer = false
+        let store = terminalTakeoverStore
+        let host = terminalTakeoverHost
+        let driver = terminalTakeoverDriver
+        let source = terminalSource
+        Task { [weak self] in
+            let refusal: String? = await Task.detached {
+                do {
+                    let record = try TerminalTakeoverSteps.prepare(host)
+                    _ = try store?.saveIfAbsent(record)
+                    return nil
+                } catch TerminalStepError.refused(let text), TerminalStepError.temporary(let text) {
+                    return text
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            self?.terminalMoveRefusal = refusal
+            guard refusal == nil else { return }
+            await driver?.advance()
+            source?.reconcile()
+        }
+    }
+
+    private func applyTerminalEnabled(_ enabled: Bool) {
+        var newConfig = config
+        newConfig.isTerminalEnabled = enabled
+        updateConfig(newConfig)
+    }
+
+    /// One line on what terminal is doing, when it has something to say.
+    var terminalStatusLine: String? {
+        if let terminalMoveRefusal { return terminalMoveRefusal }
+        switch terminalTakeoverStore?.load() {
+        case .unusable(let url):
+            return UICopy.Terminal.unreadableRecord(url.path)
+        case .present(let record):
+            let lines = UICopy.Terminal.moveLine(record)
+            let status = config.isTerminalEnabled ? terminalSource.flatMap { UICopy.Terminal.statusLine($0.state) } : nil
+            let all = (status.map { [$0] } ?? []) + lines
+            return all.isEmpty ? nil : all.joined(separator: "\n")
+        default:
+            break
+        }
+        guard config.isTerminalEnabled, let terminalSource else { return nil }
+        let unsendable = terminalSource.unsendableCount == 0
+            ? [] : [UICopy.Terminal.unsendable(terminalSource.unsendableCount)]
+        let lines = [UICopy.Terminal.statusLine(terminalSource.state)].compactMap { $0 } + unsendable
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
     internal func performUpdatePreparation() async {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         let generation = appQuitCoordinator.preparationGeneration
@@ -1121,37 +1204,6 @@ public final class AppState {
                 self.refreshBrowserPendingDiscard()
             }
         }
-    }
-
-    /// Turning terminal on while the old app is still installed changes nothing.
-    public func setTerminalEnabled(_ enabled: Bool) {
-        terminalOldAppRefusal = false
-        guard enabled else {
-            applyTerminalEnabled(false)
-            return
-        }
-        Task { [weak self] in
-            let installed = await Task.detached { TerminalLegacyInstall.isPresent() }.value
-            guard let self else { return }
-            if installed {
-                self.terminalOldAppRefusal = true
-            } else {
-                self.applyTerminalEnabled(true)
-            }
-        }
-    }
-
-    private func applyTerminalEnabled(_ enabled: Bool) {
-        var newConfig = config
-        newConfig.isTerminalEnabled = enabled
-        updateConfig(newConfig)
-    }
-
-    /// One line on what terminal is doing, when it has something to say.
-    var terminalStatusLine: String? {
-        if terminalOldAppRefusal { return UICopy.Terminal.oldAppInstalled }
-        guard config.isTerminalEnabled, let terminalSource else { return nil }
-        return UICopy.Terminal.statusLine(terminalSource.state)
     }
 
     public func setBrowserIntakeEnabled(_ enabled: Bool) {
@@ -2959,6 +3011,11 @@ public final class AppState {
               let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
         let spool = TerminalSpool.rootURL(appSupport: appSupport)
         let resolver = ingestBaseURLResolver
+        let store = TerminalTakeoverStore(directory: appSupport.appendingPathComponent("Solstone", isDirectory: true))
+        let host = terminalTakeoverHost
+        let helperURL = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/solstone-terminal")
+        let settingsURL = appSupport.appendingPathComponent("Solstone/terminal-settings.json")
+        terminalTakeoverStore = store
         let planner = TerminalUploadPlanner(
             root: spool,
             transport: UploadClient(),
@@ -2980,14 +3037,59 @@ public final class AppState {
                     guard let self, case .identified(let fingerprint) = self.currentJournalIdentity() else { return }
                     self.uploadCoordinator.noteBrowserDelivery(captured: fingerprint)
                 }
+            },
+            uploadsGated: { store.load().uploadsGated },
+            listLegacy: { TerminalLegacyRunner.run(helper: helperURL, root: host.root) },
+            reportUnsendable: { [weak self] count in
+                await MainActor.run { self?.terminalSource?.setUnsendableCount(count) }
             }
         )
+        let driver = TerminalTakeoverDriver(
+            store: store,
+            host: host,
+            planner: planner,
+            settingsURL: settingsURL,
+            serverURL: {
+                guard case .url(let url) = await resolver.resolve() else { return nil }
+                return url
+            },
+            appPairing: { [weak self] in
+                await MainActor.run {
+                    guard let self, let pairing = self.currentDurablePairing else { return nil }
+                    return TerminalContinuityPlan.AppPairing(pairing: pairing, confirmed: self.isJournalMarkConfirmed)
+                }
+            },
+            turnTerminalOn: { [weak self] in
+                await MainActor.run { self?.applyTerminalEnabled(true) }
+            }
+        )
+        terminalTakeoverDriver = driver
         let source = TerminalSource(
-            helperURL: Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/solstone-terminal"),
+            helperURL: helperURL,
             spool: spool,
             planner: planner,
             isEnabled: { [weak self] in self?.config.isTerminalEnabled ?? false },
-            isPaused: { [weak self] in self?.pauseManager.isPaused ?? true }
+            isPaused: { [weak self] in self?.pauseManager.isPaused ?? true },
+            oldAppInstalled: {
+                switch store.load() {
+                case .absent:
+                    return TerminalTakeoverSteps.isInstalled(host)
+                case .unusable:
+                    return FileManager.default.fileExists(atPath: host.plistURL.path)
+                        || host.launchctl(["print", host.serviceTarget])
+                case .present(let record):
+                    return record.phase < .listed || !record.settingsApplied
+                }
+            },
+            helperOptions: {
+                let record = store.load().record
+                var options = TerminalHelperOptions()
+                if record?.carriedSettings != nil { options.settings = settingsURL }
+                if let directory = record?.tmuxTmpdir { options.environment["TMUX_TMPDIR"] = directory }
+                options.tmuxPath = record?.tmuxPath
+                return options
+            },
+            advanceTakeover: { await driver.advance() }
         )
         terminalSource = source
         let previousPause = pauseManager.onPauseIntake

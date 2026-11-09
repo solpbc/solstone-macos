@@ -37,3 +37,9 @@ The solstone app includes an App Transport Security exception (`NSAllowsArbitrar
 
 - The app starts automatically at login once installed.
 - See [README.md](README.md) for development commands and [AGENTS.md](AGENTS.md) for contributor guidance.
+
+## Your tmux sessions
+
+The app can take in your tmux sessions, and all of it goes into your journal. It's off until you turn on terminal in Settings > Sources, and it needs tmux on this Mac. It runs whenever the app does, and works in any terminal session, including when you SSH into this Mac. Pausing or quitting the app stops it.
+
+If solstone for tmux is on this Mac, turning terminal on asks first, then moves it in: what it still has waiting goes into your journal through this app, anything that can't go stays on this Mac, and solstone for tmux stops for good.

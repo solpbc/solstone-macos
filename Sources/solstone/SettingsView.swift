@@ -888,6 +888,17 @@ struct SettingsView: View {
                         Text(UICopy.Terminal.sourceTitle)
                     }
                     .accessibilityIdentifier(AXID.Settings.Sources.terminalEnabled)
+                    .alert(UICopy.Terminal.moveTitle, isPresented: Binding(
+                        get: { appState.terminalMoveOffer },
+                        set: { appState.terminalMoveOffer = $0 }
+                    )) {
+                        Button(UICopy.Terminal.moveConfirm) { appState.confirmTerminalMove() }
+                        Button(UICopy.Terminal.moveCancel, role: .cancel) {}
+                    } message: {
+                        Text(appState.currentDurablePairing == nil
+                            ? "\(UICopy.Terminal.moveBody) \(UICopy.Terminal.moveBodyUnpaired)"
+                            : UICopy.Terminal.moveBody)
+                    }
                     Text(UICopy.Terminal.sourceHelp)
                         .font(.caption)
                         .foregroundStyle(.secondary)

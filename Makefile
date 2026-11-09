@@ -458,18 +458,6 @@ endif
 	@codesign --verify --strict --deep --verbose=2 solstone.app
 	@test -f solstone.app/Contents/embedded.provisionprofile || { echo "error: embedded.provisionprofile missing from bundle"; exit 1; }
 	@codesign -d --entitlements - --xml solstone.app 2>/dev/null | plutil -p - 2>/dev/null | grep -q '7QCG8V4M6H.app.solstone.observer.spl' || { echo "error: keychain-access-group entitlement missing from signed app (DP keychain would -34018)"; exit 1; }
-	@codesign --verify --strict --verbose=2 solstone.app/Contents/MacOS/solstone-terminal || \
-		{ echo "terminal helper signature invalid"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/MacOS/solstone-terminal 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || \
-		{ echo "terminal helper missing Team ID 7QCG8V4M6H"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/MacOS/solstone-terminal 2>&1 | grep -q 'flags=0x10000(runtime)' || \
-		{ echo "terminal helper missing hardened runtime flag"; exit 1; }
-	@codesign -dvvv solstone.app/Contents/MacOS/solstone-terminal 2>&1 | grep -q 'Identifier=app.solstone.observer.terminal' || \
-		{ echo "terminal helper identifier mismatch"; exit 1; }
-	@lipo -archs solstone.app/Contents/MacOS/solstone-terminal | grep -q 'arm64' || \
-		{ echo "terminal helper missing arm64 slice"; exit 1; }
-	@lipo -archs solstone.app/Contents/MacOS/solstone-terminal | grep -q 'x86_64' || \
-		{ echo "terminal helper missing x86_64 slice"; exit 1; }
 	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
 		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@$(MAKE) --no-print-directory check-app-notices
@@ -498,7 +486,7 @@ bundle-adhoc: release-universal-adhoc
 		$(MAKE) --no-print-directory assemble-adhoc-bundle SWIFT_PRODUCTS_DIR="$$products"
 
 .PHONY: assemble-adhoc-bundle
-assemble-adhoc-bundle:
+assemble-adhoc-bundle: terminal-helper
 	@test -n "$(SWIFT_PRODUCTS_DIR)" && test -d "$(SWIFT_PRODUCTS_DIR)" || { echo "error: Swift build products directory is missing" >&2; exit 1; }
 	@echo "Creating local ad-hoc app bundle..."
 	@rm -rf solstone.app
@@ -673,6 +661,18 @@ verify-notarization:
 		{ echo "watchdog missing arm64 slice"; exit 1; }
 	@lipo -archs solstone.app/Contents/MacOS/solstone-watchdog | grep -q 'x86_64' || \
 		{ echo "watchdog missing x86_64 slice"; exit 1; }
+	@codesign --verify --strict --verbose=2 solstone.app/Contents/MacOS/solstone-terminal || \
+		{ echo "terminal helper signature invalid"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/MacOS/solstone-terminal 2>&1 | grep -q 'TeamIdentifier=7QCG8V4M6H' || \
+		{ echo "terminal helper missing Team ID 7QCG8V4M6H"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/MacOS/solstone-terminal 2>&1 | grep -q 'flags=0x10000(runtime)' || \
+		{ echo "terminal helper missing hardened runtime flag"; exit 1; }
+	@codesign -dvvv solstone.app/Contents/MacOS/solstone-terminal 2>&1 | grep -q 'Identifier=app.solstone.observer.terminal' || \
+		{ echo "terminal helper identifier mismatch"; exit 1; }
+	@lipo -archs solstone.app/Contents/MacOS/solstone-terminal | grep -q 'arm64' || \
+		{ echo "terminal helper missing arm64 slice"; exit 1; }
+	@lipo -archs solstone.app/Contents/MacOS/solstone-terminal | grep -q 'x86_64' || \
+		{ echo "terminal helper missing x86_64 slice"; exit 1; }
 	@BAD="$$(find solstone.app -path '*uv*' -o -path '*/python' -o -path '*python3.13*' -o -path '*wheelhouse*' 2>/dev/null | head -1)"; \
 		[ -z "$$BAD" ] || { echo "error: solstone.app must not ship the journal runtime plane (found: $$BAD)"; exit 1; }
 	@echo "✓ $(DMG_NAME) notarized + stapled"

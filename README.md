@@ -44,6 +44,8 @@ These Make targets build a local test app. They do not build or bundle the journ
 
 mac presents permission prompts for what you choose to share. The relevant settings include Screen & System Audio Recording and Microphone.
 
+The app can also take in your tmux sessions, if you turn on terminal in Settings > Sources, and all of it goes into your journal. It needs tmux on this Mac and works in any terminal session, including when you SSH into this Mac.
+
 ## Architecture
 
 This is one Swift Package Manager repository. `solstone` is the app executable and `solstone-watchdog` is its helper. The package also exports the mac libraries it shares with the journal app: `SolstoneCore`, `JournalMarkKit`, `SetupChrome`, `UpdateKit`, `WatchdogKit` and the test-only `MacTestSupport`. The journal app itself is built from [solstone-journal](https://github.com/solpbc/solstone-journal/tree/main/platforms/macos), which uses those libraries at an exact commit of this repository. A change to a shared library reaches the journal app when that pin moves. See [Package.swift](Package.swift) for the target graph.

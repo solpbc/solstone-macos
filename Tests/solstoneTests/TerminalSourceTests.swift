@@ -189,13 +189,4 @@ struct TerminalSourceTests {
             #expect(FileManager.default.fileExists(atPath: directory.path))
         }
     }
-
-    @Test func anOldInstallIsFoundBySpoolOrAgent() throws {
-        let home = try tempRoot()
-        #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent("Library").path))
-        let captures = home.appendingPathComponent("Library/Application Support/solstone-tmux/captures")
-        try FileManager.default.createDirectory(at: captures, withIntermediateDirectories: true)
-        try Data().write(to: captures.appendingPathComponent("20260101"))
-        #expect(TerminalLegacyInstall.isPresent(home: home))
-    }
 }

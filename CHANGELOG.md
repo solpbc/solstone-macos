@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- terminal is now a source. turn it on in settings › sources and the app takes in your tmux sessions, and all of it goes into your journal. it needs tmux on this mac, and it works in any terminal session, including when you SSH into this mac. pausing or quitting the app stops it.
+- if solstone for tmux is on this mac, turning terminal on asks first, then moves it in. what it still has waiting goes into your journal through this app, anything that can't go stays on this mac, and solstone for tmux stops for good.
 - Obsidian is now a source. turn it on in settings › sources, pick a vault or choose a folder, and every note in that vault goes into your journal, then each one as it changes. your vault stays as it is.
 
 ### Changed

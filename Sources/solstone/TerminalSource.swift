@@ -5,6 +5,13 @@ import Foundation
 import Observation
 import os
 
+/// What a run of the helper needs from an earlier install.
+struct TerminalHelperOptions: Sendable {
+    var settings: URL?
+    var environment: [String: String] = [:]
+    var tmuxPath: String?
+}
+
 /// Terminal as one of this app's sources. While it is on and the app isn't paused,
 /// the bundled helper takes in the owner's tmux sessions; this app delivers what it
 /// writes over its own pairing. The screen being locked or another user in front
@@ -22,6 +29,8 @@ final class TerminalSource {
     }
 
     private(set) var state: State = .off
+    /// Segments that could not be made ready to send, for the Terminal row.
+    private(set) var unsendableCount = 0
 
     @ObservationIgnored private let helperURL: URL
     @ObservationIgnored private let spool: URL
@@ -34,6 +43,8 @@ final class TerminalSource {
     @ObservationIgnored private var process: TerminalHelperProcess?
     @ObservationIgnored private var restartTask: Task<Void, Never>?
     @ObservationIgnored private var cadence: Task<Void, Never>?
+    @ObservationIgnored private let helperOptions: @Sendable () -> TerminalHelperOptions
+    @ObservationIgnored private let advanceTakeover: @Sendable () async -> Void
     @ObservationIgnored private var failures = 0
     @ObservationIgnored private var shuttingDown = false
     @ObservationIgnored private var generation = 0
@@ -47,8 +58,10 @@ final class TerminalSource {
         planner: TerminalUploadPlanner,
         isEnabled: @escaping () -> Bool,
         isPaused: @escaping () -> Bool,
-        oldAppInstalled: @escaping @Sendable () -> Bool = { TerminalLegacyInstall.isPresent() },
-        locateTmux: @escaping @Sendable () -> String? = { TerminalTmuxLocator.locate() }
+        oldAppInstalled: @escaping @Sendable () -> Bool,
+        locateTmux: @escaping @Sendable () -> String? = { TerminalTmuxLocator.locate() },
+        helperOptions: @escaping @Sendable () -> TerminalHelperOptions = { TerminalHelperOptions() },
+        advanceTakeover: @escaping @Sendable () async -> Void = {}
     ) {
         self.helperURL = helperURL
         self.spool = spool
@@ -57,11 +70,15 @@ final class TerminalSource {
         self.isPaused = isPaused
         self.oldAppInstalled = oldAppInstalled
         self.locateTmux = locateTmux
+        self.helperOptions = helperOptions
+        self.advanceTakeover = advanceTakeover
     }
 
     func start() {
         cadence = Task { [weak self] in
             while !Task.isCancelled {
+                await self?.advanceTakeover()
+                self?.reconcile()
                 await self?.planner.planAndUpload()
                 try? await Task.sleep(for: Self.planInterval)
             }
@@ -89,16 +106,19 @@ final class TerminalSource {
         probing = true
         let oldAppInstalled = oldAppInstalled
         let locateTmux = locateTmux
+        let helperOptions = helperOptions
         Task { [weak self] in
-            let (installed, tmux) = await Task.detached { () -> (Bool, String?) in
+            let (installed, tmux, options) = await Task.detached { () -> (Bool, String?, TerminalHelperOptions) in
                 let installed = oldAppInstalled()
-                return (installed, installed ? nil : locateTmux())
+                let options = helperOptions()
+                let carried = options.tmuxPath.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+                return (installed, installed ? nil : carried ?? locateTmux(), options)
             }.value
-            self?.finishProbe(oldAppInstalled: installed, tmux: tmux)
+            self?.finishProbe(oldAppInstalled: installed, tmux: tmux, options: options)
         }
     }
 
-    private func finishProbe(oldAppInstalled installed: Bool, tmux: String?) {
+    private func finishProbe(oldAppInstalled installed: Bool, tmux: String?, options: TerminalHelperOptions) {
         probing = false
         guard !shuttingDown, isEnabled(), !isPaused(), process == nil else { return }
         guard !installed else {
@@ -107,13 +127,14 @@ final class TerminalSource {
         }
         guard let tmux else {
             state = .tmuxNotFound
+            failures += 1
             scheduleRestart()
             return
         }
-        startHelper(tmux: tmux)
+        startHelper(tmux: tmux, options: options)
     }
 
-    private func startHelper(tmux: String) {
+    private func startHelper(tmux: String, options: TerminalHelperOptions) {
         do {
             try TerminalSpool.ensureRoot(spool)
             generation += 1
@@ -122,6 +143,8 @@ final class TerminalSource {
                 helper: helperURL,
                 spool: spool,
                 tmux: tmux,
+                settings: options.settings,
+                environment: options.environment,
                 onEvent: { [weak self] event in
                     Task { @MainActor in self?.handle(event, run: run) }
                 },
@@ -135,6 +158,7 @@ final class TerminalSource {
             Task { await planner.planAndUpload() }
         } catch {
             Logger.general.error("Terminal helper did not start: \(error.localizedDescription, privacy: .public)")
+            failures += 1
             state = .restarting
             scheduleRestart()
         }
@@ -184,6 +208,10 @@ final class TerminalSource {
             try? await Task.sleep(for: Self.stopWait)
             helper.kill()
         }
+    }
+
+    func setUnsendableCount(_ count: Int) {
+        unsendableCount = count
     }
 
     func setUploading(_ working: Bool) {

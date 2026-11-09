@@ -35,8 +35,43 @@ public enum UICopy {
     public static let SOURCES_TITLE = "sources"
     enum Terminal {
         static let sourceTitle = "terminal"
-        static let sourceHelp = "takes in your tmux sessions, and all of it goes into your journal. needs tmux on this Mac, and works in any terminal session, including over SSH."
-        static let oldAppInstalled = "solstone for tmux is still installed on this Mac, so terminal stays off for now."
+        static let sourceHelp = "takes in your tmux sessions, and all of it goes into your journal. needs tmux on this mac, and works in any terminal session, including when you SSH into this mac."
+        static let moveTitle = "move solstone for tmux in?"
+        static let moveBody = "this moves solstone for tmux into this app, and solstone for tmux stops for good. what it still has waiting goes into your journal through this app, and anything that can't go stays on this mac."
+        static let moveBodyUnpaired = "this app isn't paired yet, so nothing goes into your journal until you pair it."
+        static let waitingForPairing = "pair this app with your journal"
+        static let waitingForMark = "confirm your journal's mark"
+        static let moveConfirm = "move it"
+        static let moveCancel = "not now"
+        static let oldAppWaiting = "solstone for tmux is still installed on this mac, so terminal stays off for now."
+        static let plistNotOurs = "the solstone for tmux login item on this mac isn't one solstone installed, so nothing was changed."
+        static let oldAppStillRunning = "solstone for tmux is still running."
+        static let oldSpoolUnreadable = "something solstone for tmux left couldn't be read."
+
+        static func unreadableRecord(_ path: String) -> String {
+            "the record of moving solstone for tmux can't be read: \(path). please contact support, and don't delete it."
+        }
+
+        static func unsendable(_ count: Int) -> String { "\(count) \(count == 1 ? "segment" : "segments") can't be sent" }
+
+        static func moveLine(_ record: TerminalTakeoverRecord) -> [String] {
+            var lines: [String] = []
+            if record.phase < .done { lines.append("moving solstone for tmux in") }
+            switch record.continuity {
+            case .continued: lines.append("terminal history: continued")
+            case .newStream(let reason, let attention):
+                lines.append("new terminal history from here, and what's already in your journal stays (\(reason))")
+                if attention { lines.append("this needs attention: please contact support") }
+            case nil: break
+            }
+            if let answer = record.lastAnswer { lines.append("waiting: \(answer)") }
+            if record.heldCount != 0 {
+                let noun = record.heldCount == 1 ? "segment" : "segments"
+                lines.append("\(record.heldCount) old \(noun) couldn't go and stayed on this mac")
+            }
+            lines.append(contentsOf: record.problems.map { "problem: \($0)" })
+            return lines
+        }
 
         @MainActor
         static func statusLine(_ state: TerminalSource.State) -> String? {
@@ -45,7 +80,7 @@ public enum UICopy {
             case .running: return "terminal: running"
             case .paused: return "terminal: paused"
             case .tmuxNotFound: return "terminal: tmux isn't installed"
-            case .oldAppInstalled: return "terminal: waiting, solstone for tmux is still installed"
+            case .oldAppInstalled: return oldAppWaiting
             case .restarting: return "terminal: stopped by an error, restarting"
             }
         }
