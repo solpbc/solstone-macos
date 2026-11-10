@@ -71,6 +71,18 @@ public final class PerSourceAudioManager: @unchecked Sendable {
         }
     }
 
+    public func acceptedAudioSpans() -> [String: [(Double, Double)]] {
+        lock.lock()
+        let pairs = sourceWriters.map { ($0.key, $0.value.writer) }
+        lock.unlock()
+        var spans: [String: [(Double, Double)]] = [:]
+        for (id, writer) in pairs {
+            let accepted = writer.acceptedSpansSnapshot()
+            if !accepted.isEmpty { spans[id] = accepted }
+        }
+        return spans
+    }
+
     public func audioStatistics() -> [String: AudioWriterStatistics] {
         let writers = lock.withLock { sourceWriters.merging(finishingWriters) { _, finishing in finishing } }
         return writers.mapValues { $0.writer.statisticsSnapshot }

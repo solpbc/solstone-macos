@@ -33,6 +33,9 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     private var staleElapsedBaseMs: UInt64 = 0
     private let floorAnchorMs: UInt64
     private let floorMonotonicAnchor: Duration
+    private let sourceTotals: SourceTotals?
+    /// Runs after a kept batch is counted and before the accept reply is built.
+    var beforeAcceptReply: (@Sendable () -> Void)?
     public var isPaused: Bool {
         lock.withLock { _isPaused }
     }
@@ -42,7 +45,8 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         projection: BrowserContractProjection,
         monotonicClock: any MonotonicClock = SystemMonotonicClock(),
         wallClock: @escaping @Sendable () -> Date = Date.init,
-        timeZone: TimeZone = TimeZone.current
+        timeZone: TimeZone = TimeZone.current,
+        sourceTotals: SourceTotals? = nil
     ) {
         self.store = store
         self.projection = projection
@@ -52,6 +56,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         self.lastRotationDate = wallClock()
         self.floorAnchorMs = max(store.getFloorMs(), BrowserAgeStamp.wallMilliseconds(wallClock()))
         self.floorMonotonicAnchor = monotonicClock.now()
+        self.sourceTotals = sourceTotals
         let staleState = store.stalenessState()
         self.staleAnchorMs = staleState.anchorMs
         self.staleElapsedBaseMs = staleState.elapsedHighWaterMs
@@ -418,6 +423,11 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
 
         do {
             let pid = try store.commitBatch(batch: batch, nowMs: nowMs, civilDate: civilDate, timeZone: timeZone)
+            let pages = countedPages(in: batch)
+            if !pages.isEmpty, let sourceTotals {
+                _ = sourceTotals.applyPages(pages)
+            }
+            beforeAcceptReply?()
             return try BrowserPayloadDecoder.buildReply(
                 destinationGeneration: batch.destinationGeneration,
                 inst: batch.inst,
@@ -441,6 +451,34 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         } catch {
             return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
+    }
+
+    /// Snapshots that are not a delivery recovery. A tab id on the record wins over the context id.
+    private func countedPages(in batch: BrowserDecodedBatch) -> [(key: String, url: String)] {
+        var pages: [(key: String, url: String)] = []
+        for record in batch.records where record.t == "segment_start" && record.snapshotReason != "delivery_recovery" {
+            guard let url = pageURL(in: record.rawSlice) else { continue }
+            if let tab = tabID(in: record.rawSlice) {
+                pages.append((key: "tab:\(batch.inst):\(tab)", url: url))
+            } else {
+                pages.append((key: "ctx:\(batch.inst):\(record.ctx)", url: url))
+            }
+        }
+        return pages
+    }
+
+    private func tabID(in slice: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: slice) as? [String: Any],
+              let tab = object["tab"] as? [String: Any] else { return nil }
+        if let text = tab["id"] as? String, !text.isEmpty { return text }
+        guard let number = tab["id"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        return number.stringValue
+    }
+
+    private func pageURL(in slice: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: slice) as? [String: Any],
+              let url = object["url"] as? String, !url.isEmpty else { return nil }
+        return url
     }
 }
 

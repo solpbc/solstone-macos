@@ -67,6 +67,7 @@ public final class AppState {
     @ObservationIgnored var terminalTakeoverStore: TerminalTakeoverStore?
     @ObservationIgnored var terminalTakeoverDriver: TerminalTakeoverDriver?
     @ObservationIgnored var terminalTakeoverHost: TerminalTakeoverHost = .live()
+    @ObservationIgnored private var sourceTotals: SourceTotals?
     public let audioDeviceMonitor: AudioDeviceMonitor
     public var captureManager: CaptureManager { capture.captureManager }
     public private(set) var uploadCoordinator: UploadCoordinator!
@@ -2507,6 +2508,10 @@ public final class AppState {
         capture.onMicrophonesChanged = { [weak self] in self?.syncMicrophonePriorityList() }
         configureScreenPreviewInvalidation()
         configureDesktopActivity()
+        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let totals = openSourceTotals(appSupport: appSupport)
+            Task { await RemixQueue.shared.setSourceTotals(totals) }
+        }
         configureObsidianSource()
         configureTerminalSource()
         syncMicrophonePriorityList()
@@ -2995,6 +3000,22 @@ public final class AppState {
         return false
     }
 
+    /// Opens the on-device source totals once. `started` is this launch's day,
+    /// including for a source that is never used.
+    @discardableResult
+    private func openSourceTotals(appSupport: URL) -> SourceTotals {
+        if let sourceTotals { return sourceTotals }
+        let totals = SourceTotals(
+            directory: appSupport.appendingPathComponent("Solstone", isDirectory: true),
+            clock: SourceTotals.Clock(now: Date(), timeZone: .current)
+        )
+        let carryURL = terminalTakeoverHost.root.appendingPathComponent(SourceTotals.fileName)
+        _ = totals.considerCarry(try? Data(contentsOf: carryURL))
+        SourceTotalsInstall.install(totals)
+        sourceTotals = totals
+        return totals
+    }
+
     private func configureObsidianSource() {
         guard automaticObservationPipelineEnabled,
               let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
@@ -3004,7 +3025,8 @@ public final class AppState {
             isHeld: { [weak self] in
                 guard let self else { return true }
                 return self.pauseManager.isPaused || self.config.syncPaused
-            }
+            },
+            sourceTotals: sourceTotals ?? openSourceTotals(appSupport: appSupport)
         )
         obsidianSource = source
         let previousPause = pauseManager.onPauseIntake
@@ -3050,7 +3072,8 @@ public final class AppState {
             listLegacy: { TerminalLegacyRunner.run(helper: helperURL, root: host.root) },
             reportUnsendable: { [weak self] count in
                 await MainActor.run { self?.terminalSource?.setUnsendableCount(count) }
-            }
+            },
+            sourceTotals: sourceTotals ?? openSourceTotals(appSupport: appSupport)
         )
         let driver = TerminalTakeoverDriver(
             store: store,
@@ -3571,6 +3594,7 @@ public final class AppState {
         }
         let snapshot = browserHostSnapshot
         let state = self
+        let totals = sourceTotals
         Task.detached(priority: .utility) { [weak state, credentialStore, bridge] in
             guard let vendorURL = BrowserContractProjection.vendorRootURL(bundleURL: bundleURL),
                   let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
@@ -3610,7 +3634,8 @@ public final class AppState {
                         await MainActor.run {
                             bridge.state?.uploadCoordinator.noteBrowserDelivery(captured: captured)
                         }
-                    }
+                    },
+                    sourceTotals: totals
                 )
             } catch {
                 Logger.storage.error("Browser intake left off: spool unavailable")

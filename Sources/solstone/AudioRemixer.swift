@@ -46,11 +46,15 @@ public struct AudioRemixerResult: Sendable {
     /// Only sources fully copied to a completed output qualify for cleanup.
     public let sourceFiles: [URL]
     public let sources: [AudioSourceRemixResult]
-    public init(tracksWritten: Int, tracksSkipped: Int, sourceFiles: [URL], sources: [AudioSourceRemixResult] = []) {
+    /// Silence this remix applied, shifted onto the segment clock. Keyed by source id.
+    public let appliedSilence: [String: [(Double, Double)]]
+    public init(tracksWritten: Int, tracksSkipped: Int, sourceFiles: [URL], sources: [AudioSourceRemixResult] = [],
+                appliedSilence: [String: [(Double, Double)]] = [:]) {
         self.tracksWritten = tracksWritten
         self.tracksSkipped = tracksSkipped
         self.sourceFiles = sourceFiles
         self.sources = sources
+        self.appliedSilence = appliedSilence
     }
 }
 
@@ -72,6 +76,7 @@ public final class AudioRemixer: Sendable {
         var outcomes = inputs.map { AudioSourceRemixResult(sourceID: $0.timingInfo.trackType.sourceID, state: "pending") }
         var pairs: [(index: Int, reader: AVAssetReader, output: AVAssetReaderTrackOutput,
                      input: AVAssetWriterInput, offset: CMTime, silence: [CMTimeRange])] = []
+        var appliedSilence: [String: [(Double, Double)]] = [:]
 
         for (index, source) in inputs.enumerated() {
             let asset = AVURLAsset(url: source.url)
@@ -108,6 +113,14 @@ public final class AudioRemixer: Sendable {
                 let analysis = await SystemAudioAnalyzer.shared.analyze(url: source.url)
                 ranges = analysis.silenceRanges
                 outcomes[index].musicAnalysis = analysis.status
+                let shift = source.timingInfo.startOffset.seconds
+                let origin = shift.isFinite ? shift : 0
+                appliedSilence[source.timingInfo.trackType.sourceID] = ranges.compactMap { range in
+                    let start = range.start.seconds
+                    let length = range.duration.seconds
+                    guard start.isFinite, length.isFinite, length > 0 else { return nil }
+                    return (start + origin, start + origin + length)
+                }
             }
             pairs.append((index, reader, output, input, source.timingInfo.startOffset, ranges))
         }
@@ -173,7 +186,7 @@ public final class AudioRemixer: Sendable {
         let complete = inputs.enumerated().compactMap { outcomes[$0.offset].state == "complete" ? $0.element.url : nil }
         let written = outcomes.filter { $0.framesCopied > 0 }.count
         Logger.audio.notice("Remixed \(written, privacy: .public) audio sources; \(inputs.count - complete.count, privacy: .public) incomplete")
-        return AudioRemixerResult(tracksWritten: written, tracksSkipped: inputs.count - written, sourceFiles: complete, sources: outcomes)
+        return AudioRemixerResult(tracksWritten: written, tracksSkipped: inputs.count - written, sourceFiles: complete, sources: outcomes, appliedSilence: appliedSilence)
     }
 
     private func retimeBuffer(_ sampleBuffer: CMSampleBuffer, offset: CMTime) -> CMSampleBuffer? {

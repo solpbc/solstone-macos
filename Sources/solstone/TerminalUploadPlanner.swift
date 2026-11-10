@@ -53,6 +53,7 @@ actor TerminalUploadPlanner {
     private var legacySegments: [TerminalSpoolSegment] = []
     private var refusedUntil: [String: Date] = [:]
     private let reportUnsendable: @Sendable (Int) async -> Void
+    private let sourceTotals: SourceTotals?
     private var unsendable: Set<String> = []
     private var running = false
     private var rerun = false
@@ -68,7 +69,8 @@ actor TerminalUploadPlanner {
         now: @escaping @Sendable () -> Date = Date.init,
         uploadsGated: @escaping @Sendable () async -> Bool = { false },
         listLegacy: (@Sendable () async -> TerminalLegacyListing)? = nil,
-        reportUnsendable: @escaping @Sendable (Int) async -> Void = { _ in }
+        reportUnsendable: @escaping @Sendable (Int) async -> Void = { _ in },
+        sourceTotals: SourceTotals? = nil
     ) {
         self.root = root
         self.transport = transport
@@ -80,6 +82,7 @@ actor TerminalUploadPlanner {
         self.uploadsGated = uploadsGated
         self.listLegacy = listLegacy
         self.reportUnsendable = reportUnsendable
+        self.sourceTotals = sourceTotals
     }
 
     /// Lists the old spool, waiting for any pass to end and holding new ones off, so
@@ -112,6 +115,10 @@ actor TerminalUploadPlanner {
     private func pass() async {
         // Nothing else uses this between passes, and a crash mid-upload leaves bodies here.
         try? FileManager.default.removeItem(at: root.appendingPathComponent(".staging", isDirectory: true))
+        // Count before a held pass returns, and before a finished directory can be removed.
+        if let sourceTotals, sourceTotals.absorbFinishedTerminal(root: root) == .saveFailed {
+            return
+        }
         guard await !isHeld(), let serverURL = await serverURL() else { return }
         guard await !uploadsGated() else { return }
         guard await deliverAll(TerminalSpool.finished(root: root), serverURL: serverURL, budget: nil) else { return }

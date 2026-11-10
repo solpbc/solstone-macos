@@ -107,6 +107,9 @@ public final class SiteFrameGate {
     /// When a Safari window on screen last stopped being one the rule has read as ordinary.
     private var notOrdinarySince: TimeInterval?
 
+    /// Per-display recording ranges for the segment that is open. Nil outside one.
+    var intakeLog: IntakeIntervalLog?
+
     public init() {}
 
     /// Whether Safari should sit out of capture now, so a left-out page costs Safari and not the
@@ -146,6 +149,7 @@ public final class SiteFrameGate {
                 return currentDecisions.verdict(for: key, at: now) != .ordinary
             }
             if !blocking {
+                intakeLog?.resume(display: String(display), at: now)
                 heldSince[display] = nil
             } else if now - since >= holdFor {
                 return true
@@ -245,6 +249,7 @@ public final class SiteFrameGate {
                 if now - c >= Self.holdLimitSites {
                     holdDropCount += 1
                     noteHoldDrop(displayID: displayID, c: c)
+                    intakeLog?.hold(display: String(displayID), at: c)
                     actions.append(.drop(id: frame.id, reason: .hold))
                     continue
                 } else {
@@ -284,6 +289,7 @@ public final class SiteFrameGate {
                     if now - c >= Self.holdLimitSites {
                         holdDropCount += 1
                         noteHoldDrop(displayID: displayID, c: c)
+                        intakeLog?.hold(display: String(displayID), at: c)
                         actions.append(.drop(id: frame.id, reason: .hold))
                         continue
                     } else {
@@ -296,6 +302,7 @@ public final class SiteFrameGate {
                     // No Safari window in range -> release
                     let pts = makeClampedPTS(displayID: displayID, displayTicks: displayTicks, originTicks: frame.originTicks)
                     relCount += 1
+                    intakeLog?.resume(display: String(displayID), at: c)
                     heldSince[displayID] = nil
                     actions.append(.release(id: frame.id, pts: pts))
                     continue
@@ -331,6 +338,7 @@ public final class SiteFrameGate {
             if hasCovered {
                 covCount += 1
                 noteHoldDrop(displayID: displayID, c: c)
+                intakeLog?.hold(display: String(displayID), at: c)
                 actions.append(.drop(id: frame.id, reason: .cov))
                 continue
             }
@@ -354,6 +362,7 @@ public final class SiteFrameGate {
             if hasPendingDisappeared {
                 holdDropCount += 1
                 noteHoldDrop(displayID: displayID, c: c)
+                intakeLog?.hold(display: String(displayID), at: c)
                 actions.append(.drop(id: frame.id, reason: .hold))
                 continue
             }
@@ -375,6 +384,7 @@ public final class SiteFrameGate {
                 if now - c >= Self.holdLimitSites {
                     holdDropCount += 1
                     noteHoldDrop(displayID: displayID, c: c)
+                    intakeLog?.hold(display: String(displayID), at: c)
                     actions.append(.drop(id: frame.id, reason: .hold))
                     continue
                 } else {
@@ -388,6 +398,7 @@ public final class SiteFrameGate {
             // All windows ordinary across bracket range -> release
             let pts = makeClampedPTS(displayID: displayID, displayTicks: displayTicks, originTicks: frame.originTicks)
             relCount += 1
+            intakeLog?.resume(display: String(displayID), at: c)
             heldSince[displayID] = nil
             actions.append(.release(id: frame.id, pts: pts))
         }
@@ -424,6 +435,7 @@ public final class SiteFrameGate {
 
     /// Deactivating drops held frames immediately without releasing them.
     public func deactivate(displayID: CGDirectDisplayID, owner: UInt64 = 0) -> [SiteFrameAction] {
+        intakeLog?.endDisplay(String(displayID), at: HostClock.seconds(ticks: mach_absolute_time()))
         heldSince[displayID] = nil
         guard let queue = heldFrames[displayID] else { return [] }
         var dropped: [SiteFrameAction] = []
@@ -442,6 +454,10 @@ public final class SiteFrameGate {
     }
 
     public func deactivateAll() -> [SiteFrameAction] {
+        let now = HostClock.seconds(ticks: mach_absolute_time())
+        for display in heldSince.keys {
+            intakeLog?.resume(display: String(display), at: now)
+        }
         var actions: [SiteFrameAction] = []
         for (_, queue) in heldFrames {
             for frame in queue {

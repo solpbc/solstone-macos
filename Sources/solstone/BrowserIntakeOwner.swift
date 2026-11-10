@@ -217,7 +217,8 @@ public actor BrowserIntakeOwner {
         ioInjector: BrowserIntakeIOInjector = BrowserIntakeIOInjector(),
         routeState: BrowserIntakeRouteState = BrowserIntakeRouteState(),
         journalFingerprint: @escaping @Sendable () async -> JournalConnectionFingerprint?,
-        reportProvenDelivery: @escaping @Sendable (JournalConnectionFingerprint?) async -> Void
+        reportProvenDelivery: @escaping @Sendable (JournalConnectionFingerprint?) async -> Void,
+        sourceTotals: SourceTotals? = nil
     ) throws -> BrowserIntakeOwner {
         let store = try BrowserIntakeStore(rootURL: spoolRoot, projection: projection, ioInjector: ioInjector, ageClock: { clock.ageStamp() })
         let authority = BrowserIntakeAuthority(
@@ -225,7 +226,8 @@ public actor BrowserIntakeOwner {
             projection: projection,
             monotonicClock: clock,
             wallClock: { clock.wallNow() },
-            timeZone: clock.timeZone()
+            timeZone: clock.timeZone(),
+            sourceTotals: sourceTotals
         )
         let gate = BrowserUploadGate(store: store)
         let planner = BrowserUploadPlanner(

@@ -81,6 +81,8 @@ public actor RemixQueue {
 
     /// Callback invoked when a segment completes (for triggering upload)
     private var onSegmentComplete: (@Sendable (URL, SegmentReconciliation) async -> Void)?
+    /// Install totals. Tests pass their own. A nil value reads the process slot.
+    private var sourceTotals: SourceTotals?
 
     private let remixTimeoutSeconds: TimeInterval
     private let durationProbeTimeoutSeconds: TimeInterval
@@ -137,6 +139,10 @@ public actor RemixQueue {
     /// Set the callback for when segments complete remixing
     public func setOnSegmentComplete(_ callback: (@Sendable (URL, SegmentReconciliation) async -> Void)?) {
         onSegmentComplete = callback
+    }
+
+    public func setSourceTotals(_ totals: SourceTotals?) {
+        sourceTotals = totals
     }
 
     /// Enqueue a remix job for background processing
@@ -395,6 +401,7 @@ public actor RemixQueue {
             try fm.moveItem(at: job.segmentDirectory, to: finalDirectory)
             Logger.storage.info("Renamed segment: \(job.timePrefix, privacy: .public).incomplete -> \(segmentKey, privacy: .public)")
 
+            recordKeptSegment(directory: finalDirectory, segmentKey: segmentKey, remix: remixResult)
             // Trigger upload callback
             await onSegmentComplete?(finalDirectory, reconciliation)
         } catch {
@@ -405,6 +412,15 @@ public actor RemixQueue {
             await markIncompleteSegmentAsFailed(job.segmentDirectory)
             await onSegmentComplete?(job.segmentDirectory, .failed(stage))
         }
+    }
+
+    /// Counts a segment that was kept. A save failure still lets the callback run.
+    private func recordKeptSegment(directory: URL, segmentKey: String, remix: AudioRemixerResult?) {
+        guard let totals = sourceTotals ?? SourceTotalsInstall.currentStore() else { return }
+        let landed = Set((remix?.sources ?? []).filter { $0.state == "complete" }.map(\.sourceID))
+        let measured = IntakeIntervalLog.measure(directory: directory, landed: landed, silence: remix?.appliedSilence ?? [:])
+        let day = directory.deletingLastPathComponent().lastPathComponent
+        _ = totals.applyCapture(segmentID: "\(day)/\(segmentKey)", audioMilliseconds: measured.audioMs, screenMilliseconds: measured.screenMs)
     }
 
     /// A failed timeline append retains its raw prefix even when remix can copy

@@ -94,6 +94,7 @@ actor ObsidianEngine {
     private let directory: URL
     private let timeZone: @Sendable () -> TimeZone
     private let walker: @Sendable (URL) -> ObsidianVaultWalkResult
+    private let sourceTotals: SourceTotals?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private let fileManager = FileManager.default
@@ -127,11 +128,13 @@ actor ObsidianEngine {
     init(
         directory: URL,
         timeZone: @escaping @Sendable () -> TimeZone = { TimeZone.autoupdatingCurrent },
-        walker: @escaping @Sendable (URL) -> ObsidianVaultWalkResult = ObsidianVaultWalker.walk
+        walker: @escaping @Sendable (URL) -> ObsidianVaultWalkResult = ObsidianVaultWalker.walk,
+        sourceTotals: SourceTotals? = nil
     ) {
         self.directory = directory
         self.timeZone = timeZone
         self.walker = walker
+        self.sourceTotals = sourceTotals
     }
 
     /// Reads what earlier launches left. Off the main thread, and only once.
@@ -661,6 +664,13 @@ actor ObsidianEngine {
         }
         state.lastScanMs = nowMs
         saveState()
+        if let sourceTotals {
+            let hashes = walk.notes.compactMap { path, entry -> String? in
+                guard !entry.isPlaceholder else { return nil }
+                return ObsidianWire.sha256Hex(Data(path.utf8))
+            }
+            _ = sourceTotals.applyBaseline(hashes: hashes)
+        }
         return snapshot()
     }
 
@@ -818,11 +828,11 @@ actor ObsidianEngine {
         guard let urls = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return nil }
         // Decode for the sort, then read each entry once more while writing, so a window's
         // text is never all in memory at once.
-        var ordered: [(key: ObsidianLineSortKey, url: URL, path: String)] = []
+        var ordered: [(key: ObsidianLineSortKey, url: URL, path: String, change: ObsidianChange, previousPath: String?)] = []
         for url in urls where url.pathExtension == "json" {
             switch readEntry(url) {
             case .entry(let entry):
-                ordered.append((entry.line.sortKey, url, entry.path))
+                ordered.append((entry.line.sortKey, url, entry.path, entry.change, entry.previousPath))
             case .corrupt:
                 Logger.upload.error("Obsidian pending entry can't be decoded; dropped")
                 removeEntry(url)
@@ -844,6 +854,23 @@ actor ObsidianEngine {
             Logger.upload.error("Obsidian window not closed; it stays pending")
             for url in writtenFiles { try? fileManager.removeItem(at: url) }
             return nil
+        }
+        if let sourceTotals {
+            let events: [SourceTotals.ObsidianEvent] = ordered.map { item in
+                let hash = ObsidianWire.sha256Hex(Data(item.path.utf8))
+                switch item.change {
+                case .changed:
+                    return .added(hash)
+                case .renamed:
+                    let from = item.previousPath.map { ObsidianWire.sha256Hex(Data($0.utf8)) }
+                    return .renamed(from: from, to: hash)
+                case .removed:
+                    return .removed(hash)
+                }
+            }
+            if sourceTotals.applyObsidianQueue(events) == .saveFailed {
+                return abandon()
+            }
         }
         for item in ordered {
             guard case .entry(let entry) = readEntry(item.url) else { return abandon() }

@@ -1189,31 +1189,8 @@ public actor SyncService {
                     continue
                 }
 
-                let segment = dirName
-                let fileURLs: [URL]
-                do {
-                    fileURLs = try listDirectory(segmentURL)
-                } catch {
-                    recordFailure(error)
+                guard let mediaFiles = uploadMedia(in: segmentURL, onFailure: recordFailure) else {
                     continue
-                }
-
-                var mediaFiles: [URL] = []
-                for fileURL in fileURLs {
-                    let name = fileURL.lastPathComponent
-                    guard IngestAcknowledgment.isUploadMediaName(name, segment: segment) else {
-                        continue
-                    }
-                    let fileKind: DiscoveredEntryKind
-                    do {
-                        fileKind = try classifyEntry(fileURL)
-                    } catch {
-                        recordFailure(error)
-                        continue
-                    }
-                    if fileKind == .regularFile {
-                        mediaFiles.append(fileURL)
-                    }
                 }
 
                 candidatesForDay.append(DiscoveredCandidate(
@@ -1230,6 +1207,35 @@ public actor SyncService {
 
         return DiscoverySnapshot(candidatesByDay: candidatesByDay, failure: firstFailure,
                                  preservedFailureFolders: preservedFailureFolders)
+    }
+
+    /// Media this directory would upload. Nil when the directory itself cannot be listed.
+    /// The intervals sidecar is not media.
+    internal func uploadMedia(in directory: URL, onFailure: (Error) -> Void) -> [URL]? {
+        let fileURLs: [URL]
+        do {
+            fileURLs = try listDirectory(directory)
+        } catch {
+            onFailure(error)
+            return nil
+        }
+        let segment = directory.lastPathComponent
+        var mediaFiles: [URL] = []
+        for fileURL in fileURLs {
+            let name = fileURL.lastPathComponent
+            guard IngestAcknowledgment.isUploadMediaName(name, segment: segment) else { continue }
+            let fileKind: DiscoveredEntryKind
+            do {
+                fileKind = try classifyEntry(fileURL)
+            } catch {
+                onFailure(error)
+                continue
+            }
+            if fileKind == .regularFile {
+                mediaFiles.append(fileURL)
+            }
+        }
+        return mediaFiles
     }
 
     /// Convert local segment path to server format
@@ -1892,22 +1898,7 @@ public actor SyncService {
     }
 
     private func selectFilesForUploadLive(segmentDirectory: URL) -> [URL] {
-        let files: [URL]
-        do {
-            files = try listDirectory(segmentDirectory)
-        } catch {
-            return []
-        }
-        let segment = segmentDirectory.lastPathComponent
-        var result: [URL] = []
-        for file in files {
-            let name = file.lastPathComponent
-            guard IngestAcknowledgment.isUploadMediaName(name, segment: segment) else { continue }
-            if let kind = try? classifyEntry(file), kind == .regularFile {
-                result.append(file)
-            }
-        }
-        return result
+        uploadMedia(in: segmentDirectory, onFailure: { _ in }) ?? []
     }
 #endif
 

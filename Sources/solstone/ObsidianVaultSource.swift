@@ -407,9 +407,9 @@ final class ObsidianVaultSource {
 }
 
 extension ObsidianVaultSource {
-    static func make(appSupportDirectory: URL, resolver: HomeBaseURLResolver, isHeld: @escaping @MainActor () -> Bool) -> ObsidianVaultSource {
+    static func make(appSupportDirectory: URL, resolver: HomeBaseURLResolver, isHeld: @escaping @MainActor () -> Bool, sourceTotals: SourceTotals? = nil) -> ObsidianVaultSource {
         ObsidianVaultSource(
-            engine: ObsidianEngine(directory: appSupportDirectory.appendingPathComponent("Solstone/obsidian", isDirectory: true)),
+            engine: ObsidianEngine(directory: appSupportDirectory.appendingPathComponent("Solstone/obsidian", isDirectory: true), sourceTotals: sourceTotals),
             transport: UploadClient(),
             resolver: resolver,
             isHeld: isHeld

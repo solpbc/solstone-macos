@@ -123,6 +123,8 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
     private var firstBufferTime: CMTime?
     private var lastBufferTime: CMTime?
     private let lock = NSLock()
+    private let spanLock = NSLock()
+    private var acceptedSpans: [(Double, Double)] = []
     private var timelineFailed = false
     private var lastFormat: CMFormatDescription?
     private var lastSampleRate: Double = 48_000
@@ -696,7 +698,10 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
             if accepted {
                 acceptedSuccessfully = true
                 if generated { statistics.generatedFrames = (statistics.generatedFrames ?? 0) + frames }
-                else { statistics.acceptedFrames += frames }
+                else {
+                    statistics.acceptedFrames += frames
+                    recordAcceptedSpan(buffer, frames: frames)
+                }
                 publishStatistics()
             } else { recordFailure(stage: generated ? "padding_append" : "append", error: writer.error, dropped: generated ? 0 : frames) }
             return accepted
@@ -852,6 +857,37 @@ public final class SingleTrackAudioWriter: @unchecked Sendable {
         }
 
         appendAudio(sampleBuffer)
+    }
+
+    /// Accepted sample time on the segment clock. Generated padding is not included.
+    func acceptedSpansSnapshot() -> [(Double, Double)] {
+        spanLock.lock()
+        defer { spanLock.unlock() }
+        return acceptedSpans
+    }
+
+    /// Writes this writer's accepted ranges into the segment's intervals file.
+    func writeAcceptedIntervals(into directory: URL, source: String) {
+        let log = IntakeIntervalLog()
+        for span in acceptedSpansSnapshot() {
+            log.acceptAudio(source: source, start: span.0, end: span.1)
+        }
+        log.write(into: directory)
+    }
+
+    private func recordAcceptedSpan(_ buffer: CMSampleBuffer, frames: Int) {
+        let start = CMTimeSubtract(CMSampleBufferGetPresentationTimeStamp(buffer), segmentStartTime).seconds
+        var rate = Self.targetSampleRate
+        if let format = CMSampleBufferGetFormatDescription(buffer),
+           let description = CMAudioFormatDescriptionGetStreamBasicDescription(format) {
+            let sampleRate = description.pointee.mSampleRate
+            if sampleRate > 0 { rate = sampleRate }
+        }
+        let end = start + Double(frames) / rate
+        guard start.isFinite, end.isFinite, end > start else { return }
+        spanLock.lock()
+        acceptedSpans.append((start, end))
+        spanLock.unlock()
     }
 
     /// Finishes writing and returns timing info

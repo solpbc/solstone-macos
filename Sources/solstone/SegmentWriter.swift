@@ -123,6 +123,7 @@ public protocol SegmentAudioManaging: AnyObject, Sendable {
     func activeMicrophoneUIDs() -> [String]
     func getMicMetadata() -> [[String: Any]]
     func finishAll() async -> [AudioRemixerInput]
+    func acceptedAudioSpans() -> [String: [(Double, Double)]]
     func audioStatistics() -> [String: AudioWriterStatistics]
     func audioOwnership() -> AudioNativeOwnership?
     func prepareToFinishCapture() -> CMTime
@@ -135,6 +136,7 @@ public extension SegmentAudioManaging {
     func bindDiagnostics(_ recorder: AudioCaptureRecorder) {}
     func bindSystemAudioBudget(_ budget: AudioMediaBudget) {}
     func audioStatistics() -> [String: AudioWriterStatistics] { [:] }
+    func acceptedAudioSpans() -> [String: [(Double, Double)]] { [:] }
     func audioOwnership() -> AudioNativeOwnership? { nil }
     func prepareToFinishCapture() -> CMTime { CMClockGetTime(CMClockGetHostTimeClock()) }
     func prepareToFinishCapture(handoff: AudioRotationHandoff?) -> CMTime { prepareToFinishCapture() }
@@ -180,6 +182,7 @@ public final class SegmentWriter {
     public var currentPreviewEpoch: (@Sendable () -> UInt64)?
     public var onLatestFrame: (@MainActor @Sendable (CGImage, Int, UInt64) -> Void)?
     public var siteFrameGate: SiteFrameGate?
+    private var intakeLog = IntakeIntervalLog()
     internal let siteRuleLock: OSAllocatedUnfairLock<Bool>
     internal let appendsClosedLock = OSAllocatedUnfairLock(initialState: false)
     public var isSiteRuleActive: Bool {
@@ -440,8 +443,10 @@ public final class SegmentWriter {
                             self?.onLatestFrame?(image, streamGen, epoch)
                         }
                         capturer.siteFrameGate = siteFrameGate
+                        siteFrameGate?.intakeLog = intakeLog
                         liveCapturers.append(capturer)
                         try await capturer.start()
+                        intakeLog.beginDisplay(String(info.displayID), at: HostClock.seconds(ticks: mach_absolute_time()))
                         constructedCapturers[info.displayID] = capturer
                         anyDisplayStarted = true
                     } catch {
@@ -801,6 +806,14 @@ public final class SegmentWriter {
             await markIncompleteSegmentAsFailed(outputDirectory)
             return nil
         }
+        for (id, spans) in audioManager?.acceptedAudioSpans() ?? [:] {
+            for span in spans {
+                intakeLog.acceptAudio(source: id, start: span.0, end: span.1)
+            }
+        }
+        intakeLog.endAll(at: HostClock.seconds(ticks: mach_absolute_time()))
+        intakeLog.write(into: outputDirectory)
+        siteFrameGate?.intakeLog = nil
         Logger.capture.info("Capture finished, queued for background remix: \(self.outputDirectory.lastPathComponent, privacy: .public)")
 
         return SegmentCaptureResult(
