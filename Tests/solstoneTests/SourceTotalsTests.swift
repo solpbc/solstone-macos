@@ -413,11 +413,11 @@ struct CaptureCounterTests {
         let root = try makeTempDirectory("upload-list")
         let segment = root.appendingPathComponent("20260303").appendingPathComponent("120000_10")
         try FileManager.default.createDirectory(at: segment, withIntermediateDirectories: true)
-        try Data("a").write(to: segment.appendingPathComponent("120000_10_audio.m4a"))
-        try Data("s").write(to: segment.appendingPathComponent("120000_10_display_1_screen.mp4"))
-        try Data("s2").write(to: segment.appendingPathComponent("120000_10_display_2_screen.mp4"))
-        try Data("{}").write(to: segment.appendingPathComponent("intake-intervals.json"))
-        try Data("x").write(to: segment.appendingPathComponent("notes.txt"))
+        try Data("a".utf8).write(to: segment.appendingPathComponent("120000_10_audio.m4a"))
+        try Data("s".utf8).write(to: segment.appendingPathComponent("120000_10_display_1_screen.mp4"))
+        try Data("s2".utf8).write(to: segment.appendingPathComponent("120000_10_display_2_screen.mp4"))
+        try Data("{}".utf8).write(to: segment.appendingPathComponent("intake-intervals.json"))
+        try Data("x".utf8).write(to: segment.appendingPathComponent("notes.txt"))
         let service = SyncService(
             storageManager: StorageManager(baseDirectory: root),
             resolver: HomeBaseURLResolver { .url("http://127.0.0.1") }
@@ -489,7 +489,8 @@ struct ScreenHoldIntervalTests {
         #expect(abs((log.screenRanges()["1"]?.first?.1 ?? 0) - 10) < 0.001)
         #expect(log.screenRanges()["2"] == nil)
         log.endAll(at: 20)
-        #expect(log.screenRanges()["2"] == [(0, 20)])
+        let displayTwo = log.screenRanges()["2"] ?? []
+        #expect(displayTwo.count == 1 && displayTwo.first?.0 == 0 && displayTwo.first?.1 == 20)
 
         let gapLog = IntakeIntervalLog()
         gapLog.beginDisplay("1", at: 0)
@@ -501,7 +502,8 @@ struct ScreenHoldIntervalTests {
         _ = gapGate.enqueue(displayID: 1, frame: SiteHeldFrame(id: 2, displayTicks: ticks(110), c: 10, originTicks: origin))
         #expect(gapGate.evaluate(displayID: 1, now: 11) == [.drop(id: 2, reason: .gap)])
         gapLog.endAll(at: 20)
-        #expect(gapLog.screenRanges()["1"] == [(0, 20)])
+        let gapRange = gapLog.screenRanges()["1"] ?? []
+        #expect(gapRange.count == 1 && gapRange.first?.0 == 0 && gapRange.first?.1 == 20)
 
         let stallLog = IntakeIntervalLog()
         stallLog.beginDisplay("1", at: 0)
@@ -512,7 +514,8 @@ struct ScreenHoldIntervalTests {
         }
         #expect(stallLog.screenRanges()["1"] == nil)
         stallLog.endAll(at: 30)
-        #expect(stallLog.screenRanges()["1"] == [(0, 30)])
+        let stallRange = stallLog.screenRanges()["1"] ?? []
+        #expect(stallRange.count == 1 && stallRange.first?.0 == 0 && stallRange.first?.1 == 30)
     }
 }
 
