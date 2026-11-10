@@ -22,7 +22,9 @@ private func totals(at text: String = "2026-03-03T17:00:00Z", zone: TimeZone = u
 }
 
 private func object(_ data: Data?) throws -> [String: Any] {
-    try #require(JSONSerialization.jsonObject(with: try #require(data)) as? [String: Any])
+    let bytes = try #require(data)
+    let parsed = try JSONSerialization.jsonObject(with: bytes)
+    return try #require(parsed as? [String: Any])
 }
 
 private func source(_ root: [String: Any], _ name: String) throws -> [String: Any] {
