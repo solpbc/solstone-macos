@@ -930,7 +930,6 @@ struct AudioAdmissionTests {
         #expect(stats.receivedFrames == 14_400 && stats.acceptedFrames == 4_800 && stats.droppedFrames == 9_600)
         // The refused interval is a padded gap to the cutoff, not the end of the source.
         #expect(stats.generatedFrames == 14_400 && stats.failures.contains { $0.stage == "admission_copy" })
-        let original = try Data(contentsOf: writer.url)
         let prefix = try #require(try await admissionDecode(writer.url).first)
         #expect(prefix.count == 19_200 && admissionTone(prefix, frequency: 220, start: 0.025, end: 0.075) > 0.15)
         try recorder.seal()
@@ -940,7 +939,8 @@ struct AudioAdmissionTests {
             audioDiagnostics: recorder, audioOwnership: AudioNativeOwnership { writer.nativeWriterIsQuiescent }))
         await queue.waitForCompletion()
         let final = root.appendingPathComponent("120000_4")
-        #expect(try Data(contentsOf: final.appendingPathComponent("120000_4_audio_system.m4a")) == original)
+        // The merged track holds every accepted frame, so the source file is not left behind.
+        #expect(!FileManager.default.fileExists(atPath: final.appendingPathComponent("120000_4_audio_system.m4a").path))
         let mixed = try #require(try await admissionDecode(final.appendingPathComponent("120000_4_audio.m4a")).first)
         #expect(mixed.count == 19_200 && admissionTone(mixed, frequency: 220, start: 0.025, end: 0.075) > 0.15)
         let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: final.appendingPathComponent("120000_4_meta.json"))) as? [String: Any]

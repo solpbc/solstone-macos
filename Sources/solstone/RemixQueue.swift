@@ -355,10 +355,9 @@ public actor RemixQueue {
             return
         }
         // Cleanup is authorized only after output completion and durable outcomes.
-        let preservation = timelineFailureSources(directory: job.segmentDirectory, timePrefix: job.timePrefix)
+        // `sourceFiles` lists only sources the remix copied whole, so the merged track holds
+        // every frame they had; a source failure stays in the metadata. Any other source stays.
         for source in remixResult?.sourceFiles ?? [] {
-            let id = parseTrackType(from: source.lastPathComponent, timePrefix: job.timePrefix).sourceID
-            guard let preservation, !preservation.contains(id) else { continue }
             do { try fm.removeItem(at: source) }
             catch { Logger.storage.warning("Could not remove remixed source: \(error, privacy: .public)") }
         }
@@ -421,27 +420,6 @@ public actor RemixQueue {
         let measured = IntakeIntervalLog.measure(directory: directory, landed: landed, silence: remix?.appliedSilence ?? [:])
         let day = directory.deletingLastPathComponent().lastPathComponent
         _ = totals.applyCapture(segmentID: "\(day)/\(segmentKey)", audioMilliseconds: measured.audioMs, screenMilliseconds: measured.screenMs)
-    }
-
-    /// A failed timeline append retains its raw prefix even when remix can copy
-    /// that shorter prefix. It cannot erase the evidence of unencoded placement.
-    private func timelineFailureSources(directory: URL, timePrefix: String) -> Set<String>? {
-        let url = directory.appendingPathComponent("\(timePrefix)_meta.json")
-        guard let data = try? Data(contentsOf: url),
-              let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        let capture = meta["audio_capture"] as? [String: Any] ?? [:]
-        var retained = Set<String>()
-        for row in capture["sources"] as? [[String: Any]] ?? [] {
-            let failures = row["failures"] as? [[String: Any]] ?? []
-            if failures.contains(where: {
-                let stage = $0["stage"] as? String ?? ""
-                return stage.hasPrefix("padding") || stage.hasPrefix("admission") || ["timeline", "boundary_clip"].contains(stage)
-            }),
-               let id = row["source_id"] as? String {
-                retained.insert(id.replacingOccurrences(of: ":", with: "_").replacingOccurrences(of: "/", with: "_"))
-            }
-        }
-        return retained
     }
 
     /// The duration in a consolidated `<prefix>_<n>_audio.m4a` left by an interrupted finalization.

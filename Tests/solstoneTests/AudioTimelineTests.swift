@@ -177,7 +177,6 @@ struct AudioTimelineTests {
         let stats = writer.statisticsSnapshot
         #expect(stats.receivedFrames == 14_400 && stats.acceptedFrames == 4800 && stats.droppedFrames == 9600)
         #expect(stats.generatedFrames == 0 && stats.failures.contains(where: { $0.stage == "padding" }))
-        let original = try Data(contentsOf: writer.url)
         let prefix = try #require(try await timelineDecode(writer.url).first)
         #expect(prefix.count == 4800)
         #expect(timelineRMS(prefix, from: 0.025, to: 0.075) > 0.05)
@@ -188,7 +187,8 @@ struct AudioTimelineTests {
             audioDiagnostics: recorder, audioOwnership: AudioNativeOwnership { writer.nativeWriterIsQuiescent }))
         await queue.waitForCompletion()
         let final = root.appendingPathComponent("120000_4")
-        #expect(try Data(contentsOf: final.appendingPathComponent("120000_4_audio_system.m4a")) == original)
+        // The merged track holds every accepted frame, so the source file is not left behind.
+        #expect(!FileManager.default.fileExists(atPath: final.appendingPathComponent("120000_4_audio_system.m4a").path))
         let mixed = try #require(try await timelineDecode(final.appendingPathComponent("120000_4_audio.m4a")).first)
         #expect(mixed.count == 4800)
         let meta = try JSONSerialization.jsonObject(with: Data(contentsOf: final.appendingPathComponent("120000_4_meta.json"))) as? [String: Any]

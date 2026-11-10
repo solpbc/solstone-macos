@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - settings now says that a left-out website keeps Safari out of screen intake even when the page is in a window behind other windows, and that switching onto a left-out page pauses screen intake for a few seconds.
 - starting the solstone app a second time from a terminal no longer leaves the solstone extension in Safari unable to reach the app until you quit and reopen it. a second copy now leaves the open app alone and exits, and an unknown word, like `status`, now prints how to open the app instead of starting it. thanks @dvanduzer.
 - a segment the app set aside on your mac no longer gets stuck trying again at every start when an earlier one has the same name, and set-aside folders with nothing you shared left in them are now removed on their own. any that still hold something you shared stay where they are. thanks @dvanduzer.
+- when a segment's audio had a gap, the app kept a second copy of that audio in a set-aside folder on your mac, even after your journal held it. it no longer does. thanks @dvanduzer.
 
 ## [2.0.63] - 2026-11-08
 
