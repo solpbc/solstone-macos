@@ -131,6 +131,13 @@ struct IngestV3UploadRequestBuilder {
                 mimeType = "application/jsonl"
             } else if source == ObsidianWire.source {
                 mimeType = "application/jsonl"
+            } else if source == "screenshots" {
+                switch fileURL.pathExtension.lowercased() {
+                case "png": mimeType = "image/png"
+                case "jpg", "jpeg": mimeType = "image/jpeg"
+                case "webp": mimeType = "image/webp"
+                default: mimeType = "application/octet-stream"
+                }
             } else if filename.hasSuffix("_protected_video.jsonl") {
                 mimeType = "application/jsonl"
             } else if fileURL.pathExtension == "mp4" {

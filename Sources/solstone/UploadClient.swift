@@ -280,6 +280,17 @@ public struct UploadClient: Sendable {
         )
     }
 
+    /// Uploads one staged screenshot. The answers table is the screenshots contract.
+    func uploadScreenshotStaged(prepared: PreparedIngestV3Upload) async -> ScreenshotAnswer {
+        do {
+            let (data, response) = try await session.upload(for: prepared.request, fromFile: prepared.bodyURL)
+            guard let httpResponse = response as? HTTPURLResponse else { return .retry }
+            return classifyScreenshot(statusCode: httpResponse.statusCode, body: data)
+        } catch {
+            return .retry
+        }
+    }
+
     /// Uploads a staged note file. Its answer is read by the Obsidian answers table alone.
     func uploadObsidianStaged(prepared: PreparedIngestV3Upload) async -> ObsidianSendOutcome {
         do {

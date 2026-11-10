@@ -12,22 +12,26 @@ import SwiftUI
 extension SettingsView {
     @ViewBuilder
     func sourcePage(_ source: DeckSource, scrollProxy: ScrollViewProxy) -> some View {
-        let tile = deriveDeckTile(source, appState.deckInputs)
-        VStack(alignment: .leading, spacing: 16) {
-            paneHeader(source.label, systemImage: source.systemImage)
-            pageVerdict(tile)
-            pageReason(tile)
-            Text(takesInSentence(source))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            SourceTotalRows(appState: appState, source: source)
-            pageBody(source, scrollProxy: scrollProxy)
+        if source == .screenshots {
+            screenshotPage()
+        } else {
+            let tile = deriveDeckTile(source, appState.deckInputs)
+            VStack(alignment: .leading, spacing: 16) {
+                paneHeader(source.label, systemImage: source.systemImage)
+                pageVerdict(tile)
+                pageReason(tile)
+                Text(takesInSentence(source))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                SourceTotalRows(appState: appState, source: source)
+                pageBody(source, scrollProxy: scrollProxy)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(AXID.Deck.page(source))
+            .onAppear { pageAppeared(source) }
+            .onDisappear { pageDisappeared(source) }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(AXID.Deck.page(source))
-        .onAppear { pageAppeared(source) }
-        .onDisappear { pageDisappeared(source) }
     }
 
     private func takesInSentence(_ source: DeckSource) -> String {
@@ -37,6 +41,7 @@ extension SettingsView {
         case .terminal: return DeckCopy.terminalTakesIn
         case .browsers: return DeckCopy.browsersTakesIn
         case .obsidian: return UICopy.Obsidian.EXPLAINER
+        case .screenshots: return ScreenshotCopy.takesIn
         }
     }
 
@@ -64,6 +69,7 @@ extension SettingsView {
         case .terminal: return AXID.Settings.Sources.terminalEnabled
         case .browsers: return AXID.Settings.Sources.browserIntakeEnabled
         case .obsidian: return AXID.Deck.tileSwitch(.obsidian) + ".page"
+        case .screenshots: return AXID.Deck.tileSwitch(.screenshots) + ".page"
         }
     }
 
@@ -186,6 +192,8 @@ extension SettingsView {
             if let obsidianSource = appState.obsidianSource {
                 ObsidianSourceSettingsView(source: obsidianSource, onSourcePage: true)
             }
+        case .screenshots:
+            EmptyView()
         }
     }
 
@@ -225,7 +233,7 @@ extension SettingsView {
             appState.markSettingsTabVisited(.permissions)
             privateWindowAnnouncements.reset(to: privateWindowAccessibilityState)
             refreshSetupProbes()
-        case .terminal, .browsers, .obsidian:
+        case .terminal, .browsers, .obsidian, .screenshots:
             appState.markSettingsTabVisited(.sources)
         }
     }

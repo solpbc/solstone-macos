@@ -71,6 +71,10 @@ final class SourceTotals: @unchecked Sendable {
         var obsidianNotes: Set<String>
         var obsidianBaseline: Bool
         var obsidianStarted: String
+        var screenshotsTotal: Int = 0
+        var screenshotsLast: String?
+        var screenshotsHashes: Set<String> = []
+        var screenshotsStarted: String = ""
     }
 
     enum ObsidianEvent: Equatable, Sendable {
@@ -231,6 +235,17 @@ final class SourceTotals: @unchecked Sendable {
                 }
             }
             return changed
+        }
+    }
+
+    /// One screenshot, counted once by the hash of its bytes.
+    func applyScreenshot(hash: String) -> SourceTotalsOutcome {
+        mutate { model in
+            if model.screenshots.hashes.contains(hash) { return false }
+            model.screenshots.hashes.insert(hash)
+            model.screenshots.total += 1
+            model.screenshots.last = Self.iso(clock.now)
+            return true
         }
     }
 
@@ -401,6 +416,7 @@ final class SourceTotals: @unchecked Sendable {
         var terminal: TerminalSource
         var browsers: PageSource
         var obsidian: NoteSource
+        var screenshots: ShotSource
 
         static func fresh(day: String) -> Model {
             Model(
@@ -408,7 +424,8 @@ final class SourceTotals: @unchecked Sendable {
                 screen: TimeSource(totalMilliseconds: 0, started: day, last: nil, segments: []),
                 terminal: TerminalSource(totalSeconds: 0, started: day, last: nil, coverage: [], carried: false),
                 browsers: PageSource(total: 0, started: day, last: nil, tabs: [:]),
-                obsidian: NoteSource(total: 0, started: day, last: nil, notes: [], baseline: false)
+                obsidian: NoteSource(total: 0, started: day, last: nil, notes: [], baseline: false),
+                screenshots: ShotSource(total: 0, started: day, last: nil, hashes: [])
             )
         }
 
@@ -436,9 +453,20 @@ final class SourceTotals: @unchecked Sendable {
                 obsidianLast: obsidian.last,
                 obsidianNotes: obsidian.notes,
                 obsidianBaseline: obsidian.baseline,
-                obsidianStarted: obsidian.started
+                obsidianStarted: obsidian.started,
+                screenshotsTotal: screenshots.total,
+                screenshotsLast: screenshots.last,
+                screenshotsHashes: screenshots.hashes,
+                screenshotsStarted: screenshots.started
             )
         }
+    }
+
+    private struct ShotSource: Equatable {
+        var total: Int
+        var started: String
+        var last: String?
+        var hashes: Set<String>
     }
 
     private static func encode(_ model: Model) throws -> Data {
@@ -449,6 +477,7 @@ final class SourceTotals: @unchecked Sendable {
             "terminal": terminalJSON(model.terminal),
             "browsers": pageJSON(model.browsers),
             "obsidian": noteJSON(model.obsidian),
+            "screenshots": shotJSON(model.screenshots),
         ]
         return try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
     }
@@ -483,6 +512,15 @@ final class SourceTotals: @unchecked Sendable {
         ]
     }
 
+    private static func shotJSON(_ source: ShotSource) -> [String: Any] {
+        [
+            "total": source.total,
+            "started": source.started,
+            "last": source.last ?? NSNull(),
+            "hashes": source.hashes.sorted(),
+        ]
+    }
+
     private static func noteJSON(_ source: NoteSource) -> [String: Any] {
         [
             "total": source.total,
@@ -502,7 +540,20 @@ final class SourceTotals: @unchecked Sendable {
               let terminal = terminal(root["terminal"]),
               let browsers = pages(root["browsers"]),
               let obsidian = notes(root["obsidian"]) else { return nil }
-        return Model(audio: audio, screen: screen, terminal: terminal, browsers: browsers, obsidian: obsidian)
+        let screenshots = shots(root["screenshots"]) ?? ShotSource(total: 0, started: audio.started, last: nil, hashes: [])
+        return Model(audio: audio, screen: screen, terminal: terminal, browsers: browsers, obsidian: obsidian, screenshots: screenshots)
+    }
+
+    private static func shots(_ value: Any?) -> ShotSource? {
+        guard let object = value as? [String: Any],
+              let total = integer(object["total"]),
+              let started = object["started"] as? String else { return nil }
+        return ShotSource(
+            total: total,
+            started: started,
+            last: instant(object["last"]),
+            hashes: Set(object["hashes"] as? [String] ?? [])
+        )
     }
 
     private static func time(_ value: Any?, remainder: Bool) -> TimeSource? {

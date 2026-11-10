@@ -98,6 +98,9 @@ extension AppState {
         } else {
             i.obsidianState = .unknown
         }
+        if let screenshotSource {
+            i.screenshot = screenshotSource.snapshot
+        }
         return i
     }
 
@@ -193,6 +196,9 @@ extension AppState {
         case .obsidian:
             guard !on, let obsidianSource else { return }
             Task { await obsidianSource.turnOff() }
+        case .screenshots:
+            guard !on, let screenshotSource else { return }
+            Task { await screenshotSource.turnOff() }
         }
     }
 

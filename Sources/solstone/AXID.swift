@@ -161,6 +161,20 @@ enum AXID {
             static let obsidianProgress = "settings.sources.obsidian.progress"
             static let obsidianNotOnDevice = "settings.sources.obsidian.notOnDevice"
             static let obsidianTooLarge = "settings.sources.obsidian.tooLarge"
+            static let screenshotsAllow = "settings.sources.screenshots.allow"
+            static let screenshotsOpenSettings = "settings.sources.screenshots.openSettings"
+            static let screenshotsChooseFolder = "settings.sources.screenshots.chooseFolder"
+            static let screenshotsSpan = "settings.sources.screenshots.span"
+            static let screenshotsConfirm = "settings.sources.screenshots.confirm"
+            static let screenshotsRetry = "settings.sources.screenshots.retry"
+            static let screenshotsResume = "settings.sources.screenshots.resume"
+            static let screenshotsProgress = "settings.sources.screenshots.progress"
+            static let screenshotsRefused = "settings.sources.screenshots.refused"
+            static let screenshotsUnreadable = "settings.sources.screenshots.unreadable"
+            static let screenshotsDetail = "settings.sources.screenshots.detail"
+            static let screenshotsWaiting = "settings.sources.screenshots.waiting"
+            static let screenshotsLastChecked = "settings.sources.screenshots.lastChecked"
+            static let screenshotsFolder = "settings.sources.screenshots.folder"
         }
 
         enum Permissions {

@@ -59,6 +59,7 @@ public final class AppState {
     public let storageManager: StorageManager
     var activitySource: DesktopActivitySource?
     var obsidianSource: ObsidianVaultSource?
+    var screenshotSource: ScreenshotSource?
     var terminalSource: TerminalSource?
     /// The owner turned terminal on and solstone for tmux is still here: ask first.
     var terminalMoveOffer = false
@@ -747,6 +748,7 @@ public final class AppState {
 #endif
         shortcutController.unregister()
         obsidianSource?.shutdown()
+        screenshotSource?.shutdown()
         await terminalSource?.shutdown()
         await stopRecording(reason: .quit)
         await drainRemixQueueForTermination()
@@ -843,6 +845,7 @@ public final class AppState {
         guard appQuitCoordinator.preparationGeneration == generation else { return }
 #endif
         obsidianSource?.shutdown()
+        screenshotSource?.shutdown()
         await terminalSource?.shutdown()
         await stopRecording(reason: .update)
         await drainRemixQueueForTermination()
@@ -1026,7 +1029,10 @@ public final class AppState {
         }
 #endif
         silenceMusicHolder.value = newConfig.silenceMusic
-        if oldConfig.syncPaused != newConfig.syncPaused { obsidianSource?.nudge() }
+        if oldConfig.syncPaused != newConfig.syncPaused {
+            obsidianSource?.nudge()
+            screenshotSource?.nudge()
+        }
         if oldConfig.isTerminalEnabled != newConfig.isTerminalEnabled { terminalSource?.reconcile() }
 
         let modeSelectionChanged = (newConfig.disabledMicrophoneUIDs != oldDisabled ||
@@ -2521,6 +2527,7 @@ public final class AppState {
             Task { await RemixQueue.shared.setSourceTotals(totals) }
         }
         configureObsidianSource()
+        configureScreenshotSource()
         configureTerminalSource()
         syncMicrophonePriorityList()
 
@@ -3037,6 +3044,29 @@ public final class AppState {
             sourceTotals: sourceTotals ?? openSourceTotals(appSupport: appSupport)
         )
         obsidianSource = source
+        let previousPause = pauseManager.onPauseIntake
+        pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.nudge() }
+        let previousResume = pauseManager.onResumeIntake
+        pauseManager.onResumeIntake = { [weak source] in previousResume?(); source?.nudge() }
+        Task { await source.start() }
+    }
+
+    private func configureScreenshotSource() {
+        guard automaticObservationPipelineEnabled,
+              let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let source = ScreenshotSource.make(
+            appSupportDirectory: appSupport,
+            resolver: ingestBaseURLResolver,
+            journalID: { [weak self] in self?.currentJournalIdentity().fingerprint?.value },
+            pauseFact: { [weak self] in
+                guard let self else { return .running }
+                return ScreenshotPauseFact(paused: self.pauseManager.isPaused, expiration: self.pauseManager.pauseState.expirationDate)
+            },
+            paired: { [weak self] in self?.deckHasJournal ?? false },
+            syncPaused: { [weak self] in self?.config.syncPaused ?? true },
+            sourceTotals: sourceTotals ?? openSourceTotals(appSupport: appSupport)
+        )
+        screenshotSource = source
         let previousPause = pauseManager.onPauseIntake
         pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.nudge() }
         let previousResume = pauseManager.onResumeIntake

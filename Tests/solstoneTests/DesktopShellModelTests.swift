@@ -15,6 +15,7 @@ struct DesktopShellModelTests {
         inputs.terminalState = .running
         inputs.obsidianState = .on
         inputs.obsidianVaultName = "field notes"
+        inputs.screenshot = .running(folderLine: "Desktop")
         inputs.browserState = .running(connected: ["Chrome", "Safari"])
         for tile in deriveDeck(inputs, sources: DeckSource.allCases) {
             #expect(tile.state == .on, "\(tile.source)")

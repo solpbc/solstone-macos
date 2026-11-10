@@ -183,4 +183,97 @@ struct DesktopShellSnapshotTests {
             try render(view, size: windowSize, to: "shelf-\(tab.rawValue)", dark: dark)
         }
     }
+
+    /// The screenshots page in each condition the shell can show. Light is enough to compare with the mock.
+    @Test(arguments: ["not-set-up", "access-off", "moved", "chooser", "bringing-in", "waiting", "paused", "off", "refused"])
+    func screenshotPage(_ name: String) throws {
+        let facts = Self.screenshotFacts(name)
+        let app = state(.good)
+        var deck = Self.inputs(.good).0
+        deck.screenshot = presentScreenshots(facts)
+        app.snapshotDeckInputs = deck
+        if name == "bringing-in" || name == "paused" || name == "refused" {
+            var totals = Self.sampleTotals()
+            totals.screenshotsTotal = 40
+            totals.screenshotsLast = SourceTotals.iso(Date().addingTimeInterval(-120))
+            totals.screenshotsStarted = "2026-03-03"
+            app.snapshotSourceTotals = totals
+        }
+        let wide = CGSize(width: 1160, height: 1100)
+        let view = SettingsView(
+            appState: app, updateController: updateController(), selectedTab: .home,
+            initialHomePane: .source(.screenshots), initialStorageUsedMB: 42
+        )
+        try render(view, size: wide, to: "screenshots-\(name)", dark: false)
+        if name == "chooser" || name == "bringing-in" {
+            let phone = SettingsView(
+                appState: app, updateController: updateController(), selectedTab: .home,
+                initialHomePane: .source(.screenshots), initialPhonePushed: true, initialStorageUsedMB: 42
+            )
+            try render(phone, size: CGSize(width: 420, height: 900), to: "screenshots-\(name)-phone", dark: false)
+        }
+    }
+
+    private static func screenshotFacts(_ name: String) -> ScreenshotFacts {
+        var facts = ScreenshotFacts()
+        facts.folderName = "Documents"
+        facts.folderLine = "Documents"
+        facts.folderIsDesktop = false
+        switch name {
+        case "not-set-up":
+            facts.folderName = "Desktop"
+            facts.folderIsDesktop = true
+        case "access-off":
+            facts.consented = true
+            facts.enabled = true
+            facts.access = .denied
+        case "moved":
+            facts.consented = true
+            facts.enabled = true
+            facts.access = .moved
+            facts.movedName = "Desktop"
+        case "chooser":
+            facts.consented = true
+            facts.enabled = true
+            facts.count = .ready(128)
+            facts.folderPath = "/Users/owner/Documents"
+            facts.showReturnNote = true
+        case "bringing-in":
+            facts.consented = true
+            facts.enabled = true
+            facts.confirmed = true
+            facts.backlogOpen = true
+            facts.done = 12
+            facts.total = 128
+            facts.lastChecked = Date().addingTimeInterval(-20)
+        case "waiting":
+            facts.consented = true
+            facts.enabled = true
+            facts.confirmed = true
+            facts.waitingForJournal = true
+            facts.lastChecked = Date().addingTimeInterval(-40)
+        case "paused":
+            facts.consented = true
+            facts.enabled = true
+            facts.confirmed = true
+            facts.ownerPaused = true
+            facts.backlogOpen = true
+            facts.done = 12
+            facts.total = 128
+        case "off":
+            facts.consented = true
+            facts.enabled = false
+        case "refused":
+            facts.consented = true
+            facts.enabled = true
+            facts.confirmed = true
+            facts.refused = 1
+            facts.unreadable = 2
+            facts.lastChecked = Date().addingTimeInterval(-90)
+            facts.waiting = 3
+        default:
+            break
+        }
+        return facts
+    }
 }

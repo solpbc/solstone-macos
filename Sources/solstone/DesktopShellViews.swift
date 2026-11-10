@@ -128,6 +128,11 @@ extension SettingsView {
             openPane(.source(.obsidian))
             return
         }
+        if source == .screenshots, on {
+            openPane(.source(.screenshots))
+            Task { await appState.screenshotSource?.turnBackOn() }
+            return
+        }
         appState.setDeckSource(source, on: on)
     }
 

@@ -10,7 +10,7 @@ import Foundation
 
 /// The sources this Mac has, in tile order.
 enum DeckSource: String, CaseIterable, Hashable, Sendable {
-    case audio, screen, terminal, browsers, obsidian
+    case audio, screen, terminal, browsers, obsidian, screenshots
 
     var label: String {
         switch self {
@@ -19,6 +19,7 @@ enum DeckSource: String, CaseIterable, Hashable, Sendable {
         case .terminal: return "terminal"
         case .browsers: return "browsers"
         case .obsidian: return "Obsidian"
+        case .screenshots: return ScreenshotCopy.label
         }
     }
 
@@ -29,6 +30,7 @@ enum DeckSource: String, CaseIterable, Hashable, Sendable {
         case .terminal: return "apple.terminal"
         case .browsers: return "globe"
         case .obsidian: return "diamond"
+        case .screenshots: return "photo"
         }
     }
 
@@ -37,7 +39,7 @@ enum DeckSource: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .audio: return "microphones"
         case .screen: return "privacy"
-        case .terminal, .browsers, .obsidian: return "sources"
+        case .terminal, .browsers, .obsidian, .screenshots: return "sources"
         }
     }
 
@@ -90,6 +92,10 @@ enum DeckSourceAction: Equatable, Sendable {
     case tryAgain
     case chooseVault
     case openSafariSettings
+    case allowScreenshotFolder
+    case openScreenshotSettings
+    case retryScreenshotCount
+    case resumeIntake
 }
 
 struct DeckTile: Equatable, Sendable {
@@ -201,6 +207,8 @@ struct DeckInputs: Equatable, Sendable {
     var obsidianState: DeckObsidianState = .off
     var obsidianVaultName: String?
     var obsidianAttentionLine: String?
+
+    var screenshot = ScreenshotSnapshot.notSetUp
 }
 
 // MARK: - tiles
@@ -212,7 +220,16 @@ func deriveDeckTile(_ source: DeckSource, _ i: DeckInputs) -> DeckTile {
     case .terminal: return deriveTerminalTile(i)
     case .browsers: return deriveBrowsersTile(i)
     case .obsidian: return deriveObsidianTile(i)
+    case .screenshots: return deriveScreenshotTile(i)
     }
+}
+
+private func deriveScreenshotTile(_ i: DeckInputs) -> DeckTile {
+    let shot = i.screenshot
+    return DeckTile(
+        source: .screenshots, state: shot.state, subline: shot.subline,
+        reason: shot.reason, action: shot.action, switchOn: shot.switchOn
+    )
 }
 
 func deriveDeck(_ i: DeckInputs, sources: [DeckSource] = DeckSource.available) -> [DeckTile] {
@@ -519,7 +536,7 @@ struct SourceTotalFacts: Equatable, Sendable {
 }
 
 enum SourceTotalUnit: Sendable {
-    case seconds, pages, notes
+    case seconds, pages, notes, screenshots
 }
 
 /// The words for one source's total, or nil when the record can't be read (the rows are then absent).
@@ -537,6 +554,7 @@ func sourceTotalFacts(
     case .terminal: (amount, started, last, unit) = (view.terminalSeconds, view.terminalStarted, view.terminalLast, .seconds)
     case .browsers: (amount, started, last, unit) = (view.browsersTotal, view.browsersStarted, view.browsersLast, .pages)
     case .obsidian: (amount, started, last, unit) = (view.obsidianTotal, view.obsidianStarted, view.obsidianLast, .notes)
+    case .screenshots: (amount, started, last, unit) = (view.screenshotsTotal, view.screenshotsStarted, view.screenshotsLast, .screenshots)
     }
     let lastDate = last.flatMap(SourceTotals.parseInstant)
     guard amount > 0 || lastDate != nil else {
@@ -570,6 +588,8 @@ func totalWords(_ amount: Int, unit: SourceTotalUnit) -> String {
         return amount == 1 ? "1 page" : "\(grouped(amount)) pages"
     case .notes:
         return amount == 1 ? "1 note" : "\(grouped(amount)) notes"
+    case .screenshots:
+        return ScreenshotCopy.total(amount)
     }
 }
 
