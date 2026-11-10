@@ -119,6 +119,8 @@ extension AppState {
             return .fault(UICopy.SOURCES_BROWSER_REGISTRATION_BROKEN)
         }
         if pauseManager.isPaused { return .paused }
+        // Without a journal, browser pages wait for one: setup, not a fault.
+        if !deckHasJournal { return .notPaired }
         let verdict = browserOwnerVerdict(
             mediaSourcesEmpty: true, mediaRecording: false, mediaPaused: false, snapshot: snapshot, now: now
         )

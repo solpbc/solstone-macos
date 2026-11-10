@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- the solstone window now opens on your sources. each one has a tile with its state and a switch, and clicking a tile opens its page beside them, with what it takes in, how much it has taken in so far, and what's left out of it. the sidebar is now home, your journal, this mac, updates and help, and every setting you had is still there, on the page of the source it belongs to.
+- the solstone window now opens on your sources. each one has a tile with its state and a switch, and clicking a tile opens its page beside them, with what it takes in and how much it has taken in so far. the sidebar is now home, your journal, this mac, updates and help, and every source setting you had is still there, on that source's page.
 - one click on the menu bar icon now shows the same tiles, with switches that work right there. pause, open solstone and quit are on a right-click.
 
 ## [2.0.64] - 2026-11-09

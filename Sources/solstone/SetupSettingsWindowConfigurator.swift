@@ -46,7 +46,7 @@ enum SetupSettingsWindowConfigurator {
                 memory.appliedInitialSetupSize = true
             }
         } else {
-            window.title = "solstone settings"
+            window.title = "solstone"
             if let memory = objc_getAssociatedObject(window, &setupWindowMemoryKey) as? SetupWindowMemory {
                 window.styleMask = memory.styleMask
                 // Settings' own title bar: opaque, title shown. These are not read back from
@@ -56,7 +56,7 @@ enum SetupSettingsWindowConfigurator {
                 window.titleVisibility = .visible
                 memory.appliedInitialSetupSize = false
             }
-            window.contentMinSize = NSSize(width: 720, height: 500)
+            window.contentMinSize = NSSize(width: 860, height: 600)
         }
     }
 }

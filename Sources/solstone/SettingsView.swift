@@ -423,7 +423,7 @@ struct SettingsView: View {
         }
         }
         .frame(
-            minWidth: appState.setupModel.phase != nil ? 880 : 860,
+            minWidth: appState.setupModel.phase != nil ? 880 : (shelf == .home && homePane != nil ? 1080 : 860),
             minHeight: appState.setupModel.phase != nil ? 580 : 600
         )
 

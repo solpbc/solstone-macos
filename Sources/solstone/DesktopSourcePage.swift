@@ -246,13 +246,22 @@ struct SourceTotalRows: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             if let facts = sourceTotalFacts(SourceTotalsInstall.currentStore()?.view(), source: source, now: context.date) {
                 VStack(spacing: 6) {
-                    LabeledContent("so far", value: facts.soFar)
+                    factRow("so far", facts.soFar)
                     if let last = facts.lastTakenIn {
-                        LabeledContent("last taken in", value: last)
+                        factRow("last taken in", last)
                     }
                 }
                 .font(.callout)
             }
         }
     }
+}
+
+private func factRow(_ label: String, _ value: String) -> some View {
+    HStack(alignment: .firstTextBaseline) {
+        Text(label).foregroundStyle(.secondary)
+        Spacer(minLength: 12)
+        Text(value).multilineTextAlignment(.trailing)
+    }
+    .accessibilityElement(children: .combine)
 }

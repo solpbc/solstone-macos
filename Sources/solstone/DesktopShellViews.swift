@@ -19,7 +19,8 @@ extension SettingsView {
                         .padding(20)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .frame(minWidth: 380, idealWidth: 420, maxWidth: 460, maxHeight: .infinity)
+                .frame(width: 420)
+                .frame(maxHeight: .infinity)
                 .background(DeckPaneGround())
             }
         }

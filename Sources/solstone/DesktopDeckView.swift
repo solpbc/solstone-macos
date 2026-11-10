@@ -275,6 +275,8 @@ struct DeckGreeting: View {
             Text(deckGreeting(forHour: Calendar.current.component(.hour, from: context.date)))
                 .font(DeckStyle.name(size))
                 .foregroundStyle(SetupChromeColor.ink(for: scheme))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .accessibilityAddTraits(.isHeader)
         }
     }

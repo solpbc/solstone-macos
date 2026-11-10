@@ -96,7 +96,7 @@ struct DesktopShellSnapshotTests {
     private func state(_ scene: Scene) -> AppState {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
-        state.capture.publishScreenRecordingPermission(.granted)
+        state.capture.publishScreenRecordingPermission(scene == .attn ? .notGranted : .granted)
         state.microphoneAuthorizationCause = .authorized
         state.isRecording = scene != .fresh
         let (deck, pill) = Self.inputs(scene)

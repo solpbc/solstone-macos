@@ -82,9 +82,9 @@ extension SettingsView {
                 Text("waiting to sync").foregroundStyle(.secondary)
                 Text("on this device").foregroundStyle(.secondary)
             case .syncPaused(let n):
-                Text("\(n)").font(DeckStyle.name(34))
-                Text(pill.text).foregroundStyle(.secondary)
-                Text("on this device").foregroundStyle(.secondary)
+                if n > 0 { Text("\(n)").font(DeckStyle.name(34)) }
+                Text("sync paused").font(n > 0 ? .body : DeckStyle.name(22)).foregroundStyle(n > 0 ? .secondary : .primary)
+                if n > 0 { Text("on this device").foregroundStyle(.secondary) }
                 Button("your journal") { navigate(.service) }.buttonStyle(.link)
             case .notPaired:
                 Text("not paired").font(DeckStyle.name(22))
@@ -97,7 +97,7 @@ extension SettingsView {
                     NotificationCenter.default.post(name: .reaskJournalMark, object: nil)
                 }
             case .pairAgain(let n):
-                Text("\(n)").font(DeckStyle.name(34))
+                if n > 0 { Text("\(n)").font(DeckStyle.name(34)) }
                 Text(appState.tunnelLifecycleOwner.connectionVerdict.message)
                 configuredJournalRecoveryRow(for: appState.tunnelLifecycleOwner.connectionVerdict.failureCause)
             case .needsNewLink:
