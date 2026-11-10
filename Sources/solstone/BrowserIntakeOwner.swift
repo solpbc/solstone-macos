@@ -226,9 +226,9 @@ public actor BrowserIntakeOwner {
             projection: projection,
             monotonicClock: clock,
             wallClock: { clock.wallNow() },
-            timeZone: clock.timeZone(),
-            sourceTotals: sourceTotals
+            timeZone: clock.timeZone()
         )
+        authority.setSourceTotals(sourceTotals)
         let gate = BrowserUploadGate(store: store)
         let planner = BrowserUploadPlanner(
             store: store,

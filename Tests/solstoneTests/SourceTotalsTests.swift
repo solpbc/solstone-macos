@@ -840,11 +840,13 @@ struct BrowserCounterTests {
         let root = try makeTempDirectory("browser-counter")
         let projection = try BrowserContractProjection(rootURL: vendorURL)
         let spool = try BrowserIntakeStore(rootURL: root, projection: projection)
-        return BrowserIntakeAuthority(
+        let authority = BrowserIntakeAuthority(
             store: spool, projection: projection,
             wallClock: { moment("2023-11-14T22:13:20Z") },
-            timeZone: utc, sourceTotals: store
+            timeZone: utc
         )
+        authority.setSourceTotals(store)
+        return authority
     }
 
     private func batch(generation: String, id: String, inst: String, ctx: String, url: String, tab: Any? = nil, reason: String? = nil, delta: Bool = false) throws -> Data {

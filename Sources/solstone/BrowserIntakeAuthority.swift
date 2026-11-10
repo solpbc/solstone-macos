@@ -33,7 +33,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
     private var staleElapsedBaseMs: UInt64 = 0
     private let floorAnchorMs: UInt64
     private let floorMonotonicAnchor: Duration
-    private let sourceTotals: SourceTotals?
+    private var sourceTotals: SourceTotals?
     /// Runs after a kept batch is counted and before the accept reply is built.
     var beforeAcceptReply: (@Sendable () -> Void)?
     public var isPaused: Bool {
@@ -45,8 +45,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         projection: BrowserContractProjection,
         monotonicClock: any MonotonicClock = SystemMonotonicClock(),
         wallClock: @escaping @Sendable () -> Date = Date.init,
-        timeZone: TimeZone = TimeZone.current,
-        sourceTotals: SourceTotals? = nil
+        timeZone: TimeZone = TimeZone.current
     ) {
         self.store = store
         self.projection = projection
@@ -56,7 +55,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         self.lastRotationDate = wallClock()
         self.floorAnchorMs = max(store.getFloorMs(), BrowserAgeStamp.wallMilliseconds(wallClock()))
         self.floorMonotonicAnchor = monotonicClock.now()
-        self.sourceTotals = sourceTotals
+        self.sourceTotals = nil
         let staleState = store.stalenessState()
         self.staleAnchorMs = staleState.anchorMs
         self.staleElapsedBaseMs = staleState.elapsedHighWaterMs
@@ -451,6 +450,10 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         } catch {
             return try rejected(batch: batch, reason: "resource_exhausted", receiptClass: "retryable")
         }
+    }
+
+    func setSourceTotals(_ totals: SourceTotals?) {
+        sourceTotals = totals
     }
 
     /// Snapshots that are not a delivery recovery. A tab id on the record wins over the context id.
