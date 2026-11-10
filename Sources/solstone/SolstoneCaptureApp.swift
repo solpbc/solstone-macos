@@ -113,7 +113,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppPlacementRepairCoordinator.shared.signalReadiness()
         JournalMarkFont.register()
         StatusItemSecondaryMenu.shared.install()
-        ShellChrome.applyConfiguredAppearance()
 
         notificationObservers.append(
             NotificationCenter.default.addObserver(

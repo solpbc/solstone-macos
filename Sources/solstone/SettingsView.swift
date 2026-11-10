@@ -186,7 +186,6 @@ struct SettingsView: View {
     @Bindable var appState: AppState
     @Bindable var updateController: UpdateController
     @State var shelf: ShelfRow = .home
-    let chrome: ShellChrome
     @State var homePane: HomePane?
     @FocusState var focusedTile: DeckSource?
     @Environment(\.dismiss) private var dismiss
@@ -273,7 +272,6 @@ struct SettingsView: View {
         updateController: UpdateController,
         selectedTab: Tab = .home,
         initialHomePane: HomePane? = nil,
-        chrome: ShellChrome = .configured,
         initialStorageUsedMB: Int? = nil,
         initialLocalJournalMark: JournalMark? = nil,
         initialLocalOnDiskDiscoveryPath: String? = nil,
@@ -335,7 +333,6 @@ struct SettingsView: View {
         let route = ShellRoute(tab: selectedTab, appState: appState)
         self._shelf = State(initialValue: route.shelf)
         self._homePane = State(initialValue: initialHomePane ?? route.pane)
-        self.chrome = chrome
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
         self._setupProbeSnapshot = State(initialValue: initialSetupProbeSnapshot)
         self._diagnosticsExpanded = State(initialValue: initialDiagnosticsExpanded)
@@ -365,7 +362,7 @@ struct SettingsView: View {
 
     var body: some View {
         settingsContent
-        .background(SetupSettingsWindowInstaller(setupShowing: appState.setupModel.phase != nil, groundChrome: chrome.groundChrome))
+        .background(SetupSettingsWindowInstaller(setupShowing: appState.setupModel.phase != nil, groundChrome: true))
         .alert(appState.setupModel.handoffRefusalMessage ?? "", isPresented: Binding(
             get: { appState.setupModel.handoffRefusal != nil },
             set: { if !$0 { appState.setupModel.dismissHandoffRefusal() } }
