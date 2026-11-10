@@ -38,7 +38,8 @@ extension SettingsView {
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(DeckPaneGround())
+        // The pane's sheet runs to the window's top edge, like the ground beside it.
+        .background(DeckPaneGround().ignoresSafeArea(edges: .top))
     }
 
     /// Opens a pane: a source's page, status or add more. At phone width it pushes.
