@@ -11,7 +11,12 @@ import SwiftUI
 /// names, the system face for everything read, sol orange as the one accent.
 enum DeckStyle {
     static let nameFont = "Comfortaa-Bold"
-    static let attentionInk = Color(.sRGB, red: 0.70, green: 0.16, blue: 0.13, opacity: 1)
+    /// A fault's ink: dark red on the light ground, a lighter red on the dark one, so both read.
+    static let attentionInk = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 1.0, green: 0.48, blue: 0.42, alpha: 1)
+            : NSColor(srgbRed: 0.70, green: 0.16, blue: 0.13, alpha: 1)
+    })
 
     static func name(_ size: CGFloat) -> Font { .custom(nameFont, size: size) }
 }
