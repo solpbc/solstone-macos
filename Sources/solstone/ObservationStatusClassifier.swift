@@ -418,7 +418,8 @@ extension AppState {
             durableUpdateStatus: durableUpdateStatus,
             privateWindowsNeedAttention: privateWindowAccessibilityEnabled
                 && privateWindowAccessibilityMonitor.needsAttention,
-            screenFailureNeedsAttention: capture.screenFailure != nil,
+            // The icon is the one place a source's fault rolls up: any tile in `needs attention`.
+            screenFailureNeedsAttention: capture.screenFailure != nil || deckHasFault(deckTiles),
             safariExtensionNeedsAttention: safariExtensionAttention
         )
     }

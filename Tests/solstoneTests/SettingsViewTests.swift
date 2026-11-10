@@ -33,9 +33,9 @@ struct SettingsViewTests {
         #expect(choices.contains("AXID.Settings.Service.migrationChoiceDefer"))
         #expect(!choices.contains(".keyboardShortcut(.defaultAction)"))
 
-        let replacementStart = try #require(source.range(of: "private var replacementFlowSheet"))
+        let replacementStart = try #require(source.range(of: "var replacementFlowSheet"))
         let replacementEnd = try #require(source[replacementStart.lowerBound...].range(
-            of: "private var replacementConfirmationTitle"
+            of: "var replacementConfirmationTitle"
         ))
         let replacement = source[replacementStart.lowerBound..<replacementEnd.lowerBound]
         #expect(replacement.contains(".accessibilityValue(target.cid)"))
@@ -60,8 +60,8 @@ struct SettingsViewTests {
 
     @Test func aConfirmedPairingsMarkComesFromItsStoredCA() throws {
         let source = try readWireUpSource("Sources/solstone/SettingsView.swift")
-        let start = try #require(source.range(of: "private func startJournalMarkRederiveIfNeeded()"))
-        let end = try #require(source[start.lowerBound...].range(of: "private func sidebarPlainLabel"))
+        let start = try #require(source.range(of: "func startJournalMarkRederiveIfNeeded()"))
+        let end = try #require(source[start.lowerBound...].range(of: "func sidebarPlainLabel"))
         let rederive = source[start.lowerBound..<end.lowerBound]
         #expect(rederive.contains("deriveConfirmedMark"))
         #expect(!rederive.contains("resolveHomeBase"))
@@ -598,7 +598,7 @@ private func extractSection(from source: String, named sectionName: String) thro
         throw SectionExtractionError.sectionNotFound(sectionName)
     }
     let rest = source[range.lowerBound...]
-    guard let endRange = rest.range(of: "\n    @ViewBuilder\n    private var ", options: []) ?? rest.range(of: "\n    // MARK:", options: []) else {
+    guard let endRange = rest.range(of: "\n    @ViewBuilder\n    var ", options: []) ?? rest.range(of: "\n    // MARK:", options: []) else {
         return String(rest)
     }
     return String(rest[..<endRange.lowerBound])
