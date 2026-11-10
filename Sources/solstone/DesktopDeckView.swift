@@ -27,6 +27,8 @@ struct DeckTileView: View {
     let tile: DeckTile
     var selected = false
     var compact = false
+    /// Drawn only when focus came from the keyboard, at the card's own radius.
+    var keyboardFocused = false
     let onOpen: () -> Void
     let onSwitch: (Bool) -> Void
     @Environment(\.colorScheme) private var scheme
@@ -92,6 +94,14 @@ struct DeckTileView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(selected ? SetupChromeColor.solOrange : SetupChromeColor.hairline(for: scheme), lineWidth: selected ? 2 : 1)
         )
+        .overlay {
+            if keyboardFocused {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 3)
+                    .padding(-3)
+                    .accessibilityHidden(true)
+            }
+        }
     }
 }
 

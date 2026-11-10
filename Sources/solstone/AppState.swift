@@ -72,6 +72,9 @@ public final class AppState {
     /// Snapshot renders set the deck's facts directly, so every state can be drawn without a session.
     var snapshotDeckInputs: DeckInputs?
     var snapshotJournalPillInputs: JournalPillInputs?
+    var snapshotSourceTotals: SourceTotals.View?
+    /// The status pane's journal facts as label and value, for renders with no journal behind them.
+    var snapshotJournalFacts: [[String]]?
 #endif
     public let audioDeviceMonitor: AudioDeviceMonitor
     public var captureManager: CaptureManager { capture.captureManager }

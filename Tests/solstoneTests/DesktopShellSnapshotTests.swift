@@ -98,6 +98,19 @@ struct DesktopShellSnapshotTests {
         return (deck, pill)
     }
 
+    /// Sample totals, the mock's own values, with times relative to now.
+    static func sampleTotals() -> SourceTotals.View {
+        let now = Date()
+        let iso = { (seconds: TimeInterval) in SourceTotals.iso(now.addingTimeInterval(-seconds)) }
+        return SourceTotals.View(
+            audioSeconds: 265 * 3600, audioRemainderMs: 0, audioLast: iso(4 * 60), audioSegments: [], audioStarted: "2026-03-03",
+            screenSeconds: 212 * 3600, screenRemainderMs: 0, screenLast: iso(10), screenSegments: [], screenStarted: "2026-03-03",
+            terminalSeconds: 38 * 3600, terminalLast: iso(12 * 60), terminalCarried: false, terminalStarted: "2026-03-03",
+            browsersTotal: 1351, browsersLast: iso(26 * 3600), browsersTabs: [:], browsersStarted: "2026-06-12",
+            obsidianTotal: 412, obsidianLast: iso(2 * 3600), obsidianNotes: [], obsidianBaseline: true, obsidianStarted: "2026-03-03"
+        )
+    }
+
     private func state(_ scene: Scene) -> AppState {
         let state = AppState.forSnapshot()
         state.initialPermissionCheckComplete = true
@@ -107,6 +120,13 @@ struct DesktopShellSnapshotTests {
         let (deck, pill) = Self.inputs(scene)
         state.snapshotDeckInputs = deck
         state.snapshotJournalPillInputs = pill
+        state.snapshotSourceTotals = scene == .fresh ? nil : Self.sampleTotals()
+        if scene != .fresh {
+            state.snapshotJournalFacts = [
+                ["connection", "connected to your journal on this mac"],
+                [UICopy.SETTINGS_LAST_DELIVERY_LABEL, "just now"],
+            ]
+        }
         if scene == .paused { state.pauseManager.pause(for: .minutes(14)) }
         return state
     }

@@ -9,6 +9,14 @@ import SwiftUI
 // journal's own facts and the technical details. A source row never says the source's state or
 // fault: its tile beside the pane says that.
 extension SettingsView {
+    var snapshotJournalFacts: [[String]]? {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        return appState.snapshotJournalFacts
+#else
+        return nil
+#endif
+    }
+
     var statusPane: some View {
         let pill = appState.journalPill
         return VStack(alignment: .leading, spacing: 16) {
@@ -18,13 +26,17 @@ extension SettingsView {
                 .accessibilityIdentifier(AXID.Deck.statusLead)
                 .accessibilityValue(pill.axToken)
 
-            StatusSourceRows()
+            StatusSourceRows(appState: appState)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("your journal")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
-                if appState.deckHasJournal {
+                if let facts = snapshotJournalFacts {
+                    ForEach(facts, id: \.self) { fact in
+                        LabeledContent(fact[0], value: fact[1])
+                    }
+                } else if appState.deckHasJournal {
                     LabeledContent("connection", value: appState.tunnelLifecycleOwner.connectionVerdict.message)
                     lastDeliveryDetailRow
                 }
@@ -131,42 +143,41 @@ extension SettingsView {
     }
 }
 
-/// One row per source with `so far` and `last taken in`, the iPad's status rows. A row carries those
-/// two facts only: the tile beside it says the source's state. Absent when the record can't be read.
+/// One row per source with `so far` and `last taken in`, the iPad's status rows, for every source on
+/// the deck. A row carries those two facts only: the tile beside it says the source's state. A source
+/// with nothing recorded, or a record that can't be read, reads `nothing yet` under `so far`.
 struct StatusSourceRows: View {
+    let appState: AppState
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            let view = SourceTotalsInstall.currentStore()?.view()
-            if view != nil {
-                VStack(alignment: .leading, spacing: 6) {
+            let view = appState.sourceTotalsView
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("sources")
+                    Spacer()
+                    Text("so far").frame(width: 92, alignment: .trailing)
+                    Text("last taken in").frame(width: 92, alignment: .trailing)
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                ForEach(DeckSource.available, id: \.self) { source in
+                    let row = statusSourceRow(view, source: source, now: context.date)
                     HStack {
-                        Text("sources")
+                        Image(systemName: source.systemImage)
+                            .font(.system(size: 12))
+                            .frame(width: 18)
+                            .accessibilityHidden(true)
+                        Text(source.label)
                         Spacer()
-                        Text("so far").frame(width: 92, alignment: .trailing)
-                        Text("last taken in").frame(width: 92, alignment: .trailing)
+                        Text(row.soFar)
+                            .foregroundStyle(row.lastTakenIn == nil ? .secondary : .primary)
+                            .frame(width: 92, alignment: .trailing)
+                        Text(row.lastTakenIn ?? "")
+                            .frame(width: 92, alignment: .trailing)
                     }
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    ForEach(DeckSource.available, id: \.self) { source in
-                        if let columns = sourceTotalColumns(view, source: source, now: context.date) {
-                            HStack {
-                                Image(systemName: source.systemImage)
-                                    .font(.system(size: 12))
-                                    .frame(width: 18)
-                                    .accessibilityHidden(true)
-                                Text(source.label)
-                                Spacer()
-                                if let last = columns.lastTakenIn {
-                                    Text(columns.soFar).frame(width: 92, alignment: .trailing)
-                                    Text(last).frame(width: 92, alignment: .trailing)
-                                } else {
-                                    Text(columns.soFar).foregroundStyle(.secondary)
-                                }
-                            }
-                            .font(.callout)
-                            .accessibilityElement(children: .combine)
-                        }
-                    }
+                    .font(.callout)
+                    .accessibilityElement(children: .combine)
                 }
             }
         }

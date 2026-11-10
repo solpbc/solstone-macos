@@ -324,4 +324,62 @@ struct DesktopShellModelTests {
         let facts = try #require(sourceTotalFacts(view(audioSeconds: 7200, started: "2025-03-03"), source: .audio, now: now, calendar: utc))
         #expect(facts.soFar.contains("2025"))
     }
+
+    // MARK: menu rows
+
+    private func menu(_ tiles: [DeckTile], pill: JournalPill = .connected, paused: String? = nil,
+                      canPause: Bool = true, canResume: Bool = false, hasJournal: Bool = true, canOpen: Bool = true) -> [ShellMenuRow] {
+        shellMenuRows(tiles: tiles, pill: pill, pausedLine: paused, canPause: canPause, canResume: canResume,
+                      hasJournal: hasJournal, canOpenJournal: canOpen)
+    }
+
+    @Test func menuLeadsWithEachSourceThatNeedsAttentionAndNamesNoOther() {
+        var inputs = DeckInputs()
+        inputs.screenAccess = .denied
+        inputs.terminalOn = true
+        inputs.terminalState = .tmuxNotFound
+        let rows = menu(deriveDeck(inputs, sources: DeckSource.allCases))
+        #expect(Array(rows.prefix(2)) == [.attention(.screen), .attention(.terminal)])
+        #expect(rows.filter { if case .attention = $0 { return true } else { return false } }.count == 2)
+        #expect(rows[2] == .status(menuStatusLine(.connected)))
+        #expect(rows.contains(.pause))
+        #expect(!rows.contains(.resume))
+    }
+
+    @Test func menuWithNothingWrongHasNoAttentionRows() {
+        let rows = menu(deriveDeck(DeckInputs()))
+        #expect(rows.first == .status(menuStatusLine(.connected)))
+        #expect(rows.map(\.title) == [menuStatusLine(.connected), "pause", "", "open settings", "open journal", "", "about solstone", "", "quit solstone"])
+    }
+
+    @Test func pausedMenuShowsTheTimeLeftAndResumeInPlaceOfPause() throws {
+        let line = try #require(pausedTimeLeftLine(isPaused: true, remaining: 14 * 60))
+        let rows = menu(deriveDeck(DeckInputs()), paused: line, canPause: false, canResume: true)
+        #expect(rows.first == .status(line))
+        #expect(rows.contains(.resume))
+        #expect(!rows.contains(.pause))
+    }
+
+    @Test func offlineMenuShowsThePillWordsAndAnUnreachableJournalIsDisabled() {
+        let pill = JournalPill.offline(waiting: 12)
+        let rows = menu(deriveDeck(DeckInputs()), pill: pill, canOpen: false)
+        #expect(rows.first == .status(pill.text))
+        #expect(rows.contains(.openJournal(enabled: false)))
+    }
+
+    @Test func unpairedMenuHasNoOpenJournal() {
+        let rows = menu(deriveDeck(DeckInputs()), pill: .notPaired, hasJournal: false)
+        #expect(!rows.contains { if case .openJournal = $0 { return true } else { return false } })
+        #expect(rows.first == .status(JournalPill.notPaired.text))
+    }
+
+    @Test func statusRowPutsNothingYetUnderSoFarAndAlwaysExists() throws {
+        let now = try #require(SourceTotals.parseInstant("2026-11-10T15:00:00Z"))
+        let missing = statusSourceRow(nil, source: .terminal, now: now, calendar: utc)
+        #expect(missing.lastTakenIn == nil)
+        #expect(missing.soFar == statusSourceRow(view(), source: .audio, now: now, calendar: utc).soFar)
+        let counted = statusSourceRow(view(audioSeconds: 7200, audioLast: "2026-11-10T14:56:00Z"), source: .audio, now: now, calendar: utc)
+        #expect(counted.lastTakenIn != nil)
+        #expect(counted.soFar != missing.soFar)
+    }
 }

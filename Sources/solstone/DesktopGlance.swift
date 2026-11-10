@@ -24,18 +24,38 @@ struct ShellMenuContent: View {
     @Bindable var updateController: UpdateController
 
     var body: some View {
-        ForEach(appState.deckTiles.filter { $0.state == .needsAttention }, id: \.source) { tile in
-            Button("\(tile.source.label) needs attention") {
-                openSolstoneWindow(appState: appState, route: "source:\(tile.source.rawValue)")
-            }
+        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+            rowView(row)
         }
+    }
 
-        Text(statusLine)
-            .accessibilityIdentifier(AXID.Menubar.statusRowState)
-
+    private var rows: [ShellMenuRow] {
+        let _ = appState.pauseManager.refreshTick
+        let pause = appState.pauseManager.pauseState
         let controls = appState.deckPauseControls
-        if controls.pause {
-            Menu("pause") {
+        return shellMenuRows(
+            tiles: appState.deckTiles,
+            pill: appState.journalPill,
+            pausedLine: pausedTimeLeftLine(isPaused: pause.isPaused, remaining: pause.timeRemaining(at: Date())),
+            canPause: controls.pause,
+            canResume: controls.resume,
+            hasJournal: appState.deckHasJournal,
+            canOpenJournal: appState.canOpenJournal
+        )
+    }
+
+    @ViewBuilder
+    private func rowView(_ row: ShellMenuRow) -> some View {
+        switch row {
+        case .attention(let source):
+            Button(row.title) {
+                openSolstoneWindow(appState: appState, route: "source:\(source.rawValue)")
+            }
+        case .status:
+            Text(row.title)
+                .accessibilityIdentifier(AXID.Menubar.statusRowState)
+        case .pause:
+            Menu(row.title) {
                 Button("15 minutes") { appState.pauseManager.pause(for: .minutes(15)) }
                     .accessibilityIdentifier(AXID.Menubar.pauseFifteenMinutes)
                 Button("30 minutes") { appState.pauseManager.pause(for: .minutes(30)) }
@@ -46,47 +66,25 @@ struct ShellMenuContent: View {
                     .accessibilityIdentifier(AXID.Menubar.pauseIndefinite)
             }
             .accessibilityIdentifier(AXID.Menubar.pauseMenu)
-        } else if controls.resume {
-            Button("resume") { appState.pauseManager.resume() }
+        case .resume:
+            Button(row.title) { appState.pauseManager.resume() }
                 .accessibilityIdentifier(AXID.Menubar.resumeButton)
-        }
-
-        Divider()
-
-        Button("open settings") {
-            openSolstoneWindow(appState: appState, route: nil)
-        }
-        .accessibilityIdentifier(AXID.Menubar.settingsButton)
-        if appState.deckHasJournal {
-            Button("open journal") { appState.requestOpenJournal(.root) }
-                .disabled(!appState.canOpenJournal)
+        case .divider:
+            Divider()
+        case .openSettings:
+            Button(row.title) { openSolstoneWindow(appState: appState, route: nil) }
+                .accessibilityIdentifier(AXID.Menubar.settingsButton)
+        case .openJournal(let enabled):
+            Button(row.title) { appState.requestOpenJournal(.root) }
+                .disabled(!enabled)
                 .accessibilityIdentifier(AXID.Menubar.openJournalButton)
+        case .about:
+            Button(row.title) { NotificationCenter.default.post(name: .openAboutWindow, object: nil) }
+                .accessibilityIdentifier(AXID.Menubar.aboutButton)
+        case .quit:
+            Button(row.title) { appState.appQuitCoordinator.requestAppOwnedQuit() }
+                .accessibilityIdentifier(AXID.Menubar.quitButton)
         }
-
-        Divider()
-
-        Button("about solstone") {
-            NotificationCenter.default.post(name: .openAboutWindow, object: nil)
-        }
-        .accessibilityIdentifier(AXID.Menubar.aboutButton)
-
-        Divider()
-
-        Button("quit solstone") {
-            appState.appQuitCoordinator.requestAppOwnedQuit()
-        }
-        .accessibilityIdentifier(AXID.Menubar.quitButton)
-    }
-
-    /// The pill's words with the status lead, or the time left while paused.
-    private var statusLine: String {
-        let _ = appState.pauseManager.refreshTick
-        let pause = appState.pauseManager.pauseState
-        if let paused = pausedTimeLeftLine(isPaused: pause.isPaused, remaining: pause.timeRemaining(at: Date())) {
-            return paused
-        }
-        let pill = appState.journalPill
-        return menuStatusLine(pill)
     }
 }
 

@@ -189,6 +189,7 @@ struct SettingsView: View {
     @State var shellLayout: ShellLayout = .full
     @State var phonePushed = false
     @State var shelfOpen = false
+    @State var tileFocusFromKeyboard = false
     @State var homePane: HomePane?
     @FocusState var focusedTile: DeckSource?
     @Environment(\.dismiss) private var dismiss

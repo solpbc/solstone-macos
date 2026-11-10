@@ -21,7 +21,7 @@ extension SettingsView {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            SourceTotalRows(source: source)
+            SourceTotalRows(appState: appState, source: source)
             pageBody(source, scrollProxy: scrollProxy)
         }
         .accessibilityElement(children: .contain)
@@ -240,11 +240,12 @@ extension SettingsView {
 /// `so far` and `last taken in`, read from the on-device record every 30 seconds while shown.
 /// Both rows are absent when the record can't be read.
 struct SourceTotalRows: View {
+    let appState: AppState
     let source: DeckSource
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            if let facts = sourceTotalFacts(SourceTotalsInstall.currentStore()?.view(), source: source, now: context.date) {
+            if let facts = sourceTotalFacts(appState.sourceTotalsView, source: source, now: context.date) {
                 VStack(spacing: 6) {
                     factRow("so far", facts.soFar)
                     if let last = facts.lastTakenIn {

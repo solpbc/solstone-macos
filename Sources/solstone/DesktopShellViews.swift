@@ -82,10 +82,12 @@ extension SettingsView {
                         DeckTileView(
                             tile: tile,
                             selected: shellLayout != .phone && pane == .source(tile.source),
+                            keyboardFocused: tileFocusFromKeyboard && focusedTile == tile.source,
                             onOpen: { openPane(.source(tile.source)) },
                             onSwitch: { on in switchSource(tile.source, on: on) }
                         )
                         .focusable()
+                        .focusEffectDisabled()
                         .focused($focusedTile, equals: tile.source)
                         .onKeyPress(.space) {
                             if let on = tile.switchOn { switchSource(tile.source, on: !on) }
@@ -98,8 +100,15 @@ extension SettingsView {
                     }
                     AddMoreTile(selected: shellLayout != .phone && pane == .addMore) { openPane(.addMore) }
                 }
-                .padding(2)
-                .onMoveCommand { direction in moveTileFocus(direction, tiles: tiles) }
+                .padding(4)
+                .onMoveCommand { direction in
+                    tileFocusFromKeyboard = true
+                    moveTileFocus(direction, tiles: tiles)
+                }
+                // A click focuses a tile too; only focus that arrived by key draws the ring.
+                .onChange(of: focusedTile) { _, _ in
+                    tileFocusFromKeyboard = NSApp.currentEvent?.type == .keyDown
+                }
             }
             .scrollContentBackground(.hidden)
             HStack {

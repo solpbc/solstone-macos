@@ -141,6 +141,14 @@ extension AppState {
 
     var deckTiles: [DeckTile] { deriveDeck(deckInputs) }
 
+    /// What each source has taken in on this install, or nil when the record can't be read.
+    var sourceTotalsView: SourceTotals.View? {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        if let snapshotSourceTotals { return snapshotSourceTotals }
+#endif
+        return SourceTotalsInstall.currentStore()?.view()
+    }
+
     var journalPillInputs: JournalPillInputs {
 #if DEBUG || SOLSTONE_TEST_SUPPORT
         if let snapshotJournalPillInputs { return snapshotJournalPillInputs }

@@ -637,3 +637,61 @@ func sourceTotalColumns(_ view: SourceTotals.View?, source: DeckSource, now: Dat
     let total = facts.soFar.components(separatedBy: ", since ").first ?? facts.soFar
     return SourceTotalColumns(soFar: total, lastTakenIn: facts.lastTakenIn)
 }
+
+// MARK: - the menu bar menu
+
+/// One row of the menu bar menu, top to bottom.
+enum ShellMenuRow: Equatable, Sendable {
+    case attention(DeckSource)
+    case status(String)
+    case pause
+    case resume
+    case divider
+    case openSettings
+    case openJournal(enabled: Bool)
+    case about
+    case quit
+
+    var title: String {
+        switch self {
+        case .attention(let source): return "\(source.label) needs attention"
+        case .status(let line): return line
+        case .pause: return "pause"
+        case .resume: return "resume"
+        case .divider: return ""
+        case .openSettings: return "open settings"
+        case .openJournal: return "open journal"
+        case .about: return "about solstone"
+        case .quit: return "quit solstone"
+        }
+    }
+}
+
+/// The menu's rows from the deck, the pill and the pause state. No source rows except a fault,
+/// and no switches: the window is where sources are turned on and off.
+func shellMenuRows(
+    tiles: [DeckTile],
+    pill: JournalPill,
+    pausedLine: String?,
+    canPause: Bool,
+    canResume: Bool,
+    hasJournal: Bool,
+    canOpenJournal: Bool
+) -> [ShellMenuRow] {
+    var rows: [ShellMenuRow] = tiles.filter { $0.state == .needsAttention }.map { .attention($0.source) }
+    rows.append(.status(pausedLine ?? menuStatusLine(pill)))
+    if canPause { rows.append(.pause) } else if canResume { rows.append(.resume) }
+    rows.append(.divider)
+    rows.append(.openSettings)
+    if hasJournal { rows.append(.openJournal(enabled: canOpenJournal)) }
+    rows.append(contentsOf: [.divider, .about, .divider, .quit])
+    return rows
+}
+
+// MARK: - status rows
+
+/// The status pane's row for one source, always present: the total and the time, or `nothing yet`
+/// under `so far` with `last taken in` empty, whether or not the record could be read.
+func statusSourceRow(_ view: SourceTotals.View?, source: DeckSource, now: Date, calendar: Calendar = .current) -> SourceTotalColumns {
+    sourceTotalColumns(view, source: source, now: now, calendar: calendar) ?? SourceTotalColumns(soFar: "nothing yet", lastTakenIn: nil)
+}
