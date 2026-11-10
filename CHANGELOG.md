@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.64] - 2026-11-09
+
 ### Added
 
 - when Safari allows the solstone extension on every website, the extension's settings now have a field to leave a site out by typing its address, so it stays out before you ever open it. they also say that Safari's own settings don't show the sites you leave out. thanks @dvanduzer.
@@ -14,12 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - when terminal is the only source running, the menu and status now say so. opening settings starts on status.
-- a terminal segment from eight or more tmux sessions now goes into your journal instead of waiting on your mac. your journal needs its matching update too.
-- settings now calls its website list "websites you leave out", and its button says `leave out`, so it's clearer that a site you type there stays out from the first time you open it. thanks @dvanduzer.
+- a terminal segment from eight or more tmux sessions now goes into your journal instead of waiting on your mac, once your journal is updated too.
+- settings now calls its website list "websites you leave out", and its button says "leave out", so it's clearer that a site you type there stays out from the first time you open it. thanks @dvanduzer.
 - settings now says that a left-out website keeps Safari out of screen intake even when the page is in a window behind other windows, and that switching onto a left-out page pauses screen intake for a few seconds.
 - starting the solstone app a second time from a terminal no longer leaves the solstone extension in Safari unable to reach the app until you quit and reopen it. a second copy now leaves the open app alone and exits, and an unknown word, like `status`, now prints how to open the app instead of starting it. thanks @dvanduzer.
-- a segment the app set aside on your mac no longer gets stuck trying again at every start when an earlier one has the same name, and set-aside folders with nothing you shared left in them are now removed on their own. any that still hold something you shared stay where they are. thanks @dvanduzer.
-- when a segment's audio had a gap, the app kept a second copy of that audio in a set-aside folder on your mac, even after your journal held it. it no longer does. thanks @dvanduzer.
+- a segment the app couldn't move aside on your mac is no longer retried at every start, and leftover folders with nothing you shared left in them are now removed on their own. any that still hold something you shared stay where they are. thanks @dvanduzer.
+- when a segment's audio had a gap, the app kept a second copy of that audio in a leftover folder on your mac, even after your journal held it. it no longer does. thanks @dvanduzer.
 
 ## [2.0.63] - 2026-11-08
 
