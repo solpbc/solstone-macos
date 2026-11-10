@@ -141,7 +141,7 @@ public actor RemixQueue {
         onSegmentComplete = callback
     }
 
-    public func setSourceTotals(_ totals: SourceTotals?) {
+    func setSourceTotals(_ totals: SourceTotals?) {
         sourceTotals = totals
     }
 
