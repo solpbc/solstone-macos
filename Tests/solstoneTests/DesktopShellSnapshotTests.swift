@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import AppKit
+import JournalMarkKit
 import os
 import SwiftUI
 import Testing
@@ -16,7 +17,11 @@ struct DesktopShellSnapshotTests {
     private let isolatedDefaults = IsolatedUserDefaults()
     private static nonisolated(unsafe) var outputDirectory: URL?
 
-    init() { _ = NSApplication.shared }
+    init() {
+        _ = NSApplication.shared
+        // The app registers the names' face at launch; the renders need it before their first frame.
+        JournalMarkFont.register()
+    }
 
     enum Scene: String, CaseIterable {
         case good, attn, offline, paused, fresh, many
