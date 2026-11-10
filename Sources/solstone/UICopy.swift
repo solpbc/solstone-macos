@@ -65,11 +65,10 @@ public enum UICopy {
             var lines: [String] = []
             if record.phase < .done { lines.append("moving solstone for tmux in") }
             switch record.continuity {
-            case .continued: lines.append("terminal history: continued")
             case .newStream(let reason, let attention):
                 lines.append("new terminal history from here, and what's already in your journal stays (\(reason))")
                 if attention { lines.append("this needs attention: please contact support") }
-            case nil: break
+            case .continued, nil: break
             }
             if let answer = record.lastAnswer { lines.append("waiting: \(answer)") }
             if record.heldCount != 0 {

@@ -148,6 +148,16 @@ struct TerminalSourceTests {
         #expect(TerminalTmuxLocator.locate(isExecutable: { _ in true }, loginShellLookup: { nil }) != nil)
     }
 
+    @Test func aCellarTmuxIsStartedThroughHomebrewsLinkToIt() {
+        let cellar = "/opt/homebrew/Cellar/tmux/3.8/bin/tmux"
+        let links = ["/opt/homebrew/bin/tmux": cellar]
+        let resolve: (String) -> String = { links[$0] ?? $0 }
+        #expect(TerminalTmuxLocator.stableLink(to: cellar, isExecutable: { _ in true }, resolve: resolve) == "/opt/homebrew/bin/tmux")
+        // A tmux no well-known link points at stays as it was found.
+        #expect(TerminalTmuxLocator.stableLink(to: "/nix/bin/tmux", isExecutable: { _ in true }, resolve: resolve) == "/nix/bin/tmux")
+        #expect(TerminalTmuxLocator.stableLink(to: cellar, isExecutable: { _ in false }, resolve: resolve) == cellar)
+    }
+
     @Test func helperEventsAreParsedWhateverTheKeyOrder() {
         #expect(TerminalHelperEvent.parse(Data(#"{"version":"1","event":"ready"}"#.utf8)) == .ready)
         #expect(TerminalHelperEvent.parse(Data(#"{"tmux":"missing","event":"health"}"#.utf8)) == .tmuxHealth(found: false))
