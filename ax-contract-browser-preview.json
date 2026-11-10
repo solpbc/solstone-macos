@@ -63,32 +63,25 @@
       },
       {
         "expansions" : [
-          "permissions",
-          "sources",
-          "observer",
+          "home",
           "service",
-          "microphones",
-          "privacy",
-          "status",
+          "observer",
           "updates",
-          "help"
+          "help",
+          "status"
         ],
-        "key" : "SettingsView.Tab.rawValue",
+        "key" : "ShelfRow.rawValue + status",
         "template" : "settings.sidebar.tab.{tab}"
       },
       {
         "expansions" : [
-          "permissions",
-          "sources",
-          "observer",
+          "home",
           "service",
-          "microphones",
-          "privacy",
-          "status",
+          "observer",
           "updates",
           "help"
         ],
-        "key" : "SettingsView.Tab.rawValue",
+        "key" : "ShelfRow.rawValue",
         "template" : "settings.sidebar.tab.{tab}.state"
       }
     ],
@@ -133,6 +126,17 @@
       "menubar.websites.safariKeptOut",
       "menubar.websites.screenHeld",
       "settings.configSave.error",
+      "settings.deck.addMore",
+      "settings.deck.journal",
+      "settings.deck.pane.back",
+      "settings.deck.pane.close",
+      "settings.deck.pause",
+      "settings.deck.paused",
+      "settings.deck.pill.state",
+      "settings.deck.resume",
+      "settings.deck.shelf",
+      "settings.deck.status",
+      "settings.deck.status.lead",
       "settings.help.about.state",
       "settings.help.agentInstructions",
       "settings.help.agentInstructions.copy",
@@ -311,6 +315,7 @@
       "settings.setup.screen.frame",
       "settings.setup.screen.notNow",
       "settings.setup.screen.turnOn",
+      "settings.sidebar.tab.status",
       "settings.sources.activity.accessibility",
       "settings.sources.activity.accessibility.off",
       "settings.sources.activity.accessibility.openSettings",
@@ -440,6 +445,14 @@
     "menubar.status.row.state" : {
       "kind" : "enum",
       "vocabulary" : "MenubarStatusRowState"
+    },
+    "settings.deck.pill.state" : {
+      "kind" : "enum",
+      "vocabulary" : "JournalPill"
+    },
+    "settings.deck.tile.{source}.state" : {
+      "kind" : "enum",
+      "vocabulary" : "DeckStateWord"
     },
     "settings.help.about.state" : {
       "kind" : "freeform"
@@ -767,6 +780,15 @@
       "success",
       "failure"
     ],
+    "DeckStateWord" : [
+      "off",
+      "on",
+      "paused",
+      "setting_up",
+      "ready_to_set_up",
+      "checking",
+      "needs_attention"
+    ],
     "DiagnosticCaptureAXState" : [
       "on",
       "paused",
@@ -808,6 +830,18 @@
       "completed",
       "failed",
       "aborted"
+    ],
+    "JournalPill" : [
+      "needs_new_link",
+      "not_paired",
+      "confirm_mark",
+      "sync_paused",
+      "pair_again",
+      "offline",
+      "connecting",
+      "syncing",
+      "waiting_to_sync",
+      "connected"
     ],
     "JournalWindowAXState" : [
       "held",

@@ -267,7 +267,7 @@ struct SolstoneCaptureApp: App {
     var body: some Scene {
         MenuBarExtra(isInserted: .constant(startup != nil)) {
             if let startup {
-                MenuContent(appState: startup.appState, updateController: startup.updateController)
+                ShellMenuContent(appState: startup.appState, updateController: startup.updateController)
             } else {
                 EmptyView()
             }
@@ -280,7 +280,7 @@ struct SolstoneCaptureApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Window("solstone settings", id: "settings") {
+        Window("solstone", id: "settings") {
             if let startup {
                 SettingsSceneRoot(appState: startup.appState, updateController: startup.updateController)
             } else {
@@ -289,6 +289,16 @@ struct SolstoneCaptureApp: App {
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("settings…") {
+                    if let appState = AppState.shared {
+                        openSolstoneWindow(appState: appState, route: "observer")
+                    }
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+        }
 
         Window("about solstone", id: "about") {
             if let startup {
@@ -553,13 +563,13 @@ private struct StatusIcon: View {
                     let config = appState.config
                     let openPermissions = { @MainActor in
                         openWindow(id: SolstoneSceneID.settings.rawValue)
-                        appState.pendingSettingsTab = "permissions"
+                        appState.pendingSettingsTab = "home"
                         appState.didOpenWindow(.settings)
                         NSApp.activate(ignoringOtherApps: true)
                     }
                     let openService = { @MainActor in
                         openWindow(id: SolstoneSceneID.settings.rawValue)
-                        appState.pendingSettingsTab = "journal"
+                        appState.pendingSettingsTab = "home"
                         appState.didOpenWindow(.settings)
                         NSApp.activate(ignoringOtherApps: true)
                     }
@@ -578,6 +588,11 @@ private struct StatusIcon: View {
                     openWindow: { openWindow(id: $0) },
                     activate: { NSApp.activate(ignoringOtherApps: true) }
                 )
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openAboutWindow)) { _ in
+                openWindow(id: SolstoneSceneID.about.rawValue)
+                appState.didOpenWindow(.about)
+                NSApp.activate(ignoringOtherApps: true)
             }
             .onReceive(NotificationCenter.default.publisher(for: .openJournalWindow)) { _ in
                 routeOpenJournalWindow(

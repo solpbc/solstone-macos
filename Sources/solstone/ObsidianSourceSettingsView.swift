@@ -8,11 +8,15 @@ import SwiftUI
 /// The Obsidian source in Settings, beside the other sources.
 struct ObsidianSourceSettingsView: View {
     let source: ObsidianVaultSource
+    /// On a source page the verdict above already names the source and its state.
+    var onSourcePage = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(UICopy.Obsidian.TITLE)
-                .font(.headline)
+            if !onSourcePage {
+                Text(UICopy.Obsidian.TITLE)
+                    .font(.headline)
+            }
             AXStateCompanion(id: AXID.Settings.Sources.obsidianState, value: source.axState.axToken)
 
             if let warning = source.alreadySynced {
@@ -36,9 +40,11 @@ struct ObsidianSourceSettingsView: View {
 
     private var offSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(UICopy.Obsidian.EXPLAINER)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            if !onSourcePage {
+                Text(UICopy.Obsidian.EXPLAINER)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
 
             if !source.foundVaults.isEmpty {
                 Text(UICopy.Obsidian.FOUND_VAULTS)
@@ -59,10 +65,12 @@ struct ObsidianSourceSettingsView: View {
 
     private var statusSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(UICopy.Obsidian.stateLine(source.phase, vaultName: source.snapshot.state.vaultName))
-                .accessibilityIdentifier(AXID.Settings.Sources.obsidianStatus)
+            if !onSourcePage {
+                Text(UICopy.Obsidian.stateLine(source.phase, vaultName: source.snapshot.state.vaultName))
+                    .accessibilityIdentifier(AXID.Settings.Sources.obsidianStatus)
+            }
 
-            if source.phase == .needsAttention {
+            if source.phase == .needsAttention, !onSourcePage {
                 Text(UICopy.Obsidian.attentionLine(vaultUnreadable: source.snapshot.vaultUnreadable, partUnreadable: source.snapshot.partUnreadable))
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier(AXID.Settings.Sources.obsidianAttention)

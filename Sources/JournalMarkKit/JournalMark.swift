@@ -171,7 +171,7 @@ public struct JournalMarkView: View {
     }
 }
 
-private struct JournalMarkIconChip: View {
+struct JournalMarkIconChip: View {
     let icon: JournalMark.Icon
 
     var body: some View {

@@ -40,8 +40,8 @@ struct HeldIdlePresentationTests {
 #endif
 
         let settingsSource = try readWireUpSource("Sources/solstone/SettingsView.swift")
-        let summaryStart = try #require(settingsSource.range(of: "    private var statusHealthSummary: StatusHealthSummary {"))
-        let summaryEnd = try #require(settingsSource[summaryStart.lowerBound...].range(of: "    @ViewBuilder\n    private func healthSummaryCard"))
+        let summaryStart = try #require(settingsSource.range(of: "    var statusHealthSummary: StatusHealthSummary {"))
+        let summaryEnd = try #require(settingsSource[summaryStart.lowerBound...].range(of: "    @ViewBuilder\n    func healthSummaryCard"))
         let summarySource = String(settingsSource[summaryStart.lowerBound..<summaryEnd.lowerBound])
         #expect(wireUpContains(summarySource, "ownerPauseHeldIdle: appState.ownerPauseHeldIdle"))
     }
@@ -95,8 +95,8 @@ struct HeldIdlePresentationTests {
         ) == .error)
 
         let settingsSource = try readWireUpSource("Sources/solstone/SettingsView.swift")
-        let reportStart = try #require(settingsSource.range(of: "    private func openProblemReport(aboutSnapshot: String) {"))
-        let reportEnd = try #require(settingsSource[reportStart.lowerBound...].range(of: "    private var currentScreenPermissionOutcome"))
+        let reportStart = try #require(settingsSource.range(of: "    func openProblemReport(aboutSnapshot: String) {"))
+        let reportEnd = try #require(settingsSource[reportStart.lowerBound...].range(of: "    var currentScreenPermissionOutcome"))
         let reportSource = String(settingsSource[reportStart.lowerBound..<reportEnd.lowerBound])
         #expect(wireUpContains(reportSource, "appState.isPaused || appState.ownerPauseHeldIdle"))
         #expect(wireUpContains(reportSource, "appState.errorMessage != nil ? \"error\""))

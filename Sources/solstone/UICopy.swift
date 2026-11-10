@@ -587,7 +587,7 @@ public enum UICopy {
     public static let SETTINGS_PERMISSIONS_ENABLE_MICROPHONE = "enable microphone"
     public static let SETTINGS_HELP_ICON_RECORDING = "on · reaching your journal"
     public static let SETTINGS_HELP_ICON_CONNECTING = "connecting"
-    public static let SETTINGS_HELP_ICON_PAUSED = "paused, or both sources off"
+    public static let SETTINGS_HELP_ICON_PAUSED = "paused, or every source off"
     public static let SETTINGS_HELP_ICON_ATTENTION = "needs your attention"
     public static let SETTINGS_HELP_ICON_OFFLINE = "on · saved on this mac, not reaching your journal right now"
     public static let SETTINGS_HELP_ICON_ERROR = "something's broken"

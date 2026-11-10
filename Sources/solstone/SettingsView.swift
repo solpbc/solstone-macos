@@ -147,7 +147,7 @@ func shouldShowPairingRetry(for state: TunnelLifecycleState, failureCause: Journ
     }
 }
 
-private struct SettingsPaneScrollEdgeModifier: ViewModifier {
+struct SettingsPaneScrollEdgeModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
@@ -164,7 +164,10 @@ func healthActionEffect(_ action: StatusHealthAction) -> (tab: SettingsView.Tab,
 
 /// Settings window for configuring server upload
 struct SettingsView: View {
+    /// The window's places, by their legacy names: routes, visited marks and tests use these.
+    /// The sidebar shows `ShelfRow`; the source-shaped names open a pane beside the deck.
     enum Tab: String, Hashable, CaseIterable {
+        case home = "home"
         case permissions = "permissions"
         case sources = "sources"
         case observer = "observer"
@@ -182,90 +185,98 @@ struct SettingsView: View {
 
     @Bindable var appState: AppState
     @Bindable var updateController: UpdateController
-    @State var selectedTab: Tab = .status
+    @State var shelf: ShelfRow = .home
+    @State var shellLayout: ShellLayout = .full
+    @State var phonePushed = false
+    @State var shelfOpen = false
+    @State var tileFocusFromKeyboard = false
+    @State var homePane: HomePane?
+    @FocusState var focusedTile: DeckSource?
     @Environment(\.dismiss) private var dismiss
 
-    @State private var storageUsedMB: Int?
-    @State private var tryAgainInFlight = false
-    @State private var setupProbeSnapshot = SetupProbeSnapshot.checking
+    @State var storageUsedMB: Int?
+    @State var tryAgainInFlight = false
+    @State var setupProbeSnapshot = SetupProbeSnapshot.checking
 
     // Help diagnostics are read only after the owner opens the disclosure.
-    @State private var diagnosticsExpanded = false
-    @State private var diagnosticsLoading = false
-    @State private var diagnosticLoadGeneration: UInt = 0
-    @State private var diagnosticReport: DiagnosticReport?
-    @State private var diagnosticCopyFeedback: DiagnosticCopyFeedback?
+    @State var diagnosticsExpanded = false
+    @State var diagnosticsLoading = false
+    @State var diagnosticLoadGeneration: UInt = 0
+    @State var diagnosticReport: DiagnosticReport?
+    @State var diagnosticCopyFeedback: DiagnosticCopyFeedback?
 
-    @State private var logExportGeneration: UInt = 0
-    @State private var logExportLoading = false
-    @State private var logExportDocument: LogExportDocument?
-    @State private var logExportTask: Task<Void, Never>?
-    @State private var logExportWriteFeedback: LogExportWriteFeedback?
+    @State var logExportGeneration: UInt = 0
+    @State var logExportLoading = false
+    @State var logExportDocument: LogExportDocument?
+    @State var logExportTask: Task<Void, Never>?
+    @State var logExportWriteFeedback: LogExportWriteFeedback?
 
     // Permissions tab state
-    @State private var screenRecordingPrompted = false
-    @State private var screenRestartPending = false
+    @State var screenRecordingPrompted = false
+    @State var screenRestartPending = false
 
     // Privacy tab state
-    @State private var newTitlePattern = ""
-    @State private var newProtectedVideoPattern = ""
-    @State private var newExcludedApp = ""
-    @State private var newWebsite = ""
-    @State private var websiteError: String? = nil
-    @FocusState private var privateWindowKeyboardFocused: Bool
-    @AccessibilityFocusState private var privateWindowAccessibilityFocused: Bool
-    @State private var privateWindowAnnouncements = PrivateWindowAccessibilityAnnouncementPolicy()
+    @State var newTitlePattern = ""
+    @State var newProtectedVideoPattern = ""
+    @State var newExcludedApp = ""
+    @State var newWebsite = ""
+    @State var websiteError: String? = nil
+    @FocusState var privateWindowKeyboardFocused: Bool
+    @AccessibilityFocusState var privateWindowAccessibilityFocused: Bool
+    @State var privateWindowAnnouncements = PrivateWindowAccessibilityAnnouncementPolicy()
 
     // Service tab state
-    @State private var observerURL = ""
-    @State private var observerKey = ""
-    @State private var pairingLink = ""
-    @State private var inFlightTestID: UUID?
-    @State private var disconnectConfirmPending = false
-    @State private var journalMarkDriver = JournalMarkConfirmationDriver()
-    @State private var journalHandoffOrchestrator: JournalHandoffOrchestrator
-    @State private var freshFlow: FreshJournalFlow
-    @State private var onDiskJournalAdoptionFlow: OnDiskJournalAdoptionFlow
-    @State private var pairingMismatch = false
-    @State private var journalMarkRederiveEligible = false
-    @State private var journalMarkRederiveStarted = false
-    @State private var journalMarkRederiveTask: Task<Void, Never>?
-    @State private var localJournalMark: JournalMark?
-    @State private var localOnDiskDiscoveryPath: String?
-    @State private var localOnDiskAdoptionAction: OnDiskJournalAdoptionAction = .install
-    @State private var localDiscoveryCompleted = false
-    @State private var localDiscoveryTask: Task<Void, Never>?
-    @State private var localDiscoveryInFlight = false
-    @State private var lastProbeFinishedAt: Date?
-    @State private var localLinkInProgress = false
-    @State private var localLinkError: String?
-    @State private var localLinkNotice: String?
-    @State private var localJournalIsNotYours = false
+    @State var observerURL = ""
+    @State var observerKey = ""
+    @State var pairingLink = ""
+    @State var inFlightTestID: UUID?
+    @State var disconnectConfirmPending = false
+    @State var journalMarkDriver = JournalMarkConfirmationDriver()
+    @State var journalHandoffOrchestrator: JournalHandoffOrchestrator
+    @State var freshFlow: FreshJournalFlow
+    @State var onDiskJournalAdoptionFlow: OnDiskJournalAdoptionFlow
+    @State var pairingMismatch = false
+    @State var journalMarkRederiveEligible = false
+    @State var journalMarkRederiveStarted = false
+    @State var journalMarkRederiveTask: Task<Void, Never>?
+    @State var localJournalMark: JournalMark?
+    @State var localOnDiskDiscoveryPath: String?
+    @State var localOnDiskAdoptionAction: OnDiskJournalAdoptionAction = .install
+    @State var localDiscoveryCompleted = false
+    @State var localDiscoveryTask: Task<Void, Never>?
+    @State var localDiscoveryInFlight = false
+    @State var lastProbeFinishedAt: Date?
+    @State var localLinkInProgress = false
+    @State var localLinkError: String?
+    @State var localLinkNotice: String?
+    @State var localJournalIsNotYours = false
     /// Re-link found this Mac set to send somewhere a same-machine link can't reach.
-    @State private var relinkNeedsPairingLink = false
-    @State private var showPairingFlow = false
-    @State private var replacementConfirmationPresented = false
+    @State var relinkNeedsPairingLink = false
+    @State var showPairingFlow = false
+    @State var replacementConfirmationPresented = false
     @State var entitlementOpenFailed = false
     @State var supportOpenFailed = false
 
-    private let localIdentityFetch: @MainActor @Sendable (String) async -> JournalIdentityResolution
-    private let onDiskJournalDiscovery: @MainActor @Sendable () async -> OnDiskJournalDiscovery
-    private let sameMachinePairStart: @MainActor @Sendable (
+    let localIdentityFetch: @MainActor @Sendable (String) async -> JournalIdentityResolution
+    let onDiskJournalDiscovery: @MainActor @Sendable () async -> OnDiskJournalDiscovery
+    let sameMachinePairStart: @MainActor @Sendable (
         _ baseURL: String,
         _ deviceLabel: String
     ) async -> Result<SameMachinePairStartResponse, SameMachinePairStartFailure>
-    private let runningJournalController: any RunningJournalController
-    private let diagnosticClipboardWrite: @MainActor (String) -> Bool
-    private let diagnosticAnnouncement: @MainActor (String) -> Void
-    private let openURL: @MainActor (URL) -> Bool
-    private let logExportSource: any LogExportEntrySourcing
-    private let logExportWriter: any LogExportFileWriting
-    private let logExportChooseSaveURL: @MainActor (LogExportDocument) -> URL?
+    let runningJournalController: any RunningJournalController
+    let diagnosticClipboardWrite: @MainActor (String) -> Bool
+    let diagnosticAnnouncement: @MainActor (String) -> Void
+    let openURL: @MainActor (URL) -> Bool
+    let logExportSource: any LogExportEntrySourcing
+    let logExportWriter: any LogExportFileWriting
+    let logExportChooseSaveURL: @MainActor (LogExportDocument) -> URL?
 
     init(
         appState: AppState,
         updateController: UpdateController,
-        selectedTab: Tab = .status,
+        selectedTab: Tab = .home,
+        initialHomePane: HomePane? = nil,
+        initialPhonePushed: Bool = false,
         initialStorageUsedMB: Int? = nil,
         initialLocalJournalMark: JournalMark? = nil,
         initialLocalOnDiskDiscoveryPath: String? = nil,
@@ -324,7 +335,10 @@ struct SettingsView: View {
         self.logExportSource = logExportSource
         self.logExportWriter = logExportWriter
         self.logExportChooseSaveURL = logExportChooseSaveURL
-        self._selectedTab = State(initialValue: selectedTab)
+        let route = ShellRoute(tab: selectedTab, appState: appState)
+        self._shelf = State(initialValue: route.shelf)
+        self._homePane = State(initialValue: initialHomePane ?? route.pane)
+        self._phonePushed = State(initialValue: initialPhonePushed)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
         self._setupProbeSnapshot = State(initialValue: initialSetupProbeSnapshot)
         self._diagnosticsExpanded = State(initialValue: initialDiagnosticsExpanded)
@@ -341,7 +355,7 @@ struct SettingsView: View {
         self._pairingMismatch = State(initialValue: initialPairingMismatch)
     }
 
-    private var preserveSyncedSegmentsBinding: Binding<Bool> {
+    var preserveSyncedSegmentsBinding: Binding<Bool> {
         Binding(
             get: { appState.config.preserveSyncedSegments },
             set: { newValue in
@@ -354,7 +368,7 @@ struct SettingsView: View {
 
     var body: some View {
         settingsContent
-        .background(SetupSettingsWindowInstaller(setupShowing: appState.setupModel.phase != nil))
+        .background(SetupSettingsWindowInstaller(setupShowing: appState.setupModel.phase != nil, groundChrome: true))
         .alert(appState.setupModel.handoffRefusalMessage ?? "", isPresented: Binding(
             get: { appState.setupModel.handoffRefusal != nil },
             set: { if !$0 { appState.setupModel.dismissHandoffRefusal() } }
@@ -363,83 +377,17 @@ struct SettingsView: View {
         }
     }
 
-    private var settingsContent: some View {
+    var settingsContent: some View {
         Group {
             if appState.setupModel.phase != nil {
                 SetupView(model: appState.setupModel, appState: appState, journalMarkDriver: journalMarkDriver)
             } else {
-                NavigationSplitView(columnVisibility: .constant(.all)) {
-                    List(selection: $selectedTab) {
-                sidebarPlainLabel("status", tab: .status, systemImage: "info.circle").tag(Tab.status)
-
-                Section {
-                    sidebarLabel(
-                        "permissions",
-                        tab: .permissions,
-                        systemImage: "lock.shield",
-                        badge: appState.permissionsAreDone ? .done : (appState.permissionsNeedAttention ? .attention : .blank)
-                    )
-                        .tag(Tab.permissions)
-                    sidebarLabel(
-                        "journal",
-                        tab: .service,
-                        systemImage: "book.closed",
-                        badge: appState.serviceIsDone ? .done : (appState.serviceNeedsAttention ? .attention : .blank)
-                    )
-                        .tag(Tab.service)
-                } header: {
-                    Text("setup")
-                }
-
-                Section {
-                    sidebarPlainLabel("sources", tab: .sources, systemImage: "waveform.badge.mic").tag(Tab.sources)
-                    sidebarPlainLabel("microphones", tab: .microphones, systemImage: "mic").tag(Tab.microphones)
-                    sidebarPlainLabel("privacy", tab: .privacy, systemImage: "eye.slash").tag(Tab.privacy)
-                } header: {
-                    Text("inputs")
-                }
-
-                Section {
-                    sidebarPlainLabel("general", tab: .observer, systemImage: "gearshape").tag(Tab.observer)
-                    sidebarLabel(
-                        UpdatesCopy(provider: .solstone).tabTitle,
-                        tab: .updates,
-                        systemImage: "arrow.down.circle",
-                        badge: updatesSidebarBadge(for: updateController.durableUpdateStatus),
-                        doneAccessibilityLabel: UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y
-                    )
-                        .tag(Tab.updates)
-                    sidebarPlainLabel("help", tab: .help, systemImage: "questionmark.circle").tag(Tab.help)
-                } header: {
-                    Text("app")
-                }
+                shellChromeContent
             }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            .modifier(SettingsPaneScrollEdgeModifier())
-        } detail: {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if let error = appState.configSaveError {
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                                .accessibilityIdentifier(AXID.Settings.configSaveError)
-                        }
-                        detailContent(scrollProxy: proxy)
-                    }
-                    .padding(20)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-                .modifier(SettingsPaneScrollEdgeModifier())
-            }
-        }
-        }
         }
         .frame(
-            minWidth: appState.setupModel.phase != nil ? 880 : 720,
-            minHeight: appState.setupModel.phase != nil ? 580 : 500
+            minWidth: appState.setupModel.phase != nil ? 880 : 390,
+            minHeight: appState.setupModel.phase != nil ? 580 : 560
         )
 
         .task {
@@ -489,13 +437,16 @@ struct SettingsView: View {
                 journalMarkDriver.startIfUnconfirmed(appState: appState)
             }
         }
-        .onChange(of: selectedTab) { _, newValue in
-            if newValue != .privacy {
+        .onChange(of: homePane) { _, newValue in
+            if shelf != .home || !Self.paneHoldsLeftOut(newValue) {
                 appState.pendingPrivateWindowSettingsTarget = nil
                 appState.pendingWebsiteSettingsTarget = nil
             }
-            if newValue == .status {
-                refreshSetupProbes()
+        }
+        .onChange(of: shelf) { _, newValue in
+            if newValue != .home {
+                appState.pendingPrivateWindowSettingsTarget = nil
+                appState.pendingWebsiteSettingsTarget = nil
             }
         }
         .onChange(of: appState.initialPermissionCheckComplete) { _, _ in
@@ -529,7 +480,7 @@ struct SettingsView: View {
             privateWindowAnnouncements.reset(to: privateWindowAccessibilityState)
         }
         .onReceive(NotificationCenter.default.publisher(for: .reaskJournalMark)) { _ in
-            selectedTab = .service
+            navigate(.service)
             journalMarkDriver.reaskUnconfirmed(appState: appState)
         }
         .sheet(isPresented: Binding(
@@ -555,45 +506,31 @@ struct SettingsView: View {
             journalMarkRederiveTask = nil
         }
         .onExitCommand {
-            dismiss()
+            if shelfOpen {
+                shelfOpen = false
+            } else if shelf == .home, shellLayout == .phone, phonePushed {
+                phonePushed = false
+            } else if shelf == .home, homePane != nil {
+                homePane = nil
+            } else {
+                dismiss()
+            }
         }
     }
 
     @ViewBuilder
-    private func detailContent(scrollProxy: ScrollViewProxy) -> some View {
-        switch selectedTab {
-        case .status:
-            statusTab.onAppear {
-                appState.markSettingsTabVisited(.status)
-                refreshSetupProbes()
-            }
+    func detailContent(scrollProxy: ScrollViewProxy) -> some View {
+        switch shelf {
+        case .home:
+            EmptyView()
         case .observer:
-            observerTab.onAppear { appState.markSettingsTabVisited(.observer) }
+            VStack(alignment: .leading, spacing: 20) {
+                observerTab
+                permissionsReviewRow
+            }
+            .onAppear { appState.markSettingsTabVisited(.observer) }
         case .service:
             serviceTab.onAppear { appState.markSettingsTabVisited(.service) }
-        case .sources:
-            sourcesTab
-                .onAppear { appState.markSettingsTabVisited(.sources) }
-                .onDisappear {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-                    appState.browserRepair.viewGeneration += 1
-#endif
-                }
-        case .microphones:
-            microphoneTab.onAppear {
-                appState.markSettingsTabVisited(.microphones)
-                refreshMicrophoneEmptyState()
-            }
-        case .privacy:
-            privacyTab(scrollProxy: scrollProxy).onAppear {
-                appState.markSettingsTabVisited(.privacy)
-                privateWindowAnnouncements.reset(to: privateWindowAccessibilityState)
-            }
-        case .permissions:
-            permissionsTab.onAppear {
-                appState.markSettingsTabVisited(.permissions)
-                appState.refreshMicrophoneAuthorization()
-            }
         case .updates:
             VStack(alignment: .leading, spacing: 16) {
                 JournalUpdateDestinationView(owner: appState.tunnelLifecycleOwner)
@@ -608,29 +545,24 @@ struct SettingsView: View {
         }
     }
 
-    private func applyPendingSettingsTab() {
+    func applyPendingSettingsTab() {
         if let pendingLink = appState.takePendingPairingLink(forSetup: false) {
             pairingLink = pendingLink
             showPairingFlow = true
         }
         if let pending = appState.pendingSettingsTab {
-            switch pending {
-            case "observer", "general": selectedTab = .observer
-            case "permissions": selectedTab = .permissions
-            case "service", "journal": selectedTab = .service
-            case "sources": selectedTab = .sources
-            case "microphones": selectedTab = .microphones
-            case "privacy": selectedTab = .privacy
-            case "help": selectedTab = .help
-            case "status": selectedTab = .status
-            case "updates": selectedTab = .updates
-            default: break
+            if pending.hasPrefix("source:"), let source = DeckSource(rawValue: String(pending.dropFirst("source:".count))) {
+                shelf = .home
+                homePane = .source(source)
+                phonePushed = true
+            } else if let tab = SettingsView.Tab(legacyRoute: pending) {
+                navigate(tab)
             }
             appState.pendingSettingsTab = nil
         }
     }
 
-    private var journalMarkSheet: some View {
+    var journalMarkSheet: some View {
         JournalMarkSheetContent(
             phase: journalMarkDriver.phase,
             onMismatch: rejectJournalMark,
@@ -640,7 +572,7 @@ struct SettingsView: View {
         )
     }
 
-    private func handlePairingStateChange(_ state: PairingFlowState) {
+    func handlePairingStateChange(_ state: PairingFlowState) {
         if !appState.setupModel.isPeerSupportingSetup {
             journalMarkDriver.startIfNeeded(for: state, appState: appState)
         }
@@ -654,17 +586,17 @@ struct SettingsView: View {
         }
     }
 
-    private func confirmJournalMark() {
+    func confirmJournalMark() {
         _ = journalMarkDriver.confirm(appState: appState)
         pairingMismatch = false
     }
 
-    private func continueUnverifiedMark() {
+    func continueUnverifiedMark() {
         _ = journalMarkDriver.continueAnyway(appState: appState)
         pairingMismatch = false
     }
 
-    private func cancelUnverifiedPairing() {
+    func cancelUnverifiedPairing() {
         Task { @MainActor in
             guard await journalMarkDriver.cancelPairing(appState: appState) else { return }
             pairingMismatch = false
@@ -673,7 +605,7 @@ struct SettingsView: View {
         }
     }
 
-    private func rejectJournalMark() {
+    func rejectJournalMark() {
         Task { @MainActor in
             await journalMarkDriver.reject(appState: appState) {
                 pairingMismatch = true
@@ -683,7 +615,7 @@ struct SettingsView: View {
         }
     }
 
-    private func startJournalMarkRederiveIfNeeded() {
+    func startJournalMarkRederiveIfNeeded() {
         guard journalMarkRederiveEligible,
               !journalMarkRederiveStarted,
               appState.confirmedMark == nil,
@@ -701,7 +633,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func sidebarPlainLabel(_ title: String, tab: Tab, systemImage: String) -> some View {
+    func sidebarPlainLabel(_ title: String, tab: Tab, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .accessibilityIdentifier(AXID.Settings.Sidebar.tab(tab))
             .overlay(alignment: .topLeading) {
@@ -713,7 +645,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func sidebarLabel(
+    func sidebarLabel(
         _ title: String,
         tab: Tab,
         systemImage: String,
@@ -759,7 +691,7 @@ struct SettingsView: View {
         }
     }
 
-    private func sidebarBadgeStateCompanion(tab: Tab, badge: SidebarBadgeState) -> some View {
+    func sidebarBadgeStateCompanion(tab: Tab, badge: SidebarBadgeState) -> some View {
         AXStateCompanion(
             id: AXID.Settings.Sidebar.tabState(tab),
             value: badge.axToken
@@ -768,7 +700,7 @@ struct SettingsView: View {
 
     // MARK: - Sources Tab
 
-    private func setCaptureSource(_ source: CaptureSources, enabled: Bool) {
+    func setCaptureSource(_ source: CaptureSources, enabled: Bool) {
         var config = appState.config
         if source.contains(.microphone) {
             config.isMicrophoneCaptureEnabled = enabled
@@ -782,200 +714,81 @@ struct SettingsView: View {
         Task { await appState.applySelectedSourcesToRunningSession() }
     }
 
-    private var sourcesTab: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text(UICopy.SOURCES_HELP)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            Text(UICopy.SOURCES_SEGMENTS_EXPLAINER)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier(AXID.Settings.Sources.segments)
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 10) {
-                    Toggle(UICopy.SOURCES_MICROPHONE, isOn: Binding(
-                        get: { appState.config.isMicrophoneCaptureEnabled },
-                        set: { setCaptureSource(.microphone, enabled: $0) }
-                    ))
-                    .accessibilityIdentifier(AXID.Settings.Sources.microphoneCaptureEnabled)
-                    Toggle(UICopy.SOURCES_SCREEN, isOn: Binding(
-                        get: { appState.config.isScreenCaptureEnabled },
-                        set: { setCaptureSource(.screen, enabled: $0) }
-                    ))
-                    .accessibilityIdentifier(AXID.Settings.Sources.screenCaptureEnabled)
-
-                    Toggle("activity", isOn: Binding(
-                        get: { appState.config.isActivityEnabled },
-                        set: { enabled in
-                            var config = appState.config
-                            config.isActivityEnabled = enabled
-                            appState.updateConfig(config)
-                        }
-                    ))
-                    Text("adds app names, window titles and active or idle time to your journal, and browser addresses if you allow accessibility. it starts and pauses with screen and system audio.")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                    if appState.config.isActivityEnabled {
-                        Toggle("keep activity on while paused", isOn: Binding(
-                            get: { appState.config.activityContinuesThroughPause },
-                            set: { value in
-                                var config = appState.config; config.activityContinuesThroughPause = value
-                                appState.updateConfig(config)
-                            }
-                        ))
-                        Text("activity keeps going when you pause, and when screen and system audio are off.")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                        Toggle("window titles", isOn: Binding(
-                            get: { appState.config.activityTitlesEnabled },
-                            set: { value in
-                                var config = appState.config; config.activityTitlesEnabled = value
-                                appState.updateConfig(config)
-                            }
-                        ))
-                        Toggle("browser addresses", isOn: Binding(
-                            get: { appState.config.activityURLsEnabled },
-                            set: { value in
-                                var config = appState.config; config.activityURLsEnabled = value
-                                appState.updateConfig(config)
-                            }
-                        ))
-                        Text("addresses include the site and path, without query strings or fragments.")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                        Toggle("allow accessibility for activity", isOn: Binding(
-                            get: { appState.config.activityAccessibilityEnabled && !appState.activityAccessibilityOffInMacOS },
-                            set: { enabled in
-                                if enabled && appState.activityAccessibilityOffInMacOS {
-                                    appState.askForAccessibility()
-                                    return
-                                }
-                                var config = appState.config; config.activityAccessibilityEnabled = enabled
-                                appState.updateConfig(config)
-                                if enabled {
-                                    _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-                                }
-                            }
-                        ))
-                        .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibility)
-                        Text(UICopy.Websites.ACTIVITY_ACCESSIBILITY_HELP)
-                            .font(.subheadline).foregroundStyle(.secondary)
-                        if appState.activityAccessibilityOffInMacOS {
-                            Text(UICopy.Websites.activityAccessibilityOffInMacOS(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
-                                .font(.subheadline)
-                                .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibilityOff)
-                            Button(UICopy.Websites.OPEN_SYSTEM_SETTINGS) { appState.askForAccessibility() }
-                                .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibilityOpenSettings)
-                        }
-                        Text("activity follows your exclusions. it continues while screen and audio step aside for protected video. a title does not mean you watched or read it.")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                    }
-                    if let activity = appState.activitySource {
-                        if activity.failed {
-                            Text("activity couldn't be saved. check free space on this mac.").foregroundStyle(.secondary)
-                        } else if !activity.enabled && appState.config.isActivityEnabled {
-                            Text("activity starts when screen and system audio are on")
-                        } else {
-                            Text(!activity.enabled ? "activity is off" : (activity.paused ? "activity is paused" : "activity is on"))
-                            if activity.titleUnavailable { Text("window titles are unavailable").foregroundStyle(.secondary) }
-                            if activity.urlUnavailable { Text("browser addresses are unavailable").foregroundStyle(.secondary) }
-                        }
-                    }
-
-                    Toggle(isOn: Binding(
-                        get: { appState.config.isTerminalEnabled },
-                        set: { appState.setTerminalEnabled($0) }
-                    )) {
-                        Text(UICopy.Terminal.sourceTitle)
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Sources.terminalEnabled)
-                    .alert(UICopy.Terminal.moveTitle, isPresented: Binding(
-                        get: { appState.terminalMoveOffer },
-                        set: { appState.terminalMoveOffer = $0 }
-                    )) {
-                        Button(UICopy.Terminal.moveConfirm) { appState.confirmTerminalMove() }
-                        Button(UICopy.Terminal.moveCancel, role: .cancel) {}
-                    } message: {
-                        Text(appState.currentDurablePairing == nil
-                            ? "\(UICopy.Terminal.moveBody) \(UICopy.Terminal.moveBodyUnpaired)"
-                            : UICopy.Terminal.moveBody)
-                    }
-                    Text(UICopy.Terminal.sourceHelp)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if let line = appState.terminalStatusLine {
-                        Text(line)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier(AXID.Settings.Sources.terminalStatus)
-                    }
-
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-                    Toggle(isOn: Binding(
-                        get: { appState.config.isBrowserIntakeEnabled },
-                        set: { enabled in
-                            if sourcesToggleRestartsMedia(.browserPages(enabled)) {
-                                setCaptureSource(.microphone, enabled: enabled)
-                            }
-                            appState.setBrowserIntakeEnabled(enabled)
-                        }
-                    )) {
-                        Text(UICopy.SOURCES_BROWSER_PAGES)
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Sources.browserIntakeEnabled)
-
-                    if browserSetupGroupIsVisible(
-                        screenGranted: appState.screenRecordingGranted,
-                        microphoneGranted: appState.microphoneGranted
-                    ) {
-                        browserSourcesGroup
-                    }
-#endif
-
-                    Divider()
-
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-                    Text(sourcesFooter(media: appState.captureSourcesStatusText, lead: sourcesLead))
-                        .accessibilityIdentifier(AXID.Settings.Sources.sourceStatus)
-#else
-                    Text(appState.captureSourcesStatusText)
-                        .accessibilityIdentifier(AXID.Settings.Sources.sourceStatus)
-#endif
-                    if appState.config.selectedSources.isEmpty && !appState.config.isActivitySourceOn && appState.obsidianSource?.isOn != true && !appState.config.isTerminalEnabled {
-#if SOLSTONE_BROWSER_INTAKE_PREVIEW
-                        if sourcesLead != .draining && !appState.config.isBrowserIntakeEnabled {
-                            Text(UICopy.SOURCES_NONE_REASON).foregroundStyle(.secondary)
-                        }
-#else
-                        Text(UICopy.SOURCES_NONE_REASON).foregroundStyle(.secondary)
-#endif
-                    } else if !appState.config.selectedSources.isEmpty && appState.availableSelectedSources.isEmpty {
-                        Text(UICopy.SOURCES_GRANT_OR_CHANGE).foregroundStyle(.secondary)
-                        navRow(UICopy.SETTINGS_NEXT_GRANT_PERMISSIONS) {
-                            selectedTab = .permissions
-                        }
-                    } else if appState.isRecording || appState.isPaused,
-                              appState.captureManager.activeSources.isEmpty {
-                        // Turned on and granted, but the device did not start. Without this the
-                        // one state with no owner action attached is also the only one with no
-                        // reason attached.
-                        Text(UICopy.SOURCES_UNAVAILABLE_REASON).foregroundStyle(.secondary)
-                    }
-                    if let notice = appState.captureSourceNotice {
-                        Text(notice).foregroundStyle(.secondary)
-                    }
+    var activityControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("activity", isOn: Binding(
+                get: { appState.config.isActivityEnabled },
+                set: { enabled in
+                    var config = appState.config
+                    config.isActivityEnabled = enabled
+                    appState.updateConfig(config)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
+            ))
+            Text("adds app names, window titles and active or idle time to your journal, and browser addresses if you allow accessibility. it starts and pauses with screen and system audio.")
+                .font(.subheadline).foregroundStyle(.secondary)
+            if appState.config.isActivityEnabled {
+                Toggle("keep activity on while paused", isOn: Binding(
+                    get: { appState.config.activityContinuesThroughPause },
+                    set: { value in
+                        var config = appState.config; config.activityContinuesThroughPause = value
+                        appState.updateConfig(config)
+                    }
+                ))
+                Text("activity keeps going when you pause, and when screen and system audio are off.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Toggle("window titles", isOn: Binding(
+                    get: { appState.config.activityTitlesEnabled },
+                    set: { value in
+                        var config = appState.config; config.activityTitlesEnabled = value
+                        appState.updateConfig(config)
+                    }
+                ))
+                Toggle("browser addresses", isOn: Binding(
+                    get: { appState.config.activityURLsEnabled },
+                    set: { value in
+                        var config = appState.config; config.activityURLsEnabled = value
+                        appState.updateConfig(config)
+                    }
+                ))
+                Text("addresses include the site and path, without query strings or fragments.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Toggle("allow accessibility for activity", isOn: Binding(
+                    get: { appState.config.activityAccessibilityEnabled && !appState.activityAccessibilityOffInMacOS },
+                    set: { enabled in
+                        if enabled && appState.activityAccessibilityOffInMacOS {
+                            appState.askForAccessibility()
+                            return
+                        }
+                        var config = appState.config; config.activityAccessibilityEnabled = enabled
+                        appState.updateConfig(config)
+                        if enabled {
+                            _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+                        }
+                    }
+                ))
+                .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibility)
+                Text(UICopy.Websites.ACTIVITY_ACCESSIBILITY_HELP)
+                    .font(.subheadline).foregroundStyle(.secondary)
+                if appState.activityAccessibilityOffInMacOS {
+                    Text(UICopy.Websites.activityAccessibilityOffInMacOS(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
+                        .font(.subheadline)
+                        .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibilityOff)
+                    Button(UICopy.Websites.OPEN_SYSTEM_SETTINGS) { appState.askForAccessibility() }
+                        .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibilityOpenSettings)
+                }
+                Text("activity follows your exclusions. it continues while screen and audio step aside for protected video. a title does not mean you watched or read it.")
+                    .font(.subheadline).foregroundStyle(.secondary)
             }
-
-            if let obsidianSource = appState.obsidianSource {
-                GroupBox { ObsidianSourceSettingsView(source: obsidianSource) }
+            if let activity = appState.activitySource, activity.enabled, !activity.failed {
+                if activity.titleUnavailable { Text("window titles are unavailable").foregroundStyle(.secondary) }
+                if activity.urlUnavailable { Text("browser addresses are unavailable").foregroundStyle(.secondary) }
             }
         }
     }
 
+
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-    private var sourcesLead: BrowserOwnerStatusLead {
+    var sourcesLead: BrowserOwnerStatusLead {
         browserOwnerStatusLead(
             mediaSourcesEmpty: appState.config.selectedSources.isEmpty,
             mediaRecording: appState.isRecording,
@@ -985,7 +798,7 @@ struct SettingsView: View {
         )
     }
 
-    private var browserSourcesGroup: some View {
+    var browserSourcesGroup: some View {
         let snapshot = appState.browserHostSnapshot.value
         let rows = browserBrandRows(snapshot, now: Date())
         let verdict = browserOwnerVerdict(mediaSourcesEmpty: appState.config.selectedSources.isEmpty,
@@ -1071,7 +884,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var browserPendingDiscardLine: some View {
+    var browserPendingDiscardLine: some View {
         let custody = appState.browserPendingDiscard
         VStack(alignment: .leading, spacing: 6) {
             if custody.showsDiscarded {
@@ -1110,7 +923,7 @@ struct SettingsView: View {
         .accessibilityValue(browserPendingAXState.axToken)
     }
 
-    private var browserPendingAXState: BrowserRetiredAXState {
+    var browserPendingAXState: BrowserRetiredAXState {
         let custody = appState.browserPendingDiscard
         if custody.isDiscarding { return .discarding }
         if custody.showsDiscarded { return .discarded }
@@ -1124,14 +937,14 @@ struct SettingsView: View {
     }
 
 
-    private var browserRepairValue: BrowserRepairAXState {
+    var browserRepairValue: BrowserRepairAXState {
         if appState.browserRepair.inFlight { return .inFlight }
         if appState.browserRepair.repaired { return .repaired }
         if appState.browserRepair.lastFailureReason != nil { return .failed }
         return .idle
     }
 
-    private func browserStoreValue(_ brand: BrowserBrand) -> BrowserStoreLaunchAXState {
+    func browserStoreValue(_ brand: BrowserBrand) -> BrowserStoreLaunchAXState {
         switch appState.browserStoreLaunch[brand] ?? .disabled {
         case .disabled: return .disabled
         case .opened: return .opened
@@ -1139,7 +952,7 @@ struct SettingsView: View {
         }
     }
 
-    private func browserBrandAXID(_ brand: BrowserBrand) -> String {
+    func browserBrandAXID(_ brand: BrowserBrand) -> String {
         switch brand {
         case .chrome: return AXID.Settings.Sources.browserChrome
         case .edge: return AXID.Settings.Sources.browserEdge
@@ -1148,7 +961,7 @@ struct SettingsView: View {
         }
     }
 
-    private func browserStoreAXID(_ brand: BrowserBrand) -> String {
+    func browserStoreAXID(_ brand: BrowserBrand) -> String {
         switch brand {
         case .chrome: return AXID.Settings.Sources.browserStoreChrome
         case .edge: return AXID.Settings.Sources.browserStoreEdge
@@ -1159,7 +972,7 @@ struct SettingsView: View {
 
     /// Safari's extension ships inside this app: the owner turns it on in
     /// Safari's own settings, which this opens, and the row says whether it's on.
-    private var safariExtensionRow: some View {
+    var safariExtensionRow: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
                 Button(UICopy.SOURCES_BROWSER_SAFARI_SETTINGS_ACTION) {
@@ -1192,7 +1005,7 @@ struct SettingsView: View {
 
     // MARK: - Permissions Tab
 
-    private var screenRecordingWaiting: Bool {
+    var screenRecordingWaiting: Bool {
         (screenRecordingPrompted || appState.capture.screenRecordingHasPrompted()) && !appState.screenRecordingGranted
     }
 
@@ -1203,52 +1016,40 @@ struct SettingsView: View {
         return screenRecordingWaiting ? .waiting : .denied
     }
 
-    private var microphonePermissionAXState: AXPermissionState {
+    var microphonePermissionAXState: AXPermissionState {
         appState.microphoneAuthorizationCause.permissionAXState
     }
 
     @ViewBuilder
-    private func permissionSourceLiveRow(source: CaptureSources) -> some View {
+    func permissionSourceLiveRow(source: CaptureSources) -> some View {
         PermissionSourceLiveRowView(
             source: source,
             appState: appState,
-            onOpenSources: { selectedTab = .sources },
-            onCheckStatus: { selectedTab = .status }
+            onOpenSources: { navigate(.sources) },
+            onCheckStatus: { navigate(.status) }
         )
     }
 
-    private var permissionsTab: some View {
+    var permissionsTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("the solstone app takes in what you share with it, and all of it goes into your journal.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            screenRecordingPermissionCard
+            microphonePermissionCard
+            permissionsReviewRow
+            Spacer()
+        }
+    }
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("screen recording")
-                        .font(.headline)
-                    AXStateCompanion(
-                        id: AXID.Settings.Permissions.screenRecordingState,
-                        value: screenRecordingPermissionAXState.axToken
-                    )
-                    if appState.screenRecordingGranted {
-                        if screenRestartPending {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.clockwise.circle.fill")
-                                    .foregroundStyle(SolstoneColors.solOrange)
-                                Text(UICopy.SOURCES_RESTART_READY)
-                                Spacer()
-                                Button(UICopy.SOURCES_RESTART) { relaunchApp() }
-                                    .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingRestartNow)
-                            }
-                            AXStateCompanion(
-                                id: AXID.Settings.Permissions.screenRecordingRestartPending,
-                                value: "pending"
-                            )
-                        } else {
-                            permissionSourceLiveRow(source: .screen)
-                        }
-                    } else if appState.capture.screenRecordingNeedsRestart {
+    var screenRecordingPermissionCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("screen recording")
+                    .font(.headline)
+                AXStateCompanion(
+                    id: AXID.Settings.Permissions.screenRecordingState,
+                    value: screenRecordingPermissionAXState.axToken
+                )
+                if appState.screenRecordingGranted {
+                    if screenRestartPending {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.clockwise.circle.fill")
                                 .foregroundStyle(SolstoneColors.solOrange)
@@ -1262,132 +1063,146 @@ struct SettingsView: View {
                             value: "pending"
                         )
                     } else {
-                        Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_EXPLAINER)
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                        if shouldShowScreenRecordingResetHint(
-                            hasPromptedScreenRecording: setupProbeSnapshot.hasPromptedScreenRecording,
-                            sckFailedAfterPositivePreflight: setupProbeSnapshot.screenDiagnostic?.sckFailedAfterPositivePreflight ?? false,
-                            restartCountdown: nil
-                        ) {
-                            Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingResetHint)
-                        }
-                        HStack {
-                            if screenRecordingWaiting {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack(spacing: 6) {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                        Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_WAITING)
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                    }
-                                    HStack {
-                                        Button(UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS) {
-                                            // Asking again puts solstone back in the list if its entry was removed there.
-                                            PermissionChecker().promptScreenRecording()
-                                            NSWorkspace.shared.open(
-                                                URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
-                                            )
-                                        }
-                                        .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingOpenSystemSettings)
-                                        Button(UICopy.SETTINGS_PERMISSIONS_SCREEN_REOPEN) { relaunchApp() }
-                                            .buttonStyle(.link)
-                                            .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingReopen)
-                                    }
-                                }
-                            } else {
-                                Spacer()
-                                Button(UICopy.SETTINGS_PERMISSIONS_ENABLE_SCREEN_RECORDING) {
-                                    Logger.setup.info("Button tapped: enable screen recording")
-                                    PermissionChecker().promptScreenRecording()
-                                    screenRecordingPrompted = true
-                                }
-                                .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingEnable)
-                            }
-                        }
+                        permissionSourceLiveRow(source: .screen)
                     }
-                    Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_BREADCRUMB)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .textSelection(.enabled)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-            }
-            GroupBox {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("microphone")
-                        .font(.headline)
+                } else if appState.capture.screenRecordingNeedsRestart {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise.circle.fill")
+                            .foregroundStyle(SolstoneColors.solOrange)
+                        Text(UICopy.SOURCES_RESTART_READY)
+                        Spacer()
+                        Button(UICopy.SOURCES_RESTART) { relaunchApp() }
+                            .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingRestartNow)
+                    }
                     AXStateCompanion(
-                        id: AXID.Settings.Permissions.microphoneState,
-                        value: microphonePermissionAXState.axToken
+                        id: AXID.Settings.Permissions.screenRecordingRestartPending,
+                        value: "pending"
                     )
-                    if appState.microphoneGranted {
-                        permissionSourceLiveRow(source: .microphone)
-                    } else {
-                        Text(UICopy.SETTINGS_PERMISSIONS_MIC_EXPLAINER)
-                            .font(.body)
+                } else {
+                    Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_EXPLAINER)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                    if shouldShowScreenRecordingResetHint(
+                        hasPromptedScreenRecording: setupProbeSnapshot.hasPromptedScreenRecording,
+                        sckFailedAfterPositivePreflight: setupProbeSnapshot.screenDiagnostic?.sckFailedAfterPositivePreflight ?? false,
+                        restartCountdown: nil
+                    ) {
+                        Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT)
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                        HStack {
-                            Spacer()
-                            switch appState.microphoneAuthorizationCause {
-                            case .authorized:
-                                EmptyView()
-                            case .denied:
-                                microphoneSettingsButton(message: UICopy.SETTINGS_PERMISSIONS_MIC_DENIED)
-                            case .restricted:
-                                microphoneSettingsButton(message: UICopy.SETTINGS_PERMISSIONS_MIC_RESTRICTED)
-                            case .notDetermined:
-                                Button(UICopy.SETTINGS_PERMISSIONS_ENABLE_MICROPHONE) {
-                                    Task {
-                                        await PermissionChecker().requestMicrophone()
-                                        appState.refreshMicrophoneAuthorization()
-                                    }
+                            .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingResetHint)
+                    }
+                    HStack {
+                        if screenRecordingWaiting {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_WAITING)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
                                 }
-                                .accessibilityIdentifier(AXID.Settings.Permissions.microphoneGrantAccess)
-                            case .unknown:
-                                microphoneSettingsButton(message: UICopy.SETTINGS_SETUP_SHARED_COULD_NOT_CHECK)
+                                HStack {
+                                    Button(UICopy.SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS) {
+                                        // Asking again puts solstone back in the list if its entry was removed there.
+                                        PermissionChecker().promptScreenRecording()
+                                        NSWorkspace.shared.open(
+                                            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
+                                        )
+                                    }
+                                    .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingOpenSystemSettings)
+                                    Button(UICopy.SETTINGS_PERMISSIONS_SCREEN_REOPEN) { relaunchApp() }
+                                        .buttonStyle(.link)
+                                        .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingReopen)
+                                }
                             }
+                        } else {
+                            Spacer()
+                            Button(UICopy.SETTINGS_PERMISSIONS_ENABLE_SCREEN_RECORDING) {
+                                Logger.setup.info("Button tapped: enable screen recording")
+                                PermissionChecker().promptScreenRecording()
+                                screenRecordingPrompted = true
+                            }
+                            .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingEnable)
                         }
                     }
-                    Text(UICopy.SETTINGS_PERMISSIONS_MICROPHONE_BREADCRUMB)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .textSelection(.enabled)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-            }
-            HStack(spacing: 4) {
-                Text("you can review or revoke these anytime in")
+                Text(UICopy.SETTINGS_PERMISSIONS_SCREEN_RECORDING_BREADCRUMB)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("System Settings") {
-                    NSWorkspace.shared.open(
-                        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
-                    )
-                }
-                .font(.caption)
-                .buttonStyle(.link)
-                .accessibilityIdentifier(AXID.Settings.Permissions.systemSettingsOpen)
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
             }
-
-            if appState.permissionsAreDone &&
-                !appState.config.isUploadConfigured &&
-                !appState.visitedSettingsTabs.contains(Tab.service.rawValue) {
-                navRow(UICopy.SETTINGS_NEXT_CONNECT_JOURNAL) {
-                    selectedTab = .service
-                }
-                .keyboardShortcut(.defaultAction)
-                .accessibilityIdentifier(AXID.Settings.Permissions.nextConnectJournal)
-            }
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
         }
+    }
+
+    var microphonePermissionCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("microphone")
+                    .font(.headline)
+                AXStateCompanion(
+                    id: AXID.Settings.Permissions.microphoneState,
+                    value: microphonePermissionAXState.axToken
+                )
+                if appState.microphoneGranted {
+                    permissionSourceLiveRow(source: .microphone)
+                } else {
+                    Text(UICopy.SETTINGS_PERMISSIONS_MIC_EXPLAINER)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Spacer()
+                        switch appState.microphoneAuthorizationCause {
+                        case .authorized:
+                            EmptyView()
+                        case .denied:
+                            microphoneSettingsButton(message: UICopy.SETTINGS_PERMISSIONS_MIC_DENIED)
+                        case .restricted:
+                            microphoneSettingsButton(message: UICopy.SETTINGS_PERMISSIONS_MIC_RESTRICTED)
+                        case .notDetermined:
+                            Button(UICopy.SETTINGS_PERMISSIONS_ENABLE_MICROPHONE) {
+                                Task {
+                                    await PermissionChecker().requestMicrophone()
+                                    appState.refreshMicrophoneAuthorization()
+                                }
+                            }
+                            .accessibilityIdentifier(AXID.Settings.Permissions.microphoneGrantAccess)
+                        case .unknown:
+                            microphoneSettingsButton(message: UICopy.SETTINGS_SETUP_SHARED_COULD_NOT_CHECK)
+                        }
+                    }
+                }
+                Text(UICopy.SETTINGS_PERMISSIONS_MICROPHONE_BREADCRUMB)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 4)
+        }
+    }
+
+    var permissionsReviewRow: some View {
+        HStack(spacing: 4) {
+            Text("you can review or revoke these anytime in")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button("System Settings") {
+                NSWorkspace.shared.open(
+                    URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
+                )
+            }
+            .font(.caption)
+            .buttonStyle(.link)
+            .accessibilityIdentifier(AXID.Settings.Permissions.systemSettingsOpen)
+        }
+    }
+
+    /// Watches for a screen recording grant while the screen page shows the card.
+    func screenRecordingGrantWatcher<Content: View>(_ content: Content) -> some View {
+        content
         .task(id: screenRecordingWaiting) {
             guard screenRecordingWaiting else { return }
             while !Task.isCancelled {
@@ -1407,18 +1222,19 @@ struct SettingsView: View {
                 await appState.capture.probeScreenRecordingGrantIfWaiting()
                 try? await Task.sleep(for: .seconds(1.5))
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            appState.capture.noteApplicationDidBecomeActive()
-            Task { await appState.capture.probeScreenRecordingGrantIfWaiting() }
-        }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+        appState.capture.noteApplicationDidBecomeActive()
+        Task { await appState.capture.probeScreenRecordingGrantIfWaiting() }
+    }
     }
 
-    private func relaunchApp() {
+
+    func relaunchApp() {
         appState.appQuitCoordinator.requestSettingsRestart()
     }
 
-    private func microphoneSettingsButton(message: String) -> some View {
+    func microphoneSettingsButton(message: String) -> some View {
         VStack(alignment: .trailing, spacing: 6) {
             Text(message)
                 .font(.caption)
@@ -1430,13 +1246,13 @@ struct SettingsView: View {
         }
     }
 
-    private func openMicrophoneSettings() {
+    func openMicrophoneSettings() {
         NSWorkspace.shared.open(
             URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
         )
     }
 
-    private func refreshSetupProbes() {
+    func refreshSetupProbes() {
         Task { @MainActor in
             let permissionChecker = PermissionChecker()
             let screenDiagnostic: ScreenRecordingPermissionDiagnostic?
@@ -1454,7 +1270,7 @@ struct SettingsView: View {
         }
     }
 
-    private func solAppPlacementOutcome() -> SetupProbeOutcome {
+    func solAppPlacementOutcome() -> SetupProbeOutcome {
         switch AppPlacementGate.evaluate() {
         case .allowed(.canonical), .allowed(.stableLocation), .allowed(.developerBypass):
             return .ready
@@ -1465,7 +1281,7 @@ struct SettingsView: View {
 
     // MARK: - Observer Tab
 
-    private var observerTab: some View {
+    var observerTab: some View {
         VStack(alignment: .leading, spacing: 20) {
             GroupBox("general") {
                 VStack(alignment: .leading, spacing: 6) {
@@ -1504,7 +1320,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var shortcutSettingsView: some View {
+    var shortcutSettingsView: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(UICopy.SHORTCUT_SECTION_TITLE)
                 .font(.subheadline)
@@ -1573,7 +1389,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var notificationAuthorizationDetails: some View {
+    var notificationAuthorizationDetails: some View {
         if appState.notificationAuthorizationStatus == .provisional {
             VStack(alignment: .leading, spacing: 6) {
                 Text("want solstone's notes to show up with a banner and sound?")
@@ -1611,13 +1427,13 @@ struct SettingsView: View {
 
     // MARK: - Service Tab
 
-    private var serviceTab: some View {
+    var serviceTab: some View {
         VStack(alignment: .leading, spacing: 20) {
             serviceSection
             Spacer()
             if appState.serviceIsDone && !appState.visitedSettingsTabs.contains(Tab.status.rawValue) {
                 navRow(UICopy.SETTINGS_NEXT_CHECK_STATUS) {
-                    selectedTab = .status
+                    navigate(.status)
                 }
                 .accessibilityIdentifier(AXID.Settings.Service.nextCheckStatus)
             }
@@ -1698,16 +1514,16 @@ struct SettingsView: View {
         }
     }
 
-    private var journalPathIsValid: Bool {
+    var journalPathIsValid: Bool {
         isJournalPathValid(appState.config.journalPath)
     }
 
     @ViewBuilder
-    private var serviceSection: some View {
+    var serviceSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             if appState.permissionsNeedAttention {
                 attentionRow(UICopy.SETTINGS_PREREQ_PERMISSIONS) {
-                    selectedTab = .permissions
+                    navigate(.permissions)
                 }
                 .accessibilityIdentifier(AXID.Settings.Service.prereqPermissions)
             }
@@ -1738,7 +1554,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var configuredJournalPanel: some View {
+    var configuredJournalPanel: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 LabeledContent("journal") {
@@ -1883,7 +1699,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var journalAddressRows: some View {
+    var journalAddressRows: some View {
         let owner = appState.tunnelLifecycleOwner
         let addresses = owner.pairedAddresses
         if !addresses.isEmpty {
@@ -1908,7 +1724,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var unconfiguredJournalPanel: some View {
+    var unconfiguredJournalPanel: some View {
         if appState.tunnelLifecycleOwner.hasPersistedPairing {
             pairingSection
         } else {
@@ -1921,7 +1737,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var localJournalDiscoveryPanel: some View {
+    var localJournalDiscoveryPanel: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 if !localDiscoveryCompleted {
@@ -2089,7 +1905,7 @@ struct SettingsView: View {
         }
     }
 
-    private var localJournalDiscoveryPanelModel: LocalJournalDiscoveryPanelModel {
+    var localJournalDiscoveryPanelModel: LocalJournalDiscoveryPanelModel {
         if let localJournalMark {
             return .foundRunning(localJournalMark)
         }
@@ -2105,14 +1921,14 @@ struct SettingsView: View {
         return .none
     }
 
-    private var localJournalPairButton: some View {
+    var localJournalPairButton: some View {
         Button("pair to a journal on another device") {
             showPairingFlow = true
         }
         .accessibilityIdentifier(AXID.Settings.Service.pairJournalAnotherDevice)
     }
 
-    private var journalMigrationBanner: some View {
+    var journalMigrationBanner: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: appState.journalHandoffActive ? "arrow.triangle.2.circlepath" : "book.closed.fill")
                 .foregroundStyle(.orange)
@@ -2161,7 +1977,7 @@ struct SettingsView: View {
         .accessibilityIdentifier(AXID.Settings.Service.journalHandoffBanner)
     }
 
-    private var journalHandoffStatusColor: Color {
+    var journalHandoffStatusColor: Color {
         switch journalHandoffOrchestrator.step {
         case .failed, .aborted:
             return .red
@@ -2172,7 +1988,7 @@ struct SettingsView: View {
         }
     }
 
-    private func freshJournalStatusColor(for state: FreshJournalState) -> Color {
+    func freshJournalStatusColor(for state: FreshJournalState) -> Color {
         switch state {
         case .failed:
             return .red
@@ -2181,14 +1997,14 @@ struct SettingsView: View {
         }
     }
 
-    private var resolvedJournalName: String {
+    var resolvedJournalName: String {
         resolvedJournalDisplayName(
             isConfirmed: appState.isJournalMarkConfirmed,
             mark: appState.confirmedMark
         )
     }
 
-    private var journalLocationLabel: String {
+    var journalLocationLabel: String {
         solstone.journalLocationLabel(
             isSameMacJournalDoor: isSameMacJournalDoor(
                 sameMachineStoredPairingState: appState.tunnelLifecycleOwner.sameMachineStoredPairingState,
@@ -2197,14 +2013,14 @@ struct SettingsView: View {
         )
     }
 
-    private var journalConnectionPresentation: JournalConnectionVerdict {
+    var journalConnectionPresentation: JournalConnectionVerdict {
         journalConnectionVerdictPresentation(
             tunnel: appState.tunnelLifecycleOwner.connectionVerdict,
             pairingMismatch: pairingMismatch
         )
     }
 
-    private var journalPanelAffordancesForPresentation: JournalPanelAffordances {
+    var journalPanelAffordancesForPresentation: JournalPanelAffordances {
         let presentation = journalConnectionPresentation
         return journalPanelAffordances(
             for: journalPanelRemedy(
@@ -2214,7 +2030,7 @@ struct SettingsView: View {
         )
     }
 
-    private var externalJournalSyncSection: some View {
+    var externalJournalSyncSection: some View {
         GroupBox("sync") {
             VStack(alignment: .leading, spacing: 8) {
                 uploadStatusView
@@ -2247,7 +2063,7 @@ struct SettingsView: View {
         }
     }
 
-    private var lastDeliveryDetailRow: some View {
+    var lastDeliveryDetailRow: some View {
         let outcome = appState.uploadCoordinator.lastJournalDeliveryOutcome
         return VStack(alignment: .leading, spacing: 2) {
             LabeledContent(UICopy.SETTINGS_LAST_DELIVERY_LABEL) {
@@ -2267,7 +2083,7 @@ struct SettingsView: View {
         }
     }
 
-    private var externalJournalStorageSection: some View {
+    var externalJournalStorageSection: some View {
         GroupBox("kept on this mac") {
             VStack(alignment: .leading) {
                  LabeledContent("currently using") {
@@ -2315,7 +2131,7 @@ struct SettingsView: View {
         }
     }
 
-    private func navRow(_ text: String, action: @escaping () -> Void) -> some View {
+    func navRow(_ text: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack {
                 Text(text)
@@ -2327,7 +2143,7 @@ struct SettingsView: View {
         .foregroundStyle(.secondary)
     }
 
-    private func attentionRow(_ text: String, action: @escaping () -> Void) -> some View {
+    func attentionRow(_ text: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.circle.fill")
@@ -2348,7 +2164,7 @@ struct SettingsView: View {
         .buttonStyle(.plain)
     }
 
-    private var pairingSection: some View {
+    var pairingSection: some View {
         GroupBox("pairing") {
             VStack(alignment: .leading, spacing: 12) {
                 if relinkNeedsPairingLink {
@@ -2437,7 +2253,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var carriedPairingMigrationPane: some View {
+    var carriedPairingMigrationPane: some View {
         if appState.pairingCoordinator.pendingMigrationDecision != nil {
             GroupBox {
                 VStack(alignment: .leading, spacing: 8) {
@@ -2449,7 +2265,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var migrationDecisionNotice: some View {
+    var migrationDecisionNotice: some View {
         switch appState.pairingCoordinator.migrationDecisionState ?? "decision_unknown" {
         case "deciding":
             Text(UICopy.Migration.decidingTitle)
@@ -2486,7 +2302,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var replacementFlowSheet: some View {
+    var replacementFlowSheet: some View {
         if appState.pairingCoordinator.replacementPickerVisible {
             VStack(alignment: .leading, spacing: 12) {
                 Text(UICopy.Migration.pickerTitle)
@@ -2581,7 +2397,7 @@ struct SettingsView: View {
         }
     }
 
-    private var replacementConfirmationTitle: String {
+    var replacementConfirmationTitle: String {
         let label = appState.pairingCoordinator.replacementTargets.first {
             $0.cid == appState.pairingCoordinator.selectedReplacementCID
         }?.displayLabel
@@ -2592,13 +2408,13 @@ struct SettingsView: View {
         )
     }
 
-    private func openMigrationTechnicalDetails() {
-        selectedTab = .help
+    func openMigrationTechnicalDetails() {
+        navigate(.help)
         diagnosticsExpanded = true
     }
 
     @ViewBuilder
-    private var pairingDisconnectControls: some View {
+    var pairingDisconnectControls: some View {
         if pairingCanUnpair {
             if disconnectConfirmPending {
                 VStack(alignment: .leading, spacing: 8) {
@@ -2634,7 +2450,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var pairingResultView: some View {
+    var pairingResultView: some View {
         if let mark = appState.confirmedMark, pairingCanUnpair {
             JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkCompared)
         } else if let result = pairingResultText {
@@ -2679,7 +2495,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func configuredJournalRecoveryRow(for cause: JournalConnectionFailureCause?) -> some View {
+    func configuredJournalRecoveryRow(for cause: JournalConnectionFailureCause?) -> some View {
         let action = journalConnectionRecoveryAction(for: cause)
         switch action {
         case .none, .mismatchFreshLinkAndSupport:
@@ -2724,7 +2540,7 @@ struct SettingsView: View {
         }
     }
 
-    private var unknownJournalNotices: some View {
+    var unknownJournalNotices: some View {
         UnknownJournalNoticeList(
             notices: appState.tunnelLifecycleOwner.unknownJournals.notices,
             yourJournal: appState.tunnelLifecycleOwner.unknownJournals.yourJournal,
@@ -2733,7 +2549,7 @@ struct SettingsView: View {
         )
     }
 
-    private var pairingMismatchPane: some View {
+    var pairingMismatchPane: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(UICopy.JOURNAL_MARK_MISMATCH_TITLE)
                 .font(.headline)
@@ -2774,7 +2590,7 @@ struct SettingsView: View {
         )
     }
 
-    private var pairingConnectionTruthRow: some View {
+    var pairingConnectionTruthRow: some View {
         let presentation = journalConnectionPresentation
         return VStack(alignment: .leading, spacing: 4) {
             LabeledContent("connection") {
@@ -2811,19 +2627,19 @@ struct SettingsView: View {
         }
     }
 
-    private var pairingDisconnectConfirmText: String {
+    var pairingDisconnectConfirmText: String {
         if let mark = appState.confirmedMark {
             return "disconnect this mac from \(JournalMarkSlot.join(mark.words))? your journal keeps everything. you can pair again anytime."
         }
         return UICopy.PAIRING_DISCONNECT_CONFIRM
     }
 
-    private var pairingSwitchConfirmText: String {
+    var pairingSwitchConfirmText: String {
         "this link is for a different journal. switch to it?"
     }
 
     @ViewBuilder
-    private var pairingFailureRow: some View {
+    var pairingFailureRow: some View {
         switch appState.pairingCoordinator.state {
         case .failed(let failure):
             VStack(alignment: .leading, spacing: 8) {
@@ -2857,7 +2673,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var tunnelErrorRetryRow: some View {
+    var tunnelErrorRetryRow: some View {
         let failureCause = journalConnectionPresentation.failureCause
         let action = journalConnectionRecoveryAction(for: failureCause)
         if shouldShowPairingRetry(
@@ -2885,7 +2701,7 @@ struct SettingsView: View {
         }
     }
 
-    private var coordinatorShowsPairingRetry: Bool {
+    var coordinatorShowsPairingRetry: Bool {
         switch appState.pairingCoordinator.state {
         case .failed, .saveFailed:
             return true
@@ -2894,7 +2710,7 @@ struct SettingsView: View {
         }
     }
 
-    private var pairingResultText: String? {
+    var pairingResultText: String? {
         solstone.pairingResultText(
             for: appState.pairingCoordinator.state,
             isPairedHome: appState.isPairedHome,
@@ -2902,18 +2718,18 @@ struct SettingsView: View {
         )
     }
 
-    private var pairingIsBusy: Bool {
+    var pairingIsBusy: Bool {
         if case .pairing = appState.pairingCoordinator.state {
             return true
         }
         return false
     }
 
-    private var pairingCanUnpair: Bool {
+    var pairingCanUnpair: Bool {
         appState.tunnelLifecycleOwner.hasPersistedPairing || pairingResultText != nil
     }
 
-    private func submitPairingLink() {
+    func submitPairingLink() {
         appState.pendingPairingLinkError = nil
         pairingMismatch = false
         journalMarkRederiveEligible = false
@@ -2929,7 +2745,7 @@ struct SettingsView: View {
         }
     }
 
-    private func disconnectPairing() {
+    func disconnectPairing() {
         disconnectConfirmPending = false
         Task { @MainActor in
             let removed = await appState.pairingCoordinator.unpair()
@@ -2944,7 +2760,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var externalServiceSection: some View {
+    var externalServiceSection: some View {
         GroupBox("connection") {
             VStack(alignment: .leading, spacing: 12) {
                 Link("setup guide: solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
@@ -2998,7 +2814,7 @@ struct SettingsView: View {
 
                 if appState.connectionTestState == .success {
                     Button("view status →") {
-                        selectedTab = .status
+                        navigate(.status)
                     }
                     .font(.caption)
                     .buttonStyle(.link)
@@ -3017,7 +2833,7 @@ struct SettingsView: View {
 
     /// Normalizes flexible journal address input to a full URL.
     /// Accepts: local names, name:port pairs, https:// addresses, and full URLs.
-    private func normalizeServerURL(_ input: String) -> String {
+    func normalizeServerURL(_ input: String) -> String {
         let trimmed = input.trimmingCharacters(in: .whitespaces)
         if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
             return trimmed
@@ -3027,7 +2843,7 @@ struct SettingsView: View {
 
     // MARK: - Service Connection Logic
 
-    private func testServiceConnection() {
+    func testServiceConnection() {
         let testGeneration = UUID()
         inFlightTestID = testGeneration
         appState.connectionTestState = .testing
@@ -3050,12 +2866,12 @@ struct SettingsView: View {
         }
     }
 
-    private func invalidateConnectionTestState() {
+    func invalidateConnectionTestState() {
         inFlightTestID = nil
         appState.connectionTestState = .idle
     }
 
-    private func saveService(url: String, key: String, mode: ServiceMode) {
+    func saveService(url: String, key: String, mode: ServiceMode) {
         var config = appState.config
         config.serverURL = url
         config.serverKey = key
@@ -3068,7 +2884,7 @@ struct SettingsView: View {
         }
     }
 
-    private func refreshLocalJournalDiscoveryIfNeeded() {
+    func refreshLocalJournalDiscoveryIfNeeded() {
         guard shouldProbeLocalJournal(
             isUploadConfigured: appState.config.isUploadConfigured,
             hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
@@ -3125,7 +2941,7 @@ struct SettingsView: View {
         }
     }
 
-    private func reprobeLocalJournalOnReturn() {
+    func reprobeLocalJournalOnReturn() {
         guard shouldReprobeLocalJournalOnReturn(
             showsConfiguredJournal: appState.showsConfiguredJournal,
             hasPersistedPairing: appState.tunnelLifecycleOwner.hasPersistedPairing,
@@ -3182,7 +2998,7 @@ struct SettingsView: View {
         }
     }
 
-    private func relinkJournal() {
+    func relinkJournal() {
         resetForJournalRelink(appState: appState, journalMarkDriver: journalMarkDriver)
         appState.recordDiagnosticEvidence(.pairingRelinkStarted)
         localLinkError = nil
@@ -3197,7 +3013,7 @@ struct SettingsView: View {
 
     /// Asks for a pasted link and changes nothing else, so the pairing in use and its mark stand
     /// until a link actually lands.
-    private func openPastedLinkFlow() {
+    func openPastedLinkFlow() {
         appState.recordDiagnosticEvidence(.pairingRelinkNeedsPairingLink)
         localLinkError = nil
         localLinkNotice = nil
@@ -3205,7 +3021,7 @@ struct SettingsView: View {
         showPairingFlow = true
     }
 
-    private func confirmLocalJournalLink() {
+    func confirmLocalJournalLink() {
         localLinkInProgress = true
         localLinkError = nil
         localLinkNotice = nil
@@ -3232,7 +3048,7 @@ struct SettingsView: View {
 
     // MARK: - Microphone Tab
 
-    private var microphoneDisplayEntries: [MicrophoneDisplayEntry] {
+    var microphoneDisplayEntries: [MicrophoneDisplayEntry] {
         let _ = appState.audioDeviceMonitor.layoutRefreshGeneration
         let available = appState.audioDeviceMonitor.availableDevices
         let availableByUID = Dictionary(uniqueKeysWithValues: available.map { ($0.uid, $0) })
@@ -3264,7 +3080,7 @@ struct SettingsView: View {
         }
     }
 
-    private var microphoneTab: some View {
+    var microphoneTab: some View {
         VStack(alignment: .leading, spacing: 20) {
             GroupBox("microphone priority") {
                 VStack(alignment: .leading, spacing: 8) {
@@ -3326,19 +3142,6 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("audio processing") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("silence music in system audio", isOn: silenceMusicBinding)
-                        .help("silences background music when nobody's talking")
-                        .accessibilityIdentifier(AXID.Settings.Microphones.silenceMusic)
-
-                    Text("silences portions of system audio where music is detected but no speech.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
-            }
-
             Spacer()
         }
         .onAppear {
@@ -3346,14 +3149,30 @@ struct SettingsView: View {
         }
     }
 
-    private func refreshMicrophoneEmptyState() {
+    var audioProcessingGroup: some View {
+        GroupBox("audio processing") {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("silence music in system audio", isOn: silenceMusicBinding)
+                    .help("silences background music when nobody's talking")
+                    .accessibilityIdentifier(AXID.Settings.Microphones.silenceMusic)
+
+                Text("silences portions of system audio where music is detected but no speech.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+
+    func refreshMicrophoneEmptyState() {
         if microphoneDisplayEntries.isEmpty && appState.audioDeviceMonitor.availableDevices.count > 0 {
             appState.syncMicrophonePriorityList()
         }
     }
 
     @ViewBuilder
-    private func emptyMicrophoneView(_ emptyState: MicrophoneEmptyState) -> some View {
+    func emptyMicrophoneView(_ emptyState: MicrophoneEmptyState) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             switch emptyState {
             case .access:
@@ -3361,7 +3180,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button(UICopy.MICROPHONES_EMPTY_OPEN_PERMISSIONS) {
-                    selectedTab = .permissions
+                    navigate(.permissions)
                     openMicrophoneSettings()
                 }
                 .accessibilityIdentifier(AXID.Settings.Microphones.emptyPermissions)
@@ -3388,7 +3207,7 @@ struct SettingsView: View {
         .accessibilityIdentifier(AXID.Settings.Microphones.empty)
     }
 
-    private func snapGain(_ value: Float) -> Float {
+    func snapGain(_ value: Float) -> Float {
         let stops: [Float] = [1, 2, 4, 8]
         var best = stops[0]
         var bestDistance = abs(value - best)
@@ -3404,7 +3223,7 @@ struct SettingsView: View {
         return best
     }
 
-    private var microphoneGainBinding: Binding<Float> {
+    var microphoneGainBinding: Binding<Float> {
         Binding(
             get: { snapGain(appState.config.microphoneGain) },
             set: { newValue in
@@ -3415,7 +3234,7 @@ struct SettingsView: View {
         )
     }
 
-    private var silenceMusicBinding: Binding<Bool> {
+    var silenceMusicBinding: Binding<Bool> {
         Binding(
             get: { appState.config.silenceMusic },
             set: { newValue in
@@ -3426,394 +3245,411 @@ struct SettingsView: View {
         )
     }
 
-    private func moveMicrophones(from: IndexSet, to: Int) {
+    func moveMicrophones(from: IndexSet, to: Int) {
         var newConfig = appState.config
         newConfig.reorderMicrophones(fromOffsets: from, toOffset: to)
         appState.updateConfig(newConfig)
     }
 
-    private func deleteMicrophone(uid: String) {
+    func deleteMicrophone(uid: String) {
         var newConfig = appState.config
         _ = newConfig.removeMicrophone(uid: uid)
         appState.updateConfig(newConfig)
     }
 
-    private func toggleMicrophoneDisabled(uid: String) {
+    func toggleMicrophoneDisabled(uid: String) {
         var newConfig = appState.config
         newConfig.toggleMicrophoneDisabled(uid: uid)
         appState.updateConfig(newConfig)
     }
 
-    private func setMicrophoneMode(uid: String, mode: MicrophoneEntry.Mode) {
+    func setMicrophoneMode(uid: String, mode: MicrophoneEntry.Mode) {
         var newConfig = appState.config
         newConfig.setMicrophoneMode(uid: uid, mode: mode)
         appState.updateConfig(newConfig)
     }
 
-    private func selectMicrophoneChoice(uid: String, choice: MicrophoneChoice) {
+    func selectMicrophoneChoice(uid: String, choice: MicrophoneChoice) {
         var config = appState.config
         if config.setMicrophoneChoice(uid: uid, choice: choice) {
             appState.updateConfig(config)
         }
     }
 
-    private func retryMicrophoneLayout(uid: String) {
+    func retryMicrophoneLayout(uid: String) {
         appState.retryMicrophoneLayout(uid: uid)
     }
 
     // MARK: - Privacy Tab
 
-    private func privacyTab(scrollProxy: ScrollViewProxy) -> some View {
+    func privacyTab(scrollProxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            GroupBox("excluded apps") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("windows from these apps are always excluded.")
+            excludedAppsGroup
+            titlePatternsGroup
+            websitesGroup(scrollProxy: scrollProxy)
+            protectedVideoGroup
+            privateBrowsingGroup(scrollProxy: scrollProxy)
+        }
+        .padding(.vertical, 4)
+    }
+
+    var excludedAppsGroup: some View {
+        GroupBox("excluded apps") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("windows from these apps are always excluded.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if appState.config.excludedApps.isEmpty {
+                    Text("no apps excluded")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 20)
+                } else {
+                    VStack(spacing: 4) {
+                        ForEach(Array(appState.config.excludedApps.enumerated()), id: \.offset) { index, app in
+                            HStack {
+                                Text(app.name)
+                                Spacer()
+                                Button(action: { deleteExcludedApp(at: index) }) {
+                                    Image(systemName: "minus.circle")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                                .help("remove app")
+                                .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppRemove(app.name))
+                            }
+                            .padding(.vertical, 2)
+                            .accessibilityIdentifier(AXID.Settings.Privacy.excludedApp(app.name))
+                            .accessibilityValue(app.name)
+                        }
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppsList)
+                }
+
+                let pickerEvaluation = ExcludedAppPicker.evaluate(
+                    screenRecordingGranted: appState.screenRecordingGranted,
+                    records: OnScreenWindowList.onScreenLayer0Windows(),
+                    alreadyExcludedNames: appState.config.excludedApps.map(\.name)
+                )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("currently open apps")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    if appState.config.excludedApps.isEmpty {
-                        Text("no apps excluded")
+                    switch pickerEvaluation.availability {
+                    case .needsScreenRecording:
+                        Text("grant access to see open apps")
                             .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 20)
-                    } else {
-                        VStack(spacing: 4) {
-                            ForEach(Array(appState.config.excludedApps.enumerated()), id: \.offset) { index, app in
-                                HStack {
-                                    Text(app.name)
-                                    Spacer()
-                                    Button(action: { deleteExcludedApp(at: index) }) {
-                                        Image(systemName: "minus.circle")
-                                            .foregroundStyle(.red)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("remove app")
-                                    .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppRemove(app.name))
-                                }
-                                .padding(.vertical, 2)
-                                .accessibilityIdentifier(AXID.Settings.Privacy.excludedApp(app.name))
-                                .accessibilityValue(app.name)
+                    case .nothingAvailable:
+                        Text("nothing available right now")
+                            .foregroundStyle(.secondary)
+                    case .ready:
+                        Picker("", selection: Binding<String?>(
+                            get: { nil },
+                            set: { if let app = $0 { addExcludedApp(name: app) } }
+                        )) {
+                            Text("choose an open app…").tag(String?.none)
+                            ForEach(pickerEvaluation.candidateNames, id: \.self) { name in
+                                Text(name).tag(String?.some(name))
                             }
                         }
-                        .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppsList)
+                        .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppsPicker)
                     }
 
-                    let pickerEvaluation = ExcludedAppPicker.evaluate(
-                        screenRecordingGranted: appState.screenRecordingGranted,
-                        records: OnScreenWindowList.onScreenLayer0Windows(),
-                        alreadyExcludedNames: appState.config.excludedApps.map(\.name)
+                    AXStateCompanion(
+                        id: AXID.Settings.Privacy.excludedAppsPickerState,
+                        value: pickerEvaluation.availability.axToken
                     )
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("currently open apps")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        switch pickerEvaluation.availability {
-                        case .needsScreenRecording:
-                            Text("grant access to see open apps")
-                                .foregroundStyle(.secondary)
-                        case .nothingAvailable:
-                            Text("nothing available right now")
-                                .foregroundStyle(.secondary)
-                        case .ready:
-                            Picker("", selection: Binding<String?>(
-                                get: { nil },
-                                set: { if let app = $0 { addExcludedApp(name: app) } }
-                            )) {
-                                Text("choose an open app…").tag(String?.none)
-                                ForEach(pickerEvaluation.candidateNames, id: \.self) { name in
-                                    Text(name).tag(String?.some(name))
-                                }
-                            }
-                            .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppsPicker)
-                        }
-
-                        AXStateCompanion(
-                            id: AXID.Settings.Privacy.excludedAppsPickerState,
-                            value: pickerEvaluation.availability.axToken
-                        )
-                    }
-                    .padding(.top, 4)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            TextField("exact window-server name", text: $newExcludedApp)
-                                .textFieldStyle(.roundedBorder)
-                                .onSubmit { addExcludedApp() }
-                                .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppField)
-                            Button("add") { addExcludedApp() }
-                                .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
-                                .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppAdd)
-                        }
-                        Text("typed names only take effect if they exactly match the name the app reports while running")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.top, 4)
                 }
-                .padding(.vertical, 4)
-            }
+                .padding(.top, 4)
 
-            GroupBox("title patterns") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("hide windows whose title contains these keywords.")
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        TextField("exact window-server name", text: $newExcludedApp)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { addExcludedApp() }
+                            .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppField)
+                        Button("add") { addExcludedApp() }
+                            .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppAdd)
+                    }
+                    Text("typed names only take effect if they exactly match the name the app reports while running")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-
-                    if appState.config.excludedTitlePatterns.isEmpty {
-                        Text("no patterns added")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 20)
-                    } else {
-                        VStack(spacing: 4) {
-                            ForEach(Array(appState.config.excludedTitlePatterns.enumerated()), id: \.offset) { index, pattern in
-                                HStack {
-                                    Text(pattern)
-                                    Spacer()
-                                    Button(action: { deleteTitlePattern(at: index) }) {
-                                        Image(systemName: "minus.circle")
-                                            .foregroundStyle(.red)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("remove pattern")
-                                    .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternRemove(pattern))
-                                }
-                                .padding(.vertical, 2)
-                                .accessibilityIdentifier(AXID.Settings.Privacy.titlePattern(pattern))
-                                .accessibilityValue(pattern)
-                            }
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternsList)
-                    }
-
-                    HStack {
-                        TextField("reddit, facebook, etc.", text: $newTitlePattern)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { addTitlePattern() }
-                            .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternField)
-                        Button("add") { addTitlePattern() }
-                            .disabled(newTitlePattern.trimmingCharacters(in: .whitespaces).isEmpty)
-                            .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternAdd)
-                    }
                 }
-                .padding(.vertical, 4)
+                .padding(.top, 4)
             }
+            .padding(.vertical, 4)
+        }
+    }
 
-            GroupBox("websites you leave out") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_1)
+    var titlePatternsGroup: some View {
+        GroupBox("title patterns") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("hide windows whose title contains these keywords.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if appState.config.excludedTitlePatterns.isEmpty {
+                    Text("no patterns added")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 20)
+                } else {
+                    VStack(spacing: 4) {
+                        ForEach(Array(appState.config.excludedTitlePatterns.enumerated()), id: \.offset) { index, pattern in
+                            HStack {
+                                Text(pattern)
+                                Spacer()
+                                Button(action: { deleteTitlePattern(at: index) }) {
+                                    Image(systemName: "minus.circle")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                                .help("remove pattern")
+                                .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternRemove(pattern))
+                            }
+                            .padding(.vertical, 2)
+                            .accessibilityIdentifier(AXID.Settings.Privacy.titlePattern(pattern))
+                            .accessibilityValue(pattern)
+                        }
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternsList)
+                }
+
+                HStack {
+                    TextField("reddit, facebook, etc.", text: $newTitlePattern)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addTitlePattern() }
+                        .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternField)
+                    Button("add") { addTitlePattern() }
+                        .disabled(newTitlePattern.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternAdd)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    func websitesGroup(scrollProxy: ScrollViewProxy) -> some View {
+        GroupBox("websites you leave out") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_1)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if appState.siteAccessibilityCaution {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(UICopy.Websites.accessibilityCaution(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button(UICopy.Websites.OPEN_SYSTEM_SETTINGS) {
+                            appState.askForAccessibility()
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Privacy.websiteAllowAccessibility)
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier(AXID.Settings.Privacy.websiteAccessibilityCaution)
+                }
+
+                if appState.siteSafariCaution {
+                    Text(UICopy.Websites.browserCaution(browser: "Safari"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .accessibilityIdentifier(AXID.Settings.Privacy.websiteBrowserCaution)
+                }
 
-                    if appState.siteAccessibilityCaution {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(UICopy.Websites.accessibilityCaution(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Button(UICopy.Websites.OPEN_SYSTEM_SETTINGS) {
-                                appState.askForAccessibility()
-                            }
-                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteAllowAccessibility)
-                        }
-                        .accessibilityElement(children: .contain)
-                        .accessibilityIdentifier(AXID.Settings.Privacy.websiteAccessibilityCaution)
-                    }
-
-                    if appState.siteSafariCaution {
-                        Text(UICopy.Websites.browserCaution(browser: "Safari"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteBrowserCaution)
-                    }
-
-                    if appState.config.excludedSites.isEmpty {
-                        Text("no websites left out")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 20)
-                    } else {
-                        VStack(spacing: 4) {
-                            ForEach(Array(appState.config.excludedSites.enumerated()), id: \.offset) { index, site in
-                                HStack {
-                                    Text(site)
-                                    Spacer()
-                                    Button(action: { appState.removeExcludedSite(site) }) {
-                                        Image(systemName: "minus.circle")
-                                            .foregroundStyle(.red)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("stop leaving out")
-                                    .accessibilityIdentifier(AXID.Settings.Privacy.websiteRemove(site))
+                if appState.config.excludedSites.isEmpty {
+                    Text("no websites left out")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 20)
+                } else {
+                    VStack(spacing: 4) {
+                        ForEach(Array(appState.config.excludedSites.enumerated()), id: \.offset) { index, site in
+                            HStack {
+                                Text(site)
+                                Spacer()
+                                Button(action: { appState.removeExcludedSite(site) }) {
+                                    Image(systemName: "minus.circle")
+                                        .foregroundStyle(.red)
                                 }
-                                .padding(.vertical, 2)
-                                .accessibilityIdentifier(AXID.Settings.Privacy.websiteSite(site))
-                                .accessibilityValue(site)
+                                .buttonStyle(.plain)
+                                .help("stop leaving out")
+                                .accessibilityIdentifier(AXID.Settings.Privacy.websiteRemove(site))
                             }
+                            .padding(.vertical, 2)
+                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteSite(site))
+                            .accessibilityValue(site)
                         }
-                        .accessibilityIdentifier(AXID.Settings.Privacy.websitesList)
                     }
+                    .accessibilityIdentifier(AXID.Settings.Privacy.websitesList)
+                }
 
-                    HStack {
-                        TextField("bank.com", text: $newWebsite)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { addWebsite() }
-                            .onChange(of: newWebsite) { websiteError = nil }
-                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteField)
-                        Button("leave out") { addWebsite() }
-                            .disabled(newWebsite.trimmingCharacters(in: .whitespaces).isEmpty)
-                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteAdd)
+                HStack {
+                    TextField("bank.com", text: $newWebsite)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addWebsite() }
+                        .onChange(of: newWebsite) { websiteError = nil }
+                        .accessibilityIdentifier(AXID.Settings.Privacy.websiteField)
+                    Button("leave out") { addWebsite() }
+                        .disabled(newWebsite.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .accessibilityIdentifier(AXID.Settings.Privacy.websiteAdd)
+                }
+
+                if let websiteError {
+                    Text(websiteError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier(AXID.Settings.Privacy.websiteFieldError)
+                }
+
+                DisclosureGroup(UICopy.Websites.HOW_THIS_WORKS) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_2)
+                        Text(UICopy.Websites.LIMITS_DISCLOSURE)
                     }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .accessibilityIdentifier(AXID.Settings.Privacy.websiteLimits)
+            }
+            .padding(.vertical, 4)
+        }
+        .id(AXID.Settings.Privacy.websitesList + ".group")
+        .task(id: appState.pendingWebsiteSettingsTarget) {
+            guard appState.pendingWebsiteSettingsTarget != nil else { return }
+            await Task.yield()
+            guard !Task.isCancelled, leftOutShowing else { return }
+            scrollProxy.scrollTo(AXID.Settings.Privacy.websitesList + ".group", anchor: .top)
+            appState.pendingWebsiteSettingsTarget = nil
+        }
+    }
 
-                    if let websiteError {
-                        Text(websiteError)
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteFieldError)
-                    }
+    var protectedVideoGroup: some View {
+        GroupBox("protected video") {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("pause intake while protected video is on screen", isOn: pauseProtectedVideoBinding)
+                    .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideo)
+                Text("pauses screen and audio intake while supported streaming video apps or websites are visible, so the video doesn't go black. a short note of the service and window title goes into your journal.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-                    DisclosureGroup(UICopy.Websites.HOW_THIS_WORKS) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_2)
-                            Text(UICopy.Websites.LIMITS_DISCLOSURE)
+                if appState.config.protectedVideoTitlePatterns.isEmpty {
+                    Text("no patterns added")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 20)
+                } else {
+                    VStack(spacing: 4) {
+                        ForEach(Array(appState.config.protectedVideoTitlePatterns.enumerated()), id: \.offset) { index, pattern in
+                            HStack {
+                                Text(pattern)
+                                Spacer()
+                                Button(action: { deleteProtectedVideoPattern(at: index) }) {
+                                    Image(systemName: "minus.circle")
+                                        .foregroundStyle(.red)
+                                }
+                                .buttonStyle(.plain)
+                                .help("remove pattern")
+                                .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternRemove(pattern))
+                            }
+                            .padding(.vertical, 2)
+                            .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPattern(pattern))
+                            .accessibilityValue(pattern)
                         }
+                    }
+                    .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternsList)
+                }
+
+                HStack {
+                    TextField("mubi", text: $newProtectedVideoPattern)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addProtectedVideoPattern() }
+                        .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternField)
+                    Button("add") { addProtectedVideoPattern() }
+                        .disabled(newProtectedVideoPattern.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternAdd)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    func privateBrowsingGroup(scrollProxy: ScrollViewProxy) -> some View {
+        GroupBox("private browsing") {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("keep private windows out of your journal: Firefox set to English", isOn: excludePrivateBrowsingBinding)
+                    .help("reads the window title and matches private windows in Firefox set to English. Safari, Chrome, Edge and Brave don't show private mode in that title; the option below checks them another way. other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps.")
+                    .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsing)
+                Text("this reads the window title and keeps Firefox private windows out of your journal. a new Firefox window is kept out of your journal for a moment while it is checked.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                DisclosureGroup("details") {
+                    Text("checked on Firefox 157 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a web page can end its own title the way Firefox marks a private window, and then an ordinary Firefox window showing it is kept out too. Safari, Chrome, Edge and Brave don't show private mode in that title; the option below checks them another way. other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps above.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .accessibilityIdentifier(AXID.Settings.Privacy.websiteLimits)
                 }
-                .padding(.vertical, 4)
-            }
-            .id(AXID.Settings.Privacy.websitesList + ".group")
-            .task(id: appState.pendingWebsiteSettingsTarget) {
-                guard appState.pendingWebsiteSettingsTarget != nil else { return }
-                await Task.yield()
-                guard !Task.isCancelled, selectedTab == .privacy else { return }
-                scrollProxy.scrollTo(AXID.Settings.Privacy.websitesList + ".group", anchor: .top)
-                appState.pendingWebsiteSettingsTarget = nil
-            }
+                .font(.caption)
 
-            GroupBox("protected video") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle("pause intake while protected video is on screen", isOn: pauseProtectedVideoBinding)
-                        .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideo)
-                    Text("pauses screen and audio intake while supported streaming video apps or websites are visible, so the video doesn't go black. a short note of the service and window title goes into your journal.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if appState.config.protectedVideoTitlePatterns.isEmpty {
-                        Text("no patterns added")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 20)
-                    } else {
-                        VStack(spacing: 4) {
-                            ForEach(Array(appState.config.protectedVideoTitlePatterns.enumerated()), id: \.offset) { index, pattern in
-                                HStack {
-                                    Text(pattern)
-                                    Spacer()
-                                    Button(action: { deleteProtectedVideoPattern(at: index) }) {
-                                        Image(systemName: "minus.circle")
-                                            .foregroundStyle(.red)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("remove pattern")
-                                    .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternRemove(pattern))
-                                }
-                                .padding(.vertical, 2)
-                                .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPattern(pattern))
-                                .accessibilityValue(pattern)
-                            }
-                        }
-                        .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternsList)
-                    }
-
-                    HStack {
-                        TextField("mubi", text: $newProtectedVideoPattern)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { addProtectedVideoPattern() }
-                            .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternField)
-                        Button("add") { addProtectedVideoPattern() }
-                            .disabled(newProtectedVideoPattern.trimmingCharacters(in: .whitespaces).isEmpty)
-                            .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternAdd)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            GroupBox("private browsing") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Toggle("keep private windows out of your journal: Firefox set to English", isOn: excludePrivateBrowsingBinding)
-                        .help("reads the window title and matches private windows in Firefox set to English. Safari, Chrome, Edge and Brave don't show private mode in that title; the option below checks them another way. other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps.")
-                        .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsing)
-                    Text("this reads the window title and keeps Firefox private windows out of your journal. a new Firefox window is kept out of your journal for a moment while it is checked.")
+                    Toggle("also check Safari, Chrome, Edge and Brave", isOn: excludePrivateBrowsingAccessibilityBinding)
+                        .disabled(!appState.config.excludePrivateBrowsing)
+                        .focused($privateWindowKeyboardFocused)
+                        .accessibilityFocused($privateWindowAccessibilityFocused)
+                        .accessibilityHint("turning this on asks for Accessibility access. solstone uses it to read these browsers' window titles and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity.")
+                        .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibility)
+                    Text(Self.privateWindowAccessibilityExplanation)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     DisclosureGroup("details") {
-                        Text("checked on Firefox 157 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a web page can end its own title the way Firefox marks a private window, and then an ordinary Firefox window showing it is kept out too. Safari, Chrome, Edge and Brave don't show private mode in that title; the option below checks them another way. other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps above.")
+                        Text("checked on Safari 27, Chrome 154, Edge 154 and Brave 1.96 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a new window from these browsers is kept out of your journal for a moment while it is checked. turning this off stops the reads; to remove the access too, turn solstone off in System Settings, under Privacy & Security, in Accessibility (Device Control and Data Access on macOS 27).")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .font(.caption)
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Toggle("also check Safari, Chrome, Edge and Brave", isOn: excludePrivateBrowsingAccessibilityBinding)
-                            .disabled(!appState.config.excludePrivateBrowsing)
-                            .focused($privateWindowKeyboardFocused)
-                            .accessibilityFocused($privateWindowAccessibilityFocused)
-                            .accessibilityHint("turning this on asks for Accessibility access. solstone uses it to read these browsers' window titles and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity.")
-                            .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibility)
-                        Text(Self.privateWindowAccessibilityExplanation)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        DisclosureGroup("details") {
-                            Text("checked on Safari 27, Chrome 154, Edge 154 and Brave 1.96 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a new window from these browsers is kept out of your journal for a moment while it is checked. turning this off stops the reads; to remove the access too, turn solstone off in System Settings, under Privacy & Security, in Accessibility (Device Control and Data Access on macOS 27).")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .font(.caption)
-
-                        if privateWindowAccessibilityState != .off {
-                            privateWindowAccessibilityStatus
-                        }
-                        AXStateCompanion(
-                            id: AXID.Settings.Privacy.privateBrowsingAccessibilityState,
-                            value: privateWindowAccessibilityState.axToken
-                        )
+                    if privateWindowAccessibilityState != .off {
+                        privateWindowAccessibilityStatus
                     }
-                    .padding(.leading, 20)
-                    .padding(.top, 8)
-                    .id(AXID.Settings.Privacy.privateBrowsingAccessibility)
-                    .task(id: appState.pendingPrivateWindowSettingsTarget) {
-                        guard let target = appState.pendingPrivateWindowSettingsTarget else { return }
-                        await Task.yield()
-                        guard !Task.isCancelled, selectedTab == .privacy,
-                              appState.pendingPrivateWindowSettingsTarget == target else { return }
-                        scrollProxy.scrollTo(AXID.Settings.Privacy.privateBrowsingAccessibility, anchor: .center)
-                        privateWindowKeyboardFocused = true
-                        privateWindowAccessibilityFocused = true
-                        appState.pendingPrivateWindowSettingsTarget = nil
-                    }
+                    AXStateCompanion(
+                        id: AXID.Settings.Privacy.privateBrowsingAccessibilityState,
+                        value: privateWindowAccessibilityState.axToken
+                    )
                 }
-                .padding(.vertical, 4)
-                .onChange(of: privateWindowAccessibilityState) { _, state in
-                    if let message = privateWindowAnnouncements.observe(state, isVisible: privateWindowPrivacyIsVisible) {
-                        diagnosticAnnouncement(message)
-                    }
+                .padding(.leading, 20)
+                .padding(.top, 8)
+                .id(AXID.Settings.Privacy.privateBrowsingAccessibility)
+                .task(id: appState.pendingPrivateWindowSettingsTarget) {
+                    guard let target = appState.pendingPrivateWindowSettingsTarget else { return }
+                    await Task.yield()
+                    guard !Task.isCancelled, leftOutShowing,
+                          appState.pendingPrivateWindowSettingsTarget == target else { return }
+                    scrollProxy.scrollTo(AXID.Settings.Privacy.privateBrowsingAccessibility, anchor: .center)
+                    privateWindowKeyboardFocused = true
+                    privateWindowAccessibilityFocused = true
+                    appState.pendingPrivateWindowSettingsTarget = nil
+                }
+            }
+            .padding(.vertical, 4)
+            .onChange(of: privateWindowAccessibilityState) { _, state in
+                if let message = privateWindowAnnouncements.observe(state, isVisible: privateWindowPrivacyIsVisible) {
+                    diagnosticAnnouncement(message)
                 }
             }
         }
-        .padding(.vertical, 4)
     }
 
-    private static let privateWindowAccessibilityExplanation = "this needs Accessibility access (called Device Control and Data Access on macOS 27). solstone uses it to read the window titles these browsers give to accessibility tools, and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity. turning this on asks for it."
+
+    static let privateWindowAccessibilityExplanation = "this needs Accessibility access (called Device Control and Data Access on macOS 27). solstone uses it to read the window titles these browsers give to accessibility tools, and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity. turning this on asks for it."
 
     @ViewBuilder
-    private var privateWindowAccessibilityStatus: some View {
+    var privateWindowAccessibilityStatus: some View {
         VStack(alignment: .leading, spacing: 6) {
             switch privateWindowAccessibilityState {
             case .checking:
@@ -3875,8 +3711,8 @@ struct SettingsView: View {
         appState.privateWindowAccessibilityEnabled ? appState.privateWindowAccessibilityMonitor.state : .off
     }
 
-    private var privateWindowPrivacyIsVisible: Bool {
-        selectedTab == .privacy && !NSApp.isHidden && NSApp.windows.contains {
+    var privateWindowPrivacyIsVisible: Bool {
+        leftOutShowing && !NSApp.isHidden && NSApp.windows.contains {
             $0.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
                 && $0.isVisible && !$0.isMiniaturized
         }
@@ -3899,7 +3735,7 @@ struct SettingsView: View {
         )
     }
 
-    private var excludePrivateBrowsingBinding: Binding<Bool> {
+    var excludePrivateBrowsingBinding: Binding<Bool> {
         Binding(
             get: { appState.config.excludePrivateBrowsing },
             set: { newValue in
@@ -3910,7 +3746,7 @@ struct SettingsView: View {
         )
     }
 
-    private func addTitlePattern() {
+    func addTitlePattern() {
         let pattern = newTitlePattern.trimmingCharacters(in: .whitespaces)
         guard !pattern.isEmpty else { return }
 
@@ -3922,13 +3758,13 @@ struct SettingsView: View {
         newTitlePattern = ""
     }
 
-    private func deleteTitlePattern(at index: Int) {
+    func deleteTitlePattern(at index: Int) {
         var config = appState.config
         config.excludedTitlePatterns.remove(at: index)
         appState.updateConfig(config)
     }
 
-    private func addWebsite() {
+    func addWebsite() {
         let input = newWebsite.trimmingCharacters(in: .whitespaces)
         guard !input.isEmpty else { return }
         Task { @MainActor in
@@ -3941,7 +3777,7 @@ struct SettingsView: View {
         }
     }
 
-    private var pauseProtectedVideoBinding: Binding<Bool> {
+    var pauseProtectedVideoBinding: Binding<Bool> {
         Binding(
             get: { appState.config.pauseForProtectedVideo },
             set: { newValue in
@@ -3952,20 +3788,20 @@ struct SettingsView: View {
         )
     }
 
-    private func addProtectedVideoPattern() {
+    func addProtectedVideoPattern() {
         let pattern = newProtectedVideoPattern.trimmingCharacters(in: .whitespaces)
         guard !pattern.isEmpty else { return }
         appState.addProtectedVideoTitlePattern(pattern)
         newProtectedVideoPattern = ""
     }
 
-    private func deleteProtectedVideoPattern(at index: Int) {
+    func deleteProtectedVideoPattern(at index: Int) {
         guard index >= 0, index < appState.config.protectedVideoTitlePatterns.count else { return }
         let pattern = appState.config.protectedVideoTitlePatterns[index]
         appState.removeProtectedVideoTitlePattern(pattern)
     }
 
-    private func addExcludedApp(name: String? = nil) {
+    func addExcludedApp(name: String? = nil) {
         let rawName = name ?? newExcludedApp
         let updated = ExcludedAppPicker.appending(rawName, to: appState.config.excludedApps)
         if updated.count != appState.config.excludedApps.count {
@@ -3976,7 +3812,7 @@ struct SettingsView: View {
         newExcludedApp = ""
     }
 
-    private func deleteExcludedApp(at index: Int) {
+    func deleteExcludedApp(at index: Int) {
         var config = appState.config
         config.excludedApps.remove(at: index)
         appState.updateConfig(config)
@@ -3986,7 +3822,7 @@ struct SettingsView: View {
 
     /// True when the health card above has already claimed the source state as its verdict and
     /// this group would render an empty box under its own heading.
-    private var statusGroupIsFullyClaimedByVerdict: Bool {
+    var statusGroupIsFullyClaimedByVerdict: Bool {
         guard !appState.isRecording, !appState.isPaused, appState.config.selectedSources.isEmpty,
               appState.obsidianSource?.isOn != true else {
             return false
@@ -3999,11 +3835,11 @@ struct SettingsView: View {
         ) == nil
     }
 
-    private var renderedObservationAXState: SettingsObservationAXState {
+    var renderedObservationAXState: SettingsObservationAXState {
         SettingsObservationAXState(appState.observationRowState)
     }
 
-    private var renderedObservationText: String {
+    var renderedObservationText: String {
         if renderedObservationAXState == .protectedVideo {
             return UICopy.SETTINGS_OBSERVATION_PROTECTED_VIDEO
         }
@@ -4013,14 +3849,14 @@ struct SettingsView: View {
         return renderedObservationAXState.headline
     }
 
-    private var storageGlanceText: String {
+    var storageGlanceText: String {
         if let storageUsedMB {
             return "\(storageUsedMB) MB"
         }
         return "calculating"
     }
 
-    private var statusFooterText: String {
+    var statusFooterText: String {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         sourcesFooter(media: appState.captureSourcesStatusText, lead: sourcesLead)
 #else
@@ -4028,7 +3864,7 @@ struct SettingsView: View {
 #endif
     }
 
-    private var setupTopology: SetupTopology {
+    var setupTopology: SetupTopology {
         classifySetupTopology(
             serviceMode: appState.config.serviceMode,
             serverURL: appState.config.serverURL,
@@ -4037,7 +3873,7 @@ struct SettingsView: View {
         )
     }
 
-    private var setupSnapshotPresentation: SetupSnapshotPresentation {
+    var setupSnapshotPresentation: SetupSnapshotPresentation {
         let screenOutcome = PermissionOutcome.screenRecording(
             initialPermissionCheckComplete: appState.initialPermissionCheckComplete,
             screenRecordingGranted: appState.screenRecordingGranted,
@@ -4063,11 +3899,11 @@ struct SettingsView: View {
         ))
     }
 
-    private var primaryLastDeliveryOutcome: LastJournalDeliveryOutcome {
+    var primaryLastDeliveryOutcome: LastJournalDeliveryOutcome {
         appState.serviceIsDone ? appState.uploadCoordinator.lastJournalDeliveryOutcome : .notLinked
     }
 
-    private var statusHealthSummary: StatusHealthSummary {
+    var statusHealthSummary: StatusHealthSummary {
         let setupPresentation = setupSnapshotPresentation
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         return StatusHealthSummary.makeIncludingBrowser(
@@ -4125,7 +3961,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func healthSummaryCard(showsAction: Bool = true) -> some View {
+    func healthSummaryCard(showsAction: Bool = true) -> some View {
         let summary = statusHealthSummary
         HStack(alignment: .top, spacing: 8) {
             Circle()
@@ -4143,7 +3979,7 @@ struct SettingsView: View {
                 if showsAction, let action = summary.action {
                     Button(action.label) {
                         let effect = healthActionEffect(action)
-                        selectedTab = effect.tab
+                        navigate(effect.tab)
                         if effect.postsReask {
                             NotificationCenter.default.post(name: .reaskJournalMark, object: nil)
                         }
@@ -4169,11 +4005,11 @@ struct SettingsView: View {
         .accessibilityValue(summary.axValue)
     }
 
-    private var aboutBlock: String {
+    var aboutBlock: String {
         AboutPresentation.captureBlock(journal: appState.tunnelLifecycleOwner.journalVersion)
     }
 
-    private var setupGroup: some View {
+    var setupGroup: some View {
         let presentation = setupSnapshotPresentation
         let displayedAbout = aboutBlock
         return GroupBox(UICopy.SETTINGS_SETUP_GROUP_TITLE) {
@@ -4207,7 +4043,7 @@ struct SettingsView: View {
                         .accessibilityValue(displayedAbout)
                     Spacer(minLength: 8)
                     Button(UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION) {
-                        selectedTab = .service
+                        navigate(.service)
                     }
                     .font(.caption)
                     .buttonStyle(.link)
@@ -4218,7 +4054,7 @@ struct SettingsView: View {
         }
     }
 
-    private func setupCheckRow(_ row: SetupCheckRow) -> some View {
+    func setupCheckRow(_ row: SetupCheckRow) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             LabeledContent {
                 HStack(spacing: 8) {
@@ -4261,7 +4097,7 @@ struct SettingsView: View {
         }
     }
 
-    private func setupStateAXID(for rowID: SetupCheckRowID) -> String {
+    func setupStateAXID(for rowID: SetupCheckRowID) -> String {
         switch rowID {
         case .solApp:
             return AXID.Settings.Status.setupSolAppState
@@ -4278,7 +4114,7 @@ struct SettingsView: View {
         }
     }
 
-    private func setupActionAXID(for rowID: SetupCheckRowID) -> String? {
+    func setupActionAXID(for rowID: SetupCheckRowID) -> String? {
         switch rowID {
         case .solApp:
             return AXID.Settings.Status.setupSolAppAction
@@ -4295,18 +4131,18 @@ struct SettingsView: View {
         }
     }
 
-    private func performSetupAction(_ action: SetupCheckAction) {
+    func performSetupAction(_ action: SetupCheckAction) {
         switch action {
         case .openApplications:
             NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications", isDirectory: true))
         case .openJournalSettings, .connectJournal:
-            selectedTab = .service
+            navigate(.service)
         case .grantPermission:
-            selectedTab = .permissions
+            navigate(.permissions)
         }
     }
 
-    private func setupRowColor(_ state: SetupCheckRowAXState) -> Color {
+    func setupRowColor(_ state: SetupCheckRowAXState) -> Color {
         switch state {
         case .ready:
             return .green
@@ -4317,11 +4153,11 @@ struct SettingsView: View {
         }
     }
 
-    private func setupVerdictColor(_ verdict: SetupGroupVerdict) -> Color {
+    func setupVerdictColor(_ verdict: SetupGroupVerdict) -> Color {
         verdict.severity.color
     }
 
-    private func setupVerdictSystemImage(_ verdict: SetupGroupVerdict) -> String {
+    func setupVerdictSystemImage(_ verdict: SetupGroupVerdict) -> String {
         switch verdict {
         case .ready:
             return "checkmark.circle.fill"
@@ -4332,7 +4168,7 @@ struct SettingsView: View {
         }
     }
 
-    private var statusTab: some View {
+    var statusTab: some View {
         VStack(alignment: .leading, spacing: 20) {
             healthSummaryCard()
 
@@ -4397,7 +4233,7 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Button("storage settings →") {
-                            selectedTab = .service
+                            navigate(.service)
                         }
                         .font(.caption)
                         .buttonStyle(.link)
@@ -4431,7 +4267,7 @@ struct SettingsView: View {
     }
 
     #if DEBUG
-    private var debugSegmentsBinding: Binding<Bool> {
+    var debugSegmentsBinding: Binding<Bool> {
         Binding(
             get: { appState.config.debugSegments },
             set: { newValue in
@@ -4451,7 +4287,7 @@ struct SettingsView: View {
     // MARK: - Upload Status
 
     @ViewBuilder
-    private var uploadStatusView: some View {
+    var uploadStatusView: some View {
         let status = appState.uploadCoordinator.status
         let pending = appState.uploadCoordinator.pendingCount
         let symbol = journalSyncStatusSymbol(
@@ -4496,21 +4332,21 @@ struct SettingsView: View {
         }
     }
 
-    private func uploadCheckedCount(for status: UploadCoordinator.Status) -> Int {
+    func uploadCheckedCount(for status: UploadCoordinator.Status) -> Int {
         if case .syncing(let checked, _) = status {
             return checked
         }
         return 0
     }
 
-    private func uploadTotalCount(for status: UploadCoordinator.Status) -> Int {
+    func uploadTotalCount(for status: UploadCoordinator.Status) -> Int {
         if case .syncing(_, let total) = status {
             return total
         }
         return 0
     }
 
-    private func uploadStatusColor(for status: UploadCoordinator.Status) -> Color {
+    func uploadStatusColor(for status: UploadCoordinator.Status) -> Color {
         switch status {
         case .notSynced:
             .gray
@@ -4529,7 +4365,7 @@ struct SettingsView: View {
     // MARK: - Connection Test
 
     @ViewBuilder
-    private var connectionTestIcon: some View {
+    var connectionTestIcon: some View {
         switch appState.connectionTestState {
         case .idle, .testing:
             EmptyView()
@@ -4549,7 +4385,7 @@ struct SettingsView: View {
 
     // MARK: - Help Tab
 
-    private var agentInstructions: String {
+    var agentInstructions: String {
         """
         this is solstone for macos.
         the solstone app takes in what you share with it, and all of it goes into your journal.
@@ -4564,7 +4400,7 @@ struct SettingsView: View {
         """
     }
 
-    private var helpTab: some View {
+    var helpTab: some View {
         let displayedAbout = aboutBlock
         return VStack(alignment: .leading, spacing: 20) {
             GroupBox("get help") {
@@ -4736,7 +4572,7 @@ struct SettingsView: View {
         }
     }
 
-    private func toggleDiagnostics() {
+    func toggleDiagnostics() {
         diagnosticLoadGeneration &+= 1
         let loadGeneration = diagnosticLoadGeneration
         diagnosticCopyFeedback = nil
@@ -4763,7 +4599,7 @@ struct SettingsView: View {
 
     /// Reads everything the report shows, now. Copy reads again rather than reusing what the
     /// panel showed when it opened, so a copy taken after a re-link carries what happened.
-    private func readDiagnosticReport() async -> DiagnosticReport {
+    func readDiagnosticReport() async -> DiagnosticReport {
         let evidence = await appState.readDiagnosticEvidence()
         let backlog = await appState.uploadCoordinator.readDiagnosticBacklog()
         var reportInput = DiagnosticReportInput(
@@ -4801,7 +4637,7 @@ struct SettingsView: View {
         return buildDiagnosticReport(reportInput)
     }
 
-    private func openProblemReport(aboutSnapshot: String) {
+    func openProblemReport(aboutSnapshot: String) {
         Task { @MainActor in
             let evidence = await appState.readDiagnosticEvidence()
             let recent: String? = switch evidence {
@@ -4824,7 +4660,7 @@ struct SettingsView: View {
         }
     }
 
-    private var currentScreenPermissionOutcome: PermissionOutcome {
+    var currentScreenPermissionOutcome: PermissionOutcome {
         PermissionOutcome.screenRecording(
             initialPermissionCheckComplete: appState.initialPermissionCheckComplete,
             screenRecordingGranted: appState.screenRecordingGranted,
@@ -4834,14 +4670,14 @@ struct SettingsView: View {
         )
     }
 
-    private var currentMicrophonePermissionOutcome: PermissionOutcome {
+    var currentMicrophonePermissionOutcome: PermissionOutcome {
         PermissionOutcome.microphone(
             initialPermissionCheckComplete: appState.initialPermissionCheckComplete,
             cause: appState.microphoneAuthorizationCause
         )
     }
 
-    private func copyDiagnostics() {
+    func copyDiagnostics() {
         diagnosticLoadGeneration &+= 1
         let loadGeneration = diagnosticLoadGeneration
         diagnosticCopyFeedback = nil
@@ -4861,7 +4697,7 @@ struct SettingsView: View {
         }
     }
 
-    private var logExportFailureReasonValue: String {
+    var logExportFailureReasonValue: String {
         guard case .failed(let reason) = logExportDocument?.outcome else {
             return ""
         }
@@ -4869,7 +4705,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func logExportOutcomeViews(_ document: LogExportDocument) -> some View {
+    func logExportOutcomeViews(_ document: LogExportDocument) -> some View {
         switch document.outcome {
         case .empty:
             Text(UICopy.SETTINGS_LOG_EXPORT_EMPTY)
@@ -4932,7 +4768,7 @@ struct SettingsView: View {
         }
     }
 
-    private func startLogExportRead() {
+    func startLogExportRead() {
         logExportTask?.cancel()
         logExportGeneration &+= 1
         let generation = logExportGeneration
@@ -4975,14 +4811,14 @@ struct SettingsView: View {
         }
     }
 
-    private func cancelLogExportRead() {
+    func cancelLogExportRead() {
         logExportTask?.cancel()
         logExportTask = nil
         logExportGeneration &+= 1
         logExportLoading = false
     }
 
-    private func saveLogExport(_ document: LogExportDocument) {
+    func saveLogExport(_ document: LogExportDocument) {
         logExportWriteFeedback = performLogExportSave(
             document: document,
             chooseURL: logExportChooseSaveURL,
@@ -4991,7 +4827,7 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func diagnosticAXCompanions(_ report: DiagnosticReport) -> some View {
+    func diagnosticAXCompanions(_ report: DiagnosticReport) -> some View {
         AXStateCompanion(
             id: AXID.Settings.Help.diagnosticsScreenRecordingState,
             value: report.screenRecordingState.axToken
@@ -5026,7 +4862,7 @@ struct SettingsView: View {
         }
     }
 
-    private func diagnosticRowAXID(_ rowID: DiagnosticReportRowID) -> String {
+    func diagnosticRowAXID(_ rowID: DiagnosticReportRowID) -> String {
         switch rowID {
         case .appVersion:
             return AXID.Settings.Help.diagnosticsAppVersionRow
@@ -5101,7 +4937,7 @@ struct MicrophoneRow: View {
     var onSelectChoice: (MicrophoneChoice) -> Void = { _ in }
     var onRetry: () -> Void = {}
 
-    private var indicatorColor: Color {
+    var indicatorColor: Color {
         if !entry.isConnected {
             return .gray
         }
@@ -5116,7 +4952,7 @@ struct MicrophoneRow: View {
         }
     }
 
-    private var axStateValue: String {
+    var axStateValue: String {
         let enabled = entry.mode == .whenInUseElsewhere ? "following" : (entry.isDisabled ? "disabled" : "enabled")
         guard entry.isConnected else { return "disconnected_\(enabled)" }
         if entry.mode == .off {

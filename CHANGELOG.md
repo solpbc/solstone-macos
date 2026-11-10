@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- the solstone window now opens on your sources. each one has a tile with its state and a switch. beside them, status shows how much each source has taken in so far, and clicking a tile shows that source's page there instead. the sidebar is now home, your journal, this mac, updates and help, and every source setting you had is still there, on that source's page.
+- the menu bar icon's menu is now shorter. it names a source only when that source needs attention, and each source's state is on its tile in the window.
+- a narrow solstone window now keeps its sidebar behind a button, and at its narrowest shows one column at a time.
+
 ### Fixed
 
 - the ☼ that terminal shows in tmux's status bar no longer brings another `_` with it each time terminal resumes or the app opens, which pushed session names out of view. the next start clears the ones already there. tmux session and window names with accented letters or symbols now also come into your journal as they are, instead of with `_` in their place. thanks @dvanduzer.

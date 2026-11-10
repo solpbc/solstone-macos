@@ -56,7 +56,7 @@ struct SettingsRestartContractTests {
         let source = try readSource("Sources/solstone/SettingsView.swift")
         let body = try extract(
             from: source,
-            start: "private func saveService(url: String, key: String, mode: ServiceMode)",
+            start: "func saveService(url: String, key: String, mode: ServiceMode)",
             end: "    // MARK: - Microphone Tab"
         )
 
@@ -89,7 +89,7 @@ struct SettingsRestartContractTests {
         let source = try readSource("Sources/solstone/SettingsView.swift")
         let body = try extract(
             from: source,
-            start: "private func relaunchApp()",
+            start: "func relaunchApp()",
             end: "    // MARK: - Observer Tab"
         )
 

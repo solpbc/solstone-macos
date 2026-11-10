@@ -4,6 +4,26 @@
 import Foundation
 
 enum AXID {
+    enum Deck {
+        static func tile(_ source: DeckSource) -> String { "settings.deck.tile.\(source.rawValue)" }
+        static func tileState(_ source: DeckSource) -> String { "settings.deck.tile.\(source.rawValue).state" }
+        static func tileSwitch(_ source: DeckSource) -> String { "settings.deck.tile.\(source.rawValue).switch" }
+        static func page(_ source: DeckSource) -> String { "settings.deck.page.\(source.rawValue)" }
+        /// The status pill keeps the id the status pane's sidebar row had.
+        static let pill = "settings.sidebar.tab.status"
+        static let pillState = "settings.deck.pill.state"
+        static let pause = "settings.deck.pause"
+        static let resume = "settings.deck.resume"
+        static let pausedLine = "settings.deck.paused"
+        static let journalPill = "settings.deck.journal"
+        static let addMore = "settings.deck.addMore"
+        static let paneClose = "settings.deck.pane.close"
+        static let paneBack = "settings.deck.pane.back"
+        static let shelfButton = "settings.deck.shelf"
+        static let statusPane = "settings.deck.status"
+        static let statusLead = "settings.deck.status.lead"
+    }
+
     enum Menubar {
         static let terminal = "menubar.terminal"
         static let audioHealthNote = "menubar.audio.health"
@@ -89,6 +109,14 @@ enum AXID {
 
             static func tabState(_ tab: SettingsView.Tab) -> String {
                 "settings.sidebar.tab.\(tab.rawValue).state"
+            }
+
+            static func row(_ row: ShelfRow) -> String {
+                "settings.sidebar.tab.\(row.rawValue)"
+            }
+
+            static func rowState(_ row: ShelfRow) -> String {
+                "settings.sidebar.tab.\(row.rawValue).state"
             }
         }
 

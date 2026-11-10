@@ -68,6 +68,14 @@ public final class AppState {
     @ObservationIgnored var terminalTakeoverDriver: TerminalTakeoverDriver?
     @ObservationIgnored var terminalTakeoverHost: TerminalTakeoverHost = .live()
     @ObservationIgnored private var sourceTotals: SourceTotals?
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+    /// Snapshot renders set the deck's facts directly, so every state can be drawn without a session.
+    var snapshotDeckInputs: DeckInputs?
+    var snapshotJournalPillInputs: JournalPillInputs?
+    var snapshotSourceTotals: SourceTotals.View?
+    /// The status pane's journal facts as label and value, for renders with no journal behind them.
+    var snapshotJournalFacts: [[String]]?
+#endif
     public let audioDeviceMonitor: AudioDeviceMonitor
     public var captureManager: CaptureManager { capture.captureManager }
     public private(set) var uploadCoordinator: UploadCoordinator!

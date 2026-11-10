@@ -38,11 +38,11 @@ struct SetupSettingsWindowConfiguratorTests {
 
         // Apply not-showing
         SetupSettingsWindowConfigurator.apply(setupShowing: false, to: window)
-        #expect(window.title == "solstone settings")
+        #expect(window.title == "solstone")
         #expect(window.styleMask == originalMask)
         #expect(window.titlebarAppearsTransparent == false)
         #expect(window.titleVisibility == .visible)
-        #expect(window.contentMinSize == NSSize(width: 720, height: 500))
+        #expect(window.contentMinSize == NSSize(width: 390, height: 560))
         let settingsContentRect = window.contentRect(forFrameRect: window.frame)
         #expect(settingsContentRect.size == NSSize(width: 900, height: 700))
     }
@@ -63,7 +63,7 @@ struct SetupSettingsWindowConfiguratorTests {
 
         SetupSettingsWindowConfigurator.apply(setupShowing: true, to: window)
         SetupSettingsWindowConfigurator.apply(setupShowing: false, to: window)
-        #expect(window.title == "solstone settings")
+        #expect(window.title == "solstone")
         #expect(window.titleVisibility == .visible)
         #expect(window.titlebarAppearsTransparent == false)
     }

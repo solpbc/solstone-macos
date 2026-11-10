@@ -13,6 +13,18 @@ enum AXContract {
         "DO NOT EDIT. Generated from AXID.swift + AXToken.swift. Run `make ax-contract` to regenerate; `make ci` fails on drift."
 
     static let staticIDs: [String] = [
+        AXID.Deck.pill,
+        AXID.Deck.pillState,
+        AXID.Deck.pause,
+        AXID.Deck.resume,
+        AXID.Deck.pausedLine,
+        AXID.Deck.journalPill,
+        AXID.Deck.addMore,
+        AXID.Deck.paneClose,
+        AXID.Deck.paneBack,
+        AXID.Deck.shelfButton,
+        AXID.Deck.statusPane,
+        AXID.Deck.statusLead,
         AXID.Menubar.statusIconState,
         AXID.Menubar.statusIconOverlayState,
         AXID.Menubar.statusRowState,
@@ -337,9 +349,15 @@ enum AXContract {
     static var enumerableIDs: [String] {
         var ids = staticIDs
 
-        for tab in SettingsView.Tab.allCases {
-            ids.append(AXID.Settings.Sidebar.tab(tab))
-            ids.append(AXID.Settings.Sidebar.tabState(tab))
+        for row in ShelfRow.allCases {
+            ids.append(AXID.Settings.Sidebar.row(row))
+            ids.append(AXID.Settings.Sidebar.rowState(row))
+        }
+        for source in DeckSource.allCases {
+            ids.append(AXID.Deck.tile(source))
+            ids.append(AXID.Deck.tileState(source))
+            ids.append(AXID.Deck.tileSwitch(source))
+            ids.append(AXID.Deck.page(source))
         }
 
         return ids
@@ -349,13 +367,13 @@ enum AXContract {
         [
             ParameterizedIdentifier(
                 template: "settings.sidebar.tab.{tab}",
-                key: "SettingsView.Tab.rawValue",
-                expansions: SettingsView.Tab.allCases.map(\.rawValue)
+                key: "ShelfRow.rawValue + status",
+                expansions: ShelfRow.allCases.map(\.rawValue) + ["status"]
             ),
             ParameterizedIdentifier(
                 template: "settings.sidebar.tab.{tab}.state",
-                key: "SettingsView.Tab.rawValue",
-                expansions: SettingsView.Tab.allCases.map(\.rawValue)
+                key: "ShelfRow.rawValue",
+                expansions: ShelfRow.allCases.map(\.rawValue)
             ),
             ParameterizedIdentifier(
                 template: "settings.microphones.priority.device.{uid}",
@@ -430,6 +448,11 @@ enum AXContract {
             "DiagnosticCopyAXState": DiagnosticCopyAXState.allCases.map(\.axToken),
             "LogExportAXState": LogExportAXState.allCases.map(\.axToken),
             "SidebarBadgeState": SettingsView.SidebarBadgeState.allCases.map(\.axToken),
+            "DeckStateWord": DeckStateWord.allCases.map(\.axToken),
+            "JournalPill": [
+                "needs_new_link", "not_paired", "confirm_mark", "sync_paused", "pair_again",
+                "offline", "connecting", "syncing", "waiting_to_sync", "connected",
+            ],
             "UploadCoordinator.Status": UploadCoordinator.Status.axTokens,
             "ConnectionTestState": ConnectionTestState.axTokens,
             "PairingFlowState": PairingFlowState.axTokens,
@@ -470,6 +493,8 @@ enum AXContract {
             AXID.Menubar.journalState: .enum("MenubarStatusRowState"),
             AXID.Journal.Browser.navigationState: .enum("JournalWindowAXState"),
             "settings.sidebar.tab.{tab}.state": .enum("SidebarBadgeState"),
+            "settings.deck.tile.{source}.state": .enum("DeckStateWord"),
+            AXID.Deck.pillState: .enum("JournalPill"),
             AXID.Settings.Sources.obsidianState: .enum("ObsidianSourceAXState"),
             AXID.Settings.Permissions.screenRecordingState: .enum("AXPermissionState"),
             AXID.Settings.Permissions.screenRecordingRestartPending: .freeform,
@@ -575,6 +600,9 @@ enum AXContract {
     static func stateKey(for id: String) -> String {
         if id.hasPrefix("settings.sidebar.tab."), id.hasSuffix(".state") {
             return "settings.sidebar.tab.{tab}.state"
+        }
+        if id.hasPrefix("settings.deck.tile."), id.hasSuffix(".state") {
+            return "settings.deck.tile.{source}.state"
         }
         return id
     }
