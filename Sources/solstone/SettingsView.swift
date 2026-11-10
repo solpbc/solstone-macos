@@ -147,7 +147,7 @@ func shouldShowPairingRetry(for state: TunnelLifecycleState, failureCause: Journ
     }
 }
 
-private struct SettingsPaneScrollEdgeModifier: ViewModifier {
+struct SettingsPaneScrollEdgeModifier: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
@@ -186,6 +186,7 @@ struct SettingsView: View {
     @Bindable var appState: AppState
     @Bindable var updateController: UpdateController
     @State var shelf: ShelfRow = .home
+    let chrome: ShellChrome
     @State var homePane: HomePane?
     @FocusState var focusedTile: DeckSource?
     @Environment(\.dismiss) private var dismiss
@@ -272,6 +273,7 @@ struct SettingsView: View {
         updateController: UpdateController,
         selectedTab: Tab = .home,
         initialHomePane: HomePane? = nil,
+        chrome: ShellChrome = .configured,
         initialStorageUsedMB: Int? = nil,
         initialLocalJournalMark: JournalMark? = nil,
         initialLocalOnDiskDiscoveryPath: String? = nil,
@@ -333,6 +335,7 @@ struct SettingsView: View {
         let route = ShellRoute(tab: selectedTab, appState: appState)
         self._shelf = State(initialValue: route.shelf)
         self._homePane = State(initialValue: initialHomePane ?? route.pane)
+        self.chrome = chrome
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
         self._setupProbeSnapshot = State(initialValue: initialSetupProbeSnapshot)
         self._diagnosticsExpanded = State(initialValue: initialDiagnosticsExpanded)
@@ -362,7 +365,7 @@ struct SettingsView: View {
 
     var body: some View {
         settingsContent
-        .background(SetupSettingsWindowInstaller(setupShowing: appState.setupModel.phase != nil))
+        .background(SetupSettingsWindowInstaller(setupShowing: appState.setupModel.phase != nil, groundChrome: chrome.groundChrome))
         .alert(appState.setupModel.handoffRefusalMessage ?? "", isPresented: Binding(
             get: { appState.setupModel.handoffRefusal != nil },
             set: { if !$0 { appState.setupModel.dismissHandoffRefusal() } }
@@ -376,51 +379,8 @@ struct SettingsView: View {
             if appState.setupModel.phase != nil {
                 SetupView(model: appState.setupModel, appState: appState, journalMarkDriver: journalMarkDriver)
             } else {
-                NavigationSplitView(columnVisibility: .constant(.all)) {
-                    List(selection: $shelf) {
-                        shelfLabel("home", row: .home, systemImage: "house")
-                        shelfLabel(
-                            "your journal",
-                            row: .service,
-                            systemImage: "book.closed",
-                            badge: appState.serviceIsDone ? .done : (appState.serviceNeedsAttention ? .attention : .blank)
-                        )
-                        shelfLabel("this mac", row: .observer, systemImage: "laptopcomputer")
-                        shelfLabel(
-                            UpdatesCopy(provider: .solstone).tabTitle,
-                            row: .updates,
-                            systemImage: "arrow.down.circle",
-                            badge: updatesSidebarBadge(for: updateController.durableUpdateStatus),
-                            doneAccessibilityLabel: UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y
-                        )
-                        shelfLabel("help", row: .help, systemImage: "questionmark.circle")
-                    }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            .modifier(SettingsPaneScrollEdgeModifier())
-        } detail: {
-            ScrollViewReader { proxy in
-                if shelf == .home {
-                    deskHome(scrollProxy: proxy)
-                } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if let error = appState.configSaveError {
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                                .accessibilityIdentifier(AXID.Settings.configSaveError)
-                        }
-                        detailContent(scrollProxy: proxy)
-                    }
-                    .padding(20)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-                .modifier(SettingsPaneScrollEdgeModifier())
-                }
+                shellChromeContent
             }
-        }
-        }
         }
         .frame(
             minWidth: appState.setupModel.phase != nil ? 880 : (shelf == .home && homePane != nil ? 1080 : 860),

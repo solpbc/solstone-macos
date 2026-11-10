@@ -22,7 +22,7 @@ private var setupWindowMemoryKey: UInt8 = 0
 
 enum SetupSettingsWindowConfigurator {
     @MainActor
-    static func apply(setupShowing: Bool, to window: NSWindow) {
+    static func apply(setupShowing: Bool, groundChrome: Bool = false, to window: NSWindow) {
         if setupShowing {
             let memory: SetupWindowMemory
             if let existing = objc_getAssociatedObject(window, &setupWindowMemoryKey) as? SetupWindowMemory {
@@ -57,25 +57,36 @@ enum SetupSettingsWindowConfigurator {
                 memory.appliedInitialSetupSize = false
             }
             window.contentMinSize = NSSize(width: 860, height: 600)
+            if groundChrome {
+                // The ground runs to the top edge: the title bar takes no band of its own, and
+                // the title stays for the Window menu and app switchers only.
+                window.styleMask.insert(.fullSizeContentView)
+                window.titlebarAppearsTransparent = true
+                window.titleVisibility = .hidden
+            }
         }
     }
 }
 
 struct SetupSettingsWindowInstaller: NSViewRepresentable {
     let setupShowing: Bool
+    var groundChrome = false
 
     func makeNSView(context: Context) -> SetupSettingsWindowHostView {
         let view = SetupSettingsWindowHostView()
+        view.groundChrome = groundChrome
         view.setupShowing = setupShowing
         return view
     }
 
     func updateNSView(_ nsView: SetupSettingsWindowHostView, context: Context) {
+        nsView.groundChrome = groundChrome
         nsView.setupShowing = setupShowing
     }
 }
 
 final class SetupSettingsWindowHostView: NSView {
+    var groundChrome = false
     var setupShowing: Bool = false {
         didSet {
             applyConfigurator()
@@ -89,6 +100,6 @@ final class SetupSettingsWindowHostView: NSView {
 
     private func applyConfigurator() {
         guard let window else { return }
-        SetupSettingsWindowConfigurator.apply(setupShowing: setupShowing, to: window)
+        SetupSettingsWindowConfigurator.apply(setupShowing: setupShowing, groundChrome: groundChrome, to: window)
     }
 }

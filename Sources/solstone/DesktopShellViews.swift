@@ -8,9 +8,9 @@ import SwiftUI
 
 // The window's home: the deck on the warm ground, and one pane beside it.
 extension SettingsView {
-    func deskHome(scrollProxy: ScrollViewProxy) -> some View {
+    func deskHome(scrollProxy: ScrollViewProxy, drawsGround: Bool = true) -> some View {
         HStack(spacing: 0) {
-            deckColumn
+            deckColumn(drawsGround: drawsGround)
                 .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
             if let pane = homePane {
                 Divider()
@@ -26,12 +26,14 @@ extension SettingsView {
         }
     }
 
-    private var deckColumn: some View {
+    private func deckColumn(drawsGround: Bool) -> some View {
         let tiles = appState.deckTiles
         let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: deckColumns(paneOpen: homePane != nil))
         return ZStack {
-            SunArcBackgroundView()
-                .ignoresSafeArea()
+            if drawsGround {
+                SunArcBackgroundView()
+                    .ignoresSafeArea()
+            }
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {

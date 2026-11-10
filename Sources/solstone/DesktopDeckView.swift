@@ -234,11 +234,11 @@ struct DeckPausedLine: View {
     }
 }
 
-/// The journal at the foot: its mark and words, and the way in.
+/// The journal at the foot: its mark and words on the mark's own card, and the way in. With no
+/// journal it shows the generic mark, which says "your · journal".
 struct DeckJournalPill: View {
     let appState: AppState
     let fallback: () -> Void
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let mark = appState.confirmedMark
@@ -249,23 +249,15 @@ struct DeckJournalPill: View {
                 fallback()
             }
         } label: {
-            HStack(spacing: 7) {
-                Image(nsImage: JournalIconCompositor.appIcon(spec: mark))
-                    .resizable()
-                    .frame(width: 18, height: 18)
-                    .accessibilityHidden(true)
-                Text(mark.map { $0.words.joined(separator: " · ") } ?? "your journal")
-                    .font(DeckStyle.name(13))
-                    .foregroundStyle(SetupChromeColor.ink(for: scheme))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(SetupChromeColor.card(for: scheme)))
-            .overlay(Capsule().stroke(SetupChromeColor.hairline(for: scheme), lineWidth: 1))
-            .contentShape(Capsule())
+            JournalMarkInlineView(mark: mark)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(JournalMarkInlineView.cardFill))
+                .overlay(Capsule().stroke(JournalMarkInlineView.cardBorder, lineWidth: 1))
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(mark.map { "your journal, \($0.words.joined(separator: " "))" } ?? "your journal")
+        .accessibilityLabel("your journal")
         .accessibilityIdentifier(AXID.Deck.journalPill)
     }
 }
