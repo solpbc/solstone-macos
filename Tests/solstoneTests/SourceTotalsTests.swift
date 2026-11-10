@@ -105,7 +105,7 @@ struct SourceTotalsTests {
         #expect(empty.bytes() == Data())
         try Data(#"{"version":2}"#.utf8).write(to: url)
         let future = SourceTotals(directory: directory, clock: .init(now: moment("2026-03-03T17:00:00Z"), timeZone: utc))
-        #expect(future.considerCarry(Data(#"{"version":1,"terminal":{"total_seconds":5}}"#.utf8)) == .skippedUnreadable)
+        #expect(future.considerCarry(Data(#"{"version":1,"terminal":{"seconds":5}}"#.utf8)) == .skippedUnreadable)
         #expect(future.bytes() == Data(#"{"version":2}"#.utf8))
 
         let store = try totals()
@@ -194,11 +194,11 @@ struct SourceTotalsTests {
 
         let carried = try totals(at: "2026-03-03T17:00:00Z")
         let started = carried.view()?.terminalStarted
-        let payload = Data(#"{"version":1,"terminal":{"total_seconds":100,"started":"2020-01-01","last":"2020-01-01T00:00:00.000Z"}}"#.utf8)
+        let payload = Data(#"{"version":1,"terminal":{"seconds":100,"started":"2020-01-01","started_at":"2020-01-01T00:00:00Z","last":"2020-01-01T00:00:00Z","seen":["20260101/130000_10"]}}"#.utf8)
         #expect(carried.considerCarry(payload) == .applied)
         #expect(carried.view()?.terminalSeconds == 100)
         #expect(carried.view()?.terminalStarted == started)
-        #expect(carried.view()?.terminalLast == "2020-01-01T00:00:00.000Z")
+        #expect(carried.view()?.terminalLast == "2020-01-01T00:00:00Z")
         #expect(carried.view()?.terminalCarried == true)
         let afterCarry = try makeTempDirectory("terminal-after-carry")
         try finishedSegment(root: afterCarry, name: "130000_10")
@@ -219,6 +219,13 @@ struct SourceTotalsTests {
         #expect(blank.view()?.terminalSeconds == 0 && blank.view()?.terminalCarried == true)
         #expect(blank.considerCarry(payload) == .unchanged)
         #expect(blank.view()?.terminalSeconds == 0)
+
+        let foreign = try totals()
+        #expect(foreign.considerCarry(Data(#"{"version":2,"terminal":{"seconds":100}}"#.utf8)) == .applied)
+        #expect(foreign.view()?.terminalSeconds == 0 && foreign.view()?.terminalCarried == true)
+        let misnamed = try totals()
+        #expect(misnamed.considerCarry(Data(#"{"version":1,"terminal":{"total_seconds":100}}"#.utf8)) == .applied)
+        #expect(misnamed.view()?.terminalSeconds == 0 && misnamed.view()?.terminalCarried == true)
     }
 
     @Test func pagesRememberTheLatestURLAndNotesFollowTheQueue() throws {

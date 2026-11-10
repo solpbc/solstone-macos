@@ -3009,7 +3009,7 @@ public final class AppState {
             directory: appSupport.appendingPathComponent("Solstone", isDirectory: true),
             clock: SourceTotals.Clock(now: Date(), timeZone: .current)
         )
-        let carryURL = terminalTakeoverHost.root.appendingPathComponent(SourceTotals.fileName)
+        let carryURL = terminalTakeoverHost.root.appendingPathComponent(SourceTotals.carriedTerminalFileName)
         _ = totals.considerCarry(try? Data(contentsOf: carryURL))
         SourceTotalsInstall.install(totals)
         sourceTotals = totals

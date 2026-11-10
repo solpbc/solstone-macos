@@ -38,6 +38,8 @@ enum SourceTotalsInstall {
 /// directory. The file is not a preference and it is not uploaded.
 final class SourceTotals: @unchecked Sendable {
     static let fileName = "source-totals.json"
+    /// The terminal helper's counter, in its own data root. Not this app's file.
+    static let carriedTerminalFileName = "source-intake.json"
     static let version = 1
 
     struct Clock: Sendable {
@@ -156,17 +158,18 @@ final class SourceTotals: @unchecked Sendable {
         }
     }
 
-    /// One read of an older install's totals. Missing, unreadable, or without a
-    /// numeric total adds nothing, and is not read again. The seconds are not
-    /// coverage, so a later segment is not swallowed by them.
+    /// One read of the terminal helper's counter. Missing, not version 1, or
+    /// without a whole `seconds` adds nothing, and is not read again. Those
+    /// seconds are not coverage, and the helper's `seen` list is not applied.
     func considerCarry(_ data: Data?) -> SourceTotalsOutcome {
         mutate { model in
             if model.terminal.carried { return false }
             model.terminal.carried = true
             guard let data,
                   let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  Self.integer(root["version"]) == 1,
                   let terminal = root["terminal"] as? [String: Any],
-                  let seconds = Self.integer(terminal["total_seconds"]) else {
+                  let seconds = Self.integer(terminal["seconds"]) else {
                 return true
             }
             let before = model.terminal.totalSeconds
