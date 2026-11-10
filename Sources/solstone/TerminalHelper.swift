@@ -127,6 +127,17 @@ enum TerminalTmuxLocator {
         return path
     }
 
+    /// The well-known link to the same tmux as `path`, when there is one. Homebrew's
+    /// versioned Cellar path stops existing when tmux upgrades; its `bin` link doesn't.
+    static func stableLink(
+        to path: String,
+        isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) },
+        resolve: (String) -> String = { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
+    ) -> String {
+        let target = resolve(path)
+        return wellKnown.first { $0 != path && isExecutable($0) && resolve($0) == target } ?? path
+    }
+
     static func askLoginShell() -> String? {
         let process = Process()
         let pipe = Pipe()

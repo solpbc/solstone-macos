@@ -111,7 +111,9 @@ final class TerminalSource {
             let (installed, tmux, options) = await Task.detached { () -> (Bool, String?, TerminalHelperOptions) in
                 let installed = oldAppInstalled()
                 let options = helperOptions()
-                let carried = options.tmuxPath.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+                let carried = options.tmuxPath
+                    .flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+                    .map { TerminalTmuxLocator.stableLink(to: $0) }
                 return (installed, installed ? nil : carried ?? locateTmux(), options)
             }.value
             self?.finishProbe(oldAppInstalled: installed, tmux: tmux, options: options)
