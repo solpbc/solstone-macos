@@ -12,12 +12,12 @@ import UpdateKit
 /// where the shelf lives. Chosen by a hidden setting while the design is open.
 enum ShellChrome: String, CaseIterable, Sendable {
     case current
-    /// The system sidebar, with the ground and the sun running under and behind it.
+    /// The macOS 26 floating glass sidebar's look, as the app's own inset panel over the ground.
     case glassSidebar = "a"
     /// No sidebar surface: the shelf's rows as outlined pills floating on the ground.
     case floatingPills = "b"
-    /// The shelf behind one control at the top left, beside the window buttons.
-    case menuButton = "c"
+    /// The shelf's rows together in one outlined pill on the ground.
+    case onePill = "c"
 
     static let defaultsKey = "solstone.shell.chrome"
     static let appearanceKey = "solstone.shell.appearance"
@@ -51,13 +51,13 @@ extension SettingsView {
                 detailColumn(drawsGround: true)
             }
         case .glassSidebar:
-            NavigationSplitView(columnVisibility: .constant(.all)) {
-                shelfList
-                    .scrollContentBackground(.hidden)
-            } detail: {
-                detailColumn(drawsGround: false)
+            ZStack(alignment: .topLeading) {
+                SunArcBackgroundView().ignoresSafeArea()
+                HStack(alignment: .top, spacing: 0) {
+                    GlassShelfPanel(selection: $shelf, rows: shelfRowItems)
+                    detailColumn(drawsGround: false)
+                }
             }
-            .background(SunArcBackgroundView().ignoresSafeArea())
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             .toolbar(removing: .title)
         case .floatingPills:
@@ -72,15 +72,15 @@ extension SettingsView {
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             .toolbar(removing: .title)
-        case .menuButton:
+        case .onePill:
             ZStack(alignment: .topLeading) {
                 SunArcBackgroundView().ignoresSafeArea()
-                detailColumn(drawsGround: false)
-                    .padding(.top, 14)
-                ShelfMenuButton(selection: $shelf, rows: shelfRowItems)
-                    // Beside the window buttons, on their centre line.
-                    .padding(.leading, 84)
-                    .padding(.top, -24)
+                HStack(alignment: .top, spacing: 0) {
+                    OnePillShelf(selection: $shelf, rows: shelfRowItems)
+                        .padding(.leading, 18)
+                        .padding(.top, 20)
+                    detailColumn(drawsGround: false)
+                }
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             .toolbar(removing: .title)
@@ -205,43 +205,102 @@ struct ShelfPills: View {
     }
 }
 
-/// The shelf behind one control: the place the owner is, and the other four a click away.
-struct ShelfMenuButton: View {
+/// The shelf's five rows in one outlined pill on the ground; the place you are is washed orange.
+struct OnePillShelf: View {
     @Binding var selection: ShelfRow
     let rows: [ShelfRowItem]
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let current = rows.first { $0.row == selection }
-        Menu {
+        VStack(alignment: .leading, spacing: 2) {
             ForEach(rows) { item in
-                Button {
-                    selection = item.row
-                } label: {
-                    Label(item.title, systemImage: item.systemImage)
-                }
-                .accessibilityIdentifier(AXID.Settings.Sidebar.row(item.row))
+                ShelfRowButton(item: item, selected: selection == item.row) { selection = item.row }
             }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "line.3.horizontal")
-                    .font(.system(size: 12, weight: .semibold))
-                Text(current?.title ?? "home")
-                    .font(.system(size: 13))
-                if rows.contains(where: { $0.badge == .attention }) {
-                    Circle().fill(SetupChromeColor.solOrange).frame(width: 6, height: 6)
-                }
-            }
-            .foregroundStyle(SetupChromeColor.ink(for: scheme))
-            .padding(.horizontal, 11)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(SetupChromeColor.card(for: scheme)))
-            .overlay(Capsule().stroke(SetupChromeColor.hairline(for: scheme), lineWidth: 1))
         }
-        .menuStyle(.button)
+        .padding(6)
+        .frame(width: 172)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(SetupChromeColor.card(for: scheme)))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(SetupChromeColor.hairline(for: scheme), lineWidth: 1))
+    }
+}
+
+/// The macOS 26 floating sidebar's look on any release: an inset, rounded panel with the window
+/// buttons inside its top, glass where the system has it and a material where it doesn't.
+struct GlassShelfPanel: View {
+    @Binding var selection: ShelfRow
+    let rows: [ShelfRowItem]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // The window buttons sit in the panel's top band.
+            Color.clear.frame(height: 34)
+            ForEach(rows) { item in
+                ShelfRowButton(item: item, selected: selection == item.row, glass: true) { selection = item.row }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .frame(width: 196)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .modifier(GlassPanelBackground(cornerRadius: 18))
+        .padding(8)
+        .ignoresSafeArea(edges: .top)
+    }
+}
+
+struct GlassPanelBackground: ViewModifier {
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if #available(macOS 26.0, *) {
+            content.glassEffect(.regular, in: shape)
+        } else {
+            content.background(.regularMaterial, in: shape)
+        }
+    }
+}
+
+/// One shelf row: glyph, name, and the attention dot where a row needs the owner.
+struct ShelfRowButton: View {
+    let item: ShelfRowItem
+    let selected: Bool
+    var glass = false
+    let action: () -> Void
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: item.systemImage)
+                    .font(.system(size: 13))
+                    .frame(width: 18)
+                    .accessibilityHidden(true)
+                Text(item.title)
+                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                Spacer(minLength: 4)
+                if item.badge == .attention {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(SetupChromeColor.solOrange)
+                        .accessibilityHidden(true)
+                }
+            }
+            .foregroundStyle(glass ? Color.primary : SetupChromeColor.ink(for: scheme))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                if selected {
+                    RoundedRectangle(cornerRadius: glass ? 9 : 14, style: .continuous)
+                        .fill(glass ? Color.primary.opacity(0.10) : SetupChromeColor.orangeWash(for: scheme))
+                }
+            }
+            .contentShape(Rectangle())
+        }
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .accessibilityLabel("places, \(current?.title ?? "home")")
+        .accessibilityLabel(item.badge == .attention ? "\(item.title), \(UICopy.SETTINGS_TAB_ATTENTION_A11Y)" : item.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(AXID.Settings.Sidebar.row(item.row))
     }
 }
