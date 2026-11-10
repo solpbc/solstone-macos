@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import CoreGraphics
 import Foundation
 
 // The window, the menu bar panel and the native menu all draw the same five sources from
@@ -494,8 +495,6 @@ func deckGreeting(forHour hour: Int) -> String {
     }
 }
 
-/// Three columns with nothing selected, two while a pane is open.
-func deckColumns(paneOpen: Bool) -> Int { paneOpen ? 2 : 3 }
 
 /// The header line while paused. Nil when nothing is paused.
 func pausedTimeLeftLine(isPaused: Bool, remaining: TimeInterval?) -> String? {
@@ -601,4 +600,40 @@ func relativeWords(_ date: Date, now: Date, calendar: Calendar = .current) -> St
         return "yesterday"
     }
     return monthDayWords(date, now: now, calendar: calendar)
+}
+
+// MARK: - widths
+
+/// The window at three widths, like the devices: the iPad split with its shelf, the split with
+/// the shelf tucked behind a button, and one column that pushes like the iPhone.
+enum ShellLayout: Equatable, Sendable {
+    case full, narrow, phone
+
+    static let fullMinimum: CGFloat = 1120
+    static let narrowMinimum: CGFloat = 720
+
+    init(width: CGFloat) {
+        if width >= Self.fullMinimum { self = .full }
+        else if width >= Self.narrowMinimum { self = .narrow }
+        else { self = .phone }
+    }
+
+    /// The deck's columns depend on the width alone, never on what the pane shows.
+    var deckColumns: Int { self == .full ? 3 : 2 }
+    var paneWidth: CGFloat { self == .full ? 400 : 340 }
+}
+
+/// The status pane's per-source row: `so far` and `last taken in`, or `nothing yet` across both.
+struct SourceTotalColumns: Equatable, Sendable {
+    var soFar: String
+    var lastTakenIn: String?
+}
+
+func sourceTotalColumns(_ view: SourceTotals.View?, source: DeckSource, now: Date, calendar: Calendar = .current) -> SourceTotalColumns? {
+    guard let facts = sourceTotalFacts(view, source: source, now: now, calendar: calendar) else { return nil }
+    guard facts.lastTakenIn != nil || !facts.soFar.hasPrefix("nothing") else {
+        return SourceTotalColumns(soFar: facts.soFar, lastTakenIn: nil)
+    }
+    let total = facts.soFar.components(separatedBy: ", since ").first ?? facts.soFar
+    return SourceTotalColumns(soFar: total, lastTakenIn: facts.lastTakenIn)
 }

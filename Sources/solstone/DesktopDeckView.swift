@@ -175,45 +175,23 @@ struct JournalPillButton: View {
     }
 }
 
-/// `pause ▾` and its durations, or `resume` while paused. The durations are the 2.0.64 menu's.
-struct DeckPauseControl: View {
+/// The header's one button while paused. Pause itself lives only in the menu bar menu.
+struct DeckResumeButton: View {
     let appState: AppState
-    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        let controls = appState.deckPauseControls
-        if controls.pause {
-            Menu {
-                Button("15 minutes") { appState.pauseManager.pause(for: .minutes(15)) }
-                    .accessibilityIdentifier(AXID.Menubar.pauseFifteenMinutes)
-                Button("30 minutes") { appState.pauseManager.pause(for: .minutes(30)) }
-                    .accessibilityIdentifier(AXID.Menubar.pauseThirtyMinutes)
-                Button("1 hour") { appState.pauseManager.pause(for: .minutes(60)) }
-                    .accessibilityIdentifier(AXID.Menubar.pauseOneHour)
-                Button("until I resume") { appState.pauseManager.pause(for: .indefinite) }
-                    .accessibilityIdentifier(AXID.Menubar.pauseIndefinite)
-            } label: {
-                Text("pause")
-                    .font(.system(size: 12))
-            }
-            .menuStyle(.button)
-            .fixedSize()
-            .accessibilityLabel("pause")
-            .accessibilityIdentifier(AXID.Deck.pause)
-        } else if controls.resume {
-            Button {
-                appState.pauseManager.resume()
-            } label: {
-                Text("resume")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(SetupChromeColor.primaryLabel)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(SetupChromeColor.solOrange))
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier(AXID.Deck.resume)
+        Button {
+            appState.pauseManager.resume()
+        } label: {
+            Text("resume")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(SetupChromeColor.primaryLabel)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(SetupChromeColor.solOrange))
         }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(AXID.Deck.resume)
     }
 }
 

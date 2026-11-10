@@ -186,6 +186,9 @@ struct SettingsView: View {
     @Bindable var appState: AppState
     @Bindable var updateController: UpdateController
     @State var shelf: ShelfRow = .home
+    @State var shellLayout: ShellLayout = .full
+    @State var phonePushed = false
+    @State var shelfOpen = false
     @State var homePane: HomePane?
     @FocusState var focusedTile: DeckSource?
     @Environment(\.dismiss) private var dismiss
@@ -272,6 +275,7 @@ struct SettingsView: View {
         updateController: UpdateController,
         selectedTab: Tab = .home,
         initialHomePane: HomePane? = nil,
+        initialPhonePushed: Bool = false,
         initialStorageUsedMB: Int? = nil,
         initialLocalJournalMark: JournalMark? = nil,
         initialLocalOnDiskDiscoveryPath: String? = nil,
@@ -333,6 +337,7 @@ struct SettingsView: View {
         let route = ShellRoute(tab: selectedTab, appState: appState)
         self._shelf = State(initialValue: route.shelf)
         self._homePane = State(initialValue: initialHomePane ?? route.pane)
+        self._phonePushed = State(initialValue: initialPhonePushed)
         self._storageUsedMB = State(initialValue: initialStorageUsedMB)
         self._setupProbeSnapshot = State(initialValue: initialSetupProbeSnapshot)
         self._diagnosticsExpanded = State(initialValue: initialDiagnosticsExpanded)
@@ -380,8 +385,8 @@ struct SettingsView: View {
             }
         }
         .frame(
-            minWidth: appState.setupModel.phase != nil ? 880 : (shelf == .home && homePane != nil ? 1080 : 860),
-            minHeight: appState.setupModel.phase != nil ? 580 : 600
+            minWidth: appState.setupModel.phase != nil ? 880 : 390,
+            minHeight: appState.setupModel.phase != nil ? 580 : 560
         )
 
         .task {
@@ -500,7 +505,11 @@ struct SettingsView: View {
             journalMarkRederiveTask = nil
         }
         .onExitCommand {
-            if shelf == .home, homePane != nil {
+            if shelfOpen {
+                shelfOpen = false
+            } else if shelf == .home, shellLayout == .phone, phonePushed {
+                phonePushed = false
+            } else if shelf == .home, homePane != nil {
                 homePane = nil
             } else {
                 dismiss()
@@ -544,6 +553,7 @@ struct SettingsView: View {
             if pending.hasPrefix("source:"), let source = DeckSource(rawValue: String(pending.dropFirst("source:".count))) {
                 shelf = .home
                 homePane = .source(source)
+                phonePushed = true
             } else if let tab = SettingsView.Tab(legacyRoute: pending) {
                 navigate(tab)
             }

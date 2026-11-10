@@ -42,7 +42,7 @@ struct SetupSettingsWindowConfiguratorTests {
         #expect(window.styleMask == originalMask)
         #expect(window.titlebarAppearsTransparent == false)
         #expect(window.titleVisibility == .visible)
-        #expect(window.contentMinSize == NSSize(width: 860, height: 600))
+        #expect(window.contentMinSize == NSSize(width: 390, height: 560))
         let settingsContentRect = window.contentRect(forFrameRect: window.frame)
         #expect(settingsContentRect.size == NSSize(width: 900, height: 700))
     }

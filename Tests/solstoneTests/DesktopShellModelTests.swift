@@ -240,9 +240,30 @@ struct DesktopShellModelTests {
         #expect(Set([deckGreeting(forHour: 9), deckGreeting(forHour: 14), deckGreeting(forHour: 20)]).count == 3)
     }
 
-    @Test func columnsNarrowWhileAPaneIsOpen() {
-        #expect(deckColumns(paneOpen: false) == 3)
-        #expect(deckColumns(paneOpen: true) == 2)
+    @Test func widthsPickTheLayoutAndTheDeckNeverReflowsWithThePane() {
+        #expect(ShellLayout(width: 1400) == .full)
+        #expect(ShellLayout(width: ShellLayout.fullMinimum) == .full)
+        #expect(ShellLayout(width: ShellLayout.fullMinimum - 1) == .narrow)
+        #expect(ShellLayout(width: ShellLayout.narrowMinimum) == .narrow)
+        #expect(ShellLayout(width: ShellLayout.narrowMinimum - 1) == .phone)
+        #expect(ShellLayout.full.deckColumns == 3)
+        #expect(ShellLayout.narrow.deckColumns == 2)
+    }
+
+    @Test func menuStatusLineAddsTheLeadOnlyWhenCaughtUp() {
+        #expect(menuStatusLine(.connected) != JournalPill.connected.text)
+        #expect(menuStatusLine(.connected).hasPrefix(JournalPill.connected.text))
+        #expect(menuStatusLine(.offline(waiting: 12)) == JournalPill.offline(waiting: 12).text)
+    }
+
+    @Test func statusRowsCarryTheTotalAloneOrNothingYetAcross() throws {
+        let now = try #require(SourceTotals.parseInstant("2026-11-10T15:00:00Z"))
+        let row = try #require(sourceTotalColumns(view(audioSeconds: 7200, audioLast: "2026-11-10T12:00:00Z"), source: .audio, now: now, calendar: utc))
+        #expect(!row.soFar.contains("since"))
+        #expect(row.lastTakenIn != nil)
+        let empty = try #require(sourceTotalColumns(view(), source: .audio, now: now, calendar: utc))
+        #expect(empty.lastTakenIn == nil)
+        #expect(sourceTotalColumns(nil, source: .audio, now: now) == nil)
     }
 
     @Test func timeLeftRoundsUpAndIndefiniteDiffers() throws {

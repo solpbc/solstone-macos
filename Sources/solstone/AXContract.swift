@@ -21,11 +21,10 @@ enum AXContract {
         AXID.Deck.journalPill,
         AXID.Deck.addMore,
         AXID.Deck.paneClose,
+        AXID.Deck.paneBack,
+        AXID.Deck.shelfButton,
         AXID.Deck.statusPane,
         AXID.Deck.statusLead,
-        AXID.Glance.openSolstone,
-        AXID.Glance.notice,
-        AXID.Glance.line,
         AXID.Menubar.statusIconState,
         AXID.Menubar.statusIconOverlayState,
         AXID.Menubar.statusRowState,
@@ -359,7 +358,6 @@ enum AXContract {
             ids.append(AXID.Deck.tileState(source))
             ids.append(AXID.Deck.tileSwitch(source))
             ids.append(AXID.Deck.page(source))
-            ids.append(AXID.Glance.tile(source))
         }
 
         return ids

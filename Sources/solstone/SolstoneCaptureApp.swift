@@ -112,7 +112,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppPlacementRepairCoordinator.shared.signalReadiness()
         JournalMarkFont.register()
-        StatusItemSecondaryMenu.shared.install()
 
         notificationObservers.append(
             NotificationCenter.default.addObserver(
@@ -268,7 +267,7 @@ struct SolstoneCaptureApp: App {
     var body: some Scene {
         MenuBarExtra(isInserted: .constant(startup != nil)) {
             if let startup {
-                GlanceView(appState: startup.appState, updateController: startup.updateController)
+                ShellMenuContent(appState: startup.appState, updateController: startup.updateController)
             } else {
                 EmptyView()
             }
@@ -279,7 +278,7 @@ struct SolstoneCaptureApp: App {
                 EmptyView()
             }
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
 
         Window("solstone", id: "settings") {
             if let startup {

@@ -5,17 +5,20 @@ import AppKit
 import SolstoneCore
 import SwiftUI
 
-// The status pane is about the journal: the count, then the journal's own facts, then the
-// technical details. It never names a source or a source's state.
+// The status pane: the status and its line, one row per source with what it has taken in, then the
+// journal's own facts and the technical details. A source row never says the source's state or
+// fault: its tile beside the pane says that.
 extension SettingsView {
     var statusPane: some View {
         let pill = appState.journalPill
         return VStack(alignment: .leading, spacing: 16) {
-            paneHeader("status")
+            paneHeader("status", closable: false)
             statusLead(pill)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier(AXID.Deck.statusLead)
                 .accessibilityValue(pill.axToken)
+
+            StatusSourceRows()
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("your journal")
@@ -123,6 +126,48 @@ extension SettingsView {
                     .accessibilityIdentifier(AXID.Settings.Status.setupAboutState)
                     .accessibilityValue(aboutBlock)
                 Spacer(minLength: 8)
+            }
+        }
+    }
+}
+
+/// One row per source with `so far` and `last taken in`, the iPad's status rows. A row carries those
+/// two facts only: the tile beside it says the source's state. Absent when the record can't be read.
+struct StatusSourceRows: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let view = SourceTotalsInstall.currentStore()?.view()
+            if view != nil {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("sources")
+                        Spacer()
+                        Text("so far").frame(width: 92, alignment: .trailing)
+                        Text("last taken in").frame(width: 92, alignment: .trailing)
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    ForEach(DeckSource.available, id: \.self) { source in
+                        if let columns = sourceTotalColumns(view, source: source, now: context.date) {
+                            HStack {
+                                Image(systemName: source.systemImage)
+                                    .font(.system(size: 12))
+                                    .frame(width: 18)
+                                    .accessibilityHidden(true)
+                                Text(source.label)
+                                Spacer()
+                                if let last = columns.lastTakenIn {
+                                    Text(columns.soFar).frame(width: 92, alignment: .trailing)
+                                    Text(last).frame(width: 92, alignment: .trailing)
+                                } else {
+                                    Text(columns.soFar).foregroundStyle(.secondary)
+                                }
+                            }
+                            .font(.callout)
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                }
             }
         }
     }

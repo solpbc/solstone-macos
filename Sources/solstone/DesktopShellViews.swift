@@ -6,90 +6,116 @@ import SetupChrome
 import SolstoneCore
 import SwiftUI
 
-// The window's home: the deck on the warm ground, and one pane beside it.
+// The window's home: the deck on the warm ground, and the pane beside it, always open with
+// status by default. At phone width it becomes one column that pushes like the iPhone.
 extension SettingsView {
-    func deskHome(scrollProxy: ScrollViewProxy, drawsGround: Bool = true) -> some View {
-        HStack(spacing: 0) {
-            deckColumn(drawsGround: drawsGround)
-                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
-            if let pane = homePane {
+    @ViewBuilder
+    func deskHome(scrollProxy: ScrollViewProxy) -> some View {
+        let pane = homePane ?? .status
+        if shellLayout == .phone {
+            if phonePushed {
+                paneScroll(pane, scrollProxy: scrollProxy)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                deckColumn
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else {
+            HStack(spacing: 0) {
+                deckColumn
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
-                ScrollView {
-                    paneContent(pane, scrollProxy: scrollProxy)
-                        .padding(20)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-                .frame(width: 420)
-                .frame(maxHeight: .infinity)
-                .background(DeckPaneGround())
+                paneScroll(pane, scrollProxy: scrollProxy)
+                    .frame(width: shellLayout.paneWidth)
+                    .frame(maxHeight: .infinity)
             }
         }
     }
 
-    private func deckColumn(drawsGround: Bool) -> some View {
+    private func paneScroll(_ pane: HomePane, scrollProxy: ScrollViewProxy) -> some View {
+        ScrollView {
+            paneContent(pane, scrollProxy: scrollProxy)
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(DeckPaneGround())
+    }
+
+    /// Opens a pane: a source's page, status or add more. At phone width it pushes.
+    func openPane(_ pane: HomePane) {
+        homePane = pane == .status ? nil : pane
+        if shellLayout == .phone { phonePushed = true }
+    }
+
+    /// Back to status at the wider widths, back to the deck at phone width.
+    func closePane() {
+        if shellLayout == .phone {
+            phonePushed = false
+        } else {
+            homePane = nil
+        }
+    }
+
+    private var deckColumn: some View {
         let tiles = appState.deckTiles
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: deckColumns(paneOpen: homePane != nil))
-        return ZStack {
-            if drawsGround {
-                SunArcBackgroundView()
-                    .ignoresSafeArea()
-            }
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        DeckGreeting()
-                        DeckPausedLine(appState: appState)
-                    }
-                    Spacer(minLength: 8)
-                    DeckPauseControl(appState: appState)
-                    JournalPillButton(pill: appState.journalPill, selected: homePane == .status) {
-                        homePane = homePane == .status ? nil : .status
-                    }
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: shellLayout.deckColumns)
+        let pane = homePane ?? .status
+        let paused = appState.pauseManager.isPaused
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    DeckGreeting()
+                    DeckPausedLine(appState: appState)
                 }
-                ScrollView {
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
-                        ForEach(tiles, id: \.source) { tile in
-                            DeckTileView(
-                                tile: tile,
-                                selected: homePane == .source(tile.source),
-                                onOpen: { homePane = .source(tile.source) },
-                                onSwitch: { on in switchSource(tile.source, on: on) }
-                            )
-                            .focusable()
-                            .focused($focusedTile, equals: tile.source)
-                            .onKeyPress(.space) {
-                                if let on = tile.switchOn { switchSource(tile.source, on: !on) }
-                                return .handled
-                            }
-                            .onKeyPress(.return) {
-                                homePane = .source(tile.source)
-                                return .handled
-                            }
+                Spacer(minLength: 8)
+                if paused, appState.deckPauseControls.resume {
+                    DeckResumeButton(appState: appState)
+                }
+                JournalPillButton(pill: appState.journalPill, selected: shellLayout != .phone && pane == .status) {
+                    openPane(.status)
+                }
+            }
+            ScrollView {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+                    ForEach(tiles, id: \.source) { tile in
+                        DeckTileView(
+                            tile: tile,
+                            selected: shellLayout != .phone && pane == .source(tile.source),
+                            onOpen: { openPane(.source(tile.source)) },
+                            onSwitch: { on in switchSource(tile.source, on: on) }
+                        )
+                        .focusable()
+                        .focused($focusedTile, equals: tile.source)
+                        .onKeyPress(.space) {
+                            if let on = tile.switchOn { switchSource(tile.source, on: !on) }
+                            return .handled
                         }
-                        addMoreTile
+                        .onKeyPress(.return) {
+                            openPane(.source(tile.source))
+                            return .handled
+                        }
                     }
-                    .padding(2)
-                    .onMoveCommand { direction in moveTileFocus(direction, tiles: tiles) }
+                    AddMoreTile(selected: shellLayout != .phone && pane == .addMore) { openPane(.addMore) }
                 }
-                .scrollContentBackground(.hidden)
-                HStack {
-                    Spacer()
-                    DeckJournalPill(appState: appState) { navigate(.service) }
-                    Spacer()
-                }
+                .padding(2)
+                .onMoveCommand { direction in moveTileFocus(direction, tiles: tiles) }
             }
-            .padding(20)
+            .scrollContentBackground(.hidden)
+            HStack {
+                Spacer()
+                DeckJournalPill(appState: appState) { navigate(.service) }
+                Spacer()
+            }
         }
-    }
-
-    private var addMoreTile: some View {
-        AddMoreTile(selected: homePane == .addMore) { homePane = .addMore }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 20)
+        .padding(.top, shellLayout == .full ? 20 : 30)
     }
 
     /// The tile switch. Turning Obsidian on needs a folder, so that opens its page instead.
     func switchSource(_ source: DeckSource, on: Bool) {
         if source == .obsidian, on {
-            homePane = .source(.obsidian)
+            openPane(.source(.obsidian))
             return
         }
         appState.setDeckSource(source, on: on)
@@ -98,7 +124,7 @@ extension SettingsView {
     private func moveTileFocus(_ direction: MoveCommandDirection, tiles: [DeckTile]) {
         let order = tiles.map(\.source)
         guard !order.isEmpty else { return }
-        let columns = deckColumns(paneOpen: homePane != nil)
+        let columns = shellLayout.deckColumns
         let index = focusedTile.flatMap { order.firstIndex(of: $0) } ?? -1
         var next = index
         switch direction {
@@ -131,26 +157,44 @@ extension SettingsView {
         }
     }
 
-    func paneHeader(_ title: String, systemImage: String? = nil) -> some View {
-        HStack(spacing: 8) {
-            if let systemImage {
-                Image(systemName: systemImage).font(.system(size: 16)).accessibilityHidden(true)
+    /// A pane's title row. Status has no `×`, because the pane always shows it; at phone width
+    /// every pushed page carries `‹ home` above its title instead.
+    func paneHeader(_ title: String, systemImage: String? = nil, closable: Bool = true) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if shellLayout == .phone {
+                Button {
+                    closePane()
+                } label: {
+                    Text("‹ home")
+                        .font(.system(size: 13))
+                        .foregroundStyle(SetupChromeColor.solOrange)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("home")
+                .accessibilityIdentifier(AXID.Deck.paneBack)
             }
-            Text(title)
-                .font(DeckStyle.name(20))
-                .accessibilityAddTraits(.isHeader)
-            Spacer()
-            Button {
-                homePane = nil
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(6)
-                    .contentShape(Rectangle())
+            HStack(spacing: 8) {
+                if let systemImage {
+                    Image(systemName: systemImage).font(.system(size: 16)).accessibilityHidden(true)
+                }
+                Text(title)
+                    .font(DeckStyle.name(20))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                if closable, shellLayout != .phone {
+                    Button {
+                        closePane()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(6)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("close")
+                    .accessibilityIdentifier(AXID.Deck.paneClose)
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("close")
-            .accessibilityIdentifier(AXID.Deck.paneClose)
         }
     }
 
@@ -162,7 +206,7 @@ extension SettingsView {
                 .foregroundStyle(.secondary)
             ForEach(appState.deckTiles, id: \.source) { tile in
                 Button {
-                    homePane = .source(tile.source)
+                    openPane(.source(tile.source))
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: tile.source.systemImage).frame(width: 18).accessibilityHidden(true)

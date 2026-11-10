@@ -18,16 +18,10 @@ enum AXID {
         static let journalPill = "settings.deck.journal"
         static let addMore = "settings.deck.addMore"
         static let paneClose = "settings.deck.pane.close"
+        static let paneBack = "settings.deck.pane.back"
+        static let shelfButton = "settings.deck.shelf"
         static let statusPane = "settings.deck.status"
         static let statusLead = "settings.deck.status.lead"
-    }
-
-    enum Glance {
-        static func tile(_ source: DeckSource) -> String { "menubar.glance.tile.\(source.rawValue)" }
-        static func tileSwitch(_ source: DeckSource) -> String { "menubar.glance.tile.\(source.rawValue).switch" }
-        static let openSolstone = "menubar.glance.openSolstone"
-        static let notice = "menubar.glance.notice"
-        static let line = "menubar.glance.line"
     }
 
     enum Menubar {

@@ -56,7 +56,7 @@ enum SetupSettingsWindowConfigurator {
                 window.titleVisibility = .visible
                 memory.appliedInitialSetupSize = false
             }
-            window.contentMinSize = NSSize(width: 860, height: 600)
+            window.contentMinSize = NSSize(width: 390, height: 560)
             if groundChrome {
                 // The ground runs to the top edge: the title bar takes no band of its own, and
                 // the title stays for the Window menu and app switchers only.

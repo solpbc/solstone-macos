@@ -139,11 +139,20 @@ struct DesktopShellSnapshotTests {
         }
     }
 
-    @Test(arguments: Scene.allCases)
-    func glance(_ scene: Scene) throws {
+    @Test(arguments: [
+        ("full", CGFloat(1240), false, HomePane?.none),
+        ("narrow", CGFloat(900), false, HomePane?.none),
+        ("phone-deck", CGFloat(420), false, HomePane?.none),
+        ("phone-page", CGFloat(420), true, HomePane?.some(.source(.screen))),
+        ("phone-status", CGFloat(420), true, HomePane?.none),
+    ])
+    func width(_ name: String, _ width: CGFloat, _ pushed: Bool, _ pane: HomePane?) throws {
         for dark in [false, true] {
-            let view = GlanceView(appState: state(scene), updateController: updateController())
-            try render(view, size: CGSize(width: 340, height: 360), to: "glance-\(scene.rawValue)", dark: dark)
+            let view = SettingsView(
+                appState: state(.good), updateController: updateController(), selectedTab: .home,
+                initialHomePane: pane, initialPhonePushed: pushed, initialStorageUsedMB: 42
+            )
+            try render(view, size: CGSize(width: width, height: 760), to: "width-\(name)", dark: dark)
         }
     }
 

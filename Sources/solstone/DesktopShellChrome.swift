@@ -10,27 +10,72 @@ import UpdateKit
 extension SettingsView {
     /// The ground reaches the top edge, and the shelf floats on it as an inset glass panel with the
     /// window buttons inside its top: the look macOS 26 gave its sidebar, drawn by the app because
-    /// later macOS draws the system sidebar edge to edge.
+    /// later macOS draws the system sidebar edge to edge. Narrower, the shelf tucks behind a button
+    /// beside the window buttons and floats over the content when opened.
     var shellChromeContent: some View {
-        ZStack(alignment: .topLeading) {
-            SunArcBackgroundView().ignoresSafeArea()
-            HStack(alignment: .top, spacing: 0) {
-                GlassShelfPanel(selection: $shelf, rows: shelfRowItems)
-                detailColumn(drawsGround: false)
+        GeometryReader { geometry in
+            let layout = ShellLayout(width: geometry.size.width)
+            ZStack(alignment: .topLeading) {
+                SunArcBackgroundView().ignoresSafeArea()
+                if layout == .full {
+                    HStack(alignment: .top, spacing: 0) {
+                        GlassShelfPanel(selection: shelfSelection, rows: shelfRowItems)
+                        detailColumn
+                    }
+                } else {
+                    detailColumn
+                    if shelfOpen {
+                        Color.black.opacity(0.001)
+                            .ignoresSafeArea()
+                            .onTapGesture { shelfOpen = false }
+                        GlassShelfPanel(selection: shelfSelection, rows: shelfRowItems, floating: true)
+                            .frame(maxHeight: 300, alignment: .top)
+                            .shadow(color: .black.opacity(0.18), radius: 18, y: 6)
+                            .transition(.opacity)
+                    }
+                    ShelfToggleButton(isOpen: $shelfOpen)
+                        // On the window buttons' line, just past them.
+                        .padding(.leading, 82)
+                        .padding(.top, -22)
+                }
+            }
+            .onAppear { shellLayout = layout }
+            .onChange(of: layout) { _, newValue in
+                shellLayout = newValue
+                shelfOpen = false
+                if newValue != .phone { phonePushed = false }
             }
         }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .toolbar(removing: .title)
     }
 
+    /// Choosing a shelf row also closes the floating shelf and returns a pushed page to its deck.
+    var shelfSelection: Binding<ShelfRow> {
+        Binding(
+            get: { shelf },
+            set: { row in
+                shelf = row
+                shelfOpen = false
+                phonePushed = false
+            }
+        )
+    }
+
     var shelfRowItems: [ShelfRowItem] {
         [
             ShelfRowItem(row: .home, title: "home", systemImage: "house", badge: .blank),
+            // A notice that belongs to no tile badges the row it belongs to: an unknown journal on
+            // your journal, a shortcut needing repair on this mac, an update on updates.
             ShelfRowItem(
                 row: .service, title: "your journal", systemImage: "book.closed",
-                badge: appState.serviceIsDone ? .done : (appState.serviceNeedsAttention ? .attention : .blank)
+                badge: appState.serviceNeedsAttention || !appState.tunnelLifecycleOwner.unknownJournals.notices.isEmpty
+                    ? .attention : (appState.serviceIsDone ? .done : .blank)
             ),
-            ShelfRowItem(row: .observer, title: "this mac", systemImage: "laptopcomputer", badge: .blank),
+            ShelfRowItem(
+                row: .observer, title: "this mac", systemImage: "laptopcomputer",
+                badge: appState.shortcutController.isUnavailableOrConflict ? .attention : .blank
+            ),
             ShelfRowItem(
                 row: .updates, title: UpdatesCopy(provider: .solstone).tabTitle, systemImage: "arrow.down.circle",
                 badge: updatesSidebarBadge(for: updateController.durableUpdateStatus)
@@ -39,11 +84,11 @@ extension SettingsView {
         ]
     }
 
-    /// Home is the deck; every other row is its body, on the sheet when the ground is the window's.
-    func detailColumn(drawsGround: Bool) -> some View {
+    /// Home is the deck and its pane; every other row is its body, on the sheet over the ground.
+    var detailColumn: some View {
         ScrollViewReader { proxy in
             if shelf == .home {
-                deskHome(scrollProxy: proxy, drawsGround: drawsGround)
+                deskHome(scrollProxy: proxy)
             } else {
                 let body = ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
@@ -59,14 +104,12 @@ extension SettingsView {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
                 .modifier(SettingsPaneScrollEdgeModifier())
-                if drawsGround {
-                    body
-                } else {
-                    body
-                        .background { DeckPaneGround().clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous)) }
-                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(.quaternary, lineWidth: 1))
-                        .padding(18)
-                }
+                body
+                    .background { DeckPaneGround().clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous)) }
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(.quaternary, lineWidth: 1))
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 18)
+                    .padding(.top, shellLayout == .full ? 18 : 30)
             }
         }
     }
@@ -85,11 +128,13 @@ struct ShelfRowItem: Identifiable {
 struct GlassShelfPanel: View {
     @Binding var selection: ShelfRow
     let rows: [ShelfRowItem]
+    /// Opened from the shelf button, over the content, below the window buttons.
+    var floating = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // The window buttons sit in the panel's top band.
-            Color.clear.frame(height: 34)
+            // The window buttons sit in the panel's top band; floating, the button sits there.
+            Color.clear.frame(height: floating ? 30 : 34)
             ForEach(rows) { item in
                 ShelfRowButton(item: item, selected: selection == item.row) { selection = item.row }
             }
@@ -175,5 +220,26 @@ struct ShelfRowButton: View {
         case .done: return "\(item.title), \(item.row == .updates ? UICopy.SETTINGS_TAB_UPDATES_DONE_A11Y : UICopy.SETTINGS_TAB_DONE_A11Y)"
         case .blank: return item.title
         }
+    }
+}
+
+/// The shelf's button beside the window buttons, at the narrower widths.
+struct ShelfToggleButton: View {
+    @Binding var isOpen: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.15)) { isOpen.toggle() }
+        } label: {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .padding(5)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("sidebar")
+        .accessibilityValue(isOpen ? "open" : "closed")
+        .accessibilityIdentifier(AXID.Deck.shelfButton)
     }
 }
