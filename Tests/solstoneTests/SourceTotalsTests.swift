@@ -147,12 +147,15 @@ struct SourceTotalsTests {
         #expect(store.absorbFinishedTerminal(root: root) == .applied)
         let firstLast = store.view()?.terminalLast
         #expect(store.view()?.terminalSeconds == 10)
+        store.setClock(.init(now: moment("2026-03-03T18:00:00Z"), timeZone: utc))
         try finishedSegment(root: root, name: "120006_10")
         #expect(store.absorbFinishedTerminal(root: root) == .applied)
         #expect(store.view()?.terminalSeconds == 16)
+        #expect(store.view()?.terminalLast == "2026-03-03T18:00:00.000Z")
         #expect(store.view()?.terminalLast != firstLast)
+        store.setClock(.init(now: moment("2026-03-03T19:00:00Z"), timeZone: utc))
         #expect(store.absorbFinishedTerminal(root: root) == .unchanged)
-        #expect(store.view()?.terminalLast != nil)
+        #expect(store.view()?.terminalLast == "2026-03-03T18:00:00.000Z")
 
         let adjacent = try makeTempDirectory("terminal-adjacent")
         let adjacentStore = try totals()
@@ -590,7 +593,7 @@ struct ObsidianCounterTests {
         #expect(store.view()?.obsidianNotes.contains(moved) == true)
     }
 
-    @Test func aRenameSeenBeforeTheOldPathWasRecordedAddsNothing() async throws {
+    @Test func aNoteSeenAndThenRenamedCountsOnce() async throws {
         let fixture = try NoteFixture()
         let store = try totals()
         let engine = fixture.engine(store)
@@ -604,8 +607,11 @@ struct ObsidianCounterTests {
         await engine.closeDueWindows(now: moment("2026-11-08T10:00:00-07:00"))
         let lines = try await fixture.outboxLines(engine)
         #expect(lines.contains { ($0["change"] as? String) == "renamed" })
-        #expect(store.view()?.obsidianTotal == 0)
-        #expect(store.view()?.obsidianNotes.contains(ObsidianWire.sha256Hex(Data("b.md".utf8))) == true)
+        #expect(store.view()?.obsidianTotal == 1)
+        let old = ObsidianWire.sha256Hex(Data("a.md".utf8))
+        let moved = ObsidianWire.sha256Hex(Data("b.md".utf8))
+        #expect(store.view()?.obsidianNotes.contains(old) == false)
+        #expect(store.view()?.obsidianNotes.contains(moved) == true)
     }
 
     @Test func aFailedSaveLeavesTheWindowPendingAndAnUnreadableFileDoesNot() async throws {
@@ -647,6 +653,7 @@ struct ObsidianCounterTests {
         #expect(try await retry.outboxLines(retryEngine).count == 1)
 
         let blind = try NoteFixture()
+        try FileManager.default.createDirectory(at: blind.store, withIntermediateDirectories: true)
         try Data("nope".utf8).write(to: blind.store.appendingPathComponent(SourceTotals.fileName))
         let blindStore = SourceTotals(directory: blind.store, clock: .init(now: moment("2026-03-03T17:00:00Z"), timeZone: utc))
         let blindEngine = blind.engine(blindStore)
@@ -842,7 +849,10 @@ struct BrowserCounterTests {
     }
 
     private func authority(_ store: SourceTotals) throws -> BrowserIntakeAuthority {
-        let root = try makeTempDirectory("browser-counter")
+        // The intake store refuses a spool reached through a symlink. /var is one.
+        let root = URL(fileURLWithPath: "/private/var/tmp", isDirectory: true)
+            .appendingPathComponent("browser-counter-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let projection = try BrowserContractProjection(rootURL: vendorURL)
         let spool = try BrowserIntakeStore(rootURL: root, projection: projection)
         let authority = BrowserIntakeAuthority(
