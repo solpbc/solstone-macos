@@ -407,12 +407,7 @@ public actor SyncService {
                             options: []
                         )) ?? []
                         let isSidecarOnly = entries.allSatisfy { url in
-                            let name = url.lastPathComponent
-                            return name == ".DS_Store" ||
-                                   Self.isStagingAckTmp(name: name, segment: segment) ||
-                                   Self.isRemixerTemp(name: name) ||
-                                   name == "\(segment)_meta.json" ||
-                                   name == StorageManager.captureZoneFileName
+                            Self.isSegmentBookkeeping(name: url.lastPathComponent, segment: segment)
                         }
                         if isSidecarOnly {
                             Logger.upload.info("Segment \(segment, privacy: .public) had no upload media and only sidecars")
@@ -1330,6 +1325,17 @@ public actor SyncService {
         case segmentRemoved(unreadableSourceIDs: [String])
     }
 
+    /// The app's own files beside a segment's media: never sent, and never a reason to keep the
+    /// folder once the journal has what it holds. A new file of this kind is added here.
+    private static func isSegmentBookkeeping(name: String, segment: String) -> Bool {
+        name == ".DS_Store" ||
+            name == "\(segment)_meta.json" ||
+            name == StorageManager.captureZoneFileName ||
+            name == IntakeIntervalLog.fileName ||
+            isStagingAckTmp(name: name, segment: segment) ||
+            isRemixerTemp(name: name)
+    }
+
     private static func isStagingAckTmp(name: String, segment: String) -> Bool {
         let prefix = ".\(segment)_ingest_ack.json."
         let suffix = ".tmp"
@@ -1501,12 +1507,8 @@ public actor SyncService {
                     continue
                 }
                 if IngestAcknowledgment.isUploadMediaName(name, segment: segment) ||
-                   name == "\(segment)_meta.json" ||
-                   name == StorageManager.captureZoneFileName ||
                    safeUnreadableAudioNames.contains(name) ||
-                   name == ".DS_Store" ||
-                   Self.isStagingAckTmp(name: name, segment: segment) ||
-                   Self.isRemixerTemp(name: name) {
+                   Self.isSegmentBookkeeping(name: name, segment: segment) {
                     nonAckConfirmedURLs.append(entry)
                 } else {
                     keepers.append(entry)
@@ -1624,13 +1626,9 @@ public actor SyncService {
                 if name == ackFileName {
                     continue
                 }
-                if name == "\(segment)_meta.json" ||
-                   name == StorageManager.captureZoneFileName ||
-                   name.hasSuffix("_protected_video.jsonl") ||
+                if name.hasSuffix("_protected_video.jsonl") ||
                    safeUnreadableAudioNames.contains(name) ||
-                   name == ".DS_Store" ||
-                   Self.isStagingAckTmp(name: name, segment: segment) ||
-                   Self.isRemixerTemp(name: name) {
+                   Self.isSegmentBookkeeping(name: name, segment: segment) {
                     nonAckConfirmedURLs.append(entry)
                 } else {
                     keepers.append(entry)
@@ -1736,12 +1734,8 @@ public actor SyncService {
                     ackURL = entry
                 } else if IngestAcknowledgment.isUploadMediaName(name, segment: segment) {
                     uploadMediaURLs.append(entry)
-                } else if name == "\(segment)_meta.json" ||
-                            name == StorageManager.captureZoneFileName ||
-                            name == ".DS_Store" ||
-                            safeUnreadableAudioNames.contains(name) ||
-                            Self.isStagingAckTmp(name: name, segment: segment) ||
-                            Self.isRemixerTemp(name: name) {
+                } else if safeUnreadableAudioNames.contains(name) ||
+                            Self.isSegmentBookkeeping(name: name, segment: segment) {
                     nonUploadConfirmedURLs.append(entry)
                 } else {
                     keepers.append(entry)

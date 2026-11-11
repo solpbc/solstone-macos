@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- a recent update left a small folder, with nothing you shared in it, on your mac for each segment your journal already had. it's now removed once your journal has the segment, and the ones already left behind are removed on their own. thanks @dvanduzer.
 - the ☼ that terminal shows in tmux's status bar no longer brings another `_` with it each time terminal resumes or the app opens, which pushed session names out of view. the next start clears the ones already there. tmux session and window names with accented letters or symbols now also come into your journal as they are, instead of with `_` in their place. thanks @dvanduzer.
 - if solstone for tmux moved into terminal, terminal now keeps finding tmux after Homebrew upgrades it. thanks @dvanduzer.
 - the menu no longer shows "terminal history: continued" after solstone for tmux has moved in. thanks @dvanduzer.

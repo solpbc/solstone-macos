@@ -53,6 +53,7 @@ struct IncompleteSegmentFailureTests {
         let metaOnly = try folder("051010.2.failed", files: ["051010_meta.json", "capture_zone.json", ".DS_Store"])
         let withAudio = try folder("051020.failed", files: ["051020_meta.json", "051020_audio_system.m4a"])
         let withReceipt = try folder("051030_300.failed", files: ["051030_300_ingest_ack.json", "051030_300_audio_mic.m4a"])
+        let receiptAndIntervals = try folder("051035_300.failed", files: ["051035_300_ingest_ack.json", "intake-intervals.json"])
         let withSubfolder = try folder("051040.failed", files: [])
         try fm.createDirectory(at: withSubfolder.appendingPathComponent("nested"), withIntermediateDirectories: true)
         let recent = try folder("051050.failed", files: [], secondsAgo: 5)
@@ -64,6 +65,7 @@ struct IncompleteSegmentFailureTests {
         #expect(!fm.fileExists(atPath: metaOnly.path))
         #expect(fm.fileExists(atPath: withAudio.path))
         #expect(fm.fileExists(atPath: withReceipt.path))
+        #expect(!fm.fileExists(atPath: receiptAndIntervals.path))
         #expect(fm.fileExists(atPath: withSubfolder.path))
         #expect(fm.fileExists(atPath: recent.path))
     }

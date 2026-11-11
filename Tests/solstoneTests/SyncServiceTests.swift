@@ -86,6 +86,33 @@ struct SyncServiceTests {
         #expect(FileManager.default.fileExists(atPath: seg.url.deletingLastPathComponent().path))
     }
 
+    @Test func successfulUploadRemovesTheIntervalsFileWithTheFolder() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-immediate-delete-intervals")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        let filename = "120000_300_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        try Data("{}".utf8).write(to: seg.url.appendingPathComponent("120000_300_meta.json"))
+        try Data(#"{"audio":{},"screen":{"1":[[0,300]]}}"#.utf8).write(to: seg.url.appendingPathComponent(IntakeIntervalLog.fileName))
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 200, body: uploadResponseJSON(filename: filename, sha: sha, size: 5))
+
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24679") })
+        await configure(service)
+        let listen = Task {
+            for await event in await service.progressStream { progress.append(event) }
+        }
+        await service.sync()
+        await progress.waitForSyncComplete()
+        listen.cancel()
+
+        #expect(progress.containsUploadSucceeded)
+        let dayDir = seg.url.deletingLastPathComponent()
+        #expect(!FileManager.default.fileExists(atPath: seg.url.path))
+        #expect(!FileManager.default.fileExists(atPath: dayDir.appendingPathComponent("120000_300.failed").path))
+        #expect(await service.discover().preservedFailureFolders == 0)
+    }
+
     @Test func successfulUploadWithKeepersRenamesToFailedAndRemovesOnlyConfirmedMedia() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-immediate-delete-keepers")
@@ -2988,7 +3015,8 @@ struct SyncServiceTests {
         let segment = "120000_300"
         let segmentURL = try writeSegmentFiles(root: nest.root, day: "2026-09-14", segment: segment, files: [
             "\(segment)_meta.json": Data("{}".utf8),
-            StorageManager.captureZoneFileName: Data("{}".utf8)
+            StorageManager.captureZoneFileName: Data("{}".utf8),
+            IntakeIntervalLog.fileName: Data("{}".utf8)
         ])
         let service = makeService(root: nest.root, resolver: HomeBaseURLResolver { .held })
         await configure(service)

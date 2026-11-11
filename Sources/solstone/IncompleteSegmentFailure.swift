@@ -41,11 +41,13 @@ public func markIncompleteSegmentAsFailed(_ url: URL) async -> Bool {
 }
 
 /// True when a set-aside folder holds nothing but bookkeeping: no file, or only `.DS_Store`, a
-/// `*_meta.json` and the capture zone. Such a folder has no recording to deliver or keep.
-/// Anything else, a subfolder included, counts as a recording. A folder that can't be read is kept.
+/// `*_meta.json`, the capture zone, the intervals file and an upload receipt. Such a folder has no
+/// recording to deliver or keep. Anything else, a subfolder included, counts as a recording.
+/// A folder that can't be read is kept.
 func setAsideFolderHoldsNoRecording(_ url: URL) -> Bool {
     guard let names = try? FileManager.default.contentsOfDirectory(atPath: url.path) else { return false }
     return names.allSatisfy { name in
-        name == ".DS_Store" || name == StorageManager.captureZoneFileName || name.hasSuffix("_meta.json")
+        name == ".DS_Store" || name == StorageManager.captureZoneFileName || name == IntakeIntervalLog.fileName ||
+            name.hasSuffix("_meta.json") || name.hasSuffix("_ingest_ack.json")
     }
 }
