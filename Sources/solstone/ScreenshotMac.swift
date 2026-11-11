@@ -177,9 +177,19 @@ struct ScreenshotLiveTransport: ScreenshotTransport {
         let staging = FileManager.default.temporaryDirectory.appendingPathComponent("solstone-screenshots-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-            defer { try? FileManager.default.removeItem(at: staging) }
-            let named = staging.appendingPathComponent(upload.fileName)
-            try FileManager.default.copyItem(at: URL(fileURLWithPath: upload.sourcePath), to: named)
+        } catch {
+            return .retry
+        }
+        defer { try? FileManager.default.removeItem(at: staging) }
+        let named = staging.appendingPathComponent(upload.fileName)
+        let scale = await ScreenshotPrepare.displayBackingScale()
+        let preparedFile = ScreenshotPrepare.prepare(
+            source: URL(fileURLWithPath: upload.sourcePath),
+            destination: named,
+            pdfScale: scale
+        )
+        if let answer = ScreenshotPrepare.answer(for: preparedFile) { return answer }
+        do {
             let body = staging.appendingPathComponent("body")
             let prepared = try UploadClient().prepareUpload(
                 serverURL: serverURL,

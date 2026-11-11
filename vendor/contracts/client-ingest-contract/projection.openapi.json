@@ -27,6 +27,7 @@
               "backup_operation_failed",
               "backup_unavailable",
               "browser_record_invalid",
+              "calendar_note_invalid",
               "config_busy",
               "content_conflict",
               "convey_busy",
@@ -82,6 +83,8 @@
               "multipart_malformed",
               "multipart_part_too_large",
               "capture_restart_failed",
+              "obsidian_note_ahead",
+              "obsidian_note_invalid",
               "operation_erased",
               "operation_in_progress",
               "operation_no_longer_available",
@@ -133,7 +136,9 @@
               "talent_run_pending",
               "tos_changed",
               "unknown_service",
-              "voice_unavailable"
+              "voice_unavailable",
+              "screenshot_ahead",
+              "screenshot_invalid"
             ],
             "type": "string"
           }
@@ -177,6 +182,41 @@
           "size",
           "sha256",
           "disposition"
+        ],
+        "type": "object"
+      },
+      "ObsidianVaultsEnvelope": {
+        "additionalProperties": true,
+        "properties": {
+          "vaults": {
+            "items": {
+              "additionalProperties": true,
+              "properties": {
+                "device": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "last_synced_at": {
+                  "type": "string"
+                },
+                "vault": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "vault",
+                "device",
+                "last_synced_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "vaults"
         ],
         "type": "object"
       },
@@ -229,9 +269,6 @@
           "key": {
             "type": "string"
           },
-          "observed": {
-            "type": "boolean"
-          },
           "original_key": {
             "type": "string"
           },
@@ -244,7 +281,6 @@
         },
         "required": [
           "key",
-          "observed",
           "files"
         ],
         "type": "object"
@@ -275,9 +311,9 @@
     }
   },
   "info": {
-    "description": "Generated from client_ingest_authority.json. Covers only the four Rust-served linked-device devices/ingest operations.",
+    "description": "Generated from client_ingest_authority.json. Covers only the three Rust-served linked-device devices/ingest operations: upload, segment listing and the Obsidian vault list.",
     "title": "Linked-device v3 ingest client contract",
-    "version": "14.0.0",
+    "version": "15.3.0",
     "x-generated": true,
     "x-generated-by": "solstone-core-repository-contracts"
   },
@@ -444,7 +480,10 @@
               "segment_invalid",
               "multipart_malformed",
               "multipart_part_too_large",
-              "browser_record_invalid"
+              "browser_record_invalid",
+              "calendar_note_invalid",
+              "obsidian_note_invalid",
+              "screenshot_invalid"
             ]
           },
           "403": {
@@ -468,12 +507,14 @@
                 }
               }
             },
-            "description": "Held sidecar bytes conflict, or the device's stream binding is refused.",
+            "description": "Held sidecar bytes conflict, the device's stream binding is refused, or a note window or screenshot is later than the journal's today (held on the device and sent again later).",
             "x-reason-codes": [
               "content_conflict",
               "pairing_identity_unavailable",
               "foreign_stream_binding",
-              "malformed_evidence_row"
+              "malformed_evidence_row",
+              "obsidian_note_ahead",
+              "screenshot_ahead"
             ]
           },
           "413": {
@@ -512,156 +553,214 @@
             "x-reason-codes": [
               "segment_removed"
             ]
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "The journal can't take this upload right now (body `status: retryable`). Hold it and send it again later."
           }
         },
         "summary": "Upload one capture segment from a linked device",
         "tags": [
           "client"
-        ]
-      }
-    },
-    "/app/devices/ingest/manifest": {
-      "get": {
-        "deprecated": true,
-        "description": "Deprecated. Return days with uploaded linked-device segment history. A device proves custody from the upload response's `file_descriptors` and reads `segments/{day}` only when its own record of an upload is missing; this operation keeps answering until devices in the field no longer call it.",
-        "operationId": "client.ingestManifest",
-        "parameters": [
-          {
-            "description": "Linked-device ingest protocol version. Must be 3. Values less than 3 are rejected with HTTP 426 Upgrade Required; values greater than 3 are rejected as unsupported. Identity is the linked-device mTLS certificate, not a request header.",
-            "in": "header",
-            "name": "X-Solstone-Protocol-Version",
-            "required": true,
-            "schema": {
-              "const": 3,
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Optional device-chosen sub-stream discriminator.",
-            "in": "query",
-            "name": "source",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "example": {
-                  "days": {
-                    "20260815": {
-                      "segments": 3
-                    }
+        "x-sources": {
+          "screenshots": {
+            "accepted_types": [
+              {
+                "extension": "png",
+                "media_type": "image/png"
+              },
+              {
+                "extension": "jpg",
+                "media_type": "image/jpeg"
+              },
+              {
+                "extension": "jpeg",
+                "media_type": "image/jpeg"
+              },
+              {
+                "extension": "webp",
+                "media_type": "image/webp"
+              }
+            ],
+            "accepted_types_rule": "The bytes must be the type the extension names. The journal accepts png, jpg, jpeg and webp, and refuses HEIC, HEIF, TIFF, GIF, PDF and every other type because it can't decode them. Send an accepted type exactly as the platform saved it. A type outside those is converted to PNG on the device, keeping its metadata, and sent as png.",
+            "answers": [
+              {
+                "client_action": "Mark it delivered and never send it again. It counts toward the in-your-journal total.",
+                "http_status": 200,
+                "meaning": "Kept, at the requested segment.",
+                "status": "ok"
+              },
+              {
+                "client_action": "As `ok`.",
+                "http_status": 200,
+                "meaning": "Kept, at a nearby segment because the requested one was taken (`segment` names it).",
+                "status": "collision"
+              },
+              {
+                "client_action": "Mark it delivered and never send it again. It counts toward the in-your-journal total.",
+                "http_status": 200,
+                "meaning": "Already in this journal, from this device or another, or received before and since deleted by the owner.",
+                "status": "duplicate"
+              },
+              {
+                "client_action": "Don't send it again. It reaches its final state on the device: counted, with the string that says it couldn't come in.",
+                "http_status": 400,
+                "meaning": "The upload breaks this contract, or the image can't be read: wrong name or type, bytes that aren't the named type, over the pixel limit, missing or inconsistent `meta.screenshot`.",
+                "reason_code": "screenshot_invalid"
+              },
+              {
+                "client_action": "As `screenshot_invalid`.",
+                "http_status": 400,
+                "meaning": "Over 64 MiB.",
+                "reason_code": "multipart_part_too_large"
+              },
+              {
+                "client_action": "Hold it and send it again once the journal's day has reached it.",
+                "http_status": 409,
+                "meaning": "Its day is later than the journal's today.",
+                "reason_code": "screenshot_ahead"
+              },
+              {
+                "client_action": "Hold it and send it again later, with backoff.",
+                "http_status": 503,
+                "meaning": "The journal can't take it right now, including when it can't read what this source has received.",
+                "status": "retryable"
+              },
+              {
+                "client_action": "Hold it and send it again later, with backoff. A resend of the same bytes is never kept twice.",
+                "http_status": 500,
+                "meaning": "The journal couldn't finish the write.",
+                "status": "failed"
+              },
+              {
+                "client_action": "As for every other source: hold it and follow the pairing contract.",
+                "http_status": "403, 409 (stream binding), 426",
+                "meaning": "The linked-device and protocol answers every upload shares."
+              }
+            ],
+            "capability": "screenshots",
+            "capability_rule": "Send only to a journal whose `GET /api/system/status` lists `screenshots` in `capabilities`. Below that, hold every screenshot on the device and send it once the paired journal lists it.",
+            "capture_time": "`meta.screenshot.captured_at` is the moment it was taken, RFC 3339 with the UTC offset in force where it was taken (`Z` means `+00:00`). It comes from the platform's own record of the screenshot or from the file (its embedded date or modification time), never from a model, and `meta.screenshot.taken_from` says which (`platform` or `file`). The envelope's `day` (`YYYYMMDD`) and `segment` (`HHMMSS_1`) are that moment's date and clock time in its own offset, so the screenshot lands at the minute it was taken.",
+            "deleted": "The journal remembers every screenshot this source has received, and that memory outlives a delete. A screenshot the owner deleted from the journal is answered `duplicate` when a device sends it again, from any device and after any re-scan. The owner bringing the same file in through the Import page or a share is a re-import and arrives as new data; that path is not this source.",
+            "description": "A screenshot the owner took, sent by the solstone app on the device that holds it. One upload carries one screenshot. It lands at its capture second in the sending device's screenshots stream, is made searchable the way a screen is, and is kept once across the owner's devices.",
+            "device": "The device is the linked device that sends the upload, by its mTLS identity; no field names it. The screenshot lands in that device's screenshots stream and is labelled with the device's name as the journal shows it. A screenshot already received from another device keeps the label of the device that sent it first.",
+            "files": "Exactly one file per upload, named `screenshot_screen.<extension>` with an accepted extension in lowercase. No other file goes with it, and that name is refused under any other source.",
+            "golden": [
+              {
+                "day": "20261103",
+                "files": [
+                  {
+                    "submitted": "screenshot_screen.png"
+                  }
+                ],
+                "meta": {
+                  "screenshot": {
+                    "captured_at": "2026-11-03T14:32:07-07:00",
+                    "taken_from": "platform",
+                    "v": 1
                   }
                 },
-                "schema": {
+                "segment": "143207_1",
+                "source": "screenshots"
+              },
+              {
+                "day": "20261104",
+                "files": [
+                  {
+                    "submitted": "screenshot_screen.jpg"
+                  }
+                ],
+                "meta": {
+                  "screenshot": {
+                    "captured_at": "2026-11-04T09:15:02+01:00",
+                    "taken_from": "file",
+                    "v": 1
+                  }
+                },
+                "segment": "091502_1",
+                "source": "screenshots"
+              },
+              {
+                "day": "20261105",
+                "files": [
+                  {
+                    "submitted": "screenshot_screen.webp"
+                  }
+                ],
+                "meta": {
+                  "screenshot": {
+                    "captured_at": "2026-11-05T00:00:00Z",
+                    "taken_from": "platform",
+                    "v": 1
+                  }
+                },
+                "segment": "000000_1",
+                "source": "screenshots"
+              }
+            ],
+            "identity": "A screenshot is the SHA-256 of its exact bytes, computed by the journal; the device sends no id. Send an accepted type exactly as the platform saved it: do not re-encode, resize, crop, rotate or strip its metadata. A type outside png, jpg, jpeg and webp is converted to PNG on the device, keeping its metadata, and then the identity is the hash of that PNG. The same bytes from a second device, or sent again after a re-scan, a turn-back-on or a re-pair, are the same screenshot and are answered `duplicate`.",
+            "meta_schema": {
+              "properties": {
+                "screenshot": {
                   "additionalProperties": true,
                   "properties": {
-                    "days": {
-                      "additionalProperties": {
-                        "additionalProperties": true,
-                        "properties": {
-                          "segments": {
-                            "type": "integer"
-                          }
-                        },
-                        "type": "object"
-                      },
-                      "type": "object"
+                    "captured_at": {
+                      "format": "date-time",
+                      "type": "string"
+                    },
+                    "taken_from": {
+                      "enum": [
+                        "platform",
+                        "file"
+                      ]
+                    },
+                    "v": {
+                      "const": 1
                     }
                   },
                   "required": [
-                    "days"
+                    "v",
+                    "captured_at",
+                    "taken_from"
                   ],
                   "type": "object"
                 }
-              }
+              },
+              "required": [
+                "screenshot"
+              ],
+              "type": "object"
             },
-            "description": "Available manifest days keyed by YYYYMMDD."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
+            "size_limit": {
+              "max_bytes": 67108864,
+              "max_pixels": 100000000,
+              "rule": "At most 64 MiB, the part limit for every upload (larger is refused with `multipart_part_too_large`), and at most 100,000,000 pixels by the image's own header (larger is refused with `screenshot_invalid`)."
             },
-            "description": "Protocol version missing or malformed.",
-            "x-reason-codes": [
-              "protocol_version_required",
-              "protocol_version_malformed"
-            ]
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "A linked-device identity is required.",
-            "x-reason-codes": [
-              "linked_device_required"
-            ]
-          },
-          "426": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Protocol version is not 3.",
-            "x-reason-codes": [
-              "protocol_version_legacy",
-              "protocol_version_future"
-            ]
+            "source": "screenshots"
           }
-        },
-        "summary": "List linked-device ingest manifest days",
-        "tags": [
-          "client"
-        ]
+        }
       }
     },
-    "/app/devices/ingest/manifest/{day}": {
+    "/app/devices/ingest/obsidian/vaults": {
       "get": {
-        "deprecated": true,
-        "description": "Deprecated. Return file names, sizes, sha256 hashes, and custody status for every physical segment on one day. Segment-map keys equal the corresponding `segments/{day}` collection item keys; each map value contains only `files`. A basename that appears once remains its key. Repeated basenames use collection aliases `{basename}~{stream}`, then `~2`, `~3`, and so on, skipping occupied names. An alias is a listing identifier, not a directory basename. The collection item carries `segment` and `stream` to correlate a collided physical segment. A within-segment effective-name clash remains `ambiguous_segment_file_name`. This operation keeps answering until devices in the field no longer call it.",
-        "operationId": "client.ingestManifestDay",
+        "description": "List the Obsidian vaults this journal has from devices other than the caller, so an app can warn before the first send of a vault with the same name. `device` is the device's label as the journal knows it, or null.",
+        "operationId": "client.ingestObsidianVaults",
         "parameters": [
           {
-            "description": "Linked-device ingest protocol version. Must be 3. Values less than 3 are rejected with HTTP 426 Upgrade Required; values greater than 3 are rejected as unsupported. Identity is the linked-device mTLS certificate, not a request header.",
+            "description": "Linked-device ingest protocol version. Must be 3.",
             "in": "header",
             "name": "X-Solstone-Protocol-Version",
             "required": true,
             "schema": {
               "const": 3,
               "type": "integer"
-            }
-          },
-          {
-            "description": "YYYYMMDD day.",
-            "in": "path",
-            "name": "day",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Optional device-chosen sub-stream discriminator.",
-            "in": "query",
-            "name": "source",
-            "required": false,
-            "schema": {
-              "type": "string"
             }
           }
         ],
@@ -670,74 +769,20 @@
             "content": {
               "application/json": {
                 "example": {
-                  "day": "20260815",
-                  "segments": {
-                    "143000": {
-                      "files": [
-                        {
-                          "name": "audio.m4a",
-                          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                          "size": 4096,
-                          "status": "present"
-                        }
-                      ]
+                  "vaults": [
+                    {
+                      "device": "studio",
+                      "last_synced_at": "2026-11-08T09:44:33-07:00",
+                      "vault": "Notes"
                     }
-                  },
-                  "version": 1
+                  ]
                 },
                 "schema": {
-                  "additionalProperties": true,
-                  "properties": {
-                    "day": {
-                      "type": "string"
-                    },
-                    "segments": {
-                      "additionalProperties": {
-                        "additionalProperties": true,
-                        "properties": {
-                          "files": {
-                            "items": {
-                              "$ref": "#/components/schemas/SegmentFile"
-                            },
-                            "type": "array"
-                          }
-                        },
-                        "required": [
-                          "files"
-                        ],
-                        "type": "object"
-                      },
-                      "type": "object"
-                    },
-                    "version": {
-                      "type": "integer"
-                    }
-                  },
-                  "required": [
-                    "version",
-                    "day",
-                    "segments"
-                  ],
-                  "type": "object"
+                  "$ref": "#/components/schemas/ObsidianVaultsEnvelope"
                 }
               }
             },
-            "description": "Day transfer manifest. Segment-map keys equal the corresponding `segments/{day}` collection keys and values contain only `files`. Aliases are listing identifiers; the collection carries the exact physical `segment` and `stream` for collided basenames. A within-segment effective-name clash remains `ambiguous_segment_file_name`."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "Day path parameter or protocol version was invalid.",
-            "x-reason-codes": [
-              "day_invalid",
-              "protocol_version_required",
-              "protocol_version_malformed"
-            ]
+            "description": "Vaults known from other devices."
           },
           "403": {
             "content": {
@@ -747,12 +792,9 @@
                 }
               }
             },
-            "description": "A linked-device identity is required.",
-            "x-reason-codes": [
-              "linked_device_required"
-            ]
+            "description": "The caller is not a linked device."
           },
-          "426": {
+          "500": {
             "content": {
               "application/json": {
                 "schema": {
@@ -760,17 +802,10 @@
                 }
               }
             },
-            "description": "Protocol version is not 3.",
-            "x-reason-codes": [
-              "protocol_version_legacy",
-              "protocol_version_future"
-            ]
+            "description": "The vault list could not be read."
           }
         },
-        "summary": "Read linked-device transfer manifest for a day",
-        "tags": [
-          "client"
-        ]
+        "summary": "List Obsidian vaults held from other devices"
       }
     },
     "/app/devices/ingest/segments/{day}": {
@@ -822,8 +857,7 @@
                           "status": "present"
                         }
                       ],
-                      "key": "143000",
-                      "observed": true
+                      "key": "143000"
                     }
                   ],
                   "protocol_version": 3,

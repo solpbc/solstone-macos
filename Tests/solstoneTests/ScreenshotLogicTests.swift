@@ -60,10 +60,12 @@ struct ScreenshotLogicTests {
         #expect(ScreenshotBytes.kind(header: Data([0x49, 0x49, 0x2A, 0x00])) == .tiff)
         #expect(ScreenshotBytes.uploadName(kind: .jpeg, fileExtension: "jpeg") == "screenshot_screen.jpeg")
         #expect(ScreenshotBytes.uploadName(kind: .jpeg, fileExtension: "jpg") == "screenshot_screen.jpg")
-        #expect(ScreenshotBytes.uploadName(kind: .heic, fileExtension: "heic") == nil)
+        #expect(ScreenshotBytes.uploadName(kind: .heic, fileExtension: "heic") == "screenshot_screen.png")
+        #expect(ScreenshotBytes.uploadName(kind: .pdf, fileExtension: "pdf") == "screenshot_screen.png")
         #expect(ScreenshotBytes.refused(byteCount: ScreenshotBytes.maxBytes + 1, pixelCount: 1, kind: .png))
         #expect(ScreenshotBytes.refused(byteCount: 10, pixelCount: ScreenshotBytes.maxPixels + 1, kind: .png))
         #expect(!ScreenshotBytes.refused(byteCount: 10, pixelCount: nil, kind: .png))
+        #expect(!ScreenshotBytes.refused(byteCount: ScreenshotBytes.maxBytes + 1, pixelCount: nil, kind: .heic))
     }
 
     @Test func folderLineKeepsTheLastThreeParts() {
@@ -245,10 +247,27 @@ struct ScreenshotEngineTests {
         #expect(transport.sent.count == 1)
     }
 
-    @Test func aRefusedTypeIsFinalAndStaysUnsent() async throws {
+    @Test func aConvertibleTypeIsSentAsPngOnce() async throws {
         let reader = FakeShots()
         let transport = FakeShotTransport()
-        reader.files = [shot(when: now(), header: Data([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63]), ext: "heic")]
+        let heic = Data([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63])
+        reader.files = [shot(when: now(), header: heic, ext: "heic", bytes: ScreenshotBytes.maxBytes + 1, pixels: nil)]
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
+        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        await engine.confirm(now: now())
+        let snap = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(transport.sent.count == 1)
+        #expect(transport.sent[0].fileName == "screenshot_screen.png")
+        #expect(transport.sent[0].hash == "abc")
+        #expect(snap.refusedLine == nil)
+        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(transport.sent.count == 1)
+    }
+
+    @Test func aSizeTheJournalWillNotKeepStaysUnsent() async throws {
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        reader.files = [shot(when: now(), bytes: ScreenshotBytes.maxBytes + 1)]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
         _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
         await engine.confirm(now: now())

@@ -124,13 +124,15 @@ enum ScreenshotBytes {
         return .other
     }
 
-    static func uploadName(kind: ScreenshotImageKind, fileExtension: String) -> String? {
+    /// The name on the wire. A type the journal accepts keeps its own extension.
+    /// Anything else is sent as PNG after the Mac converts it.
+    static func uploadName(kind: ScreenshotImageKind, fileExtension: String) -> String {
         switch kind {
         case .png: return "screenshot_screen.png"
         case .jpeg:
             return fileExtension.lowercased() == "jpeg" ? "screenshot_screen.jpeg" : "screenshot_screen.jpg"
         case .webp: return "screenshot_screen.webp"
-        case .heic, .tiff, .gif, .pdf, .other: return nil
+        case .heic, .tiff, .gif, .pdf, .other: return "screenshot_screen.png"
         }
     }
 
@@ -151,10 +153,13 @@ enum ScreenshotBytes {
         return data
     }
 
+    /// Size is known from the header for png, jpeg and webp, so those can be
+    /// refused before a send. Any other type is judged after it becomes a PNG.
     static func refused(byteCount: Int, pixelCount: Int64?, kind: ScreenshotImageKind) -> Bool {
+        guard kind.accepted else { return false }
         if byteCount > maxBytes { return true }
         if let pixelCount, pixelCount > maxPixels { return true }
-        return !kind.accepted
+        return false
     }
 
     private static func heic(_ bytes: [UInt8]) -> Bool {
@@ -210,7 +215,12 @@ enum ScreenshotBytes {
 
 private extension UInt32 {
     var bigEndianBytes: [UInt8] {
-        [UInt8(self >> 24), UInt8(self >> 16), UInt8(self >> 8), UInt8(self)]
+        [
+            UInt8(truncatingIfNeeded: self >> 24),
+            UInt8(truncatingIfNeeded: self >> 16),
+            UInt8(truncatingIfNeeded: self >> 8),
+            UInt8(truncatingIfNeeded: self),
+        ]
     }
 }
 

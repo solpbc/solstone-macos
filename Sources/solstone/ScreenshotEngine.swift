@@ -312,7 +312,7 @@ actor ScreenshotEngine {
         let name = ScreenshotBytes.uploadName(kind: kind, fileExtension: file.fileExtension)
         return ScreenshotStoredItem(
             id: hash, path: file.path,
-            outcome: refused || name == nil ? .refused : .pending,
+            outcome: refused ? .refused : .pending,
             capturedAt: when, takenFrom: file.takenFrom, byteCount: file.byteCount,
             fileName: name, inFrozen: frozen, fileExtension: file.fileExtension
         )
