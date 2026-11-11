@@ -32,7 +32,7 @@ struct MenuContent: View {
         if appState.isRecording || appState.isPaused, !appState.captureManager.activeSources.isEmpty {
             Text(UICopy.sourceNames(appState.captureManager.activeSources))
         }
-        if appState.isRecording, !appState.isPaused, let note = appState.capture.audioHealthNote {
+        if appState.isRecording, !appState.isPaused, let note = appState.capture.audioHealthNote?.text {
             Text(note)
                 .accessibilityIdentifier(AXID.Menubar.audioHealthNote)
         }

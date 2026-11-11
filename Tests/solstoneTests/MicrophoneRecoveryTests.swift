@@ -622,7 +622,9 @@ struct MicrophoneRecoveryTests {
         guard case .committed = result else { Issue.record("A failing selected mic must not fail the session"); return }
         manager.handleLivenessTick()
         #expect(manager.state.isRecording && shared.getCapture(for: "u")?.isCapturing != true)
-        #expect(manager.currentAudioHealthNote == "mic isn't coming through right now. the solstone app is trying again on its own.")
+        #expect(manager.currentAudioHealthNote?.text == "mic isn't coming through right now. the solstone app is trying again on its own.")
+        // A microphone note is about audio alone, so it never shows on screen.
+        #expect(manager.currentAudioHealthNote?.sources == .microphone)
         failing.set(false)
         clock.set(clock.current! + manager.audioRecovery.secondsUntilAttempt("u") + 0.01); manager.handleLivenessTick()
         #expect(shared.getCapture(for: "u")?.isCapturing == true)
@@ -741,15 +743,15 @@ struct MicrophoneRecoveryTests {
         manager.refreshAudioHealth()
         #expect(manager.currentAudioHealthNote == nil)
         try await knockDown(lab, shared, manager)
-        #expect(manager.currentAudioHealthNote == "mic isn't coming through right now. the solstone app is trying again on its own.")
+        #expect(manager.currentAudioHealthNote?.text == "mic isn't coming through right now. the solstone app is trying again on its own.")
         clock.set(clock.current! + manager.audioRecovery.secondsUntilAttempt("u")); manager.handleLivenessTick()
         #expect(shared.getCapture(for: "u")?.isCapturing == true)
         // Writer evidence reaches the segment record asynchronously; a later check sees it.
         let back = "mic dropped out earlier and is back. part of this segment may be missing."
         try await withTimeout(seconds: 5) { @MainActor in
-            while manager.currentAudioHealthNote != back { manager.refreshAudioHealth(); try await Task.sleep(for: .milliseconds(10)) }
+            while manager.currentAudioHealthNote?.text != back { manager.refreshAudioHealth(); try await Task.sleep(for: .milliseconds(10)) }
         }
-        #expect(manager.currentAudioHealthNote == back)
+        #expect(manager.currentAudioHealthNote?.text == back)
         _ = await manager.enqueueTransition(.pause(reason: .user, stopAudio: true))
         #expect(manager.currentAudioHealthNote == nil)
         _ = await manager.enqueueTransition(.stop(reason: .user)); shared.stopAll()

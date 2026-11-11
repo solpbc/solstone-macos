@@ -49,7 +49,7 @@ public final class CaptureCoordinator {
         screenFailure = failure
     }
     /// Which audio source isn't coming through, or dropped out and is back. Shown as a plain line.
-    public internal(set) var audioHealthNote: String?
+    public internal(set) var audioHealthNote: AudioHealthNote?
     internal var screenRecordingNeedsRestart = false
     private var storedScreenRecordingGranted = false
     public var screenRecordingGranted: Bool { storedScreenRecordingGranted }

@@ -173,7 +173,8 @@ struct SystemAudioContinuityTests {
         try await settled { factory.createdStreams.count == 7 && system.needsRearm }
         now += 59; capture.handleLivenessTick(); try await Task.sleep(for: .milliseconds(20))
         #expect(factory.createdStreams.count == 7)
-        #expect(capture.currentAudioHealthNote?.contains(UICopy.AUDIO_SOURCE_SYSTEM) == true)
+        #expect(capture.currentAudioHealthNote?.text.contains(UICopy.AUDIO_SOURCE_SYSTEM) == true)
+        #expect(capture.currentAudioHealthNote?.sources == .screen)
         now += 1; capture.handleLivenessTick()
         try await settled { factory.createdStreams.count == 10 && system.needsRearm }
         now += 119; capture.handleLivenessTick(); try await Task.sleep(for: .milliseconds(20))

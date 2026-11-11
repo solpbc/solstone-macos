@@ -289,10 +289,10 @@ public final class CaptureManager {
     public private(set) var currentAudioCaptureIssue: String?
     /// Owner-facing audio health: which source isn't coming through, or dropped out and is back.
     /// Information, not an error: it never puts the menu into its error state.
-    public private(set) var currentAudioHealthNote: String? {
+    public private(set) var currentAudioHealthNote: AudioHealthNote? {
         didSet { if currentAudioHealthNote != oldValue { onAudioHealthNote?(currentAudioHealthNote) } }
     }
-    public var onAudioHealthNote: (@MainActor (String?) -> Void)?
+    public var onAudioHealthNote: (@MainActor (AudioHealthNote?) -> Void)?
 
     public private(set) var currentScreenFailure: ScreenFailureKind?
     public var onScreenFailureChanged: (@MainActor (ScreenFailureKind?) -> Void)?
@@ -1389,7 +1389,14 @@ public final class CaptureManager {
             : Dictionary(microphoneDevices().map { ($0.uid, $0.name) }, uniquingKeysWith: { first, _ in first })
         let name: (String) -> String = { $0 == Self.systemAudioSourceID ? UICopy.AUDIO_SOURCE_SYSTEM : (names[$0] ?? UICopy.AUDIO_SOURCE_MICROPHONE) }
         let message = UICopy.audioIssue(recovering: recovering.map(name), recovered: recovered.map(name))
-        if message != currentAudioHealthNote { currentAudioHealthNote = message }
+        // The note names `recovering` when any source is, otherwise `recovered`. Computer sound
+        // rides the screen stream on this mac, so a note naming it is about screen.
+        let named = recovering.isEmpty ? recovered : recovering
+        var about: CaptureSources = []
+        if named.contains(Self.systemAudioSourceID) { about.insert(.screen) }
+        if named.contains(where: { $0 != Self.systemAudioSourceID }) { about.insert(.microphone) }
+        let note = message.map { AudioHealthNote(text: $0, sources: about) }
+        if note != currentAudioHealthNote { currentAudioHealthNote = note }
     }
 
     internal func handleHeartbeatTick() {
@@ -2023,4 +2030,11 @@ extension CaptureManager: CaptureLifecycleDelegate {
             }
         }
     }
+}
+
+/// An audio health note and the capture sources it is about: microphones, computer sound
+/// (which rides the screen stream), or both.
+public struct AudioHealthNote: Equatable, Sendable {
+    public let text: String
+    public let sources: CaptureSources
 }

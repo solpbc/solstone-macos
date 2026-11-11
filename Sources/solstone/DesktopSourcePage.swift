@@ -127,7 +127,7 @@ extension SettingsView {
                 if appState.config.isMicrophoneCaptureEnabled, !appState.microphoneGranted {
                     microphonePermissionCard
                 }
-                audioHealthNoteView
+                audioHealthNoteView(for: .microphone)
                 pageSection("microphones")
                 microphoneTab
             }
@@ -143,7 +143,7 @@ extension SettingsView {
                     if appState.config.isScreenCaptureEnabled, !appState.screenRecordingGranted || screenRestartPending {
                         screenRecordingPermissionCard
                     }
-                    audioHealthNoteView
+                    audioHealthNoteView(for: .screen)
                     ForEach(appState.siteIntakeNotes, id: \.self) { note in
                         switch note {
                         case .safariKeptOut: Text(UICopy.MENUBAR_A11Y_SAFARI_KEPT_OUT).font(.caption).foregroundStyle(.secondary)
@@ -206,10 +206,13 @@ extension SettingsView {
         }
     }
 
+    /// The audio health note, on the page of each source it names: a microphone on audio,
+    /// computer sound on screen, both on both.
     @ViewBuilder
-    private var audioHealthNoteView: some View {
-        if appState.isRecording, !appState.isPaused, let note = appState.capture.audioHealthNote {
-            Text(note)
+    private func audioHealthNoteView(for source: CaptureSources) -> some View {
+        if appState.isRecording, !appState.isPaused, let note = appState.capture.audioHealthNote,
+           note.sources.contains(source) {
+            Text(note.text)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier(AXID.Menubar.audioHealthNote)
