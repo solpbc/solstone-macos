@@ -122,9 +122,11 @@ struct DesktopShellSnapshotTests {
         state.snapshotJournalPillInputs = pill
         state.snapshotSourceTotals = scene == .fresh ? nil : Self.sampleTotals()
         if scene != .fresh {
+            // The connection fact goes through the pane's own rule, so offline reads its shared words.
+            let connected = "connected to your journal on this mac"
             state.snapshotJournalFacts = [
-                ["connection", "connected to your journal on this mac"],
-                [UICopy.SETTINGS_LAST_DELIVERY_LABEL, "just now"],
+                ["connection", statusConnectionValue(deriveJournalPill(pill), connectionLine: connected)],
+                [UICopy.SETTINGS_LAST_DELIVERY_LABEL, scene == .offline ? "40 minutes ago" : "just now"],
             ]
         }
         if scene == .paused { state.pauseManager.pause(for: .minutes(14)) }

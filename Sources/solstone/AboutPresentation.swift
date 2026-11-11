@@ -27,6 +27,18 @@ enum AboutPresentation {
         )
     }
 
+    /// The about window's block: the shared lines, with an unknown journal said as the other
+    /// computers say it. What the window shows is what `copy` copies.
+    static func windowBlock(journal: JournalVersionMetadata, now: Date = Date()) -> String {
+        windowLines(captureBlock(journal: journal, now: now))
+    }
+
+    nonisolated static func windowLines(_ block: String) -> String {
+        block.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0 == "journal unknown" ? "journal version unknown" : String($0) }
+            .joined(separator: "\n")
+    }
+
     static func nativeSnapshot(journal: JournalVersionMetadata) -> SolstoneCoreAbout.NativeSnapshot {
         journal.nativeAboutSnapshot(
             os: "macos",

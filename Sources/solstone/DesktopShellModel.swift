@@ -112,14 +112,13 @@ struct DeckTile: Equatable, Sendable {
     /// What VoiceOver reads after the name: the state word, then a reason the word doesn't carry.
     var accessibilityValue: String {
         if state == .needsAttention, let subline { return "\(state.word). \(subline)" }
-        if state == .paused, let subline, subline != DeckCopy.ownerPaused { return "\(state.word). \(subline)" }
+        if state == .paused, let subline { return "\(state.word). \(subline)" }
         return state.word
     }
 }
 
 enum DeckCopy {
-    static let ownerPaused = "you paused this. resume to start intake again."
-    static let offPaired = "intake is off. turn it on any time."
+    static let offPaired = "turn it on any time."
     static let offUnpaired = "turn it on any time."
     static let screenWithActivity = "with computer sound and activity"
     static let screenWithoutActivity = "with computer sound"
@@ -134,10 +133,14 @@ enum DeckCopy {
     static let tmuxMissing = "tmux isn't installed."
     static let chooseVault = "choose a vault to start."
     static let protectedVideo = "paused for protected video"
+    static let onThisDevice = "on this device"
+    static let notReachingJournal = "not reaching your journal right now"
 
     static let audioTakesIn = "while this is on, the solstone app takes in sound from your microphones, and all of it goes into your journal."
     static let screenTakesIn = "while this is on, the solstone app takes in what's on your screen, the sound your mac plays, and which apps and windows you're using, and all of it goes into your journal."
     static let terminalTakesIn = "the solstone app takes in your tmux sessions, and all of it goes into your journal. needs tmux on this mac, and works in any terminal session, including when you SSH into this mac."
+    static let browsersSetUp = "add the solstone extension to a browser on this mac."
+    static let browsersNeedJournal = "browser pages start once you pair this mac with a journal."
     static let browsersTakesIn = "on the sites you allow, the solstone extension takes in the page's text and rough layout, and all of it goes into your journal."
 }
 
@@ -262,12 +265,13 @@ private func deriveAudioTile(_ i: DeckInputs) -> DeckTile {
     case .protectedVideo:
         return DeckTile(source: .audio, state: .paused, subline: DeckCopy.protectedVideo, reason: DeckCopy.protectedVideo, action: nil, switchOn: true)
     case .ownerPaused:
-        return DeckTile(source: .audio, state: .paused, subline: DeckCopy.ownerPaused, reason: DeckCopy.ownerPaused, action: nil, switchOn: true)
+        // The window's header says how long is left and holds resume, so the tile keeps its own line.
+        return DeckTile(source: .audio, state: .paused, subline: nil, reason: nil, action: nil, switchOn: true)
     case .on:
         return DeckTile(source: .audio, state: .on, subline: nil, reason: nil, action: nil, switchOn: true)
     case .notRunning:
         if i.ownerPaused {
-            return DeckTile(source: .audio, state: .paused, subline: DeckCopy.ownerPaused, reason: DeckCopy.ownerPaused, action: nil, switchOn: true)
+            return DeckTile(source: .audio, state: .paused, subline: nil, reason: nil, action: nil, switchOn: true)
         }
         return DeckTile(source: .audio, state: .settingUp, subline: nil, reason: nil, action: nil, switchOn: true)
     }
@@ -275,6 +279,7 @@ private func deriveAudioTile(_ i: DeckInputs) -> DeckTile {
 
 private func deriveScreenTile(_ i: DeckInputs) -> DeckTile {
     let activityLine: String? = i.activityGoingIn && i.activityEnabled ? DeckCopy.activityStillOn : nil
+    let ownLine = i.activityEnabled ? DeckCopy.screenWithActivity : DeckCopy.screenWithoutActivity
     guard i.screenOn else {
         // Off never hides a fault in an intake still running under the tile.
         if activityLine != nil, i.activityFailed {
@@ -313,12 +318,12 @@ private func deriveScreenTile(_ i: DeckInputs) -> DeckTile {
     case .protectedVideo:
         return DeckTile(source: .screen, state: .paused, subline: activityLine ?? DeckCopy.protectedVideo, reason: DeckCopy.protectedVideo, action: nil, switchOn: true)
     case .ownerPaused:
-        return DeckTile(source: .screen, state: .paused, subline: activityLine ?? DeckCopy.ownerPaused, reason: DeckCopy.ownerPaused, action: nil, switchOn: true)
+        return DeckTile(source: .screen, state: .paused, subline: activityLine ?? ownLine, reason: nil, action: nil, switchOn: true)
     case .on:
-        return DeckTile(source: .screen, state: .on, subline: i.activityEnabled ? DeckCopy.screenWithActivity : DeckCopy.screenWithoutActivity, reason: nil, action: nil, switchOn: true)
+        return DeckTile(source: .screen, state: .on, subline: ownLine, reason: nil, action: nil, switchOn: true)
     case .notRunning:
         if i.ownerPaused {
-            return DeckTile(source: .screen, state: .paused, subline: activityLine ?? DeckCopy.ownerPaused, reason: DeckCopy.ownerPaused, action: nil, switchOn: true)
+            return DeckTile(source: .screen, state: .paused, subline: activityLine ?? ownLine, reason: nil, action: nil, switchOn: true)
         }
         return DeckTile(source: .screen, state: .settingUp, subline: nil, reason: nil, action: nil, switchOn: true)
     }
@@ -336,7 +341,7 @@ private func deriveTerminalTile(_ i: DeckInputs) -> DeckTile {
         let line = "solstone for tmux is still installed on this mac, so terminal stays off for now."
         return DeckTile(source: .terminal, state: .needsAttention, subline: line, reason: line, action: nil, switchOn: true)
     case .paused:
-        return DeckTile(source: .terminal, state: .paused, subline: DeckCopy.ownerPaused, reason: DeckCopy.ownerPaused, action: nil, switchOn: true)
+        return DeckTile(source: .terminal, state: .paused, subline: nil, reason: nil, action: nil, switchOn: true)
     case .running:
         return DeckTile(source: .terminal, state: .on, subline: nil, reason: nil, action: nil, switchOn: true)
     case .restarting:
@@ -352,9 +357,9 @@ private func deriveBrowsersTile(_ i: DeckInputs) -> DeckTile {
     case .fault(let line):
         return DeckTile(source: .browsers, state: .needsAttention, subline: line, reason: line, action: nil, switchOn: true)
     case .paused:
-        return DeckTile(source: .browsers, state: .paused, subline: DeckCopy.ownerPaused, reason: DeckCopy.ownerPaused, action: nil, switchOn: true)
+        return DeckTile(source: .browsers, state: .paused, subline: nil, reason: nil, action: nil, switchOn: true)
     case .notPaired:
-        return DeckTile(source: .browsers, state: .readyToSetUp, subline: nil, reason: "browser pages can't start right now.", action: nil, switchOn: true)
+        return DeckTile(source: .browsers, state: .readyToSetUp, subline: nil, reason: DeckCopy.browsersNeedJournal, action: nil, switchOn: true)
     case .starting:
         return DeckTile(source: .browsers, state: .settingUp, subline: nil, reason: nil, action: nil, switchOn: true)
     case .running(let connected):
@@ -362,6 +367,16 @@ private func deriveBrowsersTile(_ i: DeckInputs) -> DeckTile {
         return DeckTile(source: .browsers, state: .on, subline: line, reason: nil, action: nil, switchOn: true)
     case .checking:
         return DeckTile(source: .browsers, state: .checking, subline: nil, reason: nil, action: nil, switchOn: true)
+    }
+}
+
+/// A pause reaches only a browser source that is running. One waiting to be set up, or one with a
+/// fault, keeps its word through the pause.
+func deckBrowserStatePausing(_ state: DeckBrowserState, ownerPaused: Bool) -> DeckBrowserState {
+    guard ownerPaused else { return state }
+    switch state {
+    case .running, .starting, .checking: return .paused
+    case .paused, .notPaired, .fault: return state
     }
 }
 
@@ -374,7 +389,7 @@ private func deriveObsidianTile(_ i: DeckInputs) -> DeckTile {
         return DeckTile(source: .obsidian, state: .needsAttention, subline: line, reason: line, action: nil, switchOn: true)
     case .paused:
         let line = "Obsidian is paused. your notes wait on this mac."
-        return DeckTile(source: .obsidian, state: .paused, subline: line, reason: line, action: nil, switchOn: true)
+        return DeckTile(source: .obsidian, state: .paused, subline: i.obsidianVaultName, reason: line, action: nil, switchOn: true)
     case .waitingForJournalUpdate:
         let line = "waiting for a journal update. your notes wait on this mac."
         return DeckTile(source: .obsidian, state: .settingUp, subline: line, reason: line, action: nil, switchOn: true)
@@ -481,6 +496,13 @@ func deriveJournalPill(_ i: JournalPillInputs) -> JournalPill {
     case .sending: return i.pending > 0 ? .syncing(i.pending) : .waitingToSync
     case .synced: return i.pending > 0 ? .syncing(i.pending) : .connected
     }
+}
+
+/// The status pane's `connection` fact. Offline says it in the words every computer uses; any other
+/// state keeps the connection's own line.
+func statusConnectionValue(_ pill: JournalPill, connectionLine: String) -> String {
+    if case .offline = pill { return DeckCopy.notReachingJournal }
+    return connectionLine
 }
 
 /// Reads the connection the way the icon does.

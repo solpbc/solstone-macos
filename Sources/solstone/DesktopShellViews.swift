@@ -82,6 +82,7 @@ extension SettingsView {
                         DeckTileView(
                             tile: tile,
                             selected: shellLayout != .phone && pane == .source(tile.source),
+                            compact: shellLayout == .narrow,
                             keyboardFocused: tileFocusFromKeyboard && focusedTile == tile.source,
                             onOpen: { openPane(.source(tile.source)) },
                             onSwitch: { on in switchSource(tile.source, on: on) }
@@ -98,7 +99,7 @@ extension SettingsView {
                             return .handled
                         }
                     }
-                    AddMoreTile(selected: shellLayout != .phone && pane == .addMore) { openPane(.addMore) }
+                    AddMoreTile(selected: shellLayout != .phone && pane == .addMore, compact: shellLayout == .narrow) { openPane(.addMore) }
                 }
                 .padding(4)
                 .onMoveCommand { direction in
@@ -243,26 +244,30 @@ extension SettingsView {
 /// `add more` on the deck: dotted, with the category as its sub-line.
 struct AddMoreTile: View {
     var selected = false
+    var compact = false
     let action: () -> Void
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 5) {
-                Image(systemName: "plus")
-                    .font(.system(size: 15))
-                    .foregroundStyle(SetupChromeColor.softInk(for: scheme))
-                    .accessibilityHidden(true)
-                Spacer(minLength: 8)
-                Text("add more")
-                    .font(DeckStyle.name(17))
-                    .foregroundStyle(SetupChromeColor.ink(for: scheme))
+                HStack(spacing: 7) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15))
+                        .foregroundStyle(SetupChromeColor.softInk(for: scheme))
+                        .accessibilityHidden(true)
+                    if compact { name }
+                }
+                if !compact {
+                    Spacer(minLength: 8)
+                    name
+                }
                 Text("sources")
                     .font(.system(size: 11))
                     .foregroundStyle(SetupChromeColor.faintInk(for: scheme))
             }
-            .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
-            .padding(13)
+            .frame(maxWidth: .infinity, minHeight: compact ? 66 : 104, alignment: .topLeading)
+            .padding(compact ? 11 : 13)
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
@@ -273,6 +278,12 @@ struct AddMoreTile: View {
         )
         .accessibilityLabel("add more, sources")
         .accessibilityIdentifier(AXID.Deck.addMore)
+    }
+
+    private var name: some View {
+        Text("add more")
+            .font(DeckStyle.name(compact ? 16 : 17))
+            .foregroundStyle(SetupChromeColor.ink(for: scheme))
     }
 }
 

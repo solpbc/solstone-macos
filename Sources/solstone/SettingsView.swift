@@ -798,87 +798,119 @@ struct SettingsView: View {
         )
     }
 
+    /// The store buttons, as one row under their one line, while no browser is connected: the
+    /// browsers page's one action.
+    @ViewBuilder
+    func browserStoreOffer() -> some View {
+        let rows = browserBrandRows(appState.browserHostSnapshot.value, now: Date())
+        let offered = offeredBrowserStoreBrands(catalog: appState.browserStoreCatalog, rows: rows)
+        if browserStoreOfferVisible(rows, offered: offered) {
+            let brands = BrowserBrand.allCases.filter(offered.contains)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(DeckCopy.browsersSetUp)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { browserStoreButtons(brands) }
+                    VStack(alignment: .leading, spacing: 8) { browserStoreButtons(brands) }
+                }
+                ForEach(brands.filter { appState.browserStoreLaunch[$0] == .failed }, id: \.self) { brand in
+                    Text(UICopy.sourcesBrowserLaunchFailure(browser: brand.displayName))
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func browserStoreButtons(_ brands: [BrowserBrand]) -> some View {
+        ForEach(brands, id: \.self) { brand in
+            Button(UICopy.sourcesBrowserAddAction(browser: brand.displayName)) {
+                appState.openBrowserStore(brand)
+            }
+            .fixedSize()
+            .accessibilityIdentifier(browserStoreAXID(brand))
+            .accessibilityValue(browserStoreValue(brand).axToken)
+        }
+    }
+
+    /// The browsers page's children: one row per browser with one status, `repair` only on a browser
+    /// that can't find the app, and Safari's settings only while its extension isn't on. What is still
+    /// kept on this mac follows.
     var browserSourcesGroup: some View {
         let snapshot = appState.browserHostSnapshot.value
         let rows = browserBrandRows(snapshot, now: Date())
         let verdict = browserOwnerVerdict(mediaSourcesEmpty: appState.config.selectedSources.isEmpty,
             mediaRecording: appState.isRecording, mediaPaused: appState.isPaused, snapshot: snapshot, now: Date())
-        let hasAnyHistory = rows.contains { $0.lastSeen != nil }
-        let offered = offeredBrowserStoreBrands(catalog: appState.browserStoreCatalog, rows: rows)
+        let pageRows = browserPageRows(
+            rows, safari: appState.safariExtensionState, safariNeedsAttention: appState.safariExtensionNeedsAttention
+        )
 
         return VStack(alignment: .leading, spacing: 8) {
-            Text(UICopy.SOURCES_BROWSERS_GROUP_TITLE)
-                .font(.headline)
+            pageSection(UICopy.SOURCES_BROWSERS_GROUP_TITLE)
                 .accessibilityIdentifier(AXID.Settings.Sources.browsersGroup)
 
-            if !hasAnyHistory {
-                Text(UICopy.SOURCES_BROWSERS_NO_HISTORY)
-                    .foregroundStyle(.secondary)
-                Text(UICopy.SOURCES_BROWSERS_STORES_CONFIGURED)
-                    .foregroundStyle(.secondary)
-            }
-
-            ForEach(rows, id: \.brand) { row in
-                HStack {
-                    Text(UICopy.sourcesBrowserRowLabel(browser: row.brand.displayName, profileCount: row.connectedCount))
-                    Spacer()
-                    Text(browserRowStatusText(row))
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityIdentifier(browserBrandAXID(row.brand))
-                .accessibilityValue(row.state.axToken)
-
-                if row.connectedCount > 0 && (row.needsAppUpdate || row.needsExtensionUpdate) {
-                    Text(UICopy.SOURCES_BROWSER_CONNECTED_NOW).foregroundStyle(.secondary)
-                }
-            }
-
-            HStack(spacing: 8) {
-                Button(UICopy.SOURCES_BROWSER_REPAIR_ACTION) {
-                    appState.beginBrowserRepair()
-                }
-                .disabled(appState.browserRepair.inFlight)
-                .accessibilityIdentifier(AXID.Settings.Sources.browserRepair)
-                .accessibilityValue(browserRepairValue.axToken)
-
-                if appState.browserRepair.repaired {
-                    Text(UICopy.SOURCES_BROWSER_REPAIRED)
-                        .foregroundStyle(.secondary)
-                } else if let failure = appState.browserRepair.lastFailureReason {
-                    Text(UICopy.sourcesBrowserRepairFailed(reason: UICopy.browserSetupReason(failure)))
-                        .foregroundStyle(.red)
-                }
-            }
-
-            ForEach(BrowserBrand.allCases.filter(offered.contains), id: \.self) { brand in
-                VStack(alignment: .leading, spacing: 2) {
-                    Button(UICopy.sourcesBrowserAddAction(browser: brand.displayName)) {
-                        appState.openBrowserStore(brand)
+            ForEach(pageRows, id: \.brand) { row in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(row.label)
+                        Spacer(minLength: 8)
+                        Text(row.status)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
                     }
-                    .accessibilityIdentifier(browserStoreAXID(brand))
-                    .accessibilityValue(browserStoreValue(brand).axToken)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier(browserBrandAXID(row.brand))
+                    .accessibilityValue(row.axState.axToken)
 
-                    if appState.browserStoreLaunch[brand] == .failed {
-                        Text(UICopy.sourcesBrowserLaunchFailure(browser: brand.displayName))
-                            .font(.caption)
-                            .foregroundStyle(.red)
+                    if row.needsRepair {
+                        Button(UICopy.SOURCES_BROWSER_REPAIR_ACTION) {
+                            appState.beginBrowserRepair()
+                        }
+                        .disabled(appState.browserRepair.inFlight)
+                        .accessibilityIdentifier(AXID.Settings.Sources.browserRepair)
+                        .accessibilityValue(browserRepairValue.axToken)
+                    }
+                    if row.opensSafariSettings {
+                        Button(UICopy.SOURCES_BROWSER_SAFARI_SETTINGS_ACTION) {
+                            appState.openSafariExtensionSettings()
+                        }
+                        .accessibilityIdentifier(AXID.Settings.Sources.browserSafariSettings)
+                        .accessibilityValue(appState.safariExtensionState.axToken)
                     }
                 }
+                .font(.callout)
             }
 
-            safariExtensionRow
-
-            Text(UICopy.SOURCES_BROWSER_FOOTNOTE)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if rows.contains(where: { $0.needsAppUpdate }) { Text(UICopy.SOURCES_BROWSER_NEWER_EXTENSION) }
-            if verdict.fullSecondary { Text(UICopy.SOURCES_BROWSER_FULL) }
-            if verdict.stale { Text(UICopy.SOURCES_BROWSER_STALE) }
-            browserPendingDiscardLine
-            if verdict.showsDeliveryLine { Text(UICopy.SOURCES_BROWSER_DELIVERY_FAILED) }
-            if snapshot.registration.values.contains(where: { $0.state == .refused }) {
-                Text(UICopy.SOURCES_BROWSER_REGISTRATION_BROKEN)
+            if appState.browserRepair.repaired {
+                Text(UICopy.SOURCES_BROWSER_REPAIRED)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let failure = appState.browserRepair.lastFailureReason {
+                Text(UICopy.sourcesBrowserRepairFailed(reason: UICopy.browserSetupReason(failure)))
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
+            if appState.safariSettingsLaunch == .failed {
+                Text(UICopy.SOURCES_BROWSER_SAFARI_SETTINGS_FAILED)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            Group {
+                if rows.contains(where: { $0.needsAppUpdate }) { Text(UICopy.SOURCES_BROWSER_NEWER_EXTENSION) }
+                if verdict.fullSecondary { Text(UICopy.SOURCES_BROWSER_FULL) }
+                if verdict.stale { Text(UICopy.SOURCES_BROWSER_STALE) }
+                browserPendingDiscardLine
+                if verdict.showsDeliveryLine { Text(UICopy.SOURCES_BROWSER_DELIVERY_FAILED) }
+            }
+            .font(.callout)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear { appState.refreshSafariExtensionState() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            appState.refreshSafariExtensionState()
         }
         .accessibilityElement(children: .contain)
     }
@@ -970,37 +1002,6 @@ struct SettingsView: View {
         }
     }
 
-    /// Safari's extension ships inside this app: the owner turns it on in
-    /// Safari's own settings, which this opens, and the row says whether it's on.
-    var safariExtensionRow: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 8) {
-                Button(UICopy.SOURCES_BROWSER_SAFARI_SETTINGS_ACTION) {
-                    appState.openSafariExtensionSettings()
-                }
-                .accessibilityIdentifier(AXID.Settings.Sources.browserSafariSettings)
-                .accessibilityValue(appState.safariExtensionState.axToken)
-
-                switch appState.safariExtensionState {
-                case .on: Text(UICopy.SOURCES_BROWSER_SAFARI_ON).foregroundStyle(.secondary)
-                case .off: Text(UICopy.SOURCES_BROWSER_SAFARI_OFF).foregroundStyle(.secondary)
-                case .unknown:
-                    if appState.safariExtensionNeedsAttention {
-                        Text(UICopy.SOURCES_BROWSER_SAFARI_UNAVAILABLE).foregroundStyle(.orange)
-                    }
-                }
-            }
-            if appState.safariSettingsLaunch == .failed {
-                Text(UICopy.SOURCES_BROWSER_SAFARI_SETTINGS_FAILED)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        }
-        .onAppear { appState.refreshSafariExtensionState() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            appState.refreshSafariExtensionState()
-        }
-    }
 #endif
 
     // MARK: - Permissions Tab
@@ -3367,7 +3368,7 @@ struct SettingsView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        TextField("exact window-server name", text: $newExcludedApp)
+                        TextField("app name", text: $newExcludedApp)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit { addExcludedApp() }
                             .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppField)
@@ -3375,7 +3376,7 @@ struct SettingsView: View {
                             .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
                             .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppAdd)
                     }
-                    Text("typed names only take effect if they exactly match the name the app reports while running")
+                    Text("a typed name works only when it matches the app's name exactly, as it shows under currently open apps.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -3532,9 +3533,9 @@ struct SettingsView: View {
     var protectedVideoGroup: some View {
         GroupBox("protected video") {
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("pause intake while protected video is on screen", isOn: pauseProtectedVideoBinding)
+                Toggle("pause screen and audio while protected video is on screen", isOn: pauseProtectedVideoBinding)
                     .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideo)
-                Text("pauses screen and audio intake while supported streaming video apps or websites are visible, so the video doesn't go black. a short note of the service and window title goes into your journal.")
+                Text("pauses screen and audio while supported streaming video apps or websites are visible, so the video doesn't go black. a short note of the service and window title goes into your journal.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

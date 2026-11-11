@@ -20,6 +20,11 @@ extension SettingsView {
                 paneHeader(source.label, systemImage: source.systemImage)
                 pageVerdict(tile)
                 pageReason(tile)
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+                if source == .browsers {
+                    browserStoreOffer()
+                }
+#endif
                 Text(takesInSentence(source))
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -27,6 +32,10 @@ extension SettingsView {
                 SourceTotalRows(appState: appState, source: source)
                 pageBody(source, scrollProxy: scrollProxy)
             }
+            // Every checkbox and switch on a page takes sol orange, and every group sits on the
+            // page's own left edge.
+            .tint(SetupChromeColor.solOrange)
+            .groupBoxStyle(PageGroupBoxStyle())
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(AXID.Deck.page(source))
             .onAppear { pageAppeared(source) }
@@ -96,7 +105,7 @@ extension SettingsView {
         }
     }
 
-    private func pageSection(_ title: String) -> some View {
+    func pageSection(_ title: String) -> some View {
         Text(title)
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(.secondary)
@@ -242,6 +251,26 @@ extension SettingsView {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         if source == .browsers { appState.browserRepair.viewGeneration += 1 }
 #endif
+    }
+}
+
+/// A group on a source page: its name on the page's left edge, and its box the page's full width.
+struct PageGroupBoxStyle: GroupBoxStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            configuration.label
+                .font(.system(size: 12, weight: .medium))
+            configuration.content
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

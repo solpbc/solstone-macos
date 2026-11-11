@@ -415,6 +415,63 @@ public func browserRowStatusText(_ row: BrowserBrandRow) -> String {
     return UICopy.SOURCES_BROWSERS_NO_HISTORY
 }
 
+/// One browser's row on the browsers page: one status, and an action only where that browser
+/// needs one (`repair` for a browser that can't find the app, Safari's settings while its
+/// extension is off).
+public struct BrowserPageRow: Equatable, Sendable {
+    public var brand: BrowserBrand
+    public var label: String
+    public var status: String
+    public var needsRepair: Bool
+    public var opensSafariSettings: Bool
+    public var axState: BrowserProfileAXState
+}
+
+public func browserPageRows(
+    _ rows: [BrowserBrandRow],
+    safari: SafariExtensionAXState,
+    safariNeedsAttention: Bool
+) -> [BrowserPageRow] {
+    rows.map { row in
+        var page = BrowserPageRow(
+            brand: row.brand,
+            label: UICopy.sourcesBrowserRowLabel(browser: row.brand.displayName, profileCount: row.connectedCount),
+            status: browserRowStatusText(row),
+            needsRepair: false,
+            opensSafariSettings: false,
+            axState: row.state
+        )
+        if row.needsAppUpdate || row.needsExtensionUpdate { return page }
+        if row.registration == .refused {
+            page.status = UICopy.SOURCES_BROWSER_ROW_CANT_FIND_APP
+            page.needsRepair = true
+            return page
+        }
+        if row.connectedCount > 0 { return page }
+        if row.brand == .safari {
+            if safariNeedsAttention {
+                page.status = UICopy.SOURCES_BROWSER_SAFARI_UNAVAILABLE
+                page.opensSafariSettings = true
+                return page
+            }
+            if safari != .on {
+                if safari == .off { page.status = UICopy.SOURCES_BROWSER_ROW_SAFARI_OFF }
+                page.opensSafariSettings = true
+            }
+        }
+        // `no browser connected yet` belongs to the page, not to a row named for one browser.
+        if page.status == UICopy.SOURCES_BROWSERS_NO_HISTORY {
+            page.status = UICopy.SOURCES_BROWSER_ROW_NOT_CONNECTED
+        }
+        return page
+    }
+}
+
+/// The store buttons show while no browser is connected, one per browser that has never sent anything.
+public func browserStoreOfferVisible(_ rows: [BrowserBrandRow], offered: Set<BrowserBrand>) -> Bool {
+    !offered.isEmpty && !rows.contains { $0.connectedCount > 0 }
+}
+
 public func formatRelativeBucket(_ bucket: BrowserRelativeTimeBucket) -> String {
     switch bucket {
     case .justNow:

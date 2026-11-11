@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import SetupChrome
 import SwiftUI
 
 /// About window showing app identity, version, and copyright
@@ -13,6 +14,7 @@ struct AboutView: View {
     let renderedBlock: String
     let clipboardWrite: (String) -> Bool
     @State private var copyState: CopyState?
+    @Environment(\.colorScheme) private var scheme
 
     init(aboutBlock: @escaping () -> String, clipboardWrite: @escaping (String) -> Bool) {
         self.renderedBlock = aboutBlock()
@@ -42,9 +44,11 @@ struct AboutView: View {
             Spacer().frame(height: 16)
 
             VStack(spacing: 6) {
+                // Centred line by line, like everything else in this window.
                 Text(displayedBlock)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                     .textSelection(.enabled)
                     .accessibilityIdentifier(AXID.About.aboutState)
                     .accessibilityValue(displayedBlock)
@@ -84,6 +88,7 @@ struct AboutView: View {
 
             Spacer()
 
+            // Links take sol orange, the one accent, at the darker text shade so they read on the panel.
             VStack(spacing: 4) {
                 Link("source code on github", destination: URL(string: "https://github.com/solpbc/solstone-macos")!)
                     .font(.callout)
@@ -92,6 +97,8 @@ struct AboutView: View {
                     .font(.callout)
                     .accessibilityIdentifier(AXID.About.website)
             }
+            .tint(SetupChromeColor.orangeText(for: scheme))
+            .foregroundStyle(SetupChromeColor.orangeText(for: scheme))
         }
         .padding(30)
     }

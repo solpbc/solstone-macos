@@ -11,11 +11,17 @@ public struct JournalMarkInlineView: View {
     let mark: JournalMark?
     let chipSide: CGFloat
     let wordSize: CGFloat
+    let wordInk: Color?
+    let dotInk: Color?
 
-    public init(mark: JournalMark?, chipSide: CGFloat = 15, wordSize: CGFloat = 13) {
+    /// `wordInk` and `dotInk` set the words for a pill drawn on a host's own surface; left nil, the
+    /// words keep the mark card's fixed ink.
+    public init(mark: JournalMark?, chipSide: CGFloat = 15, wordSize: CGFloat = 13, wordInk: Color? = nil, dotInk: Color? = nil) {
         self.mark = mark
         self.chipSide = chipSide
         self.wordSize = wordSize
+        self.wordInk = wordInk
+        self.dotInk = dotInk
     }
 
     public var body: some View {
@@ -29,7 +35,11 @@ public struct JournalMarkInlineView: View {
                     scaled(JournalMarkGenericChip(hex: JournalIconTileGeometry.genericChip2Hex, rotated: true))
                 }
             }
-            Text(MarkGeometry.markWords(mark?.words ?? JournalMarkGeneric.words))
+            Text(MarkGeometry.markWords(
+                mark?.words ?? JournalMarkGeneric.words,
+                wordInk: wordInk ?? MarkGeometry.wordInk,
+                faintInk: dotInk ?? MarkGeometry.faintInk
+            ))
                 .font(JournalMarkFont.isRegistered ? .custom("Comfortaa-Bold", size: wordSize) : .system(size: wordSize, weight: .bold, design: .rounded))
                 .lineLimit(1)
         }

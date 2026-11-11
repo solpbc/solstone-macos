@@ -303,7 +303,7 @@ struct SolstoneCaptureApp: App {
         Window("about solstone", id: "about") {
             if let startup {
                 AboutView(
-                    aboutBlock: { AboutPresentation.captureBlock(journal: startup.appState.tunnelLifecycleOwner.journalVersion) },
+                    aboutBlock: { AboutPresentation.windowBlock(journal: startup.appState.tunnelLifecycleOwner.journalVersion) },
                     clipboardWrite: { text in
                         let pasteboard = NSPasteboard.general
                         pasteboard.clearContents()

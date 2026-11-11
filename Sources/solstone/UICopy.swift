@@ -206,6 +206,9 @@ public enum UICopy {
     public static func sourcesBrowserLastPage(_ relative: String) -> String { "last page \(relative)" }
     public static let SOURCES_BROWSER_NEEDS_EXT_UPDATE = "needs an extension update"
     public static let SOURCES_BROWSER_NEEDS_APP_UPDATE = "needs a solstone app update"
+    public static let SOURCES_BROWSER_ROW_NOT_CONNECTED = "not connected yet"
+    public static let SOURCES_BROWSER_ROW_CANT_FIND_APP = "can't find the solstone app"
+    public static let SOURCES_BROWSER_ROW_SAFARI_OFF = "turned off in Safari"
 
     // State lines
     public static let SOURCES_BROWSER_INTAKE_OFF = "browser pages are off. nothing new is taken in from your browsers."
@@ -447,9 +450,9 @@ public enum UICopy {
     public static let MENUBAR_OBSERVING_OFFLINE_SAVED_LOCALLY = "on, offline (saved locally) →"
     public static let MENUBAR_LOCAL_ONLY_SETUP_JOURNAL = "on · set up your journal →"
     public static let MENUBAR_SYNC_PAUSED = "on, sync paused"
-    public static let MENUBAR_SAFARI_KEPT_OUT = "Safari is out of screen intake →"
+    public static let MENUBAR_SAFARI_KEPT_OUT = "Safari left out of screen →"
     public static let MENUBAR_SITE_SCREEN_HELD = "screen paused for websites you left out"
-    public static let MENUBAR_A11Y_SAFARI_KEPT_OUT = "Safari is out of screen intake"
+    public static let MENUBAR_A11Y_SAFARI_KEPT_OUT = "Safari is left out of what the solstone app takes in from your screen"
     public static let MENUBAR_STARTING = "starting…"
     public static let MENUBAR_AWAITING_MARK_CONFIRMATION = "on · confirm your journal's mark →"
     public static let MENUBAR_A11Y_PERMISSIONS_NEEDED = "solstone · permissions needed"
@@ -477,7 +480,7 @@ public enum UICopy {
     public static let SETTINGS_OBSERVATION_ERROR = "something's broken"
     public static let SETTINGS_TRY_AGAIN = "try again"
     public static let SETTINGS_TRY_AGAIN_IN_FLIGHT = "trying again…"
-    public static let SETTINGS_OBSERVATION_RECOVERY_FALLBACK = "intake stopped and couldn't restart on its own."
+    public static let SETTINGS_OBSERVATION_RECOVERY_FALLBACK = "screen and audio stopped and couldn't start again on their own."
     public static let SETTINGS_SETUP_GROUP_TITLE = "check my setup"
     public static let SETTINGS_SETUP_VERDICT_READY = "your setup is ready"
     public static let SETTINGS_SETUP_VERDICT_UNAVAILABLE = "some setup checks are unavailable"
@@ -606,7 +609,7 @@ public enum UICopy {
     public static let STATUS_CAPTURE_ERROR_TITLE = "something's broken"
     public static let ERROR_LOGIN_ITEM = "your mac wouldn't change \"start at login\". use the switch to try again."
     public static let ERROR_SAVE_CONFIG = "couldn't save that change. try it again."
-    public static let ERROR_START_OBSERVING = "couldn't turn intake on. check permissions in settings, then try again."
+    public static let ERROR_START_OBSERVING = "screen and audio couldn't start. check permissions in settings, then try again."
 
     public static func menubarErrorOpenSettings(_ message: String) -> String {
         "error: \(message) →"
@@ -642,16 +645,16 @@ public enum UICopy {
     public static let MICROPHONES_EMPTY_OPEN_SOUND = "open sound settings"
 
     public enum Websites {
-        public static let DESCRIPTION_PARAGRAPH_1 = "while a website you leave out shows in any Safari window on your screen, even one behind other windows, Safari stays out of screen intake, and the website's title and address stay out of activity. the rest of your screen keeps going into your journal. leaving out bank.com leaves out login.bank.com too."
+        public static let DESCRIPTION_PARAGRAPH_1 = "while a website you leave out shows in any Safari window on your screen, even one behind other windows, Safari stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. the rest of your screen keeps going into your journal. leaving out bank.com leaves out login.bank.com too."
         public static let HOW_THIS_WORKS = "how this works"
         public static let DESCRIPTION_PARAGRAPH_2 = "to check, solstone reads the address of the page each Safari window shows, through Accessibility, and compares it with this list on this mac. the address goes into activity only if you turned on browser addresses."
-        public static let LIMITS_DISCLOSURE = "checked in Safari. other browsers and web apps added to the Dock aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, screen intake pauses for a moment while solstone checks, and for a few seconds when the page is one you leave out. a website shown inside another website's page isn't recognized. a left-out website's tab title can still show in a browser's tab bar. a minimized Safari window's picture in the Dock can still show. a page that changes without changing its window title, or a page shown for less than a quarter of a second, can be missed. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you stop leaving out there comes off this list, so Safari windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well. while any website is left out, Picture in Picture from Safari, and from other apps that use macOS's own player, stays out of screen intake."
+        public static let LIMITS_DISCLOSURE = "checked in Safari. other browsers and web apps added to the Dock aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, the solstone app stops taking in your screen for a moment while it checks, and for a few seconds when the page is one you leave out. a website shown inside another website's page isn't recognized. a left-out website's tab title can still show in a browser's tab bar. a minimized Safari window's picture in the Dock can still show. a page that changes without changing its window title, or a page shown for less than a quarter of a second, can be missed. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you stop leaving out there comes off this list, so Safari windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well. while any website is left out, Picture in Picture from Safari, and from other apps that use macOS's own player, stays out of what the solstone app takes in from your screen."
         /// What System Settings calls this list on the owner's macOS.
         public static func accessibilityName(macOSMajor: Int) -> String {
             macOSMajor >= 27 ? "Device Control and Data Access" : "Accessibility"
         }
         public static func accessibilityCaution(macOSMajor: Int) -> String {
-            "solstone uses \(accessibilityName(macOSMajor: macOSMajor)) to read the title and address of each Safari window. once it's allowed, activity also adds browser addresses to your journal, unless you turn that off under activity. until solstone can use it, Safari stays out of screen intake and its titles stay out of activity. the rest of your screen isn't affected."
+            "solstone uses \(accessibilityName(macOSMajor: macOSMajor)) to read the title and address of each Safari window. once it's allowed, activity also adds browser addresses to your journal, unless you turn that off under activity. until solstone can use it, Safari stays out of what solstone takes in from your screen and its titles stay out of activity. the rest of your screen isn't affected."
         }
         public static let ACTIVITY_ACCESSIBILITY_HELP = "with Accessibility (called Device Control and Data Access on macOS 27), activity can add browser addresses to your journal, and window titles when screen recording is unavailable. checking Safari for the websites you leave out uses the same access, whether this setting is on or off."
         public static func activityAccessibilityOffInMacOS(macOSMajor: Int) -> String {
@@ -659,7 +662,7 @@ public enum UICopy {
         }
         public static let OPEN_SYSTEM_SETTINGS = "open System Settings"
         public static func browserCaution(browser: String) -> String {
-            "solstone can't read page addresses in \(browser) right now, so \(browser) stays out of screen intake until it can."
+            "solstone can't read page addresses in \(browser) right now, so \(browser) stays out of what it takes in from your screen until it can."
         }
         public static let ERROR_INVALID_ADDRESS = "enter a website address, like bank.com."
         public static let ERROR_LIMIT_REACHED = "you can leave out up to 200 websites."
