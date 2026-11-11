@@ -122,6 +122,7 @@ extension SettingsView {
                 }
             }
             .pickerStyle(.radioGroup)
+            .tint(SetupChromeColor.solOrange)
             .labelsHidden()
             .accessibilityIdentifier(AXID.Settings.Sources.screenshotsSpan)
             Text(ScreenshotCopy.seeTheCount)
@@ -167,6 +168,8 @@ extension SettingsView {
             Spacer(minLength: 12)
             Text(value).multilineTextAlignment(.trailing)
         }
+        // One element for VoiceOver, read as "folder, /Users/…", as the totals rows are.
+        .accessibilityElement(children: .combine)
     }
 
     private func chooseScreenshotFolder(_ source: ScreenshotSource?) {

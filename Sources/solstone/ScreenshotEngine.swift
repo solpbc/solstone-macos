@@ -34,8 +34,15 @@ struct ScreenshotLedger: Codable, Equatable, Sendable {
     var ownerChose = false
     var systemPathAtConsent: String?
     var access: ScreenshotAccess = .ok
+    /// Whether this folder has ever been read. A refusal before that is the owner's answer to
+    /// the system's prompt, not access that was taken away. Optional so a ledger saved before
+    /// it existed still decodes; nil reads as held.
+    var accessHeld: Bool?
     var movedName = "Desktop"
     var span: ScreenshotSpan = .last30Days
+    /// Where the chosen span began when the owner confirmed it. A screenshot from before it
+    /// stays out, so the folder's older screenshots don't come in after the count.
+    var liveFrom: Date?
     var journalID: String?
     var deliveredByJournal: [String: [String]] = [:]
     var items: [ScreenshotStoredItem] = []
@@ -87,9 +94,14 @@ actor ScreenshotEngine {
     private let transport: any ScreenshotTransport
     private let totals: SourceTotals?
     private let timeZone: @Sendable () -> TimeZone
+    private let onDelivered: @Sendable () async -> Void
     private let fileURL: URL
     private var ledger = ScreenshotLedger()
     private var capability: [String: Bool] = [:]
+    private var capabilityAskedAt: [String: Date] = [:]
+    /// How long a journal that doesn't list `screenshots` waits before it is asked again, so an
+    /// updated journal is noticed without a relaunch.
+    static let capabilityRecheck: TimeInterval = 60
     private var countFailed = false
 
     init(
@@ -97,13 +109,15 @@ actor ScreenshotEngine {
         reader: any ScreenshotReading,
         transport: any ScreenshotTransport,
         totals: SourceTotals? = nil,
-        timeZone: @escaping @Sendable () -> TimeZone = { .current }
+        timeZone: @escaping @Sendable () -> TimeZone = { .current },
+        onDelivered: @escaping @Sendable () async -> Void = {}
     ) {
         self.directory = directory
         self.reader = reader
         self.transport = transport
         self.totals = totals
         self.timeZone = timeZone
+        self.onDelivered = onDelivered
         fileURL = directory.appendingPathComponent("ledger.json")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if let data = try? Data(contentsOf: fileURL),
@@ -127,6 +141,7 @@ actor ScreenshotEngine {
         ledger.isDesktop = system.isDesktop
         ledger.systemPathAtConsent = system.path
         ledger.access = .ok
+        ledger.accessHeld = false
         ledger.journalID = journalID ?? ledger.journalID
         scan(now: now)
         save()
@@ -144,6 +159,7 @@ actor ScreenshotEngine {
         ledger.isDesktop = folder.isDesktop
         ledger.systemPathAtConsent = system.path
         ledger.access = .ok
+        ledger.accessHeld = false
         ledger.journalID = journalID ?? ledger.journalID
         scan(now: now)
         save()
@@ -157,6 +173,15 @@ actor ScreenshotEngine {
         ledger.pauseWindows.removeAll()
         ledger.seenCandidates.removeAll()
         save()
+    }
+
+    /// The switch turned on. Before the folder was ever read, that asks for it, as `allow` does.
+    func turnOn(now: Date, pause: ScreenshotPauseFact, journalID: String?, paired: Bool) async -> ScreenshotSnapshot {
+        if !ledger.consented || (ledger.access == .denied && ledger.accessHeld == false) {
+            return await allow(now: now, pause: pause, journalID: journalID, paired: paired)
+        }
+        turnBackOn(now: now)
+        return snapshot(now: now, pause: pause, journalID: journalID, paired: paired)
     }
 
     func turnBackOn(now: Date) {
@@ -179,12 +204,25 @@ actor ScreenshotEngine {
         let start = ledger.span.start(now: now, timeZone: timeZone())
         let delivered = deliveredHashes(for: ledger.journalID)
         ledger.items.removeAll { $0.inFrozen && ($0.outcome == .pending || $0.outcome == .held) }
-        var seen = Set(ledger.items.map(\.id))
+        // This backfill is the count the owner just saw, so an earlier one stops counting toward
+        // `{d} of {N}`, and a screenshot the ledger already knows joins this one.
+        for index in ledger.items.indices { ledger.items[index].inFrozen = false }
+        var seen = Set<String>()
         for file in ledger.seenCandidates.map(\.candidate) {
             guard let item = makeItem(file, spanStart: start, delivered: delivered, frozen: true) else { continue }
             guard seen.insert(item.id).inserted else { continue }
-            ledger.items.append(item)
+            guard let index = ledger.items.firstIndex(where: { $0.id == item.id }) else {
+                ledger.items.append(item)
+                continue
+            }
+            ledger.items[index].inFrozen = true
+            // Delivered to another journal, or seen gone and back: this journal hasn't got it.
+            if ledger.items[index].outcome == .delivered || ledger.items[index].outcome == .deleted {
+                ledger.items[index].outcome = item.outcome
+                ledger.items[index].path = item.path
+            }
         }
+        ledger.liveFrom = start
         ledger.confirmed = true
         ledger.wasOn = true
         save()
@@ -209,7 +247,7 @@ actor ScreenshotEngine {
         if ledger.confirmed { reconcilePause(now: now, fact: pause) }
         if ledger.consented { scan(now: now) }
         if let serverURL, !syncPaused {
-            await sendReady(serverURL: serverURL)
+            await sendReady(serverURL: serverURL, now: now)
         }
         save()
         return snapshot(now: now, pause: pause, journalID: journalID, paired: paired)
@@ -219,7 +257,12 @@ actor ScreenshotEngine {
 
     private func noteMove() {
         let system = reader.systemFolder()
-        guard ledger.consented, let seen = ledger.systemPathAtConsent, system.path != seen else { return }
+        guard ledger.consented, let seen = ledger.systemPathAtConsent else { return }
+        guard system.path != seen else {
+            // Moved back to the folder the app already reads: nothing to ask for.
+            if ledger.access == .moved { ledger.access = .ok }
+            return
+        }
         ledger.access = .moved
         ledger.movedName = system.name
     }
@@ -237,6 +280,7 @@ actor ScreenshotEngine {
             countFailed = true
         case .files(let files):
             ledger.access = .ok
+            ledger.accessHeld = true
             countFailed = false
             ledger.lastChecked = now
             absorb(files, now: now)
@@ -247,10 +291,13 @@ actor ScreenshotEngine {
         let marked = files.filter(\.marked)
         ledger.seenCandidates = marked.map(ScreenshotCandidateRecord.init)
         guard ledger.confirmed else { return }
+        // Read before the items are mutated: reading the ledger inside its own mutation is an
+        // exclusivity violation, which traps at run time.
+        let windows = ledger.pauseWindows
         ledger.items.removeAll { item in
             guard !item.inFrozen, item.outcome == .pending || item.outcome == .held else { return false }
             guard let when = item.capturedAt else { return false }
-            return ScreenshotPause.excludes(when, windows: ledger.pauseWindows)
+            return ScreenshotPause.excludes(when, windows: windows)
         }
         var byHash: [String: ScreenshotCandidate] = [:]
         for file in marked {
@@ -284,7 +331,8 @@ actor ScreenshotEngine {
         for file in marked where file.stable {
             guard let item = makeItem(file, spanStart: .distantPast, delivered: known, frozen: false) else { continue }
             guard !known.contains(item.id) else { continue }
-            if let when = file.when, ScreenshotPause.excludes(when, windows: ledger.pauseWindows) { continue }
+            if let when = file.when, let from = ledger.liveFrom, when < from { continue }
+            if let when = file.when, ScreenshotPause.excludes(when, windows: windows) { continue }
             if item.outcome == .refused || item.outcome == .unreadable || item.outcome == .pending {
                 ledger.items.append(item)
             }
@@ -320,17 +368,21 @@ actor ScreenshotEngine {
 
     // MARK: - send
 
-    private func sendReady(serverURL: String) async {
+    private func sendReady(serverURL: String, now: Date) async {
         guard ledger.confirmed, ledger.enabled, ledger.access == .ok, let journalID = ledger.journalID else { return }
         if capability[journalID] != true {
-            if capability[journalID] == nil {
+            let due = capabilityAskedAt[journalID].map { now.timeIntervalSince($0) >= Self.capabilityRecheck } ?? true
+            if capability[journalID] == nil || due {
                 if let listed = try? await transport.capabilities(serverURL: serverURL) {
                     capability[journalID] = listed.contains("screenshots")
+                    capabilityAskedAt[journalID] = now
                 }
             }
             guard capability[journalID] == true else { return }
         }
         var sent = 0
+        var delivered = false
+        defer { if delivered { Task { await onDelivered() } } }
         while sent < 8 {
             guard let index = nextSendable() else { return }
             let item = ledger.items[index]
@@ -348,6 +400,7 @@ actor ScreenshotEngine {
             case .delivered:
                 ledger.items[index].outcome = .delivered
                 rememberDelivered(item.id, journalID: journalID)
+                delivered = true
                 _ = totals?.applyScreenshot(hash: item.id)
             case .invalid:
                 ledger.items[index].outcome = .refused
@@ -450,6 +503,7 @@ actor ScreenshotEngine {
             enabled: ledger.enabled,
             confirmed: ledger.confirmed,
             access: ledger.access,
+            accessHeld: ledger.accessHeld ?? true,
             ownerPaused: pause.paused && ledger.confirmed,
             paired: paired,
             waitingForJournal: ledger.confirmed && paired && capabilityKnown == false,

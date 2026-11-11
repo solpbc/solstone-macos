@@ -943,6 +943,24 @@ struct BrowserCounterTests {
         let file = try #require(store.bytes())
         #expect(!file.contains(Data("https://counter-sentinel.example/lost".utf8)))
     }
+
+    @Test func theAppsClockIsLiveSoLastIsTheMomentOfIntake() throws {
+        let fixed = SourceTotals.Clock(now: moment("2026-03-03T17:00:00Z"), timeZone: utc)
+        #expect(fixed.now == moment("2026-03-03T17:00:00Z"))
+        let live = SourceTotals.Clock.live(timeZone: utc)
+        let first = live.now
+        Thread.sleep(forTimeInterval: 0.02)
+        #expect(live.now > first)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("totals-live-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = SourceTotals(directory: directory, clock: .live(timeZone: utc))
+        Thread.sleep(forTimeInterval: 1.1)
+        let before = Date()
+        _ = store.applyScreenshot(hash: "aa")
+        let last = try #require(store.view()?.screenshotsLast.flatMap(SourceTotals.parseInstant))
+        #expect(last >= before.addingTimeInterval(-0.01))
+    }
+
 }
 
 #endif

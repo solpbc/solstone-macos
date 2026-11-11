@@ -130,7 +130,7 @@ extension SettingsView {
         }
         if source == .screenshots, on {
             openPane(.source(.screenshots))
-            Task { await appState.screenshotSource?.turnBackOn() }
+            Task { await appState.screenshotSource?.turnOn() }
             return
         }
         appState.setDeckSource(source, on: on)

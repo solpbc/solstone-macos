@@ -394,7 +394,8 @@ struct ScreenshotSnapshot: Equatable, Sendable {
         subline: nil,
         reason: ScreenshotCopy.needsFolder("Desktop"),
         action: .allowScreenshotFolder,
-        switchOn: false
+        switchOn: false,
+        leavesAlone: ScreenshotCopy.desktopStays("Desktop")
     )
 
     static func running(folderLine: String) -> ScreenshotSnapshot {
@@ -412,6 +413,7 @@ struct ScreenshotFacts: Equatable, Sendable {
     var enabled = false
     var confirmed = false
     var access: ScreenshotAccess = .ok
+    var accessHeld = true
     var ownerPaused = false
     var paired = true
     var waitingForJournal = false
@@ -461,11 +463,27 @@ func presentScreenshots(_ facts: ScreenshotFacts) -> ScreenshotSnapshot {
     }
 
     if !facts.consented {
+        // The folder's own sentence is the second half of the page's claim, so it is there before
+        // the owner allows access, beside the reason that asks for it.
+        snapshot.leavesAlone = facts.folderIsDesktop
+            ? ScreenshotCopy.desktopStays(facts.folderName)
+            : ScreenshotCopy.folderStays(facts.folderName)
         snapshot.state = .readyToSetUp
         snapshot.subline = nil
         snapshot.reason = ScreenshotCopy.needsFolder(facts.folderName)
         snapshot.action = .allowScreenshotFolder
         snapshot.pageNotice = snapshot.reason
+        snapshot.switchOn = false
+        return snapshot
+    }
+    if facts.access == .denied && !facts.accessHeld {
+        // The owner said no at the system's prompt. Access was never held, so this is not a fault:
+        // the source waits to be set up, and the reason says where access is turned on.
+        snapshot.state = .readyToSetUp
+        snapshot.subline = nil
+        snapshot.reason = ScreenshotCopy.accessOff(facts.folderName)
+        snapshot.pageNotice = snapshot.reason
+        snapshot.action = .openScreenshotSettings
         snapshot.switchOn = false
         return snapshot
     }
@@ -492,8 +510,8 @@ func presentScreenshots(_ facts: ScreenshotFacts) -> ScreenshotSnapshot {
             snapshot.state = .checking
             snapshot.busy = true
         case .failed:
-            snapshot.state = .needsAttention
-            snapshot.subline = ScreenshotCopy.couldntCount
+            snapshot.state = .readyToSetUp
+            snapshot.subline = ScreenshotCopy.chooseHowFar
             snapshot.reason = ScreenshotCopy.couldntCount
             snapshot.pageNotice = ScreenshotCopy.couldntCount
             snapshot.action = .retryScreenshotCount

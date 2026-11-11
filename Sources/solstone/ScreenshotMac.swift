@@ -24,10 +24,22 @@ enum ScreenshotMac {
     }
 
     static func systemFolder() -> ScreenshotFolder {
-        let raw = CFPreferencesCopyAppValue("location" as CFString, captureDomain as CFString) as? String
+        let raw = locationSetting(
+            screenshot: CFPreferencesCopyAppValue("location-screenshot" as CFString, captureDomain as CFString) as? String,
+            general: CFPreferencesCopyAppValue("location" as CFString, captureDomain as CFString) as? String
+        )
         let expanded = raw.map { ($0 as NSString).expandingTildeInPath }
         let url = expanded.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? desktopURL()
         return folder(url)
+    }
+
+    /// Where this Mac saves a screenshot. Since macOS 27 the screenshot tool's own options write
+    /// `location-screenshot` beside `location`, and a screenshot follows the first: with only
+    /// `location` changed, screenshots kept going to the Desktop.
+    static func locationSetting(screenshot: String?, general: String?) -> String? {
+        if let screenshot, !screenshot.isEmpty { return screenshot }
+        if let general, !general.isEmpty { return general }
+        return nil
     }
 
     static func folder(_ url: URL) -> ScreenshotFolder {
@@ -56,7 +68,53 @@ enum ScreenshotMac {
     }
 }
 
+/// What reading a file found, kept while its size and modification date stay the same, so a
+/// folder of screenshots is hashed once rather than on every look.
+final class ScreenshotReadCache: @unchecked Sendable {
+    struct Key: Hashable {
+        var path: String
+        var size: Int
+        var modified: Date?
+    }
+
+    struct Entry {
+        var header: Data
+        var sha256: String
+        var pixels: Int64?
+    }
+
+    private let lock = NSLock()
+    private var entries: [Key: Entry] = [:]
+
+    func entry(_ key: Key) -> Entry? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries[key]
+    }
+
+    func store(_ entry: Entry, for key: Key) {
+        lock.lock()
+        defer { lock.unlock() }
+        entries[key] = entry
+    }
+
+    /// Forget files the folder no longer offers.
+    func keep(paths: Set<String>) {
+        lock.lock()
+        defer { lock.unlock() }
+        entries = entries.filter { paths.contains($0.key.path) }
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.count
+    }
+}
+
 struct ScreenshotMacReader: ScreenshotReading {
+    let cache = ScreenshotReadCache()
+
     func systemFolder() -> ScreenshotFolder { ScreenshotMac.systemFolder() }
 
     func homePath() -> String {
@@ -83,8 +141,9 @@ struct ScreenshotMacReader: ScreenshotReading {
             guard values?.isRegularFile == true else { continue }
             let path = child.path
             guard Self.marked(path) else { continue }
-            files.append(Self.read(child, values: values, now: now))
+            files.append(Self.read(child, values: values, now: now, cache: cache))
         }
+        cache.keep(paths: Set(files.map(\.path)))
         return .files(files)
     }
 
@@ -117,13 +176,21 @@ struct ScreenshotMacReader: ScreenshotReading {
         return (MDItemCopyAttribute(item, ScreenshotMac.isScreenCaptureName as CFString) as? Bool) == true
     }
 
-    private static func read(_ url: URL, values: URLResourceValues?, now: Date) -> ScreenshotCandidate {
+    static func read(_ url: URL, values: URLResourceValues?, now: Date, cache: ScreenshotReadCache? = nil) -> ScreenshotCandidate {
         let path = url.path
         let mtime = values?.contentModificationDate
         let created = values?.creationDate
         let platform = spotlightDate(path) ?? created
         let size = values?.fileSize ?? 0
         let stable = mtime.map { now.timeIntervalSince($0) >= ScreenshotMac.stableAfter } ?? false
+        let key = ScreenshotReadCache.Key(path: path, size: size, modified: mtime)
+        if stable, let known = cache?.entry(key) {
+            return ScreenshotCandidate(
+                path: path, marked: true, platformDate: platform, fileDate: mtime,
+                byteCount: size, stable: stable, header: known.header, sha256: known.sha256,
+                pixelCount: known.pixels, unreadable: false, fileExtension: url.pathExtension
+            )
+        }
         var header = Data()
         var hash: String?
         var pixels: Int64?
@@ -153,6 +220,9 @@ struct ScreenshotMacReader: ScreenshotReading {
             }
         } else {
             unreadable = true
+        }
+        if stable, !unreadable, let hash {
+            cache?.store(ScreenshotReadCache.Entry(header: header, sha256: hash, pixels: pixels), for: key)
         }
         return ScreenshotCandidate(
             path: path, marked: true, platformDate: platform, fileDate: mtime,

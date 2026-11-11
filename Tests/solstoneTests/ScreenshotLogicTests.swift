@@ -100,6 +100,47 @@ struct ScreenshotLogicTests {
         #expect(tile.pageNotice == ScreenshotCopy.needsFolder("Desktop"))
     }
 
+    @Test func beforeAllowTheFolderSentenceStandsBesideTheAsk() {
+        var facts = ScreenshotFacts()
+        #expect(presentScreenshots(facts).leavesAlone == ScreenshotCopy.desktopStays("Desktop"))
+        #expect(ScreenshotSnapshot.notSetUp.leavesAlone == ScreenshotCopy.desktopStays("Desktop"))
+        facts.folderIsDesktop = false
+        facts.folderName = "Screenshots"
+        #expect(presentScreenshots(facts).leavesAlone == ScreenshotCopy.folderStays("Screenshots"))
+    }
+
+    @Test func noAtThePromptIsNotAFaultAndAccessTakenAwayIs() {
+        var facts = ScreenshotFacts()
+        facts.consented = true
+        facts.enabled = true
+        facts.access = .denied
+        facts.accessHeld = false
+        let declined = presentScreenshots(facts)
+        #expect(declined.state == .readyToSetUp)
+        #expect(declined.subline == nil)
+        #expect(declined.switchOn == false)
+        #expect(declined.pageNotice == ScreenshotCopy.accessOff("Desktop"))
+        #expect(declined.action == .openScreenshotSettings)
+        facts.accessHeld = true
+        let revoked = presentScreenshots(facts)
+        #expect(revoked.state == .needsAttention)
+        #expect(revoked.subline == ScreenshotCopy.accessOff("Desktop"))
+        #expect(revoked.action == .openScreenshotSettings)
+    }
+
+    @Test func aCountThatFailedWaitsToBeSetUp() {
+        var facts = ScreenshotFacts()
+        facts.consented = true
+        facts.enabled = true
+        facts.count = .failed
+        let failed = presentScreenshots(facts)
+        #expect(failed.state == .readyToSetUp)
+        #expect(failed.subline == ScreenshotCopy.chooseHowFar)
+        #expect(failed.pageNotice == ScreenshotCopy.couldntCount)
+        #expect(failed.action == .retryScreenshotCount)
+        #expect(failed.showChooser)
+    }
+
     @Test func bringingInCountingAndAMissingCapability() {
         var facts = ScreenshotFacts()
         facts.consented = true
@@ -148,6 +189,23 @@ struct ScreenshotLogicTests {
         facts.folderIsDesktop = false
         facts.folderName = "Screenshots"
         #expect(presentScreenshots(facts).leavesAlone == "other files in Screenshots stay where they are.")
+    }
+
+    @Test func aRunningScreenshotsSourceCanBePausedAndResumed() {
+        let idle = withScreenshotsPause((false, false), screenshotsRunning: false, screenshotsPaused: false, computerPaused: false)
+        #expect(idle.pause == false && idle.resume == false)
+        let running = withScreenshotsPause((false, false), screenshotsRunning: true, screenshotsPaused: false, computerPaused: false)
+        #expect(running.pause && !running.resume)
+        let paused = withScreenshotsPause((false, false), screenshotsRunning: false, screenshotsPaused: true, computerPaused: true)
+        #expect(!paused.pause && paused.resume)
+        let recording = withScreenshotsPause((true, false), screenshotsRunning: false, screenshotsPaused: false, computerPaused: false)
+        #expect(recording.pause && !recording.resume)
+    }
+
+    @Test func theScreenshotToolsOwnLocationWins() {
+        #expect(ScreenshotMac.locationSetting(screenshot: "~/Documents/", general: "~/Pictures") == "~/Documents/")
+        #expect(ScreenshotMac.locationSetting(screenshot: nil, general: "~/Pictures") == "~/Pictures")
+        #expect(ScreenshotMac.locationSetting(screenshot: "", general: nil) == nil)
     }
 
     @Test func confirmWords() {
@@ -345,6 +403,76 @@ struct ScreenshotEngineTests {
         #expect(snap.action == .allowScreenshotFolder)
     }
 
+    @Test func aSecondBackfillCountsOnlyItsOwnScreenshots() async throws {
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        reader.files = [shot(path: "/Users/a/Desktop/one.png", hash: "one", when: now().addingTimeInterval(-60))]
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
+        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        await engine.turnOff()
+        reader.files += [
+            shot(path: "/Users/a/Desktop/two.png", hash: "two", when: now().addingTimeInterval(-50)),
+            shot(path: "/Users/a/Desktop/three.png", hash: "three", when: now().addingTimeInterval(-40)),
+        ]
+        transport.answers = [.ahead]
+        await engine.turnBackOn(now: now())
+        let choosing = await engine.snapshot(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        #expect(choosing.confirmTitle == ScreenshotCopy.confirmTitle(spanFromToday: false, count: 2))
+        await engine.confirm(now: now())
+        let bringing = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(bringing.progress == ScreenshotCopy.pageProgress(done: 0, total: 2))
+    }
+
+    @Test func aDifferentJournalGetsWhatTheFirstOneAlreadyHas() async throws {
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        reader.files = [shot(path: "/Users/a/Desktop/one.png", hash: "one", when: now().addingTimeInterval(-60))]
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
+        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(transport.sent.map(\.hash) == ["one"])
+        let asking = await engine.tick(now: now(), pause: .running, journalID: "journal-b", serverURL: nil, paired: true, syncPaused: true)
+        #expect(asking.confirmTitle == ScreenshotCopy.confirmTitle(spanFromToday: false, count: 1))
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-b", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(transport.sent.map(\.hash) == ["one", "one"])
+    }
+
+    @Test func aDeliveryIsReported() async throws {
+        let reader = FakeShots()
+        reader.files = [shot(when: now())]
+        let reports = DeliveryReports()
+        let engine = ScreenshotEngine(
+            directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver },
+            onDelivered: { await reports.add() }
+        )
+        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        for _ in 0..<50 where await reports.count == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(await reports.count == 1)
+        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await reports.count == 1)
+    }
+
+    @Test func aFolderMovedAwayAndBackNeedsNothing() async throws {
+        let reader = FakeShots()
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
+        _ = await engine.allow(now: now(), pause: .running, journalID: nil, paired: true)
+        let desktop = reader.folder
+        reader.folder = ScreenshotFolder(path: "/Users/a/Documents", name: "Documents", isDesktop: false)
+        let moved = await engine.tick(now: now(), pause: .running, journalID: nil, serverURL: nil, paired: true, syncPaused: true)
+        #expect(moved.state == .needsAttention)
+        reader.folder = desktop
+        let back = await engine.tick(now: now(), pause: .running, journalID: nil, serverURL: nil, paired: true, syncPaused: true)
+        #expect(back.state != .needsAttention)
+        #expect(back.showChooser)
+    }
+
     @Test func aDifferentJournalAsksAgain() async throws {
         let reader = FakeShots()
         reader.files = [shot(when: now())]
@@ -394,6 +522,87 @@ struct ScreenshotEngineTests {
         #expect(transport.sent.count == 3)
     }
 
+    @Test func aNewScreenshotThatWaitsAcrossTicksDoesNotTrap() async throws {
+        let reader = FakeShots()
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
+        let start = now()
+        _ = await engine.allow(now: start, pause: .running, journalID: "journal-a", paired: false)
+        await engine.confirm(now: start)
+        reader.files = [shot(hash: "new", when: start.addingTimeInterval(30))]
+        _ = await engine.tick(now: start.addingTimeInterval(40), pause: .running, journalID: "journal-a", serverURL: nil, paired: false, syncPaused: false)
+        let held = await engine.tick(now: start.addingTimeInterval(55), pause: .running, journalID: "journal-a", serverURL: nil, paired: false, syncPaused: false)
+        #expect(held.waiting == 1)
+    }
+
+    @Test func screenshotsFromBeforeTheChosenSpanStayOutAfterTheCount() async throws {
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        let calendar = ScreenshotCalendar.gregorian(in: denver)
+        let old = calendar.date(byAdding: .day, value: -60, to: now())!
+        reader.files = [
+            shot(path: "/Users/a/Desktop/recent.png", hash: "recent", when: now().addingTimeInterval(-3600)),
+            shot(path: "/Users/a/Desktop/old.png", hash: "old", when: old),
+        ]
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
+        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        await engine.select(span: .last30Days, now: now())
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        reader.files.append(shot(path: "/Users/a/Desktop/later.png", hash: "later", when: now().addingTimeInterval(60)))
+        let after = await engine.tick(now: now().addingTimeInterval(70), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(transport.sent.map(\.hash) == ["recent", "later"])
+        #expect(after.waiting == 0)
+    }
+
+    @Test func aJournalThatUpdatesIsAskedAgain() async throws {
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        transport.capability = []
+        reader.files = [shot(when: now())]
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
+        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        transport.capability = ["screenshots"]
+        let soon = await engine.tick(now: now().addingTimeInterval(10), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(transport.sent.isEmpty)
+        #expect(soon.pageNotice == ScreenshotCopy.waitingForJournal)
+        let later = await engine.tick(
+            now: now().addingTimeInterval(ScreenshotEngine.capabilityRecheck + 10),
+            pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false
+        )
+        #expect(transport.sent.count == 1)
+        #expect(later.pageNotice == nil)
+    }
+
+    @Test func noAtThePromptThenAccessLaterBringsTheChooser() async throws {
+        let reader = FakeShots()
+        reader.denied = true
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
+        let declined = await engine.turnOn(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        #expect(reader.listCount > 0)
+        #expect(declined.state == .readyToSetUp)
+        #expect(declined.action == .openScreenshotSettings)
+        #expect(declined.switchOn == false)
+        reader.denied = false
+        let granted = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: nil, paired: true, syncPaused: true)
+        #expect(granted.showChooser)
+        reader.denied = true
+        let revoked = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: nil, paired: true, syncPaused: true)
+        #expect(revoked.state == .needsAttention)
+        #expect(revoked.action == .openScreenshotSettings)
+    }
+
+    @Test func aLedgerSavedBeforeTheNewFieldsStillLoads() async throws {
+        let dir = try directory()
+        let old = #"{"version":1,"consented":true,"enabled":true,"confirmed":true,"wasOn":true,"path":"/Users/a/Desktop","folderName":"Desktop","isDesktop":true,"ownerChose":false,"systemPathAtConsent":"/Users/a/Desktop","access":"ok","movedName":"Desktop","span":"last30Days","deliveredByJournal":{},"items":[],"pauseWindows":[],"seenCandidates":[]}"#
+        try old.write(to: dir.appendingPathComponent("ledger.json"), atomically: true, encoding: .utf8)
+        let engine = ScreenshotEngine(directory: dir, reader: FakeShots(), transport: FakeShotTransport(), timeZone: { self.denver })
+        let snap = await engine.snapshot(now: now(), pause: .running, journalID: nil, paired: true)
+        #expect(snap.state == .on)
+        #expect(snap.subline == ScreenshotCopy.fromFolder("Desktop"))
+    }
+
     @Test func anOldTotalsFileStillDecodesAndAHashCountsOnce() throws {
         let dir = try directory()
         let json = """
@@ -411,15 +620,22 @@ struct ScreenshotEngineTests {
     }
 }
 
+private actor DeliveryReports {
+    var count = 0
+    func add() { count += 1 }
+}
+
 private final class FakeShots: ScreenshotReading, @unchecked Sendable {
     var folder = ScreenshotFolder(path: "/Users/a/Desktop", name: "Desktop", isDesktop: true)
     var files: [ScreenshotCandidate] = []
     var listCount = 0
+    var denied = false
 
     func systemFolder() -> ScreenshotFolder { folder }
     func homePath() -> String { "/Users/a" }
     func list(_ folder: ScreenshotFolder, now: Date) -> ScreenshotList {
         listCount += 1
+        if denied { return .denied }
         return .files(files)
     }
 }
@@ -436,4 +652,36 @@ private final class FakeShotTransport: ScreenshotTransport, @unchecked Sendable 
         if answers.isEmpty { return .delivered }
         return answers.removeFirst()
     }
+}
+
+@Suite("Screenshots reading")
+struct ScreenshotReadCacheTests {
+    @Test func aFileIsHashedOnceUntilItChanges() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("shots-read-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("shot.png")
+        let then = Date().addingTimeInterval(-60).rounded()
+        func write(_ byte: UInt8, modified: Date) throws -> URLResourceValues {
+            var bytes = ScreenshotBytes.pngHeader(width: 2, height: 3)
+            bytes.append(contentsOf: [UInt8](repeating: byte, count: 64))
+            try bytes.write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+            // A fresh URL, as each listing gives: a URL keeps the resource values it read first.
+            return try URL(fileURLWithPath: url.path).resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey, .fileSizeKey])
+        }
+        let cache = ScreenshotReadCache()
+        let first = ScreenshotMacReader.read(url, values: try write(1, modified: then), now: Date(), cache: cache)
+        let sameKey = ScreenshotMacReader.read(url, values: try write(2, modified: then), now: Date(), cache: cache)
+        #expect(first.sha256 != nil)
+        #expect(sameKey.sha256 == first.sha256)
+        #expect(cache.count == 1)
+        let changed = ScreenshotMacReader.read(url, values: try write(2, modified: then.addingTimeInterval(5)), now: Date(), cache: cache)
+        #expect(changed.sha256 != first.sha256)
+        cache.keep(paths: [])
+        #expect(cache.count == 0)
+    }
+}
+
+private extension Date {
+    func rounded() -> Date { Date(timeIntervalSince1970: timeIntervalSince1970.rounded(.down)) }
 }

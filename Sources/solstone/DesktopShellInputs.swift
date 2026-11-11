@@ -223,6 +223,26 @@ extension AppState {
         let pause = activityPausable || (isRecording && !isPaused)
         let resume = activityResumable || capture.isUserPaused || ownerPauseHeldIdle
 #endif
-        return (pause, !pause && resume)
+        let shots = screenshotSource?.snapshot
+        return withScreenshotsPause(
+            (pause, resume),
+            screenshotsRunning: shots?.state == .on,
+            screenshotsPaused: shots?.state == .paused,
+            computerPaused: pauseManager.isPaused
+        )
     }
+}
+
+/// The computer's pause covers every running source (desktop-shell § 2.9), so a running
+/// screenshots source offers `pause`, and a paused one offers `resume`, even when nothing
+/// else is recording.
+func withScreenshotsPause(
+    _ controls: (pause: Bool, resume: Bool),
+    screenshotsRunning: Bool,
+    screenshotsPaused: Bool,
+    computerPaused: Bool
+) -> (pause: Bool, resume: Bool) {
+    let pause = controls.pause || (screenshotsRunning && !computerPaused)
+    let resume = controls.resume || (screenshotsPaused && computerPaused)
+    return (pause, !pause && resume)
 }

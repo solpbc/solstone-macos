@@ -42,9 +42,23 @@ final class SourceTotals: @unchecked Sendable {
     static let carriedTerminalFileName = "source-intake.json"
     static let version = 1
 
+    /// Where `last` and `started` read the time. The app's clock is live, so `last taken in`
+    /// is the moment something was taken in; a fixed clock is for tests.
     struct Clock: Sendable {
-        var now: Date
+        private var fixed: Date?
         var timeZone: TimeZone
+        var now: Date { fixed ?? Date() }
+
+        init(now: Date, timeZone: TimeZone) {
+            fixed = now
+            self.timeZone = timeZone
+        }
+
+        static func live(timeZone: TimeZone = .current) -> Clock {
+            var clock = Clock(now: Date(), timeZone: timeZone)
+            clock.fixed = nil
+            return clock
+        }
     }
 
     struct View: Equatable, Sendable {

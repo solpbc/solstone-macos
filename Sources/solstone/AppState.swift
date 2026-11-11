@@ -3022,7 +3022,7 @@ public final class AppState {
         if let sourceTotals { return sourceTotals }
         let totals = SourceTotals(
             directory: appSupport.appendingPathComponent("Solstone", isDirectory: true),
-            clock: SourceTotals.Clock(now: Date(), timeZone: .current)
+            clock: .live(timeZone: .current)
         )
         let carryURL = terminalTakeoverHost.root.appendingPathComponent(SourceTotals.carriedTerminalFileName)
         _ = totals.considerCarry(try? Data(contentsOf: carryURL))
@@ -3064,7 +3064,14 @@ public final class AppState {
             },
             paired: { [weak self] in self?.deckHasJournal ?? false },
             syncPaused: { [weak self] in self?.config.syncPaused ?? true },
-            sourceTotals: sourceTotals ?? openSourceTotals(appSupport: appSupport)
+            sourceTotals: sourceTotals ?? openSourceTotals(appSupport: appSupport),
+            // A screenshot the journal kept is a delivery, so status's `last added to your journal` moves.
+            reportDelivery: { [weak self] in
+                await MainActor.run {
+                    guard let self, case .identified(let fingerprint) = self.currentJournalIdentity() else { return }
+                    self.uploadCoordinator.noteBrowserDelivery(captured: fingerprint)
+                }
+            }
         )
         screenshotSource = source
         let previousPause = pauseManager.onPauseIntake

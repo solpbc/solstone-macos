@@ -45,14 +45,16 @@ final class ScreenshotSource {
         pauseFact: @escaping @MainActor () -> ScreenshotPauseFact,
         paired: @escaping @MainActor () -> Bool,
         syncPaused: @escaping @MainActor () -> Bool,
-        sourceTotals: SourceTotals? = nil
+        sourceTotals: SourceTotals? = nil,
+        reportDelivery: @escaping @Sendable () async -> Void = {}
     ) -> ScreenshotSource {
         ScreenshotSource(
             engine: ScreenshotEngine(
                 directory: appSupportDirectory.appendingPathComponent("Solstone/screenshots", isDirectory: true),
                 reader: ScreenshotMacReader(),
                 transport: ScreenshotLiveTransport(),
-                totals: sourceTotals
+                totals: sourceTotals,
+                onDelivered: reportDelivery
             ),
             journalID: journalID,
             pauseFact: pauseFact,
@@ -101,6 +103,12 @@ final class ScreenshotSource {
 
     func turnBackOn() async {
         await engine.turnBackOn(now: Date())
+        await refresh()
+    }
+
+    /// The tile's or the page's switch turned on.
+    func turnOn() async {
+        snapshot = await engine.turnOn(now: Date(), pause: pauseFact(), journalID: journalID(), paired: paired())
         await refresh()
     }
 
