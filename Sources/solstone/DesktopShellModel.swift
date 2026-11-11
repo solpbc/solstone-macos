@@ -118,7 +118,7 @@ struct DeckTile: Equatable, Sendable {
 }
 
 enum DeckCopy {
-    static let offPaired = "intake is off. turn it on any time."
+    static let offPaired = "turn it on any time."
     static let offUnpaired = "turn it on any time."
     static let screenWithActivity = "with computer sound and activity"
     static let screenWithoutActivity = "with computer sound"

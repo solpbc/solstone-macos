@@ -244,15 +244,19 @@ enum MarkGeometry {
     static let confirmedBorder = Self.color(hex: "#d1c7b7")
 
     static func markWords(_ words: [String]) -> AttributedString {
+        markWords(words, wordInk: Self.wordInk, faintInk: Self.faintInk)
+    }
+
+    static func markWords(_ words: [String], wordInk: Color, faintInk: Color) -> AttributedString {
         var line = AttributedString()
         for (index, word) in words.enumerated() {
             if index > 0 {
                 var dot = AttributedString(" · ")
-                dot.swiftUI.foregroundColor = Self.faintInk
+                dot.swiftUI.foregroundColor = faintInk
                 line += dot
             }
             var run = AttributedString(word)
-            run.swiftUI.foregroundColor = Self.wordInk
+            run.swiftUI.foregroundColor = wordInk
             line += run
         }
         return line

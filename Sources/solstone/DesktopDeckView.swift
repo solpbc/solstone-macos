@@ -232,11 +232,13 @@ struct DeckPausedLine: View {
     }
 }
 
-/// The journal at the foot: its mark and words on the mark's own card, and the way in. With no
-/// journal it shows the generic mark, which says "your · journal".
+/// The journal at the foot: its mark and words, and the way in. With no journal it shows the
+/// generic mark, which says "your · journal". Light, it sits on the mark's own card; dark, on the
+/// deck's dark card, as windows and linux draw it.
 struct DeckJournalPill: View {
     let appState: AppState
     let fallback: () -> Void
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         let mark = appState.confirmedMark
@@ -247,11 +249,16 @@ struct DeckJournalPill: View {
                 fallback()
             }
         } label: {
-            JournalMarkInlineView(mark: mark)
+            let dark = scheme == .dark
+            JournalMarkInlineView(
+                mark: mark,
+                wordInk: dark ? SetupChromeColor.ink(for: scheme) : nil,
+                dotInk: dark ? SetupChromeColor.faintInk(for: scheme) : nil
+            )
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(Capsule().fill(JournalMarkInlineView.cardFill))
-                .overlay(Capsule().stroke(JournalMarkInlineView.cardBorder, lineWidth: 1))
+                .background(Capsule().fill(dark ? SetupChromeColor.card(for: scheme) : JournalMarkInlineView.cardFill))
+                .overlay(Capsule().stroke(dark ? SetupChromeColor.hairline(for: scheme) : JournalMarkInlineView.cardBorder, lineWidth: 1))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)

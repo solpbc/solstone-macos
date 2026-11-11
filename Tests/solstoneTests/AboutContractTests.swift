@@ -24,6 +24,13 @@ struct AboutContractTests {
         #expect(copied == displayed)
     }
 
+    @Test @MainActor func theAboutWindowSaysAnUnknownJournalVersionPlainly() {
+        let unknown = "solstone macos app 2.0.0 (67) · macos 15.6 · arm64\njournal unknown"
+        #expect(AboutPresentation.windowLines(unknown) == "solstone macos app 2.0.0 (67) · macos 15.6 · arm64\njournal version unknown")
+        let known = "solstone macos app 2.0.0 (67) · macos 15.6 · arm64\njournal 1.2.3 · last seen 1 minute ago"
+        #expect(AboutPresentation.windowLines(known) == known)
+    }
+
     private var bundleURL: URL {
         let file = URL(fileURLWithPath: #filePath)
         let root = file.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
