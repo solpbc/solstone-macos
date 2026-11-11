@@ -27,9 +27,22 @@ struct UploadCoordinatorTests {
         let fixed = Date(timeIntervalSince1970: 1_700_000_000)
         let coordinator = try makeCoordinator(now: fixed)
 
-        coordinator.handleProgressEvent(.syncComplete(context: nil))
+        coordinator.handleProgressEvent(.syncComplete(context: nil, remaining: 0))
 
         #expect(coordinator.lastSyncedAt == nil)
+    }
+
+    @Test func syncCompleteKeepsTheSegmentsStillOnThisMacCounted() throws {
+        let coordinator = try makeCoordinator(now: Date(timeIntervalSince1970: 1_700_000_000))
+
+        coordinator.handleProgressEvent(.syncComplete(context: nil, remaining: 2))
+
+        #expect(coordinator.status == .synced)
+        #expect(coordinator.pendingCount == 2)
+        var pill = JournalPillInputs()
+        pill.upload = deckUploadPhase(coordinator.status)
+        pill.pending = coordinator.pendingCount
+        #expect(!deriveJournalPill(pill).isCaughtUp)
     }
 
     @Test func segmentUnprovableRecordsEvidenceOnceThenCoalescesOnRepeat() async throws {
@@ -488,7 +501,7 @@ struct UploadCoordinatorTests {
         #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
         #expect(delivery.read() == .absent)
 
-        coordinator.handleProgressEvent(.syncComplete(context: nil))
+        coordinator.handleProgressEvent(.syncComplete(context: nil, remaining: 0))
         #expect(coordinator.lastJournalDeliveryWriteFailed == true)
         #expect(coordinator.lastJournalDeliveryOutcome == .unavailable)
         #expect(delivery.read() == .absent)
@@ -579,7 +592,7 @@ struct UploadCoordinatorTests {
         )
 
         coordinator.handleProgressEvent(.journalContactSucceeded(context: nil))
-        coordinator.handleProgressEvent(.syncComplete(context: nil))
+        coordinator.handleProgressEvent(.syncComplete(context: nil, remaining: 0))
         coordinator.handleProgressEvent(.uploadRetrying(segment: "x", attempt: 1))
         coordinator.handleProgressEvent(.offline(
             error: "offline",
@@ -826,7 +839,7 @@ struct UploadCoordinatorTests {
             requestedPath: IngestProtocolV3.uploadPath
         ),
         .journalContactSucceeded(context: nil),
-        .syncComplete(context: nil),
+        .syncComplete(context: nil, remaining: 0),
         .offline(
             error: "offline",
             healthReason: .urlErrorCode(-1009),

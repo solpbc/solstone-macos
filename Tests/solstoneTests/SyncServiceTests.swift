@@ -4338,6 +4338,52 @@ struct SyncServiceTests {
         #expect(store.snapshotRequests().compactMap { $0.url?.path } == [IngestProtocolV3.segmentsDayPath(today)])
     }
 
+    @Test func deviceQuietPassCountsTheSegmentsItLeftOnThisMac() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-quiet-remaining")
+        let seg = try makeSegment(root: root, segmentName: "121000_300")
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 403, body: "{\"reason_code\":\"linked_device_required\"}")
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24802") })
+        await configure(service)
+        await service.sync()  // 403: the device-quiet window starts
+
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream { collector.append(event) }
+        }
+        defer { listen.cancel() }
+        await service.sync()  // inside the window: today's probe only, no upload
+
+        #expect(FileManager.default.fileExists(atPath: seg.url.path))
+        let remaining = try await waitForSyncCompleteRemaining(collector)
+        #expect(remaining == 1)
+    }
+
+    @Test func refusedUploadPassCountsTheSegmentAsStillOnThisMac() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-refused-remaining")
+        let seg = try makeSegment(root: root, segmentName: "120000_300")
+        store.registerRoute(path: IngestProtocolV3.uploadPath, statusCode: 413, body: "{\"reason_code\":\"too_large\"}")
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24803") })
+        await configure(service)
+        let collector = ProgressCollector()
+        let listen = Task {
+            for await event in await service.progressStream { collector.append(event) }
+        }
+        defer { listen.cancel() }
+        await service.sync()
+
+        #expect(FileManager.default.fileExists(atPath: seg.url.appendingPathComponent("120000_300_audio.m4a").path))
+        let remaining = try await waitForSyncCompleteRemaining(collector)
+        #expect(remaining == 1)
+    }
+
     @Test func upgradeNoMediaFolderWithUnreadableAckIsRemovedWithoutNetwork() async throws {
         store.reset()
         let root = try makeTempDirectory("sync-upgrade-unreadable-ack")
@@ -5219,6 +5265,21 @@ private actor ResolverScript {
         }
         return values.first ?? .held
     }
+}
+
+/// The `remaining` count of the first finished pass the collector saw.
+private func waitForSyncCompleteRemaining(_ collector: ProgressCollector) async throws -> Int? {
+    func found() -> Int? {
+        for event in collector.allEvents {
+            if case .syncComplete(_, let remaining) = event { return remaining }
+        }
+        return nil
+    }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while found() == nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    return found()
 }
 
 private final class ProgressCollector: @unchecked Sendable {

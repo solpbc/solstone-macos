@@ -24,7 +24,10 @@ public actor SyncService {
             context: JournalUploadContext? = nil
         )
         case journalContactSucceeded(context: JournalUploadContext?)
-        case syncComplete(context: JournalUploadContext?)
+        /// The pass finished. `remaining` counts the segments it found that are still
+        /// only on this mac (not attempted, bounded, refused or unproven), so a
+        /// finished pass never reads as caught up while any are left.
+        case syncComplete(context: JournalUploadContext?, remaining: Int)
         case syncBlocked(pendingCount: Int, reason: UploadError)
         case offline(error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)
         case awaitingTunnel
@@ -559,7 +562,8 @@ public actor SyncService {
             switch probeResult {
             case .success:
                 emitProgress(.journalContactSucceeded(context: context))
-                emitProgress(.syncComplete(context: context))
+                // The quiet window skips the upload walk, so every segment found is still here.
+                emitProgress(.syncComplete(context: context, remaining: totalSegments))
             case .failure(let classification):
                 handleProbeFailure(classification: classification, day: today)
             }
@@ -567,6 +571,9 @@ public actor SyncService {
         }
 
         var checked = 0
+        // Segments this pass settled: delivered, already acknowledged, or removed by the
+        // journal. Every other outcome leaves the segment waiting on this mac.
+        var settled = 0
         var didPOST = false
         var hasYieldedContact = false
 
@@ -606,6 +613,10 @@ public actor SyncService {
                     context: context
                 )
 
+                if !needsUpload {
+                    settled += 1
+                }
+
                 if needsUpload {
                     if let bound = self.segmentBounds[address], bound.quietUntil > self.now() {
                         Logger.upload.info("Segment \(segment, privacy: .public): skipped (bound active)")
@@ -635,6 +646,7 @@ public actor SyncService {
                             uploadBlockReason = .preparationFailed
                         }
                     case .succeeded:
+                        settled += 1
                         emitProgress(.journalContactSucceeded(context: context))
                         hasYieldedContact = true
                         let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
@@ -690,6 +702,7 @@ public actor SyncService {
                         let nowTime = self.now()
                         switch scope {
                         case .segmentRemoved:
+                            settled += 1
                             Logger.upload.notice("Segment \(segment, privacy: .public) day=\(day, privacy: .public): segment_removed")
                             let unreadableIDs: [String] = {
                                 if case .present(let m) = metaState,
@@ -795,8 +808,9 @@ public actor SyncService {
             return
         }
         guard syncContextIsCurrent(context, epoch: epoch) else { return }
-        emitProgress(.syncComplete(context: context))
-        Logger.upload.info("Sync complete")
+        let remaining = max(totalSegments - settled, 0)
+        emitProgress(.syncComplete(context: context, remaining: remaining))
+        Logger.upload.info("Sync complete, \(remaining, privacy: .public) still on this mac")
     }
 
     private func handleProbeFailure(

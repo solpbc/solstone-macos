@@ -462,10 +462,10 @@ public final class UploadCoordinator {
             recentErrorCount = 0
             clearIngestFailure()
 
-        case .syncComplete(let context):
+        case .syncComplete(let context, let remaining):
             guard ordinaryProgressIsCurrent(context) else { return }
             status = .synced
-            pendingCount = 0
+            pendingCount = remaining
             recentErrorCount = 0
             clearIngestFailure()
 
