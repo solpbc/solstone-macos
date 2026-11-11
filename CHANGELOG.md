@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the ☼ that terminal shows in tmux's status bar no longer brings another `_` with it each time terminal resumes or the app opens, which pushed session names out of view. the next start clears the ones already there. tmux session and window names with accented letters or symbols now also come into your journal as they are, instead of with `_` in their place. thanks @dvanduzer.
 - if solstone for tmux moved into terminal, terminal now keeps finding tmux after Homebrew upgrades it. thanks @dvanduzer.
 - the menu no longer shows "terminal history: continued" after solstone for tmux has moved in. thanks @dvanduzer.
+- terminal now reads `terminal-settings.json` in `~/Library/Application Support/Solstone/` every time it starts, so you can choose tmux sessions that go into your journal whenever their output changes, such as ones where an agent works on its own, even if solstone for tmux had no settings when it moved in. for example, `{"output_sessions": ["agent-*"]}`, then turn terminal off and on again. a setting terminal can't use stays at its default. thanks @dvanduzer.
 
 ## [2.0.64] - 2026-11-09
 

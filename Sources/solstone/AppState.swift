@@ -3153,7 +3153,10 @@ public final class AppState {
             helperOptions: {
                 let record = store.load().record
                 var options = TerminalHelperOptions()
-                if record?.carriedSettings != nil { options.settings = settingsURL }
+                options.settings = TerminalSettingsFile.forHelper(
+                    owner: settingsURL,
+                    copy: FileManager.default.temporaryDirectory.appendingPathComponent("solstone-terminal-settings.json")
+                )
                 if let directory = record?.tmuxTmpdir { options.environment["TMUX_TMPDIR"] = directory }
                 options.tmuxPath = record?.tmuxPath
                 return options

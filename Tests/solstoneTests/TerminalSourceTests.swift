@@ -158,6 +158,22 @@ struct TerminalSourceTests {
         #expect(TerminalTmuxLocator.stableLink(to: cellar, isExecutable: { _ in false }, resolve: resolve) == cellar)
     }
 
+    @Test func theOwnersSettingsFileReachesTheHelperWithoutAMoveAndABadKeyKeepsItsDefault() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let owner = directory.appendingPathComponent("terminal-settings.json")
+        let copy = directory.appendingPathComponent("helper-settings.json")
+        #expect(TerminalSettingsFile.forHelper(owner: owner, copy: copy) == nil)
+        try Data(#"{"output_sessions":["agent-*"],"segment_interval":0,"future":1}"#.utf8).write(to: owner)
+        let handed = try #require(TerminalSettingsFile.forHelper(owner: owner, copy: copy))
+        let settings = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: handed)) as? [String: Any])
+        #expect(settings["output_sessions"] as? [String] == ["agent-*"])
+        #expect(settings.count == 1)
+        try Data("not json".utf8).write(to: owner)
+        #expect(TerminalSettingsFile.forHelper(owner: owner, copy: copy) == nil)
+    }
+
     @Test func helperEventsAreParsedWhateverTheKeyOrder() {
         #expect(TerminalHelperEvent.parse(Data(#"{"version":"1","event":"ready"}"#.utf8)) == .ready)
         #expect(TerminalHelperEvent.parse(Data(#"{"tmux":"missing","event":"health"}"#.utf8)) == .tmuxHealth(found: false))

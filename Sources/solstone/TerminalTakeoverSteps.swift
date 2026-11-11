@@ -91,11 +91,16 @@ enum TerminalTakeoverSteps {
         return record
     }
 
-    /// The old capture choices the helper would accept, key by key. A value it
-    /// would refuse would stop the helper starting at all, so it's left out.
+    /// The old capture choices the helper would accept, key by key.
     static func carriedSettings(_ host: TerminalTakeoverHost) -> Data? {
-        guard let data = try? Data(contentsOf: host.configURL),
-              let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        guard let data = try? Data(contentsOf: host.configURL) else { return nil }
+        return acceptedSettings(data)
+    }
+
+    /// The capture choices in `data` the helper would accept, key by key. A value it
+    /// would refuse would stop the helper starting at all, so it's left out.
+    static func acceptedSettings(_ data: Data) -> Data? {
+        guard let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         var carried: [String: Any] = [:]
         for key in carriedKeys {
             guard let value = saved[key], isAcceptable(key: key, value: value) else { continue }

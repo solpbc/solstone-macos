@@ -12,6 +12,27 @@ struct TerminalHelperOptions: Sendable {
     var tmuxPath: String?
 }
 
+/// The owner's terminal choices, in `terminal-settings.json`. A move from solstone for
+/// tmux fills it, and the owner can edit it. It's read each time the helper starts, and
+/// the helper gets a copy holding only the keys it accepts, so a mistake in the file
+/// leaves that key at its default instead of stopping terminal.
+enum TerminalSettingsFile {
+    static func forHelper(owner: URL, copy: URL) -> URL? {
+        guard let data = try? Data(contentsOf: owner) else { return nil }
+        guard let accepted = TerminalTakeoverSteps.acceptedSettings(data) else {
+            Logger.general.error("terminal-settings.json has no setting terminal can use")
+            return nil
+        }
+        do {
+            try accepted.write(to: copy, options: .atomic)
+        } catch {
+            Logger.general.error("Terminal settings were not handed on: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+        return copy
+    }
+}
+
 /// Terminal as one of this app's sources. While it is on and the app isn't paused,
 /// the bundled helper takes in the owner's tmux sessions; this app delivers what it
 /// writes over its own pairing. The screen being locked or another user in front
