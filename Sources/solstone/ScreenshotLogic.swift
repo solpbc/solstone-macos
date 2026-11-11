@@ -389,6 +389,10 @@ struct ScreenshotSnapshot: Equatable, Sendable {
     var waiting = 0
     var busy = false
 
+    /// The page's one action for this state (desktop-shell § 2.7). Choosing another folder is
+    /// not one of them: it sits with the `folder` fact.
+    var pageActions: [DeckSourceAction] { action.map { [$0] } ?? [] }
+
     static let notSetUp = ScreenshotSnapshot(
         state: .readyToSetUp,
         subline: nil,
@@ -439,7 +443,9 @@ func presentScreenshots(_ facts: ScreenshotFacts) -> ScreenshotSnapshot {
     var snapshot = ScreenshotSnapshot()
     snapshot.span = facts.span
     snapshot.takesIn = ScreenshotCopy.takesIn
-    snapshot.folderPath = facts.consented ? facts.folderPath : nil
+    // The folder is a fact in every state, so choosing another folder is reachable from it
+    // before access is given too.
+    snapshot.folderPath = facts.folderPath
     snapshot.lastChecked = facts.consented ? facts.lastChecked : nil
     snapshot.waiting = facts.waiting
     snapshot.showReturnNote = facts.showReturnNote && !facts.confirmed

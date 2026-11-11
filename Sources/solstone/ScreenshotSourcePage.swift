@@ -23,7 +23,9 @@ extension SettingsView {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier(AXID.Settings.Sources.screenshotsProgress)
             }
-            screenshotAction(snapshot, source: source)
+            ForEach(snapshot.pageActions, id: \.self) { action in
+                screenshotAction(action, source: source)
+            }
             Text(snapshot.takesIn)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -38,7 +40,7 @@ extension SettingsView {
                 screenshotChooser(snapshot, source: source)
             }
             SourceTotalRows(appState: appState, source: .screenshots)
-            screenshotFacts(snapshot)
+            screenshotFacts(snapshot, source: source)
             if let refused = snapshot.refusedLine {
                 Text(refused)
                     .font(.callout)
@@ -64,9 +66,8 @@ extension SettingsView {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .font(.callout)
             .accessibilityIdentifier(AXID.Settings.Sources.screenshotsDetail)
-            Button(ScreenshotCopy.chooseFolder) { chooseScreenshotFolder(source) }
-                .accessibilityIdentifier(AXID.Settings.Sources.screenshotsChooseFolder)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AXID.Deck.page(.screenshots))
@@ -90,8 +91,8 @@ extension SettingsView {
     }
 
     @ViewBuilder
-    private func screenshotAction(_ snapshot: ScreenshotSnapshot, source: ScreenshotSource?) -> some View {
-        switch snapshot.action {
+    private func screenshotAction(_ action: DeckSourceAction, source: ScreenshotSource?) -> some View {
+        switch action {
         case .allowScreenshotFolder:
             Button(ScreenshotCopy.allow) { Task { await source?.allow() } }
                 .accessibilityIdentifier(AXID.Settings.Sources.screenshotsAllow)
@@ -140,14 +141,25 @@ extension SettingsView {
     }
 
     @ViewBuilder
-    private func screenshotFacts(_ snapshot: ScreenshotSnapshot) -> some View {
+    private func screenshotFacts(_ snapshot: ScreenshotSnapshot, source: ScreenshotSource?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(ScreenshotCopy.staysIfDeleted)
-            Text(ScreenshotCopy.staysWhenPaused)
-            Text(ScreenshotCopy.onlyWhatWeCanTell)
+            Group {
+                Text(ScreenshotCopy.staysIfDeleted)
+                Text(ScreenshotCopy.staysWhenPaused)
+                Text(ScreenshotCopy.onlyWhatWeCanTell)
+            }
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
             if let path = snapshot.folderPath {
                 factLine(ScreenshotCopy.folderLabel, path)
                     .accessibilityIdentifier(AXID.Settings.Sources.screenshotsFolder)
+                HStack {
+                    Spacer(minLength: 0)
+                    Button(ScreenshotCopy.chooseFolder) { chooseScreenshotFolder(source) }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(SetupChromeColor.solOrange)
+                        .accessibilityIdentifier(AXID.Settings.Sources.screenshotsChooseFolder)
+                }
             }
             if let checked = snapshot.lastChecked {
                 factLine(ScreenshotCopy.lastChecked, relativeWords(checked, now: Date()))
@@ -158,13 +170,13 @@ extension SettingsView {
                     .accessibilityIdentifier(AXID.Settings.Sources.screenshotsWaiting)
             }
         }
-        .font(.caption)
-        .foregroundStyle(.secondary)
+        // The facts' size and inks are the other source pages' (their `so far` rows and notes).
+        .font(.callout)
     }
 
     private func factLine(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(label)
+            Text(label).foregroundStyle(.secondary)
             Spacer(minLength: 12)
             Text(value).multilineTextAlignment(.trailing)
         }

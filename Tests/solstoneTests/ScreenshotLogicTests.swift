@@ -208,6 +208,35 @@ struct ScreenshotLogicTests {
         #expect(ScreenshotMac.locationSetting(screenshot: "", general: nil) == nil)
     }
 
+    @Test func eachStateOffersOneActionAndTheFolderIsAlwaysAFact() {
+        var facts = ScreenshotFacts()
+        facts.folderPath = "/Users/a/Desktop"
+        func check(_ expected: DeckSourceAction?) {
+            let page = presentScreenshots(facts)
+            #expect(page.pageActions == (expected.map { [$0] } ?? []))
+            #expect(page.folderPath != nil)
+        }
+        check(.allowScreenshotFolder)
+        facts.consented = true
+        facts.enabled = true
+        facts.access = .denied
+        facts.accessHeld = false
+        check(.openScreenshotSettings)
+        facts.accessHeld = true
+        check(.openScreenshotSettings)
+        facts.access = .moved
+        check(.allowScreenshotFolder)
+        facts.access = .ok
+        facts.count = .failed
+        check(.retryScreenshotCount)
+        facts.count = .ready(3)
+        check(nil)
+        facts.confirmed = true
+        check(nil)
+        facts.ownerPaused = true
+        check(.resumeIntake)
+    }
+
     @Test func confirmWords() {
         #expect(ScreenshotCopy.confirmTitle(spanFromToday: true, count: 4) == "start from today")
         #expect(ScreenshotCopy.confirmTitle(spanFromToday: false, count: 0) == "start from today")
