@@ -34,16 +34,16 @@ extension SettingsView {
                     .foregroundStyle(.secondary)
                 if let facts = snapshotJournalFacts {
                     ForEach(facts, id: \.self) { fact in
-                        LabeledContent(fact[0], value: fact[1])
+                        StatusFactRow(label: fact[0], value: fact[1])
                     }
                 } else if appState.deckHasJournal {
-                    LabeledContent("connection", value: statusConnectionValue(
+                    StatusFactRow(label: "connection", value: statusConnectionValue(
                         pill, connectionLine: appState.tunnelLifecycleOwner.connectionVerdict.message
                     ))
-                    lastDeliveryDetailRow
+                    statusLastDeliveryRow
                 }
                 if resolvedServiceMode(for: appState.config) == .external {
-                    LabeledContent("kept on this mac", value: storageGlanceText)
+                    StatusFactRow(label: "kept on this mac", value: storageGlanceText)
                 }
             }
             .font(.callout)
@@ -124,6 +124,24 @@ extension SettingsView {
         }
     }
 
+    /// The last delivery as a status fact row, keeping the companions automation reads.
+    private var statusLastDeliveryRow: some View {
+        let outcome = appState.uploadCoordinator.lastJournalDeliveryOutcome
+        return VStack(alignment: .leading, spacing: 0) {
+            StatusFactRow(label: UICopy.SETTINGS_LAST_DELIVERY_LABEL, value: diagnosticDeliveryValue(outcome, now: Date()))
+            AXStateCompanion(
+                id: AXID.Settings.Status.lastDeliveryState,
+                value: outcome.diagnosticAXState.axToken
+            )
+            if case .delivered(let date) = outcome {
+                AXStateCompanion(
+                    id: AXID.Settings.Status.lastDeliveryTimestamp,
+                    value: axIntegerString(Int(date.timeIntervalSince1970))
+                )
+            }
+        }
+    }
+
     /// `check my setup` without the two permission rows, which now sit on the audio and screen pages.
     private var statusSetupRows: some View {
         let rows = setupSnapshotPresentation.rows.filter { $0.id != .screenRecording && $0.id != .microphone }
@@ -183,5 +201,33 @@ struct StatusSourceRows: View {
                 }
             }
         }
+    }
+}
+
+/// One of the journal's facts in the status pane: the label at the left and the value at the same
+/// right edge as the source rows' last column. A value too long for the row goes under its label.
+struct StatusFactRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(label)
+                Spacer(minLength: 12)
+                Text(value)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                Text(value)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
