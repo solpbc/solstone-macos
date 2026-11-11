@@ -50,6 +50,50 @@ struct DesktopShellModelTests {
         }
     }
 
+    @Test func aPausedTileKeepsItsOwnSubLine() {
+        var inputs = DeckInputs()
+        inputs.ownerPaused = true
+        inputs.microphoneLive = .ownerPaused
+        inputs.screenLive = .ownerPaused
+        inputs.activityGoingIn = false
+        inputs.terminalOn = true
+        inputs.terminalState = .paused
+        inputs.browserState = .paused
+        inputs.obsidianState = .paused
+        inputs.obsidianVaultName = "field notes"
+        let tiles = deriveDeck(inputs, sources: [.audio, .screen, .terminal, .browsers, .obsidian])
+        for tile in tiles {
+            #expect(tile.state == .paused, "\(tile.source)")
+            #expect(!(tile.subline ?? "").contains("intake"), "\(tile.source)")
+            #expect(!(tile.subline ?? "").contains("you paused this"), "\(tile.source)")
+        }
+        #expect(deriveDeckTile(.screen, inputs).subline == DeckCopy.screenWithActivity)
+        #expect(deriveDeckTile(.audio, inputs).subline == nil)
+        #expect(deriveDeckTile(.obsidian, inputs).subline == "field notes")
+        inputs.activityEnabled = false
+        #expect(deriveDeckTile(.screen, inputs).subline == DeckCopy.screenWithoutActivity)
+
+        // Activity kept on through the pause says so, because it really is still going in.
+        inputs.activityEnabled = true
+        inputs.activityGoingIn = true
+        #expect(deriveDeckTile(.screen, inputs).subline == DeckCopy.activityStillOn)
+    }
+
+    @Test func aPauseReachesOnlyARunningBrowserSource() {
+        #expect(deckBrowserStatePausing(.running(connected: ["Chrome"]), ownerPaused: true) == .paused)
+        #expect(deckBrowserStatePausing(.starting, ownerPaused: true) == .paused)
+        #expect(deckBrowserStatePausing(.notPaired, ownerPaused: true) == .notPaired)
+        #expect(deckBrowserStatePausing(.fault("x"), ownerPaused: true) == .fault("x"))
+        #expect(deckBrowserStatePausing(.running(connected: []), ownerPaused: false) == .running(connected: []))
+
+        var inputs = DeckInputs()
+        inputs.ownerPaused = true
+        inputs.browserState = deckBrowserStatePausing(.notPaired, ownerPaused: true)
+        let tile = deriveDeckTile(.browsers, inputs)
+        #expect(tile.state == .readyToSetUp)
+        #expect(tile.reason == DeckCopy.browsersNeedJournal)
+    }
+
     @Test func aNeverAskedMicrophoneTheOwnerSwitchedOffIsOff() {
         var inputs = DeckInputs()
         inputs.microphoneOn = false
@@ -177,6 +221,13 @@ struct DesktopShellModelTests {
     }
 
     // MARK: pill
+
+    @Test func offlineStatusReadsTheSharedWords() {
+        let pill = deriveJournalPill(JournalPillInputs(connection: .offline, pending: 12))
+        #expect(pill.text == "offline · 12 waiting")
+        #expect(statusConnectionValue(pill, connectionLine: "connected to your journal") == "not reaching your journal right now")
+        #expect(statusConnectionValue(.connected, connectionLine: "connected to your journal") == "connected to your journal")
+    }
 
     @Test func pillStatesThatAreNotCaughtUpNeverReadConnected() {
         let cases: [JournalPillInputs] = [

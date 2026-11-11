@@ -206,6 +206,9 @@ public enum UICopy {
     public static func sourcesBrowserLastPage(_ relative: String) -> String { "last page \(relative)" }
     public static let SOURCES_BROWSER_NEEDS_EXT_UPDATE = "needs an extension update"
     public static let SOURCES_BROWSER_NEEDS_APP_UPDATE = "needs a solstone app update"
+    public static let SOURCES_BROWSER_ROW_NOT_CONNECTED = "not connected yet"
+    public static let SOURCES_BROWSER_ROW_CANT_FIND_APP = "can't find the solstone app"
+    public static let SOURCES_BROWSER_ROW_SAFARI_OFF = "turned off in Safari"
 
     // State lines
     public static let SOURCES_BROWSER_INTAKE_OFF = "browser pages are off. nothing new is taken in from your browsers."

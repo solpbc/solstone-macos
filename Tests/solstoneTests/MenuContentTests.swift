@@ -88,7 +88,7 @@ struct MenuContentTests {
             (.paused, "sol-ring-icon-paused-template"),
             (.stopped, "sol-ring-icon-paused-template"),
             (.syncPaused, "sol-ring-icon-paused-template"),
-            (.localOnly, "sol-ring-icon-paused-template"),
+            (.localOnly, "sol-ring-template"),
             (.journalMigrationNeeded, "sol-ring-icon-attention-template"),
             (.permissions, "sol-ring-icon-attention-template"),
             (.offline, "sol-ring-icon-offline-template"),
@@ -107,7 +107,8 @@ struct MenuContentTests {
         #expect(MenubarStatusRowState.permissions.iconState.iconName == "sol-ring-icon-attention-template")
         #expect(MenubarStatusRowState.permissions.iconState.iconName != "sol-ring-icon-error-template")
         #expect(MenubarStatusRowState.journalMigrationNeeded.iconState.iconName != "sol-ring-icon-offline-template")
-        #expect(MenubarStatusRowState.localOnly.iconState.iconName == "sol-ring-icon-paused-template")
+        #expect(MenubarStatusRowState.localOnly.iconState.iconName == "sol-ring-template")
+        #expect(MenubarStatusRowState.localOnly.iconState.iconName != "sol-ring-icon-paused-template")
         #expect(MenubarStatusRowState.syncPaused.iconState.iconName == "sol-ring-icon-paused-template")
         #expect(MenubarStatusRowState.starting.iconState.iconName == "sol-ring-icon-connecting-template")
         #expect(MenubarStatusRowState.connectionWaiting.iconState.iconName == "sol-ring-icon-connecting-template")
@@ -225,6 +226,20 @@ struct MenuContentTests {
         #expect(classified(serviceMode: .bundled, uploadStatus: .awaitingTunnel) == .journalMigrationNeeded)
         #expect(classified(isRecording: false, serviceMode: .bundled) == .journalMigrationNeeded)
         #expect(classified(isPaused: true, serviceMode: .bundled) == .journalMigrationNeeded)
+    }
+
+    @Test func aRunningUnpairedMacDoesNotGetThePausedGlyph() {
+        // Taking things in with no journal paired yet: the menu bar icon is the running glyph.
+        let running = classified(hasJournalOnRecord: false)
+        #expect(running == .localOnly)
+        #expect(running.iconState == .recording)
+        #expect(running.iconState != .paused)
+        #expect(MenubarPresentation(observation: running, attention: nil).icon.iconName == "sol-ring-template")
+
+        // Paused, the same mac dims, and only then.
+        let paused = classified(isPaused: true, hasJournalOnRecord: false)
+        #expect(paused == .paused)
+        #expect(paused.iconState == .paused)
     }
 
     @Test @MainActor func pairedNotReadyObservationMatrix() {

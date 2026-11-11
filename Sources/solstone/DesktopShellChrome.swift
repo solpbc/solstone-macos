@@ -125,11 +125,13 @@ struct ShelfRowItem: Identifiable {
 
 /// The macOS 26 floating sidebar's look on any release: an inset, rounded panel with the window
 /// buttons inside its top, glass where the system has it and a material where it doesn't.
+/// Floating over the deck at the narrower widths it is opaque, so no tile shows through it.
 struct GlassShelfPanel: View {
     @Binding var selection: ShelfRow
     let rows: [ShelfRowItem]
     /// Opened from the shelf button, over the content, below the window buttons.
     var floating = false
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -143,7 +145,7 @@ struct GlassShelfPanel: View {
         .padding(8)
         .frame(width: 196)
         .frame(maxHeight: .infinity, alignment: .top)
-        .modifier(GlassPanelBackground(cornerRadius: 18))
+        .modifier(GlassPanelBackground(cornerRadius: 18, opaque: floating ? SetupChromeColor.sheet(for: scheme) : nil))
         .padding(8)
         .ignoresSafeArea(edges: .top)
     }
@@ -151,10 +153,16 @@ struct GlassShelfPanel: View {
 
 struct GlassPanelBackground: ViewModifier {
     let cornerRadius: CGFloat
+    /// A solid fill in place of the glass, for a panel that floats over content.
+    var opaque: Color? = nil
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        if #available(macOS 26.0, *) {
+        if let opaque {
+            content
+                .background(opaque, in: shape)
+                .overlay(shape.stroke(.quaternary, lineWidth: 1))
+        } else if #available(macOS 26.0, *) {
             content.glassEffect(.regular, in: shape)
         } else {
             content.background(.regularMaterial, in: shape)

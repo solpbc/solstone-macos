@@ -709,11 +709,13 @@ extension MenubarStatusRowState {
         switch self {
         case .stopped:
             return .paused
-        case .observing, .awaitingMarkConfirmation:
+        // A mac taking things in with no journal paired yet is running: the icon dims only
+        // while paused, never because no journal is paired.
+        case .observing, .awaitingMarkConfirmation, .localOnly:
             return .recording
         case .starting, .connectionWaiting:
             return .connecting
-        case .paused, .protectedVideo, .syncPaused, .localOnly:
+        case .paused, .protectedVideo, .syncPaused:
             return .paused
         case .journalMigrationNeeded, .permissions:
             return .attention

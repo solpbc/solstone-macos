@@ -283,4 +283,45 @@ struct BrowserSiteListTests {
     }
 }
 
+@Suite("Browsers page rows")
+struct BrowsersPageRowTests {
+    private func rows(refused: BrowserBrand? = nil, connected: BrowserBrand? = nil) -> [BrowserBrandRow] {
+        BrowserBrand.allCases.map { brand in
+            BrowserBrandRow(
+                brand: brand,
+                connectedCount: brand == connected ? 1 : 0,
+                lastSeen: brand == connected ? .justNow : nil,
+                registration: brand == refused ? .refused : .ready
+            )
+        }
+    }
+
+    @Test func eachBrowserSaysOneThingAndNoRowSaysNoBrowser() {
+        let page = browserPageRows(rows(), safari: .off, safariNeedsAttention: false)
+        #expect(page.map(\.brand) == BrowserBrand.allCases)
+        for row in page {
+            #expect(row.status != UICopy.SOURCES_BROWSERS_NO_HISTORY, "\(row.brand)")
+            #expect(!row.needsRepair, "\(row.brand)")
+        }
+        #expect(page.first { $0.brand == .chrome }?.status == UICopy.SOURCES_BROWSER_ROW_NOT_CONNECTED)
+        let safari = page.first { $0.brand == .safari }
+        #expect(safari?.status == UICopy.SOURCES_BROWSER_ROW_SAFARI_OFF)
+        #expect(safari?.opensSafariSettings == true)
+        #expect(page.filter(\.opensSafariSettings).count == 1)
+    }
+
+    @Test func repairShowsOnlyOnTheBrowserThatNeedsIt() {
+        let page = browserPageRows(rows(refused: .firefox), safari: .on, safariNeedsAttention: false)
+        #expect(page.filter(\.needsRepair).map(\.brand) == [.firefox])
+        #expect(page.first { $0.brand == .firefox }?.status == UICopy.SOURCES_BROWSER_ROW_CANT_FIND_APP)
+        #expect(page.first { $0.brand == .safari }?.opensSafariSettings == false)
+    }
+
+    @Test func theStoreButtonsLeaveOnceABrowserConnects() {
+        #expect(browserStoreOfferVisible(rows(), offered: [.chrome, .edge, .firefox]))
+        #expect(!browserStoreOfferVisible(rows(connected: .safari), offered: [.chrome, .edge, .firefox]))
+        #expect(!browserStoreOfferVisible(rows(), offered: []))
+    }
+}
+
 #endif

@@ -23,6 +23,7 @@ enum DeckStyle {
 
 /// One source's tile: name, glyph, state word, sub-line, and a switch where the Mac can start
 /// and stop it. The tile opens the source's page; the switch is its own control beside it.
+/// Compact puts the name beside the glyph, so the deck fits the narrower window without scrolling.
 struct DeckTileView: View {
     let tile: DeckTile
     var selected = false
@@ -36,18 +37,20 @@ struct DeckTileView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Button(action: onOpen) {
-                VStack(alignment: .leading, spacing: compact ? 3 : 5) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 7) {
                         Image(systemName: tile.source.systemImage)
-                            .font(.system(size: compact ? 13 : 15))
+                            .font(.system(size: 15))
                             .foregroundStyle(SetupChromeColor.softInk(for: scheme))
                             .accessibilityHidden(true)
                         if compact {
                             Text(tile.source.label)
-                                .font(DeckStyle.name(14))
+                                .font(DeckStyle.name(16))
                                 .foregroundStyle(SetupChromeColor.ink(for: scheme))
+                                .lineLimit(1)
                         }
                     }
+                    .padding(.trailing, compact && tile.switchOn != nil ? 44 : 0)
                     if !compact {
                         Spacer(minLength: 8)
                         Text(tile.source.label)
@@ -55,7 +58,7 @@ struct DeckTileView: View {
                             .foregroundStyle(SetupChromeColor.ink(for: scheme))
                     }
                     DeckStateLine(state: tile.state)
-                    if !compact, let subline = tile.subline {
+                    if let subline = tile.subline {
                         Text(subline)
                             .font(.system(size: 11))
                             .foregroundStyle(SetupChromeColor.faintInk(for: scheme))
@@ -63,8 +66,8 @@ struct DeckTileView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: compact ? 46 : 104, alignment: .topLeading)
-                .padding(compact ? 10 : 13)
+                .frame(maxWidth: .infinity, minHeight: compact ? 66 : 104, alignment: .topLeading)
+                .padding(compact ? 11 : 13)
                 .contentShape(RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
@@ -80,8 +83,8 @@ struct DeckTileView: View {
                     .toggleStyle(.switch)
                     .labelsHidden()
                     .tint(SetupChromeColor.solOrange)
-                    .controlSize(compact ? .mini : .small)
-                    .padding(compact ? 8 : 11)
+                    .controlSize(.small)
+                    .padding(11)
                     .accessibilityLabel(tile.source.label)
                     .accessibilityIdentifier(AXID.Deck.tileSwitch(tile.source))
             }
@@ -205,7 +208,8 @@ struct DeckResumeButton: View {
     }
 }
 
-/// The time-left line while paused, refreshed with the pause manager's own tick.
+/// The time-left line while paused, refreshed with the pause manager's own tick. Its room is there
+/// whether or not anything is paused.
 struct DeckPausedLine: View {
     let appState: AppState
     @Environment(\.colorScheme) private var scheme
@@ -218,6 +222,12 @@ struct DeckPausedLine: View {
                 .font(.system(size: 12))
                 .foregroundStyle(SetupChromeColor.softInk(for: scheme))
                 .accessibilityIdentifier(AXID.Deck.pausedLine)
+        } else {
+            // The line's room is kept, so the deck doesn't move when a pause starts or ends.
+            Text(" ")
+                .font(.system(size: 12))
+                .hidden()
+                .accessibilityHidden(true)
         }
     }
 }

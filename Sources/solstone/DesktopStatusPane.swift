@@ -37,7 +37,9 @@ extension SettingsView {
                         LabeledContent(fact[0], value: fact[1])
                     }
                 } else if appState.deckHasJournal {
-                    LabeledContent("connection", value: appState.tunnelLifecycleOwner.connectionVerdict.message)
+                    LabeledContent("connection", value: statusConnectionValue(
+                        pill, connectionLine: appState.tunnelLifecycleOwner.connectionVerdict.message
+                    ))
                     lastDeliveryDetailRow
                 }
                 if resolvedServiceMode(for: appState.config) == .external {
@@ -92,10 +94,10 @@ extension SettingsView {
                 Text("on this device").foregroundStyle(.secondary)
             case .connecting:
                 Text("connecting…").font(DeckStyle.name(22))
-            case .offline(let n):
-                Text("\(n)").font(DeckStyle.name(34))
-                Text("waiting to sync").foregroundStyle(.secondary)
-                Text("on this device").foregroundStyle(.secondary)
+            case .offline:
+                // The pill's own words, as every computer says them, then where the waiting items are.
+                Text(pill.text).font(DeckStyle.name(22))
+                Text(DeckCopy.onThisDevice).foregroundStyle(.secondary)
             case .syncPaused(let n):
                 if n > 0 { Text("\(n)").font(DeckStyle.name(34)) }
                 Text("sync paused").font(n > 0 ? .body : DeckStyle.name(22)).foregroundStyle(n > 0 ? .secondary : .primary)

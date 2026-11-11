@@ -114,14 +114,19 @@ extension AppState {
     }
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
+    /// Pausing turns only a running browser source to `paused`; one waiting for a journal stays
+    /// `ready to set up` through the pause.
     var deckBrowserState: DeckBrowserState {
+        deckBrowserStatePausing(deckBrowserStateBeforePause, ownerPaused: pauseManager.isPaused)
+    }
+
+    private var deckBrowserStateBeforePause: DeckBrowserState {
         let snapshot = browserHostSnapshot.value
         let now = Date()
         if safariExtensionNeedsAttention { return .fault(UICopy.SOURCES_BROWSER_SAFARI_UNAVAILABLE) }
         if snapshot.registration.values.contains(where: { $0.state == .refused }) {
             return .fault(UICopy.SOURCES_BROWSER_REGISTRATION_BROKEN)
         }
-        if pauseManager.isPaused { return .paused }
         // Without a journal, browser pages wait for one: setup, not a fault.
         if !deckHasJournal { return .notPaired }
         let verdict = browserOwnerVerdict(
