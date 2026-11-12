@@ -25,6 +25,7 @@ enum AXContract {
         AXID.Deck.shelfButton,
         AXID.Deck.statusPane,
         AXID.Deck.statusLead,
+        AXID.Deck.unwrittenList,
         AXID.Menubar.statusIconState,
         AXID.Menubar.statusIconOverlayState,
         AXID.Menubar.statusRowState,
@@ -465,7 +466,8 @@ enum AXContract {
             "DeckStateWord": DeckStateWord.allCases.map(\.axToken),
             "JournalPill": [
                 "needs_new_link", "not_paired", "confirm_mark", "sync_paused", "pair_again",
-                "offline", "connecting", "syncing", "waiting_to_sync", "connected",
+                "offline", "connecting", "syncing", "waiting", "waiting_to_sync", "connected",
+                "connected_held",
             ],
             "UploadCoordinator.Status": UploadCoordinator.Status.axTokens,
             "ConnectionTestState": ConnectionTestState.axTokens,

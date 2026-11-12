@@ -90,5 +90,9 @@ struct ShellMenuContent: View {
 
 /// The menu's status line for a pill: caught up gets its lead beside the pill's word.
 func menuStatusLine(_ pill: JournalPill) -> String {
-    pill == .connected ? "connected · all caught up" : pill.text
+    switch pill {
+    case .connected: return "connected · all caught up"
+    case .waiting: return "connected · \(pill.text)"
+    default: return pill.text
+    }
 }

@@ -104,6 +104,9 @@ public final class UploadCoordinator {
     /// for a moment after the queue drains.
     internal private(set) var presentedStatus: Status = .notSynced
     public internal(set) var pendingCount: Int = 0
+    /// Segments the journal answered it would not write. They wait on the owner, so they
+    /// are not in `pendingCount`.
+    public internal(set) var unwrittenSegments: [UnwrittenSegment] = []
     public internal(set) var lastError: String?
     public internal(set) var lastSyncedAt: Date?
     public internal(set) var recentErrorCount: Int = 0
@@ -144,7 +147,11 @@ public final class UploadCoordinator {
     private let classifiedLog: any ClassifiedLogSinking
     private var config: AppConfig
     private var pairedIngestIdentity: TunnelPairingIdentity?
-    private var pushedJournalFingerprint: JournalConnectionFingerprint?
+    private var pushedJournalFingerprint: JournalConnectionFingerprint? {
+        didSet { noteJournalFingerprintPush() }
+    }
+    /// The last journal the declined list was read from.
+    private var unwrittenJournalFingerprint: String?
     private let automaticSyncEnabled: Bool
     private var eventTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
@@ -189,6 +196,7 @@ public final class UploadCoordinator {
 
         let initialFingerprint = journalIdentityProvider().fingerprint
         self.pushedJournalFingerprint = initialFingerprint
+        self.unwrittenJournalFingerprint = initialFingerprint?.value
 
         // Configure sync service with initial settings
         configurationTask = Task {
@@ -293,6 +301,26 @@ public final class UploadCoordinator {
             preserveSyncedSegments: config.preserveSyncedSegments
             )
         }
+    }
+
+    /// A declined list belongs to the journal that declined it. When another journal is
+    /// paired, those segments wait again, for it.
+    private func noteJournalFingerprintPush() {
+        guard let value = pushedJournalFingerprint?.value else { return }
+        if let previous = unwrittenJournalFingerprint, previous != value, !unwrittenSegments.isEmpty {
+            pendingCount += unwrittenSegments.count
+            unwrittenSegments = []
+        }
+        unwrittenJournalFingerprint = value
+    }
+
+    /// Removes a declined segment from this mac, at the owner's request.
+    func removeUnwritten(_ segment: UnwrittenSegment) async -> SyncService.RemoveHeldResult {
+        let result = await syncService.removeHeld(day: segment.day, segment: segment.segment)
+        if result == .removed {
+            unwrittenSegments.removeAll { $0 == segment }
+        }
+        return result
     }
 
     func revokeOrdinaryTraffic() async {
@@ -462,10 +490,11 @@ public final class UploadCoordinator {
             recentErrorCount = 0
             clearIngestFailure()
 
-        case .syncComplete(let context, let remaining):
+        case .syncComplete(let context, let remaining, let unwritten):
             guard ordinaryProgressIsCurrent(context) else { return }
             status = .synced
             pendingCount = remaining
+            unwrittenSegments = unwritten
             recentErrorCount = 0
             clearIngestFailure()
 

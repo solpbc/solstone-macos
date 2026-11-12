@@ -22,6 +22,12 @@ enum AXID {
         static let shelfButton = "settings.deck.shelf"
         static let statusPane = "settings.deck.status"
         static let statusLead = "settings.deck.status.lead"
+        static let unwrittenList = "settings.deck.status.unwritten"
+        /// One declined segment's row. Each part starts with a letter and holds no `_`, per the id grammar.
+        static func unwrittenRow(_ day: String, _ segment: String) -> String {
+            "settings.deck.status.unwritten.d\(day).s\(segment.replacingOccurrences(of: "_", with: "-"))"
+        }
+        static func unwrittenRemove(_ day: String, _ segment: String) -> String { unwrittenRow(day, segment) + ".remove" }
     }
 
     enum Menubar {

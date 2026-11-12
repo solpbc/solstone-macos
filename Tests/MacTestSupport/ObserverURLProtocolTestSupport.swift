@@ -20,6 +20,7 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
     private let lock = NSLock()
     private var responses: [Response] = []
     private var routeHandlers: [@Sendable (URLRequest) -> Response?] = []
+    private var bodyRouteHandlers: [@Sendable (URLRequest, Data?) -> Response?] = []
     private(set) var requests: [URLRequest] = []
     public private(set) var requestBodies: [String?] = []
     public private(set) var requestBodyData: [Data?] = []
@@ -30,6 +31,7 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         lock.withLock {
             responses.removeAll()
             routeHandlers.removeAll()
+            bodyRouteHandlers.removeAll()
             requests.removeAll()
             requestBodies.removeAll()
             requestBodyData.removeAll()
@@ -93,6 +95,31 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         )
     }
 
+    /// Answers a request to `path` whose body contains `bodyContains`, ahead of every other route.
+    /// For a pass that sends several bodies to one path and needs a different answer for each.
+    public func registerBodyRoute(
+        path: String,
+        bodyContains: String,
+        statusCode: Int = 200,
+        body: String = "",
+        error: URLError? = nil,
+        beforeReply: (@Sendable () -> Void)? = nil
+    ) {
+        let needle = Data(bodyContains.utf8)
+        lock.withLock {
+            bodyRouteHandlers.append({ req, data in
+                guard req.url?.path == path, let data, data.range(of: needle) != nil else { return nil }
+                return Response(
+                    statusCode: statusCode,
+                    data: Data(body.utf8),
+                    delay: .zero,
+                    error: error,
+                    beforeReply: beforeReply
+                )
+            })
+        }
+    }
+
     public func enqueue(
         statusCode: Int = 200,
         body: String = "",
@@ -116,7 +143,9 @@ public final class ObserverURLProtocolStore: @unchecked Sendable {
         requests.append(request)
         requestBodyData.append(data)
         requestBodies.append(data.flatMap { String(data: $0, encoding: .utf8) })
-        if let match = routeHandlers.lazy.compactMap({ $0(request) }).first {
+        if let match = bodyRouteHandlers.lazy.compactMap({ $0(request, data) }).first {
+            response = match
+        } else if let match = routeHandlers.lazy.compactMap({ $0(request) }).first {
             response = match
         } else if responses.isEmpty {
             response = Response(statusCode: 500, data: Data(), delay: .zero, error: nil)

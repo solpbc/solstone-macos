@@ -178,6 +178,9 @@ extension AppState {
         ))
         i.upload = deckUploadPhase(uploadCoordinator.status)
         i.pending = uploadCoordinator.pendingCount
+        if deckHasJournal, !uploadCoordinator.unwrittenSegments.isEmpty {
+            i.held = .segmentsNotWritten
+        }
         return i
     }
 

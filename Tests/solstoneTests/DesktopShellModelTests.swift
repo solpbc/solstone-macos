@@ -279,8 +279,56 @@ struct DesktopShellModelTests {
 
     @Test func pillCountsWhatIsWaiting() {
         #expect(deriveJournalPill(JournalPillInputs(connection: .offline, pending: 12)) == .offline(waiting: 12))
-        #expect(deriveJournalPill(JournalPillInputs(pending: 4)) == .syncing(4))
+        #expect(deriveJournalPill(JournalPillInputs(upload: .sending, pending: 4)) == .syncing(4))
         #expect(deriveJournalPill(JournalPillInputs(upload: .sending)) == .waitingToSync)
+    }
+
+    @Test func aFinishedPassWithSegmentsLeftReadsWaitingNotSyncing() {
+        #expect(deriveJournalPill(JournalPillInputs(pending: 3)) == .waiting(3))
+        #expect(JournalPill.waiting(3).waiting == 3)
+        #expect(!JournalPill.waiting(3).isCaughtUp)
+    }
+
+    @Test func somethingHeldForTheOwnerNeverReadsCaughtUp() {
+        #expect(deriveJournalPill(JournalPillInputs(held: .segmentsNotWritten)) == .connectedHeld(.segmentsNotWritten))
+        #expect(deriveJournalPill(JournalPillInputs()) == .connected)
+        #expect(!JournalPill.connectedHeld(.segmentsNotWritten).isCaughtUp)
+        #expect(JournalPill.connectedHeld(.segmentsNotWritten).axToken != JournalPill.connected.axToken)
+        // Every earlier state wins over held.
+        #expect(deriveJournalPill(JournalPillInputs(markHeld: true, held: .segmentsNotWritten)) == .confirmMark(waiting: 0))
+        #expect(deriveJournalPill(JournalPillInputs(syncPaused: true, held: .segmentsNotWritten)) == .syncPaused(waiting: 0))
+        #expect(deriveJournalPill(JournalPillInputs(pairingRefused: true, held: .segmentsNotWritten)) == .pairAgain(waiting: 0))
+        #expect(deriveJournalPill(JournalPillInputs(connection: .offline, held: .segmentsNotWritten)) == .offline(waiting: 0))
+        #expect(deriveJournalPill(JournalPillInputs(connection: .waiting, held: .segmentsNotWritten)) == .connecting)
+        #expect(deriveJournalPill(JournalPillInputs(pending: 2, held: .segmentsNotWritten)) == .waiting(2))
+    }
+
+    @Test func everyPillTokenIsInTheAXContract() throws {
+        let pills: [JournalPill] = [
+            .needsNewLink, .notPaired, .confirmMark(waiting: 1), .syncPaused(waiting: 1), .pairAgain(waiting: 1),
+            .offline(waiting: 1), .connecting, .syncing(1), .waiting(1), .waitingToSync, .connected,
+            .connectedHeld(.segmentsNotWritten),
+        ]
+        let listed = try #require(AXContract.vocabularies["JournalPill"])
+        for pill in pills { #expect(listed.contains(pill.axToken), "\(pill.axToken)") }
+    }
+
+    @Test func removeWaitsOnlyWhileAPassRuns() {
+        #expect(unwrittenRemoveBlocked(status: .syncing(checked: 0, total: 1), syncPaused: false))
+        #expect(unwrittenRemoveBlocked(status: .uploading(segment: "s"), syncPaused: false))
+        #expect(unwrittenRemoveBlocked(status: .retrying(segment: "s", attempts: 1), syncPaused: false))
+        for status: UploadCoordinator.Status in [.synced, .offline("x"), .blocked("x"), .awaitingTunnel, .notSynced] {
+            #expect(!unwrittenRemoveBlocked(status: status, syncPaused: false))
+        }
+        #expect(!unwrittenRemoveBlocked(status: .uploading(segment: "s"), syncPaused: true))
+    }
+
+    @Test func aDeclinedSegmentIsNamedByItsStart() throws {
+        let utc = try #require(TimeZone(identifier: "UTC"))
+        let name = unwrittenSegmentName(UnwrittenSegment(day: "20261111", segment: "143000_300"), timeZone: utc)
+        #expect(name.contains("2026"))
+        #expect(name == name.lowercased())
+        #expect(unwrittenSegmentName(UnwrittenSegment(day: "bad", segment: "143000_300")) == "143000_300")
     }
 
     // MARK: small pieces
@@ -306,6 +354,13 @@ struct DesktopShellModelTests {
         #expect(menuStatusLine(.connected) != JournalPill.connected.text)
         #expect(menuStatusLine(.connected).hasPrefix(JournalPill.connected.text))
         #expect(menuStatusLine(.offline(waiting: 12)) == JournalPill.offline(waiting: 12).text)
+    }
+
+    @Test func menuStatusLineSaysConnectedBeforeAWaitingCountAndNeverCaughtUpWhenHeld() {
+        #expect(menuStatusLine(.waiting(3)).hasSuffix(JournalPill.waiting(3).text))
+        #expect(menuStatusLine(.waiting(3)) != JournalPill.waiting(3).text)
+        #expect(menuStatusLine(.waiting(3)).hasPrefix(JournalPill.connected.text))
+        #expect(menuStatusLine(.connectedHeld(.segmentsNotWritten)) != menuStatusLine(.connected))
     }
 
     @Test func statusRowsCarryTheTotalAloneOrNothingYetAcross() throws {

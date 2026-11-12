@@ -405,6 +405,12 @@ func deckHasFault(_ tiles: [DeckTile]) -> Bool {
 
 // MARK: - the journal pill
 
+/// Why everything left on this Mac waits on the owner rather than on a sync.
+enum JournalHeld: Equatable, Sendable {
+    /// Segments the journal answered it would not write.
+    case segmentsNotWritten
+}
+
 enum JournalPill: Equatable, Sendable {
     case needsNewLink
     case notPaired
@@ -414,8 +420,12 @@ enum JournalPill: Equatable, Sendable {
     case offline(waiting: Int)
     case connecting
     case syncing(Int)
+    /// A finished pass left segments that will go on their own later.
+    case waiting(Int)
     case waitingToSync
     case connected
+    /// Connected, with nothing waiting to sync, but something here that waits on the owner.
+    case connectedHeld(JournalHeld)
 
     var text: String {
         switch self {
@@ -427,8 +437,9 @@ enum JournalPill: Equatable, Sendable {
         case .offline(let n): return "offline · \(n) waiting"
         case .connecting: return "connecting…"
         case .syncing(let n): return "\(n) syncing"
+        case .waiting(let n): return "\(n) waiting"
         case .waitingToSync: return "waiting to sync"
-        case .connected: return "connected"
+        case .connected, .connectedHeld: return "connected"
         }
     }
 
@@ -437,8 +448,8 @@ enum JournalPill: Equatable, Sendable {
 
     var waiting: Int {
         switch self {
-        case .confirmMark(let n), .syncPaused(let n), .pairAgain(let n), .offline(let n), .syncing(let n): return n
-        case .needsNewLink, .notPaired, .connecting, .waitingToSync, .connected: return 0
+        case .confirmMark(let n), .syncPaused(let n), .pairAgain(let n), .offline(let n), .syncing(let n), .waiting(let n): return n
+        case .needsNewLink, .notPaired, .connecting, .waitingToSync, .connected, .connectedHeld: return 0
         }
     }
 
@@ -452,8 +463,10 @@ enum JournalPill: Equatable, Sendable {
         case .offline: return "offline"
         case .connecting: return "connecting"
         case .syncing: return "syncing"
+        case .waiting: return "waiting"
         case .waitingToSync: return "waiting_to_sync"
         case .connected: return "connected"
+        case .connectedHeld: return "connected_held"
         }
     }
 }
@@ -478,6 +491,8 @@ struct JournalPillInputs: Equatable, Sendable {
     var connection: DeckConnection = .reachable
     var upload: DeckUploadPhase = .synced
     var pending = 0
+    /// Set when something on this Mac waits on the owner, so the pill never reads caught up.
+    var held: JournalHeld?
 }
 
 func deriveJournalPill(_ i: JournalPillInputs) -> JournalPill {
@@ -494,7 +509,10 @@ func deriveJournalPill(_ i: JournalPillInputs) -> JournalPill {
     switch i.upload {
     case .starting: return .connecting
     case .sending: return i.pending > 0 ? .syncing(i.pending) : .waitingToSync
-    case .synced: return i.pending > 0 ? .syncing(i.pending) : .connected
+    case .synced:
+        if i.pending > 0 { return .waiting(i.pending) }
+        if let held = i.held { return .connectedHeld(held) }
+        return .connected
     }
 }
 

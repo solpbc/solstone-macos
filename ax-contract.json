@@ -137,6 +137,7 @@
       "settings.deck.shelf",
       "settings.deck.status",
       "settings.deck.status.lead",
+      "settings.deck.status.unwritten",
       "settings.help.about.state",
       "settings.help.agentInstructions",
       "settings.help.agentInstructions.copy",
@@ -781,8 +782,10 @@
       "offline",
       "connecting",
       "syncing",
+      "waiting",
       "waiting_to_sync",
-      "connected"
+      "connected",
+      "connected_held"
     ],
     "JournalWindowAXState" : [
       "held",

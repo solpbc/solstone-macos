@@ -6,9 +6,30 @@ import Foundation
 import os
 import SolstoneCore
 
+/// A segment the journal received and answered it would not write. It stays on this mac
+/// until the owner removes it or the journal answers it differently.
+public struct UnwrittenSegment: Equatable, Hashable, Sendable {
+    public let day: String
+    public let segment: String
+
+    public init(day: String, segment: String) {
+        self.day = day
+        self.segment = segment
+    }
+}
+
 /// Background sync service that walks days and uploads missing segments
 /// All operations run off the main actor
 public actor SyncService {
+    /// What removing an unwritten segment did.
+    public enum RemoveHeldResult: Equatable, Sendable {
+        case removed
+        /// A pass is running, or the folder couldn't be set aside. Nothing changed.
+        case busy
+        /// The segment isn't one the journal declined, as far as this service knows now.
+        case notHeld
+    }
+
     /// Progress event for UI updates
     public enum ProgressEvent: Sendable {
         case syncStarted
@@ -25,9 +46,11 @@ public actor SyncService {
         )
         case journalContactSucceeded(context: JournalUploadContext?)
         /// The pass finished. `remaining` counts the segments it found that are still
-        /// only on this mac (not attempted, bounded, refused or unproven), so a
-        /// finished pass never reads as caught up while any are left.
-        case syncComplete(context: JournalUploadContext?, remaining: Int)
+        /// only on this mac and can still go on their own (not attempted, bounded,
+        /// refused or unproven), so a finished pass never reads as caught up while any
+        /// are left. `unwritten` lists the segments the journal answered it would not
+        /// write: they wait on the owner, not on a retry, so they are not in `remaining`.
+        case syncComplete(context: JournalUploadContext?, remaining: Int, unwritten: [UnwrittenSegment] = [])
         case syncBlocked(pendingCount: Int, reason: UploadError)
         case offline(error: String, healthReason: ObserverHealthFailureReason, requestedPath: String)
         case awaitingTunnel
@@ -153,6 +176,11 @@ public actor SyncService {
     private let persistAcknowledgment: @Sendable (IngestAcknowledgment, URL) throws -> Void
     private let removeItem: @Sendable (URL) throws -> Void
     private let renameItem: @Sendable (URL, URL) throws -> Void
+    private let removeTree: @Sendable (URL) throws -> Void
+    /// Segments whose last answer from the journal under `heldFingerprint` was that it
+    /// would not write them, keyed by day and segment, with the folder discovery found.
+    private var held: [UnwrittenSegment: URL] = [:]
+    private var heldFingerprint: String?
     private let listDirectory: @Sendable (URL) throws -> [URL]
     private let classifyEntry: @Sendable (URL) throws -> DiscoveredEntryKind
     private let pairingCredentialStore: PairingCredentialStore?
@@ -233,8 +261,12 @@ public actor SyncService {
                 return .unsupported
             }
         },
+        removeTree: @escaping @Sendable (URL) throws -> Void = { url in
+            try FileManager.default.removeItem(at: url)
+        },
         pairingCredentialStore: PairingCredentialStore? = nil
     ) {
+        self.removeTree = removeTree
         self.storageManager = storageManager
         self.client = client
         self.resolver = resolver
@@ -275,6 +307,13 @@ public actor SyncService {
         if newContext != self.journalContext {
             self.deviceQuietUntil = nil
             self.segmentBounds.removeAll()
+        }
+        // A declined segment belongs to the journal that declined it. Only another journal
+        // clears the list: a context that goes away and comes back to the same journal, or a
+        // credential rotation, keeps it.
+        if let fingerprint = newContext?.fingerprint.value {
+            if let heldFingerprint, heldFingerprint != fingerprint { held.removeAll() }
+            heldFingerprint = fingerprint
         }
         self.journalContext = newContext
         self.syncPaused = syncPaused
@@ -346,6 +385,67 @@ public actor SyncService {
         }
     }
 
+    // MARK: - Declined segments
+
+    private func unwrittenList() -> [UnwrittenSegment] {
+        held.keys.sorted { ($0.day, $0.segment) > ($1.day, $1.segment) }
+    }
+
+    /// Removes a segment the journal declined, at the owner's request. It runs only between
+    /// passes, with no suspension between its checks and setting the folder aside, so a pass
+    /// can never find it half removed.
+    public func removeHeld(day: String, segment: String) -> RemoveHeldResult {
+        guard !isSyncing else { return .busy }
+        let key = UnwrittenSegment(day: day, segment: segment)
+        guard let folder = held[key] else { return .notHeld }
+        let setAside = folder.deletingLastPathComponent()
+            .appendingPathComponent(".\(folder.lastPathComponent).removing", isDirectory: true)
+        do {
+            try renameItem(folder, setAside)
+        } catch let error as NSError where error.domain == NSPOSIXErrorDomain && error.code == Int(ENOENT) {
+            forgetHeld(key)
+            return .removed
+        } catch {
+            Logger.upload.error("Couldn't set aside declined segment \(segment, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return .busy
+        }
+        forgetHeld(key)
+        do {
+            try removeTree(setAside)
+        } catch {
+            Logger.upload.error("Couldn't delete removed segment \(setAside.lastPathComponent, privacy: .public) in \(day, privacy: .public); the next pass tries again")
+        }
+        return .removed
+    }
+
+    private func forgetHeld(_ key: UnwrittenSegment) {
+        held.removeValue(forKey: key)
+        if let fingerprint = journalContext?.fingerprint.value ?? heldFingerprint {
+            segmentBounds.removeValue(forKey: SegmentAddress(fingerprint: fingerprint, day: key.day, segment: key.segment))
+        }
+    }
+
+    /// Finishes removals whose delete didn't complete. The set-aside folders are hidden, so
+    /// neither discovery nor recovery ever enters them.
+    private func sweepRemovedSegments() {
+        let fm = FileManager.default
+        guard let days = try? fm.contentsOfDirectory(
+            at: storageManager.baseDirectory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        ) else { return }
+        for day in days {
+            guard let entries = try? fm.contentsOfDirectory(at: day, includingPropertiesForKeys: nil, options: []) else { continue }
+            for entry in entries {
+                let name = entry.lastPathComponent
+                guard name.hasPrefix("."), name.hasSuffix(".removing") else { continue }
+                do {
+                    try removeTree(entry)
+                } catch {
+                    Logger.upload.error("Couldn't delete removed segment \(name, privacy: .public) in \(day.lastPathComponent, privacy: .public)")
+                }
+            }
+        }
+    }
+
     // MARK: - Full Sync
 
     /// Perform full sync: local discovery, unacknowledged segment upload, idle probe, cleanup
@@ -377,6 +477,7 @@ public actor SyncService {
 
         isSyncing = true
         emitProgress(.syncStarted)
+        sweepRemovedSegments()
 
         defer {
             isSyncing = false
@@ -520,7 +621,32 @@ public actor SyncService {
             }
         }
 
-        let totalSegments = candidatesByDay.values.reduce(0) { $0 + $1.count }
+        // Declined segments that discovery no longer finds have left this mac.
+        if snapshot.failure == nil {
+            var present = Set<UnwrittenSegment>()
+            for (day, candidates) in candidatesByDay {
+                for candidate in candidates {
+                    present.insert(UnwrittenSegment(day: day, segment: convertSegmentPath(candidate.segmentURL).segment))
+                }
+            }
+            held = held.filter { present.contains($0.key) }
+        }
+        // Decided once, at one instant: declined segments still inside their bound are not
+        // walked, so they never count as syncing.
+        let passStart = self.now()
+        var skipHeld = Set<UnwrittenSegment>()
+        for (day, candidates) in candidatesByDay {
+            for candidate in candidates {
+                let segment = convertSegmentPath(candidate.segmentURL).segment
+                let key = UnwrittenSegment(day: day, segment: segment)
+                guard held[key] != nil else { continue }
+                let address = SegmentAddress(fingerprint: context.fingerprint.value, day: day, segment: segment)
+                if let bound = segmentBounds[address], bound.quietUntil > passStart {
+                    skipHeld.insert(key)
+                }
+            }
+        }
+        let totalSegments = candidatesByDay.values.reduce(0) { $0 + $1.count } - skipHeld.count
 
         if let failure = snapshot.failure, totalSegments == 0 {
             Logger.upload.info("Discovery incomplete: \(failure.localizedDescription, privacy: .public)")
@@ -562,8 +688,14 @@ public actor SyncService {
             switch probeResult {
             case .success:
                 emitProgress(.journalContactSucceeded(context: context))
-                // The quiet window skips the upload walk, so every segment found is still here.
-                emitProgress(.syncComplete(context: context, remaining: totalSegments))
+                // The quiet window skips the upload walk, so every segment found is still
+                // here; the declined ones wait on the owner instead.
+                let waiting = candidatesByDay.reduce(0) { count, entry in
+                    count + entry.value.filter { candidate in
+                        held[UnwrittenSegment(day: entry.key, segment: convertSegmentPath(candidate.segmentURL).segment)] == nil
+                    }.count
+                }
+                emitProgress(.syncComplete(context: context, remaining: waiting, unwritten: unwrittenList()))
             case .failure(let classification):
                 handleProbeFailure(classification: classification, day: today)
             }
@@ -574,6 +706,7 @@ public actor SyncService {
         // Segments this pass settled: delivered, already acknowledged, or removed by the
         // journal. Every other outcome leaves the segment waiting on this mac.
         var settled = 0
+        var settledKeys = Set<UnwrittenSegment>()
         var didPOST = false
         var hasYieldedContact = false
 
@@ -584,6 +717,8 @@ public actor SyncService {
             for candidate in localCandidates {
                 let segmentURL = candidate.segmentURL
                 let (_, segment) = convertSegmentPath(segmentURL)
+                let heldKey = UnwrittenSegment(day: day, segment: segment)
+                if skipHeld.contains(heldKey) { continue }
                 let address = SegmentAddress(fingerprint: context.fingerprint.value, day: day, segment: segment)
                 let metaState = readSegmentMetadata(segmentURL: segmentURL, segment: segment)
                 let filesToUpload = candidate.media
@@ -615,6 +750,8 @@ public actor SyncService {
 
                 if !needsUpload {
                     settled += 1
+                    settledKeys.insert(heldKey)
+                    held.removeValue(forKey: heldKey)
                 }
 
                 if needsUpload {
@@ -647,6 +784,8 @@ public actor SyncService {
                         }
                     case .succeeded:
                         settled += 1
+                        settledKeys.insert(heldKey)
+                        held.removeValue(forKey: heldKey)
                         emitProgress(.journalContactSucceeded(context: context))
                         hasYieldedContact = true
                         let ackURL = IngestAcknowledgmentStore.acknowledgmentURL(segmentDirectory: segmentURL, segment: segment)
@@ -703,6 +842,8 @@ public actor SyncService {
                         switch scope {
                         case .segmentRemoved:
                             settled += 1
+                            settledKeys.insert(heldKey)
+                            held.removeValue(forKey: heldKey)
                             Logger.upload.notice("Segment \(segment, privacy: .public) day=\(day, privacy: .public): segment_removed")
                             let unreadableIDs: [String] = {
                                 if case .present(let m) = metaState,
@@ -727,6 +868,7 @@ public actor SyncService {
                             }
 
                         case .receivedNotWritten:
+                            held[heldKey] = segmentURL
                             self.segmentBounds[address] = SegmentBound(
                                 kind: .receivedNotWritten,
                                 consecutive: 1,
@@ -735,6 +877,7 @@ public actor SyncService {
                             Logger.upload.info("Segment \(segment, privacy: .public) day=\(day, privacy: .public): disposition_received_not_written")
 
                         case .deterministic(let status, let reasonCode):
+                            held.removeValue(forKey: heldKey)
                             if let uploadErr = error as? UploadError, case .serverError(let s) = uploadErr, s.bodyStatus == "retryable" {
                                 let currentConsecutive = self.segmentBounds[address]?.consecutive ?? 0
                                 self.segmentBounds[address] = SegmentBound(
@@ -808,8 +951,13 @@ public actor SyncService {
             return
         }
         guard syncContextIsCurrent(context, epoch: epoch) else { return }
-        let remaining = max(totalSegments - settled, 0)
-        emitProgress(.syncComplete(context: context, remaining: remaining))
+        let remaining = candidatesByDay.reduce(0) { count, entry in
+            count + entry.value.filter { candidate in
+                let key = UnwrittenSegment(day: entry.key, segment: convertSegmentPath(candidate.segmentURL).segment)
+                return !settledKeys.contains(key) && held[key] == nil
+            }.count
+        }
+        emitProgress(.syncComplete(context: context, remaining: remaining, unwritten: unwrittenList()))
         Logger.upload.info("Sync complete, \(remaining, privacy: .public) still on this mac")
     }
 

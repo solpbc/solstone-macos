@@ -119,6 +119,37 @@ struct UploadCoordinatorTests {
         #expect(coordinator.lastRequestedIngestPath == nil)
     }
 
+    @Test func declinedSegmentsWaitAgainWhenAnotherJournalIsPaired() throws {
+        let root = try makeTempDirectory("upload-coordinator-declined")
+        let current = FingerprintBox(JournalConnectionFingerprint(value: "sha256:a"))
+        let coordinator = UploadCoordinator(
+            forSnapshot: StorageManager(baseDirectory: root),
+            config: AppConfig(),
+            journalIdentityProvider: { .identified(current.value) }
+        )
+        coordinator.updateConfig(AppConfig())
+        let declined = UnwrittenSegment(day: "20261111", segment: "120000_300")
+        coordinator.handleProgressEvent(.syncComplete(context: nil, remaining: 0, unwritten: [declined]))
+        #expect(coordinator.unwrittenSegments == [declined])
+
+        // The same journal pushed again keeps the list.
+        coordinator.updateConfig(AppConfig())
+        #expect(coordinator.unwrittenSegments == [declined])
+        #expect(coordinator.pendingCount == 0)
+
+        // Another journal, in the order AppState pushes it: the segment waits for it.
+        current.value = JournalConnectionFingerprint(value: "sha256:b")
+        coordinator.updateConfig(AppConfig())
+        coordinator.updatePairedIngestIdentity(nil)
+        #expect(coordinator.unwrittenSegments.isEmpty)
+        #expect(coordinator.pendingCount == 1)
+        var pill = JournalPillInputs()
+        pill.upload = deckUploadPhase(coordinator.status)
+        pill.pending = coordinator.pendingCount
+        pill.upload = .synced
+        #expect(deriveJournalPill(pill) == .waiting(1))
+    }
+
     @Test func journalContactSucceededWritesDurableLastContactPayload() throws {
         let fixed = Date(timeIntervalSince1970: 1_700_000_001)
         let root = try makeTempDirectory("upload-coordinator-last-contact")
@@ -941,4 +972,10 @@ private final class MutableJournalIdentityRead {
     init(_ value: JournalIdentityRead) {
         self.value = value
     }
+}
+
+@MainActor
+private final class FingerprintBox {
+    var value: JournalConnectionFingerprint
+    init(_ value: JournalConnectionFingerprint) { self.value = value }
 }

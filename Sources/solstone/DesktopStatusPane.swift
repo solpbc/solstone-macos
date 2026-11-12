@@ -41,6 +41,9 @@ extension SettingsView {
                         pill, connectionLine: appState.tunnelLifecycleOwner.connectionVerdict.message
                     ))
                     statusLastDeliveryRow
+                    if !appState.uploadCoordinator.unwrittenSegments.isEmpty {
+                        UnwrittenSegmentRows(appState: appState)
+                    }
                 }
                 if resolvedServiceMode(for: appState.config) == .external {
                     StatusFactRow(label: "kept on this mac", value: storageGlanceText)
@@ -89,9 +92,14 @@ extension SettingsView {
             case .syncing(let n):
                 Text("\(n)").font(DeckStyle.name(34))
                 Text("syncing to your journal…").foregroundStyle(.secondary)
+            case .waiting(let n):
+                Text("\(n)").font(DeckStyle.name(34))
+                Text(DeckCopy.onThisDevice).foregroundStyle(.secondary)
             case .waitingToSync:
                 Text("waiting to sync").font(DeckStyle.name(22))
                 Text("on this device").foregroundStyle(.secondary)
+            case .connectedHeld(.segmentsNotWritten):
+                Text("nothing waiting to sync").font(DeckStyle.name(22))
             case .connecting:
                 Text("connecting…").font(DeckStyle.name(22))
             case .offline:
@@ -230,4 +238,86 @@ struct StatusFactRow: View {
         }
         .accessibilityElement(children: .combine)
     }
+}
+
+/// Segments the journal answered it would not write, under `your journal` › `on this device`.
+/// Each can be removed from this Mac. Sync still tries them again once their quiet window ends.
+struct UnwrittenSegmentRows: View {
+    let appState: AppState
+    @State private var confirming: UnwrittenSegment?
+
+    var body: some View {
+        let coordinator: UploadCoordinator = appState.uploadCoordinator
+        let passRunning = unwrittenRemoveBlocked(status: coordinator.status, syncPaused: coordinator.syncPaused)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(DeckCopy.onThisDevice).foregroundStyle(.secondary)
+            ForEach(coordinator.unwrittenSegments, id: \.self) { segment in
+                let name = unwrittenSegmentName(segment)
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(name)
+                        Text(UnwrittenCopy.reason).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Button(UnwrittenCopy.remove) { confirming = segment }
+                        .disabled(passRunning)
+                        .accessibilityLabel("\(UnwrittenCopy.remove) \(name)")
+                        .accessibilityIdentifier(AXID.Deck.unwrittenRemove(segment.day, segment.segment))
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier(AXID.Deck.unwrittenRow(segment.day, segment.segment))
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(AXID.Deck.unwrittenList)
+        .confirmationDialog(
+            confirming.map { UnwrittenCopy.confirmTitle(unwrittenSegmentName($0)) } ?? "",
+            isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+            titleVisibility: .visible,
+            presenting: confirming
+        ) { segment in
+            Button(UnwrittenCopy.remove, role: .destructive) {
+                Task { _ = await coordinator.removeUnwritten(segment) }
+            }
+            Button(UnwrittenCopy.cancel, role: .cancel) {}
+        } message: { _ in
+            Text(UnwrittenCopy.confirmMessage)
+        }
+    }
+}
+
+enum UnwrittenCopy {
+    static let reason = "your journal couldn't take all of this."
+    static let remove = "remove"
+    static let cancel = "cancel"
+    static let confirmMessage = "this removes the copy on this device, so what your journal didn't take won't reach it."
+    static func confirmTitle(_ name: String) -> String { "remove \(name)?" }
+}
+
+/// Whether `remove` waits: a pass is running unless sync is paused.
+func unwrittenRemoveBlocked(status: UploadCoordinator.Status, syncPaused: Bool) -> Bool {
+    guard !syncPaused else { return false }
+    switch status {
+    case .syncing, .uploading, .retrying: return true
+    case .notSynced, .awaitingTunnel, .synced, .offline, .blocked: return false
+    }
+}
+
+/// A segment's start, from its day key (`yyyyMMdd`) and folder (`HHmmss_…`), as the owner reads it.
+func unwrittenSegmentName(_ segment: UnwrittenSegment, timeZone: TimeZone = .current) -> String {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = timeZone
+    let day = segment.day
+    let time = segment.segment.prefix(6)
+    guard day.count == 8, time.count == 6,
+          let y = Int(day.prefix(4)), let mo = Int(day.dropFirst(4).prefix(2)), let d = Int(day.suffix(2)),
+          let h = Int(time.prefix(2)), let mi = Int(time.dropFirst(2).prefix(2)),
+          let date = calendar.date(from: DateComponents(year: y, month: mo, day: d, hour: h, minute: mi)) else {
+        return segment.segment
+    }
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    formatter.timeZone = timeZone
+    return formatter.string(from: date).lowercased()
 }

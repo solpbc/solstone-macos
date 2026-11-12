@@ -3319,6 +3319,287 @@ struct SyncServiceTests {
         #expect(pathsAfter.contains(IngestProtocolV3.uploadPath))
     }
 
+    // MARK: - Declined segments
+
+    private func lastSyncComplete(_ collector: ProgressCollector) -> (remaining: Int, unwritten: [UnwrittenSegment])? {
+        for event in collector.allEvents.reversed() {
+            if case .syncComplete(_, let remaining, let unwritten) = event { return (remaining, unwritten) }
+        }
+        return nil
+    }
+
+    private func syncAndWait(_ service: SyncService, _ collector: ProgressCollector, passes: Int) async {
+        await service.sync()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while collector.allEvents.filter({ if case .syncComplete = $0 { return true }; return false }).count < passes,
+              ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    private func dayKey(_ url: URL) -> String {
+        url.deletingLastPathComponent().lastPathComponent.replacingOccurrences(of: "-", with: "")
+    }
+
+    private func registerAnswer(_ seg: (url: URL, date: Date), disposition: String) throws {
+        let segment = seg.url.lastPathComponent
+        let filename = "\(segment)_audio.m4a"
+        let sha = try sha256(of: seg.url.appendingPathComponent(filename))
+        store.registerBodyRoute(
+            path: IngestProtocolV3.uploadPath,
+            bodyContains: filename,
+            body: completeUploadResponseJSON(status: "ok", segment: segment, descriptors: [(filename, filename, 5, sha, disposition)])
+        )
+    }
+
+    @Test
+    func aDeclinedSegmentLeavesTheCountAndIsListedOnItsOwn() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-declined-three")
+        let declined = try makeSegment(root: root, segmentName: "120000_300")
+        let delivered = try makeSegment(root: root, segmentName: "110000_300")
+        let unreachable = try makeSegment(root: root, segmentName: "100000_300")
+        try registerAnswer(declined, disposition: "received_not_written")
+        try registerAnswer(delivered, disposition: "written")
+        store.registerBodyRoute(path: IngestProtocolV3.uploadPath, bodyContains: "100000_300_audio.m4a", error: URLError(.networkConnectionLost))
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+
+        let progress = ProgressCollector()
+        let clock = SyncTestClock()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24801") }, now: { clock.now() })
+        await configure(service)
+        let listen = Task { for await event in await service.progressStream { progress.append(event) } }
+        await syncAndWait(service, progress, passes: 1)
+        let first = try #require(lastSyncComplete(progress))
+        #expect(first.remaining == 1)
+        #expect(first.unwritten == [UnwrittenSegment(day: dayKey(declined.url), segment: "120000_300")])
+        #expect(FileManager.default.fileExists(atPath: unreachable.url.path))
+
+        // Inside the bound the declined segment isn't walked, so progress never counts it.
+        let before = progress.allEvents.count
+        clock.advance(by: 3600)
+        await syncAndWait(service, progress, passes: 2)
+        listen.cancel()
+        let second = try #require(lastSyncComplete(progress))
+        #expect(second.unwritten == [UnwrittenSegment(day: dayKey(declined.url), segment: "120000_300")])
+        #expect(second.remaining == 1)
+        for event in progress.allEvents.dropFirst(before) {
+            if case .syncProgress(let checked, let total) = event {
+                #expect(checked <= total)
+                #expect(total == 1)
+            }
+        }
+    }
+
+    @Test
+    func aDeclinedSegmentStaysHeldThroughATransportFailureAndLeavesOnAnotherAnswer() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-declined-answers")
+        let declined = try makeSegment(root: root, segmentName: "120000_300")
+        try registerAnswer(declined, disposition: "received_not_written")
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        let progress = ProgressCollector()
+        let clock = SyncTestClock()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24802") }, now: { clock.now() })
+        await configure(service)
+        let listen = Task { for await event in await service.progressStream { progress.append(event) } }
+        await syncAndWait(service, progress, passes: 1)
+        #expect(lastSyncComplete(progress)?.unwritten.count == 1)
+
+        // Past the bound a re-send that never reaches the journal is not an answer: still held.
+        store.reset()
+        store.registerBodyRoute(path: IngestProtocolV3.uploadPath, bodyContains: "120000_300_audio.m4a", error: URLError(.networkConnectionLost))
+        clock.advance(by: 86_401)
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(IngestDayKey.string(from: clock.now())), body: segmentsDayJSON(entries: []))
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        await syncAndWait(service, progress, passes: 2)
+        #expect(lastSyncComplete(progress)?.unwritten.count == 1)
+        #expect(lastSyncComplete(progress)?.remaining == 0)
+
+        // A deterministic refusal is another answer: it leaves the held list and waits as before.
+        store.reset()
+        store.registerBodyRoute(path: IngestProtocolV3.uploadPath, bodyContains: "120000_300_audio.m4a", statusCode: 422,
+                                body: "{\"status\":\"failed\",\"error\":\"nope\",\"reason_code\":\"invalid_segment\"}")
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(IngestDayKey.string(from: clock.now())), body: segmentsDayJSON(entries: []))
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        await syncAndWait(service, progress, passes: 3)
+        listen.cancel()
+        let third = try #require(lastSyncComplete(progress))
+        #expect(third.unwritten.isEmpty)
+        #expect(third.remaining == 1)
+    }
+
+    @Test
+    func aDeclinedSegmentLeavesWhenItsFolderIsGoneAndOnAnotherJournalOnly() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-declined-gone")
+        let declined = try makeSegment(root: root, segmentName: "120000_300")
+        let other = try makeSegment(root: root, segmentName: "110000_300")
+        try registerAnswer(declined, disposition: "received_not_written")
+        try registerAnswer(other, disposition: "received_not_written")
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        let progress = ProgressCollector()
+        let clock = SyncTestClock()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24803") }, now: { clock.now() })
+        await configure(service)
+        let listen = Task { for await event in await service.progressStream { progress.append(event) } }
+        await syncAndWait(service, progress, passes: 1)
+        #expect(lastSyncComplete(progress)?.unwritten.count == 2)
+
+        try FileManager.default.removeItem(at: other.url)
+        await syncAndWait(service, progress, passes: 2)
+        #expect(lastSyncComplete(progress)?.unwritten == [UnwrittenSegment(day: dayKey(declined.url), segment: "120000_300")])
+
+        // The same journal again, after a credential-only or pause change, keeps the list.
+        await service.configure(pairingIdentity: pairingA, journalFingerprint: tunnelJournalConnectionFingerprint(for: pairingA), syncPaused: true)
+        await configure(service)
+        await syncAndWait(service, progress, passes: 3)
+        #expect(lastSyncComplete(progress)?.unwritten.count == 1)
+
+        // Another journal: the list empties, and the segment waits for it.
+        store.reset()
+        store.registerBodyRoute(path: IngestProtocolV3.uploadPath, bodyContains: "120000_300_audio.m4a", error: URLError(.networkConnectionLost))
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        await configureB(service)
+        await syncAndWait(service, progress, passes: 4)
+        listen.cancel()
+        let last = try #require(lastSyncComplete(progress))
+        #expect(last.unwritten.isEmpty)
+        #expect(last.remaining == 1)
+    }
+
+    @Test
+    func theQuietWindowCountsOnlyWhatCanStillGo() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-declined-quiet")
+        let declined = try makeSegment(root: root, segmentName: "120000_300")
+        try registerAnswer(declined, disposition: "received_not_written")
+        // The second segment's journal refusal opens the device quiet window.
+        _ = try makeSegment(root: root, segmentName: "110000_300")
+        store.registerBodyRoute(path: IngestProtocolV3.uploadPath, bodyContains: "110000_300_audio.m4a", statusCode: 403,
+                                body: "{\"status\":\"failed\",\"error\":\"refused\",\"reason_code\":\"device_refused\"}")
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        let progress = ProgressCollector()
+        let clock = SyncTestClock()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24804") }, now: { clock.now() })
+        await configure(service)
+        let listen = Task { for await event in await service.progressStream { progress.append(event) } }
+        await service.sync()
+        _ = try makeSegment(root: root, segmentName: "100000_300")
+        await syncAndWait(service, progress, passes: 1)
+        listen.cancel()
+        let quiet = try #require(lastSyncComplete(progress))
+        #expect(quiet.remaining == 2)
+        #expect(quiet.unwritten.count == 1)
+    }
+
+    @Test
+    func removingADeclinedSegmentSetsItAsideThenDeletesOnlyIt() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-declined-remove")
+        let declined = try makeSegment(root: root, segmentName: "120000_300")
+        let sibling = try makeSegment(root: root, segmentName: "110000_300")
+        try registerAnswer(declined, disposition: "received_not_written")
+        try registerAnswer(sibling, disposition: "received_not_written")
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        let progress = ProgressCollector()
+        let service = makeService(root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24805") })
+        await configure(service)
+        let listen = Task { for await event in await service.progressStream { progress.append(event) } }
+        await syncAndWait(service, progress, passes: 1)
+        listen.cancel()
+        let day = dayKey(declined.url)
+
+        #expect(await service.removeHeld(day: day, segment: "999999_300") == .notHeld)
+        #expect(await service.removeHeld(day: day, segment: "120000_300") == .removed)
+        #expect(!FileManager.default.fileExists(atPath: declined.url.path))
+        #expect(FileManager.default.fileExists(atPath: sibling.url.path))
+        #expect(FileManager.default.fileExists(atPath: declined.url.deletingLastPathComponent().path))
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: declined.url.deletingLastPathComponent().path)
+        #expect(!leftovers.contains { $0.hasSuffix(".removing") })
+        #expect(await service.removeHeld(day: day, segment: "120000_300") == .notHeld)
+
+        // Already gone from disk: the list still lets go of it.
+        try FileManager.default.removeItem(at: sibling.url)
+        #expect(await service.removeHeld(day: day, segment: "110000_300") == .removed)
+    }
+
+    @Test
+    func aRemoveThatCantSetTheFolderAsideChangesNothing() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-declined-rename-fails")
+        let declined = try makeSegment(root: root, segmentName: "120000_300")
+        try registerAnswer(declined, disposition: "received_not_written")
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        let failRenames = LockedFlag()
+        let progress = ProgressCollector()
+        let service = makeService(
+            root: root, resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24806") },
+            renameItem: { source, destination in
+                if failRenames.value { throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES)) }
+                guard Darwin.renamex_np(source.path, destination.path, UInt32(RENAME_EXCL)) == 0 else {
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                }
+            }
+        )
+        await configure(service)
+        let listen = Task { for await event in await service.progressStream { progress.append(event) } }
+        await syncAndWait(service, progress, passes: 1)
+        listen.cancel()
+        failRenames.value = true
+        #expect(await service.removeHeld(day: dayKey(declined.url), segment: "120000_300") == .busy)
+        #expect(FileManager.default.fileExists(atPath: declined.url.path))
+    }
+
+    @Test
+    func aRemoveWhoseDeleteFailsIsHiddenFromEveryReaderAndFinishedByTheNextPass() async throws {
+        store.reset()
+        let root = try makeTempDirectory("sync-declined-delete-fails")
+        let declined = try makeSegment(root: root, segmentName: "120000_300")
+        try registerAnswer(declined, disposition: "received_not_written")
+        let today = IngestDayKey.string(from: Date())
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        let failDeletes = LockedFlag()
+        let progress = ProgressCollector()
+        let service = SyncService(
+            storageManager: StorageManager(baseDirectory: root),
+            client: UploadClient(sessionConfiguration: observerURLProtocolConfiguration(store: store)),
+            resolver: HomeBaseURLResolver { .url("http://127.0.0.1:24807") },
+            retryDelays: Array(repeating: 0, count: 10),
+            classifyEntry: syncTestClassifyByLstat,
+            removeTree: { url in
+                if failDeletes.value { throw NSError(domain: NSPOSIXErrorDomain, code: Int(EBUSY)) }
+                try FileManager.default.removeItem(at: url)
+            }
+        )
+        await configure(service)
+        let listen = Task { for await event in await service.progressStream { progress.append(event) } }
+        await syncAndWait(service, progress, passes: 1)
+        failDeletes.value = true
+        let dayFolder = declined.url.deletingLastPathComponent()
+        #expect(await service.removeHeld(day: dayKey(declined.url), segment: "120000_300") == .removed)
+        let setAside = dayFolder.appendingPathComponent(".120000_300.removing")
+        #expect(FileManager.default.fileExists(atPath: setAside.path))
+
+        // Neither discovery nor recovery lists it.
+        let visible = try FileManager.default.contentsOfDirectory(at: dayFolder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+        #expect(visible.isEmpty)
+
+        failDeletes.value = false
+        store.reset()
+        store.registerRoute(path: IngestProtocolV3.segmentsDayPath(today), body: segmentsDayJSON(entries: []))
+        await syncAndWait(service, progress, passes: 2)
+        listen.cancel()
+        #expect(!FileManager.default.fileExists(atPath: setAside.path))
+        #expect(store.snapshotRequests().allSatisfy { $0.url?.path != IngestProtocolV3.uploadPath })
+    }
+
     @Test
     func post500SegmentRemovedTwinContentConflict() async throws {
         store.reset()
@@ -5271,7 +5552,7 @@ private actor ResolverScript {
 private func waitForSyncCompleteRemaining(_ collector: ProgressCollector) async throws -> Int? {
     func found() -> Int? {
         for event in collector.allEvents {
-            if case .syncComplete(_, let remaining) = event { return remaining }
+            if case .syncComplete(_, let remaining, _) = event { return remaining }
         }
         return nil
     }
@@ -5552,4 +5833,13 @@ private func holdingURLProtocolConfiguration() -> URLSessionConfiguration {
     config.timeoutIntervalForRequest = 60
     config.timeoutIntervalForResource = 120
     return config
+}
+
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = false
+    var value: Bool {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
 }
