@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.65] - 2026-11-11
+
 ### Added
 
 - import, a new tile beside your sources, adds PDFs, audio, images and text to your journal. choose files on its page, or drop them anywhere on the solstone window. each one waits on this mac until your journal has it, and status counts the ones still waiting. a HEIC photo goes in as a JPEG.
+- screenshots is a new source. turn it on from its tile, choose how far back to start, and the solstone app takes in the screenshots you take on this mac. your journal keeps each one at the minute you took it, other files in the folder your screenshots save to stay where they are, and a HEIC screenshot goes in as a PNG.
 - when an update has waited a few days for you to quit and reopen solstone, the app now asks whether to restart and install it. it restarts only when you choose to.
 
 ### Changed
@@ -18,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - the menu bar icon's menu is now shorter. it names a source only when that source needs attention, and each source's state is on its tile in the window.
 - a narrow solstone window now keeps its sidebar behind a button, and at its narrowest shows one column at a time.
 - a segment your journal didn't take all of is now listed in status, under your journal, where you can remove it. solstone still tries it again later, and status doesn't count it as waiting.
+- the app now says computer sound everywhere it used to say system audio.
 
 ### Fixed
 
