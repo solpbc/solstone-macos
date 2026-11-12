@@ -368,6 +368,15 @@ struct SettingsView: View {
 
     var body: some View {
         settingsContent
+        // A file dropped anywhere on the window opens import and is added at once, like a pick.
+        .dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter(\.isFileURL)
+            guard !files.isEmpty, let source = appState.importSource, !source.snapshot.storeUnreadable else { return false }
+            shelf = .home
+            openPane(.importPage)
+            Task { await source.add(files) }
+            return true
+        }
         .background(SetupSettingsWindowInstaller(setupShowing: appState.setupModel.phase != nil, groundChrome: true))
         .alert(appState.setupModel.handoffRefusalMessage ?? "", isPresented: Binding(
             get: { appState.setupModel.handoffRefusal != nil },

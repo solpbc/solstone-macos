@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Solstone mobile import v1",
+  "description": "A linked device brings an owner-chosen item into the journal over its tunnel: a multipart save stages the item, then a JSON start with the save's path and timestamp runs it.",
+  "x-solstone-rust-source": "core/crates/solstone-core-import-web/src/mobile_import_contract.rs",
+  "x-solstone-regeneration-command": "cargo test --manifest-path core/Cargo.toml -p solstone-core-repository-contracts --lib mobile_import_contract::regenerate_mobile_import_contract -- --ignored",
+  "x-solstone-routes": {
+    "save": "POST /app/import/api/save",
+    "start": "POST /app/import/api/start"
+  },
+  "type": "object",
+  "$defs": {
+    "reason_code": {
+      "type": "string",
+      "enum": [
+        "missing_required_field",
+        "ingest_no_files",
+        "multipart_part_too_large",
+        "strava_download",
+        "invalid_operation_for_state",
+        "import_not_found",
+        "import_conflict",
+        "import_preview_required",
+        "import_queue_unreachable",
+        "import_metadata_failed"
+      ]
+    },
+    "reason_status": {
+      "description": "The one HTTP status each reason code is sent with.",
+      "type": "object",
+      "properties": {
+        "missing_required_field": {
+          "const": 400
+        },
+        "ingest_no_files": {
+          "const": 400
+        },
+        "multipart_part_too_large": {
+          "const": 413
+        },
+        "strava_download": {
+          "const": 422
+        },
+        "invalid_operation_for_state": {
+          "const": 400
+        },
+        "import_not_found": {
+          "const": 404
+        },
+        "import_conflict": {
+          "const": 409
+        },
+        "import_preview_required": {
+          "const": 409
+        },
+        "import_queue_unreachable": {
+          "const": 503
+        },
+        "import_metadata_failed": {
+          "const": 500
+        }
+      }
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "image",
+        "document",
+        "audio",
+        "text"
+      ]
+    },
+    "error_kind": {
+      "type": "string",
+      "enum": [
+        "already_imported",
+        "already_running",
+        "client_item_conflict",
+        "nothing_to_import",
+        "source_changed",
+        "invalid_request",
+        "not_found",
+        "plan_failed"
+      ]
+    },
+    "error_response": {
+      "description": "Every refusal. error is a sentence the owner may be shown as is; reason_code and detail are for machines.",
+      "type": "object",
+      "required": [
+        "error",
+        "reason_code"
+      ],
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "reason_code": {
+          "$ref": "#/$defs/reason_code"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/error_kind"
+        }
+      }
+    },
+    "save_request": {
+      "description": "Multipart parts, each a string except file. One of file (with a filename) or text carries the item; a file wins when both are sent. Fields other than these are ignored.",
+      "type": "object",
+      "required": [
+        "client_item_id"
+      ],
+      "x-solstone-multipart-limits": {
+        "max_parts": 12,
+        "max_headers_per_part": 16,
+        "max_filename_bytes": 128,
+        "max_field_bytes": 67108864,
+        "max_file_bytes": 4294967296
+      },
+      "properties": {
+        "client_item_id": {
+          "description": "The client's idempotency key, stable across retries of one item.",
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "description": "The item's bytes; the part's filename is required and its content type is recorded.",
+          "type": "string",
+          "contentMediaType": "application/octet-stream"
+        },
+        "text": {
+          "description": "Pasted text, staged as paste.txt.",
+          "type": "string"
+        },
+        "imported_via": {
+          "description": "The door the item came through; web_dashboard when absent.",
+          "type": "string"
+        },
+        "source_hint": {
+          "description": "strava is the only door a Strava download is taken through.",
+          "type": "string"
+        },
+        "setting": {
+          "type": "string"
+        },
+        "observer_handle": {
+          "type": "string"
+        },
+        "client": {
+          "description": "Kept when it is a JSON object, otherwise stored as {}.",
+          "type": "string"
+        }
+      }
+    },
+    "save_response": {
+      "description": "200: the item is staged. replay is true when this client_item_id was already staged with the same content. Content staged earlier under another client_item_id returns that earlier item.",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "status",
+        "replay",
+        "path",
+        "timestamp",
+        "source_timestamp",
+        "client_item_id",
+        "source",
+        "recommended_action",
+        "metadata",
+        "diagnostics"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "status": {
+          "const": "staged"
+        },
+        "replay": {
+          "type": "boolean"
+        },
+        "path": {
+          "description": "Sent back unchanged in start_request.",
+          "type": "string"
+        },
+        "timestamp": {
+          "description": "The import directory id, sent back unchanged in start_request.",
+          "type": "string"
+        },
+        "source_timestamp": {
+          "type": "string"
+        },
+        "resolved_timestamp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "client_item_id": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "setting": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recommended_action": {
+          "const": "start"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "diagnostics": {
+          "type": "object"
+        }
+      }
+    },
+    "start_request": {
+      "description": "Without preview_token the journal previews the import itself, under the same rules as a preview the owner saw.",
+      "type": "object",
+      "required": [
+        "path",
+        "timestamp"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string"
+        },
+        "import_id": {
+          "type": "string"
+        },
+        "preview_token": {
+          "type": "string"
+        }
+      }
+    },
+    "start_response": {
+      "description": "200: the import is queued, or running in process when generation and attempt_id are present. replay is true when this start found the import already queued, running or finished. A replay is classified by the same fields as a fresh body: status, task_id, and generation and attempt_id when present.",
+      "type": "object",
+      "required": [
+        "status",
+        "task_id",
+        "import_id"
+      ],
+      "properties": {
+        "status": {
+          "const": "ok"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "import_id": {
+          "type": "string"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attempt_id": {
+          "type": "string"
+        },
+        "replay": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

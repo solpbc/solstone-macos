@@ -99,6 +99,7 @@ extension SettingsView {
                             return .handled
                         }
                     }
+                    ImportTile(selected: shellLayout != .phone && pane == .importPage, compact: shellLayout == .narrow) { openPane(.importPage) }
                     AddMoreTile(selected: shellLayout != .phone && pane == .addMore, compact: shellLayout == .narrow) { openPane(.addMore) }
                 }
                 .padding(4)
@@ -165,6 +166,12 @@ extension SettingsView {
                     appState.markSettingsTabVisited(.status)
                     refreshSetupProbes()
                 }
+        case .importPage:
+            DesktopImportPage(
+                appState: appState,
+                header: AnyView(paneHeader(ImportCopy.title, systemImage: "square.and.arrow.down")),
+                openScreenshots: { openPane(.source(.screenshots)) }
+            )
         case .addMore:
             addMorePane
         case .source(let source):

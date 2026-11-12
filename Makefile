@@ -216,9 +216,9 @@ ci-release: check-sparkle
 integration-native:
 	@RUNTIME="$${SOLSTONE_NATIVE_RUNTIME_DIR:-}"; \
 		test -n "$$RUNTIME" || { echo "error: SOLSTONE_NATIVE_RUNTIME_DIR=<accepted native runtime tree> required"; exit 1; }; \
-		test -x "$$RUNTIME/bin/journal" || { echo "error: no journal binary at $$RUNTIME/bin/journal"; exit 1; }; \
+		test -x "$$RUNTIME/bin/solstone" || { echo "error: no solstone binary at $$RUNTIME/bin/solstone"; exit 1; }; \
 		test -x "$${SOLSTONE_JOURNAL_INTEGRATION_FIXTURE:-}" || { echo "error: SOLSTONE_JOURNAL_INTEGRATION_FIXTURE=<built journal-integration-fixture> required"; exit 1; }; \
-		echo "integration-native: runtime $$("$$RUNTIME/bin/journal" --version) tree-sha256=$$(cd "$$RUNTIME" && find bin lib share -type f | sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1) at $$RUNTIME"; \
+		echo "integration-native: runtime $$("$$RUNTIME/bin/solstone" --version) tree-sha256=$$(cd "$$RUNTIME" && find bin lib share -type f | sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1) at $$RUNTIME"; \
 		echo "integration-native: fixture $$(shasum -a 256 "$$SOLSTONE_JOURNAL_INTEGRATION_FIXTURE" | cut -d' ' -f1) at $$SOLSTONE_JOURNAL_INTEGRATION_FIXTURE"; \
 		SOLSTONE_NATIVE_INTEGRATION=1 SOLSTONE_NATIVE_RUNTIME_DIR="$$RUNTIME" swift test --no-parallel --filter NativeIntegration
 

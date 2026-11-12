@@ -23,6 +23,14 @@ enum AXID {
         static let statusPane = "settings.deck.status"
         static let statusLead = "settings.deck.status.lead"
         static let unwrittenList = "settings.deck.status.unwritten"
+        static let importTile = "settings.deck.import"
+        static let importPage = "settings.deck.import.page"
+        static let importChoose = "settings.deck.import.choose"
+        static let importRecent = "settings.deck.import.recent"
+        static let importIntake = "settings.deck.import.intake"
+        static let importStatusRow = "settings.deck.status.import"
+        /// One held import. Its id is a lowercase UUID, so the part starts with a letter.
+        static func importItem(_ id: String) -> String { "settings.deck.import.item.i\(id)" }
         /// One declined segment's row. Each part starts with a letter and holds no `_`, per the id grammar.
         static func unwrittenRow(_ day: String, _ segment: String) -> String {
             "settings.deck.status.unwritten.d\(day).s\(segment.replacingOccurrences(of: "_", with: "-"))"

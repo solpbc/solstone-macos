@@ -60,6 +60,7 @@ public final class AppState {
     var activitySource: DesktopActivitySource?
     var obsidianSource: ObsidianVaultSource?
     var screenshotSource: ScreenshotSource?
+    var importSource: ImportSource?
     var terminalSource: TerminalSource?
     /// The owner turned terminal on and solstone for tmux is still here: ask first.
     var terminalMoveOffer = false
@@ -748,6 +749,7 @@ public final class AppState {
         shortcutController.unregister()
         obsidianSource?.shutdown()
         screenshotSource?.shutdown()
+        importSource?.shutdown()
         await terminalSource?.shutdown()
         await stopRecording(reason: .quit)
         await drainRemixQueueForTermination()
@@ -845,6 +847,7 @@ public final class AppState {
 #endif
         obsidianSource?.shutdown()
         screenshotSource?.shutdown()
+        importSource?.shutdown()
         await terminalSource?.shutdown()
         await stopRecording(reason: .update)
         await drainRemixQueueForTermination()
@@ -1031,6 +1034,7 @@ public final class AppState {
         if oldConfig.syncPaused != newConfig.syncPaused {
             obsidianSource?.nudge()
             screenshotSource?.nudge()
+            importSource?.nudge()
         }
         if oldConfig.isTerminalEnabled != newConfig.isTerminalEnabled { terminalSource?.reconcile() }
 
@@ -2527,6 +2531,7 @@ public final class AppState {
         }
         configureObsidianSource()
         configureScreenshotSource()
+        configureImportSource()
         configureTerminalSource()
         syncMicrophonePriorityList()
 
@@ -2996,6 +3001,7 @@ public final class AppState {
 
         guard isConnected(newState), !isConnected(previousState) else { return }
         setupModel.handleTunnelConnected()
+        importSource?.tunnelReconnected()
         _ = pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         if let owner = browserIntakeOwner {
@@ -3077,6 +3083,38 @@ public final class AppState {
         pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.nudge() }
         let previousResume = pauseManager.onResumeIntake
         pauseManager.onResumeIntake = { [weak source] in previousResume?(); source?.nudge() }
+        Task { await source.start() }
+    }
+
+    /// What import's waiting reason and gate are read from.
+    var importFacts: ImportFacts {
+        var facts = ImportFacts()
+        facts.paired = deckHasJournal
+        facts.markConfirmed = !needsJournalMarkConfirmation
+        facts.syncPaused = config.syncPaused
+        switch tunnelLifecycleOwner.connectionVerdict.failureCause {
+        case .revoked, .mismatch: facts.pairingRefused = true
+        default: facts.pairingRefused = tunnelLifecycleOwner.ordinaryRouteRevoked
+        }
+        facts.instance = currentJournalIdentity().fingerprint?.value
+        facts.version = tunnelLifecycleOwner.journalVersion.version
+        return facts
+    }
+
+    private func configureImportSource() {
+        guard automaticObservationPipelineEnabled,
+              let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let source = ImportSource.make(
+            appSupportDirectory: appSupport,
+            resolver: ingestBaseURLResolver,
+            facts: { [weak self] in self?.importFacts ?? ImportFacts() },
+            reportDelivery: { [weak self] instance in
+                await MainActor.run {
+                    self?.uploadCoordinator.noteBrowserDelivery(captured: JournalConnectionFingerprint(value: instance))
+                }
+            }
+        )
+        importSource = source
         Task { await source.start() }
     }
 

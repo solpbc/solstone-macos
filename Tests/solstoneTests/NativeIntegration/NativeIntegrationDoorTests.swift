@@ -41,6 +41,8 @@ struct NativeIntegrationDoorTests {
     /// Comfortably past the ~18 MB boundary the September 2026 report measured, and well
     /// under the ingest contract's per-part and per-connection limits.
     private static let largeUploadBytes = 40 * 1024 * 1024
+    /// Past the 128 MiB request cap other computers' bridges kept before import.
+    private static let largeImportBytes = 130 * 1024 * 1024
 
     private static func writePseudoRandomBytes(count: Int, to url: URL) throws {
         // Incompressible bytes, so nothing between here and the door can shrink the body.
@@ -220,6 +222,36 @@ struct NativeIntegrationDoorTests {
         }
         let afterUpload = try LoopbackHTTP.request(port: proxyPort, path: Self.assetPath)
         #expect(afterUpload.hasPrefix("HTTP/1.1 200"), "proxy port did not survive the large upload: \(afterUpload.prefix(120))")
+
+        // Import: a file past every app-side limit the segment path keeps (128 MiB) is saved
+        // through the same proxy and door, a repeated save after it is the replay an app killed
+        // between save and start sends, and the start that follows gets the journal's answer.
+        let importRoot = try makeTempDirectory("native-integration-import")
+        defer { try? FileManager.default.removeItem(at: importRoot) }
+        let importPayload = importRoot.appendingPathComponent("payload")
+        try Self.writePseudoRandomBytes(count: Self.largeImportBytes, to: importPayload)
+        let importItem = ImportItemDescriptor(
+            id: UUID().uuidString.lowercased(), payloadURL: importPayload,
+            displayName: "large-import.m4a", mime: "audio/mp4", size: Int64(Self.largeImportBytes)
+        )
+        let importTransport = ImportLiveTransport()
+        let serverURL = "http://127.0.0.1:\(proxyPort)"
+        let saved = await importTransport.save(importItem, serverURL: serverURL)
+        guard case .saved(let savedPath, let savedTimestamp) = saved else {
+            Issue.record("\(Self.largeImportBytes)-byte import was not staged: \(saved)")
+            await transport.disconnect()
+            return
+        }
+        let staged = fixture.ready.journalRoot.appendingPathComponent("imports/\(savedTimestamp)", isDirectory: true)
+        let stagedSizes = ((try? FileManager.default.contentsOfDirectory(at: staged, includingPropertiesForKeys: [.fileSizeKey])) ?? [])
+            .compactMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }
+        #expect(stagedSizes.contains(Self.largeImportBytes), "staged import sizes \(stagedSizes) under \(staged.path)")
+        let replay = await importTransport.save(importItem, serverURL: serverURL)
+        #expect(replay == .saved(path: savedPath, timestamp: savedTimestamp), "a repeated save is not a replay: \(replay)")
+        let startAnswer = await importTransport.start(path: savedPath, timestamp: savedTimestamp, serverURL: serverURL)
+        if case .retry(let cause) = startAnswer {
+            Issue.record("start was not answered by the journal: \(cause)")
+        }
 
         await transport.disconnect()
     }

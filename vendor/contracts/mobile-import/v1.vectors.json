@@ -1,0 +1,192 @@
+{
+  "source": "core/crates/solstone-core-import-web/src/mobile_import_contract.rs",
+  "regeneration_command": "cargo test --manifest-path core/Cargo.toml -p solstone-core-repository-contracts --lib mobile_import_contract::regenerate_mobile_import_contract -- --ignored",
+  "vectors": {
+    "save_request": {
+      "client_item_id": "123e4567-e89b-42d3-a456-426614174000",
+      "imported_via": "mobile_share",
+      "file": {
+        "filename": "scan.pdf",
+        "content_type": "application/pdf"
+      }
+    },
+    "save_staged_200": {
+      "status": 200,
+      "body": {
+        "schema_version": 1,
+        "status": "staged",
+        "replay": false,
+        "path": "/journal/imports/20261019_101500/scan.pdf",
+        "timestamp": "20261019_101500",
+        "source_timestamp": "20261019_101500",
+        "client_item_id": "123e4567-e89b-42d3-a456-426614174000",
+        "source": "document",
+        "setting": null,
+        "recommended_action": "start",
+        "metadata": {
+          "original_filename": "scan.pdf",
+          "mime_type": "application/pdf",
+          "imported_via": "mobile_share",
+          "observer_handle": null,
+          "source_hint": null,
+          "client": {}
+        },
+        "diagnostics": {
+          "timestamp_detection_method": "upload_fallback",
+          "timestamp_detection_model_called": false,
+          "timestamp_detection_no_match_reason": null,
+          "source_inference": "default"
+        }
+      }
+    },
+    "save_replay_200": {
+      "status": 200,
+      "body": {
+        "schema_version": 1,
+        "status": "staged",
+        "replay": true,
+        "path": "/journal/imports/20261019_101500/scan.pdf",
+        "timestamp": "20261019_101500",
+        "source_timestamp": "20261019_101500",
+        "client_item_id": "123e4567-e89b-42d3-a456-426614174000",
+        "source": "document",
+        "setting": null,
+        "recommended_action": "start",
+        "metadata": {
+          "original_filename": "scan.pdf",
+          "mime_type": "application/pdf",
+          "imported_via": "mobile_share",
+          "observer_handle": null,
+          "source_hint": null,
+          "client": {}
+        },
+        "diagnostics": {
+          "timestamp_detection_method": "upload_fallback",
+          "timestamp_detection_model_called": false,
+          "timestamp_detection_no_match_reason": null,
+          "source_inference": "default"
+        }
+      }
+    },
+    "start_request": {
+      "path": "/journal/imports/20261019_101500/scan.pdf",
+      "timestamp": "20261019_101500"
+    },
+    "start_queued_200": {
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "task_id": "1792404900000",
+        "import_id": "20261019_101500"
+      }
+    },
+    "start_inprocess_200": {
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "import_id": "20261019_101500",
+        "task_id": "1792404900000",
+        "generation": 1,
+        "attempt_id": "attempt-1"
+      }
+    },
+    "start_queued_replay_200": {
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "task_id": "1792404900000",
+        "import_id": "20261019_101500",
+        "replay": true
+      }
+    },
+    "start_inprocess_replay_200": {
+      "status": 200,
+      "body": {
+        "status": "ok",
+        "import_id": "20261019_101500",
+        "task_id": "1792404900000",
+        "generation": 1,
+        "attempt_id": "attempt-1",
+        "replay": true
+      }
+    },
+    "save_already_imported_400": {
+      "status": 400,
+      "body": {
+        "error": "that action isn't available in the current state.",
+        "reason_code": "invalid_operation_for_state",
+        "detail": "content already imported",
+        "kind": "already_imported"
+      }
+    },
+    "save_client_item_conflict_400": {
+      "status": 400,
+      "body": {
+        "error": "that action isn't available in the current state.",
+        "reason_code": "invalid_operation_for_state",
+        "detail": "client_item_id already staged for different content; use a new client_item_id or re-fetch the existing item",
+        "kind": "client_item_conflict"
+      }
+    },
+    "start_already_imported_400": {
+      "status": 400,
+      "body": {
+        "error": "that action isn't available in the current state.",
+        "reason_code": "invalid_operation_for_state",
+        "detail": "content already imported; will not start",
+        "kind": "already_imported"
+      }
+    },
+    "start_nothing_to_import_409": {
+      "status": 409,
+      "body": {
+        "error": "there is nothing new in this source to import.",
+        "reason_code": "import_preview_required",
+        "detail": "there are no recordings to import from this source",
+        "kind": "nothing_to_import"
+      }
+    },
+    "refusals": [
+      {
+        "status": 400,
+        "reason_code": "missing_required_field"
+      },
+      {
+        "status": 400,
+        "reason_code": "ingest_no_files"
+      },
+      {
+        "status": 413,
+        "reason_code": "multipart_part_too_large"
+      },
+      {
+        "status": 422,
+        "reason_code": "strava_download"
+      },
+      {
+        "status": 400,
+        "reason_code": "invalid_operation_for_state"
+      },
+      {
+        "status": 404,
+        "reason_code": "import_not_found"
+      },
+      {
+        "status": 409,
+        "reason_code": "import_conflict"
+      },
+      {
+        "status": 409,
+        "reason_code": "import_preview_required"
+      },
+      {
+        "status": 503,
+        "reason_code": "import_queue_unreachable"
+      },
+      {
+        "status": 500,
+        "reason_code": "import_metadata_failed"
+      }
+    ]
+  }
+}

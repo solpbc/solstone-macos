@@ -18,6 +18,7 @@ enum ShelfRow: String, CaseIterable, Hashable, Sendable {
 enum HomePane: Hashable, Sendable {
     case status
     case source(DeckSource)
+    case importPage
     case addMore
 }
 

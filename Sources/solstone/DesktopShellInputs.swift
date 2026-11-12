@@ -177,8 +177,11 @@ extension AppState {
             lastHealthReason: uploadCoordinator.lastHealthReason
         ))
         i.upload = deckUploadPhase(uploadCoordinator.status)
-        i.pending = uploadCoordinator.pendingCount
-        if deckHasJournal, !uploadCoordinator.unwrittenSegments.isEmpty {
+        let imports = importSource?.snapshot
+        i.pending = uploadCoordinator.pendingCount + (imports?.countsAsWaiting ?? 0)
+        if deckHasJournal, imports?.needsOwner == true {
+            i.held = .importsNeedYou
+        } else if deckHasJournal, !uploadCoordinator.unwrittenSegments.isEmpty {
             i.held = .segmentsNotWritten
         }
         return i

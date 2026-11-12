@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- import, a new tile beside your sources, adds PDFs, audio, images and text to your journal. choose files on its page, or drop them anywhere on the solstone window. each one waits on this mac until your journal has it, and status counts the ones still waiting. a HEIC photo goes in as a JPEG.
 - when an update has waited a few days for you to quit and reopen solstone, the app now asks whether to restart and install it. it restarts only when you choose to.
 
 ### Changed

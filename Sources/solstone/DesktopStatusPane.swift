@@ -28,6 +28,24 @@ extension SettingsView {
 
             StatusSourceRows(appState: appState)
 
+            if let imports = appState.importSource?.snapshot, !imports.rows.isEmpty {
+                // Imports still on this Mac get one row, saying why they wait; it opens import.
+                Button { openPane(.importPage) } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(ImportCopy.title)
+                            Text(ImportCopy.recent(imports)).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .font(.callout)
+                .accessibilityIdentifier(AXID.Deck.importStatusRow)
+            }
+
             VStack(alignment: .leading, spacing: 8) {
                 Text("your journal")
                     .font(.system(size: 11, weight: .semibold))
@@ -100,6 +118,9 @@ extension SettingsView {
                 Text("on this device").foregroundStyle(.secondary)
             case .connectedHeld(.segmentsNotWritten):
                 Text("nothing waiting to sync").font(DeckStyle.name(22))
+            case .connectedHeld(.importsNeedYou):
+                Text(ImportCopy.importsNeedYou).font(DeckStyle.name(22))
+                Text(ImportCopy.openImportToSeeWhy).foregroundStyle(.secondary)
             case .connecting:
                 Text("connecting…").font(DeckStyle.name(22))
             case .offline:

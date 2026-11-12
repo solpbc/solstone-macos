@@ -407,6 +407,8 @@ func deckHasFault(_ tiles: [DeckTile]) -> Bool {
 
 /// Why everything left on this Mac waits on the owner rather than on a sync.
 enum JournalHeld: Equatable, Sendable {
+    /// Imports here that won't go on their own: each one needs the owner, or the journal needs an update.
+    case importsNeedYou
     /// Segments the journal answered it would not write.
     case segmentsNotWritten
 }
