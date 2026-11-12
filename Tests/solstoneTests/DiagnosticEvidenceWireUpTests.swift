@@ -3,7 +3,6 @@
 
 import Foundation
 import Testing
-import UpdateKit
 @testable import solstone
 
 @Suite("Diagnostic evidence wire-up")
@@ -183,7 +182,5 @@ struct DiagnosticEvidenceWireUpTests {
         #expect(wireUpContains(quit, "diagnosticEvidenceDrainCutoffSeconds: Double = 2"))
         #expect(wireUpContains(upload, "recorder: DiagnosticEvidenceRecorder = .dormant"))
         #expect(wireUpContains(upload, "logAdapter: DiagnosticEvidenceLoggingAdapter = .live"))
-        #expect(UpdateController.stagedInstallRecoveryDelay == .seconds(30))
-        #expect(AppQuitCoordinator.diagnosticEvidenceDrainCutoffSeconds < 30)
     }
 }

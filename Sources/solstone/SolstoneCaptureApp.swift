@@ -230,7 +230,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SafariExtensionBridge.shared.stop()
 #endif
             state.isTerminating = true
-            state.appKitTerminationBegan = true
             state.stopTunnelLifecycleOwner()
         } else {
             Logger.general.error("AppState.shared nil in applicationWillTerminate")

@@ -553,7 +553,6 @@ public final class AppState {
 #endif
         }
     }
-    public internal(set) var appKitTerminationBegan: Bool = false
     private var activationPolicyWorkItem: DispatchWorkItem?
     private var nextJournalOpenIntentID: UInt64 = 0
     private let dockBehaviorDefaultsKey = "SolstoneDockBehavior"

@@ -35,6 +35,7 @@ public final class SparkleUserDriver: NSObject, SPUUserDriver {
     public func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
         controller.presentUpdateFound(
             version: appcastItem.displayVersionString,
+            buildVersion: appcastItem.versionString,
             releaseNotes: appcastItem.itemDescription,
             state: state,
             reply: reply

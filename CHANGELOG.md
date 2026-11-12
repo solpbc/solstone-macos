@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- when an update has waited a few days for you to quit and reopen solstone, the app now asks whether to restart and install it. it restarts only when you choose to.
+
 ### Changed
 
 - the solstone window now opens on your sources. each one has a tile with its state and a switch. beside them, status shows how much each source has taken in so far, and clicking a tile shows that source's page there instead. the sidebar is now home, your journal, this mac, updates and help, and every source setting you had is still there, on that source's page.
@@ -15,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- while an update waited for you to quit and reopen solstone, the app stopped checking for newer ones, so a solstone app that stayed open could stay on an old version long after a newer one came out. it now keeps checking on its usual schedule, and a newer release takes the waiting one's place.
 - with no journal paired, the menu bar icon no longer looks paused while your sources are on.
 - status no longer says "all caught up", or "all good", while segments are still on this mac waiting to reach your journal, such as when your journal turned one away or solstone was waiting a while before trying again. it now counts the ones still here.
 - a note that a microphone isn't coming through now shows only on audio's page, and a note about computer sound only on screen's page, instead of on both.

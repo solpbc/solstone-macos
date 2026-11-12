@@ -78,7 +78,8 @@ struct SparkleDelegateIngestTests {
             immediateInstallationBlock: {}
         ) as Bool?)
 
-        #expect(handled)
+        // Sparkle's scheduler keeps running while the update waits for quit.
+        #expect(!handled)
         #expect(harness.controller.activity == .idle)
         #expect(harness.controller.updateIsStaged)
         #expect(harness.controller.stagedVersion == "1.3.9")
@@ -161,13 +162,11 @@ struct SparkleDelegateIngestTests {
         )
     }
 
-    @Test func willInstallUpdateOnQuitRetainsImmediateInstallHandlerForStagedInstall() async throws {
+    @Test func stagedInstallNowResumesSparklesSessionAndInstallsWithoutTheQuitHandler() async throws {
         clearDefaults()
         defer { clearDefaults() }
-        let harness = try makeHarness(
-            postInstallRecoveryScheduler: { _ in }
-        )
-        let item = try appcastItem(version: "1.3.9", notes: "release notes")
+        let harness = try makeHarness()
+        let item = try appcastItem(version: "1.3.9", buildVersion: "139", notes: "release notes")
         let handlerInvoked = LockedValue<Bool>()
         handlerInvoked.set(false)
 
@@ -179,16 +178,26 @@ struct SparkleDelegateIngestTests {
             }
         ) as Bool?)
 
-        #expect(handled)
-        #expect(handlerInvoked.current != true)
+        #expect(!handled)
         #expect(harness.controller.updateIsStaged)
 
         harness.controller.installStagedUpdate()
+        #expect(harness.spy.checkForUpdatesCallCount == 1)
+
+        // Sparkle resumes the waiting install in the owner's session; install now answers it.
+        let chosen = LockedValue<Int>()
+        harness.userDriver.showUpdateFound(
+            with: item,
+            state: try userUpdateState(stage: .installing)
+        ) { choice in
+            chosen.set(choice.rawValue)
+        }
         try await waitUntil(timeout: .seconds(5)) {
-            handlerInvoked.current == true
+            chosen.current == SPUUserUpdateChoice.install.rawValue
         }
 
-        #expect(handlerInvoked.current == true)
+        #expect(chosen.current == SPUUserUpdateChoice.install.rawValue)
+        #expect(handlerInvoked.current != true)
     }
 
     @Test func stagedFactRestoresAcrossLaunchWhenVersionDiffersFromRunningVersion() throws {
@@ -553,15 +562,13 @@ struct SparkleDelegateIngestTests {
     }
 
     private func makeHarness(
-        runningVersion: @escaping UpdateController.RunningVersionProvider = { "1.3.8" },
-        postInstallRecoveryScheduler: UpdateController.PostInstallRecoveryScheduler? = nil
+        runningVersion: @escaping UpdateController.RunningVersionProvider = { "1.3.8" }
     ) throws -> DelegateHarness {
         try DelegateHarness(
             feedURL: validFeedURL,
             publicKey: validPublicKey,
             defaults: isolatedDefaults.defaults,
-            runningVersion: runningVersion,
-            postInstallRecoveryScheduler: postInstallRecoveryScheduler
+            runningVersion: runningVersion
         )
     }
 
@@ -687,8 +694,7 @@ private final class DelegateHarness {
         feedURL: String,
         publicKey: String,
         defaults: UserDefaults,
-        runningVersion: @escaping UpdateController.RunningVersionProvider,
-        postInstallRecoveryScheduler: UpdateController.PostInstallRecoveryScheduler?
+        runningVersion: @escaping UpdateController.RunningVersionProvider
     ) throws {
         let spy = SpyUpdater()
         var capturedUserDriver: SparkleUserDriver?
@@ -701,7 +707,6 @@ private final class DelegateHarness {
             runningVersion: runningVersion,
             log: updateKitTestLog,
             errorDomain: updateKitTestErrorDomain,
-            postInstallRecoveryScheduler: postInstallRecoveryScheduler,
             defaults: defaults
         ) { userDriver, delegate in
             capturedUserDriver = userDriver

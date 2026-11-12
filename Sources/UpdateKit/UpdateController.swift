@@ -10,7 +10,9 @@ public protocol SparkleUpdating: AnyObject {
     var updateCheckInterval: TimeInterval { get set }
     var automaticallyDownloadsUpdates: Bool { get set }
     func checkForUpdates()
+    func checkForUpdatesInBackground()
     var sessionInProgress: Bool { get }
+    var userAgentString: String { get }
     func start() throws
 }
 
@@ -30,17 +32,25 @@ public final class UpdateController {
     public typealias SessionLivenessProvider = @MainActor () -> Bool
     public typealias PreInstallFinalizer = @MainActor () async -> Void
     public typealias InstallFailureRecovery = @MainActor () async -> Void
-    public typealias PostInstallRecoveryScheduler = @MainActor (@escaping @MainActor () -> Void) -> Void
-    public typealias TerminationBeganPredicate = @MainActor @Sendable () -> Bool
     public typealias RunningVersionProvider = @MainActor () -> String
+    /// Shows the owner the restart prompt for a waiting update and reports their answer:
+    /// `true` to restart and install now, `false` to leave it for later.
+    public typealias RestartPromptPresenter = @MainActor (_ version: String, _ respond: @escaping @MainActor (Bool) -> Void) -> Void
+    public typealias DelayScheduler = @MainActor (_ delay: TimeInterval, _ work: @escaping @MainActor () -> Void) -> Void
 
     private static let statusKey = "solstone.updates.status"
     private static let lastAnnouncedUpdateVersionKey = "solstone.updates.lastAnnouncedUpdateVersion"
     private static let feedURLOverrideKey = "solstone.updates.feedURLOverride"
     private static let legacyLastCheckedAtKey = "solstone.updates.lastCheckedAt"
     private static let legacyLastCheckResultKey = "solstone.updates.lastCheckResult"
-    public static let stagedInstallRecoveryDelay: Duration = .seconds(30)
-    public static let stagedInstallRecoveryWarningText = "Sparkle staged install handoff did not terminate within 30 seconds; recovering update finalization"
+    /// How long an update may wait for a restart before the owner is asked to restart now.
+    /// A newer release replacing the waiting one does not restart this clock.
+    public static let restartPromptThreshold: TimeInterval = 3 * 86_400
+    // Sparkle records a skipped version under these keys. UpdateKit offers no skip, and it
+    // skips only to cancel a waiting update it is replacing, so it removes the record again.
+    private static let sparkleSkipKeys = ["SUSkippedMinorVersion", "SUSkippedMajorVersion", "SUSkippedMajorSubreleaseVersion"]
+    private static let replacementRetryDelay: TimeInterval = 5
+    private static let replacementAttempts = 6
 
     public private(set) var activity: UpdateActivity = .idle
     public private(set) var backgroundDownload: BackgroundDownloadPhase? = nil
@@ -62,8 +72,11 @@ public final class UpdateController {
     private let sessionLivenessProvider: SessionLivenessProvider?
     private let preInstallFinalizer: PreInstallFinalizer?
     private let installFailureRecovery: InstallFailureRecovery?
-    private let postInstallRecoveryScheduler: PostInstallRecoveryScheduler
-    private let terminationBegan: TerminationBeganPredicate
+    private let restartPrompt: RestartPromptPresenter?
+    private let feedLoader: UpdateFeedProbe.Loader?
+    private let now: @MainActor () -> Date
+    private let scheduleAfter: DelayScheduler
+    private let feedURL: String?
     private let defaults: UserDefaults
     private let announceUpdateVersion: (@MainActor (String) -> Void)?
 
@@ -78,8 +91,14 @@ public final class UpdateController {
     // Sparkle handoff flags; distinct from AppQuitCoordinator's app committed-exit state.
     private var installFinalizationInFlight = false
     private var installFinalizationCommitted = false
-    private var immediateStagedInstallHandler: (() -> Void)?
     private var pendingDownloadIntent = false
+    // A scheduled Sparkle session resuming a waiting update, held only while the feed is read.
+    private var waitingRecheck: UUID?
+    // The build of the waiting update being cancelled so a newer release can replace it.
+    private var replacingBuild: String?
+    private var replacementCheckStarted = false
+    private var restartPromptTimer: UUID?
+    private var restartPromptShowing = false
     private var chosenInstallVersion: String?
     private var suppressNextInstallChoiceRecord = false
 
@@ -213,13 +232,16 @@ public final class UpdateController {
         sessionInProgress: SessionLivenessProvider? = nil,
         preInstallFinalizer: PreInstallFinalizer? = nil,
         installFailureRecovery: InstallFailureRecovery? = nil,
-        postInstallRecoveryScheduler: PostInstallRecoveryScheduler? = nil,
-        terminationBegan: TerminationBeganPredicate? = nil,
+        restartPrompt: RestartPromptPresenter? = nil,
         announce: (@MainActor (String) -> Void)? = nil,
         defaults: UserDefaults = .standard,
+        feedLoader: UpdateFeedProbe.Loader? = nil,
+        now: @escaping @MainActor () -> Date = { Date() },
+        scheduleAfter: DelayScheduler? = nil,
         updaterFactory: @escaping UpdaterFactory
     ) {
         let info = Bundle.main.infoDictionary
+        let resolvedFeedURL = feedURL ?? info?["SUFeedURL"] as? String
         self.updaterFactory = updaterFactory
         self.userDriver = SparkleUserDriver(log: log)
         self.updaterDelegate = SparkleUpdaterDelegateAdapter(log: log, errorDomain: errorDomain)
@@ -228,12 +250,15 @@ public final class UpdateController {
         self.sessionLivenessProvider = sessionInProgress
         self.preInstallFinalizer = preInstallFinalizer
         self.installFailureRecovery = installFailureRecovery
-        self.postInstallRecoveryScheduler = postInstallRecoveryScheduler ?? Self.defaultPostInstallRecoveryScheduler
-        self.terminationBegan = terminationBegan ?? { false }
+        self.restartPrompt = restartPrompt
+        self.feedLoader = feedLoader
+        self.now = now
+        self.scheduleAfter = scheduleAfter ?? Self.defaultScheduleAfter
+        self.feedURL = resolvedFeedURL
         self.defaults = defaults
         self.announceUpdateVersion = announce
         self.canCheckForUpdates = Self.validateSparkleConfig(
-            feedURL: feedURL ?? info?["SUFeedURL"] as? String,
+            feedURL: resolvedFeedURL,
             publicKey: publicKey ?? info?["SUPublicEDKey"] as? String
         )
 
@@ -259,6 +284,7 @@ public final class UpdateController {
         }
 
         observeExclusivity()
+        armRestartPrompt()
     }
 
     public convenience init(
@@ -267,8 +293,7 @@ public final class UpdateController {
         exclusivity: ExclusivityProvider? = nil,
         preInstallFinalizer: PreInstallFinalizer? = nil,
         installFailureRecovery: InstallFailureRecovery? = nil,
-        postInstallRecoveryScheduler: PostInstallRecoveryScheduler? = nil,
-        terminationBegan: TerminationBeganPredicate? = nil,
+        restartPrompt: RestartPromptPresenter? = nil,
         announce: (@MainActor (String) -> Void)? = nil,
         defaults: UserDefaults = .standard
     ) {
@@ -278,8 +303,7 @@ public final class UpdateController {
             exclusivity: exclusivity,
             preInstallFinalizer: preInstallFinalizer,
             installFailureRecovery: installFailureRecovery,
-            postInstallRecoveryScheduler: postInstallRecoveryScheduler,
-            terminationBegan: terminationBegan,
+            restartPrompt: restartPrompt,
             announce: announce,
             defaults: defaults
         ) { userDriver, delegate in
@@ -362,7 +386,20 @@ public final class UpdateController {
         let requiresFinalization = pendingReplyRequiresFinalization
         pendingChoiceReply = nil
         pendingReplyRequiresFinalization = false
+        waitingRecheck = nil
         fireInstallReply(reply, requiresFinalization: requiresFinalization)
+    }
+
+    /// The owner's install-now for whatever update is waiting: a staged one installs and
+    /// restarts at once; a downloaded one that needs an administrator asks for one first.
+    public func installWaitingUpdate() {
+        if pendingChoiceReply != nil {
+            install()
+        } else if updateIsStaged {
+            installStagedUpdate()
+        } else if canActOnAvailableUpdateDirectly || availableUpdate != nil {
+            download()
+        }
     }
 
     func dismiss() {
@@ -408,6 +445,7 @@ public final class UpdateController {
 
     func presentUpdateFound(
         version: String,
+        buildVersion: String = "",
         releaseNotes: String?,
         state: SPUUserUpdateState,
         reply: @escaping (SPUUserUpdateChoice) -> Void
@@ -431,6 +469,21 @@ public final class UpdateController {
         if pendingDownloadIntent {
             pendingDownloadIntent = false
             install()
+            return
+        }
+
+        // A scheduled Sparkle session that shows an update stays open until it gets an
+        // answer, and while it is open Sparkle schedules no further checks. Only the owner's
+        // own check keeps one open; a scheduled one is answered here.
+        guard !state.userInitiated else { return }
+        switch state.stage {
+        case .notDownloaded:
+            // The next scheduled check reads the feed again and finds the newest.
+            answerPendingReply(.dismiss)
+        case .downloaded, .installing:
+            recheckWaitingUpdate(buildVersion: buildVersion, stage: state.stage)
+        @unknown default:
+            answerPendingReply(.dismiss)
         }
     }
 
@@ -465,33 +518,16 @@ public final class UpdateController {
         activity = .idle
     }
 
-    func recordImmediateStagedInstallHandler(_ handler: @escaping () -> Void) {
-        immediateStagedInstallHandler = handler
-    }
-
     func installStagedUpdate() {
         guard updateIsStaged else { return }
         guard !installFinalizationInFlight, !installFinalizationCommitted else { return }
 
-        guard let immediateInstallHandler = immediateStagedInstallHandler else {
-            resumeStagedInstall()
+        // A scheduled session may be holding the waiting update while the feed is read.
+        if pendingChoiceReply != nil {
+            install()
             return
         }
-
-        installFinalizationInFlight = true
-
-        Task { @MainActor in
-            await preInstallFinalizer?()
-            installFinalizationCommitted = true
-            immediateInstallHandler()
-            postInstallRecoveryScheduler { [weak self] in
-                guard let self, self.installFinalizationCommitted else { return }
-                guard !self.terminationBegan() else { return }
-                log.warning("\(Self.stagedInstallRecoveryWarningText)")
-                self.recoverCommittedInstallFinalization()
-            }
-            installFinalizationInFlight = false
-        }
+        resumeStagedInstall()
     }
 
     func beginDownload(cancellation: @escaping () -> Void) {
@@ -748,14 +784,26 @@ public final class UpdateController {
         backgroundDownload = .finishingUp(version: version)
     }
 
-    func ingestStagedUpdate(version: String) {
+    func ingestStagedUpdate(version: String, build: String = "") {
         backgroundDownload = nil
         stagedBlockSuppressed = false
+        if replacingBuild != build {
+            replacingBuild = nil
+        }
         recordStagedUpdate(version: version)
+        markWaiting()
+        evaluateRestartPrompt()
     }
 
     func ingestCycleFinished(error: (any Error)?) {
         backgroundDownload = nil
+
+        if replacementCheckStarted {
+            // The check that replaces a cancelled update has ended. If it staged nothing,
+            // the next scheduled check continues from the feed.
+            replacementCheckStarted = false
+            replacingBuild = nil
+        }
 
         guard let error else { return }
 
@@ -782,6 +830,7 @@ public final class UpdateController {
     ) {
         pendingChoiceReply = reply
         pendingReplyRequiresFinalization = requiresFinalization
+        waitingRecheck = nil
     }
 
     private func stashCancellation(_ cancellation: @escaping () -> Void) {
@@ -792,6 +841,7 @@ public final class UpdateController {
         pendingChoiceReply = nil
         pendingReplyRequiresFinalization = false
         pendingCancellation = nil
+        waitingRecheck = nil
     }
 
     private func clearInstallChoice() {
@@ -838,6 +888,7 @@ public final class UpdateController {
                 let requiresFinalization = pendingReplyRequiresFinalization
                 pendingChoiceReply = nil
                 pendingReplyRequiresFinalization = false
+                waitingRecheck = nil
                 fireInstallReply(reply, requiresFinalization: requiresFinalization)
             } else {
                 checkForUpdates()
@@ -865,10 +916,12 @@ public final class UpdateController {
         return updater?.sessionInProgress ?? false
     }
 
-    private static func defaultPostInstallRecoveryScheduler(_ check: @escaping @MainActor () -> Void) {
+    private static func defaultScheduleAfter(_ delay: TimeInterval, _ work: @escaping @MainActor () -> Void) {
         Task { @MainActor in
-            try? await Task.sleep(for: Self.stagedInstallRecoveryDelay)
-            check()
+            // The continuous clock keeps counting while the Mac sleeps, so a wake past the
+            // deadline runs the work promptly.
+            try? await Task.sleep(for: .seconds(max(delay, 0)), clock: .continuous)
+            work()
         }
     }
 
@@ -922,10 +975,178 @@ public final class UpdateController {
         guard installFinalizationCommitted else { return false }
 
         installFinalizationCommitted = false
-        immediateStagedInstallHandler = nil
         stagedBlockSuppressed = false
         Task { @MainActor in await installFailureRecovery?() }
         return true
+    }
+
+    // MARK: - A waiting update
+
+    private func answerPendingReply(_ choice: SPUUserUpdateChoice) {
+        guard let reply = pendingChoiceReply else { return }
+        clearPendingInteractions()
+        activity = .idle
+        reply(choice)
+    }
+
+    /// Sparkle resumed a waiting update on its daily schedule without reading the feed.
+    /// Read it once: if a newer release is out, cancel the waiting one so Sparkle takes the
+    /// newest; otherwise leave it waiting and let the session end so checks continue.
+    private func recheckWaitingUpdate(buildVersion: String, stage: SPUUserUpdateStage) {
+        if stage == .downloaded {
+            // Downloaded but needing an administrator to install: it waits for the owner.
+            markWaiting()
+        }
+
+        if let replacingBuild, replacingBuild == buildVersion {
+            // Still the update being replaced; its installer had not exited yet.
+            replacementCheckStarted = false
+            answerPendingReply(.skip)
+            continueReplacement(attempt: 1)
+            return
+        }
+
+        let token = UUID()
+        waitingRecheck = token
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let newest = await self.newestFeedBuild()
+            // The owner pressed install, or another session replaced this one.
+            guard self.waitingRecheck == token else { return }
+
+            if let newest, !buildVersion.isEmpty,
+               UpdateFeedProbe.isNewer(newest, than: buildVersion),
+               self.reconciledStatus.replacedForBuild.map({ UpdateFeedProbe.isNewer(newest, than: $0) }) ?? true {
+                self.log.notice("Replacing waiting update \(buildVersion, privacy: .public) with feed build \(newest, privacy: .public)")
+                self.reconciledStatus.replacedForBuild = newest
+                self.persistStatus()
+                self.replacingBuild = buildVersion
+                self.answerPendingReply(.skip)
+                self.continueReplacement(attempt: 1)
+            } else {
+                if newest != nil {
+                    self.log.notice("Waiting update \(buildVersion, privacy: .public) is still the newest")
+                    self.recordWaitingRecheck()
+                }
+                self.answerPendingReply(.dismiss)
+            }
+            self.evaluateRestartPrompt()
+        }
+    }
+
+    private func newestFeedBuild() async -> String? {
+        guard let feedURL, let url = URL(string: feedURL), let updater else { return nil }
+        let override = Self.feedURLOverride(from: defaults)
+        let origin = UpdateFeedProbe.approvedOrigin(feedOverride: override)
+        let target = override.flatMap(URL.init(string:)) ?? url
+        guard UpdateFeedProbe.isApproved(target, origin: origin) else {
+            log.error("Waiting-update feed read refused: feed address is outside the update origin")
+            return nil
+        }
+        let loader = feedLoader ?? UpdateFeedProbe.confinedLoader(origin: origin)
+        let request = UpdateFeedProbe.request(feedURL: target, userAgent: updater.userAgentString)
+        do {
+            let (data, response) = try await loader(request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                log.error("Waiting-update feed read failed: unexpected response")
+                return nil
+            }
+            return UpdateFeedProbe.newestEligibleBuild(inAppcast: data, systemVersion: UpdateFeedProbe.systemVersion)
+        } catch {
+            log.error("Waiting-update feed read failed: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+    }
+
+    /// After cancelling the waiting update, start Sparkle's own background check once the
+    /// cancelled session has ended, so it downloads and verifies the newest release.
+    private func continueReplacement(attempt: Int) {
+        scheduleAfter(Self.replacementRetryDelay) { [weak self] in
+            guard let self, self.replacingBuild != nil else { return }
+            for key in Self.sparkleSkipKeys {
+                self.defaults.removeObject(forKey: key)
+            }
+            guard !self.sparkleSessionInProgress else {
+                if attempt < Self.replacementAttempts {
+                    self.continueReplacement(attempt: attempt + 1)
+                } else {
+                    self.log.error("Waiting-update replacement gave up; the next scheduled check continues it")
+                    self.replacingBuild = nil
+                }
+                return
+            }
+            self.replacementCheckStarted = true
+            self.updater?.checkForUpdatesInBackground()
+        }
+    }
+
+    private func recordWaitingRecheck() {
+        guard let lastCheck = reconciledStatus.lastCheck else { return }
+        reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now(), outcome: lastCheck.outcome)
+        persistStatus()
+    }
+
+    private func markWaiting() {
+        guard reconciledStatus.waitingSince == nil else { return }
+        reconciledStatus.waitingSince = now()
+        persistStatus()
+        armRestartPrompt()
+    }
+
+    // MARK: - Restart prompt
+
+    private var restartPromptDueAt: Date? {
+        guard restartPrompt != nil, let waitingSince = reconciledStatus.waitingSince, availableUpdate != nil else {
+            return nil
+        }
+        let due = waitingSince.addingTimeInterval(Self.restartPromptThreshold)
+        guard let promptedAt = reconciledStatus.restartPromptedAt else { return due }
+        return max(due, promptedAt.addingTimeInterval(Self.restartPromptThreshold))
+    }
+
+    /// Wakes once when the waiting update reaches the threshold, whatever Sparkle's own
+    /// check cadence is, so the prompt doesn't depend on the owner's update settings.
+    private func armRestartPrompt() {
+        guard let due = restartPromptDueAt else {
+            restartPromptTimer = nil
+            return
+        }
+        let token = UUID()
+        restartPromptTimer = token
+        scheduleAfter(max(due.timeIntervalSince(now()), 60)) { [weak self] in
+            guard let self, self.restartPromptTimer == token else { return }
+            self.evaluateRestartPrompt()
+        }
+    }
+
+    func evaluateRestartPrompt() {
+        guard let restartPrompt, let due = restartPromptDueAt, !restartPromptShowing else { return }
+        guard now() >= due else {
+            armRestartPrompt()
+            return
+        }
+        // Never over an install, a download or an owner choice already on screen.
+        guard activity == .idle, !installFinalizationInFlight, !installFinalizationCommitted,
+              !exclusiveOperationInProgress, replacingBuild == nil,
+              let version = availableUpdate?.version
+        else {
+            armRestartPrompt()
+            return
+        }
+
+        reconciledStatus.restartPromptedAt = now()
+        persistStatus()
+        restartPromptShowing = true
+        log.notice("Asking the owner to restart for waiting update \(version, privacy: .public)")
+        restartPrompt(version) { [weak self] restartNow in
+            guard let self else { return }
+            self.restartPromptShowing = false
+            if restartNow {
+                self.installWaitingUpdate()
+            } else {
+                self.armRestartPrompt()
+            }
+        }
     }
 
     private func currentUpdateVersionForIntent() -> String {
@@ -989,7 +1210,9 @@ public final class UpdateController {
         availableUpdate = nil
         reconciledStatus.availableVersion = nil
         reconciledStatus.lastCheck = ReconciledUpdateStatus.LastCheck(checkedAt: now, outcome: .upToDate)
+        reconciledStatus.clearWaiting()
         persistStatus()
+        armRestartPrompt()
     }
 
     private func recordFailedCheck(now: Date = Date()) {
@@ -1109,6 +1332,11 @@ public final class UpdateController {
         runningVersion: String
     ) -> (status: ReconciledUpdateStatus, changed: Bool) {
         guard status.availableVersion == runningVersion else {
+            if status.availableVersion == nil, status.waitingSince != nil || status.restartPromptedAt != nil {
+                var updated = status
+                updated.clearWaiting()
+                return (updated, true)
+            }
             return (status, false)
         }
 
@@ -1118,6 +1346,7 @@ public final class UpdateController {
             checkedAt: status.lastCheck?.checkedAt ?? Date(),
             outcome: .upToDate
         )
+        updated.clearWaiting()
         return (updated, true)
     }
 
@@ -1130,6 +1359,12 @@ public final class UpdateController {
 private extension ReconciledUpdateStatus {
     func matches(availableVersion: String?, outcome: ReconciledUpdateStatus.Outcome) -> Bool {
         self.availableVersion == availableVersion && lastCheck?.outcome == outcome
+    }
+
+    mutating func clearWaiting() {
+        waitingSince = nil
+        restartPromptedAt = nil
+        replacedForBuild = nil
     }
 }
 
@@ -1193,14 +1428,17 @@ private final class SparkleUpdaterDelegateAdapter: NSObject, SPUUpdaterDelegate 
         log.debug("Sparkle extracted update \(item.displayVersionString, privacy: .public)")
     }
 
+    // Returning false leaves Sparkle's scheduler running while the update waits for quit.
+    // Returning true would hold Sparkle's session open until the app quits, and Sparkle
+    // would schedule no further checks for as long as the app kept running. Install now
+    // goes through Sparkle's own resumed session instead (`installStagedUpdate`).
     func updater(
         _ updater: SPUUpdater,
         willInstallUpdateOnQuit item: SUAppcastItem,
         immediateInstallationBlock immediateInstallHandler: @escaping () -> Void
     ) -> Bool {
-        controller?.ingestStagedUpdate(version: item.displayVersionString)
-        controller?.recordImmediateStagedInstallHandler(immediateInstallHandler)
-        return true
+        controller?.ingestStagedUpdate(version: item.displayVersionString, build: item.versionString)
+        return false
     }
 
     func updater(_ updater: SPUUpdater, failedToDownloadUpdate item: SUAppcastItem, error: any Error) {

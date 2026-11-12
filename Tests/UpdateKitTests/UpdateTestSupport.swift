@@ -55,6 +55,8 @@ final class SpyUpdater: SparkleUpdating {
     var automaticallyDownloadsUpdates: Bool
     var sessionInProgress: Bool
     var checkForUpdatesCallCount = 0
+    var checkForUpdatesInBackgroundCallCount = 0
+    var userAgentString = "solstone/1.3.8 Sparkle/2.9.4"
     var startCallCount = 0
     var startError: Error?
 
@@ -72,6 +74,10 @@ final class SpyUpdater: SparkleUpdating {
 
     func checkForUpdates() {
         checkForUpdatesCallCount += 1
+    }
+
+    func checkForUpdatesInBackground() {
+        checkForUpdatesInBackgroundCallCount += 1
     }
 
     func start() throws {

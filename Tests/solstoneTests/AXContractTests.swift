@@ -214,7 +214,9 @@ private final class AXContractStartedUpdater: SparkleUpdating {
     var updateCheckInterval: TimeInterval = 86_400
     var automaticallyDownloadsUpdates = false
     var sessionInProgress = false
+    var userAgentString = "solstone Sparkle"
 
     func checkForUpdates() {}
+    func checkForUpdatesInBackground() {}
     func start() throws {}
 }

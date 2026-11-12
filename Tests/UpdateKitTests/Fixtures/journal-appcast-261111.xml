@@ -1,0 +1,55 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <title>journal</title>
+    <link>https://updates.solstone.app/journal-macos/appcast.xml</link>
+    <description>journal updates</description>
+    <language>en</language>
+    <item>
+      <title>journal 2.0.75 (build 127)</title>
+      <pubDate>Wed, 11 Nov 2026 12:34:42 GMT</pubDate>
+      <sparkle:version>127</sparkle:version>
+      <sparkle:shortVersionString>2.0.75</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://solstone.app/releases/journal-macos</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">### Added
+
+- you can now start a new journal from the location pane and restore from a backup during setup. your current journal stops and stays in its folder, unchanged, and you can switch back to it from the location pane.
+
+### Changed
+
+- updated the bundled journal to [2.0.75](https://solstone.app/releases#v2.0.75) →</description>
+      <enclosure url="https://updates.solstone.app/journal-macos/releases/v2.0.75/build-127/journal-2.0.75-build-127.dmg" length="286162648" type="application/x-apple-diskimage" sparkle:edSignature="wB72xBXhxYUvycGH2BFnd+BriRfatoxmAQgTpMaAT6vrHJ66ictej/DaSvl72ORiiv8RmQ4hkfTPisuGnwb8Bw==" />
+    </item>
+    <item>
+      <title>journal 2.0.74 (build 126)</title>
+      <pubDate>Tue, 10 Nov 2026 15:10:31 GMT</pubDate>
+      <sparkle:version>126</sparkle:version>
+      <sparkle:shortVersionString>2.0.74</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://solstone.app/releases/journal-macos</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">### Changed
+
+- updated the bundled journal to [2.0.74](https://solstone.app/releases#v2.0.74) →
+
+### Fixed
+
+- if you also set up your journal from Terminal, the journal app now takes over from the Terminal setup when it opens or starts your journal, after letting your journal stop cleanly. before, it could stop on "couldn't verify journal service ownership" and not start your journal.
+- if your journal stops unexpectedly and the journal app can't check right away whether something else is running it, the journal app now tries again and shows your journal as starting. if it still can't start your journal, it says why.
+- pressing start or stop while your journal is starting, or restart while it's starting again on its own, now does what you pressed. before, the earlier attempt could stop your journal again or show the wrong state.</description>
+      <enclosure url="https://updates.solstone.app/journal-macos/releases/v2.0.74/build-126/journal-2.0.74-build-126.dmg" length="285013874" type="application/x-apple-diskimage" sparkle:edSignature="5qGxPO5ZXDcljnZp+MrN1aEyKh6f8mNhtDyBokRnH5XdGDbm9SN3p2WDwdpdUCPH9rgF4KE5wsAFr6Hzy/fCAw==" />
+    </item>
+    <item>
+      <title>journal 2.0.73 (build 125)</title>
+      <pubDate>Mon, 09 Nov 2026 16:17:18 GMT</pubDate>
+      <sparkle:version>125</sparkle:version>
+      <sparkle:shortVersionString>2.0.73</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://solstone.app/releases/journal-macos</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">### Changed
+
+- updated the bundled journal to [2.0.73](https://solstone.app/releases#v2.0.73) →</description>
+      <enclosure url="https://updates.solstone.app/journal-macos/releases/v2.0.73/build-125/journal-2.0.73-build-125.dmg" length="283392395" type="application/x-apple-diskimage" sparkle:edSignature="cBzmEeiZmJAeaCdEEzgWbJxzRmx5EOGzCaHJA/Zd29dS3h4PRXgKz10SgC6CmmuYBQbnLCkIQl0J49eS7EFHCA==" />
+    </item>
+  </channel>
+</rss>

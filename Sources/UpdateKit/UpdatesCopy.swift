@@ -66,6 +66,7 @@ public struct UpdatesCopy: Sendable {
     public var actionDismiss: String { "dismiss" }
     public var actionRetry: String { "retry" }
     public var actionRetrying: String { "retrying…" }
+    public var actionLater: String { "later" }
 
     public var autoUpdateGroupTitle: String { "automatic updates" }
     public var autoCheckToggleLabel: String { "check for updates automatically" }
@@ -190,6 +191,14 @@ public struct UpdatesCopy: Sendable {
 
     public var stagedReadySubtitle: String {
         "the update is downloaded and will install when \(provider.appDisplayName) relaunches. \(restartExplanation)"
+    }
+
+    public func restartPromptTitle(version: String) -> String {
+        "\(provider.appDisplayName) \(version) is waiting to install"
+    }
+
+    public var restartPromptBody: String {
+        "an update has been ready for a few days. restart the \(provider.appDisplayName) app now to install it, or choose later. \(restartExplanation)"
     }
 
     public func installingTitle(version: String) -> String {

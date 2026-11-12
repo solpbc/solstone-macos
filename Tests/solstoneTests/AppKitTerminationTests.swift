@@ -302,8 +302,6 @@ struct AppKitTerminationTests {
             logAdapter: DiagnosticEvidenceLoggingAdapter { diagnosticEvents.append($0) },
             evidenceDrainCutoffSeconds: 0.05
         )
-        let recoveryChecks = LockedArray<Bool>([])
-        let scheduledRecovery = LockedValue<@MainActor () -> Void>()
         let update = UpdateController(
             feedURL: nil,
             publicKey: nil,
@@ -314,28 +312,23 @@ struct AppKitTerminationTests {
             },
             installFailureRecovery: {
                 coordinator.resetAfterFailedUpdaterInstall()
-            },
-            postInstallRecoveryScheduler: { check in
-                scheduledRecovery.set(check)
-            },
-            terminationBegan: {
-                let began = false
-                recoveryChecks.append(began)
-                return began
             }
         ) { _, _ in nil }
+        // Sparkle's resumed session holds the staged update; install now answers it.
         update.applyDebugFixture(
-            activity: .idle,
+            activity: .readyToInstall(version: "1.0", releaseNotes: nil),
             availableUpdate: AvailableUpdate(version: "1.0", releaseNotes: nil),
-            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .staged)
+            lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .staged),
+            choiceReply: { choice in
+                if choice == .install {
+                    events.append("handler")
+                }
+            }
         )
-        update.recordImmediateStagedInstallHandler {
-            events.append("handler")
-        }
 
         update.installStagedUpdate()
         try await waitUntil(timeout: .seconds(5)) {
-            events.all.contains("handler") && scheduledRecovery.current != nil
+            events.all.contains("handler")
         }
         await recorder.drain()
 
@@ -347,12 +340,12 @@ struct AppKitTerminationTests {
         #expect(seam.applicationShouldTerminate() == .terminateLater)
         #expect(diagnosticEvents.all == [.terminationCommitted(.updaterInstall), .terminationAppKitBegan])
         #expect(await Task.detached { bytes.waitForFirstRead() }.value)
-        scheduledRecovery.current?()
+        // Sparkle reports that the install did not go ahead.
+        update.presentUpdaterError(NSError(domain: "app.solstone.tests.appkit-termination", code: 1))
         try await waitUntil(timeout: .seconds(5)) {
             replies.all == [false]
         }
 
-        #expect(recoveryChecks.all == [false])
         #expect(!events.all.contains("terminate"))
         #expect(!events.all.contains("replacement"))
 

@@ -63,8 +63,8 @@ internal enum SolstoneStartupComposition {
                 installFailureRecovery: { @MainActor in
                     await appState.recoverAfterFailedUpdaterInstall()
                 },
-                terminationBegan: { @MainActor in
-                    appState.appKitTerminationBegan
+                restartPrompt: { version, respond in
+                    UpdateRestartPrompt(copy: UpdatesCopy(provider: .solstone)).present(version: version, respond: respond)
                 },
                 announce: { version in
                     updateAnnouncer.announce(version: version)

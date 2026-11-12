@@ -60,10 +60,28 @@ public enum DurableUpdateStatus: Equatable, Sendable {
 public struct ReconciledUpdateStatus: Codable, Equatable, Sendable {
     public var availableVersion: String?
     public var lastCheck: LastCheck?
+    /// When an update first started waiting for this Mac to restart into it: staged to
+    /// install at quit, or downloaded and waiting for an administrator. A newer release that
+    /// replaces it keeps this date, so nightly releases can't keep pushing the prompt back.
+    public var waitingSince: Date?
+    public var restartPromptedAt: Date?
+    /// The feed build that last caused a waiting update to be replaced. Each feed build
+    /// causes at most one replacement, so a release Sparkle declines can't cause a daily
+    /// re-download.
+    public var replacedForBuild: String?
 
-    public init(availableVersion: String? = nil, lastCheck: LastCheck? = nil) {
+    public init(
+        availableVersion: String? = nil,
+        lastCheck: LastCheck? = nil,
+        waitingSince: Date? = nil,
+        restartPromptedAt: Date? = nil,
+        replacedForBuild: String? = nil
+    ) {
         self.availableVersion = availableVersion
         self.lastCheck = lastCheck
+        self.waitingSince = waitingSince
+        self.restartPromptedAt = restartPromptedAt
+        self.replacedForBuild = replacedForBuild
     }
 
     public struct LastCheck: Codable, Equatable, Sendable {
