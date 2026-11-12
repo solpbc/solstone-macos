@@ -27,10 +27,12 @@ struct SupportingPairingCommitTests {
         var active = true
         var cleared = 0
         var reactivated = 0
+        var restarted = 0
         let coordinator = PairingCoordinator(
             pair: { _, _, _ in entered.increment(); await gate.wait(); return result },
             keychainStore: store, credentialStore: credentials,
-            reactivate: { reactivated += 1 }, clearJournalMarkConfirmation: { cleared += 1 }
+            reactivate: { reactivated += 1 }, clearJournalMarkConfirmation: { cleared += 1 },
+            restartSourcesFirstSetup: { restarted += 1 }
         )
         let handoff = UUID()
         let link = try relayPairLink(caPEM: testCACertPEM)
@@ -54,6 +56,7 @@ struct SupportingPairingCommitTests {
             #expect(store.currentPairing == saved)
             #expect(store.saveCount == 1)
             #expect(cleared == 1)
+            #expect(restarted == 1)
             #expect(reactivated == 1)
             #expect(coordinator.state == .paired)
             #expect(try credentials.carriedPairingRecord().freshPairObligation == PairingCredentialRevision(from: saved))
@@ -61,6 +64,7 @@ struct SupportingPairingCommitTests {
             #expect(store.saveCount == writes)
             #expect(try store.loadCarriedPairingRecord() == beforeRecord)
             #expect(cleared == 0)
+            #expect(restarted == 0)
             #expect(reactivated == 0)
         }
     }

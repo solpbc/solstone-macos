@@ -2171,6 +2171,14 @@ public final class AppState {
             !tunnelLifecycleOwner.ordinaryRouteRevoked
     }
 
+    /// The owner paired a new journal, so every source starts its first setup again for it.
+    /// Adopting a journal this Mac already had linked isn't a new pairing.
+    internal func restartSourcesFirstSetup() async {
+        guard !isAdoptingSameMachineHomeAutomatically else { return }
+        await obsidianSource?.restartFirstSetup()
+        await screenshotSource?.restartFirstSetup()
+    }
+
     internal func clearJournalMarkConfirmation() {
         // A cleared answer also ends any mark attempt for the old credential, so a
         // later pairing never compares its answer against a stale revision.
@@ -2355,6 +2363,9 @@ public final class AppState {
                 } else {
                     journalMarkConfirmationStore.clear()
                 }
+            },
+            restartSourcesFirstSetup: { [fingerprintTarget] in
+                await fingerprintTarget.state?.restartSourcesFirstSetup()
             },
             retireOwnCredential: { [owner = tunnelLifecycleOwner] pairing, operationID in
                 await owner.retireInvalidatedPairing(pairing, operationID: operationID)
@@ -2913,6 +2924,9 @@ public final class AppState {
                     journalMarkConfirmationStore.clear()
                 }
             },
+            restartSourcesFirstSetup: { [fingerprintTarget] in
+                await fingerprintTarget.state?.restartSourcesFirstSetup()
+            },
             retireOwnCredential: pairingRetire,
             endSelfRetirement: { [owner = tunnelLifecycleOwner] in
                 owner.endSelfRetirement()
@@ -3062,7 +3076,6 @@ public final class AppState {
         let source = ScreenshotSource.make(
             appSupportDirectory: appSupport,
             resolver: ingestBaseURLResolver,
-            journalID: { [weak self] in self?.currentJournalIdentity().fingerprint?.value },
             pauseFact: { [weak self] in
                 guard let self else { return .running }
                 return ScreenshotPauseFact(paused: self.pauseManager.isPaused, expiration: self.pauseManager.pauseState.expirationDate)

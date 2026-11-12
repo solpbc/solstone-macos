@@ -1248,8 +1248,9 @@ private final class FakeJournal: ObsidianJournalTransport, @unchecked Sendable {
     }
 
     func vaults(serverURL: String) async throws -> [ObsidianJournalVault] {
+        let answer = vaultsAnswer.value
         await vaultsHook.value?()
-        return vaultsAnswer.value
+        return answer
     }
 
     func send(file: ObsidianOutboxFile, serverURL: String, stagingDirectory: URL) async -> ObsidianSendOutcome {
@@ -1407,6 +1408,102 @@ struct ObsidianDeliveryTests {
         await harness.source.tick()
         #expect(harness.source.alreadySynced == nil)
         #expect(harness.journal.sent.value.count == 1)
+    }
+
+    @Test func aNewPairingSendsTheVaultAgainOnceAfterTheSameNameCheck() async throws {
+        let harness = try await makeHarness()
+        harness.journal.capabilitiesAnswer.value = ["obsidian_notes"]
+        await harness.source.turnOn(harness.fixture.root)
+        harness.advance(600)
+        await harness.source.tick()
+        #expect(harness.journal.sent.value.count == 1)
+
+        harness.journal.vaultsAnswer.value = [ObsidianJournalVault(vault: "Notes", device: "studio", lastSyncedAt: nil)]
+        await harness.source.restartFirstSetup()
+        harness.advance(600)
+        await harness.source.tick()
+        #expect(harness.source.alreadySynced?.vault == "Notes")
+        #expect(harness.journal.sent.value.count == 1)
+
+        await harness.source.continueAfterAlreadySynced()
+        harness.advance(600)
+        await harness.source.tick()
+        #expect(harness.journal.sent.value.count == 2)
+        harness.advance(7200)
+        await harness.source.tick()
+        #expect(harness.journal.sent.value.count == 2)
+        #expect(harness.source.phase == .on)
+        #expect(await harness.engine.currentState().vaultPath == harness.fixture.root.path)
+    }
+
+    @Test func aNewPairingWhileOffSendsEveryVaultAgainWhenTurnedOn() async throws {
+        let harness = try await makeHarness()
+        harness.journal.capabilitiesAnswer.value = ["obsidian_notes"]
+        await harness.source.turnOn(harness.fixture.root)
+        harness.advance(600)
+        await harness.source.tick()
+        let other = harness.fixture.base.appendingPathComponent("Other", isDirectory: true)
+        try FileManager.default.createDirectory(at: other.appendingPathComponent(".obsidian"), withIntermediateDirectories: true)
+        try Data("second vault".utf8).write(to: other.appendingPathComponent("second.md"))
+        try FileManager.default.setAttributes([.modificationDate: date("2026-11-08T09:41:00-07:00")], ofItemAtPath: other.appendingPathComponent("second.md").path)
+        await harness.source.turnOn(other)
+        harness.advance(3600)
+        await harness.source.tick()
+        await harness.source.turnOff()
+        #expect(harness.journal.sent.value.count == 2)
+
+        await harness.source.restartFirstSetup()
+        #expect(harness.source.phase == .off)
+        harness.journal.vaultsAnswer.value = [ObsidianJournalVault(vault: "Notes", device: nil, lastSyncedAt: nil)]
+        await harness.source.turnOn(harness.fixture.root)
+        harness.advance(600)
+        await harness.source.tick()
+        #expect(harness.source.alreadySynced?.vault == "Notes")
+        await harness.source.continueAfterAlreadySynced()
+        harness.advance(600)
+        await harness.source.tick()
+        #expect(harness.journal.sent.value.count == 3)
+    }
+
+    @Test func aJournalCheckOnItsWayWhenANewPairingLandsDoesNotClearTheFirstSend() async throws {
+        let harness = try await makeHarness()
+        harness.journal.capabilitiesAnswer.value = ["obsidian_notes"]
+        let source = harness.source
+        let journal = harness.journal
+        journal.vaultsHook.value = {
+            journal.vaultsHook.value = nil
+            journal.vaultsAnswer.value = [ObsidianJournalVault(vault: "Notes", device: "studio", lastSyncedAt: nil)]
+            await source.restartFirstSetup()
+        }
+        await source.turnOn(harness.fixture.root)
+        harness.advance(600)
+        await source.tick()
+        #expect(source.alreadySynced == nil)
+        #expect(journal.sent.value.isEmpty)
+        #expect(await harness.engine.currentState().firstSendCleared == false)
+
+        harness.advance(600)
+        await source.tick()
+        #expect(source.alreadySynced?.vault == "Notes")
+        #expect(journal.sent.value.isEmpty)
+    }
+
+    @Test func whatWaitsWhenANewPairingLandsStillGoes() async throws {
+        let harness = try await makeHarness()
+        harness.journal.capabilitiesAnswer.value = ["obsidian_notes"]
+        harness.journal.outcomes.value = [.retry]
+        await harness.source.turnOn(harness.fixture.root)
+        harness.advance(600)
+        await harness.source.tick()
+        let waiting = await harness.engine.outboxFiles()
+        #expect(waiting.count == 1)
+
+        await harness.source.restartFirstSetup()
+        #expect(await harness.engine.outboxFiles() == waiting)
+        harness.advance(600)
+        await harness.source.tick()
+        #expect(await harness.engine.outboxFiles().isEmpty)
+        #expect(harness.journal.sent.value.filter { $0 == waiting[0].url.lastPathComponent }.count == 2)
     }
 
     @Test func pauseHoldsWindowsAndKeepsScanningThenResumeDelivers() async throws {

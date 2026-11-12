@@ -300,7 +300,7 @@ struct ScreenshotEngineTests {
     @Test func nothingIsListedUntilAllow() async throws {
         let reader = FakeShots()
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
-        let snap = await engine.tick(now: now(), pause: .running, journalID: nil, serverURL: nil, paired: true, syncPaused: false)
+        let snap = await engine.tick(now: now(), pause: .running, serverURL: nil, paired: true, syncPaused: false)
         #expect(reader.listCount == 0)
         #expect(snap.action == .allowScreenshotFolder)
         #expect(snap.switchOn == false)
@@ -318,11 +318,11 @@ struct ScreenshotEngineTests {
             shot(path: "/Users/a/Desktop/same.png", hash: "aa", when: taken),
         ]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
-        let choosing = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        let choosing = await engine.allow(now: now(), pause: .running, paired: true)
         #expect(choosing.confirmTitle == "bring in 1 screenshot")
         #expect(choosing.showChooser)
         await engine.confirm(now: now())
-        let sent = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let sent = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.count == 1)
         #expect(transport.sent[0].fileName == "screenshot_screen.png")
         #expect(transport.sent[0].day == "20261103")
@@ -330,7 +330,7 @@ struct ScreenshotEngineTests {
         #expect(transport.sent[0].capturedAt == "2026-11-03T14:32:07-07:00")
         #expect(transport.sent[0].takenFrom == "platform")
         #expect(sent.subline == "from Desktop")
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.count == 1)
     }
 
@@ -340,14 +340,14 @@ struct ScreenshotEngineTests {
         let heic = Data([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63])
         reader.files = [shot(when: now(), header: heic, ext: "heic", bytes: ScreenshotBytes.maxBytes + 1, pixels: nil)]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         await engine.confirm(now: now())
-        let snap = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let snap = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.count == 1)
         #expect(transport.sent[0].fileName == "screenshot_screen.png")
         #expect(transport.sent[0].hash == "abc")
         #expect(snap.refusedLine == nil)
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.count == 1)
     }
 
@@ -356,9 +356,9 @@ struct ScreenshotEngineTests {
         let transport = FakeShotTransport()
         reader.files = [shot(when: now(), bytes: ScreenshotBytes.maxBytes + 1)]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         await engine.confirm(now: now())
-        let snap = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let snap = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.isEmpty)
         #expect(snap.refusedLine == ScreenshotCopy.refusedLine(1))
         #expect(snap.state == .on)
@@ -370,10 +370,10 @@ struct ScreenshotEngineTests {
         let transport = FakeShotTransport()
         reader.files = [shot(when: now())]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         await engine.confirm(now: now())
         reader.files = []
-        let snap = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let snap = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.isEmpty)
         #expect(snap.progress == nil)
         #expect(snap.state == .on)
@@ -384,16 +384,16 @@ struct ScreenshotEngineTests {
         let transport = FakeShotTransport()
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
         let start = now()
-        _ = await engine.allow(now: start, pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: start, pause: .running, paired: true)
         await engine.confirm(now: start)
         let pausedAt = start.addingTimeInterval(60)
-        _ = await engine.tick(now: pausedAt, pause: ScreenshotPauseFact(paused: true, expiration: nil), journalID: "journal-a", serverURL: nil, paired: true, syncPaused: true)
+        _ = await engine.tick(now: pausedAt, pause: ScreenshotPauseFact(paused: true, expiration: nil), serverURL: nil, paired: true, syncPaused: true)
         reader.files = [shot(hash: "during", when: pausedAt.addingTimeInterval(10))]
-        _ = await engine.tick(now: pausedAt.addingTimeInterval(30), pause: ScreenshotPauseFact(paused: true, expiration: nil), journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: pausedAt.addingTimeInterval(30), pause: ScreenshotPauseFact(paused: true, expiration: nil), serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.isEmpty)
         let resume = pausedAt.addingTimeInterval(120)
         reader.files.append(shot(path: "/Users/a/Desktop/after.png", hash: "after", when: resume))
-        _ = await engine.tick(now: resume, pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: resume, pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.map(\.hash) == ["after"])
     }
 
@@ -402,19 +402,19 @@ struct ScreenshotEngineTests {
         let transport = FakeShotTransport()
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
         let start = now()
-        _ = await engine.allow(now: start, pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: start, pause: .running, paired: true)
         await engine.confirm(now: start)
         let pausedAt = start.addingTimeInterval(60)
-        _ = await engine.tick(now: pausedAt, pause: ScreenshotPauseFact(paused: true, expiration: nil), journalID: "journal-a", serverURL: nil, paired: true, syncPaused: true)
+        _ = await engine.tick(now: pausedAt, pause: ScreenshotPauseFact(paused: true, expiration: nil), serverURL: nil, paired: true, syncPaused: true)
         reader.files = [shot(hash: "during", when: pausedAt.addingTimeInterval(5))]
         await engine.turnOff()
-        _ = await engine.tick(now: pausedAt.addingTimeInterval(10), pause: .running, journalID: "journal-a", serverURL: nil, paired: true, syncPaused: true)
+        _ = await engine.tick(now: pausedAt.addingTimeInterval(10), pause: .running, serverURL: nil, paired: true, syncPaused: true)
         await engine.turnBackOn(now: pausedAt.addingTimeInterval(20))
-        let choosing = await engine.snapshot(now: pausedAt.addingTimeInterval(20), pause: .running, journalID: "journal-a", paired: true)
+        let choosing = await engine.snapshot(now: pausedAt.addingTimeInterval(20), pause: .running, paired: true)
         #expect(choosing.showChooser)
         #expect(choosing.showReturnNote)
         await engine.confirm(now: pausedAt.addingTimeInterval(20))
-        let sent = await engine.tick(now: pausedAt.addingTimeInterval(30), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let sent = await engine.tick(now: pausedAt.addingTimeInterval(30), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.map(\.hash) == ["during"])
         #expect(sent.state == .on)
     }
@@ -422,10 +422,10 @@ struct ScreenshotEngineTests {
     @Test func aMovedFolderIsNotReadUntilAllow() async throws {
         let reader = FakeShots()
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: nil, paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         let listed = reader.listCount
         reader.folder = ScreenshotFolder(path: "/Users/a/Documents", name: "Documents", isDesktop: false)
-        let snap = await engine.tick(now: now(), pause: .running, journalID: nil, serverURL: nil, paired: true, syncPaused: false)
+        let snap = await engine.tick(now: now(), pause: .running, serverURL: nil, paired: true, syncPaused: false)
         #expect(reader.listCount == listed)
         #expect(snap.state == .needsAttention)
         #expect(snap.pageNotice == ScreenshotCopy.locationMoved("Documents"))
@@ -437,9 +437,9 @@ struct ScreenshotEngineTests {
         let transport = FakeShotTransport()
         reader.files = [shot(path: "/Users/a/Desktop/one.png", hash: "one", when: now().addingTimeInterval(-60))]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         await engine.confirm(now: now())
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         await engine.turnOff()
         reader.files += [
             shot(path: "/Users/a/Desktop/two.png", hash: "two", when: now().addingTimeInterval(-50)),
@@ -447,27 +447,115 @@ struct ScreenshotEngineTests {
         ]
         transport.answers = [.ahead]
         await engine.turnBackOn(now: now())
-        let choosing = await engine.snapshot(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        let choosing = await engine.snapshot(now: now(), pause: .running, paired: true)
         #expect(choosing.confirmTitle == ScreenshotCopy.confirmTitle(spanFromToday: false, count: 2))
         await engine.confirm(now: now())
-        let bringing = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let bringing = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(bringing.progress == ScreenshotCopy.pageProgress(done: 0, total: 2))
     }
 
-    @Test func aDifferentJournalGetsWhatTheFirstOneAlreadyHas() async throws {
+    @Test func aNewPairingAsksAgainAndSendsNothingUntilTheCount() async throws {
         let reader = FakeShots()
         let transport = FakeShotTransport()
         reader.files = [shot(path: "/Users/a/Desktop/one.png", hash: "one", when: now().addingTimeInterval(-60))]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         await engine.confirm(now: now())
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.map(\.hash) == ["one"])
-        let asking = await engine.tick(now: now(), pause: .running, journalID: "journal-b", serverURL: nil, paired: true, syncPaused: true)
+
+        await engine.restartFirstSetup(now: now())
+        let asking = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(asking.showChooser)
+        #expect(asking.switchOn)
+        #expect(!asking.showReturnNote)
+        #expect(asking.confirmTitle == ScreenshotCopy.confirmTitle(spanFromToday: false, count: 1))
+        #expect(transport.sent.map(\.hash) == ["one"])
+
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(transport.sent.map(\.hash) == ["one", "one"])
+    }
+
+    @Test func aNewPairingWhileOffAsksAgainWhenTurnedOn() async throws {
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        reader.files = [shot(path: "/Users/a/Desktop/one.png", hash: "one", when: now().addingTimeInterval(-60))]
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        await engine.turnOff()
+
+        await engine.restartFirstSetup(now: now())
+        let off = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(!off.switchOn)
+        let asking = await engine.turnOn(now: now(), pause: .running, paired: true)
+        #expect(asking.showChooser)
         #expect(asking.confirmTitle == ScreenshotCopy.confirmTitle(spanFromToday: false, count: 1))
         await engine.confirm(now: now())
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-b", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.map(\.hash) == ["one", "one"])
+    }
+
+    @Test func aScreenshotWaitingWhenANewPairingLandsStillGoes() async throws {
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        let calendar = ScreenshotCalendar.gregorian(in: denver)
+        let dayOne = calendar.date(byAdding: .day, value: -1, to: now())!
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
+        _ = await engine.allow(now: dayOne, pause: .running, paired: true)
+        await engine.select(span: .fromToday, now: dayOne)
+        await engine.confirm(now: dayOne)
+        reader.files = [shot(hash: "waiting", when: dayOne.addingTimeInterval(30))]
+        let held = await engine.tick(now: dayOne.addingTimeInterval(60), pause: .running, serverURL: nil, paired: true, syncPaused: false)
+        #expect(held.waiting == 1)
+
+        await engine.restartFirstSetup(now: now())
+        await engine.select(span: .fromToday, now: now())
+        let asking = await engine.snapshot(now: now(), pause: .running, paired: true)
+        #expect(asking.showChooser)
+        #expect(transport.sent.isEmpty)
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(transport.sent.map(\.hash) == ["waiting"])
+    }
+
+    @Test func aNewPairingDuringASendLeavesNoOutcomeAndDoesNotTrap() async throws {
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        reader.files = [
+            shot(path: "/Users/a/Desktop/one.png", hash: "one", when: now().addingTimeInterval(-60)),
+            shot(path: "/Users/a/Desktop/two.png", hash: "two", when: now().addingTimeInterval(-30)),
+        ]
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
+        await engine.confirm(now: now())
+        let at = now()
+        transport.onSend = {
+            transport.onSend = nil
+            await engine.restartFirstSetup(now: at)
+        }
+        let asking = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(transport.sent.count == 1)
+        #expect(asking.showChooser)
+        #expect(asking.confirmTitle == ScreenshotCopy.confirmTitle(spanFromToday: false, count: 2))
+    }
+
+    @Test func aRelaunchStartsNothingAgain() async throws {
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        reader.files = [shot(when: now().addingTimeInterval(-60))]
+        let dir = try directory()
+        let engine = ScreenshotEngine(directory: dir, reader: reader, transport: transport, timeZone: { self.denver })
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let relaunched = ScreenshotEngine(directory: dir, reader: reader, transport: transport, timeZone: { self.denver })
+        let snap = await relaunched.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        #expect(!snap.showChooser)
+        #expect(snap.state == .on)
+        #expect(transport.sent.count == 1)
     }
 
     @Test func aDeliveryIsReported() async throws {
@@ -478,12 +566,12 @@ struct ScreenshotEngineTests {
             directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver },
             onDelivered: { await reports.add() }
         )
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         await engine.confirm(now: now())
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         for _ in 0..<50 where await reports.count == 0 { try await Task.sleep(for: .milliseconds(10)) }
         #expect(await reports.count == 1)
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         try await Task.sleep(for: .milliseconds(50))
         #expect(await reports.count == 1)
     }
@@ -491,27 +579,15 @@ struct ScreenshotEngineTests {
     @Test func aFolderMovedAwayAndBackNeedsNothing() async throws {
         let reader = FakeShots()
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: nil, paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         let desktop = reader.folder
         reader.folder = ScreenshotFolder(path: "/Users/a/Documents", name: "Documents", isDesktop: false)
-        let moved = await engine.tick(now: now(), pause: .running, journalID: nil, serverURL: nil, paired: true, syncPaused: true)
+        let moved = await engine.tick(now: now(), pause: .running, serverURL: nil, paired: true, syncPaused: true)
         #expect(moved.state == .needsAttention)
         reader.folder = desktop
-        let back = await engine.tick(now: now(), pause: .running, journalID: nil, serverURL: nil, paired: true, syncPaused: true)
+        let back = await engine.tick(now: now(), pause: .running, serverURL: nil, paired: true, syncPaused: true)
         #expect(back.state != .needsAttention)
         #expect(back.showChooser)
-    }
-
-    @Test func aDifferentJournalAsksAgain() async throws {
-        let reader = FakeShots()
-        reader.files = [shot(when: now())]
-        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
-        await engine.confirm(now: now())
-        let snap = await engine.tick(now: now(), pause: .running, journalID: "journal-b", serverURL: nil, paired: true, syncPaused: true)
-        #expect(snap.showChooser)
-        #expect(snap.showReturnNote)
-        #expect(snap.switchOn)
     }
 
     @Test func anOlderJournalHoldsTheShots() async throws {
@@ -520,9 +596,9 @@ struct ScreenshotEngineTests {
         transport.capability = []
         reader.files = [shot(when: now())]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         await engine.confirm(now: now())
-        let snap = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let snap = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.isEmpty)
         #expect(snap.state == .on)
         #expect(snap.pageNotice == ScreenshotCopy.waitingForJournal)
@@ -538,16 +614,16 @@ struct ScreenshotEngineTests {
             shot(path: "/Users/a/Desktop/two.png", hash: "bb", when: now().addingTimeInterval(1)),
         ]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         await engine.confirm(now: now())
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.map(\.hash) == ["aa"])
         transport.answers = [.invalid, .delivered]
-        let done = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let done = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.map(\.hash) == ["aa", "aa", "bb"])
         #expect(done.refusedLine == ScreenshotCopy.refusedLine(1))
         #expect(done.state == .on)
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.count == 3)
     }
 
@@ -555,11 +631,11 @@ struct ScreenshotEngineTests {
         let reader = FakeShots()
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
         let start = now()
-        _ = await engine.allow(now: start, pause: .running, journalID: "journal-a", paired: false)
+        _ = await engine.allow(now: start, pause: .running, paired: false)
         await engine.confirm(now: start)
         reader.files = [shot(hash: "new", when: start.addingTimeInterval(30))]
-        _ = await engine.tick(now: start.addingTimeInterval(40), pause: .running, journalID: "journal-a", serverURL: nil, paired: false, syncPaused: false)
-        let held = await engine.tick(now: start.addingTimeInterval(55), pause: .running, journalID: "journal-a", serverURL: nil, paired: false, syncPaused: false)
+        _ = await engine.tick(now: start.addingTimeInterval(40), pause: .running, serverURL: nil, paired: false, syncPaused: false)
+        let held = await engine.tick(now: start.addingTimeInterval(55), pause: .running, serverURL: nil, paired: false, syncPaused: false)
         #expect(held.waiting == 1)
     }
 
@@ -573,12 +649,12 @@ struct ScreenshotEngineTests {
             shot(path: "/Users/a/Desktop/old.png", hash: "old", when: old),
         ]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         await engine.select(span: .last30Days, now: now())
         await engine.confirm(now: now())
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         reader.files.append(shot(path: "/Users/a/Desktop/later.png", hash: "later", when: now().addingTimeInterval(60)))
-        let after = await engine.tick(now: now().addingTimeInterval(70), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let after = await engine.tick(now: now().addingTimeInterval(70), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.map(\.hash) == ["recent", "later"])
         #expect(after.waiting == 0)
     }
@@ -589,16 +665,16 @@ struct ScreenshotEngineTests {
         transport.capability = []
         reader.files = [shot(when: now())]
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
-        _ = await engine.allow(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
         await engine.confirm(now: now())
-        _ = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         transport.capability = ["screenshots"]
-        let soon = await engine.tick(now: now().addingTimeInterval(10), pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let soon = await engine.tick(now: now().addingTimeInterval(10), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
         #expect(transport.sent.isEmpty)
         #expect(soon.pageNotice == ScreenshotCopy.waitingForJournal)
         let later = await engine.tick(
             now: now().addingTimeInterval(ScreenshotEngine.capabilityRecheck + 10),
-            pause: .running, journalID: "journal-a", serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false
+            pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false
         )
         #expect(transport.sent.count == 1)
         #expect(later.pageNotice == nil)
@@ -608,16 +684,16 @@ struct ScreenshotEngineTests {
         let reader = FakeShots()
         reader.denied = true
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
-        let declined = await engine.turnOn(now: now(), pause: .running, journalID: "journal-a", paired: true)
+        let declined = await engine.turnOn(now: now(), pause: .running, paired: true)
         #expect(reader.listCount > 0)
         #expect(declined.state == .readyToSetUp)
         #expect(declined.action == .openScreenshotSettings)
         #expect(declined.switchOn == false)
         reader.denied = false
-        let granted = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: nil, paired: true, syncPaused: true)
+        let granted = await engine.tick(now: now(), pause: .running, serverURL: nil, paired: true, syncPaused: true)
         #expect(granted.showChooser)
         reader.denied = true
-        let revoked = await engine.tick(now: now(), pause: .running, journalID: "journal-a", serverURL: nil, paired: true, syncPaused: true)
+        let revoked = await engine.tick(now: now(), pause: .running, serverURL: nil, paired: true, syncPaused: true)
         #expect(revoked.state == .needsAttention)
         #expect(revoked.action == .openScreenshotSettings)
     }
@@ -627,7 +703,7 @@ struct ScreenshotEngineTests {
         let old = #"{"version":1,"consented":true,"enabled":true,"confirmed":true,"wasOn":true,"path":"/Users/a/Desktop","folderName":"Desktop","isDesktop":true,"ownerChose":false,"systemPathAtConsent":"/Users/a/Desktop","access":"ok","movedName":"Desktop","span":"last30Days","deliveredByJournal":{},"items":[],"pauseWindows":[],"seenCandidates":[]}"#
         try old.write(to: dir.appendingPathComponent("ledger.json"), atomically: true, encoding: .utf8)
         let engine = ScreenshotEngine(directory: dir, reader: FakeShots(), transport: FakeShotTransport(), timeZone: { self.denver })
-        let snap = await engine.snapshot(now: now(), pause: .running, journalID: nil, paired: true)
+        let snap = await engine.snapshot(now: now(), pause: .running, paired: true)
         #expect(snap.state == .on)
         #expect(snap.subline == ScreenshotCopy.fromFolder("Desktop"))
     }
@@ -673,11 +749,13 @@ private final class FakeShotTransport: ScreenshotTransport, @unchecked Sendable 
     var capability = ["screenshots"]
     var answers: [ScreenshotAnswer] = [.delivered]
     var sent: [ScreenshotUpload] = []
+    var onSend: (@Sendable () async -> Void)?
 
     func capabilities(serverURL: String) async throws -> [String] { capability }
 
     func send(_ upload: ScreenshotUpload, serverURL: String) async -> ScreenshotAnswer {
         sent.append(upload)
+        await onSend?()
         if answers.isEmpty { return .delivered }
         return answers.removeFirst()
     }

@@ -237,6 +237,23 @@ actor ObsidianEngine {
         saveState()
     }
 
+    /// A new pairing: the next scan sends the vault's current notes once, after the same-name
+    /// check. Every vault's table and memo goes, so turning another on later starts the same way.
+    /// The vault, the switch and everything waiting stay; what's waiting goes to the journal
+    /// paired now.
+    func restartFirstSetup() {
+        load()
+        table = [:]
+        try? fileManager.removeItem(at: tablesRoot)
+        try? fileManager.createDirectory(at: tablesRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        lastCheckedMs = nil
+        partUnreadable = false
+        notOnDevice = 0
+        tooLarge = 0
+        state = ObsidianSourceState(enabled: state.enabled, vaultPath: state.vaultPath, vaultName: state.vaultName)
+        saveState()
+    }
+
     /// Declining the first-send warning leaves the source off. Only this vault's unsent
     /// changes go: its windows never reached the outbox, and what's there is another's.
     func discardUnsentVault() {

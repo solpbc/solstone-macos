@@ -11,7 +11,6 @@ final class ScreenshotSource {
     private(set) var snapshot = ScreenshotSnapshot.notSetUp
 
     private let engine: ScreenshotEngine
-    private let journalID: @MainActor () -> String?
     private let pauseFact: @MainActor () -> ScreenshotPauseFact
     private let paired: @MainActor () -> Bool
     private let syncPaused: @MainActor () -> Bool
@@ -22,7 +21,6 @@ final class ScreenshotSource {
 
     init(
         engine: ScreenshotEngine,
-        journalID: @escaping @MainActor () -> String?,
         pauseFact: @escaping @MainActor () -> ScreenshotPauseFact,
         paired: @escaping @MainActor () -> Bool,
         syncPaused: @escaping @MainActor () -> Bool,
@@ -30,7 +28,6 @@ final class ScreenshotSource {
         runsLoop: Bool = true
     ) {
         self.engine = engine
-        self.journalID = journalID
         self.pauseFact = pauseFact
         self.paired = paired
         self.syncPaused = syncPaused
@@ -41,7 +38,6 @@ final class ScreenshotSource {
     static func make(
         appSupportDirectory: URL,
         resolver: HomeBaseURLResolver,
-        journalID: @escaping @MainActor () -> String?,
         pauseFact: @escaping @MainActor () -> ScreenshotPauseFact,
         paired: @escaping @MainActor () -> Bool,
         syncPaused: @escaping @MainActor () -> Bool,
@@ -56,7 +52,6 @@ final class ScreenshotSource {
                 totals: sourceTotals,
                 onDelivered: reportDelivery
             ),
-            journalID: journalID,
             pauseFact: pauseFact,
             paired: paired,
             syncPaused: syncPaused,
@@ -68,7 +63,7 @@ final class ScreenshotSource {
     }
 
     func start() async {
-        snapshot = await engine.snapshot(now: Date(), pause: pauseFact(), journalID: journalID(), paired: paired())
+        snapshot = await engine.snapshot(now: Date(), pause: pauseFact(), paired: paired())
         guard runsLoop else { return }
         loop = Task { [weak self] in
             while let self, !Task.isCancelled {
@@ -89,11 +84,11 @@ final class ScreenshotSource {
     }
 
     func allow() async {
-        snapshot = await engine.allow(now: Date(), pause: pauseFact(), journalID: journalID(), paired: paired())
+        snapshot = await engine.allow(now: Date(), pause: pauseFact(), paired: paired())
     }
 
     func choose(_ folder: ScreenshotFolder) async {
-        snapshot = await engine.choose(folder, now: Date(), pause: pauseFact(), journalID: journalID(), paired: paired())
+        snapshot = await engine.choose(folder, now: Date(), pause: pauseFact(), paired: paired())
     }
 
     func turnOff() async {
@@ -108,7 +103,7 @@ final class ScreenshotSource {
 
     /// The tile's or the page's switch turned on.
     func turnOn() async {
-        snapshot = await engine.turnOn(now: Date(), pause: pauseFact(), journalID: journalID(), paired: paired())
+        snapshot = await engine.turnOn(now: Date(), pause: pauseFact(), paired: paired())
         await refresh()
     }
 
@@ -120,6 +115,12 @@ final class ScreenshotSource {
     func confirm() async {
         await engine.confirm(now: Date())
         await refresh()
+    }
+
+    /// A new pairing. Saved before it returns; nothing goes until the owner confirms the count.
+    func restartFirstSetup() async {
+        await engine.restartFirstSetup(now: Date())
+        snapshot = await engine.snapshot(now: Date(), pause: pauseFact(), paired: paired())
     }
 
     func retryCount() async {
@@ -134,7 +135,7 @@ final class ScreenshotSource {
     private func refresh() async {
         let url = await serverURL()
         snapshot = await engine.tick(
-            now: Date(), pause: pauseFact(), journalID: journalID(),
+            now: Date(), pause: pauseFact(),
             serverURL: url, paired: paired(), syncPaused: syncPaused()
         )
     }

@@ -55,6 +55,8 @@ final class PairingCoordinator {
     typealias DeviceLabelSource = @Sendable () -> String
     typealias ClearLastSuccessfulJournalContact = @MainActor @Sendable () -> Void
     typealias ClearJournalMarkConfirmation = @MainActor @Sendable () -> Void
+    /// A new pairing starts every source's first setup again for the journal paired now.
+    typealias RestartSourcesFirstSetup = @MainActor @Sendable () async -> Void
     typealias RetireOwnCredential = @MainActor @Sendable (StoredPairing, String) async -> Bool
     typealias FenceOrdinaryTraffic = @MainActor @Sendable (StoredPairing) async -> Void
     typealias EndSelfRetirement = @MainActor @Sendable () -> Void
@@ -99,6 +101,8 @@ final class PairingCoordinator {
     @ObservationIgnored
     private let clearJournalMarkConfirmation: ClearJournalMarkConfirmation
     @ObservationIgnored
+    private let restartSourcesFirstSetup: RestartSourcesFirstSetup
+    @ObservationIgnored
     private let retireOwnCredential: RetireOwnCredential
     @ObservationIgnored
     private let endSelfRetirement: EndSelfRetirement
@@ -142,6 +146,7 @@ final class PairingCoordinator {
         deviceLabel: @escaping DeviceLabelSource = { SPLPairingDefaults.deviceLabel },
         clearLastSuccessfulJournalContact: @escaping ClearLastSuccessfulJournalContact = {},
         clearJournalMarkConfirmation: @escaping ClearJournalMarkConfirmation = {},
+        restartSourcesFirstSetup: @escaping RestartSourcesFirstSetup = {},
         retireOwnCredential: @escaping RetireOwnCredential = { _, _ in true },
         endSelfRetirement: @escaping EndSelfRetirement = {},
         fenceOrdinaryTraffic: @escaping FenceOrdinaryTraffic = { _ in },
@@ -167,6 +172,7 @@ final class PairingCoordinator {
         self.deviceLabel = deviceLabel
         self.clearLastSuccessfulJournalContact = clearLastSuccessfulJournalContact
         self.clearJournalMarkConfirmation = clearJournalMarkConfirmation
+        self.restartSourcesFirstSetup = restartSourcesFirstSetup
         self.retireOwnCredential = retireOwnCredential
         self.endSelfRetirement = endSelfRetirement
         self.fenceOrdinaryTraffic = fenceOrdinaryTraffic
@@ -273,6 +279,7 @@ final class PairingCoordinator {
               PairingCredentialRevision(from: saved) == revision else { return }
         clearJournalMarkConfirmation()
         clearLastSuccessfulJournalContact()
+        await restartSourcesFirstSetup()
         guard current(), let saved = try? credentialStore.load(),
               PairingCredentialRevision(from: saved) == revision else { return }
         await reactivate()
@@ -1198,6 +1205,10 @@ final class PairingCoordinator {
             clearJournalMarkConfirmation()
         }
         recordAnswer?(pairing)
+        // A new pairing. Saved before `reactivate` connects to it, so nothing goes to it first.
+        if successState == .paired || successState == .switched {
+            await restartSourcesFirstSetup()
+        }
 
         do {
             if successState == .alreadyConnected {

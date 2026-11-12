@@ -43,8 +43,6 @@ struct ScreenshotLedger: Codable, Equatable, Sendable {
     /// Where the chosen span began when the owner confirmed it. A screenshot from before it
     /// stays out, so the folder's older screenshots don't come in after the count.
     var liveFrom: Date?
-    var journalID: String?
-    var deliveredByJournal: [String: [String]] = [:]
     var items: [ScreenshotStoredItem] = []
     var pauseWindows: [ScreenshotPauseWindow] = []
     var lastChecked: Date?
@@ -97,8 +95,11 @@ actor ScreenshotEngine {
     private let onDelivered: @Sendable () async -> Void
     private let fileURL: URL
     private var ledger = ScreenshotLedger()
-    private var capability: [String: Bool] = [:]
-    private var capabilityAskedAt: [String: Date] = [:]
+    private var capability: Bool?
+    private var capabilityAskedAt: Date?
+    /// Moves when a new pairing starts the setup again, so a send that was already on its way
+    /// leaves no outcome behind it.
+    private var setupGeneration = 0
     /// How long a journal that doesn't list `screenshots` waits before it is asked again, so an
     /// updated journal is noticed without a relaunch.
     static let capabilityRecheck: TimeInterval = 60
@@ -126,11 +127,11 @@ actor ScreenshotEngine {
         }
     }
 
-    func snapshot(now: Date, pause: ScreenshotPauseFact, journalID: String?, paired: Bool) -> ScreenshotSnapshot {
-        presentScreenshots(facts(now: now, pause: pause, journalID: journalID, paired: paired))
+    func snapshot(now: Date, pause: ScreenshotPauseFact, paired: Bool) -> ScreenshotSnapshot {
+        presentScreenshots(facts(now: now, pause: pause, paired: paired))
     }
 
-    func allow(now: Date, pause: ScreenshotPauseFact, journalID: String?, paired: Bool) async -> ScreenshotSnapshot {
+    func allow(now: Date, pause: ScreenshotPauseFact, paired: Bool) async -> ScreenshotSnapshot {
         let system = reader.systemFolder()
         ledger.consented = true
         ledger.enabled = true
@@ -142,13 +143,12 @@ actor ScreenshotEngine {
         ledger.systemPathAtConsent = system.path
         ledger.access = .ok
         ledger.accessHeld = false
-        ledger.journalID = journalID ?? ledger.journalID
         scan(now: now)
         save()
-        return await tick(now: now, pause: pause, journalID: journalID, serverURL: nil, paired: paired, syncPaused: true)
+        return await tick(now: now, pause: pause, serverURL: nil, paired: paired, syncPaused: true)
     }
 
-    func choose(_ folder: ScreenshotFolder, now: Date, pause: ScreenshotPauseFact, journalID: String?, paired: Bool) async -> ScreenshotSnapshot {
+    func choose(_ folder: ScreenshotFolder, now: Date, pause: ScreenshotPauseFact, paired: Bool) async -> ScreenshotSnapshot {
         let system = reader.systemFolder()
         ledger.consented = true
         ledger.enabled = true
@@ -160,10 +160,9 @@ actor ScreenshotEngine {
         ledger.systemPathAtConsent = system.path
         ledger.access = .ok
         ledger.accessHeld = false
-        ledger.journalID = journalID ?? ledger.journalID
         scan(now: now)
         save()
-        return await tick(now: now, pause: pause, journalID: journalID, serverURL: nil, paired: paired, syncPaused: true)
+        return await tick(now: now, pause: pause, serverURL: nil, paired: paired, syncPaused: true)
     }
 
     func turnOff() {
@@ -176,12 +175,12 @@ actor ScreenshotEngine {
     }
 
     /// The switch turned on. Before the folder was ever read, that asks for it, as `allow` does.
-    func turnOn(now: Date, pause: ScreenshotPauseFact, journalID: String?, paired: Bool) async -> ScreenshotSnapshot {
+    func turnOn(now: Date, pause: ScreenshotPauseFact, paired: Bool) async -> ScreenshotSnapshot {
         if !ledger.consented || (ledger.access == .denied && ledger.accessHeld == false) {
-            return await allow(now: now, pause: pause, journalID: journalID, paired: paired)
+            return await allow(now: now, pause: pause, paired: paired)
         }
         turnBackOn(now: now)
-        return snapshot(now: now, pause: pause, journalID: journalID, paired: paired)
+        return snapshot(now: now, pause: pause, paired: paired)
     }
 
     func turnBackOn(now: Date) {
@@ -189,6 +188,24 @@ actor ScreenshotEngine {
         ledger.enabled = true
         ledger.confirmed = false
         ledger.access = ledger.access == .moved ? .moved : .ok
+        scan(now: now)
+        save()
+    }
+
+    /// A new pairing: the journal paired now gets this source's first setup. The chooser comes
+    /// back with a fresh count and nothing goes until the owner confirms it. The folder, its
+    /// access, the switch and the owner's pauses stay. A screenshot that came in live and hasn't
+    /// gone yet stays waiting, and goes after the confirm.
+    func restartFirstSetup(now: Date) {
+        setupGeneration += 1
+        capability = nil
+        capabilityAskedAt = nil
+        ledger.confirmed = false
+        ledger.wasOn = false
+        ledger.liveFrom = nil
+        ledger.items.removeAll { $0.outcome == .delivered || ($0.inFrozen && ($0.outcome == .pending || $0.outcome == .held)) }
+        for index in ledger.items.indices { ledger.items[index].inFrozen = false }
+        ledger.seenCandidates.removeAll()
         scan(now: now)
         save()
     }
@@ -202,7 +219,7 @@ actor ScreenshotEngine {
     func confirm(now: Date) {
         guard ledger.consented, ledger.enabled, ledger.access == .ok, !countFailed else { return }
         let start = ledger.span.start(now: now, timeZone: timeZone())
-        let delivered = deliveredHashes(for: ledger.journalID)
+        let delivered = deliveredHashes
         ledger.items.removeAll { $0.inFrozen && ($0.outcome == .pending || $0.outcome == .held) }
         // This backfill is the count the owner just saw, so an earlier one stops counting toward
         // `{d} of {N}`, and a screenshot the ledger already knows joins this one.
@@ -216,8 +233,8 @@ actor ScreenshotEngine {
                 continue
             }
             ledger.items[index].inFrozen = true
-            // Delivered to another journal, or seen gone and back: this journal hasn't got it.
-            if ledger.items[index].outcome == .delivered || ledger.items[index].outcome == .deleted {
+            // Seen gone and back: the journal hasn't got it.
+            if ledger.items[index].outcome == .deleted {
                 ledger.items[index].outcome = item.outcome
                 ledger.items[index].path = item.path
             }
@@ -238,19 +255,17 @@ actor ScreenshotEngine {
     func tick(
         now: Date,
         pause: ScreenshotPauseFact,
-        journalID: String?,
         serverURL: String?,
         paired: Bool,
         syncPaused: Bool
     ) async -> ScreenshotSnapshot {
-        noteJournal(journalID)
         if ledger.confirmed { reconcilePause(now: now, fact: pause) }
         if ledger.consented { scan(now: now) }
         if let serverURL, !syncPaused {
             await sendReady(serverURL: serverURL, now: now)
         }
         save()
-        return snapshot(now: now, pause: pause, journalID: journalID, paired: paired)
+        return snapshot(now: now, pause: pause, paired: paired)
     }
 
     // MARK: - scan
@@ -327,7 +342,7 @@ actor ScreenshotEngine {
             let samePathUnstable = marked.contains { $0.path == item.path && !$0.stable }
             if !samePathUnstable { ledger.items[index].outcome = .deleted }
         }
-        let known = Set(ledger.items.map(\.id)).union(deliveredHashes(for: ledger.journalID))
+        let known = Set(ledger.items.map(\.id))
         for file in marked where file.stable {
             guard let item = makeItem(file, spanStart: .distantPast, delivered: known, frozen: false) else { continue }
             guard !known.contains(item.id) else { continue }
@@ -369,22 +384,24 @@ actor ScreenshotEngine {
     // MARK: - send
 
     private func sendReady(serverURL: String, now: Date) async {
-        guard ledger.confirmed, ledger.enabled, ledger.access == .ok, let journalID = ledger.journalID else { return }
-        if capability[journalID] != true {
-            let due = capabilityAskedAt[journalID].map { now.timeIntervalSince($0) >= Self.capabilityRecheck } ?? true
-            if capability[journalID] == nil || due {
+        guard ledger.confirmed, ledger.enabled, ledger.access == .ok else { return }
+        let generation = setupGeneration
+        if capability != true {
+            let due = capabilityAskedAt.map { now.timeIntervalSince($0) >= Self.capabilityRecheck } ?? true
+            if capability == nil || due {
                 if let listed = try? await transport.capabilities(serverURL: serverURL) {
-                    capability[journalID] = listed.contains("screenshots")
-                    capabilityAskedAt[journalID] = now
+                    guard generation == setupGeneration else { return }
+                    capability = listed.contains("screenshots")
+                    capabilityAskedAt = now
                 }
             }
-            guard capability[journalID] == true else { return }
+            guard capability == true else { return }
         }
         var sent = 0
         var delivered = false
         defer { if delivered { Task { await onDelivered() } } }
         while sent < 8 {
-            guard let index = nextSendable() else { return }
+            guard ledger.confirmed, let index = nextSendable() else { return }
             let item = ledger.items[index]
             guard let capturedAt = item.capturedAt, let takenFrom = item.takenFrom, let fileName = item.fileName else {
                 ledger.items[index].outcome = .unreadable
@@ -396,16 +413,19 @@ actor ScreenshotEngine {
                 capturedAt: stamp.rfc3339, takenFrom: takenFrom, hash: item.id
             )
             let answer = await transport.send(upload, serverURL: serverURL)
+            // The send let other work run on this actor. A new pairing's restart drops what this
+            // send was for, and turning off or a rescan can move the item, so look it up again.
+            guard generation == setupGeneration,
+                  let current = ledger.items.firstIndex(where: { $0.id == item.id }) else { return }
             switch answer {
             case .delivered:
-                ledger.items[index].outcome = .delivered
-                rememberDelivered(item.id, journalID: journalID)
+                ledger.items[current].outcome = .delivered
                 delivered = true
                 _ = totals?.applyScreenshot(hash: item.id)
             case .invalid:
-                ledger.items[index].outcome = .refused
+                ledger.items[current].outcome = .refused
             case .ahead, .retry:
-                ledger.items[index].outcome = .held
+                ledger.items[current].outcome = .held
                 return
             }
             sent += 1
@@ -424,7 +444,7 @@ actor ScreenshotEngine {
         }
     }
 
-    // MARK: - pause and journal
+    // MARK: - pause
 
     private func reconcilePause(now: Date, fact: ScreenshotPauseFact) {
         if fact.paused {
@@ -443,30 +463,14 @@ actor ScreenshotEngine {
         }
     }
 
-    private func noteJournal(_ journalID: String?) {
-        guard let journalID else { return }
-        if let previous = ledger.journalID, previous != journalID, ledger.wasOn {
-            ledger.confirmed = false
-            ledger.items.removeAll { $0.inFrozen && ($0.outcome == .pending || $0.outcome == .held) }
-            ledger.seenCandidates.removeAll()
-        }
-        ledger.journalID = journalID
-    }
-
-    private func deliveredHashes(for journalID: String?) -> Set<String> {
-        guard let journalID else { return [] }
-        return Set(ledger.deliveredByJournal[journalID] ?? [])
-    }
-
-    private func rememberDelivered(_ hash: String, journalID: String) {
-        var hashes = ledger.deliveredByJournal[journalID] ?? []
-        if !hashes.contains(hash) { hashes.append(hash) }
-        ledger.deliveredByJournal[journalID] = hashes
+    /// What has gone to the journal. A new pairing's restart clears it.
+    private var deliveredHashes: Set<String> {
+        Set(ledger.items.lazy.filter { $0.outcome == .delivered }.map(\.id))
     }
 
     // MARK: - facts
 
-    private func facts(now: Date, pause: ScreenshotPauseFact, journalID: String?, paired: Bool) -> ScreenshotFacts {
+    private func facts(now: Date, pause: ScreenshotPauseFact, paired: Bool) -> ScreenshotFacts {
         let system = reader.systemFolder()
         let frozen = ledger.items.filter(\.inFrozen)
         let doneOutcomes: Set<ScreenshotOutcome> = [.delivered, .refused, .unreadable, .deleted]
@@ -481,7 +485,7 @@ actor ScreenshotEngine {
                 count = .failed
             } else {
                 let start = ledger.span.start(now: now, timeZone: timeZone())
-                let delivered = deliveredHashes(for: journalID ?? ledger.journalID)
+                let delivered = deliveredHashes
                 let included = ledger.seenCandidates.map(\.candidate).filter { file in
                     guard file.marked, file.stable else { return false }
                     if let hash = file.sha256, delivered.contains(hash) { return false }
@@ -497,7 +501,6 @@ actor ScreenshotEngine {
                 count = .ready(total)
             }
         }
-        let capabilityKnown = (journalID ?? ledger.journalID).flatMap { capability[$0] }
         return ScreenshotFacts(
             consented: ledger.consented,
             enabled: ledger.enabled,
@@ -506,7 +509,7 @@ actor ScreenshotEngine {
             accessHeld: ledger.accessHeld ?? true,
             ownerPaused: pause.paused && ledger.confirmed,
             paired: paired,
-            waitingForJournal: ledger.confirmed && paired && capabilityKnown == false,
+            waitingForJournal: ledger.confirmed && paired && capability == false,
             folderName: name,
             folderIsDesktop: ledger.consented ? ledger.isDesktop : system.isDesktop,
             folderFromOwner: ledger.ownerChose,

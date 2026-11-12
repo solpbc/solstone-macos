@@ -32,6 +32,55 @@ struct PairingCoordinatorTests {
         #expect(call.relayEndpoint.absoluteString == "https://relay.test")
     }
 
+    @Test func aFirstPairingRestartsEverySourceBeforeItConnects() async throws {
+        let saved = pairing(instanceID: "11111111-1111-1111-1111-111111111111")
+        let reactivate = ReactivateRecorder()
+        let restart = RestartRecorder()
+        let coordinator = makeCoordinator(
+            store: PairingStore(pairing: nil), script: PairScript([.success(saved)]), reactivate: reactivate,
+            restartSourcesFirstSetup: { restart.record(connectedBefore: await reactivate.count) }
+        )
+
+        await coordinator.submitPairingLink(relayPairLink(instanceID: saved.instanceID))
+
+        #expect(coordinator.state == .paired)
+        #expect(restart.connectedBefore == [0])
+    }
+
+    @Test func pairingANewJournalRestartsEverySourceBeforeItConnects() async throws {
+        let prior = pairing(instanceID: "11111111-1111-1111-1111-111111111111", caChainPEM: testCACertPEM)
+        let replacement = pairing(instanceID: "22222222-2222-2222-2222-222222222222", caChainPEM: otherCACertPEM)
+        let reactivate = ReactivateRecorder()
+        let restart = RestartRecorder()
+        let coordinator = makeCoordinator(
+            store: PairingStore(pairing: prior), script: PairScript([.success(replacement)]), reactivate: reactivate,
+            restartSourcesFirstSetup: { restart.record(connectedBefore: await reactivate.count) }
+        )
+
+        await coordinator.submitPairingLink(try relayPairLink(caPEM: otherCACertPEM))
+        #expect(restart.connectedBefore.isEmpty)
+        await coordinator.confirmSwitch()
+
+        #expect(coordinator.state == .switched)
+        #expect(restart.connectedBefore == [0])
+    }
+
+    @Test func aLinkForThePairedJournalRestartsNothing() async throws {
+        let chain = otherCACertPEM + "\n" + testCACertPEM
+        let prior = pairing(instanceID: "11111111-1111-1111-1111-111111111111", caChainPEM: chain)
+        let refreshed = pairing(instanceID: "11111111-1111-1111-1111-111111111111", caChainPEM: chain)
+        let restart = RestartRecorder()
+        let coordinator = makeCoordinator(
+            store: PairingStore(pairing: prior), script: PairScript([.success(refreshed)]),
+            restartSourcesFirstSetup: { restart.record(connectedBefore: 0) }
+        )
+
+        await coordinator.submitPairingLink(try relayPairLink(caPEM: testCACertPEM))
+
+        #expect(coordinator.state == .alreadyConnected)
+        #expect(restart.connectedBefore.isEmpty)
+    }
+
     @Test func enrollUnavailablePairingStillSavesAndPairs() async throws {
         let saved = pairing(
             instanceID: "11111111-1111-1111-1111-111111111111",
@@ -1784,6 +1833,7 @@ struct PairingCoordinatorTests {
         endSelfRetirement: @escaping @MainActor @Sendable () -> Void = {},
         carriedPairingControl: any CarriedPairingControlRequesting = URLSessionCarriedPairingControlClient(),
         localPort: @escaping @MainActor @Sendable () -> Int? = { nil },
+        restartSourcesFirstSetup: @escaping PairingCoordinator.RestartSourcesFirstSetup = {},
         classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
     ) -> PairingCoordinator {
         makeCoordinator(
@@ -1798,6 +1848,7 @@ struct PairingCoordinatorTests {
             endSelfRetirement: endSelfRetirement,
             carriedPairingControl: carriedPairingControl,
             localPort: localPort,
+            restartSourcesFirstSetup: restartSourcesFirstSetup,
             classifiedLog: classifiedLog
         )
     }
@@ -2314,6 +2365,7 @@ struct PairingCoordinatorTests {
         endSelfRetirement: @escaping @MainActor @Sendable () -> Void = {},
         carriedPairingControl: any CarriedPairingControlRequesting = URLSessionCarriedPairingControlClient(),
         localPort: @escaping @MainActor @Sendable () -> Int? = { nil },
+        restartSourcesFirstSetup: @escaping PairingCoordinator.RestartSourcesFirstSetup = {},
         classifiedLog: any ClassifiedLogSinking = LoggerClassifiedLogSink.general
     ) -> PairingCoordinator {
         let coordinator = PairingCoordinator(
@@ -2335,6 +2387,7 @@ struct PairingCoordinatorTests {
             relayEndpoint: { URL(string: "https://relay.test")! },
             deviceLabel: { "test mac" },
             clearLastSuccessfulJournalContact: { clear.record() },
+            restartSourcesFirstSetup: restartSourcesFirstSetup,
             retireOwnCredential: retireOwnCredential,
             endSelfRetirement: endSelfRetirement,
             carriedPairingControl: carriedPairingControl,
@@ -2396,6 +2449,15 @@ private actor ReactivateRecorder {
 
     func record() {
         count += 1
+    }
+}
+
+@MainActor
+private final class RestartRecorder {
+    private(set) var connectedBefore: [Int] = []
+
+    func record(connectedBefore count: Int) {
+        connectedBefore.append(count)
     }
 }
 

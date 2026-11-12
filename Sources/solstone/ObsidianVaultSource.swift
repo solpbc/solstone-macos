@@ -178,6 +178,9 @@ final class ObsidianVaultSource {
     private var isSleeping = false
     private var wakeRequested = false
     private var tickRunning = false
+    /// Moves when a new pairing starts the first setup again, so a journal check already on
+    /// its way can't clear or warn about the first send for the journal paired before.
+    private var setupGeneration = 0
 
     static let tickSeconds: TimeInterval = 60
     private static let retryCapSeconds: TimeInterval = 15 * 60
@@ -276,6 +279,20 @@ final class ObsidianVaultSource {
         refreshPhase()
     }
 
+    /// A new pairing. On or off, the vault's notes go once more, after the same-name check.
+    func restartFirstSetup() async {
+        setupGeneration += 1
+        alreadySynced = nil
+        journalListsCapability = nil
+        nextScanAt = .distantPast
+        nextDeliveryAt = .distantPast
+        retryDelay = Self.tickSeconds
+        await engine.restartFirstSetup()
+        snapshot = await engine.snapshot()
+        refreshPhase()
+        nudge()
+    }
+
     /// Ends the loop as the app quits. Everything waiting is already on disk.
     func shutdown() {
         stopLoop()
@@ -327,8 +344,11 @@ final class ObsidianVaultSource {
         defer { tickRunning = false }
         let now = clock()
         if now >= nextScanAt {
+            let generation = setupGeneration
             snapshot = await engine.scan(now: now)
-            nextScanAt = now.addingTimeInterval(Self.scanInterval(afterScanTaking: snapshot.lastWalkSeconds))
+            if generation == setupGeneration {
+                nextScanAt = now.addingTimeInterval(Self.scanInterval(afterScanTaking: snapshot.lastWalkSeconds))
+            }
         }
         if !isHeld() {
             let serverURL = await journalReadyForDelivery()
@@ -357,9 +377,12 @@ final class ObsidianVaultSource {
 
     /// The paired journal's address, once it takes notes and this vault's first send is cleared.
     private func journalReadyForDelivery() async -> String? {
-        guard case .url(let serverURL) = await resolver.resolve() else { return nil }
+        let generation = setupGeneration
+        guard case .url(let serverURL) = await resolver.resolve(), generation == setupGeneration else { return nil }
         do {
-            journalListsCapability = try await transport.capabilities(serverURL: serverURL).contains(ObsidianWire.capability)
+            let lists = try await transport.capabilities(serverURL: serverURL).contains(ObsidianWire.capability)
+            guard generation == setupGeneration else { return nil }
+            journalListsCapability = lists
         } catch {
             Logger.upload.info("Obsidian capability check failed: \(error.localizedDescription, privacy: .public)")
             return nil
@@ -370,7 +393,7 @@ final class ObsidianVaultSource {
         if !state.firstSendCleared {
             do {
                 let vaults = try await transport.vaults(serverURL: serverURL)
-                guard active else { return nil }
+                guard active, generation == setupGeneration else { return nil }
                 let matches = vaults.filter { $0.vault == state.vaultName }
                 if let match = matches.max(by: { ($0.lastSyncedAt ?? "") < ($1.lastSyncedAt ?? "") }) {
                     alreadySynced = AlreadySynced(vault: match.vault, device: match.device, lastSyncedAt: match.lastSyncedAt)
