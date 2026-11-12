@@ -147,7 +147,7 @@ public enum UICopy {
     }
 
     // Audio health
-    public static let AUDIO_SOURCE_SYSTEM = "system audio"
+    public static let AUDIO_SOURCE_SYSTEM = "computer sound"
     public static let AUDIO_SOURCE_MICROPHONE = "a microphone"
     /// Owner-facing audio health, naming each source. Nil when nothing needs saying.
     public static func audioIssue(recovering: [String], recovered: [String]) -> String? {
@@ -335,7 +335,7 @@ public enum UICopy {
 
     public static let SOURCES_SEGMENTS_EXPLAINER = "screens and audio you turn on here go into your journal in five-minute segments. until your journal confirms receipt, they wait on this mac. by default, the confirmed local copy is removed."
     public static let SOURCES_MICROPHONE = "microphone"
-    public static let SOURCES_SCREEN = "screen and system audio"
+    public static let SOURCES_SCREEN = "screen and computer sound"
     public static let SOURCES_OFF = "off"
     public static let SOURCES_STARTING = "starting…"
     public static let SOURCES_OPEN_ACTION = "open sources →"
@@ -348,17 +348,17 @@ public enum UICopy {
     public static let SOURCES_GRANT_OR_CHANGE = "grant it below, or turn on the other source instead."
 
     // Per-source notices, shown beside a session that is running on the other source.
-    public static let SOURCES_MIC_DENIED = "microphone permission not granted. screen and system audio can run on their own."
+    public static let SOURCES_MIC_DENIED = "microphone permission not granted. screen and computer sound can run on their own."
     public static let SOURCES_SCREEN_DENIED = "screen permission not granted. microphone can run on its own."
-    public static let SOURCES_MIC_UNAVAILABLE = "microphone unavailable. screen and system audio are running."
-    public static let SOURCES_SCREEN_UNAVAILABLE = "screen and system audio unavailable. microphone is running."
+    public static let SOURCES_MIC_UNAVAILABLE = "microphone unavailable. screen and computer sound are running."
+    public static let SOURCES_SCREEN_UNAVAILABLE = "screen and computer sound unavailable. microphone is running."
 
     public static let SOURCES_RESTART_READY = "granted. solstone needs to restart before what's on your screen can go into your journal."
     public static let SOURCES_RESTART = "restart now"
 
     public static func sourceNames(_ sources: CaptureSources) -> String {
         switch (sources.contains(.microphone), sources.contains(.screen)) {
-        case (true, true): return "microphone, screen and system audio"
+        case (true, true): return "microphone, screen and computer sound"
         case (true, false): return SOURCES_MICROPHONE
         case (false, true): return SOURCES_SCREEN
         case (false, false): return SOURCES_OFF

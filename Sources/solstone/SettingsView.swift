@@ -724,7 +724,7 @@ struct SettingsView: View {
                     appState.updateConfig(config)
                 }
             ))
-            Text("adds app names, window titles and active or idle time to your journal, and browser addresses if you allow accessibility. it starts and pauses with screen and system audio.")
+            Text("adds app names, window titles and active or idle time to your journal, and browser addresses if you allow accessibility. it starts and pauses with screen and computer sound.")
                 .font(.subheadline).foregroundStyle(.secondary)
             if appState.config.isActivityEnabled {
                 Toggle("keep activity on while paused", isOn: Binding(
@@ -734,7 +734,7 @@ struct SettingsView: View {
                         appState.updateConfig(config)
                     }
                 ))
-                Text("activity keeps going when you pause, and when screen and system audio are off.")
+                Text("activity keeps going when you pause, and when screen and computer sound are off.")
                     .font(.subheadline).foregroundStyle(.secondary)
                 Toggle("window titles", isOn: Binding(
                     get: { appState.config.activityTitlesEnabled },
@@ -3153,11 +3153,11 @@ struct SettingsView: View {
     var audioProcessingGroup: some View {
         GroupBox("audio processing") {
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("silence music in system audio", isOn: silenceMusicBinding)
+                Toggle("silence music in computer sound", isOn: silenceMusicBinding)
                     .help("silences background music when nobody's talking")
                     .accessibilityIdentifier(AXID.Settings.Microphones.silenceMusic)
 
-                Text("silences portions of system audio where music is detected but no speech.")
+                Text("silences portions of computer sound where music is detected but no speech.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
