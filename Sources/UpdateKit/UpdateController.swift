@@ -51,6 +51,8 @@ public final class UpdateController {
     private static let sparkleSkipKeys = ["SUSkippedMinorVersion", "SUSkippedMajorVersion", "SUSkippedMajorSubreleaseVersion"]
     private static let replacementRetryDelay: TimeInterval = 5
     private static let replacementAttempts = 6
+    private static let installRetryDelay: TimeInterval = 1
+    private static let installRetryAttempts = 30
 
     public private(set) var activity: UpdateActivity = .idle
     public private(set) var backgroundDownload: BackgroundDownloadPhase? = nil
@@ -393,11 +395,22 @@ public final class UpdateController {
     /// The owner's install-now for whatever update is waiting: a staged one installs and
     /// restarts at once; a downloaded one that needs an administrator asks for one first.
     public func installWaitingUpdate() {
+        installWaitingUpdate(attempt: 1)
+    }
+
+    private func installWaitingUpdate(attempt: Int) {
         if pendingChoiceReply != nil {
             install()
         } else if updateIsStaged {
             installStagedUpdate()
-        } else if canActOnAvailableUpdateDirectly || availableUpdate != nil {
+        } else if availableUpdate != nil {
+            // Sparkle ignores a check while a session is open; wait it out rather than drop the press.
+            if sparkleSessionInProgress, attempt < Self.installRetryAttempts {
+                scheduleAfter(Self.installRetryDelay) { [weak self] in
+                    self?.installWaitingUpdate(attempt: attempt + 1)
+                }
+                return
+            }
             download()
         }
     }
@@ -953,7 +966,7 @@ public final class UpdateController {
         }
     }
 
-    private func resumeStagedInstall() {
+    private func resumeStagedInstall(attempt: Int = 1) {
         guard canCheckForUpdates else {
             log.warning("installStagedUpdate() ignored because Sparkle config gate failed")
             return
@@ -963,6 +976,20 @@ public final class UpdateController {
             log.error("installStagedUpdate() ignored because Sparkle updater failed to start")
             activity = .idle
             recordFailedCheck()
+            return
+        }
+
+        // Sparkle ignores a check while a session is open, as it briefly is between scheduled
+        // checks. The owner pressed install, so wait it out rather than drop the press.
+        if sparkleSessionInProgress {
+            guard attempt < Self.installRetryAttempts else {
+                log.error("installStagedUpdate() gave up: Sparkle stayed busy")
+                return
+            }
+            scheduleAfter(Self.installRetryDelay) { [weak self] in
+                guard let self, self.updateIsStaged, self.pendingChoiceReply == nil else { return }
+                self.resumeStagedInstall(attempt: attempt + 1)
+            }
             return
         }
 

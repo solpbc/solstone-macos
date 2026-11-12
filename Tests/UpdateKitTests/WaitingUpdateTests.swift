@@ -254,6 +254,21 @@ struct WaitingUpdateTests {
         #expect(harness.spy.checkForUpdatesCallCount == 1)
     }
 
+    @Test func restartNowWaitsOutABusySparkleSessionInsteadOfDroppingThePress() async throws {
+        let harness = try makeHarness(feed: try capturedFeed())
+        stage(try appcastItem(version: "2.0.75", build: "127"), in: harness)
+        harness.runScheduled()
+        harness.spy.sessionInProgress = true
+
+        harness.controller.installWaitingUpdate()
+        harness.runScheduled()
+        #expect(harness.spy.checkForUpdatesCallCount == 0)
+
+        harness.spy.sessionInProgress = false
+        harness.runScheduled()
+        #expect(harness.spy.checkForUpdatesCallCount == 1)
+    }
+
     @Test func runningTheNewestClearsTheWaitingClock() throws {
         let harness = try makeHarness(feed: try capturedFeed())
         stage(try appcastItem(version: "2.0.75", build: "127"), in: harness)
