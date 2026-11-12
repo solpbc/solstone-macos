@@ -48,7 +48,8 @@ public final class UpdateController {
     public static let restartPromptThreshold: TimeInterval = 3 * 86_400
     // Sparkle records a skipped version under these keys. UpdateKit offers no skip, and it
     // skips only to cancel a waiting update it is replacing, so it removes the record again.
-    private static let sparkleSkipKeys = ["SUSkippedMinorVersion", "SUSkippedMajorVersion", "SUSkippedMajorSubreleaseVersion"]
+    // Sparkle 2.9.4 `SUConstants.m`: SUSkippedMinorVersionKey is stored as "SUSkippedVersion".
+    private static let sparkleSkipKeys = ["SUSkippedVersion", "SUSkippedMajorVersion", "SUSkippedMajorSubreleaseVersion"]
     private static let replacementRetryDelay: TimeInterval = 5
     private static let replacementAttempts = 6
     private static let installRetryDelay: TimeInterval = 1

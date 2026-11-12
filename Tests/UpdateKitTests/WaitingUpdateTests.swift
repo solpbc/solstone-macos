@@ -68,13 +68,14 @@ struct WaitingUpdateTests {
         #expect(request.allHTTPHeaderFields == ["User-Agent": harness.spy.userAgentString])
         #expect(request.httpMethod == "GET")
 
-        // Sparkle recorded the cancelled version as skipped; that record is removed before
+        // Sparkle recorded the cancelled version as skipped, under the key a live run showed it
+        // writes (`SUSkippedVersion`); that record is removed before
         // Sparkle's own check runs, so it can't hide a release later.
-        isolatedDefaults.defaults.set("125", forKey: "SUSkippedMinorVersion")
+        isolatedDefaults.defaults.set("125", forKey: "SUSkippedVersion")
         harness.runScheduled()
 
         #expect(harness.spy.checkForUpdatesInBackgroundCallCount == 1)
-        #expect(isolatedDefaults.defaults.object(forKey: "SUSkippedMinorVersion") == nil)
+        #expect(isolatedDefaults.defaults.object(forKey: "SUSkippedVersion") == nil)
 
         // Sparkle stages the newest; it is the one waiting now.
         stage(try appcastItem(version: "2.0.75", build: "127"), in: harness)
