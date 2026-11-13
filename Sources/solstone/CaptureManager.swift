@@ -228,6 +228,16 @@ public final class CaptureManager {
     public let siteFrameGate = SiteFrameGate()
     internal private(set) var siteSampler: SiteSampler?
     public private(set) var siteRuleActive: Bool = false
+    /// Websites are listed, whether or not the rule can act on them.
+    private var siteListConfigured = false
+    /// Accessibility probes in a row that failed while websites are listed.
+    private var siteAXFailures = 0
+    /// Accessibility is confirmed off, so the list does nothing until it works again. No app is
+    /// kept out in its place: without Accessibility, Settings and the extensions offer no leave-out.
+    public private(set) var siteRuleSuspended = false
+    /// One failed probe holds frames as before; this many in a row means Accessibility is off.
+    static let siteAXFailuresToSuspend = 2
+    public var onSiteRuleSuspended: (@MainActor (Bool) -> Void)?
     internal let siteRuleLock: OSAllocatedUnfairLock<Bool>
     public var onSiteSafariCaution: (@MainActor (Bool) -> Void)?
     public var onSafariKeptOut: (@MainActor (Bool) -> Void)?
@@ -807,7 +817,7 @@ public final class CaptureManager {
         if siteFrameGate.currentAXAvailable {
             publishSafariKeptOut(siteRuleActive && siteFrameGate.safariShouldSitOut(isOutNow: safariKeptOut))
         }
-        publishSiteScreenHeld(siteFrameGate.isHoldingNow(now: poll.end))
+        publishSiteScreenHeld(siteRuleActive && siteFrameGate.isHoldingNow(now: poll.end))
     }
 
     private func publishSiteScreenHeld(_ held: Bool) {
@@ -825,6 +835,13 @@ public final class CaptureManager {
 
     func receiveSiteDecision(_ decisions: SiteDecision, axAvailable: Bool, generation: UInt64) {
         guard generation == siteListGeneration else { return }
+        siteAXFailures = axAvailable ? 0 : siteAXFailures + 1
+        let suspend = siteListConfigured && siteAXFailures >= Self.siteAXFailuresToSuspend
+        if suspend != siteRuleSuspended { setSiteRuleSuspended(suspend) }
+        if siteRuleSuspended {
+            onSiteSafariCaution?(false)
+            return
+        }
         siteFrameGate.updateDecisions(decisions, axAvailable: axAvailable)
         // Without Accessibility every read fails, and Settings already says why.
         onSiteSafariCaution?(axAvailable && decisions.hasSafariCaution)
@@ -832,8 +849,33 @@ public final class CaptureManager {
         currentSegment?.reevaluateSiteFrames()
     }
 
+    /// Turns the rule off while Accessibility is confirmed off, and back on when a probe works.
+    /// Coming back on, every Safari window is unvouched again, so frames hold until it reads.
+    private func setSiteRuleSuspended(_ suspended: Bool) {
+        siteRuleSuspended = suspended
+        let active = siteListConfigured && !suspended
+        siteRuleActive = active
+        currentSegment?.isSiteRuleActive = active
+        siteFrameGate.updateDecisions(SiteDecision(), axAvailable: false)
+        if !active {
+            _ = siteFrameGate.deactivateAll()
+            publishSiteScreenHeld(false)
+        }
+        publishSafariKeptOut(false)
+        Logger.capture.info("Website rule \(suspended ? "suspended: Accessibility is off" : "resumed", privacy: .public)")
+        onSiteRuleSuspended?(suspended)
+    }
+
     public func updateSiteRule(_ sites: [String]) {
-        let active = !sites.isEmpty
+        siteListConfigured = !sites.isEmpty
+        if !siteListConfigured {
+            siteAXFailures = 0
+            if siteRuleSuspended {
+                siteRuleSuspended = false
+                onSiteRuleSuspended?(false)
+            }
+        }
+        let active = siteListConfigured && !siteRuleSuspended
         siteListGeneration += 1
         let currentGen = siteListGeneration
         siteRuleActive = active

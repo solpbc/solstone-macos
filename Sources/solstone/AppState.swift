@@ -388,7 +388,9 @@ public final class AppState {
         guard !isSnapshot else { return }
         privateWindowAccessibilityMonitor.setInterests(
             privateWindows: privateWindowAccessibilityEnabled,
-            sites: !config.excludedSites.isEmpty,
+            // Always: leaving a website out is offered only while Accessibility works, so the
+            // app has to know before the first site is added, in Settings or from an extension.
+            sites: true,
             activity: config.activityAccessibilityEnabled
         )
     }
@@ -407,13 +409,31 @@ public final class AppState {
         NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
     }
 
-    /// The owner's own act, from a setting that has said what it's for. Adding a website doesn't ask.
+    /// The owner's own act, from a setting that has said what it's for. Adding a website doesn't
+    /// ask: without Accessibility, Settings offers this button in place of the field.
     func askForAccessibility() {
         accessibilityProbe.prompt()
     }
 
     internal var currentSafariKeptOut = false
     internal var currentSiteScreenHeld = false
+    /// Capture has confirmed Accessibility is off, so the website list does nothing in activity
+    /// either, as on screen.
+    internal var currentSiteRuleSuspended = false {
+        didSet {
+            guard oldValue != currentSiteRuleSuspended else { return }
+            activitySource?.invalidate()
+            activitySource?.configure(activityConfig(config))
+        }
+    }
+
+    /// Activity's view of the configuration: no website list while it can't act.
+    func activityConfig(_ config: AppConfig) -> AppConfig {
+        guard currentSiteRuleSuspended else { return config }
+        var effective = config
+        effective.excludedSites = []
+        return effective
+    }
 
     internal var siteIntakeNotes: [SiteIntakeNote] {
         classifySiteIntakeNotes(
@@ -425,12 +445,19 @@ public final class AppState {
         )
     }
 
-    public var siteAccessibilityCaution: Bool {
-        guard !config.excludedSites.isEmpty else { return false }
+    /// Leaving a website out needs Accessibility: without it solstone can't tell which website a
+    /// window shows, so it offers no leave-out and the list does nothing until it's allowed.
+    /// Unknown counts as needed, so nothing is offered before the first read answers.
+    public var websitesNeedAccessibility: Bool {
         if isSnapshot {
             return snapshotAccessibilityCaution
         }
-        return privateWindowAccessibilityMonitor.sitesEnabled && privateWindowAccessibilityMonitor.lastReadWorks == false
+        return privateWindowAccessibilityMonitor.lastReadWorks != true
+    }
+
+    /// Websites are listed, and Accessibility is off, so none of them is being kept out.
+    public var siteAccessibilityCaution: Bool {
+        !config.excludedSites.isEmpty && websitesNeedAccessibility
     }
 
     internal var currentSiteSafariCaution: Bool = false {
@@ -455,7 +482,7 @@ public final class AppState {
             screen: config.isScreenCaptureEnabled && isRecording && !paused && !away,
             activity: config.isActivitySourceOn && !away && !config.activityHeld(paused: paused, stopped: !isRecording),
             checkedBrands: [.safari],
-            accessibilityWorks: privateWindowAccessibilityMonitor.lastReadWorks == true,
+            accessibilityWorks: !websitesNeedAccessibility,
             brandsWithCaution: currentSiteSafariCaution ? [.safari] : []
         )
         if listener.siteListSource.update(snapshot) {
@@ -474,10 +501,13 @@ public final class AppState {
     }
 
     /// A leave-out or include from a browser extension, applied as a Settings edit would be.
+    /// A leave-out is refused while Accessibility is off, as Settings refuses it, because nothing
+    /// could keep the site out. Including a site again is always allowed.
     func applyBrowserSiteRule(host: String, out: Bool) {
         guard let stored = SiteRule.storedHost(host) else { return }
         var newConfig = config
         if out {
+            guard !websitesNeedAccessibility else { return }
             guard !newConfig.excludedSites.contains(stored), newConfig.excludedSites.count < 200 else { return }
             newConfig.excludedSites.append(stored)
         } else {
@@ -506,6 +536,9 @@ public final class AppState {
         }
         if config.excludedSites.contains(stored) {
             return nil
+        }
+        guard !websitesNeedAccessibility else {
+            return UICopy.Websites.errorNeedsAccessibility(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
         }
         var newConfig = config
         newConfig.excludedSites.append(stored)
@@ -1017,7 +1050,7 @@ public final class AppState {
         if newConfig.excludedSites.isEmpty {
             currentSiteSafariCaution = false
         }
-        activitySource?.configure(newConfig)
+        activitySource?.configure(activityConfig(newConfig))
         clearLatestFrameIfNeeded()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
         refreshBrowserSiteList()
@@ -2437,6 +2470,9 @@ public final class AppState {
         captureManager.onSiteScreenHeld = { [weak captureTarget] held in
             captureTarget?.state?.currentSiteScreenHeld = held
         }
+        captureManager.onSiteRuleSuspended = { [weak captureTarget] suspended in
+            captureTarget?.state?.currentSiteRuleSuspended = suspended
+        }
         if !config.excludedSites.isEmpty {
             captureManager.updateSiteRule(config.excludedSites)
         }
@@ -3259,7 +3295,7 @@ public final class AppState {
         pauseManager.onPauseIntake = { [weak source] in previousPause?(); source?.invalidate(); source?.sample() }
         let previousResume = pauseManager.onResumeIntake
         pauseManager.onResumeIntake = { [weak source] in previousResume?(); source?.invalidate(); source?.sample() }
-        source.start(config: config)
+        source.start(config: activityConfig(config))
     }
 
     /// Pause and stop hold activity the way they hold audio, unless the owner keeps it on through pause.

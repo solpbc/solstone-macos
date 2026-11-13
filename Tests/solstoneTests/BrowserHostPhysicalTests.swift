@@ -1150,7 +1150,7 @@ struct BrowserHostSiteListTests {
         try await withPhysicalListener { fixture in
             let applied = PhysicalRuleLog()
             let source = fixture.listener.siteListSource
-            source.update(BrowserSiteListSnapshot(sites: ["bank.com"], epoch: "e1", rev: 3, screen: true, activity: true))
+            source.update(BrowserSiteListSnapshot(sites: ["bank.com"], epoch: "e1", rev: 3, screen: true, activity: true, accessibilityWorks: true))
             await fixture.listener.setSiteRuleHandler { host, out in
                 await applied.append(host, out)
                 var next = source.current ?? BrowserSiteListSnapshot()

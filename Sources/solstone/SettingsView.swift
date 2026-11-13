@@ -3450,7 +3450,9 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                if appState.siteAccessibilityCaution {
+                // Without Accessibility nothing can keep a website out, so the field gives way to
+                // the reason and the one button that changes it.
+                if appState.websitesNeedAccessibility {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(UICopy.Websites.accessibilityCaution(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
                             .font(.caption)
@@ -3459,6 +3461,11 @@ struct SettingsView: View {
                             appState.askForAccessibility()
                         }
                         .accessibilityIdentifier(AXID.Settings.Privacy.websiteAllowAccessibility)
+                        if !appState.config.excludedSites.isEmpty {
+                            Text(UICopy.Websites.NOT_KEPT_OUT_YET)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier(AXID.Settings.Privacy.websiteAccessibilityCaution)
@@ -3498,15 +3505,17 @@ struct SettingsView: View {
                     .accessibilityIdentifier(AXID.Settings.Privacy.websitesList)
                 }
 
-                HStack {
-                    TextField("bank.com", text: $newWebsite)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { addWebsite() }
-                        .onChange(of: newWebsite) { websiteError = nil }
-                        .accessibilityIdentifier(AXID.Settings.Privacy.websiteField)
-                    Button("leave out") { addWebsite() }
-                        .disabled(newWebsite.trimmingCharacters(in: .whitespaces).isEmpty)
-                        .accessibilityIdentifier(AXID.Settings.Privacy.websiteAdd)
+                if !appState.websitesNeedAccessibility {
+                    HStack {
+                        TextField("bank.com", text: $newWebsite)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { addWebsite() }
+                            .onChange(of: newWebsite) { websiteError = nil }
+                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteField)
+                        Button("leave out") { addWebsite() }
+                            .disabled(newWebsite.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .accessibilityIdentifier(AXID.Settings.Privacy.websiteAdd)
+                    }
                 }
 
                 if let websiteError {

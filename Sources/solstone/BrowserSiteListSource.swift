@@ -38,10 +38,16 @@ public struct BrowserSiteListSnapshot: Sendable, Equatable {
         self.brandsWithCaution = brandsWithCaution
     }
 
-    /// Whether the app keeps a left-out site off the screen for this browser.
+    /// What the website list does for this browser.
+    /// - `needs_access`: Accessibility isn't working, so the list does nothing on screen or in
+    ///   activity and a leave-out is refused, for every browser.
+    /// - `not_checked`: the app doesn't read this browser's windows.
+    /// - `unreadable`: it reads them, but can't read their addresses right now.
+    /// - `on`: a left-out site is kept off the screen and out of activity.
     public func sitesValue(for brand: BrowserBrand?) -> String {
+        guard accessibilityWorks else { return "needs_access" }
         guard let brand, checkedBrands.contains(brand) else { return "not_checked" }
-        return accessibilityWorks && !brandsWithCaution.contains(brand) ? "on" : "needs_access"
+        return brandsWithCaution.contains(brand) ? "unreadable" : "on"
     }
 }
 

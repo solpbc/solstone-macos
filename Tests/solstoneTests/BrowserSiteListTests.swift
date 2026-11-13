@@ -142,6 +142,17 @@ struct BrowserSiteRuleApplyTests {
         #expect(state.config.excludedSitesRev == 2)
     }
 
+    @Test func aLeaveOutIsRefusedWithoutAccessibilityAndAnIncludeIsNot() {
+        var config = AppConfig()
+        config.excludedSites = ["bank.com"]
+        config.excludedSitesEpoch = "e1"
+        let state = AppState.forSnapshot(config: config, snapshotAccessibilityCaution: true)
+        state.applyBrowserSiteRule(host: "news.com", out: true)
+        #expect(state.config.excludedSites == ["bank.com"])
+        state.applyBrowserSiteRule(host: "bank.com", out: false)
+        #expect(state.config.excludedSites.isEmpty)
+    }
+
     @Test func aRuleIsRefusedAtTheCap() {
         var config = AppConfig()
         config.excludedSites = (1...200).map { "site\($0).com" }
@@ -193,10 +204,12 @@ struct BrowserSiteListTests {
         #expect(snapshot.sitesValue(for: .chrome) == "not_checked")
         #expect(snapshot.sitesValue(for: nil) == "not_checked")
         snapshot.brandsWithCaution = [.safari]
-        #expect(snapshot.sitesValue(for: .safari) == "needs_access")
+        #expect(snapshot.sitesValue(for: .safari) == "unreadable")
         snapshot.brandsWithCaution = []
         snapshot.accessibilityWorks = false
         #expect(snapshot.sitesValue(for: .safari) == "needs_access")
+        #expect(snapshot.sitesValue(for: .chrome) == "needs_access")
+        #expect(snapshot.sitesValue(for: nil) == "needs_access")
     }
 
     @Test func onlyWhatTheContractAllowsGoesOnTheWire() throws {

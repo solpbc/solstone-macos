@@ -654,9 +654,13 @@ public enum UICopy {
             macOSMajor >= 27 ? "Device Control and Data Access" : "Accessibility"
         }
         public static func accessibilityCaution(macOSMajor: Int) -> String {
-            "solstone uses \(accessibilityName(macOSMajor: macOSMajor)) to read the title and address of each Safari window. once it's allowed, activity also adds browser addresses to your journal, unless you turn that off under activity. until solstone can use it, Safari stays out of what solstone takes in from your screen and its titles stay out of activity. the rest of your screen isn't affected."
+            "to leave websites out, solstone needs \(accessibilityName(macOSMajor: macOSMajor)), so it can read which website each Safari window shows. once it's allowed, activity also adds browser addresses to your journal, except for websites you leave out, unless you turn addresses off under activity."
         }
-        public static let ACTIVITY_ACCESSIBILITY_HELP = "with Accessibility (called Device Control and Data Access on macOS 27), activity can add browser addresses to your journal, and window titles when screen recording is unavailable. checking Safari for the websites you leave out uses the same access, whether this setting is on or off."
+        public static let NOT_KEPT_OUT_YET = "until then, these websites aren't kept out of your journal."
+        public static func errorNeedsAccessibility(macOSMajor: Int) -> String {
+            "allow \(accessibilityName(macOSMajor: macOSMajor)) first, so solstone can tell which website a window shows."
+        }
+        public static let ACTIVITY_ACCESSIBILITY_HELP = "with Accessibility (called Device Control and Data Access on macOS 27), activity can add browser addresses to your journal, and window titles when screen recording is unavailable. checking browsers for the websites you leave out uses the same access, whether this setting is on or off."
         public static func activityAccessibilityOffInMacOS(macOSMajor: Int) -> String {
             "macOS has \(accessibilityName(macOSMajor: macOSMajor)) off for solstone."
         }

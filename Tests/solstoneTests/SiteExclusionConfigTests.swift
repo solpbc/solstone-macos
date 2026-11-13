@@ -64,21 +64,37 @@ struct SiteExclusionConfigTests {
         #expect(state.config.excludedSites.count == 200)
     }
 
-    @Test func addingASiteNeverAsksAndTheOwnersButtonDoes() async {
+    @Test func withoutAccessibilityAddingIsRefusedWithoutAskingAndTheOwnersButtonAsks() async {
         let promptCalled = OSAllocatedUnfairLock(initialState: 0)
         let probe = AccessibilityProbe(
             readWorks: { false },
             prompt: { promptCalled.withLock { $0 += 1 } }
         )
-        let state = AppState.forSnapshot(config: AppConfig())
+        let state = AppState.forSnapshot(config: AppConfig(), snapshotAccessibilityCaution: true)
+        state.accessibilityProbe = probe
+
+        #expect(state.websitesNeedAccessibility)
+        let error = await state.addExcludedSite("bank.com")
+        #expect(error == UICopy.Websites.errorNeedsAccessibility(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
+        #expect(state.config.excludedSites.isEmpty)
+        #expect(promptCalled.withLock { $0 } == 0)
+
+        state.askForAccessibility()
+        #expect(promptCalled.withLock { $0 } == 1)
+    }
+
+    @Test func withAccessibilityAddingNeverAsks() async {
+        let promptCalled = OSAllocatedUnfairLock(initialState: 0)
+        let probe = AccessibilityProbe(
+            readWorks: { true },
+            prompt: { promptCalled.withLock { $0 += 1 } }
+        )
+        let state = AppState.forSnapshot(config: AppConfig(), snapshotAccessibilityCaution: false)
         state.accessibilityProbe = probe
 
         #expect(await state.addExcludedSite("bank.com") == nil)
         #expect(state.config.excludedSites == ["bank.com"])
         #expect(promptCalled.withLock { $0 } == 0)
-
-        state.askForAccessibility()
-        #expect(promptCalled.withLock { $0 } == 1)
     }
 
     @Test func forSnapshotWithSitesInitializesRuleAndUpdatesOnReconfig() {

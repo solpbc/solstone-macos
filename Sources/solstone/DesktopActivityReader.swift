@@ -122,7 +122,7 @@ struct DesktopActivityReader: Sendable {
         let browser = PrivateBrowser.forBundleIdentifier(app.bundleID)
         let needsAX = (settings.accessibility && (settings.titles || settings.urls)) ||
             (settings.excludePrivate && settings.privateAccessibility && browser != nil) ||
-            (!settings.excludedSites.isEmpty && browser == .safari)
+            (!settings.excludedSites.isEmpty && browser != nil)
         var axTitle: String?
         var axDenied = false
         var focusedWindow: AXUIElement?
@@ -184,13 +184,19 @@ struct DesktopActivityReader: Sendable {
                     documentURL = walk.urls.compactMap({ $0 }).first
                 }
             }
-        } else if settings.urls && settings.accessibility && browser != nil, let focusedWindow {
+        } else if (settings.urls && settings.accessibility || !settings.excludedSites.isEmpty) && browser != nil, let focusedWindow {
+            // Another browser: wherever its page address can be read, a left-out website stays
+            // out of activity, title and address alike, whether addresses are recorded or not.
             let walk = walkSeam(focusedWindow, .firstDocument, permit, Self.activityElementTimeout)
+            if isLeftOut(walk.urls, settings: settings) { return DesktopActivityObservation(rows: []) }
             documentURL = walk.urls.compactMap({ $0 }).first
             if documentURL != nil {
                 let first = DesktopActivityPairRead(cgTitle: cgTitle, axTitle: axTitle, urls: walk.urls, complete: walk.completeness == .complete)
                 let second = readPairAgain(app: app, screenGranted: screenGranted, focused: focusedWindow, mode: .firstDocument)
-                if !Self.titleGoesWithAddress(first, second, titlesMustMatch: browser == .safari) {
+                if isLeftOut(second.urls, settings: settings) { return DesktopActivityObservation(rows: []) }
+                // A title is held back only to keep it from pairing with the wrong address.
+                if !Self.titleGoesWithAddress(first, second, titlesMustMatch: browser == .safari),
+                   settings.urls && settings.accessibility {
                     siteUndecided = true
                     documentURL = nil
                 }

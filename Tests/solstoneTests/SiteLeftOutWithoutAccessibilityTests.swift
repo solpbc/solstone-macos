@@ -536,18 +536,43 @@ struct SiteLeftOutWithoutAccessibilityTests {
 
     // MARK: capture manager and menu
 
-    @Test func keptOutFollowsAccessibilityNotCautionAndClearsWithTheList() {
+    @Test func oneFailedProbeHoldsSafariAndAccessibilityConfirmedOffTurnsTheRuleOff() {
         let state = AppState.forSnapshot(config: AppConfig())
         let capture = state.captureManager
         capture.updateSiteRule(["bank.com"])
+        #expect(capture.siteRuleActive)
+
+        // One failed probe may be a blip: Safari sits out, as before.
         capture.receiveSiteDecision(SiteDecision(), axAvailable: false, generation: capture.siteListGeneration)
         #expect(capture.safariKeptOut)
+        #expect(!capture.siteRuleSuspended)
 
-        capture.receiveSiteDecision(SiteDecision(), axAvailable: true, generation: capture.siteListGeneration)
+        // Confirmed off: the list does nothing, and nothing is kept out in its place.
+        capture.receiveSiteDecision(SiteDecision(), axAvailable: false, generation: capture.siteListGeneration)
+        #expect(capture.siteRuleSuspended)
+        #expect(!capture.siteRuleActive)
+        #expect(!capture.safariKeptOut)
+        capture.receiveSiteDecision(SiteDecision(), axAvailable: false, generation: capture.siteListGeneration)
         #expect(!capture.safariKeptOut)
 
-        capture.receiveSiteDecision(SiteDecision(), axAvailable: false, generation: capture.siteListGeneration)
+        // A working probe turns it back on.
+        capture.receiveSiteDecision(SiteDecision(), axAvailable: true, generation: capture.siteListGeneration)
+        #expect(!capture.siteRuleSuspended)
+        #expect(capture.siteRuleActive)
+        #expect(!capture.safariKeptOut)
+    }
+
+    @Test func aSuspendedRuleClearsWithTheList() {
+        let state = AppState.forSnapshot(config: AppConfig())
+        let capture = state.captureManager
+        capture.updateSiteRule(["bank.com"])
+        for _ in 0..<CaptureManager.siteAXFailuresToSuspend {
+            capture.receiveSiteDecision(SiteDecision(), axAvailable: false, generation: capture.siteListGeneration)
+        }
+        #expect(capture.siteRuleSuspended)
         capture.updateSiteRule([])
+        #expect(!capture.siteRuleSuspended)
+        #expect(!capture.siteRuleActive)
         #expect(!capture.safariKeptOut)
     }
 
