@@ -654,9 +654,9 @@ public enum UICopy {
             macOSMajor >= 27 ? "Device Control and Data Access" : "Accessibility"
         }
         public static func accessibilityCaution(macOSMajor: Int) -> String {
-            "to leave websites out, solstone needs \(accessibilityName(macOSMajor: macOSMajor)), so it can read which website each Safari window shows. once it's allowed, activity also adds browser addresses to your journal, except for websites you leave out, unless you turn addresses off under activity."
+            "to leave websites out, solstone needs \(accessibilityName(macOSMajor: macOSMajor)), so it can read which website each Safari window shows. once it's allowed, activity also adds browser addresses to your journal, except for websites you leave out. you can turn addresses off under activity."
         }
-        public static let NOT_KEPT_OUT_YET = "until then, these websites aren't kept out of your journal."
+        public static let NOT_KEPT_OUT_YET = "until it's allowed, these websites aren't kept out of your journal."
         public static func errorNeedsAccessibility(macOSMajor: Int) -> String {
             "allow \(accessibilityName(macOSMajor: macOSMajor)) first, so solstone can tell which website a window shows."
         }

@@ -268,7 +268,8 @@ struct SiteExclusionConfigTests {
                     #expect(state.privateWindowAccessibilityEnabled == expectedConjunction,
                             "Mismatch for excludePrivate: \(excludePrivate), accessibility: \(accessibility), sites: \(sites)")
                     #expect(state.privateWindowAccessibilityMonitor.isEnabled == expectedConjunction)
-                    #expect(state.privateWindowAccessibilityMonitor.sitesEnabled == !sites.isEmpty)
+                    // Always on: leave-out is offered only once Accessibility is known to work.
+                    #expect(state.privateWindowAccessibilityMonitor.sitesEnabled)
                 }
             }
         }
