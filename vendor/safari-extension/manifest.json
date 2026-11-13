@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "solstone",
+  "name": "__MSG_m62726f777365722e6272616e642e6e616d65__",
   "version": "0.5.10",
-  "description": "on sites you allow, it takes in page text, addresses and rough layout, and all of it goes into your journal.",
+  "description": "__MSG_m62726f777365722e6d616e69666573742e7361666172696465736372697074696f6e__",
   "incognito": "not_allowed",
   "permissions": [
     "storage",
@@ -20,6 +20,9 @@
   },
   "background": {
     "scripts": [
+      "i18n/catalog.js",
+      "i18n/contracts.js",
+      "i18n/index.js",
       "native-browser/constants.js",
       "native-browser/schemas.js",
       "native-browser/schema-validator.js",
@@ -53,7 +56,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "solstone",
+    "default_title": "__MSG_m62726f777365722e6272616e642e6e616d65__",
     "default_icon": {
       "16": "icons/icon-connecting-16.png",
       "48": "icons/icon-connecting-48.png",
@@ -65,5 +68,6 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "default_locale": "en_US"
 }

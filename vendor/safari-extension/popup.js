@@ -4,6 +4,8 @@
 (function () {
   "use strict";
 
+  const t = (...args) => globalThis.SolstoneI18n.t(...args);
+
   const Status = globalThis.SolstoneStatus;
   const Failures = globalThis.SolstoneFailures;
   if (globalThis.SolstoneCopy?.MOBILE === true) document.documentElement.classList.add("mobile");
@@ -212,7 +214,7 @@
     if (result.denied) {
       const blocked = result.blockedBy ? Copy.addBlockedBelow(state?.brand, Hosts.matchHostFor(page.host), result.blockedBy) : "";
       // Declining the browser's prompt is the owner's answer, not a failure; a policy block stays red.
-      showActionMessage(blocked || "permission declined. nothing added.", blocked ? "bad" : "ok");
+      showActionMessage(blocked || t("browser.copy.adddenied"), blocked ? "bad" : "ok");
     }
     else if (result.error) showActionError(result.error);
     await refresh();
@@ -223,7 +225,6 @@
     if (!$("pageLearn")) return;
     const adding = globalThis.SolstoneCopy.MOBILE === true && section.siteAction?.id === "add-site";
     $("pageLearn").hidden = !adding;
-    $("pageHint").hidden = !adding || section.siteAction.disabled === true;
     if (!adding) return;
     $("pageLearnWhat").textContent = globalThis.SolstoneCopy.DISCLOSURE_BODY;
     $("pageLearnUnsent").textContent = "";
@@ -388,7 +389,7 @@
     const about = globalThis.SolstoneAbout.block(chrome.runtime.getManifest().version, state?.about);
     if ($("aboutBlock").textContent !== about) {
       $("aboutBlock").textContent = about;
-      $("aboutCopy").textContent = "copy";
+      $("aboutCopy").textContent = t("browser.popup.copybutton", { phase: "copy" });
       $("aboutMessage").textContent = "";
     }
     const extras = {};
@@ -447,17 +448,17 @@
     try {
       await navigator.clipboard.writeText(displayed);
       if ($("aboutBlock").textContent === displayed) {
-        $("aboutCopy").textContent = "copied";
+        $("aboutCopy").textContent = t("browser.popup.copybutton", {phase:"copied"});
         $("aboutMessage").textContent = "";
       }
     } catch (_error) {
       if ($("aboutBlock").textContent === displayed) {
-        $("aboutCopy").textContent = "copy";
-        $("aboutMessage").textContent = "couldn't copy. select the text and copy it.";
+        $("aboutCopy").textContent = t("browser.popup.copybutton", {phase:"copy"});
+        $("aboutMessage").textContent = t("browser.popup.copyfailed");
       }
     }
   });
-  if (globalThis.SolstoneCopy?.MOBILE === true) $("allSitesLink").textContent = "settings \u203a";
+  if (globalThis.SolstoneCopy?.MOBILE === true) $("allSitesLink").textContent = t("browser.popup.settings");
   $("allSitesLink").addEventListener("click", (event) => {
     event.preventDefault();
     openSettings();

@@ -4,6 +4,8 @@
 (function () {
   "use strict";
 
+  const t = (...args) => globalThis.SolstoneI18n.t(...args);
+
   const Hosts = globalThis.SolstoneHosts;
   const Status = globalThis.SolstoneStatus;
   const Failures = globalThis.SolstoneFailures;
@@ -255,8 +257,8 @@
       }
       const remove = document.createElement("button");
       remove.type = "button";
-      remove.textContent = "remove";
-      if (typeof remove.setAttribute === "function") remove.setAttribute("aria-label", `${remove.textContent} ${host}`);
+      remove.textContent = t("browser.options.remove");
+      if (typeof remove.setAttribute === "function") remove.setAttribute("aria-label", t("browser.options.siterowaria", {action:remove.textContent,host}));
       remove.addEventListener("click", () => runSiteAction({ id: "remove-site", host: hostname, label: host, origin: entry }));
       actions.append(remove);
       row.append(copyEl, actions);
@@ -272,7 +274,7 @@
       sentence.textContent = Copy.TRUNCATION_ATTENTION;
       const dismiss = document.createElement("button");
       dismiss.type = "button";
-      dismiss.textContent = "dismiss";
+      dismiss.textContent = t("browser.chrome.dismiss");
       dismiss.addEventListener("click", () => runSiteAction({ id: "dismiss-truncation", origin, bound: notice.newestId }));
       const site = document.createElement("div");
       site.className = "site-host";
@@ -285,7 +287,7 @@
   function getStep1State(st) {
     if (!st || typeof st !== "object" || st.ok === false || !st.inst) {
       return {
-        heading: `looking for the solstone app on ${Copy.PLACE}\u2026`,
+        heading: t("browser.options.lookingforapp", { place: Copy.PLACE }),
         body: "",
         action: null,
         met: false,
@@ -336,10 +338,10 @@
       if (card.parentNode !== welcome) welcome.append(card);
       card.hidden = false;
       // Nobody has read it yet on a first run.
-      if (summary) summary.textContent = "what it takes in";
+      if (summary) summary.textContent = t("browser.popup.whattakes");
     } else {
       if (card.parentNode !== settings) settings.append(card);
-      if (summary && !Copy.MOBILE) summary.textContent = "read it again";
+      if (summary && !Copy.MOBILE) summary.textContent = t("browser.options.readagain");
     }
   }
 
@@ -369,7 +371,7 @@
     const rules = heldRules(st);
     const heading = document.createElement("h2");
     heading.id = "firstRunHeading";
-    heading.textContent = "which sites do you want in your journal?";
+    heading.textContent = t("browser.options.whichsitesdowant");
     block.append(heading);
     const buttonsLive = rules !== "chrome" || step1Met === true;
     const everyBody = document.createElement("p");
@@ -378,7 +380,7 @@
     every.type = "button";
     every.id = "firstRunEverySite";
     every.hidden = !buttonsLive;
-    every.textContent = rules === "chrome" ? "agree and share every site" : "share every site";
+    every.textContent = rules === "chrome" ? t("browser.options.agreeshareeverysite") : t("browser.options.shareeverysite");
     if (rules === "chrome") every.dataset.act = "agree";
     every.addEventListener("click", () => runFirstRunEverySite());
     if (Hosts?.everySiteLive?.(st?.livePatterns) === true) {
@@ -400,14 +402,14 @@
     one.type = "button";
     one.id = "firstRunOneSite";
     one.hidden = !buttonsLive;
-    one.textContent = rules === "chrome" ? "agree and add sites one at a time" : "add sites one at a time";
+    one.textContent = rules === "chrome" ? t("browser.options.agreeaddsitesone") : t("browser.options.addsitesoneat");
     if (rules === "chrome") one.dataset.act = "agree";
     one.addEventListener("click", () => runFirstRunOneSite());
     block.append(firstRunOption(oneBody, one));
   }
 
   function renderWelcome(derived) {
-    if ($("pageSubTitle")) $("pageSubTitle").textContent = "in your browser";
+    if ($("pageSubTitle")) $("pageSubTitle").textContent = t("browser.chrome.inyourbrowser");
     if ($("welcomeView")) {
       $("welcomeView").hidden = false;
       $("welcomeView").dataset.rules = heldRules(state);
@@ -441,8 +443,8 @@
     if ($("step2Section")) $("step2Section").hidden = !chromeAgreement;
     if ($("step3Section")) $("step3Section").hidden = true;
     if ($("agreeDisclosureBtn")) $("agreeDisclosureBtn").hidden = true;
-    if ($("step2Heading")) $("step2Heading").textContent = "what the solstone extension takes in";
-    if ($("step3Heading")) $("step3Heading").textContent = "choose your first site";
+    if ($("step2Heading")) $("step2Heading").textContent = t("browser.options.takesin");
+    if ($("step3Heading")) $("step3Heading").textContent = t("browser.options.choosefirst");
     if ($("step3Body") && Copy) $("step3Body").textContent = Copy.step3Body(state ? state.brand : "");
     if ($("step2Check")) $("step2Check").hidden = true;
     if ($("step2Completed")) $("step2Completed").hidden = true;
@@ -463,7 +465,7 @@
   }
 
   function renderSettings(derived) {
-    if ($("pageSubTitle")) $("pageSubTitle").textContent = "in your browser";
+    if ($("pageSubTitle")) $("pageSubTitle").textContent = t("browser.chrome.inyourbrowser");
     const welcome = $("welcomeView");
     if (welcome) {
       welcome.hidden = true;
@@ -521,7 +523,7 @@
         const resume = document.createElement("button");
         resume.type = "button";
         resume.className = "primary";
-        resume.textContent = "resume";
+        resume.textContent = t("browser.popup.pauseall", { phase: "paused" });
         resume.addEventListener("click", async () => {
           clearAnnouncement();
           const result = await cmd({ cmd: "setPaused", paused: false });
@@ -578,7 +580,7 @@
               },
               {
                 id: q.keepId || "keep-my-sites",
-                label: q.keepLabel || "keep my sites",
+                label: q.keepLabel || t("browser.options.keepmysites"),
                 primary: false,
               },
             ],
@@ -589,7 +591,7 @@
             },
             secondaryAction: {
               id: q.keepId || "keep-my-sites",
-              label: q.keepLabel || "keep my sites",
+              label: q.keepLabel || t("browser.options.keepmysites"),
               primary: false,
             },
           });
@@ -860,7 +862,7 @@
         if ($("accessChecking")) $("accessChecking").textContent = "";
         if ($("accessAllow")) {
           $("accessAllow").hidden = false;
-          $("accessAllow").textContent = "share every site";
+          $("accessAllow").textContent = t("browser.options.shareeverysite");
           mountVersionOneNote($("accessAllow").parentNode, $("accessAllow"));
         }
       }
@@ -884,7 +886,7 @@
     syncSettingsEverySiteOn(false);
 
     if ($("listHeading")) {
-      $("listHeading").textContent = "your sites";
+      $("listHeading").textContent = t("browser.options.yoursites");
       $("listHeading").hidden = everySite;
     }
     if ($("siteModeHelp")) {
@@ -895,10 +897,16 @@
       $("siteModeHelp").hidden = everySite && state?.permissionsUnavailable !== true;
     }
     fieldLeavesOut = everySite;
-    if ($("addForm")) $("addForm").hidden = false;
-    if ($("siteInputLabel")) $("siteInputLabel").textContent = fieldLeavesOut ? "leave out a site" : "add a site";
-    if ($("addBtn")) $("addBtn").textContent = fieldLeavesOut ? "leave out" : "add this site";
-    if ($("newHost")) $("newHost").placeholder = fieldLeavesOut ? "bank.com" : (Copy.MOBILE ? "eff.org" : "mail.google.com");
+    // The field leaves sites out, which on a Mac needs the app's Accessibility; say so instead.
+    const leaveOutBlocked = fieldLeavesOut && Copy.leaveOutNeedsAccess(state);
+    if (leaveOutBlocked && $("siteModeHelp")) {
+      $("siteModeHelp").textContent = Copy.LEAVE_OUT_NEEDS_ACCESS;
+      $("siteModeHelp").hidden = false;
+    }
+    if ($("addForm")) $("addForm").hidden = leaveOutBlocked;
+    if ($("siteInputLabel")) $("siteInputLabel").textContent = fieldLeavesOut ? t("browser.options.leaveoutasite") : t("browser.options.addasite");
+    if ($("addBtn")) $("addBtn").textContent = fieldLeavesOut ? t("browser.options.leaveout") : t("browser.chrome.addthissite");
+    if ($("newHost")) $("newHost").placeholder = fieldLeavesOut ? t("browser.options.leaveoutplaceholder") : (Copy.MOBILE ? t("browser.options.mobileplaceholder") : t("browser.options.placeholder"));
 
     let visibleSites = [];
     if (state?.fence) {
@@ -949,10 +957,12 @@
             hostSpan.textContent = host;
             row.append(hostSpan);
 
-            if (isLocal || state?.leftOutCapable) {
+            // Including a site the app's list also covers has to reach the app, or it stays out.
+            const appCovers = appEx.some((entry) => H.hostCovers(entry, host));
+            if (state?.leftOutCapable || (isLocal && !appCovers)) {
               const btn = document.createElement("button");
               btn.type = "button";
-              btn.textContent = "stop leaving out";
+              btn.textContent = t("browser.options.stopleavingout");
               btn.className = "include";
               btn.addEventListener("click", async () => {
                 clearAnnouncement();
@@ -1207,7 +1217,7 @@
     // Nothing heard yet: the page keeps its first look.
     if (!link.status) return;
     state = paintedState(link.status, latest);
-    if ($("ver")) $("ver").textContent = state && state.version ? `v${state.version}` : "";
+    if ($("ver")) $("ver").textContent = state && state.version ? t("browser.options.version", { version: state.version }) : "";
 
     const derived = Status.derive(state);
 
@@ -1269,7 +1279,7 @@
   // A phone's settings are one list: its sites, the pause switch, and what it takes in.
   if (Copy.MOBILE) {
     document.documentElement.classList.add("mobile");
-    document.querySelector("#disclosureCard summary").textContent = "what it takes in";
+    document.querySelector("#disclosureCard summary").textContent = t("browser.popup.whattakes");
     $("pauseCard").hidden = false;
     $("pauseSwitch").addEventListener("change", async () => {
       await cmd({ cmd: "setPaused", paused: $("pauseSwitch").checked });

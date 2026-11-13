@@ -902,7 +902,7 @@
       }
       if (Object.prototype.hasOwnProperty.call(val, "desktop")) {
         if (val.desktop && typeof val.desktop === "object") {
-          const knownSites = ["on", "needs_access", "not_checked"];
+          const knownSites = ["on", "needs_access", "unreadable", "not_checked"];
           const rawSites = val.desktop.sites;
           const sites = knownSites.includes(rawSites) ? rawSites : "not_checked";
           this.desktop = {

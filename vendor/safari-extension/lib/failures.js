@@ -4,11 +4,13 @@
 (function () {
   "use strict";
 
+  const t = (...args) => globalThis.SolstoneI18n.t(...args);
+
   function classify(raw, statusOrBrand) {
     const brand = typeof statusOrBrand === "string" ? statusOrBrand : (statusOrBrand && statusOrBrand.brand) || "";
     const C = globalThis.SolstoneCopy;
     if (C && C.actionFailure) return C.actionFailure(raw, brand);
-    return `something went wrong: ${raw}`;
+    return t("browser.failure.raw", { raw: String(raw) });
   }
 
   function contentScriptRegistrationSatisfied(id, registeredScripts) {

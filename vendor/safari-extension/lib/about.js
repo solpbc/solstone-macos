@@ -3,6 +3,7 @@
 
 (function () {
   "use strict";
+  const t = (...args) => globalThis.SolstoneI18n.t(...args);
 
   const KEYS = ["protocol_version", "os", "os_version", "arch", "journal_line", "journal_current", "journal_seen_at_epoch_secs"];
   const clean = (value) => typeof value === "string" && !/[\u0000-\u001f\u007f]/.test(value);
@@ -25,22 +26,22 @@
   }
 
   function age(seconds) {
-    if (seconds < 60) return "just now";
-    const [count, unit] = seconds < 3600 ? [Math.floor(seconds / 60), "minute"] :
-      seconds < 86400 ? [Math.floor(seconds / 3600), "hour"] : [Math.floor(seconds / 86400), "day"];
-    return `${count} ${unit}${count === 1 ? "" : "s"} ago`;
+    if (seconds < 60) return t("browser.about.justnow");
+    if (seconds < 3600) return t("browser.about.minutesago", {count:Math.floor(seconds / 60)});
+    if (seconds < 86400) return t("browser.about.hoursago", {count:Math.floor(seconds / 3600)});
+    return t("browser.about.daysago", {count:Math.floor(seconds / 86400)});
   }
 
   function block(version, value, now = Date.now() / 1000) {
     const facts = decode(value);
-    let own = `solstone extension ${String(version).replace(/^v/, "")}`;
+    let own = t("browser.about.extensionversion", {value1: String(version).replace(/^v/, "")});
     if (facts?.os) own += ` \u00b7 ${facts.os}${facts.os_version ? " " + facts.os_version : ""}`;
     if (facts?.arch) own += ` \u00b7 ${arch(facts.arch)}`;
-    let journal = facts?.journal_line || "journal unknown";
-    if (facts && journal !== "journal unknown" && !facts.journal_current && facts.journal_seen_at_epoch_secs !== null) {
-      journal += ` \u00b7 last seen ${age(Math.max(0, Math.floor(now - facts.journal_seen_at_epoch_secs)))}`;
+    let journal = facts?.journal_line || t("browser.about.journalunknown");
+    if (facts && facts.journal_line !== "journal unknown" && !facts.journal_current && facts.journal_seen_at_epoch_secs !== null) {
+      journal += t("browser.about.lastseen", {value1: String(age(Math.max(0, Math.floor(now - facts.journal_seen_at_epoch_secs))))});
     }
-    return `${own}\n${journal}`;
+    return t("browser.about.lines", {own,journal});
   }
 
   globalThis.SolstoneAbout = { decode, block, arch };

@@ -3,6 +3,9 @@
 
 if (typeof importScripts === "function") {
   importScripts(
+    "i18n/catalog.js",
+    "i18n/contracts.js",
+    "i18n/index.js",
     "native-browser/constants.js",
     "native-browser/schemas.js",
     "native-browser/schema-validator.js",
@@ -28,6 +31,7 @@ if (typeof importScripts === "function") {
   );
 }
 
+const t = (...args) => globalThis.SolstoneI18n.t(...args);
 const H = globalThis.SolstoneHosts;
 const DB = globalThis.SolstoneDB;
 const Failures = globalThis.SolstoneFailures;
@@ -246,7 +250,7 @@ async function paintToolbar(status) {
   const iconInfo = Status.iconState(toolbarLink.status);
   const prefix = iconInfo.prefix;
   const badge = iconInfo.badge || "";
-  const title = iconInfo.title || "solstone";
+  const title = iconInfo.title || t("browser.brand.name");
   const currentPaint = ++paintEpoch;
   badgeChain = badgeChain.catch(() => {}).then(async () => {
     if (paintEpoch !== currentPaint) return;

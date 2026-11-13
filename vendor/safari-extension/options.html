@@ -5,7 +5,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>solstone settings</title>
+    <title data-i18n="browser.options.documenttitle"></title>
     <style>
       @font-face { font-family: "Comfortaa"; src: url("fonts/comfortaa.woff2") format("woff2"); font-weight: 700; font-display: swap; }
       @font-face { font-family: "InterBody"; src: url("fonts/inter.woff2") format("woff2"); font-weight: 400 600; font-display: swap; }
@@ -318,7 +318,7 @@
       <header id="pageHeader">
         <h1 id="pageTitle">
           <img id="optionsMark" src="brand/mark-connecting.svg" width="24" height="24" alt="" />
-          solstone <span class="desc" id="pageSubTitle">in your browser</span>
+          <span data-i18n="browser.brand.name"></span> <span class="desc" id="pageSubTitle" data-i18n="browser.chrome.inyourbrowser"></span>
         </h1>
       </header>
 
@@ -336,7 +336,7 @@
           <section id="step1Section" class="step">
             <h2 id="step1HeadingRow">
               <span id="step1Check" hidden>✓ </span>
-              <span id="step1Heading">looking for the solstone app on this computer…</span>
+              <span id="step1Heading" data-i18n="browser.options.lookingforapp" data-i18n-args='{"place":"computer"}'></span>
             </h2>
             <p id="step1Body" class="muted"></p>
             <div id="step1Actions" class="actions">
@@ -348,18 +348,18 @@
           <section id="step2Section" class="step">
             <h2 id="step2HeadingRow">
               <span id="step2Check" hidden>✓ </span>
-              <span id="step2Heading">what the solstone extension takes in</span>
+              <span id="step2Heading" data-i18n="browser.options.takesin"></span>
             </h2>
             <div id="step2Content">
               <div id="step2DisclosureBody" class="disclosure"></div>
               <p id="step2PendingText" class="muted" hidden></p>
               <div class="actions" id="step2Actions">
-                <button id="agreeDisclosureBtn" class="primary" type="button" hidden>agree and go on</button>
+                <button id="agreeDisclosureBtn" class="primary" type="button" hidden data-i18n="browser.options.agreegoon"></button>
               </div>
             </div>
             <div id="step2Completed" hidden>
               <details id="step2ReReadDetails">
-                <summary id="step2ReadAgain">read it again</summary>
+                <summary id="step2ReadAgain" data-i18n="browser.options.readagain"></summary>
                 <div id="step2ReReadBody" class="disclosure"></div>
               </details>
             </div>
@@ -369,7 +369,7 @@
           <section id="step3Section" class="step">
             <h2 id="step3HeadingRow">
               <span id="step3Check" hidden>✓ </span>
-              <span id="step3Heading">choose your first site</span>
+              <span id="step3Heading" data-i18n="browser.options.choosefirst"></span>
             </h2>
             <div id="step3Content" hidden>
               <p id="step3Body" class="muted"></p>
@@ -393,7 +393,7 @@
         </section>
 
         <section id="sitesCard" class="card" aria-labelledby="sitesHeading">
-          <h2 id="sitesHeading" tabindex="-1">what you share</h2>
+          <h2 id="sitesHeading" tabindex="-1" data-i18n="browser.options.whatyoushare"></h2>
           <div id="sitesMain">
             <div class="modes" role="group" aria-labelledby="sitesHeading">
               <div id="modeSelected" class="mode">
@@ -449,10 +449,10 @@
             <form id="addForm" novalidate>
               <div class="addrow">
                 <div>
-                  <label id="siteInputLabel" for="newHost">add a site</label>
-                  <input id="newHost" placeholder="mail.google.com" autocomplete="off" spellcheck="false" aria-describedby="siteInputError" />
+                  <label id="siteInputLabel" for="newHost" data-i18n="browser.options.addasite"></label>
+                  <input id="newHost" placeholder="" data-i18n-placeholder="browser.options.placeholder" autocomplete="off" spellcheck="false" aria-describedby="siteInputError" />
                 </div>
-                <button id="addBtn" class="primary" type="submit">add this site</button>
+                <button id="addBtn" class="primary" type="submit" data-i18n="browser.chrome.addthissite"></button>
               </div>
               <p id="siteInputError" class="field-error" hidden></p>
             </form>
@@ -471,7 +471,7 @@
             <p id="siteDisclosureUnsent"></p>
             <p id="siteDisclosureLeaveOut" hidden></p>
             <div class="destination-box">
-              <div class="key">it goes to</div>
+              <div class="key" data-i18n="browser.chrome.itgoesto"></div>
               <div id="siteDisclosureDestination" class="value"></div>
               <div id="siteDisclosureDestinationDetail" class="detail"></div>
             </div>
@@ -486,30 +486,35 @@
         <section id="pauseCard" class="card" hidden>
           <label class="marker-label">
             <input type="checkbox" id="pauseSwitch" />
-            pause
+            <span data-i18n="browser.options.pause"></span>
+
           </label>
         </section>
 
         <section id="pauseWithAppCard" class="card">
-          <h2>pause with the solstone app</h2>
+          <h2 data-i18n="browser.options.pauseheading"></h2>
           <label class="marker-label">
             <input type="checkbox" id="pauseWithApp" />
-            pause this extension when the solstone app pauses
+            <span data-i18n="browser.options.pauselabel"></span>
+
           </label>
-          <p class="muted" style="margin-top: 8px;">on: when the solstone app on this computer pauses, so does this extension. off: when you pause the solstone app, this extension keeps taking in your shared sites, and all of it goes into your journal.</p>
+          <p class="muted" style="margin-top: 8px;" data-i18n="browser.options.pausehelp"></p>
         </section>
 
         <section id="disclosureCard" class="card">
-          <h2>what the solstone extension takes in</h2>
+          <h2 data-i18n="browser.options.takesin"></h2>
           <details id="disclosureDetails">
-            <summary id="disclosureSummary">read it again</summary>
+            <summary id="disclosureSummary" data-i18n="browser.options.readagain"></summary>
             <div id="settingsDisclosureBody" class="disclosure"></div>
           </details>
         </section>
       </div>
 
-      <footer id="pageFooter">solstone <span id="ver"></span></footer>
+      <footer id="pageFooter"><span data-i18n="browser.brand.name"></span> <span id="ver"></span></footer>
     </div>
+    <script src="i18n/catalog.js"></script>
+    <script src="i18n/contracts.js"></script>
+    <script src="i18n/index.js"></script>
     <script src="lib/copy.js"></script>
     <script src="lib/hosts.js"></script>
     <script src="lib/status.js"></script>

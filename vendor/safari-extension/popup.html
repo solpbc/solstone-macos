@@ -130,6 +130,9 @@
         border-top: 1px solid var(--line);
       }
       .site-issue:first-child { border-top: 0; padding-top: 0; }
+      /* Name and reason always share the first column. A row without a button
+         leaves the second column empty, so the hostname gets the full width. */
+      .site-issue .h, .site-issue .w { grid-column: 1; }
       .site-issue .h { font-weight: 600; overflow-wrap: anywhere; }
       .site-issue .w { color: var(--soft); font-size: 12px; }
       .site-issue button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
@@ -223,7 +226,6 @@
       .mobile .pact button { flex: none; }
       .mobile button { min-height: 50px; border-radius: 14px; font-size: 17px; }
       .mobile button.primary { font-weight: 600; }
-      .mobile .page-hint { display: block; margin: 10px 0 0; color: var(--soft); font-size: 15px; text-align: center; }
       .mobile .page-learn { display: block; margin-top: 0; font-size: 15px; color: var(--soft); }
       .mobile .page-learn[hidden] { display: none; }
       .mobile .page-learn summary {
@@ -268,8 +270,8 @@
   <body>
     <header>
       <img id="headerMark" src="brand/mark-connecting.svg" width="20" height="20" alt="" />
-      <span class="word">solstone</span>
-      <span class="desc">in your browser</span>
+      <span class="word" data-i18n="browser.brand.name"></span>
+      <span class="desc" data-i18n="browser.chrome.inyourbrowser"></span>
     </header>
 
     <main id="popupMain">
@@ -285,12 +287,12 @@
       </section>
 
       <section id="siteIssues" class="blk" hidden>
-        <h2 class="blk-h">sites that need attention</h2>
+        <h2 class="blk-h" data-i18n="browser.popup.attentionheading"></h2>
         <div id="siteIssueRows"></div>
       </section>
 
       <section id="page" class="blk">
-        <h2 class="blk-h">this page</h2>
+        <h2 class="blk-h" data-i18n="browser.popup.thispage"></h2>
         <div class="page-line">
           <span id="pageHost" class="page-host"></span>
           <span id="currentPageState" class="page-state"></span>
@@ -302,9 +304,8 @@
           <button id="pauseAction" type="button"></button>
         </div>
         <div id="actionMessage" class="action-message" aria-live="polite"></div>
-      <p id="pageHint" class="page-hint" hidden>Safari asks next. choose Always Allow.</p>
         <details id="pageLearn" class="page-learn" hidden>
-          <summary>what it takes in</summary>
+          <summary data-i18n="browser.popup.whattakes"></summary>
           <p id="pageLearnWhat"></p>
           <p id="pageLearnUnsent"></p>
           <p id="pageLearnWhere"></p>
@@ -312,18 +313,18 @@
       </section>
 
       <section id="siteCount" class="blk" hidden>
-        <h2 class="blk-h">sharing</h2>
+        <h2 class="blk-h" data-i18n="browser.popup.sharing"></h2>
         <div class="site-count">
           <span id="siteCountText"></span>
-          <a id="allSitesLink" href="#">manage ›</a>
+          <a id="allSitesLink" href="#" data-i18n="browser.popup.manage"></a>
         </div>
       </section>
 
       <section id="about" class="blk">
         <details class="about-details">
-          <summary>about</summary>
+          <summary data-i18n="browser.popup.about"></summary>
           <pre id="aboutBlock" class="about-block" tabindex="0"></pre>
-          <button id="aboutCopy" type="button">copy</button>
+          <button id="aboutCopy" type="button" data-i18n="browser.popup.copybutton" data-i18n-args='{"phase":"copy"}'></button>
           <div id="aboutMessage" class="action-message" aria-live="polite"></div>
         </details>
       </section>
@@ -334,7 +335,7 @@
       <p id="disclosureWhat" class="strongish"></p>
       <p id="disclosureUnsent"></p>
       <div class="destbox">
-        <div class="k">it goes to</div>
+        <div class="k" data-i18n="browser.chrome.itgoesto"></div>
         <div id="disclosureDestination" class="v"></div>
         <div id="disclosureDestinationDetail" class="u"></div>
       </div>
@@ -346,9 +347,12 @@
     </section>
 
     <footer id="popupFooter">
-      <a href="#" id="settingsLink">settings ›</a>
+      <a href="#" id="settingsLink" data-i18n="browser.popup.settings"></a>
     </footer>
 
+    <script src="i18n/catalog.js"></script>
+    <script src="i18n/contracts.js"></script>
+    <script src="i18n/index.js"></script>
     <script src="lib/copy.js"></script>
     <script src="lib/about.js"></script>
     <script src="lib/hosts.js"></script>

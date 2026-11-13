@@ -1,0 +1,29 @@
+{
+  "m62726f777365722e6272616e642e6e616d65": {
+    "description": "Browser extension copy. solstone",
+    "message": "$SAFE$",
+    "placeholders": {
+      "safe": {
+        "content": "solstone"
+      }
+    }
+  },
+  "m62726f777365722e6d616e69666573742e6465736372697074696f6e": {
+    "description": "Browser extension copy. on sites you allow, the solstone extension takes in page text, addresses and rough layo...",
+    "message": "$SAFE$",
+    "placeholders": {
+      "safe": {
+        "content": "on sites you allow, the solstone extension takes in page text, addresses and rough layout, and all of it goes into your journal."
+      }
+    }
+  },
+  "m62726f777365722e6d616e69666573742e7361666172696465736372697074696f6e": {
+    "description": "Safari manifest description",
+    "message": "$SAFE$",
+    "placeholders": {
+      "safe": {
+        "content": "on sites you allow, it takes in page text, addresses and rough layout, and all of it goes into your journal."
+      }
+    }
+  }
+}

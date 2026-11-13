@@ -4,6 +4,8 @@
 (function () {
   "use strict";
 
+  const t = (...args) => globalThis.SolstoneI18n.t(...args);
+
   // The device the solstone app is on, named the way the owner would.
   const here = () => globalThis.SolstoneCopy?.PLACE || "this computer";
   // Safari on iPhone and iPad: the app answers while closed.
@@ -30,11 +32,11 @@
         kind: "unavailable",
         mark: "error",
         badge: "",
-        headline: "status unavailable",
+        headline: t("browser.status.unavailable"),
         sub: "",
         appPausedNote: "",
-        reason: "the solstone extension can't show its status right now.",
-        action: { id: "open-settings", label: "open settings" },
+        reason: t("browser.status.unavailablereason"),
+        action: { id: "open-settings", label: t("browser.labels.opensettings") },
         also: [],
         connecting: null,
       };
@@ -43,7 +45,7 @@
     try {
       const brand = status.brand || "";
       const platform = status.platform || "";
-      const bName = C ? C.browserName(brand) : "your browser";
+      const bName = C ? C.browserName(brand) : t("browser.copy.browsername", {brand:"other"});
       const siteErrors = status.siteErrors || {};
       const registrations = status.registration || siteErrors.registration || {};
       const enqueueErrors = status.enqueue || siteErrors.enqueue || {};
@@ -79,39 +81,39 @@
 
       // Layer 1: Version Skew
       if (behind === "extension") {
-        let reason = `the solstone app on ${here()} needs a newer version of this extension. ${bName} hasn't found it yet; it checks again on its own.`;
+        let reason = t("browser.status.updatepending", { place: here(), browser: bName });
         let action = null;
         if (updateCheck === "pending") {
-          reason = `the solstone app on ${here()} needs a newer version of this extension. ${bName} is checking for it now.`;
+          reason = t("browser.status.updatechecking", { place: here(), browser: bName });
         } else if (updateCheck === "manual" && status.brand === "safari") {
-          reason = `the solstone app on ${here()} needs a newer version of this extension. in Safari it comes with the solstone app, so update the solstone app.`;
+          reason = t("browser.status.updatesafarimanual", { place: here() });
         } else if (updateCheck === "manual") {
-          reason = `the solstone app on ${here()} needs a newer version of this extension. in Firefox, open Add-ons and themes, then choose Check for Updates from the gear menu.`;
+          reason = t("browser.status.updatefirefoxmanual", { place: here() });
         } else if (updateCheck === "update-available") {
-          reason = "the update is ready.";
-          action = { id: "update-now", label: "update now" };
+          reason = t("browser.status.updateready");
+          action = { id: "update-now", label: t("browser.labels.updatenow") };
         }
         items.push({
           layer: 1,
           kind: "update-extension",
           mark: "attention",
           badge: "!",
-          headline: "update the solstone extension",
-          sub: "nothing new is taken in until it's updated",
+          headline: t("browser.status.updateextension"),
+          sub: t("browser.status.untilupdated"),
           reason,
           action,
           connecting: null,
         });
       } else if (behind === "app") {
-        const reason = platform === "linux" ? "" : mobile() ? `update the solstone app on ${here()}.`
-          : `this extension needs a newer version of the solstone app on ${here()}. look under updates in the solstone app's settings.`;
+        const reason = platform === "linux" ? "" : mobile() ? t("browser.status.updateapp", { place: here() })
+          : t("browser.status.updateapp", { place: here() });
         items.push({
           layer: 1,
           kind: "update-app",
           mark: "attention",
           badge: "!",
-          headline: "update the solstone app",
-          sub: "nothing new is taken in until it's updated",
+          headline: t("browser.status.updateappheadline"),
+          sub: t("browser.status.untilupdated"),
           reason,
           action: null,
           connecting: null,
@@ -131,7 +133,7 @@
           kind: "connecting",
           mark: "connecting",
           badge: "",
-          headline: "connecting to the solstone app",
+          headline: t("browser.status.connecting"),
           sub: "",
           reason: "",
           action: null,
@@ -147,15 +149,15 @@
         const appInstalled = status.appAnswered === true || brand === "safari";
         if (!everConnected && !appInstalled) {
           mark = "paused";
-          reason = `the solstone extension works with the solstone app on ${here()}. if the solstone app isn't on ${here()} yet, get it at solstone.app.`;
-          action = { id: "get-app", label: "get the solstone app" };
+          reason = t("browser.status.cantreachgetapp", { place: here() });
+          action = { id: "get-app", label: t("browser.status.getapp") };
         } else if (!everConnected || connected) {
           if (!everConnected) mark = "paused";
-          reason = mobile() ? `the solstone app on ${here()} isn't answering right now. this extension tries again on its own.`
-            : `the solstone app on ${here()} isn't answering. open it to go on.`;
+          reason = mobile() ? t("browser.status.cantreachanswering", { place: here() })
+            : t("browser.status.cantreachanswering", { place: here() });
         } else if (platform !== "linux") {
-          reason = mobile() ? `the solstone app on ${here()} isn't answering right now. this extension tries again on its own.`
-            : `open the solstone app on ${here()}. if it's already open, look under sources in its settings.`;
+          reason = mobile() ? t("browser.status.cantreachanswering", { place: here() })
+            : t("browser.status.cantreachreopen", { place: here() });
         } else if (C) {
           reason = C.linuxCantReachAppReason();
         }
@@ -164,8 +166,8 @@
           kind: "cant-reach-app",
           mark,
           badge: "",
-          headline: "can't reach the solstone app",
-          sub: "nothing is taken in until it answers",
+          headline: t("browser.status.cantreach"),
+          sub: t("browser.status.untilanswers"),
           reason,
           action,
           connecting: null,
@@ -179,10 +181,10 @@
           kind: "not-paired",
           mark: "paused",
           badge: "",
-          headline: "the solstone app isn't paired yet",
-          sub: "nothing is taken in until it is",
-          reason: mobile() ? `pair the solstone app on ${here()} with your journal and confirm your journal's mark, then come back.`
-            : `pair the solstone app on ${here()} with your journal, then come back.`,
+          headline: t("browser.status.notpairedheadline"),
+          sub: t("browser.status.untilpaired"),
+          reason: mobile() ? t("browser.status.notpaired", { place: here() })
+            : t("browser.status.notpaired", { place: here() }),
           action: null,
           connecting: null,
         });
@@ -194,10 +196,10 @@
           kind: "consent-needed",
           mark: "paused",
           badge: "",
-          headline: "finish setting up",
-          sub: "nothing is taken in until you do",
-          reason: "read what the solstone extension takes in, then choose your first site.",
-          action: { id: "finish-setup", label: "finish setting up" },
+          headline: t("browser.status.finishsetup"),
+          sub: t("browser.status.untilyoudo"),
+          reason: t("browser.status.readthenchoose"),
+          action: { id: "finish-setup", label: t("browser.status.finishsetup") },
           connecting: null,
         });
       }
@@ -208,23 +210,23 @@
           kind: "app-paused",
           mark: "paused",
           badge: "",
-          headline: "the solstone app is paused",
-          sub: "nothing new is taken in",
-          reason: "pausing doesn't hold back what's already taken in. resume from the solstone app.",
+          headline: t("browser.status.apppausedheadline", { surface: "desktop" }),
+          sub: t("browser.status.nothingnew"),
+          reason: t("browser.status.apppausedreason", { surface: "desktop" }),
           action: null,
           connecting: null,
         });
       }
 
       if (hostCapture === "intake_off" && (!hostFailure || hostFailure === "relay_unavailable" || hostFailure === "journal_rejected")) {
-        const reason = platform === "linux" ? "" : "turn browser pages back on under sources in the solstone app's settings.";
+        const reason = platform === "linux" ? "" : t("browser.status.turnpageson");
         items.push({
           layer: 3,
           kind: "intake-off",
           mark: "paused",
           badge: "",
-          headline: "browser pages are off in the solstone app",
-          sub: "nothing new is taken in",
+          headline: t("browser.status.pagesoff"),
+          sub: t("browser.status.nothingnew"),
           reason,
           action: null,
           connecting: null,
@@ -237,30 +239,30 @@
           kind: "paused-here",
           mark: "paused",
           badge: "",
-          headline: "paused in this browser",
-          sub: "nothing new is taken in from this browser",
-          reason: "pausing doesn't hold back what's already taken in.",
+          headline: t("browser.status.pausedhere"),
+          sub: t("browser.status.nothingfrombrowser"),
+          reason: t("browser.status.pausedoesnthold"),
           action: null,
           connecting: null,
         });
       }
 
       if (status.sitePolicyPending) {
-        items.push({ layer: 3, kind: "site-policy-pending", mark: "paused", badge: "", headline: "changing your sites",
-          sub: "nothing new is taken in until this is saved", reason: "", action: null, connecting: null });
+        items.push({ layer: 3, kind: "site-policy-pending", mark: "paused", badge: "", headline: t("browser.status.changingsites"),
+          sub: t("browser.status.untilsaved"), reason: "", action: null, connecting: null });
       } else if (isEverySite && status.allSitesRegistration === "failed") {
-        items.push({ layer: 3, kind: "all-sites-registration", mark: "attention", badge: "!", headline: "couldn't start on your sites",
-          sub: "nothing new is taken in from this browser", reason: C.accessCopy(brand).failedBody,
-          action: { id: "retry-all-sites", label: "try again" }, connecting: null });
+        items.push({ layer: 3, kind: "all-sites-registration", mark: "attention", badge: "!", headline: t("browser.copy.couldntstart"),
+          sub: t("browser.status.nothingfrombrowser"), reason: C.accessCopy(brand).failedBody,
+          action: { id: "retry-all-sites", label: t("browser.copy.tryagain") }, connecting: null });
       } else if (!isEverySite && siteCount === 0) {
         items.push({
           layer: 3,
           kind: "no-sites",
           mark: "paused",
           badge: "",
-          headline: "no sites yet",
-          sub: "nothing is taken in until you add a site",
-          reason: "open a site you want to share and choose add this site.",
+          headline: t("browser.status.nosites"),
+          sub: t("browser.status.untilyouadd"),
+          reason: t("browser.status.openandadd"),
           action: null,
           connecting: null,
         });
@@ -278,9 +280,9 @@
           kind: "app-store-full",
           mark: "offline",
           badge: "",
-          headline: "no room for more right now",
-          sub: "nothing new is taken in until there's room",
-          reason: mobile() ? `the room on ${here()} for Safari pages is full. open the solstone app to make room.` : `the room on ${here()} for what you share from your browsers is full. new pages are taken in again once there's room. the solstone app has the details.`,
+          headline: t("browser.status.noroom"),
+          sub: t("browser.status.untilroom"),
+          reason: mobile() ? t("browser.status.storefull", { place: here() }) : t("browser.status.storefull", { place: here() }),
           action: null,
           connecting: null,
         });
@@ -292,9 +294,9 @@
           kind: "lost-and-held",
           mark: "attention",
           badge: "!",
-          headline: "some pages couldn't be kept",
-          sub: "nothing new is taken in right now",
-          reason: "part of what you shared from your browsers couldn't be kept, so it won't go into your journal. the solstone app has the details.",
+          headline: t("browser.status.somecouldnt"),
+          sub: t("browser.status.nothingrightnow"),
+          reason: t("browser.status.lostbrowsers"),
           action: null,
           connecting: null,
         });
@@ -304,9 +306,9 @@
             kind: "app-store-full",
             mark: "offline",
             badge: "",
-            headline: "no room for more right now",
-            sub: "nothing new is taken in until there's room",
-            reason: mobile() ? `the room on ${here()} for Safari pages is full. open the solstone app to make room.` : `the room on ${here()} for what you share from your browsers is full. new pages are taken in again once there's room. the solstone app has the details.`,
+            headline: t("browser.status.noroom"),
+            sub: t("browser.status.untilroom"),
+            reason: mobile() ? t("browser.status.storefull", { place: here() }) : t("browser.status.storefull", { place: here() }),
             action: null,
             connecting: null,
           });
@@ -320,10 +322,10 @@
           kind: "intake-held",
           mark: "offline",
           badge: "",
-          headline: mobile() && custody?.full === true ? "no room for more right now" : "nothing new is taken in right now",
+          headline: mobile() && custody?.full === true ? t("browser.status.noroom") : t("browser.status.nothingrightnow"),
           sub: "",
-          reason: mobile() && custody?.full === true ? `the room on ${here()} for Safari pages is full. open the solstone app to make room.`
-            : `the solstone app on ${here()} isn't taking in new pages right now.`,
+          reason: mobile() && custody?.full === true ? t("browser.status.storefull", { place: here() })
+            : t("browser.status.intakeheld", { place: here() }),
           action: null,
           connecting: null,
         });
@@ -333,9 +335,9 @@
             kind: "app-store-full",
             mark: "offline",
             badge: "",
-            headline: "no room for more right now",
-            sub: "nothing new is taken in until there's room",
-            reason: mobile() ? `the room on ${here()} for Safari pages is full. open the solstone app to make room.` : `the room on ${here()} for what you share from your browsers is full. new pages are taken in again once there's room. the solstone app has the details.`,
+            headline: t("browser.status.noroom"),
+            sub: t("browser.status.untilroom"),
+            reason: mobile() ? t("browser.status.storefull", { place: here() }) : t("browser.status.storefull", { place: here() }),
             action: null,
             connecting: null,
           });
@@ -348,9 +350,9 @@
           kind: "pressure-here",
           mark: "offline",
           badge: "",
-          headline: "no room for more right now",
-          sub: "nothing new is taken in until there's room",
-          reason: "what you shared from this browser is waiting for the solstone app to accept it. new pages are taken in again once there's room.",
+          headline: t("browser.status.noroom"),
+          sub: t("browser.status.untilroom"),
+          reason: t("browser.status.pressure"),
           action: null,
           connecting: null,
         });
@@ -363,10 +365,10 @@
           kind: "dropped",
           mark: "attention",
           badge: "!",
-          headline: "some pages couldn't be kept",
+          headline: t("browser.status.somecouldnt"),
           sub: "",
-          reason: "part of what you shared from this browser couldn't be kept, so it won't go into your journal.",
-          action: { id: "dismiss-loss", label: "dismiss" },
+          reason: t("browser.status.lostthis"),
+          action: { id: "dismiss-loss", label: t("browser.chrome.dismiss") },
           connecting: null,
         });
       }
@@ -377,9 +379,9 @@
           kind: "waiting-over-a-week",
           mark: "attention",
           badge: "!",
-          headline: "some pages have waited more than a week",
+          headline: t("browser.status.waitedweekheadline"),
           sub: "",
-          reason: mobile() ? `some pages from Safari have waited more than a week to go into your journal. they're still kept on ${here()}. open the solstone app and they go into your journal.` : `some pages from your browsers have waited more than a week to go into your journal. they're still kept on ${here()}. the solstone app has the details.`,
+          reason: mobile() ? t("browser.status.waitedweek", { place: here() }) : t("browser.status.waitedweek", { place: here() }),
           action: null,
           connecting: null,
         });
@@ -392,7 +394,7 @@
       const hasSiteErrors = registrationFailures.length > 0 || enqueueFailureEntries.length > 0;
       if (hasSiteErrors) {
         const siteErrorCount = new Set([...registrationFailures, ...enqueueFailureEntries].map(([origin]) => origin)).size;
-        const headline = siteErrorCount === 1 ? "1 site needs attention" : `${siteErrorCount} sites need attention`;
+        const headline = t("browser.status.sitesneedattention", {count:siteErrorCount});
         items.push({
           layer: 5,
           kind: "site-error",
@@ -413,9 +415,9 @@
           kind: "delivery-failed",
           mark: "offline",
           badge: "",
-          headline: "not reaching your journal",
-          sub: `kept on ${here()} for now`,
-          reason: `what you share from this browser is kept on ${here()} for now. the solstone app has the details.`,
+          headline: t("browser.status.notreaching"),
+          sub: t("browser.status.keptfornow", { place: here() }),
+          reason: t("browser.status.keptfornowreason", { place: here() }),
           action: null,
           connecting: null,
         });
@@ -434,8 +436,8 @@
             kind: "connecting",
             mark: "connecting",
             badge: "",
-            headline: "on",
-            sub: "no word yet on whether it's reaching your journal",
+            headline: t("browser.page.markerstate", {phase:"on"}),
+            sub: t("browser.status.nowordyet"),
             reason: "",
             action: null,
             connecting: "delivery",
@@ -443,11 +445,11 @@
         } else {
           let deliverySub = "";
           if (hostDelivery === "delivered") {
-            deliverySub = hostFailure ? "the last pages reached your journal" : "reaching your journal";
+            deliverySub = hostFailure ? t("browser.status.lastpages") : t("browser.status.reaching");
           } else if (hostDelivery === "kept_locally") {
-            deliverySub = `kept on ${here()}, waiting to go into your journal`;
+            deliverySub = t("browser.status.keptwaiting", { place: here() });
           } else if (hostDelivery === "idle") {
-            deliverySub = "nothing waiting to go into your journal";
+            deliverySub = t("browser.status.nothingwaiting");
           }
 
           if (anyGrantedTabOpen === false) {
@@ -456,9 +458,9 @@
               kind: "idle",
               mark: "healthy",
               badge: "",
-              headline: "on",
+              headline: t("browser.page.markerstate", {phase:"on"}),
               sub: deliverySub,
-              reason: isEverySite ? "none of the websites you share are open right now." : "none of your sites are open right now.",
+              reason: isEverySite ? t("browser.status.idlereason", { mode: "all" }) : t("browser.status.idlereason", { mode: "selected" }),
               action: null,
               connecting: null,
             });
@@ -468,7 +470,7 @@
               kind: "on",
               mark: "healthy",
               badge: "",
-              headline: "on",
+              headline: t("browser.page.markerstate", {phase:"on"}),
               sub: deliverySub,
               reason: "",
               action: null,
@@ -483,10 +485,10 @@
         kind: "unavailable",
         mark: "error",
         badge: "",
-        headline: "status unavailable",
+        headline: t("browser.status.unavailable"),
         sub: "",
-        reason: "the solstone extension can't show its status right now.",
-        action: { id: "open-settings", label: "open settings" },
+        reason: t("browser.status.unavailablereason"),
+        action: { id: "open-settings", label: t("browser.labels.opensettings") },
         connecting: null,
       };
 
@@ -497,7 +499,7 @@
       const isWinnerOnOrIdleOrDeliveryConnecting = winner.kind === "on" || winner.kind === "idle" ||
         (winner.kind === "connecting" && winner.connecting === "delivery");
       const appPausedNote = (status.appReportedPaused === true && isWinnerOnOrIdleOrDeliveryConnecting)
-        ? `the solstone app is paused on ${here()}`
+        ? t("browser.status.apppausednote", { place: here() })
         : "";
 
       return {
@@ -518,11 +520,11 @@
         kind: "unavailable",
         mark: "error",
         badge: "",
-        headline: "status unavailable",
+        headline: t("browser.status.unavailable"),
         sub: "",
         appPausedNote: "",
-        reason: "the solstone extension can't show its status right now.",
-        action: { id: "open-settings", label: "open settings" },
+        reason: t("browser.status.unavailablereason"),
+        action: { id: "open-settings", label: t("browser.labels.opensettings") },
         also: [],
         connecting: null,
         items: [],
@@ -623,7 +625,7 @@
   function iconState(status, extras) {
     const result = derive(status, extras);
     const prefix = PREFIX_BY_MARK[result.mark] || "icon-error-";
-    let title = `solstone \u00b7 ${result.headline}`;
+    let title = `${t("browser.brand.name")} \u00b7 ${t("browser.status.icontitle", {headline:result.headline})}`;
     const shouldAppendSub = result.kind === "delivery-failed" ||
       (result.kind === "connecting" && result.connecting === "delivery") ||
       result.kind === "on" || result.kind === "idle";
@@ -637,7 +639,7 @@
     const C = globalThis.SolstoneCopy;
     status = status || {};
     extras = extras || {};
-    const bName = C ? C.browserName(status.brand) : "your browser";
+    const bName = C ? C.browserName(status.brand) : t("browser.copy.browsername", {brand:"other"});
     const registrations = status.registration || status.siteErrors?.registration || {};
     const enqueueErrors = status.enqueue || status.siteErrors?.enqueue || {};
     const registration = registrations[entry];
@@ -664,22 +666,22 @@
     const coveringSite = host && leftOutList.find((site) => globalThis.SolstoneHosts?.hostCovers ? globalThis.SolstoneHosts.hostCovers(site, host) : false);
     if (coveringSite) {
       if (isEverySite) {
-        return { kind: "excluded", label: "left out", action: null };
+        return { kind: "excluded", label: t("browser.popup.leftout"), action: null };
       }
       const appCovers = (status.appLeftOut || []).some((site) => globalThis.SolstoneHosts?.hostCovers ? globalThis.SolstoneHosts.hostCovers(site, host) : false);
       let action = null;
       if (!(appCovers && !status.leftOutCapable)) {
-        action = { id: "include-site", host: coveringSite, label: `stop leaving ${coveringSite} out` };
+        action = { id: "include-site", host: coveringSite, label: t("browser.status.stopleavinghostout", {value1: String(coveringSite)}) };
       }
-      return { kind: "excluded", label: "left out", action };
+      return { kind: "excluded", label: t("browser.popup.leftout"), action };
     }
 
     const fault = status.faults instanceof Map ? status.faults.get(entry) : status.faults?.[entry];
     if (fault === "denied") {
-      return { kind: "denied-by-browser", label: `${bName} is denying this site`, action: null };
+      return { kind: "denied-by-browser", label: t("browser.copy.denyingsite", { browser: bName }), action: null };
     }
     if (fault === "unknown") {
-      return { kind: "unknown", label: "this extension can't reach this page", action: null };
+      return { kind: "unknown", label: t("browser.copy.unknownstate"), action: null };
     }
 
     if (registration === "failed" || enqueueError) {
@@ -688,12 +690,12 @@
     }
 
     if (isEverySite) {
-      if (status.paused || status.hostCapture === "paused") return { kind: "paused", label: "paused", action: null };
+      if (status.paused || status.hostCapture === "paused") return { kind: "paused", label: t("browser.page.markerstate", {phase:"paused"}), action: null };
       if (status.allSitesRegistration === "failed" || !gateOpenFor(globalThis.SolstoneHosts?.originGranted ? globalThis.SolstoneHosts.originGranted(status, entry) : true)) {
-        return { kind: "not-taken-in", label: "not taken in right now", action: null };
+        return { kind: "not-taken-in", label: t("browser.popup.nottakenin"), action: null };
       }
-      if (tabsKnown && isTabOpen) return { kind: "on-now", label: "on now", action: null };
-      return { kind: "included", label: "included", action: null };
+      if (tabsKnown && isTabOpen) return { kind: "on-now", label: t("browser.labels.onnow"), action: null };
+      return { kind: "included", label: t("browser.popup.included"), action: null };
     }
 
     const isPendingRemove = Array.isArray(status.pendingRemoveOrigins) && status.pendingRemoveOrigins.includes(entry);
@@ -704,31 +706,31 @@
     if (status.paused || status.hostCapture === "paused") {
       return {
         kind: "paused",
-        label: "paused",
+        label: t("browser.page.markerstate", {phase:"paused"}),
         action: null,
       };
     }
 
     const gateOpen = gateOpenFor(isGranted);
-    if (!isGranted || (tabsKnown && isTabOpen && !gateOpen)) return { kind: "not-taken-in", label: "not taken in right now", action: null };
+    if (!isGranted || (tabsKnown && isTabOpen && !gateOpen)) return { kind: "not-taken-in", label: t("browser.popup.nottakenin"), action: null };
 
     if (registration === "reload" && tabsKnown && isTabOpen) {
-      return { kind: "reload-tab", label: "reload this tab to begin", action: null };
+      return { kind: "reload-tab", label: t("browser.popup.reloadtab"), action: null };
     }
     if (tabsKnown && !isTabOpen) {
-      return { kind: "added-idle", label: "added. open or reload a tab", action: null };
+      return { kind: "added-idle", label: t("browser.popup.addedidle"), action: null };
     }
     if (tabsKnown && isTabOpen) {
       return {
         kind: "on-now",
-        label: "on now",
+        label: t("browser.labels.onnow"),
         action: null,
       };
     }
 
     return {
       kind: "added",
-      label: "added",
+      label: t("browser.popup.added"),
       action: null,
     };
   }
@@ -766,8 +768,8 @@
     // The app answering says nothing about whether the owner has confirmed the
     // pairing: a held pairing reports the same capture state as a confirmed one.
     const heading = status.hostCapture === "paused"
-      ? "found the solstone app. it's paused right now."
-      : "found the solstone app";
+      ? t("browser.status.foundsolstoneapps")
+      : t("browser.status.foundsolstoneapp");
     return { met: true, heading, body: "", action: null };
   }
 
