@@ -50,7 +50,7 @@ enum ImportCopy {
             case .waiting: return "waiting to go to your journal."
             }
         }
-        if !snapshot.rows.isEmpty { return "imports here won't go on their own. each one says why." }
+        if !snapshot.rows.isEmpty { return "not going to your journal right now. each one says why." }
         if snapshot.deliveredToCurrentJournal { return "in your journal." }
         return "nothing yet."
     }
