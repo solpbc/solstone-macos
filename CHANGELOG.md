@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.66] - 2026-11-12
+
 ### Fixed
 
-- when you pair this mac with a new journal, or with your journal again after unpairing, your Obsidian notes go into it again, and screenshots asks again how far back to start, as when you first turned each one on. before, only notes you changed afterwards reached it.
+- when you pair this mac with a new journal, or with the same journal again after you disconnect it, your Obsidian notes go into it, and screenshots asks again how far back to start, as when you first turned each one on. before, only notes you changed after pairing reached that journal.
 
 ## [2.0.65] - 2026-11-11
 
