@@ -1143,6 +1143,75 @@ struct ChromiumSiteRuleTests {
         #expect(res.read.listGeneration == 2)
     }
 
+    // MARK: - The title check pairs the AX title with the window server's title of the same moment
+
+    private func roundWithTitles(pollTitle: String, axTitle: String, freshCG: String?) async -> ChromiumPollRead {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let roundComplete = OneShotContinuationGate()
+        let roundResults = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        struct TitleReader: ChromiumWindowReading, @unchecked Sendable {
+            let ax: String
+            let cg: String?
+            func copyWindows(for pid: pid_t) -> [AXUIElement]? { [AXUIElementCreateApplication(10)] }
+            func focusedWindow(for pid: pid_t) -> AXUIElement? { nil }
+            func windowID(for window: AXUIElement) -> CGWindowID? { 10 }
+            func readTitle(for window: AXUIElement) -> String? { ax }
+            func readDocument(for window: AXUIElement) -> (doc: String?, failed: Bool) { ("https://news.example.com/live", false) }
+            func walkTabStrip(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> ChromiumTabStripOutcome {
+                .counts(selected: 1, total: 1)
+            }
+            func walkSideWindow(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) {
+                ([], .complete)
+            }
+            func currentCGTitle(windowID: CGWindowID) -> String? { cg }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = { [SiteVisibleWindow(windowID: 10, pid: 100, layer: 0, title: pollTitle)] }
+        hooks.chromiumReader = TitleReader(ax: axTitle, cg: freshCG)
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                roundResults.withLock { $0 = results }
+                roundComplete.release()
+            }
+        )
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await roundComplete.wait()
+        return roundResults.withLock { $0[10] }!.read
+    }
+
+    /// A title that ticks between the CG poll and the round (the poll saw "Tick 5", the AX title and the
+    /// window server both say "Tick 6" by the time the window is read) reads ordinary.
+    @Test func titleThatChangedSinceThePollReadsOrdinaryAgainstTheFreshCGTitle() async {
+        let read = await roundWithTitles(pollTitle: "Tick 5", axTitle: "Tick 6 - Google Chrome", freshCG: "Tick 6")
+        #expect(read.verdict == .ordinary)
+    }
+
+    /// Twin: when the window server's title of that moment doesn't match the AX title, it stays can't tell.
+    @Test func freshCGTitleThatDisagreesWithTheAXTitleStaysCantTell() async {
+        let read = await roundWithTitles(pollTitle: "Tick 6", axTitle: "Tick 6 - Google Chrome", freshCG: "Tick 7")
+        #expect(read.verdict == .cantTell)
+    }
+
+    /// Twin: with no fresh title (window gone from the window server), the poll's title is used as before.
+    @Test func noFreshCGTitleFallsBackToThePollTitle() async {
+        let read = await roundWithTitles(pollTitle: "Tick 5", axTitle: "Tick 6 - Google Chrome", freshCG: nil)
+        #expect(read.verdict == .cantTell)
+    }
+
     // MARK: - Side Window Shapes
 
     @Test func sideWindowShapesComprehensive() {

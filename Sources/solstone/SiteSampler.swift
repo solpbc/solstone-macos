@@ -613,6 +613,13 @@ actor SiteSampler {
 
             // 2. Closing titles for page windows with no pass due.
             var closingTitles: [CGWindowID: String?] = [:]
+            // The window server's title read straight after each closing AX title (see currentCGTitle).
+            var closingCGTitles: [CGWindowID: String] = [:]
+            func readClosing(_ wid: CGWindowID, _ elem: AXUIElement) -> String? {
+                let title = reader.readTitle(for: elem)
+                if let cg = reader.currentCGTitle(windowID: wid) { closingCGTitles[wid] = cg }
+                return title
+            }
             var windowsNeedingPass: [CGWindowID] = []
 
             for w in pageWindows {
@@ -625,7 +632,7 @@ actor SiteSampler {
 
                 // Covered window does not need a tab-strip pass
                 if let d = docStr, let h = SiteRule.normalizeReadHost(d), !currentSites.isEmpty, currentSites.contains(where: { SiteRule.covers(siteHost: $0, host: h) }) {
-                    closingTitles[w.wid] = reader.readTitle(for: elem)
+                    closingTitles[w.wid] = readClosing(w.wid, elem)
                     continue
                 }
 
@@ -633,7 +640,7 @@ actor SiteSampler {
                 if let carried = updatedPassResults[w.wid], carried.axTitle == (openTitle ?? "") && carried.docHash == docHash {
                     let age = HostClock.seconds(ticks: nowTicks()) - carried.time
                     if age < 1.0 {
-                        closingTitles[w.wid] = reader.readTitle(for: elem)
+                        closingTitles[w.wid] = readClosing(w.wid, elem)
                         continue
                     }
                 }
@@ -720,13 +727,13 @@ actor SiteSampler {
                 let passElapsed = HostClock.seconds(ticks: nowTicks()) - HostClock.seconds(ticks: passStartTicks)
                 if passElapsed >= 0.100 {
                     tabStripOutcomes[wid] = .notRun
-                    closingTitles[wid] = reader.readTitle(for: elem)
+                    closingTitles[wid] = readClosing(wid, elem)
                     continue
                 }
                 let budget = min(0.050, 0.100 - passElapsed)
                 updatedAttemptTimes[wid] = HostClock.seconds(ticks: nowTicks())
                 let outcome = reader.walkTabStrip(for: elem, maxNodes: 3000, timeoutSeconds: budget, nowTicks: nowTicks)
-                let closeTitle = reader.readTitle(for: elem)
+                let closeTitle = readClosing(wid, elem)
                 closingTitles[wid] = closeTitle
                 tabStripOutcomes[wid] = outcome
 
@@ -837,10 +844,11 @@ actor SiteSampler {
                     effOutcome = .notRun
                 }
 
+                let cgNow = closingCGTitles[w.wid] ?? w.title
                 let eval = ChromiumSiteRead.evaluatePageWindow(
                     windowID: w.wid,
                     browser: browser,
-                    cgTitle: w.title,
+                    cgTitle: cgNow,
                     initialAXTitle: openTitle,
                     finalAXTitle: closeTitle,
                     doc: docStr,
@@ -852,11 +860,11 @@ actor SiteSampler {
                     sites: currentSites,
                     now: HostClock.seconds(ticks: nowTicks())
                 )
-                updatedPrevTitles[w.wid] = (cg: w.title, ax: closeTitle)
+                updatedPrevTitles[w.wid] = (cg: cgNow, ax: closeTitle)
                 results[w.wid] = (
                     read: ChromiumPollRead(verdict: eval.verdict, cause: eval.cause, host: eval.host, readStart: winReadStart, listGeneration: currentGeneration, browser: browser, isPending: false),
                     completed: true,
-                    cgTitle: w.title,
+                    cgTitle: cgNow,
                     axTitle: closeTitle
                 )
             }
