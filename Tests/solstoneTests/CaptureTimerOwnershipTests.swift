@@ -8,6 +8,14 @@ import Testing
 @Suite("Capture timer ownership", .serialized)
 @MainActor
 struct CaptureTimerOwnershipTests {
+    @Test func repeatingChecksMayCoalesceButDeadlinesStayExact() {
+        let check = CaptureTimer.schedule(interval: 1, repeats: true) { _ in }
+        let deadline = CaptureTimer.schedule(interval: 1, repeats: false) { _ in }
+        defer { check.invalidate(); deadline.invalidate() }
+        #expect(check.tolerance > 0 && check.tolerance <= 0.1)
+        #expect(deadline.tolerance == 0)
+    }
+
     @Test(arguments: [true, false])
     func guardedBoundaryCannotAbsorbExplicitBoundary(guardedFirst: Bool) async throws {
         let root = try makeTempDirectory("capture-timer-mixed-queue")
