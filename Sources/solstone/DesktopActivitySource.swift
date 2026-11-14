@@ -26,6 +26,7 @@ final class DesktopActivitySource {
     private var generation: UInt64 = 0
     private var notifiedPublication = 0
     private var worker: Task<Void, Never>?
+    private var started = false
     private var readPermit: DesktopActivityReadPermit?
     @ObservationIgnored nonisolated(unsafe) private var timer: Timer?
     @ObservationIgnored nonisolated(unsafe) private var activation: NSObjectProtocol?
@@ -74,19 +75,29 @@ final class DesktopActivitySource {
 
     func start(config: AppConfig) {
         do { try store.recover(); notifyPublication() } catch { fail() }
+        started = true
         configure(config)
-        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.sample() }
-        }
-        timer.tolerance = 1
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
+        updateTimer()
         activation = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.invalidate(); self?.sample() }
         }
     }
+
+    /// The sampling timer runs only while activity is on; with it off every tick would do nothing.
+    private func updateTimer() {
+        guard started, enabled else { timer?.invalidate(); timer = nil; return }
+        guard timer == nil else { return }
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.sample() }
+        }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    var isSampling: Bool { timer != nil }
 
     deinit {
         timer?.invalidate()
@@ -98,6 +109,7 @@ final class DesktopActivitySource {
         guard next != settings || enabled != next.enabled else { return }
         invalidate()
         settings = next; enabled = next.enabled
+        updateTimer()
         // A new explicit setting action can retry failed storage, preserving its old checkpoint.
         if failed {
             do { try store.recover(); failed = false } catch { fail(); return }
@@ -126,6 +138,7 @@ final class DesktopActivitySource {
 
     func stop() {
         invalidate()
+        started = false
         timer?.invalidate(); timer = nil
         if let activation { NSWorkspace.shared.notificationCenter.removeObserver(activation); self.activation = nil }
     }

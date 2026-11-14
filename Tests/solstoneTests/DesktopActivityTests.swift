@@ -322,6 +322,37 @@ struct DesktopActivityTests {
         #expect(result[0].end_ts == start + 4_000)
     }
 
+    @Test func unchangedTicksDuringCaptureWriteNothing() throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        nonisolated(unsafe) var writes = 0
+        let store = DesktopActivityStore(storage: StorageManager(baseDirectory: root.appendingPathComponent("captures")),
+                                         write: { data, url in writes += 1; try DesktopActivityStore.durableWrite(data, url) })
+        let start: Int64 = 1_800_000_001_000
+        try store.observe([DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "Fixture")], at: start, captureOpen: true)
+        // A withheld window stays in front while the capture segment is open: each tick ends nothing new.
+        try store.end(at: start + 5_000, captureOpen: true)
+        let afterClose = writes
+        for tick in 2...13 { try store.end(at: start + Int64(tick) * 5_000, captureOpen: true) }
+        #expect(writes == afterClose)
+        #expect(store.checkpoint.closed.count == 1 && store.checkpoint.closed[0].end_ts == start + 5_000)
+    }
+
+    @Test @MainActor func samplingTimerRunsOnlyWhileActivityIsOn() throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        let source = DesktopActivitySource(storage: StorageManager(baseDirectory: root.appendingPathComponent("captures")),
+            eligibility: { false }, locked: { false }, foreground: { nil })
+        defer { source.stop() }
+        var config = AppConfig(); config.isActivityEnabled = false
+        source.start(config: config)
+        #expect(!source.isSampling)
+        config.isActivityEnabled = true
+        source.configure(config)
+        #expect(source.isSampling)
+        config.isActivityEnabled = false
+        source.configure(config)
+        #expect(!source.isSampling)
+    }
+
     @Test func failedCheckpointWriteKeepsLastCommittedObservation() throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         let storage = StorageManager(baseDirectory: root.appendingPathComponent("captures"))

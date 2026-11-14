@@ -119,6 +119,8 @@ final class DesktopActivityStore {
         var next = checkpoint
         let now = max(milliseconds, next.open.map(\.end_ts).max() ?? milliseconds)
         if next.open.count == observations.count && zip(next.open, observations).allSatisfy({ $0.sameObservation(as: $1) }) {
+            // Nothing open to extend, or already ending now: the saved checkpoint is already this one.
+            guard next.open.contains(where: { $0.end_ts != now }) else { return }
             for i in next.open.indices { next.open[i].end_ts = now }
         } else {
             for var row in next.open { row.end_ts = max(row.ts, now); next.closed.append(row) }
