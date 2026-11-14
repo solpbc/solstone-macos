@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- the solstone app writes to this mac's disk much less while nothing is changing. before, it saved the same screenshots list again every few seconds, even with screenshots never turned on.
+- the solstone app writes to this mac's disk much less while nothing is changing. before, it saved the same empty screenshots file again and again, even with screenshots never turned on.
 
 ## [2.0.68] - 2026-11-14
 
