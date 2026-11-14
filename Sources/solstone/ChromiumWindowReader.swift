@@ -183,8 +183,27 @@ public final class LiveChromiumWindowReader: ChromiumWindowReading, @unchecked S
                 return .failed
             }
 
+            // Chrome, Edge and Brave expose a tab as role AXRadioButton with subrole AXTabButton.
+            // A radio button's subrole is read only to tell whether it is a tab; a failed read
+            // fails the walk, while a radio button with no subrole is not a tab.
+            var isTab = role == "AXTabButton"
+            if role == "AXRadioButton" {
+                let (subErr, subVal) = performCopyAttribute(current, kAXSubroleAttribute as CFString, role: "AXRadioButton")
+                if let to = checkTimeout() {
+                    return to
+                }
+                if subErr == .success {
+                    guard let subrole = subVal as? String else {
+                        return .failed
+                    }
+                    isTab = subrole == "AXTabButton"
+                } else if subErr != .noValue && subErr != .attributeUnsupported {
+                    return .failed
+                }
+            }
+
             // Do not descend into tab buttons or web areas
-            if role == "AXTabButton" {
+            if isTab {
                 let (valErr, val) = performCopyAttribute(current, kAXValueAttribute as CFString, role: "AXTabButton")
                 if let to = checkTimeout() {
                     return to

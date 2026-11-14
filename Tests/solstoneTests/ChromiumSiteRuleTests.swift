@@ -1465,6 +1465,76 @@ struct ChromiumSiteRuleTests {
         #expect(recorder.setCount == 0)
     }
 
+    // MARK: - Chromium's own tab-strip shape
+
+    /// Chrome, Edge and Brave expose each tab as role `AXRadioButton` with subrole `AXTabButton`,
+    /// inside an `AXTabGroup` (measured live in all three on macOS 27.2). The walk must count those.
+    private func chromiumStripReader(selected: [Int], subroleError: AXError? = nil) -> (LiveChromiumWindowReader, SendableAX, AXReadRecorder) {
+        let recorder = AXReadRecorder()
+        let reader = LiveChromiumWindowReader(recorder: recorder)
+        let win = SendableAX(element: AXUIElementCreateApplication(200))
+        let group = SendableAX(element: AXUIElementCreateApplication(201))
+        let tabs = (0..<3).map { SendableAX(element: AXUIElementCreateApplication(pid_t(210 + $0))) }
+        reader.copyAttribute = { element, attr in
+            let a = attr as String
+            if CFEqual(element, win.element) {
+                if a == (kAXRoleAttribute as String) { return (.success, "AXWindow" as CFTypeRef) }
+                if a == (kAXChildrenAttribute as String) { return (.success, [group.element] as CFTypeRef) }
+            } else if CFEqual(element, group.element) {
+                if a == (kAXRoleAttribute as String) { return (.success, "AXTabGroup" as CFTypeRef) }
+                if a == (kAXChildrenAttribute as String) { return (.success, tabs.map { $0.element } as CFTypeRef) }
+            } else if let i = tabs.firstIndex(where: { CFEqual(element, $0.element) }) {
+                if a == (kAXRoleAttribute as String) { return (.success, "AXRadioButton" as CFTypeRef) }
+                if a == (kAXSubroleAttribute as String) {
+                    if let e = subroleError, i == 1 { return (e, nil) }
+                    return (.success, "AXTabButton" as CFTypeRef)
+                }
+                if a == (kAXValueAttribute as String) { return (.success, (selected.contains(i) ? 1 : 0) as CFTypeRef) }
+                if a == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            }
+            return (.noValue, nil)
+        }
+        return (reader, win, recorder)
+    }
+
+    @Test func chromiumTabStripCountsRadioButtonsWithTabSubrole() {
+        let (reader, win, recorder) = chromiumStripReader(selected: [1])
+        #expect(reader.walkTabStrip(for: win.element, maxNodes: 100, timeoutSeconds: 0.05) == .counts(selected: 1, total: 3))
+        #expect(recorder.recordedReads.contains(AllowedAXRead(attribute: "AXSubrole", role: "AXRadioButton")))
+        #expect(recorder.actionCount == 0)
+        #expect(recorder.setCount == 0)
+    }
+
+    @Test func chromiumSplitViewShapeCountsTwoSelectedTabs() {
+        let (reader, win, _) = chromiumStripReader(selected: [0, 2])
+        #expect(reader.walkTabStrip(for: win.element, maxNodes: 100, timeoutSeconds: 0.05) == .counts(selected: 2, total: 3))
+    }
+
+    @Test func chromiumTabSubroleReadFailureFailsTheWalk() {
+        let (reader, win, _) = chromiumStripReader(selected: [1], subroleError: .cannotComplete)
+        #expect(reader.walkTabStrip(for: win.element, maxNodes: 100, timeoutSeconds: 0.05) == .failed)
+    }
+
+    /// Twin: a radio button that isn't a tab (no subrole) is not counted, and the walk completes.
+    @Test func chromiumRadioButtonWithoutTabSubroleIsNotATab() {
+        let (reader, win, _) = chromiumStripReader(selected: [1], subroleError: .noValue)
+        #expect(reader.walkTabStrip(for: win.element, maxNodes: 100, timeoutSeconds: 0.05) == .counts(selected: 0, total: 2))
+    }
+
+    @Test func chromiumHeavyTabTitleReadsOrdinaryWithRealTabStrip() {
+        let (reader, win, _) = chromiumStripReader(selected: [1])
+        let outcome = reader.walkTabStrip(for: win.element, maxNodes: 100, timeoutSeconds: 0.05)
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluatePageWindow(
+            windowID: 1, browser: .chrome,
+            cgTitle: "Docs", initialAXTitle: "Docs - High memory usage - 1.0 GB - Google Chrome",
+            finalAXTitle: "Docs - High memory usage - 1.0 GB - Google Chrome",
+            doc: "https://docs.example.com/a", docReadFailed: false,
+            previousCGTitle: nil, previousAXTitle: nil,
+            tabStripOutcome: outcome, rule6Record: &rule6, sites: ["bank.com"], now: 100.0)
+        #expect(eval.verdict == .ordinary)
+    }
+
     // MARK: - Item 1 Tests
 
     @Test func item1TwoPiPSideWindowsStampSecondReadStart() async {
