@@ -196,6 +196,49 @@ struct SiteSamplerDemandTests {
         #expect(manager.chromiumActivitySnapshot.latestCompleteRead[7]?.host == "example.com")
     }
 
+    /// A rule suspended for want of Accessibility comes back on only through a probe. A start
+    /// after the sampler stopped waits for the new run's first probe as well as its first
+    /// reading, so a grant made while nothing was reading gates the very first frame.
+    @Test func aSuspendedRuleWaitsForTheNewRunsProbeBeforeCaptureStarts() async throws {
+        let root = try makeTempDirectory("site-demand-suspended")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let screenReleased = Flag()
+        let probeReleased = Flag()
+        defer { screenReleased.set(); probeReleased.set() }
+        let box = ManagerBox()
+        let manager = makeManager(root: root, box: box, hooks: Self.stuckScreen(screenReleased))
+        // The sampler's own probe stays out of the way; the test delivers every verdict.
+        manager.accessibilityProbe = AccessibilityProbe(readWorks: {
+            while !probeReleased.isSet { usleep(1_000) }
+            return true
+        }, prompt: {})
+        manager.updateSiteRule(["bank.com"])
+        let generation = manager.siteListGeneration
+        for _ in 0..<CaptureManager.siteAXFailuresToSuspend {
+            manager.receiveSiteDecision(SiteDecision(), axAvailable: false, generation: generation)
+        }
+        #expect(manager.siteRuleSuspended)
+        #expect(!manager.siteRuleActive)
+
+        manager.setActivityNeedsSiteReads(true)
+        let done = Flag()
+        let waiter = Task { @MainActor in
+            await manager.awaitSiteReading(browserReads: false)
+            done.set()
+        }
+        for _ in 0..<5 { await Task.yield() }
+        let start = now()
+        manager.receiveSitePoll(SitePollSnapshot(start: start, end: start + 0.001, windows: []))
+        for _ in 0..<5 { await Task.yield() }
+        // A reading alone is not enough while the rule is suspended: Accessibility may be back.
+        #expect(!done.isSet)
+
+        manager.receiveSiteDecision(SiteDecision(), axAvailable: true, generation: generation)
+        await waiter.value
+        #expect(done.isSet)
+        #expect(manager.siteRuleActive)
+    }
+
     @Test func activityTakesItsBrowserSnapshotOnlyAfterTheReading() async throws {
         let root = try makeTempDirectory("site-demand-activity-source")
         defer { try? FileManager.default.removeItem(at: root) }

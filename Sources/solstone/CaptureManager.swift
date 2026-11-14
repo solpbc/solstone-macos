@@ -280,6 +280,9 @@ public final class CaptureManager {
     /// The run has delivered a reading, and which Chromium reads that first reading started are
     /// still out.
     private var siteRunHasReading = false
+    /// Whether this run has had its first Accessibility verdict. A suspended rule can only come
+    /// back on through one, so a start while suspended waits for it as well.
+    private var siteRunHasDecision = false
     private var siteRunPendingBrowserReads: Set<CGWindowID> = []
     private var siteReadingWaiters: [UUID: (browserReads: Bool, continuation: CheckedContinuation<Void, Never>)] = [:]
     internal var siteSamplerStopGrace: Duration = .seconds(5)
@@ -1011,6 +1014,10 @@ public final class CaptureManager {
         siteAXFailures = axAvailable ? 0 : siteAXFailures + 1
         let suspend = siteListConfigured && siteAXFailures >= Self.siteAXFailuresToSuspend
         if suspend != siteRuleSuspended { setSiteRuleSuspended(suspend) }
+        if !siteRunHasDecision {
+            siteRunHasDecision = true
+            resumeReadySiteReadingWaiters()
+        }
         if siteRuleSuspended {
             onSiteSafariCaution?(false)
             publishChromiumCaution(browser: .chrome, caution: false)
@@ -1147,6 +1154,7 @@ public final class CaptureManager {
                 siteFrameGate.clearPolls()
             }
             siteRunHasReading = false
+            siteRunHasDecision = false
             siteRunPendingBrowserReads = []
             siteListContinuation?.yield(.demand(true))
         } else {
@@ -1158,6 +1166,7 @@ public final class CaptureManager {
                 self.siteSamplerDemanded = false
                 self.siteSamplerHasStopped = true
                 self.siteRunHasReading = false
+                self.siteRunHasDecision = false
                 self.siteRunPendingBrowserReads = []
                 self.siteFrameGate.clearPolls()
                 self.siteListContinuation?.yield(.demand(false))
@@ -1170,7 +1179,7 @@ public final class CaptureManager {
     /// website rule is off or the reading is already in. If none comes, frames stay held as
     /// before: nothing is released without readings on both sides of it.
     func awaitSiteReading(browserReads: Bool) async {
-        guard siteRuleActive, !isSnapshot, siteSamplerDemanded,
+        guard siteRuleActive || siteRuleSuspended, !isSnapshot, siteSamplerDemanded,
               !siteReadingReady(browserReads: browserReads) else { return }
         let id = UUID()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -1185,6 +1194,7 @@ public final class CaptureManager {
 
     private func siteReadingReady(browserReads: Bool) -> Bool {
         siteRunHasReading && (!browserReads || siteRunPendingBrowserReads.isEmpty)
+            && (!siteRuleSuspended || siteRunHasDecision)
     }
 
     private func resumeReadySiteReadingWaiters() {
