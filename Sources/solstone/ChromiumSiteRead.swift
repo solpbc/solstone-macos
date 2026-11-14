@@ -131,6 +131,14 @@ public enum ChromiumSiteRead {
         case failed
     }
 
+    /// The AX title up to its last " - <brand>" tail: the page title as the AX title states it.
+    static func pageTitleBeforeBrandTail(axTitle: String, browser: PrivateBrowser) -> String? {
+        guard let brand = brandName(for: browser),
+              let range = axTitle.range(of: " - " + brand, options: .backwards) else { return nil }
+        let page = String(axTitle[..<range.lowerBound])
+        return page.isEmpty ? nil : page
+    }
+
     public static func checkTitles(
         cgTitle: String,
         axTitle: String,
@@ -258,8 +266,14 @@ public enum ChromiumSiteRead {
         tabStripOutcome: ChromiumTabStripOutcome,
         rule6Record: inout ChromiumRule6Record?,
         sites: [String],
-        now: TimeInterval
+        now: TimeInterval,
+        previousOrdinaryDoc: String? = nil
     ) -> ChromiumPageEvaluation {
+        // Chromium updates a window's AX title about 0.2 s before the window server's title. When the
+        // document is the one the window's previous, ordinary read named, a title that disagrees with
+        // the window server's is the page's title changing, not a new page: a navigation changes the
+        // committed URL. Every other rule still applies, and covered still wins.
+        let sameDocumentTitleChange = previousOrdinaryDoc != nil && doc != nil && doc == previousOrdinaryDoc
         // First, check document classification
         let docClass = classifyDocument(doc: doc, readFailed: docReadFailed, sites: sites)
 
@@ -318,7 +332,7 @@ public enum ChromiumSiteRead {
 
         // Torn pair: CG title changed since previous read while AX title did not
         if let prevCG = previousCGTitle, let prevAX = previousAXTitle,
-           cgTitle != prevCG, initialAX == prevAX {
+           cgTitle != prevCG, initialAX == prevAX, !sameDocumentTitleChange {
             if rule6Record != nil {
                 rule6Record?.waitStart = now
                 rule6Record?.firstOrdinaryAt = nil
@@ -360,12 +374,17 @@ public enum ChromiumSiteRead {
         }
 
         // Title check
-        let titleCheck = checkTitles(
+        var titleCheck = checkTitles(
             cgTitle: cgTitle,
             axTitle: initialAX,
             browser: browser,
             tabButtonCount: tabCounts?.total
         )
+        if titleCheck == .failed, sameDocumentTitleChange,
+           let pageTitle = pageTitleBeforeBrandTail(axTitle: initialAX, browser: browser) {
+            titleCheck = checkTitles(cgTitle: pageTitle, axTitle: initialAX, browser: browser, tabButtonCount: tabCounts?.total)
+            if titleCheck == .appWindow { titleCheck = .failed }
+        }
 
         // Rule 4: Single pane requirement
         let singlePane: Bool
@@ -457,7 +476,8 @@ public enum ChromiumSiteRead {
         tabStripOutcome: ChromiumTabStripOutcome,
         rule6Record: ChromiumRule6Record?,
         sites: [String],
-        now: TimeInterval
+        now: TimeInterval,
+        previousOrdinaryDoc: String? = nil
     ) -> ChromiumPageEvaluation {
         var r = rule6Record
         return evaluatePageWindow(
@@ -473,7 +493,8 @@ public enum ChromiumSiteRead {
             tabStripOutcome: tabStripOutcome,
             rule6Record: &r,
             sites: sites,
-            now: now
+            now: now,
+            previousOrdinaryDoc: previousOrdinaryDoc
         )
     }
 

@@ -1212,6 +1212,59 @@ struct ChromiumSiteRuleTests {
         #expect(read.verdict == .cantTell)
     }
 
+    // MARK: - A title that changes on the same document (Chromium's AX title leads the window server's by ~0.2 s)
+
+    private func evalTick(cg: String, ax: String, doc: String, prevCG: String?, prevAX: String?, prevOrdinaryDoc: String?,
+                          tabs: ChromiumTabStripOutcome = .counts(selected: 1, total: 1), sites: [String] = ["bank.com"]) -> ChromiumVerdict {
+        ChromiumSiteRead.evaluatePageWindow(
+            windowID: 1, browser: .chrome, cgTitle: cg, initialAXTitle: ax, finalAXTitle: ax,
+            doc: doc, docReadFailed: false, previousCGTitle: prevCG, previousAXTitle: prevAX,
+            tabStripOutcome: tabs, rule6Record: nil, sites: sites, now: 100, previousOrdinaryDoc: prevOrdinaryDoc).verdict
+    }
+
+    @Test func titleAheadOfWindowServerOnTheSameDocumentReadsOrdinary() {
+        let doc = "https://news.example.com/live"
+        #expect(evalTick(cg: "Tick 5", ax: "Tick 6 - Google Chrome", doc: doc,
+                         prevCG: "Tick 5", prevAX: "Tick 5 - Google Chrome", prevOrdinaryDoc: doc) == .ordinary)
+    }
+
+    @Test func windowServerCatchingUpOnTheSameDocumentIsNotATornPair() {
+        let doc = "https://news.example.com/live"
+        #expect(evalTick(cg: "Tick 6", ax: "Tick 6 - Google Chrome", doc: doc,
+                         prevCG: "Tick 5", prevAX: "Tick 6 - Google Chrome", prevOrdinaryDoc: doc) == .ordinary)
+    }
+
+    /// Twin: without an ordinary read of the same document just before, both stay can't tell.
+    @Test func titleMismatchWithoutAnOrdinaryReadOfTheSameDocumentStaysCantTell() {
+        let doc = "https://news.example.com/live"
+        #expect(evalTick(cg: "Tick 5", ax: "Tick 6 - Google Chrome", doc: doc,
+                         prevCG: "Tick 5", prevAX: "Tick 5 - Google Chrome", prevOrdinaryDoc: nil) == .cantTell)
+        #expect(evalTick(cg: "Tick 6", ax: "Tick 6 - Google Chrome", doc: doc,
+                         prevCG: "Tick 5", prevAX: "Tick 6 - Google Chrome", prevOrdinaryDoc: nil) == .cantTell)
+    }
+
+    /// Twin: a navigation (a different committed document) with the AX title ahead stays can't tell.
+    @Test func titleAheadOnANewDocumentStaysCantTell() {
+        #expect(evalTick(cg: "Front page", ax: "Account - Google Chrome", doc: "https://news.example.com/account",
+                         prevCG: "Front page", prevAX: "Front page - Google Chrome",
+                         prevOrdinaryDoc: "https://news.example.com/") == .cantTell)
+    }
+
+    /// Covered still wins on the same document.
+    @Test func sameDocumentTitleChangeOnALeftOutSiteIsCovered() {
+        let doc = "https://bank.com/home"
+        #expect(evalTick(cg: "Bank 5", ax: "Bank 6 - Google Chrome", doc: doc,
+                         prevCG: "Bank 5", prevAX: "Bank 5 - Google Chrome", prevOrdinaryDoc: doc) == .covered)
+    }
+
+    /// Split view still reads can't tell (two selected tabs) on the same document.
+    @Test func sameDocumentTitleChangeInSplitViewStaysCantTell() {
+        let doc = "https://news.example.com/live"
+        #expect(evalTick(cg: "Tick 5", ax: "Tick 6 - Left view - Google Chrome", doc: doc,
+                         prevCG: "Tick 5", prevAX: "Tick 5 - Left view - Google Chrome", prevOrdinaryDoc: doc,
+                         tabs: .counts(selected: 2, total: 2)) == .cantTell)
+    }
+
     // MARK: - Side Window Shapes
 
     @Test func sideWindowShapesComprehensive() {

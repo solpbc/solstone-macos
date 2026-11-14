@@ -191,6 +191,8 @@ actor SiteSampler {
     private var failureCounts: [PrivateBrowser: Int] = [:]
     private var rule6Records: [CGWindowID: ChromiumRule6Record] = [:]
     private var previousTitles: [CGWindowID: (cg: String, ax: String)] = [:]
+    /// Each page window's AXDocument from its last read, kept only while that read was ordinary.
+    private var previousOrdinaryDocs: [CGWindowID: String] = [:]
     private var passResults: [CGWindowID: ChromiumPassResult] = [:]
     private var rememberedHosts: [CGWindowID: [(host: String, time: TimeInterval)]] = [:]
     private var passAttemptTimes: [CGWindowID: TimeInterval] = [:]
@@ -548,6 +550,7 @@ actor SiteSampler {
         let currentGeneration = appliedGeneration
         let localRule6 = rule6Records
         let localPrevTitles = previousTitles
+        let localPrevOrdinaryDocs = previousOrdinaryDocs
         let localPassResults = passResults
         let localRemembered = rememberedHosts
         let localAttemptTimes = passAttemptTimes
@@ -560,6 +563,7 @@ actor SiteSampler {
             var updatedRule6 = localRule6
             var updatedPassResults = localPassResults
             var updatedPrevTitles = localPrevTitles
+            var updatedPrevOrdinaryDocs = localPrevOrdinaryDocs
             var updatedRemembered = localRemembered
             var updatedAttemptTimes = localAttemptTimes
             var newBudgetCut: Set<CGWindowID> = []
@@ -858,9 +862,11 @@ actor SiteSampler {
                     tabStripOutcome: effOutcome,
                     rule6Record: &updatedRule6[w.wid],
                     sites: currentSites,
-                    now: HostClock.seconds(ticks: nowTicks())
+                    now: HostClock.seconds(ticks: nowTicks()),
+                    previousOrdinaryDoc: localPrevOrdinaryDocs[w.wid]
                 )
                 updatedPrevTitles[w.wid] = (cg: cgNow, ax: closeTitle)
+                updatedPrevOrdinaryDocs[w.wid] = eval.verdict == .ordinary ? docStr : nil
                 results[w.wid] = (
                     read: ChromiumPollRead(verdict: eval.verdict, cause: eval.cause, host: eval.host, readStart: winReadStart, listGeneration: currentGeneration, browser: browser, isPending: false),
                     completed: true,
@@ -878,6 +884,7 @@ actor SiteSampler {
                     rule6: updatedRule6,
                     passResults: updatedPassResults,
                     prevTitles: updatedPrevTitles,
+                    prevOrdinaryDocs: updatedPrevOrdinaryDocs,
                     rememberedHosts: updatedRemembered,
                     attemptTimes: updatedAttemptTimes,
                     budgetCut: newBudgetCut,
@@ -896,6 +903,7 @@ actor SiteSampler {
         rule6: [CGWindowID: ChromiumRule6Record],
         passResults: [CGWindowID: ChromiumPassResult],
         prevTitles: [CGWindowID: (cg: String, ax: String)],
+        prevOrdinaryDocs: [CGWindowID: String] = [:],
         rememberedHosts: [CGWindowID: [(host: String, time: TimeInterval)]],
         attemptTimes: [CGWindowID: TimeInterval],
         budgetCut: Set<CGWindowID>,
@@ -938,6 +946,11 @@ actor SiteSampler {
 
             if let pt = prevTitles[wid] {
                 self.previousTitles[wid] = pt
+            }
+            if let d = prevOrdinaryDocs[wid] {
+                self.previousOrdinaryDocs[wid] = d
+            } else {
+                self.previousOrdinaryDocs.removeValue(forKey: wid)
             }
 
             if let list = rememberedHosts[wid] {
