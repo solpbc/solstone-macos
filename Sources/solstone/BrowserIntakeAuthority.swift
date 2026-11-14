@@ -157,6 +157,8 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         }
     }
 
+    /// Every advance from here (status, the periodic check, the check before accepting a batch)
+    /// may wait in memory, under a minute unsaved; the store saves on commit, period and identity.
     private func advanceFloor(wallNowMs: UInt64) throws -> UInt64 {
         let elapsed = durationMs(monotonicClock.now() - floorMonotonicAnchor)
         let (advanced, overflow) = floorAnchorMs.addingReportingOverflow(elapsed)

@@ -161,8 +161,10 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     private var deliveryStopped = false
 
     private var storedFloorMs: UInt64 = 0
-    /// The floor the age_clock row holds. A status read may run up to `ageFloorDeferMs` ahead of
-    /// it in memory; anything else that advances the floor, and a clean stop, saves it.
+    /// The floor the age_clock row holds. The authority's own advances (status reads, the periodic
+    /// check, the check before accepting a batch) may run under `ageFloorDeferMs` ahead of it in
+    /// memory. Accepting a batch, opening or closing a period, an identity change and a clean stop
+    /// save it.
     private var persistedFloorMs: UInt64 = 0
     static let ageFloorDeferMs: UInt64 = 60_000
     private var observedFloorMs: UInt64 = 0
@@ -1242,8 +1244,9 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         guard target <= UInt64(Int64.max) else { throw BrowserIntakeStoreError.localIO }
         let unsaved = storedFloorMs != persistedFloorMs
         if target == storedFloorMs, sameBoot, ageCheckpoint?.elapsedMs == stamp.elapsedMs, !unsaved { return storedFloorMs }
-        // Within one boot the saved (elapsed, floor) pair recomputes the floor exactly, so a status
-        // read keeps a small advance in memory. Only a reboot can lose it, and never more than this.
+        // Within one boot the saved (elapsed, floor) pair recomputes the floor exactly, so a
+        // deferrable advance stays in memory while it is under a minute past the saved floor. Only
+        // a reboot can lose it, and never that much.
         if deferrable, sameBoot, target >= persistedFloorMs, target - persistedFloorMs < Self.ageFloorDeferMs {
             ageCheckpoint = stamp
             storedFloorMs = target
@@ -1271,14 +1274,17 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         return storedFloorMs
     }
 
-    /// `deferrable` is for status reads: the advance may stay in memory up to `ageFloorDeferMs`.
+    /// `deferrable` is for the authority's advances (status reads, the periodic check, the check
+    /// before accepting a batch): the advance may stay in memory while under `ageFloorDeferMs`
+    /// past the saved floor. The store's own advances for a batch, a period or an identity change
+    /// always save.
     public func updateFloorMs(wallNowMs: UInt64, deferrable: Bool = false) throws -> UInt64 {
         lock.lock()
         defer { lock.unlock() }
         return try updateFloorMsLocked(wallNowMs: wallNowMs, deferrable: deferrable)
     }
 
-    /// Saves a floor a status read kept in memory. A clean stop calls this.
+    /// Saves a floor a deferrable advance kept in memory. A clean stop calls this.
     public func persistFloor() throws {
         lock.lock()
         defer { lock.unlock() }
