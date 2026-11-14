@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - when paired with your journal, the solstone app now opens journal links in its journal window.
+- a website you leave out now stays out of your journal in Chrome, Edge and Brave too. while it shows in one of their windows, that browser stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. Firefox isn't checked.
 
 ### Changed
 
