@@ -1267,8 +1267,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        do { _ = try updateFloorMsLocked(wallNowMs: nowMs) }
-        catch { isStoreFailed = true }
+        // The caller has just advanced the floor; a second advance here was a second durable commit.
         if !isStoreFailed, !deliveryStopped, currentOpenPeriodId == nil,
            activeIdentityToken != nil, destinationGeneration != nil {
             do { _ = try ensureOpenPeriodLocked(nowMs: storedFloorMs) }

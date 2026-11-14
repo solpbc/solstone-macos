@@ -142,6 +142,16 @@ private final class BrowserCapacityAgeClock: @unchecked Sendable {
     func changeBoot() { lock.withLock { stamp = BrowserAgeStamp(bootID: "capacity-boot-2", elapsedMs: 100) } }
 }
 
+private final class BrowserCountingAgeClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var elapsed: UInt64 = 0
+    private(set) var reads = 0
+    /// Each read is a little later, as a real clock is, so each one that is written is a commit.
+    func now() -> BrowserAgeStamp? {
+        lock.withLock { reads += 1; elapsed += 1; return BrowserAgeStamp(bootID: "counting-boot", elapsedMs: elapsed) }
+    }
+}
+
 @Suite("BrowserIntakeAdmission")
 struct BrowserIntakeAdmissionTests {
     private var vendorURL: URL {
@@ -1997,6 +2007,27 @@ struct BrowserIntakeAdmissionTests {
         #expect(!FileManager.default.fileExists(atPath: retired.path))
         #expect(try FileManager.default.contentsOfDirectory(atPath: url.appendingPathComponent("periods").path).isEmpty)
         #expect(store.getAllFinalizedPeriods().isEmpty)
+        #expect(!store.storeIsFailed())
+    }
+
+    @Test func eachStatusAdvancesTheAgeClockOnce() throws {
+        let url = try root()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let age = BrowserCountingAgeClock()
+        let store = try BrowserIntakeStore(rootURL: url, projection: projection,
+            ioInjector: BrowserIntakeIOInjector(), ageClock: age.now)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now })
+        _ = try authority.testConnectionGeneration(identityToken: "renewal-pairing")
+        let before = age.reads
+        // Twelve renewals of a session with nothing held: one minute at the extension's cadence.
+        for _ in 0..<12 {
+            clock.now = clock.now.addingTimeInterval(5)
+            #expect(authority.status()["delivery"] as? String != "failed")
+        }
+        #expect(age.reads - before == 12)
+        #expect(store.getFloorMs() >= 1_700_000_060_000)
         #expect(!store.storeIsFailed())
     }
 
