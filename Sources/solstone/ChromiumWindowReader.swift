@@ -68,6 +68,14 @@ public protocol ChromiumWindowReading: Sendable {
     func readDocument(for window: AXUIElement) -> (doc: String?, failed: Bool)
     func walkTabStrip(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> ChromiumTabStripOutcome
     func walkSideWindow(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome)
+    /// The window server's title for this window, read now. The title check pairs it with the AX
+    /// title read just before it, so a page title that changes between a CG poll and the round
+    /// doesn't make every read look torn. nil: use the poll's own title.
+    func currentCGTitle(windowID: CGWindowID) -> String?
+}
+
+extension ChromiumWindowReading {
+    public func currentCGTitle(windowID: CGWindowID) -> String? { nil }
 }
 
 public final class LiveChromiumWindowReader: ChromiumWindowReading, @unchecked Sendable {
@@ -125,6 +133,14 @@ public final class LiveChromiumWindowReader: ChromiumWindowReading, @unchecked S
         var wid: CGWindowID = 0
         guard _AXUIElementGetWindow(window, &wid) == .success else { return nil }
         return wid
+    }
+
+    public func currentCGTitle(windowID: CGWindowID) -> String? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
+              let info = list.first(where: { ($0[kCGWindowNumber as String] as? CGWindowID) == windowID }) else {
+            return nil
+        }
+        return info[kCGWindowName as String] as? String ?? ""
     }
 
     public func readTitle(for window: AXUIElement) -> String? {
