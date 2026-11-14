@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.68] - 2026-11-14
+
 ### Changed
 
-- leaving a website out now needs Accessibility (called Device Control and Data Access on macos 27), because without it solstone can't tell which website a window shows. until then, websites on your list aren't kept out of your journal, and Safari is no longer left out of your journal in their place, on screen or in activity.
+- leaving a website out now needs Accessibility (called Device Control and Data Access on macos 27), because without it solstone can't tell which website a window shows. until it's allowed, websites on your list aren't kept out of your journal, and Safari and Picture in Picture are no longer left out of your journal in their place.
 
 ## [2.0.67] - 2026-11-13
 
