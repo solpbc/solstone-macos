@@ -14,7 +14,7 @@ private func logJournalWindowLoad(_ url: URL) {
     let host = url.host ?? ""
     let port = url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80)
     Logger.journal.info(
-        "journal-window: load host=\(host, privacy: .public) port=\(port, privacy: .public) path=\(url.path, privacy: .private) query=\(url.query ?? "", privacy: .private) fragment=\(url.fragment ?? "", privacy: .private)"
+        "journal-window: load host=\(host, privacy: .public) port=\(port, privacy: .public)"
     )
 }
 

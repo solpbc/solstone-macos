@@ -373,6 +373,8 @@ public enum UICopy {
     public static let JOURNAL_WINDOW_TITLE = "your journal"
     public static let JOURNAL_WINDOW_LOADING = "opening your journal…"
     public static let JOURNAL_WINDOW_ERROR = "your journal couldn't load"
+    public static let JOURNAL_LINK_INVALID_TITLE = "this journal link isn't valid."
+    public static let JOURNAL_LINK_INVALID_BODY = "copy the full link from your chat and open it again."
     public static let JOURNAL_WINDOW_RETRY = "try again"
     public static let JOURNAL_MODE_THIS_MAC_LABEL = "this mac"
     public static let JOURNAL_MODE_ANOTHER_MACHINE_LABEL = "another device"
