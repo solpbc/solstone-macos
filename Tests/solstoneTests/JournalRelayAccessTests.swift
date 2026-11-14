@@ -1256,6 +1256,28 @@ extension JournalRelayAccessTests {
         #expect(await session.disconnectCallCount >= 1)
     }
 
+    @Test("The keepalive rests at two pings a minute and returns to its usual cadence")
+    @MainActor
+    func keepaliveRestsAndReturns() async throws {
+        let session = FakeTunnelReconnectingSession()
+        let transport = SPLTunnelTransport(makeSession: { _, _, _ in session })
+        let stored = pairing()
+
+        // Resting before the connection exists: it starts out resting.
+        await transport.setKeepaliveResting(true)
+        _ = try await transport.connect(pairing: stored, candidates: TransportEndpoint.candidates(for: stored))
+        #expect(await session.keepaliveIntervals == [.seconds(30)])
+
+        await transport.setKeepaliveResting(false)
+        await transport.setKeepaliveResting(true)
+        #expect(await session.keepaliveIntervals == [.seconds(30), .seconds(2), .seconds(30)])
+
+        #expect(await transport.isTransferring() == false)
+        await session.setTransferring(true)
+        #expect(await transport.isTransferring())
+        await transport.disconnect()
+    }
+
     @Test("Invalid journal text cannot partially mutate a complete metadata resource")
     func invalidJournalTextRejectsResource() throws {
         let resource = try #require(JSONSerialization.jsonObject(with: Data(Self.actualMetadataBody.utf8)) as? [String: Any])

@@ -278,6 +278,17 @@ actor FakeTunnelReconnectingSession: TunnelReconnecting {
     private(set) var disconnectCallCount = 0
     private(set) var recordedEndpoints: [[TransportEndpoint]] = []
     private(set) var isDisconnected = false
+    /// Every keepalive interval this session was given, in order.
+    private(set) var keepaliveIntervals: [Duration] = []
+    private var transferring = false
+
+    func setTransferring(_ transferring: Bool) {
+        self.transferring = transferring
+    }
+
+    func setKeepaliveInterval(_ interval: Duration) {
+        keepaliveIntervals.append(interval)
+    }
 
     init(
         connectionMode: ConnectionMode? = .plViaSpl,
@@ -686,6 +697,21 @@ final class FakeTunnelTransport: TunnelTransporting {
         return inboundSnapshots.removeFirst()
     }
 
+    var transferring = false
+    private(set) var keepaliveResting = false
+    /// Each change of the keepalive between resting and its usual cadence, in order.
+    private(set) var keepaliveRestingChanges: [Bool] = []
+
+    func isTransferring() async -> Bool {
+        transferring
+    }
+
+    func setKeepaliveResting(_ resting: Bool) async {
+        guard resting != keepaliveResting else { return }
+        keepaliveResting = resting
+        keepaliveRestingChanges.append(resting)
+    }
+
     func emit(_ state: TunnelState) {
         lastState = state
         stateContinuations.values.forEach { $0.yield(state) }
@@ -921,7 +947,7 @@ extension FakeTunnelReconnectingSession: TunnelGeneration {
     }
 
     func isTransferring(quiet _: Duration, pendingLimit _: Duration) async -> Bool {
-        false
+        transferring
     }
 }
 

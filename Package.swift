@@ -24,7 +24,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
-        .package(url: "https://github.com/solpbc/spl-swift.git", exact: "0.10.2")
+        .package(url: "https://github.com/solpbc/spl-swift.git", exact: "0.10.3")
     ],
     targets: [
         .binaryTarget(name: "Sparkle", path: "vendor/sparkle/Sparkle.xcframework"),

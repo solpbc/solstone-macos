@@ -533,6 +533,104 @@ struct TunnelLifecycleOwnerTests {
         await owner.stop()
     }
 
+    @Test func aLockedIdleConnectionRestsItsKeepaliveAndIsHeardWithoutAsking() async throws {
+        let liveness = ManualSleeper()
+        let clock = TestClock(Date(timeIntervalSince1970: 1_000_000))
+        let start = clock.now
+        let probe = ProbeScript(results: [false])
+        let lockCenter = NotificationCenter()
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34571, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            probe: { port, _ in await probe.run(port: port) },
+            livenessSleep: { try await liveness.sleep($0) },
+            now: { clock.now },
+            unlockNotificationCenter: lockCenter
+        )
+        owner.start()
+        try await waitUntil { owner.localPort == 34571 }
+        try await waitUntil { await liveness.sleepCount == 1 }
+
+        lockCenter.post(name: Notification.Name("com.apple.screenIsLocked"), object: nil)
+        for _ in 0..<20 where !transport.keepaliveResting {
+            transport.inboundSnapshots = [1]
+            try await takeReading(liveness, clock, at: start)
+        }
+        #expect(transport.keepaliveResting)
+
+        // Locked for 70 s with nothing in flight. The only thing heard is the
+        // resting keepalive's answer, about every 30 s.
+        var notConnectedAt: [Int] = []
+        for second in 1...70 {
+            transport.inboundSnapshots = [UInt64(1 + second / 30)]
+            try await takeReading(liveness, clock, at: start.addingTimeInterval(TimeInterval(second)))
+            owner.updateConnectionVerdict()
+            if owner.presentedConnection != .connected { notConnectedAt.append(second) }
+        }
+        #expect(await probe.count == 0)
+        #expect(notConnectedAt.isEmpty)
+        #expect(transport.keepaliveRestingChanges == [true])
+
+        // Unlocked 11 s after the last answer, and the check sent on unlock goes
+        // unanswered. The usual cadence is back at once, and the journal gets the
+        // usual time from the unlock before it is asked again or stops reading connected.
+        lockCenter.post(name: Notification.Name("com.apple.screenIsUnlocked"), object: nil)
+        try await waitUntil { await probe.count >= 1 }
+        #expect(transport.keepaliveRestingChanges == [true, false])
+        transport.inboundSnapshots = [3]
+        try await takeReading(liveness, clock, at: start.addingTimeInterval(72))
+        #expect(await probe.count == 1)
+        clock.now = start.addingTimeInterval(79.9)
+        owner.updateConnectionVerdict()
+        #expect(owner.presentedConnection == .connected)
+        clock.now = start.addingTimeInterval(80)
+        owner.updateConnectionVerdict()
+        #expect(owner.presentedConnection == .connecting)
+        await owner.stop()
+    }
+
+    @Test func aLockedConnectionKeepsItsUsualKeepaliveWhileARequestIsInFlight() async throws {
+        let liveness = ManualSleeper()
+        let clock = TestClock(Date(timeIntervalSince1970: 1_000_000))
+        let lockCenter = NotificationCenter()
+        let transport = FakeTunnelTransport(connection: .init(localPort: 34572, via: .relay))
+        let owner = makeOwner(
+            factory: FakeTransportFactory([transport]),
+            livenessSleep: { try await liveness.sleep($0) },
+            now: { clock.now },
+            unlockNotificationCenter: lockCenter
+        )
+        owner.start()
+        try await waitUntil { owner.localPort == 34572 }
+        try await waitUntil { await liveness.sleepCount == 1 }
+
+        lockCenter.post(name: Notification.Name("com.apple.screenIsLocked"), object: nil)
+        for _ in 0..<20 where !transport.keepaliveResting {
+            try await takeReading(liveness, clock, at: clock.now)
+        }
+        #expect(transport.keepaliveRestingChanges == [true])
+
+        // An upload starts behind the locked screen: the usual cadence returns, so a
+        // path that goes dark under it is found in seconds.
+        transport.transferring = true
+        try await takeReading(liveness, clock, at: clock.now)
+        try await takeReading(liveness, clock, at: clock.now)
+        #expect(transport.keepaliveRestingChanges == [true, false])
+
+        transport.transferring = false
+        try await takeReading(liveness, clock, at: clock.now)
+        #expect(transport.keepaliveRestingChanges == [true, false, true])
+        await owner.stop()
+    }
+
+    /// Lets the liveness loop take its next reading at `time`, and waits for it.
+    private func takeReading(_ liveness: ManualSleeper, _ clock: TestClock, at time: Date) async throws {
+        let taken = await liveness.sleepCount
+        clock.now = time
+        await liveness.advance()
+        try await waitUntil { await liveness.sleepCount == taken + 1 }
+    }
+
     @Test func aStaleWakeAnswerCannotRenewTheLease() async throws {
         let probe = ControlledHealthProbe()
         let clock = TestClock(Date(timeIntervalSince1970: 1_000_000))

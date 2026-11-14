@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/solpbc/spl-swift.git",
       "state" : {
-        "revision" : "8fac75a8d6d92ffc6efab16ee9f2f23b0d841dfa",
-        "version" : "0.10.2"
+        "revision" : "ae9e4209bf244b518a313ce1d57ecfab09b55bcd",
+        "version" : "0.10.3"
       }
     },
     {

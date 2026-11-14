@@ -25,6 +25,9 @@ struct JournalConnectionEvidence: Sendable, Equatable {
     var lastHeardAt: Date?
     /// Whether the system reports a usable network path.
     var networkAvailable: Bool
+    /// How long `lastHeardAt` keeps the connection reading connected. Longer while
+    /// the keepalive rests, when the journal is expected to be quiet between pings.
+    var lease: TimeInterval = JournalConnectionPresenter.lease
 }
 
 /// Decides when the connection reads connected, connecting… or offline.
@@ -38,9 +41,9 @@ struct JournalConnectionEvidence: Sendable, Equatable {
 ///
 /// Pure: the caller passes the time, and re-evaluates at `nextChange(after:)`.
 struct JournalConnectionPresenter: Sendable, Equatable {
-    /// How long one piece of evidence keeps the connection reading connected. One
-    /// healthy but slow liveness cycle fits inside it: the check starts after 3 s of
-    /// silence and may take up to 6 s to answer.
+    /// How long one piece of evidence keeps the connection reading connected at the
+    /// usual keepalive cadence. One healthy but slow liveness cycle fits inside it:
+    /// the check starts after 3 s of silence and may take up to 6 s to answer.
     static let lease: TimeInterval = 10
     /// A drop from connected is shown at least this long before connected returns.
     static let minimumDropDwell: TimeInterval = 1
@@ -48,9 +51,10 @@ struct JournalConnectionPresenter: Sendable, Equatable {
     static let offlineAfter: TimeInterval = 30
     /// After a wake, unlock or suspension, the last state is held at most this long.
     static let resumeGrace: TimeInterval = 0.5
-    /// An evaluation this late while connected means the process was suspended
-    /// (the Mac slept, or its timers were held back), so it counts as a resume.
-    static let suspensionGap: TimeInterval = lease + 1
+    /// An evaluation this long after the lease would have run out while connected
+    /// means the process was suspended (the Mac slept, or its timers were held
+    /// back), so it counts as a resume.
+    static let suspensionSlack: TimeInterval = 1
 
     private(set) var shown: PresentedJournalConnection = .connecting
     private var evidence: JournalConnectionEvidence?
@@ -80,7 +84,7 @@ struct JournalConnectionPresenter: Sendable, Equatable {
             lastEvaluatedAt = now
         }
         if shown == .connected, let lastEvaluatedAt,
-           now.timeIntervalSince(lastEvaluatedAt) >= Self.suspensionGap {
+           now.timeIntervalSince(lastEvaluatedAt) >= (evidence?.lease ?? Self.lease) + Self.suspensionSlack {
             resume(at: now)
         }
         if let previous = evidence,
@@ -132,7 +136,7 @@ struct JournalConnectionPresenter: Sendable, Equatable {
         }
         if Self.isHeard(evidence, at: now) {
             if let lastHeardAt = evidence.lastHeardAt {
-                deadlines.append(lastHeardAt.addingTimeInterval(Self.lease))
+                deadlines.append(lastHeardAt.addingTimeInterval(evidence.lease))
             }
             if shown != .connected, let droppedAt {
                 deadlines.append(droppedAt.addingTimeInterval(Self.minimumDropDwell))
@@ -147,7 +151,7 @@ struct JournalConnectionPresenter: Sendable, Equatable {
         guard evidence.trying, evidence.linkUp, let lastHeardAt = evidence.lastHeardAt else {
             return false
         }
-        return now.timeIntervalSince(lastHeardAt) < lease
+        return now.timeIntervalSince(lastHeardAt) < evidence.lease
     }
 }
 

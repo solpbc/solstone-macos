@@ -40,6 +40,8 @@ private final class RetriesUntilDisconnectedTransport: TunnelTransporting {
     func requestReconnect() async {}
     func requestUpgrade() async {}
     func inboundActivitySnapshot() async -> UInt64 { 0 }
+    func isTransferring() async -> Bool { false }
+    func setKeepaliveResting(_: Bool) async {}
 }
 
 @Suite("Re-pairing while the journal is unreachable", .serialized)

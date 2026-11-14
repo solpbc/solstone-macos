@@ -209,6 +209,18 @@ struct JournalConnectionPresenterTests {
         trace.run(until: 3_610)
         #expect(trace.changes().map(\.shown) == [.connected])
     }
+
+    @Test func aRestingConnectionStaysConnectedBetweenAnswersAndDropsWhenItsLeaseEnds() {
+        var trace = Trace()
+        // The keepalive rests: the journal is heard about every 30 s, on a 42 s lease.
+        trace.at(0, Evidence(linkUp: true, heardAt: 0, lease: 42))
+        trace.at(30, Evidence(linkUp: true, heardAt: 30, lease: 42))
+        trace.run(until: 100)
+        #expect(trace.shown(at: 71.9) == .connected)
+        // Nothing new by the end of the lease. The drop shows then: a timer firing
+        // one resting lease after the last is not a wake, and earns no hold.
+        #expect(trace.shown(at: 72) == .connecting)
+    }
 }
 
 // MARK: - Trace harness
@@ -218,6 +230,7 @@ private struct Evidence {
     var linkUp: Bool
     var heardAt: TimeInterval?
     var network = true
+    var lease = JournalConnectionPresenter.lease
 
     static func up(heardAt: TimeInterval?) -> Evidence { Evidence(linkUp: true, heardAt: heardAt) }
     static let down = Evidence(linkUp: false, heardAt: nil)
@@ -310,7 +323,8 @@ private struct Trace {
             trying: current.trying,
             linkUp: current.linkUp,
             lastHeardAt: current.heardAt.map(date),
-            networkAvailable: current.network
+            networkAvailable: current.network,
+            lease: current.lease
         )
         history.append(Sample(time: time, shown: presenter.update(evidence, at: date(time))))
     }
