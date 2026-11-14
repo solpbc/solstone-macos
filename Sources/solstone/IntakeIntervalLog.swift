@@ -4,8 +4,9 @@
 import Foundation
 
 /// Accepted audio and per-display screen time for one capture segment, on the
-/// segment clock. Padding the audio writer generated is not a range. A site hold
-/// closes only that display. An idle frame that was skipped does not.
+/// segment clock. Padding the audio writer generated is not a range. A frame the
+/// site gate drops on a hold, a gap or a stall closes only that display's
+/// range. An idle frame that was skipped does not.
 final class IntakeIntervalLog: @unchecked Sendable {
     private let lock = NSLock()
     private var origin: TimeInterval = 0

@@ -378,6 +378,9 @@ public final class SiteFrameGate {
             let oldest = queue.removeFirst()
             stallCount += 1
             noteHoldDrop(displayID: displayID, c: oldest.c)
+            if let c = oldest.c {
+                intakeLog?.hold(display: String(displayID), at: c)
+            }
             let drop = SiteFrameAction.drop(id: oldest.id, reason: .stall)
             let effectiveOwner = owner != 0 ? owner : frame.owner
             if oldest.owner == effectiveOwner {
@@ -482,6 +485,7 @@ public final class SiteFrameGate {
             if hasGap {
                 gapCount += 1
                 noteHoldDrop(displayID: displayID, c: c)
+                intakeLog?.hold(display: String(displayID), at: c)
                 actions.append(.drop(id: frame.id, reason: .gap))
                 continue
             }

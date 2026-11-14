@@ -477,7 +477,7 @@ struct CaptureCounterTests {
 
 @Suite("Screen hold intervals")
 struct ScreenHoldIntervalTests {
-    @Test @MainActor func aSiteHoldClosesOnlyThatDisplayAndAGapOrStallDoesNot() {
+    @Test @MainActor func aSiteHoldGapOrStallClosesOnlyThatDisplay() {
         let log = IntakeIntervalLog()
         log.beginDisplay("1", at: 0)
         log.beginDisplay("2", at: 0)
@@ -515,7 +515,7 @@ struct ScreenHoldIntervalTests {
         #expect(gapGate.evaluate(displayID: 1, now: 11) == [.drop(id: 2, reason: .gap)])
         gapLog.endAll(at: 20)
         let gapRange = gapLog.screenRanges()["1"] ?? []
-        #expect(gapRange.count == 1 && gapRange.first?.0 == 0 && gapRange.first?.1 == 20)
+        #expect(gapRange.count == 1 && gapRange.first?.0 == 0 && gapRange.first?.1 == 10)
 
         let stallLog = IntakeIntervalLog()
         stallLog.beginDisplay("1", at: 0)
@@ -524,10 +524,10 @@ struct ScreenHoldIntervalTests {
         for id in UInt64(1)...5 {
             _ = stallGate.enqueue(displayID: 1, frame: SiteHeldFrame(id: id, displayTicks: ticks(100 + Double(id)), c: Double(id), originTicks: origin))
         }
-        #expect(stallLog.screenRanges()["1"] == nil)
+        // The fifth frame drops the oldest, captured at 1.
         stallLog.endAll(at: 30)
         let stallRange = stallLog.screenRanges()["1"] ?? []
-        #expect(stallRange.count == 1 && stallRange.first?.0 == 0 && stallRange.first?.1 == 30)
+        #expect(stallRange.count == 1 && stallRange.first?.0 == 0 && stallRange.first?.1 == 1)
     }
 }
 
