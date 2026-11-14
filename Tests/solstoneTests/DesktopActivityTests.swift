@@ -201,16 +201,23 @@ struct DesktopActivityTests {
     @Test func checkpointSurvivesRestartAndDoesNotExtendAcrossDowntime() throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         let storage = StorageManager(baseDirectory: root.appendingPathComponent("captures"))
-        let store = DesktopActivityStore(storage: storage)
+        nonisolated(unsafe) var writes = 0
+        let store = DesktopActivityStore(storage: storage, write: { data, url in
+            writes += 1; try DesktopActivityStore.durableWrite(data, url)
+        })
         let row = DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "Fixture")
         let start: Int64 = 1_800_000_001_000
         try store.observe([row], at: start)
-        try store.observe([row], at: start + 5_000)
+        let afterFirst = writes
+        // A minute and a bit of the same observation, sampled every 5 s: saved once, at the minute.
+        for tick in 1...13 { try store.observe([row], at: start + Int64(tick) * 5_000) }
+        #expect(writes - afterFirst == 1)
+        // A crash now: the restart seals what was saved, at most a minute behind, never the gap.
         let recovered = DesktopActivityStore(storage: storage)
         try recovered.recover()
         let result = try rows(root)
         #expect(result.count == 1)
-        #expect(result.first?.ts == start && result.first?.end_ts == start + 5_000)
+        #expect(result.first?.ts == start && result.first?.end_ts == start + 60_000)
         try DesktopActivityStore(storage: storage).recover()
         #expect(artifacts(root).count == 1)
     }
@@ -320,6 +327,19 @@ struct DesktopActivityTests {
         let result = try rows(root)
         #expect(result.count == 1)
         #expect(result[0].end_ts == start + 4_000)
+    }
+
+    @Test func endingAnUnchangedObservationSavesItsLatestEnd() throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopActivityStore(storage: StorageManager(baseDirectory: root.appendingPathComponent("captures")))
+        let row = DesktopActivityRow(kind: "foreground", method: "nsworkspace", app: "Fixture")
+        let start: Int64 = 1_800_000_001_000
+        try store.observe([row], at: start)
+        try store.observe([row], at: start + 20_000)
+        // Quit, lock and sleep end the observation; the end is saved at once, not a minute later.
+        try store.end(at: start + 25_000)
+        let result = try rows(root)
+        #expect(result.count == 1 && result[0].end_ts == start + 25_000)
     }
 
     @Test func unchangedTicksDuringCaptureWriteNothing() throws {

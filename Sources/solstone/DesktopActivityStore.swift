@@ -54,6 +54,9 @@ final class DesktopActivityStore {
     let pendingURL: URL
     private(set) var checkpoint = Checkpoint()
     private(set) var publicationCount = 0
+    static let unchangedSaveIntervalMs: Int64 = 60_000
+    /// When an observation was last saved as it went on, on the observation clock.
+    private var extensionSavedAt: Int64?
     private let write: (Data, URL) throws -> Void
 
     init(storage: StorageManager, write: @escaping (Data, URL) throws -> Void = DesktopActivityStore.durableWrite) {
@@ -119,9 +122,16 @@ final class DesktopActivityStore {
         var next = checkpoint
         let now = max(milliseconds, next.open.map(\.end_ts).max() ?? milliseconds)
         if next.open.count == observations.count && zip(next.open, observations).allSatisfy({ $0.sameObservation(as: $1) }) {
-            // Nothing open to extend, or already ending now: the saved checkpoint is already this one.
+            // Nothing open to extend, or already ending now: nothing moved.
             guard next.open.contains(where: { $0.end_ts != now }) else { return }
             for i in next.open.indices { next.open[i].end_ts = now }
+            // The same observation going on is saved at most once a minute, so a crash can cut
+            // at most that much from its end. Any change, and every end, seal and placement
+            // (quit, lock, sleep, a segment cut), saves at once with the latest end.
+            if let savedAt = extensionSavedAt, now - savedAt < Self.unchangedSaveIntervalMs {
+                checkpoint = next
+                return
+            }
         } else {
             for var row in next.open { row.end_ts = max(row.ts, now); next.closed.append(row) }
             next.open = observations.map { row in
@@ -130,6 +140,7 @@ final class DesktopActivityStore {
         }
         guard !next.open.isEmpty || !next.closed.isEmpty else { return }
         try save(next)
+        extensionSavedAt = now
     }
 
     func end(at milliseconds: Int64, captureOpen: Bool = false) throws {
