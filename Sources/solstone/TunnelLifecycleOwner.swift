@@ -102,13 +102,16 @@ func tunnelIdentityBase(state: TunnelLifecycleState) -> String? {
 @Observable
 final class TunnelLifecycleOwner {
     /// How often the carrier's inbound counter is read. Reading it sends nothing:
-    /// the keepalive answers every couple of seconds, and every inbound byte
-    /// counts as hearing the journal.
+    /// the keepalive answers every couple of seconds (about twice a minute while
+    /// it rests), and every inbound byte counts as hearing the journal.
     static let livenessSampleInterval: Duration = .seconds(1)
     /// The reading may come this much late, so it can share a wakeup with other work.
     nonisolated static let livenessSampleTolerance: Duration = .milliseconds(250)
     /// After this much silence the journal is asked directly, over the open tunnel.
     nonisolated static let probeAfterSilence: TimeInterval = 3
+    /// The same while the keepalive rests: one resting ping interval, and room for
+    /// its answer to be late and to be read.
+    nonisolated static let restingProbeAfterSilence: TimeInterval = 35
     /// One such check may take this long. Silence, then one slow check, fits inside
     /// the presenter's lease: 3 s + 6 s + 1 s.
     static let probeTimeout: Duration = .seconds(6)
@@ -319,6 +322,10 @@ final class TunnelLifecycleOwner {
     @ObservationIgnored
     private let unlockNotificationName: Notification.Name
     @ObservationIgnored
+    private var screenLockedObserver: NSObjectProtocol?
+    @ObservationIgnored
+    private let lockNotificationName: Notification.Name
+    @ObservationIgnored
     private var establishedLoopbackPort: Int?
     /// The pairing the installed transport was built from, and whether its
     /// candidates could include the relay. A relay-access answer is compared
@@ -348,7 +355,23 @@ final class TunnelLifecycleOwner {
     /// When the journal was last heard over the installed connection. Cleared
     /// whenever that connection stops being the live route.
     @ObservationIgnored
-    private var lastHeardAt: Date?
+    private var lastHeardAt: Date? {
+        didSet {
+            silenceBeforeAsking = keepaliveResting ? Self.restingProbeAfterSilence : Self.probeAfterSilence
+        }
+    }
+    /// Whether the screen is locked. Follows the lock and unlock notices, so a launch
+    /// behind a locked screen keeps the usual cadence until the next lock.
+    @ObservationIgnored
+    private var screenLocked = false
+    /// The keepalive rests while the screen is locked and no request is in flight.
+    @ObservationIgnored
+    private var keepaliveResting = false
+    /// How long the journal may go unheard, counted from `lastHeardAt`, before it is
+    /// asked directly. Follows the keepalive cadence, so resting pings that are
+    /// answered are never mistaken for silence.
+    @ObservationIgnored
+    private var silenceBeforeAsking: TimeInterval = TunnelLifecycleOwner.probeAfterSilence
     @ObservationIgnored
     private var networkAvailable = true
     @ObservationIgnored
@@ -379,6 +402,7 @@ final class TunnelLifecycleOwner {
         retirementControlBudget: Duration = .seconds(20),
         unlockNotificationCenter: NotificationCenter = DistributedNotificationCenter.default(),
         unlockNotificationName: Notification.Name = Notification.Name("com.apple.screenIsUnlocked"),
+        lockNotificationName: Notification.Name = Notification.Name("com.apple.screenIsLocked"),
         unknownJournals: UnknownJournalNotices? = nil
     ) {
         let store = credentialStore ?? PairingCredentialStore(store: keychainStore)
@@ -399,6 +423,7 @@ final class TunnelLifecycleOwner {
         self.presenter = JournalConnectionPresenter(now: now())
         self.unlockNotificationCenter = unlockNotificationCenter
         self.unlockNotificationName = unlockNotificationName
+        self.lockNotificationName = lockNotificationName
 
         let session = loopbackSession ?? BoundedLoopbackClient.sharedSession
         self.addressSession = session
@@ -474,6 +499,8 @@ final class TunnelLifecycleOwner {
         }
         running = true
         presenter = JournalConnectionPresenter(now: now())
+        screenLocked = false
+        keepaliveResting = false
         lastHeardAt = nil
         refreshTunnelManagedFromStoredPairing()
         state = .disconnected
@@ -693,6 +720,7 @@ final class TunnelLifecycleOwner {
         guard running else { return }
         presenter.resume(at: now())
         updateConnectionVerdict()
+        if let transport { await reconcileKeepalive(on: transport) }
         guard case .connected(let localPort, _) = state else { return }
         let generation = probeGeneration
         let incarnation = transportIncarnation
@@ -1484,6 +1512,19 @@ final class TunnelLifecycleOwner {
             }
         }
 
+        if screenLockedObserver == nil {
+            screenLockedObserver = unlockNotificationCenter.addObserver(
+                forName: lockNotificationName,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                // The liveness loop rests the keepalive on its next reading.
+                Task { @MainActor [weak self] in
+                    self?.screenLocked = true
+                }
+            }
+        }
+
         if screenUnlockedObserver == nil {
             screenUnlockedObserver = unlockNotificationCenter.addObserver(
                 forName: unlockNotificationName,
@@ -1491,6 +1532,7 @@ final class TunnelLifecycleOwner {
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
+                    self?.screenLocked = false
                     await self?.handleWakeOrUnlock()
                 }
             }
@@ -1501,6 +1543,10 @@ final class TunnelLifecycleOwner {
         if let observer = didWakeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             didWakeObserver = nil
+        }
+        if let observer = screenLockedObserver {
+            unlockNotificationCenter.removeObserver(observer)
+            screenLockedObserver = nil
         }
         if let observer = screenUnlockedObserver {
             unlockNotificationCenter.removeObserver(observer)
@@ -1833,7 +1879,7 @@ final class TunnelLifecycleOwner {
     /// Gathers evidence that the journal is still there for as long as the
     /// connection is up. Each sample reads the carrier's inbound counter, which
     /// moves on every keepalive answer and every reply, so a healthy connection
-    /// is heard without sending anything extra. Only after `probeAfterSilence`
+    /// is heard without sending anything extra. Only after `silenceBeforeAsking`
     /// of silence is the journal asked directly over the open tunnel, and only
     /// its answer counts. A failed check changes nothing by itself: the lease
     /// runs out, or the keepalive declares the carrier lost and reconnects.
@@ -1852,6 +1898,7 @@ final class TunnelLifecycleOwner {
                    self.establishedLoopbackPort == localPort,
                    let transport = self.transport {
                     let incarnation = self.transportIncarnation
+                    await self.reconcileKeepalive(on: transport)
                     let count = await transport.inboundActivitySnapshot()
                     if self.probeResultIsCurrent(localPort: localPort, generation: self.probeGeneration, incarnation: incarnation) {
                         let sampledAt = self.now()
@@ -1862,7 +1909,7 @@ final class TunnelLifecycleOwner {
                         lastCount = count
                         lastSampleAt = sampledAt
                         if self.livenessProbeGeneration != self.probeGeneration,
-                           sampledAt.timeIntervalSince(self.lastHeardAt ?? .distantPast) >= Self.probeAfterSilence {
+                           sampledAt.timeIntervalSince(self.lastHeardAt ?? .distantPast) >= self.silenceBeforeAsking {
                             self.runLivenessProbe(localPort: localPort, generation: self.probeGeneration, incarnation: incarnation)
                         }
                     }
@@ -1874,6 +1921,32 @@ final class TunnelLifecycleOwner {
                 }
             }
         }
+    }
+
+    /// Rests the keepalive while the screen is locked and no request is in flight,
+    /// and returns it to the usual cadence otherwise. With nobody looking and nothing
+    /// moving, a ping every couple of seconds only keeps the radio and both machines
+    /// busy. The silence the liveness check allows follows the cadence. On the way
+    /// back the journal gets the usual time to answer, counted from now: the ping
+    /// sent at once has not had its chance yet.
+    private func reconcileKeepalive(on transport: any TunnelTransporting) async {
+        let busy = screenLocked ? await transport.isTransferring() : false
+        // Read again: an unlock may have arrived while the transport was asked.
+        let resting = screenLocked && !busy
+        if resting != keepaliveResting {
+            keepaliveResting = resting
+            if resting {
+                silenceBeforeAsking = Self.restingProbeAfterSilence
+            } else if let lastHeardAt {
+                silenceBeforeAsking = min(
+                    silenceBeforeAsking,
+                    now().timeIntervalSince(lastHeardAt) + Self.probeAfterSilence
+                )
+            }
+            updateConnectionVerdict()
+        }
+        // Told every time: a transport installed since the last change starts at the usual cadence.
+        await transport.setKeepaliveResting(resting)
     }
 
     private func runLivenessProbe(localPort: Int, generation: UInt64, incarnation: UInt64) {
@@ -2224,7 +2297,9 @@ final class TunnelLifecycleOwner {
             linkUp: linkUp,
             lastHeardAt: lastHeardAt,
             // A journal on this Mac does not need the network.
-            networkAvailable: networkAvailable || isPairedHome
+            networkAvailable: networkAvailable || isPairedHome,
+            // Silence, then one slow check, fits inside the lease at either cadence.
+            lease: JournalConnectionPresenter.lease + silenceBeforeAsking - Self.probeAfterSilence
         )
     }
 

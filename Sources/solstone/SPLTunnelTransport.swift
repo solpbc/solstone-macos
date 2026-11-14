@@ -44,6 +44,11 @@ protocol TunnelTransporting: AnyObject, Sendable {
     /// Try the pairing's better paths without disturbing the working carrier.
     func requestUpgrade() async
     func inboundActivitySnapshot() async -> UInt64
+    /// Whether a request is waiting on the journal, or the journal is still answering one.
+    func isTransferring() async -> Bool
+    /// Rests the keepalive, which then pings about twice a minute, or returns it to its
+    /// usual cadence with a ping at once. Holds for this connection and every later one.
+    func setKeepaliveResting(_ resting: Bool) async
 }
 
 extension TunnelTransporting {
@@ -64,6 +69,8 @@ protocol TunnelReconnecting: TunnelSessioning, MuxStreamOpening {
     func requestReconnect() async
     func requestUpgrade() async
     func attemptStateUpdates() async -> AsyncStream<TunnelSupervisorAttemptState>
+    func isTransferring(quiet: Duration, pendingLimit: Duration) async -> Bool
+    func setKeepaliveInterval(_ interval: Duration) async
 }
 
 extension TunnelSupervisor: TunnelReconnecting {}
@@ -145,6 +152,14 @@ final class SPLTunnelTransport: TunnelTransporting {
         keepalive: KeepalivePolicy(interval: .seconds(2), missedLimit: 5, runsOnRelayPath: true),
         returnsToBetterPath: true
     )
+    /// The resting cadence. Loss still takes five unanswered pings, so a path that
+    /// goes dark while resting is found in minutes, not seconds; a request starting
+    /// ends the rest, and the ping sent then is counted with the ones already missed.
+    static let restingKeepaliveInterval: Duration = .seconds(30)
+    /// A request counts as in flight while the journal spoke on it this recently,
+    /// or while it has waited this long at most for an answer.
+    private static let transferQuiet: Duration = .seconds(5)
+    private static let transferPendingLimit: Duration = .seconds(30)
 
     private let clientInfo: SPLClientInfo
     private let policy: SessionPolicy
@@ -158,6 +173,7 @@ final class SPLTunnelTransport: TunnelTransporting {
     private var connectionModeForwardTask: Task<Void, Never>?
     private var attemptStateForwardTask: Task<Void, Never>?
     private var sightingForwardTask: Task<Void, Never>?
+    private var keepaliveResting = false
 
     init(
         clientInfo: SPLClientInfo = SPLRuntime.clientInfo,
@@ -180,6 +196,7 @@ final class SPLTunnelTransport: TunnelTransporting {
     ) async throws -> TunnelTransportConnection {
         let capturedGeneration = generation
         let session = activeSession(for: pairing)
+        await applyKeepaliveInterval(to: session)
         _ = try await session.connect(endpoints: candidates)
         guard generation == capturedGeneration, !Task.isCancelled else {
             await session.disconnect()
@@ -264,6 +281,35 @@ final class SPLTunnelTransport: TunnelTransporting {
             return 0
         }
         return await session.inboundActivitySnapshot()
+    }
+
+    func isTransferring() async -> Bool {
+        guard let session else {
+            return false
+        }
+        return await session.isTransferring(quiet: Self.transferQuiet, pendingLimit: Self.transferPendingLimit)
+    }
+
+    func setKeepaliveResting(_ resting: Bool) async {
+        guard resting != keepaliveResting else { return }
+        keepaliveResting = resting
+        guard let session else { return }
+        await applyKeepaliveInterval(to: session)
+    }
+
+    private var keepaliveInterval: Duration {
+        keepaliveResting ? Self.restingKeepaliveInterval : policy.keepalive.interval
+    }
+
+    /// Returns only once the session holds the current cadence, even if it changed
+    /// while the session was being told.
+    private func applyKeepaliveInterval(to session: any TunnelReconnecting) async {
+        var applied: Duration?
+        while applied != keepaliveInterval {
+            let interval = keepaliveInterval
+            applied = interval
+            await session.setKeepaliveInterval(interval)
+        }
     }
 
     private func activeSession(for pairing: StoredPairing) -> any TunnelReconnecting {
