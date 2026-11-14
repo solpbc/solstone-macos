@@ -3471,8 +3471,8 @@ struct SettingsView: View {
                     .accessibilityIdentifier(AXID.Settings.Privacy.websiteAccessibilityCaution)
                 }
 
-                if appState.siteSafariCaution {
-                    Text(UICopy.Websites.browserCaution(browser: "Safari"))
+                ForEach(appState.cautionedBrowsers, id: \.self) { browser in
+                    Text(UICopy.Websites.browserCaution(browser: browser))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier(AXID.Settings.Privacy.websiteBrowserCaution)

@@ -146,7 +146,7 @@ extension SettingsView {
                     audioHealthNoteView(for: .screen)
                     ForEach(appState.siteIntakeNotes, id: \.self) { note in
                         switch note {
-                        case .safariKeptOut: Text(UICopy.MENUBAR_A11Y_SAFARI_KEPT_OUT).font(.caption).foregroundStyle(.secondary)
+                        case .safariKeptOut: Text(appState.siteKeptOutAccessibilityLabel).font(.caption).foregroundStyle(.secondary)
                         case .screenHeld: Text(UICopy.MENUBAR_SITE_SCREEN_HELD).font(.caption).foregroundStyle(.secondary)
                         }
                     }

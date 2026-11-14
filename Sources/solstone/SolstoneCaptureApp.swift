@@ -345,7 +345,8 @@ internal func statusAccessibilityLabel(
     errorMessage: String?,
     sourceStatus: String? = nil,
     siteNotes: [SiteIntakeNote] = [],
-    journalVerdict: JournalConnectionVerdict? = nil
+    journalVerdict: JournalConnectionVerdict? = nil,
+    siteKeptOutLabel: String? = nil
 ) -> String {
     let baseLabel: String = switch presentation.observation {
     case .stopped:
@@ -380,7 +381,7 @@ internal func statusAccessibilityLabel(
     if let sourceStatus { components.append(sourceStatus) }
     for note in siteNotes {
         switch note {
-        case .safariKeptOut: components.append(UICopy.MENUBAR_A11Y_SAFARI_KEPT_OUT)
+        case .safariKeptOut: components.append(siteKeptOutLabel ?? UICopy.MENUBAR_A11Y_SAFARI_KEPT_OUT)
         case .screenHeld: components.append(UICopy.MENUBAR_SITE_SCREEN_HELD)
         }
     }
@@ -547,7 +548,8 @@ private struct StatusIcon: View {
                 errorMessage: appState.errorMessage,
                 sourceStatus: appState.captureSourcesStatusText,
                 siteNotes: appState.siteIntakeNotes,
-                journalVerdict: appState.tunnelLifecycleOwner.connectionVerdict
+                journalVerdict: appState.tunnelLifecycleOwner.connectionVerdict,
+                siteKeptOutLabel: appState.siteKeptOutAccessibilityLabel
             ))
             .task {
                 guard !hasCheckedSetup else { return }

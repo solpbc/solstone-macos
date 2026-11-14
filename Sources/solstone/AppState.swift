@@ -415,7 +415,16 @@ public final class AppState {
         accessibilityProbe.prompt()
     }
 
-    internal var currentSafariKeptOut = false
+    internal var currentKeptOutBrowsers: Set<PrivateBrowser> = []
+    internal var currentSafariKeptOut: Bool {
+        !currentKeptOutBrowsers.isEmpty
+    }
+    public var siteKeptOutMenuTitle: String {
+        UICopy.browserKeptOutMenuTitle(browsers: Array(currentKeptOutBrowsers))
+    }
+    public var siteKeptOutAccessibilityLabel: String {
+        UICopy.browserKeptOutAccessibilityLabel(browsers: Array(currentKeptOutBrowsers))
+    }
     internal var currentSiteScreenHeld = false
     /// Capture has confirmed Accessibility is off, so the website list does nothing in activity
     /// either, as on screen.
@@ -467,6 +476,29 @@ public final class AppState {
 #endif
         }
     }
+    internal var currentSiteChromeCaution: Bool = false {
+        didSet {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            if oldValue != currentSiteChromeCaution { refreshBrowserSiteList() }
+#endif
+        }
+    }
+    internal var currentSiteEdgeCaution: Bool = false {
+        didSet {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            if oldValue != currentSiteEdgeCaution { refreshBrowserSiteList() }
+#endif
+        }
+    }
+    internal var currentSiteBraveCaution: Bool = false {
+        didSet {
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+            if oldValue != currentSiteBraveCaution { refreshBrowserSiteList() }
+#endif
+        }
+    }
+
+
 
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
     /// Tells every browser extension the app's website list, and what still goes into the
@@ -475,6 +507,10 @@ public final class AppState {
         guard let listener = browserHostListener else { return }
         let paused = pauseManager.isPaused
         let away = capture.captureManager.lifecycleManager.isAway
+        var cautionBundleIDs = Set<String>()
+        if siteChromeCaution { cautionBundleIDs.insert(PrivateBrowser.chrome.bundleIdentifier) }
+        if siteEdgeCaution { cautionBundleIDs.insert(PrivateBrowser.edge.bundleIdentifier) }
+        if siteBraveCaution { cautionBundleIDs.insert(PrivateBrowser.brave.bundleIdentifier) }
         let snapshot = BrowserSiteListSnapshot(
             sites: config.excludedSites,
             epoch: config.excludedSitesEpoch,
@@ -483,7 +519,8 @@ public final class AppState {
             activity: config.isActivitySourceOn && !away && !config.activityHeld(paused: paused, stopped: !isRecording),
             checkedBrands: [.safari],
             accessibilityWorks: !websitesNeedAccessibility,
-            brandsWithCaution: currentSiteSafariCaution ? [.safari] : []
+            brandsWithCaution: siteSafariCaution ? [.safari] : [],
+            cautionedBundleIDs: cautionBundleIDs
         )
         if listener.siteListSource.update(snapshot) {
             Task { await listener.publishSiteListChange() }
@@ -523,7 +560,32 @@ public final class AppState {
         if isSnapshot {
             return snapshotSiteSafariCaution
         }
-        return currentSiteSafariCaution
+        return !currentSiteRuleSuspended && currentSiteSafariCaution
+    }
+
+    public var siteChromeCaution: Bool {
+        guard !config.excludedSites.isEmpty else { return false }
+        return !currentSiteRuleSuspended && currentSiteChromeCaution
+    }
+
+    public var siteEdgeCaution: Bool {
+        guard !config.excludedSites.isEmpty else { return false }
+        return !currentSiteRuleSuspended && currentSiteEdgeCaution
+    }
+
+    public var siteBraveCaution: Bool {
+        guard !config.excludedSites.isEmpty else { return false }
+        return !currentSiteRuleSuspended && currentSiteBraveCaution
+    }
+
+    public var cautionedBrowsers: [String] {
+        if currentSiteRuleSuspended || config.excludedSites.isEmpty { return [] }
+        var list: [String] = []
+        if siteSafariCaution { list.append("Safari") }
+        if siteChromeCaution { list.append("Chrome") }
+        if siteEdgeCaution { list.append("Edge") }
+        if siteBraveCaution { list.append("Brave") }
+        return list
     }
 
     @discardableResult
@@ -2464,8 +2526,17 @@ public final class AppState {
         captureManager.onSiteSafariCaution = { [weak captureTarget] caution in
             if captureTarget?.state?.currentSiteSafariCaution != caution { captureTarget?.state?.currentSiteSafariCaution = caution }
         }
+        captureManager.onSiteChromiumCaution = { [weak captureTarget] browser, caution in
+            guard let state = captureTarget?.state else { return }
+            switch browser {
+            case .chrome: if state.currentSiteChromeCaution != caution { state.currentSiteChromeCaution = caution }
+            case .edge: if state.currentSiteEdgeCaution != caution { state.currentSiteEdgeCaution = caution }
+            case .brave: if state.currentSiteBraveCaution != caution { state.currentSiteBraveCaution = caution }
+            default: break
+            }
+        }
         captureManager.onSafariKeptOut = { [weak captureTarget] keptOut in
-            captureTarget?.state?.currentSafariKeptOut = keptOut
+            captureTarget?.state?.currentKeptOutBrowsers = keptOut
         }
         captureManager.onSiteScreenHeld = { [weak captureTarget] held in
             captureTarget?.state?.currentSiteScreenHeld = held
@@ -3280,6 +3351,7 @@ public final class AppState {
                     lifecycle.isMachineAwake && lifecycle.isActivityScreenLocked
             },
             captureOpen: { [weak manager] in manager?.hasOpenSegment ?? false },
+            chromiumSnapshot: { [weak manager] in manager?.chromiumActivitySnapshot ?? ChromiumActivitySnapshot() },
             onSealed: { [weak self] in self?.uploadCoordinator.triggerSync() }
         )
         activitySource = source

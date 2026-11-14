@@ -113,7 +113,11 @@ struct DesktopActivityReader: Sendable {
         return SiteDecision.titleMatches(axTitle: first.axTitle, cgTitle: cgTitle)
     }
 
-    func read(app: DesktopActivityApp, settings: DesktopActivitySettings) -> DesktopActivityObservation {
+    func read(
+        app: DesktopActivityApp,
+        settings: DesktopActivitySettings,
+        snapshot: ChromiumActivitySnapshot = ChromiumActivitySnapshot()
+    ) -> DesktopActivityObservation {
         guard permit.isValid, !settings.excludes(app) else { return DesktopActivityObservation(rows: []) }
         let screenGranted = permit.isValid && CGPreflightScreenCaptureAccess()
         guard permit.isValid else { return DesktopActivityObservation(rows: []) }
@@ -184,8 +188,121 @@ struct DesktopActivityReader: Sendable {
                     documentURL = walk.urls.compactMap({ $0 }).first
                 }
             }
+        } else if let browser, (browser == .chrome || browser == .edge || browser == .brave) {
+            if focusedWindow == nil {
+                siteUndecided = true
+                documentURL = nil
+            } else {
+                let win = focusedWindow!
+                let cg1 = cgTitle
+                let ax1 = axTitle
+                let (doc1, docFailed1) = readAXDocument(win)
+
+                if Self.pairSettle > 0 {
+                    Thread.sleep(forTimeInterval: Self.pairSettle)
+                }
+
+                let cg2 = screenGranted ? Self.frontWindow(pid: app.pid)?[kCGWindowName as String] as? String : nil
+                let ax2 = string(win, kAXTitleAttribute)
+                let (doc2, docFailed2) = readAXDocument(win)
+
+                let wid = windowID.map { CGWindowID($0) }
+                let prevCG = wid != nil ? snapshot.latestCGTitle[wid!] : nil
+                let prevAX = wid != nil ? snapshot.latestAXTitle[wid!] : nil
+
+                func tabStripOutcome(cg: String?, ax: String?, doc: String?) -> ChromiumTabStripOutcome {
+                    if ax == cg || (doc?.isEmpty == true) {
+                        return LiveChromiumWindowReader().walkTabStrip(for: win, maxNodes: 3000, timeoutSeconds: 0.050)
+                    }
+                    return .notRun
+                }
+
+                let outcome1 = tabStripOutcome(cg: cg1, ax: ax1, doc: doc1)
+                let outcome2 = tabStripOutcome(cg: cg2, ax: ax2, doc: doc2)
+
+                if !settings.excludedSites.isEmpty {
+                    let eval1 = ChromiumSiteRead.evaluateActivity(
+                        browser: browser,
+                        cgTitle: cg1 ?? "",
+                        axTitle: ax1 ?? "",
+                        doc: doc1,
+                        docReadFailed: docFailed1,
+                        previousCGTitle: prevCG,
+                        previousAXTitle: prevAX,
+                        tabStripOutcome: outcome1,
+                        sites: settings.excludedSites
+                    )
+                    let eval2 = ChromiumSiteRead.evaluateActivity(
+                        browser: browser,
+                        cgTitle: cg2 ?? "",
+                        axTitle: ax2 ?? "",
+                        doc: doc2,
+                        docReadFailed: docFailed2,
+                        previousCGTitle: prevCG,
+                        previousAXTitle: prevAX,
+                        tabStripOutcome: outcome2,
+                        sites: settings.excludedSites
+                    )
+
+                    let snap = wid != nil ? snapshot.latestCompleteRead[wid!] : nil
+                    if eval1.verdict == .covered || eval2.verdict == .covered || snap?.verdict == .covered {
+                        return DesktopActivityObservation(rows: [])
+                    }
+
+                    var valid = true
+                    if eval1.verdict != .ordinary || eval2.verdict != .ordinary { valid = false }
+                    if eval1.host == nil || eval2.host == nil || eval1.host != eval2.host { valid = false }
+                    if let snap {
+                        let nowSec = HostClock.seconds(ticks: mach_absolute_time())
+                        if snap.verdict != .ordinary { valid = false }
+                        if nowSec - snap.start > 1.0 { valid = false }
+                        if snap.host != eval1.host { valid = false }
+                        if snap.listGeneration < snapshot.currentGeneration { valid = false }
+                    } else {
+                        valid = false
+                    }
+
+                    if !valid {
+                        siteUndecided = true
+                        documentURL = nil
+                    } else {
+                        if settings.urls && settings.accessibility {
+                            documentURL = doc2
+                        }
+                    }
+                } else {
+                    let eval1 = ChromiumSiteRead.evaluateActivity(
+                        browser: browser,
+                        cgTitle: cg1 ?? "",
+                        axTitle: ax1 ?? "",
+                        doc: doc1,
+                        docReadFailed: docFailed1,
+                        previousCGTitle: prevCG,
+                        previousAXTitle: prevAX,
+                        tabStripOutcome: outcome1,
+                        sites: []
+                    )
+                    let eval2 = ChromiumSiteRead.evaluateActivity(
+                        browser: browser,
+                        cgTitle: cg2 ?? "",
+                        axTitle: ax2 ?? "",
+                        doc: doc2,
+                        docReadFailed: docFailed2,
+                        previousCGTitle: prevCG,
+                        previousAXTitle: prevAX,
+                        tabStripOutcome: outcome2,
+                        sites: []
+                    )
+
+                    if eval1.verdict != .cantTell && eval2.verdict != .cantTell && doc1 == doc2 && doc1 != nil {
+                        if settings.urls && settings.accessibility {
+                            documentURL = doc1
+                        }
+                    }
+                }
+            }
         } else if (settings.urls && settings.accessibility || !settings.excludedSites.isEmpty) && browser != nil, let focusedWindow {
-            // Another browser: wherever its page address can be read, a left-out website stays
+            // Another browser (e.g. Firefox): wherever its page address can be read, a left-out website stays
             // out of activity, title and address alike, whether addresses are recorded or not.
             let walk = walkSeam(focusedWindow, .firstDocument, permit, Self.activityElementTimeout)
             if isLeftOut(walk.urls, settings: settings) { return DesktopActivityObservation(rows: []) }
@@ -204,7 +321,7 @@ struct DesktopActivityReader: Sendable {
         }
         var row = DesktopActivityRow(kind: "foreground", method: screenGranted ? "cg-window" : (axTitle != nil && settings.accessibility ? "ax" : "nsworkspace"), app: app.name, app_id: app.bundleID)
         if settings.titles, !siteUndecided { row.title = title.flatMap { $0.isEmpty ? nil : String($0.prefix(2048)) } }
-        // No address-bar AXValue is used. AXURL belongs to the currently committed document.
+        // No address-bar AXValue is used. AXDocument is the committed document for Chrome, Edge, and Brave. The address field stays unread.
         if settings.urls && settings.accessibility { row.url = documentURL.flatMap(desktopActivityURL) }
         var rows = [row]
         let titleMissing = settings.titles && row.title == nil
@@ -261,8 +378,18 @@ struct DesktopActivityReader: Sendable {
         return (unsafeDowncast(value, to: AXUIElement.self), .success)
     }
 
+    private func readAXDocument(_ window: AXUIElement) -> (doc: String?, failed: Bool) {
+        AXUIElementSetMessagingTimeout(window, 0.025)
+        var val: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(window, "AXDocument" as CFString, &val)
+        guard err == .success, let s = val as? String else {
+            return (nil, true)
+        }
+        return (s, false)
+    }
+
     private func string(_ element: AXUIElement, _ attribute: String) -> String? {
-        AXUIElementSetMessagingTimeout(element, 0.05)
+        AXUIElementSetMessagingTimeout(element, 0.025)
         var value: CFTypeRef?
         guard permit.isValid, AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
         return value as? String

@@ -453,6 +453,41 @@ public enum UICopy {
     public static let MENUBAR_SAFARI_KEPT_OUT = "Safari left out of screen →"
     public static let MENUBAR_SITE_SCREEN_HELD = "screen paused for websites you left out"
     public static let MENUBAR_A11Y_SAFARI_KEPT_OUT = "Safari is left out of what the solstone app takes in from your screen"
+
+    public static func formattedBrowserList(_ browsers: [PrivateBrowser]) -> String {
+        let order: [PrivateBrowser] = [.safari, .chrome, .edge, .brave]
+        let present = order.filter { browsers.contains($0) }
+        let names = present.compactMap { browser -> String? in
+            switch browser {
+            case .safari: return "Safari"
+            case .chrome: return "Chrome"
+            case .edge: return "Edge"
+            case .brave: return "Brave"
+            default: return nil
+            }
+        }
+        if names.count <= 1 {
+            return names.first ?? ""
+        } else if names.count == 2 {
+            return "\(names[0]) and \(names[1])"
+        } else {
+            let leading = names.dropLast().joined(separator: ", ")
+            return "\(leading) and \(names.last!)"
+        }
+    }
+
+    public static func browserKeptOutMenuTitle(browsers: [PrivateBrowser]) -> String {
+        let names = formattedBrowserList(browsers)
+        return "\(names) left out of screen →"
+    }
+
+    public static func browserKeptOutAccessibilityLabel(browsers: [PrivateBrowser]) -> String {
+        let order: [PrivateBrowser] = [.safari, .chrome, .edge, .brave]
+        let present = order.filter { browsers.contains($0) }
+        let names = formattedBrowserList(present)
+        let one = present.count == 1
+        return "\(names) \(one ? "is" : "are") left out of what the solstone app takes in from your screen"
+    }
     public static let MENUBAR_STARTING = "starting…"
     public static let MENUBAR_AWAITING_MARK_CONFIRMATION = "on · confirm your journal's mark →"
     public static let MENUBAR_A11Y_PERMISSIONS_NEEDED = "solstone · permissions needed"
@@ -645,16 +680,16 @@ public enum UICopy {
     public static let MICROPHONES_EMPTY_OPEN_SOUND = "open sound settings"
 
     public enum Websites {
-        public static let DESCRIPTION_PARAGRAPH_1 = "while a website you leave out shows in any Safari window on your screen, even one behind other windows, Safari stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. the rest of your screen keeps going into your journal. leaving out bank.com leaves out login.bank.com too."
+        public static let DESCRIPTION_PARAGRAPH_1 = "while a website you leave out shows in any Safari, Chrome, Edge or Brave window on your screen, even one behind other windows, that browser stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. the rest of your screen keeps going into your journal. leaving out bank.com leaves out login.bank.com too."
         public static let HOW_THIS_WORKS = "how this works"
-        public static let DESCRIPTION_PARAGRAPH_2 = "to check, solstone reads the address of the page each Safari window shows, through Accessibility, and compares it with this list on this mac. the address goes into activity unless you turn browser addresses off."
-        public static let LIMITS_DISCLOSURE = "checked in Safari. other browsers and web apps added to the Dock aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, the solstone app stops taking in your screen for a moment while it checks, and for a few seconds when the page is one you leave out. a website shown inside another website's page isn't recognized. a left-out website's tab title can still show in a browser's tab bar. a minimized Safari window's picture in the Dock can still show. a page that changes without changing its window title, or a page shown for less than a quarter of a second, can be missed. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you stop leaving out there comes off this list, so Safari windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well. while any website is left out, Picture in Picture from Safari, and from other apps that use macOS's own player, stays out of what the solstone app takes in from your screen."
+        public static let DESCRIPTION_PARAGRAPH_2 = "to check, solstone reads the address of the page each Safari, Chrome, Edge and Brave window shows, through Accessibility, and compares it with this list on this mac. the address goes into activity unless you turn browser addresses off."
+        public static let LIMITS_DISCLOSURE = "checked in Safari, Chrome, Edge and Brave. Firefox, other browsers, beta and preview versions of these, and web apps added to the Dock from Safari aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, the solstone app stops taking in your screen for a moment while it checks, and for a few seconds when the page is one you leave out. while a Chrome, Edge or Brave window shows two pages side by side, solstone can't tell which websites it shows, so after a moment that browser stays out of what the solstone app takes in from your screen until the window shows one page again. a website shown inside another website's page isn't recognized. neither is a website open in a Chrome, Edge or Brave side panel or sidebar. a left-out website's tab title can still show in a browser's tab bar. a minimized browser window's picture in the Dock can still show. a page that changes without changing its window title, or a page open for less than half a second, can be missed, and in Chrome, Edge or Brave its picture can stay on screen, and go into your journal, for a few seconds after you leave it. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you stop leaving out there comes off this list, so Safari, Chrome, Edge and Brave windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well. while any website is left out, Picture in Picture from Safari, and from other apps that use macOS's own player, stays out of what the solstone app takes in from your screen. Picture in Picture from Chrome, Edge or Brave counts as a window of that browser: while it shows something from a website you leave out, that browser stays out of what the solstone app takes in from your screen."
         /// What System Settings calls this list on the owner's macOS.
         public static func accessibilityName(macOSMajor: Int) -> String {
             macOSMajor >= 27 ? "Device Control and Data Access" : "Accessibility"
         }
         public static func accessibilityCaution(macOSMajor: Int) -> String {
-            "to leave websites out, solstone needs \(accessibilityName(macOSMajor: macOSMajor)), so it can read which website each Safari window shows. once it's allowed, activity also adds browser addresses to your journal, except for websites you leave out. you can turn addresses off under activity."
+            "to leave websites out, solstone needs \(accessibilityName(macOSMajor: macOSMajor)), so it can read which website each Safari, Chrome, Edge and Brave window shows. once it's allowed, activity also adds browser addresses to your journal, except for websites you leave out. you can turn addresses off under activity."
         }
         public static let NOT_KEPT_OUT_YET = "until it's allowed, these websites aren't kept out of your journal."
         public static func errorNeedsAccessibility(macOSMajor: Int) -> String {

@@ -240,10 +240,15 @@ public final class CaptureManager {
     public var onSiteRuleSuspended: (@MainActor (Bool) -> Void)?
     internal let siteRuleLock: OSAllocatedUnfairLock<Bool>
     public var onSiteSafariCaution: (@MainActor (Bool) -> Void)?
-    public var onSafariKeptOut: (@MainActor (Bool) -> Void)?
+    public var onSafariKeptOut: (@MainActor (Set<PrivateBrowser>) -> Void)?
+    public var onSiteChromiumCaution: (@MainActor (PrivateBrowser, Bool) -> Void)?
     public var onSiteScreenHeld: (@MainActor (Bool) -> Void)?
-    /// The website rule can't read Safari's addresses, so Safari sits out of capture whole.
-    public private(set) var safariKeptOut = false
+    public private(set) var siteKeptOutBrowsers: Set<PrivateBrowser> = []
+    public var safariKeptOut: Bool { siteKeptOutBrowsers.contains(.safari) }
+    public private(set) var siteChromeCaution = false
+    public private(set) var siteEdgeCaution = false
+    public private(set) var siteBraveCaution = false
+    public private(set) var chromiumActivitySnapshot = ChromiumActivitySnapshot()
     /// The website rule is dropping whole frames, for long enough to say so.
     public private(set) var siteScreenHeld = false
 #if DEBUG || SOLSTONE_TEST_SUPPORT
@@ -815,7 +820,16 @@ public final class CaptureManager {
         siteFrameGate.addPoll(poll)
         currentSegment?.reevaluateSiteFrames()
         if siteFrameGate.currentAXAvailable {
-            publishSafariKeptOut(siteRuleActive && siteFrameGate.safariShouldSitOut(isOutNow: safariKeptOut))
+            var keptOut = Set<PrivateBrowser>()
+            if siteRuleActive && siteFrameGate.safariShouldSitOut(isOutNow: safariKeptOut) {
+                keptOut.insert(.safari)
+            }
+            for browser in [PrivateBrowser.chrome, .edge, .brave] {
+                if siteRuleActive && siteFrameGate.chromiumShouldSitOut(for: browser, isOutNow: siteKeptOutBrowsers.contains(browser)) {
+                    keptOut.insert(browser)
+                }
+            }
+            publishKeptOutBrowsers(keptOut)
         }
         publishSiteScreenHeld(siteRuleActive && siteFrameGate.isHoldingNow(now: poll.end))
     }
@@ -826,11 +840,85 @@ public final class CaptureManager {
         onSiteScreenHeld?(held)
     }
 
-    private func publishSafariKeptOut(_ keptOut: Bool) {
-        windowExclusionManager.setSiteRule(active: siteRuleActive, safariKeptOut: keptOut)
-        guard keptOut != safariKeptOut else { return }
-        safariKeptOut = keptOut
+    private func publishKeptOutBrowsers(_ keptOut: Set<PrivateBrowser>) {
+        windowExclusionManager.setSiteRule(active: siteRuleActive, keptOutBrowsers: keptOut)
+        guard keptOut != siteKeptOutBrowsers else { return }
+        siteKeptOutBrowsers = keptOut
         onSafariKeptOut?(keptOut)
+    }
+
+    func receiveChromiumReadComplete(
+        browser: PrivateBrowser,
+        results: [CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)],
+        startSec: TimeInterval,
+        generation: UInt64
+    ) {
+        let now = HostClock.seconds(ticks: mach_absolute_time())
+        for (wid, res) in results {
+            siteFrameGate.patchChromiumPoll(start: startSec, windowID: wid, read: res.read, at: now)
+            chromiumActivitySnapshot.latestCGTitle[wid] = res.cgTitle
+            if let ax = res.axTitle {
+                chromiumActivitySnapshot.latestAXTitle[wid] = ax
+            }
+            if !res.read.isPending {
+                chromiumActivitySnapshot.latestCompleteRead[wid] = ChromiumActivityWindowSnapshot(
+                    verdict: res.read.verdict,
+                    host: res.read.host,
+                    start: res.read.readStart,
+                    listGeneration: res.read.listGeneration
+                )
+            }
+        }
+        if siteFrameGate.currentAXAvailable {
+            var keptOut = siteKeptOutBrowsers
+            if siteRuleActive && siteFrameGate.chromiumShouldSitOut(for: browser, isOutNow: siteKeptOutBrowsers.contains(browser), now: now) {
+                keptOut.insert(browser)
+            } else {
+                keptOut.remove(browser)
+            }
+            publishKeptOutBrowsers(keptOut)
+        }
+        currentSegment?.reevaluateSiteFrames()
+    }
+
+    func receiveChromiumMiss(
+        browser: PrivateBrowser,
+        windowID: CGWindowID,
+        cgTitle: String,
+        startSec: TimeInterval,
+        generation: UInt64
+    ) {
+        chromiumActivitySnapshot.latestCGTitle[windowID] = cgTitle
+        chromiumActivitySnapshot.latestCompleteRead[windowID] = ChromiumActivityWindowSnapshot(
+            verdict: .cantTell,
+            host: nil,
+            start: startSec,
+            listGeneration: generation
+        )
+    }
+
+    func receiveChromiumCaution(browser: PrivateBrowser, caution: Bool) {
+        if siteRuleSuspended {
+            publishChromiumCaution(browser: browser, caution: false)
+            return
+        }
+        publishChromiumCaution(browser: browser, caution: caution)
+    }
+
+    private func publishChromiumCaution(browser: PrivateBrowser, caution: Bool) {
+        switch browser {
+        case .chrome:
+            guard caution != siteChromeCaution else { return }
+            siteChromeCaution = caution
+        case .edge:
+            guard caution != siteEdgeCaution else { return }
+            siteEdgeCaution = caution
+        case .brave:
+            guard caution != siteBraveCaution else { return }
+            siteBraveCaution = caution
+        default: break
+        }
+        onSiteChromiumCaution?(browser, caution)
     }
 
     func receiveSiteDecision(_ decisions: SiteDecision, axAvailable: Bool, generation: UInt64) {
@@ -840,12 +928,32 @@ public final class CaptureManager {
         if suspend != siteRuleSuspended { setSiteRuleSuspended(suspend) }
         if siteRuleSuspended {
             onSiteSafariCaution?(false)
+            publishChromiumCaution(browser: .chrome, caution: false)
+            publishChromiumCaution(browser: .edge, caution: false)
+            publishChromiumCaution(browser: .brave, caution: false)
             return
         }
         siteFrameGate.updateDecisions(decisions, axAvailable: axAvailable)
         // Without Accessibility every read fails, and Settings already says why.
         onSiteSafariCaution?(axAvailable && decisions.hasSafariCaution)
-        publishSafariKeptOut(siteRuleActive && (!axAvailable || siteFrameGate.safariShouldSitOut(isOutNow: safariKeptOut)))
+        var keptOut = siteKeptOutBrowsers
+        if siteRuleActive {
+            if !axAvailable || siteFrameGate.safariShouldSitOut(isOutNow: safariKeptOut) {
+                keptOut.insert(.safari)
+            } else {
+                keptOut.remove(.safari)
+            }
+            for browser in [PrivateBrowser.chrome, .edge, .brave] {
+                if siteFrameGate.chromiumShouldSitOut(for: browser, isOutNow: siteKeptOutBrowsers.contains(browser)) {
+                    keptOut.insert(browser)
+                } else {
+                    keptOut.remove(browser)
+                }
+            }
+        } else {
+            keptOut = []
+        }
+        publishKeptOutBrowsers(keptOut)
         currentSegment?.reevaluateSiteFrames()
     }
 
@@ -861,7 +969,13 @@ public final class CaptureManager {
             _ = siteFrameGate.deactivateAll()
             publishSiteScreenHeld(false)
         }
-        publishSafariKeptOut(false)
+        publishKeptOutBrowsers([])
+        if suspended {
+            onSiteSafariCaution?(false)
+            publishChromiumCaution(browser: .chrome, caution: false)
+            publishChromiumCaution(browser: .edge, caution: false)
+            publishChromiumCaution(browser: .brave, caution: false)
+        }
         Logger.capture.info("Website rule \(suspended ? "suspended: Accessibility is off" : "resumed", privacy: .public)")
         onSiteRuleSuspended?(suspended)
     }
@@ -878,14 +992,16 @@ public final class CaptureManager {
         let active = siteListConfigured && !siteRuleSuspended
         siteListGeneration += 1
         let currentGen = siteListGeneration
+        chromiumActivitySnapshot.currentGeneration = currentGen
         siteRuleActive = active
         currentSegment?.isSiteRuleActive = active
         siteFrameGate.updateDecisions(SiteDecision(), axAvailable: false)
+        siteFrameGate.updateSiteList(sites, generation: currentGen)
         if !active {
             _ = siteFrameGate.deactivateAll()
             publishSiteScreenHeld(false)
         }
-        publishSafariKeptOut(active && safariKeptOut)
+        publishKeptOutBrowsers(active ? siteKeptOutBrowsers : [])
 
         if siteSampler == nil {
             let sampler = SiteSampler(
@@ -896,6 +1012,15 @@ public final class CaptureManager {
                 },
                 onDecisionUpdate: { [weak self] decisions, axAvailable, generation in
                     self?.receiveSiteDecision(decisions, axAvailable: axAvailable, generation: generation)
+                },
+                onChromiumReadComplete: { [weak self] browser, results, startSec, generation in
+                    self?.receiveChromiumReadComplete(browser: browser, results: results, startSec: startSec, generation: generation)
+                },
+                onChromiumCautionUpdate: { [weak self] browser, caution in
+                    self?.receiveChromiumCaution(browser: browser, caution: caution)
+                },
+                onChromiumMiss: { [weak self] browser, windowID, cgTitle, startSec, generation in
+                    self?.receiveChromiumMiss(browser: browser, windowID: windowID, cgTitle: cgTitle, startSec: startSec, generation: generation)
                 }
             )
             siteSampler = sampler

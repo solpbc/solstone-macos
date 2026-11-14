@@ -78,6 +78,9 @@ struct SiteRuleTests {
     @Test func normalizeReadHostWrappersAndCleaning() {
         #expect(SiteRule.normalizeReadHost("blob:https://sub.bank.com/uuid") == "sub.bank.com")
         #expect(SiteRule.normalizeReadHost("view-source:https://bank.com/") == "bank.com")
+        #expect(SiteRule.normalizeReadHost("filesystem:https://bank.com/temporary/myfile.txt") == "bank.com")
+        #expect(SiteRule.normalizeReadHost("filesystem:http://localhost:3000/temporary/test") == "localhost")
+        #expect(SiteRule.normalizeReadHost("filesystem:ftp://bank.com/temporary/") == nil)
         #expect(SiteRule.normalizeReadHost("blob:http://localhost:3000/uuid") == "localhost")
         #expect(SiteRule.normalizeReadHost("https://Login.Bank.com./") == "login.bank.com")
         #expect(SiteRule.normalizeReadHost("https://bank.com:8443/") == "bank.com")

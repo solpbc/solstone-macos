@@ -203,12 +203,30 @@ struct BrowserSiteListTests {
         #expect(snapshot.sitesValue(for: .safari) == "on")
         #expect(snapshot.sitesValue(for: .chrome) == "not_checked")
         #expect(snapshot.sitesValue(for: nil) == "not_checked")
+
+        // Chromium launchers with bundle ID
+        #expect(snapshot.sitesValue(for: .chrome, bundleID: "com.google.Chrome") == "on")
+        #expect(snapshot.sitesValue(for: .chrome, bundleID: "com.brave.Browser") == "on")
+        #expect(snapshot.sitesValue(for: .chrome, bundleID: "com.microsoft.edgemac") == "on")
+        #expect(snapshot.sitesValue(for: .chrome, bundleID: "org.mozilla.firefox") == "not_checked")
+
+        // Caution per launcher
+        snapshot.cautionedBundleIDs = ["com.google.Chrome"]
+        #expect(snapshot.sitesValue(for: .chrome, bundleID: "com.google.Chrome") == "unreadable")
+        #expect(snapshot.sitesValue(for: .chrome, bundleID: "com.brave.Browser") == "on")
+        #expect(snapshot.sitesValue(for: .chrome, bundleID: "com.microsoft.edgemac") == "on")
+        snapshot.cautionedBundleIDs = []
+
+        // Safari caution
         snapshot.brandsWithCaution = [.safari]
         #expect(snapshot.sitesValue(for: .safari) == "unreadable")
         snapshot.brandsWithCaution = []
+
+        // Accessibility disabled
         snapshot.accessibilityWorks = false
         #expect(snapshot.sitesValue(for: .safari) == "needs_access")
         #expect(snapshot.sitesValue(for: .chrome) == "needs_access")
+        #expect(snapshot.sitesValue(for: .chrome, bundleID: "com.google.Chrome") == "needs_access")
         #expect(snapshot.sitesValue(for: nil) == "needs_access")
     }
 

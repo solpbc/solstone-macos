@@ -124,12 +124,19 @@ final class WindowExclusionManager {
     private static let pictureInPictureNames: Set<String> = ["com.apple.pipagent", "picture in picture"]
     private static let safariNames: Set<String> = ["com.apple.safari", "safari"]
 
-    func setSiteRule(active: Bool, safariKeptOut: Bool) {
+    func setSiteRule(active: Bool, keptOutBrowsers: Set<PrivateBrowser>) {
         var names: Set<String> = active ? Self.pictureInPictureNames : []
-        if active && safariKeptOut { names.formUnion(Self.safariNames) }
+        if active {
+            if keptOutBrowsers.contains(.safari) {
+                names.formUnion(Self.safariNames)
+            }
+            for browser in keptOutBrowsers where browser == .chrome || browser == .edge || browser == .brave {
+                names.insert(browser.bundleIdentifier.lowercased())
+            }
+        }
         guard names != siteRuleNames else { return }
         siteRuleNames = names
-        Logger.capture.info("Website rule: active=\(active, privacy: .public) safariKeptOut=\(safariKeptOut, privacy: .public)")
+        Logger.capture.info("Website rule: active=\(active, privacy: .public) keptOutBrowsers=\(keptOutBrowsers.count, privacy: .public)")
         Task { await tick() }
     }
 

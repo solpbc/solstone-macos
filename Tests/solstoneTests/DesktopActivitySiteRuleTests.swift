@@ -56,7 +56,7 @@ struct DesktopActivitySiteRuleTests {
         #expect(!observation.rows.isEmpty)
     }
 
-    @Test func frontmostChromeDoesNotCallSeamAndKeepsRows() {
+    @Test func frontmostChromeEdgeBraveDoNotCallSeam() {
         let seamCalled = OSAllocatedUnfairLock(initialState: false)
         let reader = DesktopActivityReader(
             permit: DesktopActivityReadPermit(),
@@ -67,10 +67,123 @@ struct DesktopActivitySiteRuleTests {
         )
 
         let chrome = DesktopActivityApp(pid: 1236, name: "Google Chrome", bundleID: "com.google.Chrome")
-        let observation = reader.read(app: chrome, settings: makeSettings())
+        let edge = DesktopActivityApp(pid: 1237, name: "Microsoft Edge", bundleID: "com.microsoft.edgemac")
+        let brave = DesktopActivityApp(pid: 1238, name: "Brave", bundleID: "com.brave.Browser")
+
+        let obs1 = reader.read(app: chrome, settings: makeSettings())
+        let obs2 = reader.read(app: edge, settings: makeSettings())
+        let obs3 = reader.read(app: brave, settings: makeSettings())
 
         #expect(seamCalled.withLock { $0 } == false)
-        #expect(!observation.rows.isEmpty)
+        #expect(!obs1.rows.isEmpty)
+        #expect(!obs2.rows.isEmpty)
+        #expect(!obs3.rows.isEmpty)
+    }
+
+    @Test func emptyListActivityEvaluation() {
+        // Empty list allows https ordinary
+        let httpsEval = ChromiumSiteRead.evaluateActivity(
+            browser: .chrome,
+            cgTitle: "News",
+            axTitle: "News - Google Chrome",
+            doc: "https://news.ycombinator.com",
+            docReadFailed: false,
+            previousCGTitle: nil,
+            previousAXTitle: nil,
+            tabStripOutcome: .counts(selected: 1, total: 1),
+            sites: []
+        )
+        #expect(httpsEval.verdict == .ordinary)
+        #expect(httpsEval.host == "news.ycombinator.com")
+
+        // file: and data: schemes are ordinary but have nil host (excluded from activity URL recording)
+        let fileEval = ChromiumSiteRead.evaluateActivity(
+            browser: .chrome,
+            cgTitle: "File",
+            axTitle: "File - Google Chrome",
+            doc: "file:///Users/sol/doc.pdf",
+            docReadFailed: false,
+            previousCGTitle: nil,
+            previousAXTitle: nil,
+            tabStripOutcome: .counts(selected: 1, total: 1),
+            sites: []
+        )
+        #expect(fileEval.verdict == .ordinary)
+        #expect(fileEval.host == nil)
+
+        let dataEval = ChromiumSiteRead.evaluateActivity(
+            browser: .chrome,
+            cgTitle: "Data",
+            axTitle: "Data - Google Chrome",
+            doc: "data:text/html,<h1>Hi</h1>",
+            docReadFailed: false,
+            previousCGTitle: nil,
+            previousAXTitle: nil,
+            tabStripOutcome: .counts(selected: 1, total: 1),
+            sites: []
+        )
+        #expect(dataEval.verdict == .ordinary)
+        #expect(dataEval.host == nil)
+
+        // about:blank is cantTell
+        let blankEval = ChromiumSiteRead.evaluateActivity(
+            browser: .chrome,
+            cgTitle: "Blank",
+            axTitle: "Blank - Google Chrome",
+            doc: "about:blank",
+            docReadFailed: false,
+            previousCGTitle: nil,
+            previousAXTitle: nil,
+            tabStripOutcome: .counts(selected: 1, total: 1),
+            sites: []
+        )
+        #expect(blankEval.verdict == .cantTell)
+    }
+
+    @Test func nonEmptyListActivityEvaluation() {
+        // Covered site returns covered
+        let coveredEval = ChromiumSiteRead.evaluateActivity(
+            browser: .chrome,
+            cgTitle: "Bank Login",
+            axTitle: "Bank Login - Google Chrome",
+            doc: "https://login.bank.com/account",
+            docReadFailed: false,
+            previousCGTitle: nil,
+            previousAXTitle: nil,
+            tabStripOutcome: .counts(selected: 1, total: 1),
+            sites: ["bank.com"]
+        )
+        #expect(coveredEval.verdict == .covered)
+        #expect(coveredEval.host == "login.bank.com")
+
+        // Ordinary site returns ordinary
+        let ordinaryEval = ChromiumSiteRead.evaluateActivity(
+            browser: .chrome,
+            cgTitle: "Example",
+            axTitle: "Example - Google Chrome",
+            doc: "https://example.com/page",
+            docReadFailed: false,
+            previousCGTitle: nil,
+            previousAXTitle: nil,
+            tabStripOutcome: .counts(selected: 1, total: 1),
+            sites: ["bank.com"]
+        )
+        #expect(ordinaryEval.verdict == .ordinary)
+        #expect(ordinaryEval.host == "example.com")
+
+        // Torn pair returns cantTell
+        let tornEval = ChromiumSiteRead.evaluateActivity(
+            browser: .chrome,
+            cgTitle: "Page B",
+            axTitle: "Page A - Google Chrome",
+            doc: "https://example.com/page",
+            docReadFailed: false,
+            previousCGTitle: "Page A",
+            previousAXTitle: "Page A - Google Chrome",
+            tabStripOutcome: .counts(selected: 1, total: 1),
+            sites: ["bank.com"]
+        )
+        #expect(tornEval.verdict == .cantTell)
     }
 
     @Test func uncoveredSafariReturnsRowWithNilURL() {

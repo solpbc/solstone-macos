@@ -159,6 +159,7 @@ public actor BrowserHostOutbound {
     private var siteListSource: BrowserSiteListSource?
     private var siteListProjection: BrowserContractProjection?
     private var sessionBrand: BrowserBrand?
+    private var sessionBundleID: String?
     private var siteRuleAck: Int?
 
     public init(sink: any BrowserHostByteSink) {
@@ -173,12 +174,13 @@ public actor BrowserHostOutbound {
     }
 
     func setSessionBrand(_ brand: BrowserBrand) { sessionBrand = brand }
+    func setSessionBundleID(_ bundleID: String?) { sessionBundleID = bundleID }
 
     func setSiteRuleAck(_ id: Int) { siteRuleAck = id }
 
     private func decorated(_ data: Data) -> Data {
         guard let siteListSource, let siteListProjection else { return data }
-        return siteListSource.decorate(data, brand: sessionBrand, siteRuleAck: siteRuleAck, projection: siteListProjection)
+        return siteListSource.decorate(data, brand: sessionBrand, bundleID: sessionBundleID, siteRuleAck: siteRuleAck, projection: siteListProjection)
     }
 
     public func enqueueState(_ data: Data) {
@@ -724,10 +726,12 @@ extension NativeHostBrandHint {
 public struct BrowserHostConnectionContext: Sendable {
     public let brandHint: NativeHostBrandHint
     public let mode: NativeHostMode
+    public let bundleID: String?
 
-    public init(brandHint: NativeHostBrandHint, mode: NativeHostMode) {
+    public init(brandHint: NativeHostBrandHint, mode: NativeHostMode, bundleID: String? = nil) {
         self.brandHint = brandHint
         self.mode = mode
+        self.bundleID = bundleID
     }
 
     public static func decode(_ data: Data) -> BrowserHostConnectionContext? {
@@ -735,7 +739,8 @@ public struct BrowserHostConnectionContext: Sendable {
               object["type"] == "local_hello",
               let brandRaw = object["brand"], let brand = NativeHostBrandHint(rawValue: brandRaw),
               let modeRaw = object["mode"], let mode = NativeHostMode(rawValue: modeRaw) else { return nil }
-        return BrowserHostConnectionContext(brandHint: brand, mode: mode)
+        let bundleID = object["bundle_id"]
+        return BrowserHostConnectionContext(brandHint: brand, mode: mode, bundleID: bundleID)
     }
 }
 
@@ -1577,6 +1582,7 @@ public actor BrowserHostListener {
         guard let context, acceptingModes.contains(context.mode), lifecycleCurrent() else { return }
 
         await outbound.attachSiteList(listener.siteListSource, projection: projection)
+        await outbound.setSessionBundleID(context.bundleID)
         var authority: BrowserHostSessionAuthority?
         var renewal: Task<Void, Never>?
         defer { renewal?.cancel() }

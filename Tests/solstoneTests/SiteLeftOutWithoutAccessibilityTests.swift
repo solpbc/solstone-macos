@@ -483,20 +483,20 @@ struct SiteLeftOutWithoutAccessibilityTests {
     @Test func theRuleKeepsPictureInPictureOutAndSafariOnlyWhileUnreadable() {
         let manager = manager()
         #expect(!manager.hasExclusions)
-        manager.setSiteRule(active: true, safariKeptOut: false)
+        manager.setSiteRule(active: true, keptOutBrowsers: [])
         #expect(manager.excludedAppNames.contains("com.apple.pipagent"))
         #expect(!manager.excludedAppNames.contains("com.apple.safari"))
-        manager.setSiteRule(active: true, safariKeptOut: true)
+        manager.setSiteRule(active: true, keptOutBrowsers: [.safari])
         #expect(manager.excludedAppNames.contains("com.apple.safari"))
         #expect(manager.excludedAppNames.contains("safari"))
-        manager.setSiteRule(active: false, safariKeptOut: true)
+        manager.setSiteRule(active: false, keptOutBrowsers: [.safari])
         #expect(!manager.hasExclusions)
     }
 
     @Test func thePlannerKeepsBothOutWholeAndTheTagClaimsOnlyWhatWasListed() {
         var planner = ExclusionPlanner()
         let manager = manager()
-        manager.setSiteRule(active: true, safariKeptOut: true)
+        manager.setSiteRule(active: true, keptOutBrowsers: [.safari])
         let settings = manager.plannedSettings
         let apps = [
             ExclusionApp(pid: safari, name: "Safari", bundleIdentifier: "com.apple.Safari"),
@@ -530,7 +530,7 @@ struct SiteLeftOutWithoutAccessibilityTests {
                 excludePrivateBrowsingAccessibility: false, accessibilityReader: NoAccessibility(), verdictCache: &cache)
         }
         #expect(included())
-        manager.setSiteRule(active: true, safariKeptOut: true)
+        manager.setSiteRule(active: true, keptOutBrowsers: [.safari])
         #expect(!included())
     }
 
@@ -664,9 +664,9 @@ struct SiteLeftOutWithoutAccessibilityTests {
         polls(gate, [SitePollWindow(windowID: 1, title: "Bank", pid: safari)])
         let decisions = decided(.covered, key, at: 9.9)
         _ = gate.enqueue(displayID: display, frame: frame(keptOut: [safari]))
-        #expect(isReleased(gate.evaluate(displayID: display, now: 11.0, decisions: decisions, axAvailable: true)))
+        #expect(isReleased(gate.evaluate(displayID: display, decisions: decisions, axAvailable: true, now: 11.0)))
         _ = gate.enqueue(displayID: display, frame: frame())
-        #expect(isDropped(gate.evaluate(displayID: display, now: 11.0, decisions: decisions, axAvailable: true)))
+        #expect(isDropped(gate.evaluate(displayID: display, decisions: decisions, axAvailable: true, now: 11.0)))
     }
 
     @Test func aTitleLastReadOnALeftOutPageTakesASecondOrdinaryRead() {

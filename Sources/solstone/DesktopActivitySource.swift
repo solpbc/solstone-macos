@@ -19,9 +19,10 @@ final class DesktopActivitySource {
     private let locked: @MainActor () -> Bool
     private let captureOpen: @MainActor () -> Bool
     private let foreground: @MainActor () -> DesktopActivityApp?
-    private let reader: @Sendable (DesktopActivityApp, DesktopActivitySettings, DesktopActivityReadPermit) -> DesktopActivityObservation
+    private let reader: @Sendable (DesktopActivityApp, DesktopActivitySettings, DesktopActivityReadPermit, ChromiumActivitySnapshot) -> DesktopActivityObservation
     private let now: @MainActor () -> Date
     private let onSealed: @MainActor () -> Void
+    private let chromiumSnapshot: @MainActor () -> ChromiumActivitySnapshot
     private var generation: UInt64 = 0
     private var notifiedPublication = 0
     private var worker: Task<Void, Never>?
@@ -39,12 +40,36 @@ final class DesktopActivitySource {
          locked: @escaping @MainActor () -> Bool,
          captureOpen: @escaping @MainActor () -> Bool = { false },
          foreground: @escaping @MainActor () -> DesktopActivityApp? = DesktopActivityApp.frontmost,
-         reader: @escaping @Sendable (DesktopActivityApp, DesktopActivitySettings, DesktopActivityReadPermit) -> DesktopActivityObservation = { DesktopActivityReader(permit: $2).read(app: $0, settings: $1) },
+         chromiumSnapshot: @escaping @MainActor () -> ChromiumActivitySnapshot = { ChromiumActivitySnapshot() },
+         reader: @escaping @Sendable (DesktopActivityApp, DesktopActivitySettings, DesktopActivityReadPermit, ChromiumActivitySnapshot) -> DesktopActivityObservation = { DesktopActivityReader(permit: $2).read(app: $0, settings: $1, snapshot: $3) },
          now: @escaping @MainActor () -> Date = Date.init,
          onSealed: @escaping @MainActor () -> Void = {}) {
         store = DesktopActivityStore(storage: storage)
         self.eligibility = eligibility; self.locked = locked; self.captureOpen = captureOpen; self.foreground = foreground
+        self.chromiumSnapshot = chromiumSnapshot
         self.reader = reader; self.now = now; self.onSealed = onSealed
+    }
+
+    convenience init(storage: StorageManager,
+         eligibility: @escaping @MainActor () -> Bool,
+         locked: @escaping @MainActor () -> Bool,
+         captureOpen: @escaping @MainActor () -> Bool = { false },
+         foreground: @escaping @MainActor () -> DesktopActivityApp? = DesktopActivityApp.frontmost,
+         chromiumSnapshot: @escaping @MainActor () -> ChromiumActivitySnapshot = { ChromiumActivitySnapshot() },
+         reader: @escaping @Sendable (DesktopActivityApp, DesktopActivitySettings, DesktopActivityReadPermit) -> DesktopActivityObservation,
+         now: @escaping @MainActor () -> Date = Date.init,
+         onSealed: @escaping @MainActor () -> Void = {}) {
+        self.init(
+            storage: storage,
+            eligibility: eligibility,
+            locked: locked,
+            captureOpen: captureOpen,
+            foreground: foreground,
+            chromiumSnapshot: chromiumSnapshot,
+            reader: { app, settings, permit, _ in reader(app, settings, permit) },
+            now: now,
+            onSealed: onSealed
+        )
     }
 
     func start(config: AppConfig) {
@@ -126,8 +151,9 @@ final class DesktopActivitySource {
         let revision = generation, selected = settings, read = reader
         let permit = DesktopActivityReadPermit()
         readPermit = permit
+        let snapshot = chromiumSnapshot()
         worker = Task { [weak self] in
-            let result = await Task.detached(priority: .utility) { read(app, selected, permit) }.value
+            let result = await Task.detached(priority: .utility) { read(app, selected, permit, snapshot) }.value
             guard let self else { return }
             self.worker = nil
             guard revision == self.generation, self.enabled, !self.failed,

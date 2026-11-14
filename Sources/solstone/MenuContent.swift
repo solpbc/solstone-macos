@@ -45,7 +45,7 @@ struct MenuContent: View {
         ForEach(appState.siteIntakeNotes, id: \.self) { note in
             switch note {
             case .safariKeptOut:
-                Button(UICopy.MENUBAR_SAFARI_KEPT_OUT) {
+                Button(appState.siteKeptOutMenuTitle) {
                     appState.requestWebsiteSettings()
                 }
                 .accessibilityIdentifier(AXID.Menubar.safariKeptOut)

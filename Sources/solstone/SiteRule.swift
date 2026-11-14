@@ -145,6 +145,10 @@ public enum SiteRule: Sendable {
         return h == site || (coversSubdomains(site) && h.hasSuffix(".\(site)"))
     }
 
+    public static func covers(sites: [String], host: String) -> Bool {
+        sites.contains { covers(siteHost: $0, host: host) }
+    }
+
     /// Read-side normalizer.
     /// Unwraps one blob: or view-source: wrapper when inner text is http: or https:.
     /// Lowercases, drops port, drops one trailing dot, IDNA to ASCII, brackets IPv6.
@@ -153,7 +157,7 @@ public enum SiteRule: Sendable {
         var raw = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty { return nil }
 
-        // Unwrap one blob: or view-source: wrapper if inner URL is http: or https:
+        // Unwrap one blob:, view-source:, or filesystem: wrapper if inner URL is http: or https:
         if raw.hasPrefix("blob:") {
             let inner = String(raw.dropFirst(5))
             if inner.hasPrefix("http://") || inner.hasPrefix("https://") {
@@ -163,6 +167,13 @@ public enum SiteRule: Sendable {
             }
         } else if raw.hasPrefix("view-source:") {
             let inner = String(raw.dropFirst(12))
+            if inner.hasPrefix("http://") || inner.hasPrefix("https://") {
+                raw = inner
+            } else {
+                return nil
+            }
+        } else if raw.hasPrefix("filesystem:") {
+            let inner = String(raw.dropFirst(11))
             if inner.hasPrefix("http://") || inner.hasPrefix("https://") {
                 raw = inner
             } else {

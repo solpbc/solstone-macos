@@ -24,10 +24,13 @@ public struct BrowserSiteListSnapshot: Sendable, Equatable {
     public var accessibilityWorks: Bool
     /// Browsers whose page addresses currently can't be read.
     public var brandsWithCaution: Set<BrowserBrand>
+    /// Bundle IDs under caution (Chrome, Edge, Brave).
+    public var cautionedBundleIDs: Set<String>
 
     public init(sites: [String] = [], epoch: String = "", rev: Int = 0, screen: Bool = false, activity: Bool = false,
                 checkedBrands: Set<BrowserBrand> = [.safari], accessibilityWorks: Bool = false,
-                brandsWithCaution: Set<BrowserBrand> = []) {
+                brandsWithCaution: Set<BrowserBrand> = [],
+                cautionedBundleIDs: Set<String> = []) {
         self.sites = sites
         self.epoch = epoch
         self.rev = rev
@@ -36,6 +39,7 @@ public struct BrowserSiteListSnapshot: Sendable, Equatable {
         self.checkedBrands = checkedBrands
         self.accessibilityWorks = accessibilityWorks
         self.brandsWithCaution = brandsWithCaution
+        self.cautionedBundleIDs = cautionedBundleIDs
     }
 
     /// What the website list does for this browser.
@@ -44,10 +48,23 @@ public struct BrowserSiteListSnapshot: Sendable, Equatable {
     /// - `not_checked`: the app doesn't read this browser's windows.
     /// - `unreadable`: it reads them, but can't read their addresses right now.
     /// - `on`: a left-out site is kept off the screen and out of activity.
-    public func sitesValue(for brand: BrowserBrand?) -> String {
+    public func sitesValue(for brand: BrowserBrand?, bundleID: String? = nil) -> String {
         guard accessibilityWorks else { return "needs_access" }
-        guard let brand, checkedBrands.contains(brand) else { return "not_checked" }
-        return brandsWithCaution.contains(brand) ? "unreadable" : "on"
+        if let bundleID, !bundleID.isEmpty {
+            let chromiumBundleIDs: [String] = [
+                PrivateBrowser.chrome.bundleIdentifier,
+                PrivateBrowser.brave.bundleIdentifier,
+                PrivateBrowser.edge.bundleIdentifier
+            ]
+            if chromiumBundleIDs.contains(bundleID) {
+                return cautionedBundleIDs.contains(bundleID) ? "unreadable" : "on"
+            }
+        }
+        if brand == .safari && (bundleID == nil || bundleID?.isEmpty == true) {
+            guard checkedBrands.contains(.safari) else { return "not_checked" }
+            return brandsWithCaution.contains(.safari) ? "unreadable" : "on"
+        }
+        return "not_checked"
     }
 }
 
@@ -72,7 +89,7 @@ public final class BrowserSiteListSource: Sendable {
     /// Adds the site-list fields to a host `state` or `hello_ack`. Anything else passes through.
     /// The result is validated against the contract; if the full form doesn't validate (size),
     /// the `about` block is dropped; if that still fails, the message goes out as it came.
-    public func decorate(_ data: Data, brand: BrowserBrand?, siteRuleAck: Int?,
+    public func decorate(_ data: Data, brand: BrowserBrand?, bundleID: String? = nil, siteRuleAck: Int?,
                          projection: BrowserContractProjection) -> Data {
         guard let snapshot = current,
               var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -87,7 +104,7 @@ public final class BrowserSiteListSource: Sendable {
         object["desktop"] = [
             "screen": snapshot.screen,
             "activity": snapshot.activity,
-            "sites": snapshot.sitesValue(for: brand),
+            "sites": snapshot.sitesValue(for: brand, bundleID: bundleID),
         ] as [String: Any]
         if let siteRuleAck { object["site_rule_ack"] = siteRuleAck }
         if let message = try? BrowserPayloadDecoder.validatedHostMessage(object, projection: projection) {

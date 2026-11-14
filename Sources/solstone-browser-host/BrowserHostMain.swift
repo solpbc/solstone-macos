@@ -45,11 +45,14 @@ enum BrowserHostMain {
         source.resume()
         defer { source.cancel() }
 
-        let context: [String: String] = [
+        var context: [String: String] = [
             "type": "local_hello",
             "brand": identity.brandHint.rawValue,
             "mode": identity.mode.rawValue
         ]
+        if let bundleID = parentBundleIdentifier() {
+            context["bundle_id"] = bundleID
+        }
         guard let contextBytes = try? JSONSerialization.data(withJSONObject: context, options: [.sortedKeys]),
               (try? NativeHostFrameIO.writeFrame(contextBytes, to: descriptor, direction: .control,
                                                 timeoutMs: BrowserHostLimits.helperFallback.handshakeMs,
@@ -187,6 +190,22 @@ private final class NativeHostStopFlag: @unchecked Sendable {
         let json = Data("{\"code\":\"\(code)\"}".utf8)
         try? NativeHostFrameIO.writeFrame(json, to: STDOUT_FILENO, direction: .control)
         exit(1)
+    }
+
+    private static func parentBundleIdentifier() -> String? {
+        let ppid = getppid()
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let ret = proc_pidpath(ppid, &buffer, UInt32(buffer.count))
+        guard ret > 0 else { return nil }
+        let execPath = String(cString: buffer)
+        var url = URL(fileURLWithPath: execPath)
+        while url.path != "/" {
+            if url.pathExtension == "app" {
+                return Bundle(url: url)?.bundleIdentifier
+            }
+            url = url.deletingLastPathComponent()
+        }
+        return nil
     }
 
     private static func writeUnavailableHelloAck() {

@@ -59,7 +59,7 @@ public final class ScreenshotCapturer {
         guard let gate = siteFrameGate else { return }
         let now = HostClock.seconds(ticks: mach_absolute_time())
         gate.updateLiveKeptOut(displayID: displayID, pids: keptOutPIDs(at: now))
-        let actions = gate.evaluate(displayID: displayID, now: now, owner: ownerID)
+        let actions = gate.evaluate(displayID: displayID, owner: ownerID, now: now)
         applyGateActions(actions)
     }
 
@@ -400,7 +400,7 @@ public final class ScreenshotCapturer {
 
         var actions = gate.enqueue(displayID: displayID, frame: held, owner: ownerID)
         let now = HostClock.seconds(ticks: mach_absolute_time())
-        actions.append(contentsOf: gate.evaluate(displayID: displayID, now: now, owner: ownerID))
+        actions.append(contentsOf: gate.evaluate(displayID: displayID, owner: ownerID, now: now))
 
         applyGateActions(actions)
     }
