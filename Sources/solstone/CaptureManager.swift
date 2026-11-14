@@ -183,7 +183,7 @@ public final class CaptureManager {
     private let rotationTimeoutSeconds: TimeInterval
     private let captureZoneSource: CaptureZoneSource
     private var now: @Sendable () -> Date
-    private var siteNowSeconds: @Sendable () -> TimeInterval
+    internal var siteNowSeconds: @Sendable () -> TimeInterval
     // Test-only bypass for fake segment factories without ScreenCaptureKit display state; defaults false.
     private let allowsEmptyDisplayConfigurationForTesting: Bool
 
@@ -859,6 +859,9 @@ public final class CaptureManager {
         generation: UInt64
     ) {
         let now = siteNowSeconds()
+        let deadlineMissed = now >= startSec + 0.5
+        let arrivingVerdictIsCovered = results.values.contains(where: { $0.read.verdict == .covered })
+
         for (wid, res) in results {
             siteFrameGate.patchChromiumPoll(start: startSec, windowID: wid, read: res.read, at: now)
             chromiumActivitySnapshot.latestCGTitle[wid] = res.cgTitle
@@ -866,23 +869,46 @@ public final class CaptureManager {
                 chromiumActivitySnapshot.latestAXTitle[wid] = ax
             }
             if !res.read.isPending {
-                chromiumActivitySnapshot.latestCompleteRead[wid] = ChromiumActivityWindowSnapshot(
-                    verdict: res.read.verdict,
-                    host: res.read.host,
-                    start: res.read.readStart,
-                    listGeneration: res.read.listGeneration
-                )
+                if deadlineMissed {
+                    if res.read.verdict == .covered {
+                        chromiumActivitySnapshot.latestCompleteRead[wid] = ChromiumActivityWindowSnapshot(
+                            verdict: .covered,
+                            host: res.read.host,
+                            start: res.read.readStart,
+                            listGeneration: res.read.listGeneration
+                        )
+                    } else {
+                        chromiumActivitySnapshot.latestCompleteRead[wid] = ChromiumActivityWindowSnapshot(
+                            verdict: .cantTell,
+                            host: nil,
+                            start: startSec,
+                            listGeneration: generation
+                        )
+                    }
+                } else {
+                    chromiumActivitySnapshot.latestCompleteRead[wid] = ChromiumActivityWindowSnapshot(
+                        verdict: res.read.verdict,
+                        host: res.read.host,
+                        start: res.read.readStart,
+                        listGeneration: res.read.listGeneration
+                    )
+                }
             }
         }
         if siteFrameGate.currentAXAvailable {
             var keptOut = siteKeptOutBrowsers
-            if siteRuleActive && siteFrameGate.chromiumShouldSitOut(for: browser, isOutNow: siteKeptOutBrowsers.contains(browser), now: now) {
-                keptOut.insert(browser)
-            } else {
-                keptOut.remove(browser)
+            for b in [PrivateBrowser.chrome, .edge, .brave] {
+                let alreadyOut = siteKeptOutBrowsers.contains(b)
+                let arrivingCovered = (b == browser && arrivingVerdictIsCovered)
+                if siteRuleActive && siteFrameGate.chromiumShouldSitOut(for: b, isOutNow: alreadyOut || arrivingCovered, now: now) {
+                    keptOut.insert(b)
+                } else {
+                    keptOut.remove(b)
+                }
             }
             publishKeptOutBrowsers(keptOut)
         }
+        publishSiteScreenHeld(siteRuleActive && siteFrameGate.isHoldingNow(now: now))
         currentSegment?.reevaluateSiteFrames()
     }
 
@@ -893,6 +919,7 @@ public final class CaptureManager {
         startSec: TimeInterval,
         generation: UInt64
     ) {
+        let now = siteNowSeconds()
         chromiumActivitySnapshot.latestCGTitle[windowID] = cgTitle
         chromiumActivitySnapshot.latestCompleteRead[windowID] = ChromiumActivityWindowSnapshot(
             verdict: .cantTell,
@@ -900,6 +927,19 @@ public final class CaptureManager {
             start: startSec,
             listGeneration: generation
         )
+        if siteFrameGate.currentAXAvailable {
+            var keptOut = siteKeptOutBrowsers
+            for b in [PrivateBrowser.chrome, .edge, .brave] {
+                if siteRuleActive && siteFrameGate.chromiumShouldSitOut(for: b, isOutNow: siteKeptOutBrowsers.contains(b), now: now) {
+                    keptOut.insert(b)
+                } else {
+                    keptOut.remove(b)
+                }
+            }
+            publishKeptOutBrowsers(keptOut)
+        }
+        publishSiteScreenHeld(siteRuleActive && siteFrameGate.isHoldingNow(now: now))
+        currentSegment?.reevaluateSiteFrames()
     }
 
     func receiveChromiumCaution(browser: PrivateBrowser, caution: Bool) {

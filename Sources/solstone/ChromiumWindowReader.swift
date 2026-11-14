@@ -137,8 +137,8 @@ public final class LiveChromiumWindowReader: ChromiumWindowReading, @unchecked S
     public func readDocument(for window: AXUIElement) -> (doc: String?, failed: Bool) {
         AXUIElementSetMessagingTimeout(window, 0.025)
         let (err, val) = performCopyAttribute(window, "AXDocument" as CFString, role: kAXWindowRole)
-        if err == .success {
-            return (val as? String ?? "", false)
+        if err == .success, let s = val as? String {
+            return (s, false)
         }
         return (nil, true)
     }
@@ -155,40 +155,59 @@ public final class LiveChromiumWindowReader: ChromiumWindowReading, @unchecked S
         var selectedCount = 0
         var totalCount = 0
 
+        func checkTimeout() -> ChromiumTabStripOutcome? {
+            if HostClock.seconds(ticks: nowTicks() &- startTicks) >= timeoutSeconds {
+                return timeoutSeconds >= 0.050 ? .timedOut : .budgetCut
+            }
+            return nil
+        }
+
         var stack: [AXUIElement] = [window]
 
         while !stack.isEmpty {
-            if HostClock.seconds(ticks: nowTicks() &- startTicks) >= timeoutSeconds {
-                return .truncated
+            if let to = checkTimeout() {
+                return to
             }
             if visited >= maxNodes {
-                return .truncated
+                return .overBudget
             }
             let current = stack.removeLast()
             visited += 1
 
             AXUIElementSetMessagingTimeout(current, 0.025)
             let (roleErr, roleVal) = performCopyAttribute(current, kAXRoleAttribute as CFString, role: nil)
-            if HostClock.seconds(ticks: nowTicks() &- startTicks) >= timeoutSeconds {
-                return .truncated
+            if let to = checkTimeout() {
+                return to
             }
             guard roleErr == .success, let role = roleVal as? String else {
-                continue
+                return .failed
             }
 
             // Do not descend into tab buttons or web areas
             if role == "AXTabButton" {
-                totalCount += 1
                 let (valErr, val) = performCopyAttribute(current, kAXValueAttribute as CFString, role: "AXTabButton")
-                if HostClock.seconds(ticks: nowTicks() &- startTicks) >= timeoutSeconds {
-                    return .truncated
+                if let to = checkTimeout() {
+                    return to
                 }
-                if valErr == .success {
-                    if let num = val as? NSNumber, num.intValue == 1 {
-                        selectedCount += 1
-                    } else if let str = val as? String, str == "1" || str.lowercased() == "true" {
+                guard valErr == .success else {
+                    return .failed
+                }
+                if let num = val as? NSNumber {
+                    totalCount += 1
+                    if num.intValue == 1 {
                         selectedCount += 1
                     }
+                } else if let str = val as? String {
+                    if str == "1" || str.lowercased() == "true" {
+                        totalCount += 1
+                        selectedCount += 1
+                    } else if str == "0" || str.lowercased() == "false" || Int(str) != nil {
+                        totalCount += 1
+                    } else {
+                        return .failed
+                    }
+                } else {
+                    return .failed
                 }
                 continue
             }
@@ -198,11 +217,18 @@ public final class LiveChromiumWindowReader: ChromiumWindowReading, @unchecked S
 
             // Descend into children (including scroll areas)
             let (childrenErr, childrenVal) = performCopyAttribute(current, kAXChildrenAttribute as CFString, role: role)
-            if HostClock.seconds(ticks: nowTicks() &- startTicks) >= timeoutSeconds {
-                return .truncated
+            if let to = checkTimeout() {
+                return to
             }
-            if childrenErr == .success, let children = childrenVal as? [AXUIElement] {
+            if childrenErr == .success {
+                guard let children = childrenVal as? [AXUIElement] else {
+                    return .failed
+                }
                 stack.append(contentsOf: children.reversed())
+            } else if childrenErr == .noValue || childrenErr == .attributeUnsupported {
+                // leaf node
+            } else {
+                return .failed
             }
         }
 
@@ -237,7 +263,7 @@ public final class LiveChromiumWindowReader: ChromiumWindowReading, @unchecked S
                 return (texts, .timedOut)
             }
             guard roleErr == .success, let role = roleVal as? String else {
-                continue
+                return (texts, .failed)
             }
 
             if role == "AXWebArea" {
@@ -249,8 +275,14 @@ public final class LiveChromiumWindowReader: ChromiumWindowReading, @unchecked S
                 if HostClock.seconds(ticks: nowTicks() &- startTicks) >= timeoutSeconds {
                     return (texts, .timedOut)
                 }
-                if textErr == .success, let str = textVal as? String, !str.isEmpty {
-                    texts.append(str)
+                if textErr == .success {
+                    if let str = textVal as? String, !str.isEmpty {
+                        texts.append(str)
+                    }
+                } else if textErr == .noValue || textErr == .attributeUnsupported {
+                    // Still means no text
+                } else {
+                    return (texts, .failed)
                 }
             }
 
@@ -258,8 +290,15 @@ public final class LiveChromiumWindowReader: ChromiumWindowReading, @unchecked S
             if HostClock.seconds(ticks: nowTicks() &- startTicks) >= timeoutSeconds {
                 return (texts, .timedOut)
             }
-            if childrenErr == .success, let children = childrenVal as? [AXUIElement] {
+            if childrenErr == .success {
+                guard let children = childrenVal as? [AXUIElement] else {
+                    return (texts, .failed)
+                }
                 stack.append(contentsOf: children.reversed())
+            } else if childrenErr == .noValue || childrenErr == .attributeUnsupported {
+                // leaf node
+            } else {
+                return (texts, .failed)
             }
         }
 

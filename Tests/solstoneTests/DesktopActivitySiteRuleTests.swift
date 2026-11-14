@@ -390,4 +390,384 @@ struct DesktopActivitySiteRuleTests {
         #expect(row?.title == nil)
         #expect(row?.url == nil)
     }
+
+    // MARK: - Items 11 & 12 Chromium Activity Seams Tests
+
+    private static func makeTicks(fromSeconds sec: TimeInterval) -> UInt64 {
+        var info = mach_timebase_info()
+        mach_timebase_info(&info)
+        let nanos = sec * 1_000_000_000.0
+        return UInt64((nanos * Double(info.denom)) / Double(info.numer))
+    }
+
+    private struct SendableAX: @unchecked Sendable {
+        let element: AXUIElement?
+    }
+
+    private func makeChromiumSeams(
+        cgTitle: String? = "Page",
+        axTitle: String? = "Page - Google Chrome",
+        doc: String? = "https://example.com",
+        docFailed: Bool = false,
+        focusedWindow: AXUIElement? = AXUIElementCreateApplication(100),
+        axWindowID: CGWindowID? = 10,
+        nowSeconds: TimeInterval = 100.0,
+        customAXTitle: (@Sendable (AXUIElement) -> String?)? = nil
+    ) -> DesktopActivityReadSeams {
+        let wrapped = SendableAX(element: focusedWindow)
+        return DesktopActivityReadSeams(
+            chromiumReader: LiveChromiumWindowReader(),
+            preflightScreenCapture: { true },
+            frontWindow: { _ in
+                DesktopActivityFrontWindow(windowID: 10, title: cgTitle)
+            },
+            focusedRead: { _ in
+                (element: wrapped.element, error: .success)
+            },
+            role: { _ in kAXWindowRole },
+            axWindowID: { _ in axWindowID },
+            axTitle: customAXTitle ?? { _ in axTitle },
+            cgTitle: { _, _ in cgTitle },
+            readDocument: { _ in (doc: doc, failed: docFailed) },
+            settle: {},
+            nowTicks: { Self.makeTicks(fromSeconds: nowSeconds) }
+        )
+    }
+
+    @Test func item11CoveredByReaderOrSamplerYieldsNoRows() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: ["bank.com"])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        // Reader's own read is covered
+        let seamsCovered = makeChromiumSeams(doc: "https://bank.com/dashboard")
+        let readerCovered = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seamsCovered)
+        let obs1 = readerCovered.read(app: app, settings: settings)
+        #expect(obs1.rows.isEmpty)
+
+        // Sampler's latest snapshot is covered
+        let seamsOrdinary = makeChromiumSeams(doc: "https://example.com")
+        let readerOrdinary = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seamsOrdinary)
+        var snap = ChromiumActivitySnapshot()
+        snap.latestCompleteRead[10] = ChromiumActivityWindowSnapshot(
+            verdict: .covered,
+            host: "bank.com",
+            start: 100.0,
+            listGeneration: 1
+        )
+        let obs2 = readerOrdinary.read(app: app, settings: settings, snapshot: snap)
+        #expect(obs2.rows.isEmpty)
+    }
+
+    @Test func item11CantTellYieldsNoTitleAndNoURL() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: ["bank.com"])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        let seams = makeChromiumSeams(doc: nil, docFailed: true)
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+        let obs = reader.read(app: app, settings: settings)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row != nil)
+        #expect(row?.title == nil)
+        #expect(row?.url == nil)
+    }
+
+    @Test func item11NoFocusedAXWindowYieldsNoTitle() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: ["bank.com"])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        let seams = makeChromiumSeams(focusedWindow: nil)
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+        let obs = reader.read(app: app, settings: settings)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row != nil)
+        #expect(row?.title == nil)
+        #expect(row?.url == nil)
+    }
+
+    @Test func item11TwinEmptyListNoFocusedWindowKeepsTitle() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: [])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        // Accessibility titles on and an empty list: a window that can't be read keeps its title.
+        let seams = makeChromiumSeams(focusedWindow: nil)
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+        let obs = reader.read(app: app, settings: settings)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row?.title == "Page")
+        #expect(row?.url == nil)
+    }
+
+    @Test func item11SamplerOrdinaryHostMismatchWithReaderYieldsNoTitleAndNoURL() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: ["bank.com"])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        let seams = makeChromiumSeams(doc: "https://example.com")
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+        var snap = ChromiumActivitySnapshot()
+        snap.latestCompleteRead[10] = ChromiumActivityWindowSnapshot(
+            verdict: .ordinary,
+            host: "other.com",
+            start: 100.0,
+            listGeneration: 1
+        )
+        snap.currentGeneration = 1
+        let obs = reader.read(app: app, settings: settings, snapshot: snap)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row != nil)
+        #expect(row?.title == nil)
+        #expect(row?.url == nil)
+    }
+
+    @Test func item11ReaderCantTellWhileSamplerOrdinaryYieldsNoTitleAndNoURL() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: ["bank.com"])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        let seams = makeChromiumSeams(doc: nil, docFailed: true)
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+        var snap = ChromiumActivitySnapshot()
+        snap.latestCompleteRead[10] = ChromiumActivityWindowSnapshot(
+            verdict: .ordinary,
+            host: "example.com",
+            start: 100.0,
+            listGeneration: 1
+        )
+        snap.currentGeneration = 1
+        let obs = reader.read(app: app, settings: settings, snapshot: snap)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row != nil)
+        #expect(row?.title == nil)
+        #expect(row?.url == nil)
+    }
+
+    @Test func item11SamplerOldOrOlderGenerationYieldsNoTitleAndNoURL() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: ["bank.com"])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        let seams = makeChromiumSeams(doc: "https://example.com", nowSeconds: 100.0)
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+
+        // 1.1s old (> 1.0s)
+        var snapOld = ChromiumActivitySnapshot()
+        snapOld.latestCompleteRead[10] = ChromiumActivityWindowSnapshot(
+            verdict: .ordinary,
+            host: "example.com",
+            start: 98.8,
+            listGeneration: 1
+        )
+        snapOld.currentGeneration = 1
+        let obsOld = reader.read(app: app, settings: settings, snapshot: snapOld)
+        let rowOld = obsOld.rows.first { $0.kind == "foreground" }
+        #expect(rowOld != nil)
+        #expect(rowOld?.title == nil)
+        #expect(rowOld?.url == nil)
+
+        // Older list generation
+        var snapGen = ChromiumActivitySnapshot()
+        snapGen.latestCompleteRead[10] = ChromiumActivityWindowSnapshot(
+            verdict: .ordinary,
+            host: "example.com",
+            start: 100.0,
+            listGeneration: 1
+        )
+        snapGen.currentGeneration = 2
+        let obsGen = reader.read(app: app, settings: settings, snapshot: snapGen)
+        let rowGen = obsGen.rows.first { $0.kind == "foreground" }
+        #expect(rowGen != nil)
+        #expect(rowGen?.title == nil)
+        #expect(rowGen?.url == nil)
+    }
+
+    @Test func item11EmptyListRecordsHttpsAXDocumentAndNothingForFileOrData() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: [])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        // https: records URL
+        let seamsHttps = makeChromiumSeams(doc: "https://example.com/info")
+        let readerHttps = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seamsHttps)
+        let obsHttps = readerHttps.read(app: app, settings: settings)
+        let rowHttps = obsHttps.rows.first { $0.kind == "foreground" }
+        #expect(rowHttps?.url == "https://example.com/info")
+
+        // file: records nothing
+        let seamsFile = makeChromiumSeams(doc: "file:///Users/owner/secret.pdf")
+        let readerFile = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seamsFile)
+        let obsFile = readerFile.read(app: app, settings: settings)
+        let rowFile = obsFile.rows.first { $0.kind == "foreground" }
+        #expect(rowFile?.url == nil)
+
+        // data: records nothing
+        let seamsData = makeChromiumSeams(doc: "data:text/html,<h1>Secret</h1>")
+        let readerData = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seamsData)
+        let obsData = readerData.read(app: app, settings: settings)
+        let rowData = obsData.rows.first { $0.kind == "foreground" }
+        #expect(rowData?.url == nil)
+    }
+
+    @Test func item11EmptyListAccessibilityOffKeepsTitle() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: [])
+        settings.titles = true
+        settings.urls = false
+        settings.accessibility = false
+
+        // With accessibility off and empty excludedSites, needsAX is false.
+        // Even if focusedWindow is nil, CG title is kept.
+        let seams = makeChromiumSeams(cgTitle: "My Document", focusedWindow: nil)
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+        let obs = reader.read(app: app, settings: settings)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row?.title == "My Document")
+    }
+
+    @Test func item11FilePageKeepsTitle() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: ["bank.com"])
+        settings.titles = true
+        settings.urls = false
+        settings.accessibility = true
+
+        let seams = makeChromiumSeams(cgTitle: "Local File", axTitle: "Local File - Google Chrome", doc: "file:///Users/owner/file.html", nowSeconds: 100.0)
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+
+        var snap = ChromiumActivitySnapshot()
+        snap.latestCompleteRead[10] = ChromiumActivityWindowSnapshot(
+            verdict: .ordinary,
+            host: nil,
+            start: 100.0,
+            listGeneration: 1
+        )
+        snap.currentGeneration = 1
+
+        let obs = reader.read(app: app, settings: settings, snapshot: snap)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row?.title == "Local File")
+    }
+
+    @Test func item11EmptyListHttpsAddressIsRecorded() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: [])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        let seams = makeChromiumSeams(cgTitle: "Secure", axTitle: "Secure - Google Chrome", doc: "https://example.com/account")
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+        let obs = reader.read(app: app, settings: settings)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row?.url == "https://example.com/account")
+    }
+
+    @Test func item12TornTitleInsideOneReadIsCantTell() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: ["bank.com"])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        // Double read does open title, doc, close title.
+        // If open and close titles differ within one read, verdict is can't tell -> no title, no URL.
+        let callCount = OSAllocatedUnfairLock(initialState: 0)
+        let seams = makeChromiumSeams(
+            cgTitle: "Page",
+            doc: "https://example.com",
+            customAXTitle: { _ in
+                let count = callCount.withLock {
+                    $0 += 1
+                    return $0
+                }
+                return count % 2 == 1 ? "Opening Title - Google Chrome" : "Closing Title - Google Chrome"
+            }
+        )
+
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+        var snap = ChromiumActivitySnapshot()
+        snap.latestCompleteRead[10] = ChromiumActivityWindowSnapshot(
+            verdict: .ordinary,
+            host: "example.com",
+            start: 100.0,
+            listGeneration: 1
+        )
+        snap.currentGeneration = 1
+
+        let obs = reader.read(app: app, settings: settings, snapshot: snap)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row != nil)
+        #expect(row?.title == nil)
+        #expect(row?.url == nil)
+    }
+
+    @Test func item12NilTitleIsCantTell() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: ["bank.com"])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        // With a left-out list, a nil AX title must not coerce to "": the read can't vouch for the page.
+        let seams = makeChromiumSeams(
+            cgTitle: "Page",
+            axTitle: nil,
+            doc: "https://example.com"
+        )
+
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+        var snap = ChromiumActivitySnapshot()
+        snap.latestCompleteRead[10] = ChromiumActivityWindowSnapshot(
+            verdict: .ordinary,
+            host: "example.com",
+            start: 100.0,
+            listGeneration: 1
+        )
+        snap.currentGeneration = 1
+        let obs = reader.read(app: app, settings: settings, snapshot: snap)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row != nil)
+        #expect(row?.title == nil)
+        #expect(row?.url == nil)
+    }
+
+    @Test func item12TwinEmptyListNilTitleKeepsTitleAndDropsAddress() {
+        let app = DesktopActivityApp(pid: 100, name: "Google Chrome", bundleID: "com.google.Chrome")
+        var settings = makeSettings(excludedSites: [])
+        settings.titles = true
+        settings.urls = true
+        settings.accessibility = true
+
+        // With an empty list nothing gates titles. An address read that can't be vouched for is dropped.
+        let seams = makeChromiumSeams(
+            cgTitle: "Page",
+            axTitle: nil,
+            doc: "https://example.com"
+        )
+
+        let reader = DesktopActivityReader(permit: DesktopActivityReadPermit(), seams: seams)
+        let obs = reader.read(app: app, settings: settings)
+        let row = obs.rows.first { $0.kind == "foreground" }
+        #expect(row?.title == "Page")
+        #expect(row?.url == nil)
+    }
 }

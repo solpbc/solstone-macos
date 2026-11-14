@@ -16,6 +16,10 @@ struct ChromiumSiteRuleTests {
         let nanos = sec * 1_000_000_000.0
         return UInt64((nanos * Double(info.denom)) / Double(info.numer))
     }
+
+    private struct SendableAX: @unchecked Sendable {
+        let element: AXUIElement
+    }
     // MARK: - Title Checks
 
     @Test func titleCheckPlainTab() {
@@ -333,7 +337,7 @@ struct ChromiumSiteRuleTests {
     }
 
     @Test func rule6MemoryAcrossLeave() {
-        let rule6 = ChromiumRule6Record(waitStart: 100.0, host: "bank.com")
+        var rule6: ChromiumRule6Record? = ChromiumRule6Record(waitStart: 100.0, host: "bank.com")
 
         // Ordinary page at 102.0 (2 s in): still cantTell unclear
         let eval2s = ChromiumSiteRead.evaluatePageWindow(
@@ -347,7 +351,7 @@ struct ChromiumSiteRuleTests {
             previousCGTitle: nil,
             previousAXTitle: nil,
             tabStripOutcome: .counts(selected: 1, total: 1),
-            rule6Record: rule6,
+            rule6Record: &rule6,
             sites: ["bank.com"],
             now: 102.0
         )
@@ -366,14 +370,14 @@ struct ChromiumSiteRuleTests {
             previousCGTitle: "Search",
             previousAXTitle: "Search - Google Chrome",
             tabStripOutcome: .counts(selected: 1, total: 1),
-            rule6Record: rule6,
+            rule6Record: &rule6,
             sites: ["bank.com"],
             now: 104.5
         )
         #expect(eval4_5s.verdict == .cantTell)
         #expect(eval4_5s.cause == .unclear)
 
-        // Clears at 5.5 s
+        // Clears at 5 s after first ordinary read (first ordinary read at 102.0, clears at 107.1)
         let eval5_5s = ChromiumSiteRead.evaluatePageWindow(
             windowID: 10,
             browser: .chrome,
@@ -385,12 +389,13 @@ struct ChromiumSiteRuleTests {
             previousCGTitle: nil,
             previousAXTitle: nil,
             tabStripOutcome: .counts(selected: 1, total: 1),
-            rule6Record: rule6,
+            rule6Record: &rule6,
             sites: ["bank.com"],
-            now: 105.5
+            now: 107.1
         )
         #expect(eval5_5s.verdict == .ordinary)
         #expect(eval5_5s.host == "example.com")
+        #expect(rule6 == nil)
     }
 
     // MARK: - Side Window (Layer 3) Evaluation
@@ -958,7 +963,7 @@ struct ChromiumSiteRuleTests {
         #expect(eval2_4s.verdict == .cantTell)
         #expect(eval2_4s.cause == .unclear)
 
-        // 3. Ordinary at 5 s clears (at 109.7 >= 104.6 + 5.0)
+        // 3. Ordinary at 5 s clears (first ordinary was at 107.0, so at 112.1 >= 107.0 + 5.0)
         let eval5s = ChromiumSiteRead.evaluatePageWindow(
             windowID: 10,
             browser: .chrome,
@@ -972,7 +977,7 @@ struct ChromiumSiteRuleTests {
             tabStripOutcome: .counts(selected: 1, total: 1),
             rule6Record: &rule6,
             sites: ["bank.com"],
-            now: 109.7
+            now: 112.1
         )
         #expect(eval5s.verdict == .ordinary)
         #expect(rule6 == nil)
@@ -1082,37 +1087,60 @@ struct ChromiumSiteRuleTests {
 
     // MARK: - List Generation & Host-Only Storage
 
-    @Test func listGenerationAndHostOnlyStorage() {
-        // Pass result stores host only: no url, path, query
-        let pass = ChromiumPassResult(
-            axTitle: "Inbox - Google Chrome",
-            docHash: 12345,
-            host: "mail.google.com",
-            time: 100.0,
-            selectedTabCount: 1,
-            totalTabCount: 5
+    @Test func listGenerationAndHostOnlyStorage() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let roundComplete = OneShotContinuationGate()
+        let roundResults = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        struct MockHostReader: ChromiumWindowReading, @unchecked Sendable {
+            func copyWindows(for pid: pid_t) -> [AXUIElement]? { [AXUIElementCreateApplication(10)] }
+            func focusedWindow(for pid: pid_t) -> AXUIElement? { nil }
+            func windowID(for window: AXUIElement) -> CGWindowID? { 10 }
+            func readTitle(for window: AXUIElement) -> String? { "Page - Google Chrome" }
+            func readDocument(for window: AXUIElement) -> (doc: String?, failed: Bool) {
+                ("https://bank.com/secret/account?token=private#hash", false)
+            }
+            func walkTabStrip(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> ChromiumTabStripOutcome {
+                .counts(selected: 1, total: 1)
+            }
+            func walkSideWindow(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) {
+                ([], .complete)
+            }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = { [SiteVisibleWindow(windowID: 10, pid: 100, layer: 0, title: "Page")] }
+        hooks.chromiumReader = MockHostReader()
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                roundResults.withLock { $0 = results }
+                roundComplete.release()
+            }
         )
-        #expect(pass.host == "mail.google.com")
 
-        // Rule 6 record stores host only: no url, path, query, file path, or data body
-        let r6 = ChromiumRule6Record(waitStart: 100.0, host: "bank.com")
-        #expect(r6.host == "bank.com")
+        await sampler.applySites(["bank.com"], generation: 2)
+        await sampler.performPollForTesting()
+        await roundComplete.wait()
 
-        // Activity with generation change: snap.listGeneration < currentGeneration
-        var snapshot = ChromiumActivitySnapshot()
-        snapshot.currentGeneration = 2
-        let snap = ChromiumActivityWindowSnapshot(
-            verdict: .ordinary,
-            host: "example.com",
-            start: 100.0,
-            listGeneration: 1 // older generation
-        )
-        snapshot.latestCompleteRead[10] = snap
-        snapshot.latestAXTitle[10] = "Secret Page - Google Chrome"
-        snapshot.latestCGTitle[10] = "Secret Page"
-
-        #expect(snap.listGeneration == 1)
-        #expect(snapshot.currentGeneration == 2)
+        let res = roundResults.withLock { $0[10] }!
+        #expect(res.read.verdict == .covered)
+        #expect(res.read.host == "bank.com")
+        #expect(res.read.host?.contains("secret") == false)
+        #expect(res.read.host?.contains("account") == false)
+        #expect(res.read.host?.contains("token") == false)
+        #expect(res.read.host?.contains("hash") == false)
+        #expect(res.read.listGeneration == 2)
     }
 
     // MARK: - Side Window Shapes
@@ -1191,11 +1219,16 @@ struct ChromiumSiteRuleTests {
         let passDurations = OSAllocatedUnfairLock(initialState: [CGWindowID: TimeInterval]())
         let onPassStart: @Sendable (CGWindowID) -> Void
         let onTitleRead: @Sendable (CGWindowID) -> Void
+        var customWalkSideWindow: (@Sendable (AXUIElement, CGWindowID, Int, TimeInterval, @escaping @Sendable () -> UInt64) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome))? = nil
+        var customWalkTabStrip: (@Sendable (AXUIElement, CGWindowID, Int, TimeInterval, @escaping @Sendable () -> UInt64) -> ChromiumTabStripOutcome)? = nil
+        var customReadTitle: (@Sendable (AXUIElement, CGWindowID) -> String?)? = nil
+        var customReadDocument: (@Sendable (AXUIElement, CGWindowID) -> (doc: String?, failed: Bool))? = nil
+        var customCopyWindows: (@Sendable (pid_t) -> [AXUIElement]?)? = nil
 
         init(
-            windowIDs: [CGWindowID],
-            onPassStart: @escaping @Sendable (CGWindowID) -> Void,
-            onTitleRead: @escaping @Sendable (CGWindowID) -> Void
+            windowIDs: [CGWindowID] = [],
+            onPassStart: @escaping @Sendable (CGWindowID) -> Void = { _ in },
+            onTitleRead: @escaping @Sendable (CGWindowID) -> Void = { _ in }
         ) {
             var elems: [CGWindowID: AXUIElement] = [:]
             var reverse: [AXUIElement: CGWindowID] = [:]
@@ -1211,7 +1244,10 @@ struct ChromiumSiteRuleTests {
         }
 
         func copyWindows(for pid: pid_t) -> [AXUIElement]? {
-            Array(elements.values)
+            if let custom = customCopyWindows {
+                return custom(pid)
+            }
+            return Array(elements.values)
         }
         func focusedWindow(for pid: pid_t) -> AXUIElement? {
             elements.values.first
@@ -1222,10 +1258,16 @@ struct ChromiumSiteRuleTests {
         func readTitle(for window: AXUIElement) -> String? {
             guard let wid = windowID(for: window) else { return nil }
             onTitleRead(wid)
+            if let custom = customReadTitle {
+                return custom(window, wid)
+            }
             return titles.withLock { $0[wid] }
         }
         func readDocument(for window: AXUIElement) -> (doc: String?, failed: Bool) {
             guard let wid = windowID(for: window) else { return (nil, true) }
+            if let custom = customReadDocument {
+                return custom(window, wid)
+            }
             return (docs.withLock { $0[wid] }, false)
         }
         func walkTabStrip(
@@ -1236,6 +1278,9 @@ struct ChromiumSiteRuleTests {
         ) -> ChromiumTabStripOutcome {
             guard let wid = windowID(for: window) else { return .failed }
             onPassStart(wid)
+            if let custom = customWalkTabStrip {
+                return custom(window, wid, maxNodes, timeoutSeconds, nowTicks)
+            }
             return .counts(selected: 1, total: 1)
         }
         func walkSideWindow(
@@ -1244,7 +1289,11 @@ struct ChromiumSiteRuleTests {
             timeoutSeconds: TimeInterval = 0.15,
             nowTicks: @escaping @Sendable () -> UInt64 = { mach_absolute_time() }
         ) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) {
-            ([], .complete)
+            guard let wid = windowID(for: window) else { return ([], .failed) }
+            if let custom = customWalkSideWindow {
+                return custom(window, wid, maxNodes, timeoutSeconds, nowTicks)
+            }
+            return ([], .complete)
         }
     }
 
@@ -1295,6 +1344,7 @@ struct ChromiumSiteRuleTests {
         hooks.chromiumReader = reader
 
         let sampler = SiteSampler(
+            isSnapshot: true,
             hooks: hooks,
             onPoll: { _ in },
             onDecisionUpdate: { _, _, _ in },
@@ -1350,14 +1400,62 @@ struct ChromiumSiteRuleTests {
 
     @Test func axReadRecorderTracksExpectedReads() {
         let recorder = AXReadRecorder()
-        recorder.recordRead(attribute: "AXDocument", role: "AXWindow")
-        recorder.recordRead(attribute: "AXTitle", role: "AXWindow")
-        recorder.recordRead(attribute: "AXValue", role: "AXTabButton")
-        recorder.recordRead(attribute: "AXValue", role: "AXStaticText")
+        let reader = LiveChromiumWindowReader(recorder: recorder)
 
-        #expect(recorder.recordedReads.contains(AllowedAXRead(attribute: "AXDocument", role: "AXWindow")))
-        #expect(recorder.recordedReads.contains(AllowedAXRead(attribute: "AXTitle", role: "AXWindow")))
-        #expect(recorder.recordedReads.allSatisfy { read in
+        let winElem = SendableAX(element: AXUIElementCreateApplication(100))
+        let tabElem = SendableAX(element: AXUIElementCreateApplication(101))
+        let textElem = SendableAX(element: AXUIElementCreateApplication(102))
+
+        reader.copyAttribute = { element, attr in
+            if CFEqual(element, winElem.element) {
+                if attr as String == (kAXRoleAttribute as String) {
+                    return (.success, kAXWindowRole as CFTypeRef)
+                }
+                if attr as String == (kAXTitleAttribute as String) {
+                    return (.success, "My Title" as CFTypeRef)
+                }
+                if attr as String == "AXDocument" {
+                    return (.success, "https://example.com" as CFTypeRef)
+                }
+                if attr as String == (kAXChildrenAttribute as String) {
+                    return (.success, [tabElem.element, textElem.element] as CFTypeRef)
+                }
+            } else if CFEqual(element, tabElem.element) {
+                if attr as String == (kAXRoleAttribute as String) {
+                    return (.success, "AXTabButton" as CFTypeRef)
+                }
+                if attr as String == (kAXValueAttribute as String) {
+                    return (.success, 1 as CFTypeRef)
+                }
+                if attr as String == (kAXChildrenAttribute as String) {
+                    return (.success, [] as CFTypeRef)
+                }
+            } else if CFEqual(element, textElem.element) {
+                if attr as String == (kAXRoleAttribute as String) {
+                    return (.success, "AXStaticText" as CFTypeRef)
+                }
+                if attr as String == (kAXValueAttribute as String) {
+                    return (.success, "example.com" as CFTypeRef)
+                }
+                if attr as String == (kAXChildrenAttribute as String) {
+                    return (.success, [] as CFTypeRef)
+                }
+            }
+            return (.noValue, nil)
+        }
+
+        _ = reader.readTitle(for: winElem.element)
+        _ = reader.readDocument(for: winElem.element)
+        _ = reader.walkTabStrip(for: winElem.element, maxNodes: 10, timeoutSeconds: 0.05, nowTicks: { mach_absolute_time() })
+        _ = reader.walkSideWindow(for: winElem.element, maxNodes: 10, timeoutSeconds: 0.05, nowTicks: { mach_absolute_time() })
+
+        let reads = recorder.recordedReads
+        #expect(!reads.isEmpty)
+        #expect(reads.contains(AllowedAXRead(attribute: "AXTitle", role: "AXWindow")))
+        #expect(reads.contains(AllowedAXRead(attribute: "AXDocument", role: "AXWindow")))
+        #expect(reads.contains(AllowedAXRead(attribute: "AXValue", role: "AXTabButton")))
+        #expect(reads.contains(AllowedAXRead(attribute: "AXValue", role: "AXStaticText")))
+        #expect(reads.allSatisfy { read in
             if read.attribute == "AXValue" {
                 return read.role == "AXTabButton" || read.role == "AXStaticText"
             }
@@ -1365,5 +1463,2343 @@ struct ChromiumSiteRuleTests {
         })
         #expect(recorder.actionCount == 0)
         #expect(recorder.setCount == 0)
+    }
+
+    // MARK: - Item 1 Tests
+
+    @Test func item1TwoPiPSideWindowsStampSecondReadStart() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let roundComplete = OneShotContinuationGate()
+        let roundResults = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+        let roundStart = OSAllocatedUnfairLock<Double>(initialState: 0.0)
+
+        let reader = MockChromiumReader(windowIDs: [1, 2])
+        reader.customWalkSideWindow = { _, wid, _, _, _ in
+            if wid == 1 {
+                currentTime.withLock { $0 += 0.15 }
+            }
+            return (["example.com"], .complete)
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [
+                SiteVisibleWindow(windowID: 1, pid: 100, layer: 3, title: "PiP 1"),
+                SiteVisibleWindow(windowID: 2, pid: 100, layer: 3, title: "PiP 2")
+            ]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, startSec, _ in
+                roundResults.withLock { $0 = results }
+                roundStart.withLock { $0 = startSec }
+                roundComplete.release()
+            }
+        )
+
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await roundComplete.wait()
+
+        let start = roundStart.withLock { $0 }
+        let res = roundResults.withLock { $0 }
+        let r2 = try! #require(res[2]?.read)
+        #expect(r2.readStart >= start + 0.15)
+    }
+
+    @Test func item1OpeningTitlesPrecedeSideWalksOnCopyLog() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let roundComplete = OneShotContinuationGate()
+        let callLog = OSAllocatedUnfairLock<[String]>(initialState: [])
+
+        let reader = MockChromiumReader(windowIDs: [1, 2])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://bank.com" } // covered, so no pass due
+        reader.customReadTitle = { _, wid in
+            callLog.withLock { $0.append("title\(wid)") }
+            return "Page \(wid) - Google Chrome"
+        }
+        reader.customWalkSideWindow = { _, wid, _, _, _ in
+            callLog.withLock { $0.append("sideWalk\(wid)") }
+            currentTime.withLock { $0 += 0.15 }
+            return (["example.com"], .complete)
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [
+                SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1"),
+                SiteVisibleWindow(windowID: 2, pid: 100, layer: 3, title: "PiP 2")
+            ]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, _, _, _ in
+                roundComplete.release()
+            }
+        )
+
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await roundComplete.wait()
+
+        let log = callLog.withLock { $0 }
+        #expect(log == ["title1", "title1", "sideWalk2"])
+    }
+
+    @Test func item1SideReadStartStableAcrossPassAndNoPass() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Complete = OneShotContinuationGate()
+        let round2Complete = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round1Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+        let round2Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+        let start1 = OSAllocatedUnfairLock<Double>(initialState: 0.0)
+        let start2 = OSAllocatedUnfairLock<Double>(initialState: 0.0)
+
+        let reader = MockChromiumReader(windowIDs: [1, 2])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        reader.customWalkTabStrip = { _, wid, _, _, _ in
+            let mode = roundMode.withLock { $0 }
+            if mode == 1 {
+                currentTime.withLock { $0 += 0.080 } // 80 ms pass in round 1
+            }
+            return .counts(selected: 1, total: 1)
+        }
+        reader.customWalkSideWindow = { _, wid, _, _, _ in
+            ([], .complete)
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [
+                SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1"),
+                SiteVisibleWindow(windowID: 2, pid: 100, layer: 3, title: "PiP 2")
+            ]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, startSec, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Results.withLock { $0 = results }
+                    start1.withLock { $0 = startSec }
+                    round1Complete.release()
+                } else {
+                    round2Results.withLock { $0 = results }
+                    start2.withLock { $0 = startSec }
+                    round2Complete.release()
+                }
+            }
+        )
+
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Complete.wait()
+
+        // Round 2: no pass due (carried pass matches)
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 += 0.5 }
+        await sampler.performPollForTesting()
+        await round2Complete.wait()
+
+        let r1 = round1Results.withLock { $0[2]!.read }
+        let s1 = start1.withLock { $0 }
+        let r2 = round2Results.withLock { $0[2]!.read }
+        let s2 = start2.withLock { $0 }
+
+        let offset1 = r1.readStart - s1
+        let offset2 = r2.readStart - s2
+        #expect(abs(offset1 - offset2) < 0.010)
+    }
+
+    // MARK: - Item 2 Tests
+
+    @Test func item2NilClosingTitleIsUnread() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let roundComplete = OneShotContinuationGate()
+        let roundResults = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        let titleCallCount = OSAllocatedUnfairLock(initialState: 0)
+        reader.customReadTitle = { _, wid in
+            let count = titleCallCount.withLock {
+                $0 += 1
+                return $0
+            }
+            if count == 1 {
+                return "Page 1 - Google Chrome"
+            }
+            return nil // closing title is nil
+        }
+        reader.customWalkTabStrip = { _, _, _, _, _ in
+            .counts(selected: 1, total: 1)
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                roundResults.withLock { $0 = results }
+                roundComplete.release()
+            }
+        )
+
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await roundComplete.wait()
+
+        let res = roundResults.withLock { $0[1] }!
+        #expect(res.read.verdict == .cantTell)
+        #expect(res.read.cause == .unread)
+    }
+
+    // MARK: - Item 3 Tests
+
+    @Test func item3RoleFailureHidesOneOfTwoSelectedTabs() {
+        let win = SendableAX(element: AXUIElementCreateApplication(100))
+        let tab1 = SendableAX(element: AXUIElementCreateApplication(101))
+        let tab2 = SendableAX(element: AXUIElementCreateApplication(102))
+
+        let liveReader = LiveChromiumWindowReader()
+        let failRole = OSAllocatedUnfairLock(initialState: true)
+        liveReader.copyAttribute = { element, attr in
+            if CFEqual(element, win.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXWindow" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [tab1.element, tab2.element] as CFTypeRef) }
+            } else if CFEqual(element, tab1.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXTabButton" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) { return (.success, 1 as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            } else if CFEqual(element, tab2.element) {
+                if attr as String == (kAXRoleAttribute as String) {
+                    if failRole.withLock({ $0 }) {
+                        return (.failure, nil)
+                    } else {
+                        return (.success, "AXTabButton" as CFTypeRef)
+                    }
+                }
+                if attr as String == (kAXValueAttribute as String) { return (.success, 1 as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            }
+            return (.noValue, nil)
+        }
+
+        // Fixture check: tree has two selected tabs when role succeeds
+        failRole.withLock { $0 = false }
+        let baseline = liveReader.walkTabStrip(for: win.element, maxNodes: 10, timeoutSeconds: 0.05)
+        #expect(baseline == .counts(selected: 2, total: 2))
+
+        // When role fails on tab2: walk fails, not counts(selected: 1)
+        failRole.withLock { $0 = true }
+        let failedOutcome = liveReader.walkTabStrip(for: win.element, maxNodes: 10, timeoutSeconds: 0.05)
+        #expect(failedOutcome == .failed)
+        #expect(failedOutcome != .counts(selected: 1, total: 1))
+
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluatePageWindow(
+            windowID: 1,
+            browser: .chrome,
+            cgTitle: "Page",
+            initialAXTitle: "Page - Google Chrome",
+            finalAXTitle: "Page - Google Chrome",
+            doc: "https://example.com",
+            docReadFailed: false,
+            previousCGTitle: nil,
+            previousAXTitle: nil,
+            tabStripOutcome: failedOutcome,
+            rule6Record: &rule6,
+            sites: ["bank.com"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .cantTell)
+    }
+
+    @Test func item3TabValueFailureHidesOneOfTwoSelectedTabs() {
+        let win = SendableAX(element: AXUIElementCreateApplication(100))
+        let tab1 = SendableAX(element: AXUIElementCreateApplication(101))
+        let tab2 = SendableAX(element: AXUIElementCreateApplication(102))
+
+        let liveReader = LiveChromiumWindowReader()
+        let failValue = OSAllocatedUnfairLock(initialState: true)
+        liveReader.copyAttribute = { element, attr in
+            if CFEqual(element, win.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXWindow" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [tab1.element, tab2.element] as CFTypeRef) }
+            } else if CFEqual(element, tab1.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXTabButton" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) { return (.success, 1 as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            } else if CFEqual(element, tab2.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXTabButton" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) {
+                    if failValue.withLock({ $0 }) {
+                        return (.cannotComplete, nil)
+                    } else {
+                        return (.success, 1 as CFTypeRef)
+                    }
+                }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            }
+            return (.noValue, nil)
+        }
+
+        failValue.withLock { $0 = false }
+        let baseline = liveReader.walkTabStrip(for: win.element, maxNodes: 10, timeoutSeconds: 0.05)
+        #expect(baseline == .counts(selected: 2, total: 2))
+
+        failValue.withLock { $0 = true }
+        let failedOutcome = liveReader.walkTabStrip(for: win.element, maxNodes: 10, timeoutSeconds: 0.05)
+        #expect(failedOutcome == .failed)
+        #expect(failedOutcome != .counts(selected: 1, total: 1))
+
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluatePageWindow(
+            windowID: 1,
+            browser: .chrome,
+            cgTitle: "Page",
+            initialAXTitle: "Page - Google Chrome",
+            finalAXTitle: "Page - Google Chrome",
+            doc: "https://example.com",
+            docReadFailed: false,
+            previousCGTitle: nil,
+            previousAXTitle: nil,
+            tabStripOutcome: failedOutcome,
+            rule6Record: &rule6,
+            sites: ["bank.com"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .cantTell)
+    }
+
+    @Test func item3ChildrenCannotCompleteHidesOneOfTwoSelectedTabs() {
+        let win = SendableAX(element: AXUIElementCreateApplication(100))
+        let tab1 = SendableAX(element: AXUIElementCreateApplication(101))
+        let container = SendableAX(element: AXUIElementCreateApplication(102))
+        let tab2 = SendableAX(element: AXUIElementCreateApplication(103))
+
+        let liveReader = LiveChromiumWindowReader()
+        let failChildren = OSAllocatedUnfairLock(initialState: true)
+        liveReader.copyAttribute = { element, attr in
+            if CFEqual(element, win.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXWindow" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [tab1.element, container.element] as CFTypeRef) }
+            } else if CFEqual(element, tab1.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXTabButton" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) { return (.success, 1 as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            } else if CFEqual(element, container.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXGroup" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) {
+                    if failChildren.withLock({ $0 }) {
+                        return (.cannotComplete, nil)
+                    } else {
+                        return (.success, [tab2.element] as CFTypeRef)
+                    }
+                }
+            } else if CFEqual(element, tab2.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXTabButton" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) { return (.success, 1 as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            }
+            return (.noValue, nil)
+        }
+
+        failChildren.withLock { $0 = false }
+        let baseline = liveReader.walkTabStrip(for: win.element, maxNodes: 10, timeoutSeconds: 0.05)
+        #expect(baseline == .counts(selected: 2, total: 2))
+
+        failChildren.withLock { $0 = true }
+        let failedOutcome = liveReader.walkTabStrip(for: win.element, maxNodes: 10, timeoutSeconds: 0.05)
+        #expect(failedOutcome == .failed)
+        #expect(failedOutcome != .counts(selected: 1, total: 1))
+
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluatePageWindow(
+            windowID: 1,
+            browser: .chrome,
+            cgTitle: "Page",
+            initialAXTitle: "Page - Google Chrome",
+            finalAXTitle: "Page - Google Chrome",
+            doc: "https://example.com",
+            docReadFailed: false,
+            previousCGTitle: nil,
+            previousAXTitle: nil,
+            tabStripOutcome: failedOutcome,
+            rule6Record: &rule6,
+            sites: ["bank.com"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .cantTell)
+    }
+
+    @Test func item3TwinChildrenNoValueOrUnsupportedCompletes() {
+        let win = SendableAX(element: AXUIElementCreateApplication(100))
+        let tab1 = SendableAX(element: AXUIElementCreateApplication(101))
+        let tab2 = SendableAX(element: AXUIElementCreateApplication(102))
+        let leaf1 = SendableAX(element: AXUIElementCreateApplication(103))
+        let leaf2 = SendableAX(element: AXUIElementCreateApplication(104))
+
+        let liveReader = LiveChromiumWindowReader()
+        liveReader.copyAttribute = { element, attr in
+            if CFEqual(element, win.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXWindow" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [tab1.element, tab2.element, leaf1.element, leaf2.element] as CFTypeRef) }
+            } else if CFEqual(element, tab1.element) || CFEqual(element, tab2.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXTabButton" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) { return (.success, 1 as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            } else if CFEqual(element, leaf1.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXGroup" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.noValue, nil) }
+            } else if CFEqual(element, leaf2.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXGroup" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.attributeUnsupported, nil) }
+            }
+            return (.noValue, nil)
+        }
+
+        let outcome = liveReader.walkTabStrip(for: win.element, maxNodes: 10, timeoutSeconds: 0.05)
+        #expect(outcome == .counts(selected: 2, total: 2))
+    }
+
+    @Test func item3SideRoleFailure() {
+        let win = SendableAX(element: AXUIElementCreateApplication(100))
+        let text1 = SendableAX(element: AXUIElementCreateApplication(101))
+        let text2 = SendableAX(element: AXUIElementCreateApplication(102))
+
+        let liveReader = LiveChromiumWindowReader()
+        let failRole = OSAllocatedUnfairLock(initialState: true)
+        liveReader.copyAttribute = { element, attr in
+            if CFEqual(element, win.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXWindow" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [text1.element, text2.element] as CFTypeRef) }
+            } else if CFEqual(element, text1.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXStaticText" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) { return (.success, "example.com" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            } else if CFEqual(element, text2.element) {
+                if attr as String == (kAXRoleAttribute as String) {
+                    if failRole.withLock({ $0 }) {
+                        return (.failure, nil)
+                    } else {
+                        return (.success, "AXStaticText" as CFTypeRef)
+                    }
+                }
+                if attr as String == (kAXValueAttribute as String) { return (.success, "bank.com" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            }
+            return (.noValue, nil)
+        }
+
+        failRole.withLock { $0 = false }
+        let baseline = liveReader.walkSideWindow(for: win.element, maxNodes: 10, timeoutSeconds: 0.15)
+        #expect(baseline.outcome == .complete)
+        #expect(baseline.staticTexts.count == 2)
+
+        failRole.withLock { $0 = true }
+        let failed = liveReader.walkSideWindow(for: win.element, maxNodes: 10, timeoutSeconds: 0.15)
+        #expect(failed.outcome == .failed)
+
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluateSideWindow(
+            windowID: 1,
+            staticTexts: failed.staticTexts,
+            walkOutcome: failed.outcome,
+            rule6Record: &rule6,
+            sites: ["bank.com"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .cantTell)
+    }
+
+    @Test func item3SideValueFailure() {
+        let win = SendableAX(element: AXUIElementCreateApplication(100))
+        let text1 = SendableAX(element: AXUIElementCreateApplication(101))
+        let text2 = SendableAX(element: AXUIElementCreateApplication(102))
+
+        let liveReader = LiveChromiumWindowReader()
+        let failValue = OSAllocatedUnfairLock(initialState: true)
+        liveReader.copyAttribute = { element, attr in
+            if CFEqual(element, win.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXWindow" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [text1.element, text2.element] as CFTypeRef) }
+            } else if CFEqual(element, text1.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXStaticText" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) { return (.success, "example.com" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            } else if CFEqual(element, text2.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXStaticText" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) {
+                    if failValue.withLock({ $0 }) {
+                        return (.cannotComplete, nil)
+                    } else {
+                        return (.success, "bank.com" as CFTypeRef)
+                    }
+                }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            }
+            return (.noValue, nil)
+        }
+
+        failValue.withLock { $0 = false }
+        let baseline = liveReader.walkSideWindow(for: win.element, maxNodes: 10, timeoutSeconds: 0.15)
+        #expect(baseline.outcome == .complete)
+        #expect(baseline.staticTexts.count == 2)
+
+        failValue.withLock { $0 = true }
+        let failed = liveReader.walkSideWindow(for: win.element, maxNodes: 10, timeoutSeconds: 0.15)
+        #expect(failed.outcome == .failed)
+
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluateSideWindow(
+            windowID: 1,
+            staticTexts: failed.staticTexts,
+            walkOutcome: failed.outcome,
+            rule6Record: &rule6,
+            sites: ["bank.com"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .cantTell)
+    }
+
+    @Test func item3SideChildrenFailure() {
+        let win = SendableAX(element: AXUIElementCreateApplication(100))
+        let text1 = SendableAX(element: AXUIElementCreateApplication(101))
+        let container = SendableAX(element: AXUIElementCreateApplication(102))
+        let text2 = SendableAX(element: AXUIElementCreateApplication(103))
+
+        let liveReader = LiveChromiumWindowReader()
+        let failChildren = OSAllocatedUnfairLock(initialState: true)
+        liveReader.copyAttribute = { element, attr in
+            if CFEqual(element, win.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXWindow" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [text1.element, container.element] as CFTypeRef) }
+            } else if CFEqual(element, text1.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXStaticText" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) { return (.success, "example.com" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            } else if CFEqual(element, container.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXGroup" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) {
+                    if failChildren.withLock({ $0 }) {
+                        return (.cannotComplete, nil)
+                    } else {
+                        return (.success, [text2.element] as CFTypeRef)
+                    }
+                }
+            } else if CFEqual(element, text2.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXStaticText" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) { return (.success, "bank.com" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            }
+            return (.noValue, nil)
+        }
+
+        failChildren.withLock { $0 = false }
+        let baseline = liveReader.walkSideWindow(for: win.element, maxNodes: 10, timeoutSeconds: 0.15)
+        #expect(baseline.outcome == .complete)
+        #expect(baseline.staticTexts.count == 2)
+
+        failChildren.withLock { $0 = true }
+        let failed = liveReader.walkSideWindow(for: win.element, maxNodes: 10, timeoutSeconds: 0.15)
+        #expect(failed.outcome == .failed)
+
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluateSideWindow(
+            windowID: 1,
+            staticTexts: failed.staticTexts,
+            walkOutcome: failed.outcome,
+            rule6Record: &rule6,
+            sites: ["bank.com"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .cantTell)
+    }
+
+    // MARK: - Item 4 Tests
+
+    @Test func item4InFlightMissIsNotMovedEarlier() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2InFlight = OneShotContinuationGate()
+        let round2Proceed = DispatchSemaphore(value: 0)
+        let round2Gate = OneShotContinuationGate()
+        let round3Gate = OneShotContinuationGate()
+        let round4Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let inFlightPaused = OSAllocatedUnfairLock(initialState: false)
+        let round3Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+        let round4Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://bank.com" }
+        reader.customReadTitle = { _, wid in
+            let shouldPause = inFlightPaused.withLock { p -> Bool in
+                if !p && roundMode.withLock({ $0 == 2 }) {
+                    p = true
+                    return true
+                }
+                return false
+            }
+            if shouldPause {
+                round2InFlight.release()
+                round2Proceed.wait()
+            }
+            return "Page 1 - Google Chrome"
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else if mode == 2 {
+                    round2Gate.release()
+                } else if mode == 3 {
+                    round3Results.withLock { $0 = results }
+                    round3Gate.release()
+                } else if mode == 4 {
+                    round4Results.withLock { $0 = results }
+                    round4Gate.release()
+                }
+            }
+        )
+
+        // Round 1 at 10.0: covered -> wait starts at 10.0
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2 at 11.0: in flight
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 11.0 }
+        await sampler.performPollForTesting()
+        await round2InFlight.wait()
+
+        // Missed poll at 11.5 while round 2 is in flight -> updates waitStart to 11.5
+        currentTime.withLock { $0 = 11.5 }
+        await sampler.performPollForTesting()
+
+        // Complete round 2 at 11.8
+        currentTime.withLock { $0 = 11.8 }
+        round2Proceed.signal()
+        await round2Gate.wait()
+
+        // Round 3 at 16.2: ordinary read ("https://example.com").
+        // 16.2 is 5.2s after 11.0, but only 4.7s after 11.5. Must stay can't tell!
+        roundMode.withLock { $0 = 3 }
+        currentTime.withLock { $0 = 16.2 }
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        await sampler.performPollForTesting()
+        await round3Gate.wait()
+
+        let r3 = round3Results.withLock { $0[1]!.read }
+        #expect(r3.verdict == .cantTell)
+
+        // Round 4 at 21.3: >= 11.5 + 5.0 and >= 16.2 + 5.0 -> becomes ordinary
+        roundMode.withLock { $0 = 4 }
+        currentTime.withLock { $0 = 21.3 }
+        await sampler.performPollForTesting()
+        await round4Gate.wait()
+
+        let r4 = round4Results.withLock { $0[1]!.read }
+        #expect(r4.verdict == .ordinary)
+    }
+
+    @Test func item4ChromeRoundDoesNotTouchEdge() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let round3Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round3Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1, 2])
+        reader.titles.withLock {
+            $0[1] = "Chrome Window - Google Chrome"
+            $0[2] = "Edge Window - Microsoft Edge"
+        }
+        reader.docs.withLock {
+            $0[1] = "https://example.com"
+            $0[2] = "https://bank.com" // Edge window covered initially
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = {
+            let mode = roundMode.withLock { $0 }
+            return (mode == 2) ? [100] : []
+        }
+        hooks.edgePIDs = {
+            let mode = roundMode.withLock { $0 }
+            return (mode != 2) ? [200] : []
+        }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            let mode = roundMode.withLock { $0 }
+            if mode == 2 {
+                return [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Chrome Window")]
+            } else {
+                return [SiteVisibleWindow(windowID: 2, pid: 200, layer: 0, title: "Edge Window")]
+            }
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { browser, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else if mode == 2 {
+                    round2Gate.release()
+                } else if mode == 3 {
+                    round3Results.withLock { $0 = results }
+                    round3Gate.release()
+                }
+            }
+        )
+
+        // Round 1 at 10.0: Edge window reads covered -> wait starts for Edge window 2
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2 at 11.0: Chrome round only, reads ordinary
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 11.0 }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        // Round 3 at 12.0: Edge round, reads ordinary ("https://example.com").
+        // Since wait for Edge was not cleared by Chrome, Edge stays can't tell!
+        roundMode.withLock { $0 = 3 }
+        currentTime.withLock { $0 = 12.0 }
+        reader.docs.withLock { $0[2] = "https://example.com" }
+        await sampler.performPollForTesting()
+        await round3Gate.wait()
+
+        let r3 = round3Results.withLock { $0[2]!.read }
+        #expect(r3.verdict == .cantTell)
+    }
+
+    @Test func item4LateCoveredStartsLaterWait() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let round3Gate = OneShotContinuationGate()
+        let round4Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round3Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+        let round4Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://bank.com" }
+        reader.customReadTitle = { _, wid in
+            let mode = roundMode.withLock { $0 }
+            if mode == 2 {
+                // Round 2 finishes late at 12.0 (> 11.0 + 0.5s deadline)
+                currentTime.withLock { $0 = 12.0 }
+            }
+            return "Page 1 - Google Chrome"
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else if mode == 2 {
+                    round2Gate.release()
+                } else if mode == 3 {
+                    round3Results.withLock { $0 = results }
+                    round3Gate.release()
+                } else if mode == 4 {
+                    round4Results.withLock { $0 = results }
+                    round4Gate.release()
+                }
+            }
+        )
+
+        // Round 1 at 10.0: covered -> wait starts at 10.0
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2 at 11.0: late covered read finishes at 12.0 -> starts wait later at 12.0
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 11.0 }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        // Round 3 at 15.5: ordinary read ("https://example.com").
+        // 15.5 is 5.5s after 10.0, but only 3.5s after 12.0. Must stay can't tell!
+        roundMode.withLock { $0 = 3 }
+        currentTime.withLock { $0 = 15.5 }
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        await sampler.performPollForTesting()
+        await round3Gate.wait()
+
+        let r3 = round3Results.withLock { $0[1]!.read }
+        #expect(r3.verdict == .cantTell)
+
+        // Round 4 at 20.6: >= 12.0 + 5.0 and >= 15.5 + 5.0 -> becomes ordinary
+        roundMode.withLock { $0 = 4 }
+        currentTime.withLock { $0 = 20.6 }
+        await sampler.performPollForTesting()
+        await round4Gate.wait()
+
+        let r4 = round4Results.withLock { $0[1]!.read }
+        #expect(r4.verdict == .ordinary)
+    }
+
+    @Test func item4OrdinaryResumesFiveSecondsAfterMiss() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let round3InFlight = OneShotContinuationGate()
+        let round3Proceed = DispatchSemaphore(value: 0)
+        let round3Gate = OneShotContinuationGate()
+        let round4Gate = OneShotContinuationGate()
+        let round5Gate = OneShotContinuationGate()
+        let round6Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let inFlightPaused = OSAllocatedUnfairLock(initialState: false)
+        let round5Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+        let round6Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://bank.com" }
+        reader.customReadTitle = { _, wid in
+            let shouldPause = inFlightPaused.withLock { p -> Bool in
+                if !p && roundMode.withLock({ $0 == 3 }) {
+                    p = true
+                    return true
+                }
+                return false
+            }
+            if shouldPause {
+                round3InFlight.release()
+                round3Proceed.wait()
+            }
+            return "Page 1 - Google Chrome"
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else if mode == 2 {
+                    round2Gate.release()
+                } else if mode == 3 {
+                    round3Gate.release()
+                } else if mode == 4 {
+                    round4Gate.release()
+                } else if mode == 5 {
+                    round5Results.withLock { $0 = results }
+                    round5Gate.release()
+                } else if mode == 6 {
+                    round6Results.withLock { $0 = results }
+                    round6Gate.release()
+                }
+            }
+        )
+
+        // Round 1 at 10.0: covered -> wait starts at 10.0
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2 at 13.0: 3s later, ordinary read -> firstOrdinaryAt = 13.0
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 13.0 }
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        // Round 3 at 13.5: in flight, missed poll arrives at 14.0 -> waitStart = 14.0, firstOrdinaryAt = nil
+        roundMode.withLock { $0 = 3 }
+        currentTime.withLock { $0 = 13.5 }
+        await sampler.performPollForTesting()
+        await round3InFlight.wait()
+
+        currentTime.withLock { $0 = 14.0 }
+        await sampler.performPollForTesting() // miss at 14.0
+
+        round3Proceed.signal()
+        await round3Gate.wait()
+
+        // Round 4 at 15.0: first ordinary read after miss -> firstOrdinaryAt = 15.0
+        roundMode.withLock { $0 = 4 }
+        currentTime.withLock { $0 = 15.0 }
+        await sampler.performPollForTesting()
+        await round4Gate.wait()
+
+        // Round 5 at 19.5: 5.5s after miss (14.0), but only 4.5s after first ordinary (15.0). Must stay can't tell!
+        roundMode.withLock { $0 = 5 }
+        currentTime.withLock { $0 = 19.5 }
+        await sampler.performPollForTesting()
+        await round5Gate.wait()
+
+        let r5 = round5Results.withLock { $0[1]!.read }
+        #expect(r5.verdict == .cantTell)
+
+        // Round 6 at 20.1: >= 15.0 + 5.0 -> becomes ordinary
+        roundMode.withLock { $0 = 6 }
+        currentTime.withLock { $0 = 20.1 }
+        await sampler.performPollForTesting()
+        await round6Gate.wait()
+
+        let r6 = round6Results.withLock { $0[1]!.read }
+        #expect(r6.verdict == .ordinary)
+    }
+
+    @Test func item4TwinUnrestartedWaitClearsWithinOneRound() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let round3Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round3Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://bank.com" }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else if mode == 2 {
+                    round2Gate.release()
+                } else if mode == 3 {
+                    round3Results.withLock { $0 = results }
+                    round3Gate.release()
+                }
+            }
+        )
+
+        // Round 1 at 10.0: covered -> wait starts at 10.0
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2 at 11.0: first ordinary read -> firstOrdinaryAt = 11.0
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 11.0 }
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        // Round 3 at 16.1: 5.1s after first ordinary (within 5s + one 1.0s round) -> becomes ordinary
+        roundMode.withLock { $0 = 3 }
+        currentTime.withLock { $0 = 16.1 }
+        await sampler.performPollForTesting()
+        await round3Gate.wait()
+
+        let r3 = round3Results.withLock { $0[1]!.read }
+        #expect(r3.verdict == .ordinary)
+    }
+
+    @Test func item4LateOrdinaryRoundRestartsAndCountsAMiss() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let round3Gate = OneShotContinuationGate()
+        let round4Gate = OneShotContinuationGate()
+        let round5Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round5Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://bank.com" }
+        reader.customReadTitle = { _, wid in
+            let mode = roundMode.withLock { $0 }
+            if mode == 3 {
+                // Round 3 finishes late at 13.0 (> 12.0 + 0.5s deadline)
+                currentTime.withLock { $0 = 13.0 }
+            }
+            return "Page 1 - Google Chrome"
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else if mode == 2 {
+                    round2Gate.release()
+                } else if mode == 3 {
+                    round3Gate.release()
+                } else if mode == 4 {
+                    round4Gate.release()
+                } else if mode == 5 {
+                    round5Results.withLock { $0 = results }
+                    round5Gate.release()
+                }
+            }
+        )
+
+        // Round 1 at 10.0: covered -> wait starts at 10.0
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2 at 11.0: first ordinary read -> firstOrdinaryAt = 11.0
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 11.0 }
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        // Round 3 at 12.0: late round finishes at 13.0 -> restarts wait at 13.0, firstOrdinaryAt = nil
+        roundMode.withLock { $0 = 3 }
+        currentTime.withLock { $0 = 12.0 }
+        await sampler.performPollForTesting()
+        await round3Gate.wait()
+
+        // Round 4 at 14.0: first ordinary read after restart -> firstOrdinaryAt = 14.0
+        roundMode.withLock { $0 = 4 }
+        currentTime.withLock { $0 = 14.0 }
+        await sampler.performPollForTesting()
+        await round4Gate.wait()
+
+        // Round 5 at 16.5: 2.5s after 14.0. Must stay can't tell!
+        roundMode.withLock { $0 = 5 }
+        currentTime.withLock { $0 = 16.5 }
+        await sampler.performPollForTesting()
+        await round5Gate.wait()
+
+        let r5 = round5Results.withLock { $0[1]!.read }
+        #expect(r5.verdict == .cantTell)
+    }
+
+    @Test func item4TwinListAddsRememberedHostWhileRoundReadsOtherHost() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2InFlight = OneShotContinuationGate()
+        let round2Proceed = DispatchSemaphore(value: 0)
+        let round2Gate = OneShotContinuationGate()
+        let round3Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let inFlightPaused = OSAllocatedUnfairLock(initialState: false)
+        let round3Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://bank.com" } // Host H
+        reader.customReadTitle = { _, wid in
+            let shouldPause = inFlightPaused.withLock { p -> Bool in
+                if !p && roundMode.withLock({ $0 == 2 }) {
+                    p = true
+                    return true
+                }
+                return false
+            }
+            if shouldPause {
+                round2InFlight.release()
+                round2Proceed.wait()
+            }
+            return "Page 1 - Google Chrome"
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else if mode == 2 {
+                    round2Gate.release()
+                } else if mode == 3 {
+                    round3Results.withLock { $0 = results }
+                    round3Gate.release()
+                }
+            }
+        )
+
+        // Round 1 at 10.0: list is empty. Reads "bank.com" (remembered).
+        await sampler.applySites([], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2 at 11.0: in flight reading host G ("example.com").
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 11.0 }
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        await sampler.performPollForTesting()
+        await round2InFlight.wait()
+
+        // List adds "bank.com" (generation 2) before round 2 completes
+        await sampler.applySites(["bank.com"], generation: 2)
+
+        round2Proceed.signal()
+        await round2Gate.wait()
+
+        // Round 3 at 12.0: reads host G ("example.com").
+        // Since H was remembered and became covered, window has rule-6 record. G stays can't tell!
+        roundMode.withLock { $0 = 3 }
+        currentTime.withLock { $0 = 12.0 }
+        await sampler.performPollForTesting()
+        await round3Gate.wait()
+
+        let r3 = round3Results.withLock { $0[1]!.read }
+        #expect(r3.verdict == .cantTell)
+    }
+
+    @Test func item4FailedPassOrTornCloseDropsCarriedResult() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round2Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        let titleCallCount = OSAllocatedUnfairLock(initialState: 0)
+        reader.customReadTitle = { _, wid in
+            let mode = roundMode.withLock { $0 }
+            if mode == 1 {
+                let count = titleCallCount.withLock {
+                    $0 += 1
+                    return $0
+                }
+                if count == 1 {
+                    return "Page A - Google Chrome"
+                } else {
+                    return "Page B - Google Chrome" // differing closing title in round 1
+                }
+            }
+            return "Page A - Google Chrome"
+        }
+        reader.customWalkTabStrip = { _, _, _, _, _ in
+            let mode = roundMode.withLock { $0 }
+            if mode == 1 {
+                return .counts(selected: 1, total: 1)
+            } else {
+                return .notRun // pass does not run in round 2
+            }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else {
+                    round2Results.withLock { $0 = results }
+                    round2Gate.release()
+                }
+            }
+        )
+
+        // Round 1: torn close title drops carried result
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2: pass does not run. Since carried result was dropped, verdict is can't tell
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 11.0 }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        let r2 = round2Results.withLock { $0[1]!.read }
+        #expect(r2.verdict == .cantTell)
+    }
+
+    // MARK: - Item 5 Tests
+
+    @Test func item5InFlightHostBecomesCovered() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1InFlight = OneShotContinuationGate()
+        let round1Proceed = DispatchSemaphore(value: 0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let inFlightPaused = OSAllocatedUnfairLock(initialState: false)
+        let round2Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://bank.com" } // Host H
+        reader.customReadTitle = { _, wid in
+            let shouldPause = inFlightPaused.withLock { p -> Bool in
+                if !p && roundMode.withLock({ $0 == 1 }) {
+                    p = true
+                    return true
+                }
+                return false
+            }
+            if shouldPause {
+                round1InFlight.release()
+                round1Proceed.wait()
+            }
+            return "Page 1 - Google Chrome"
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else {
+                    round2Results.withLock { $0 = results }
+                    round2Gate.release()
+                }
+            }
+        )
+
+        // Round 1 at 10.0: starts with empty list
+        await sampler.applySites([], generation: 1)
+        await sampler.performPollForTesting()
+        await round1InFlight.wait()
+
+        // List adds "bank.com" before round 1 completes
+        await sampler.applySites(["bank.com"], generation: 2)
+
+        round1Proceed.signal()
+        await round1Gate.wait()
+
+        // Round 2 at 11.0: reads ordinary "https://example.com".
+        // Wait started because in-flight host became covered. Next ordinary reads stay can't tell!
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 11.0 }
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        let r2 = round2Results.withLock { $0[1]!.read }
+        #expect(r2.verdict == .cantTell)
+    }
+
+    // MARK: - Item 8 Tests
+
+    @Test func sustainedSplitViewThroughTheSamplerRaisesNoCaution() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let cautionState = OSAllocatedUnfairLock(initialState: false)
+        let verdicts = OSAllocatedUnfairLock(initialState: [ChromiumVerdict]())
+        let roundGate = OSAllocatedUnfairLock<OneShotContinuationGate?>(initialState: nil)
+
+        // Split view: an inserted title phrase and two selected tabs. Read correctly, found unclear.
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        reader.customReadTitle = { _, _ in "Page 1 - Left view - Google Chrome" }
+        reader.customWalkTabStrip = { _, _, _, _, _ in .counts(selected: 2, total: 4) }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                verdicts.withLock { v in v.append(contentsOf: results.values.map(\.read.verdict)) }
+                roundGate.withLock { $0?.release() }
+            },
+            onChromiumCautionUpdate: { browser, caution in
+                if browser == .chrome {
+                    cautionState.withLock { $0 = caution }
+                }
+            }
+        )
+
+        await sampler.applySites(["bank.com"], generation: 1)
+
+        for _ in 1...12 {
+            let gate = OneShotContinuationGate()
+            roundGate.withLock { $0 = gate }
+            currentTime.withLock { $0 += 1.0 }
+            await sampler.performPollForTesting()
+            await gate.wait()
+        }
+
+        // Every read is can't tell, so frames drop, but none of them counts toward caution.
+        #expect(verdicts.withLock { $0 }.count == 12)
+        #expect(verdicts.withLock { $0 }.allSatisfy { $0 == .cantTell })
+        #expect(cautionState.withLock { $0 } == false)
+    }
+
+    @Test func item8TenFailedTitlesRaiseCaution() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let cautionState = OSAllocatedUnfairLock(initialState: false)
+        let roundGate = OSAllocatedUnfairLock<OneShotContinuationGate?>(initialState: nil)
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        reader.customReadTitle = { _, _ in nil } // Title read fails (returns nil)
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, _, _, _ in
+                roundGate.withLock { $0?.release() }
+            },
+            onChromiumCautionUpdate: { browser, caution in
+                if browser == .chrome {
+                    cautionState.withLock { $0 = caution }
+                }
+            }
+        )
+
+        await sampler.applySites(["bank.com"], generation: 1)
+
+        for i in 1...10 {
+            let gate = OneShotContinuationGate()
+            roundGate.withLock { $0 = gate }
+            currentTime.withLock { $0 += 1.0 }
+            await sampler.performPollForTesting()
+            await gate.wait()
+
+            print("iteration \(i), caution: \(cautionState.withLock { $0 })")
+            if i < 10 {
+                #expect(cautionState.withLock { $0 } == false)
+            }
+        }
+
+        #expect(cautionState.withLock { $0 } == true)
+    }
+
+    @Test func item8TwinNineFailuresThenCompleteDoesNot() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let cautionState = OSAllocatedUnfairLock(initialState: false)
+        let roundGate = OSAllocatedUnfairLock<OneShotContinuationGate?>(initialState: nil)
+        let roundCount = OSAllocatedUnfairLock(initialState: 0)
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        reader.customReadTitle = { _, _ in
+            let count = roundCount.withLock { $0 }
+            if count <= 9 {
+                return nil
+            }
+            return "Page 1 - Google Chrome"
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, _, _, _ in
+                roundGate.withLock { $0?.release() }
+            },
+            onChromiumCautionUpdate: { browser, caution in
+                if browser == .chrome {
+                    cautionState.withLock { $0 = caution }
+                }
+            }
+        )
+
+        await sampler.applySites(["bank.com"], generation: 1)
+
+        for _ in 1...10 {
+            let gate = OneShotContinuationGate()
+            roundGate.withLock { $0 = gate }
+            roundCount.withLock { $0 += 1 }
+            currentTime.withLock { $0 += 1.0 }
+            await sampler.performPollForTesting()
+            await gate.wait()
+            #expect(cautionState.withLock { $0 } == false)
+        }
+    }
+
+    @Test func item8NineFailuresThenLateRoundRaisesCaution() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let cautionState = OSAllocatedUnfairLock(initialState: false)
+        let roundGate = OSAllocatedUnfairLock<OneShotContinuationGate?>(initialState: nil)
+        let roundCount = OSAllocatedUnfairLock(initialState: 0)
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        reader.customReadTitle = { _, _ in
+            let count = roundCount.withLock { $0 }
+            if count <= 9 {
+                return nil
+            }
+            // Round 10: complete title, but late (> 0.5s)
+            currentTime.withLock { $0 += 0.6 }
+            return "Page 1 - Google Chrome"
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, _, _, _ in
+                roundGate.withLock { $0?.release() }
+            },
+            onChromiumCautionUpdate: { browser, caution in
+                if browser == .chrome {
+                    cautionState.withLock { $0 = caution }
+                }
+            }
+        )
+
+        await sampler.applySites(["bank.com"], generation: 1)
+
+        for i in 1...10 {
+            let gate = OneShotContinuationGate()
+            roundGate.withLock { $0 = gate }
+            roundCount.withLock { $0 += 1 }
+            currentTime.withLock { $0 += 1.0 }
+            await sampler.performPollForTesting()
+            await gate.wait()
+
+            print("iteration \(i), caution: \(cautionState.withLock { $0 })")
+            if i < 10 {
+                #expect(cautionState.withLock { $0 } == false)
+            }
+        }
+
+        #expect(cautionState.withLock { $0 } == true)
+    }
+
+    @Test func item8TimedOutSideWalkCounts() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let cautionState = OSAllocatedUnfairLock(initialState: false)
+        let roundGate = OSAllocatedUnfairLock<OneShotContinuationGate?>(initialState: nil)
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.customWalkSideWindow = { _, _, _, _, _ in
+            ([], .timedOut)
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 3, title: "PiP")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, _, _, _ in
+                roundGate.withLock { $0?.release() }
+            },
+            onChromiumCautionUpdate: { browser, caution in
+                if browser == .chrome {
+                    cautionState.withLock { $0 = caution }
+                }
+            }
+        )
+
+        await sampler.applySites(["bank.com"], generation: 1)
+
+        for i in 1...10 {
+            let gate = OneShotContinuationGate()
+            roundGate.withLock { $0 = gate }
+            currentTime.withLock { $0 += 1.0 }
+            await sampler.performPollForTesting()
+            await gate.wait()
+
+            print("iteration \(i), caution: \(cautionState.withLock { $0 })")
+            if i < 10 {
+                #expect(cautionState.withLock { $0 } == false)
+            }
+        }
+
+        #expect(cautionState.withLock { $0 } == true)
+    }
+
+    // MARK: - Item 9 Tests
+
+    @Test func item9MissAfterWaitEndedDoesNotStartWait() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let round3Gate = OneShotContinuationGate()
+        let round4InFlight = OneShotContinuationGate()
+        let round4Proceed = DispatchSemaphore(value: 0)
+        let round4Gate = OneShotContinuationGate()
+        let round5Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let inFlightPaused = OSAllocatedUnfairLock(initialState: false)
+        let round5Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://bank.com" }
+        reader.customReadTitle = { _, wid in
+            let shouldPause = inFlightPaused.withLock { p -> Bool in
+                if !p && roundMode.withLock({ $0 == 4 }) {
+                    p = true
+                    return true
+                }
+                return false
+            }
+            if shouldPause {
+                round4InFlight.release()
+                round4Proceed.wait()
+            }
+            return "Page 1 - Google Chrome"
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else if mode == 2 {
+                    round2Gate.release()
+                } else if mode == 3 {
+                    round3Gate.release()
+                } else if mode == 4 {
+                    round4Gate.release()
+                } else if mode == 5 {
+                    round5Results.withLock { $0 = results }
+                    round5Gate.release()
+                }
+            }
+        )
+
+        // Round 1 at 10.0: covered -> wait starts at 10.0
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2 at 11.0: first ordinary read -> firstOrdinaryAt = 11.0
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 11.0 }
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        // Round 3 at 16.1: wait ends at 16.0 (11.0 + 5.0) -> ordinary read clears rule-6 record
+        roundMode.withLock { $0 = 3 }
+        currentTime.withLock { $0 = 16.1 }
+        await sampler.performPollForTesting()
+        await round3Gate.wait()
+
+        // Round 4 at 17.0: a missed poll occurs while round is in flight
+        roundMode.withLock { $0 = 4 }
+        currentTime.withLock { $0 = 17.0 }
+        await sampler.performPollForTesting()
+        await round4InFlight.wait()
+
+        currentTime.withLock { $0 = 17.2 }
+        await sampler.performPollForTesting() // Missed poll
+
+        round4Proceed.signal()
+        await round4Gate.wait()
+
+        // Round 5 at 18.0: ordinary read. Miss did not restart wait because wait had ended!
+        roundMode.withLock { $0 = 5 }
+        currentTime.withLock { $0 = 18.0 }
+        await sampler.performPollForTesting()
+        await round5Gate.wait()
+
+        let r5 = round5Results.withLock { $0[1]!.read }
+        #expect(r5.verdict == .ordinary)
+    }
+
+    // MARK: - Item 10 Tests
+
+    @Test func item10SevenRefreshDueTwoKeptByCarriedResult() async {
+        let windowIDs: [CGWindowID] = Array(1...7)
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round2Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(
+            windowIDs: windowIDs,
+            onPassStart: { _ in }
+        )
+        for wid in windowIDs {
+            reader.titles.withLock { $0[wid] = "Page \(wid) - Google Chrome" }
+            reader.docs.withLock { $0[wid] = "https://example.com/page\(wid)" }
+        }
+        reader.customWalkTabStrip = { _, wid, _, _, _ in
+            let mode = roundMode.withLock { $0 }
+            if mode == 1 {
+                return .counts(selected: 1, total: 1)
+            } else {
+                // In round 2, each pass takes 0.020001s. After 5 passes (0.100005s), budget is exhausted.
+                currentTime.withLock { $0 += 0.020001 }
+                return .counts(selected: 1, total: 1)
+            }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            windowIDs.map {
+                SiteVisibleWindow(windowID: $0, pid: 100, layer: 0, title: "Page \($0)")
+            }
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else {
+                    round2Results.withLock { $0 = results }
+                    round2Gate.release()
+                }
+            }
+        )
+
+        // Round 1: all 7 complete passes and get carried results
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Advance 1.5s so all 7 are refresh-due (> 1.0s)
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 += 1.5 }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        // Windows 6 and 7 did not get passes, but keep their matching carried results and read ordinary
+        let res = round2Results.withLock { $0 }
+        #expect(res[6]?.read.verdict == .ordinary)
+        #expect(res[7]?.read.verdict == .ordinary)
+    }
+
+    @Test func item10ShortBudgetRealWalkKeepsCarriedResult() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let round3Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round2Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+        let round3Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let winElem = SendableAX(element: AXUIElementCreateApplication(101))
+        let tabElem = SendableAX(element: AXUIElementCreateApplication(102))
+
+        let liveReader = LiveChromiumWindowReader()
+        liveReader.copyAttribute = { element, attr in
+            if CFEqual(element, winElem.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXWindow" as CFTypeRef) }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [tabElem.element] as CFTypeRef) }
+            } else if CFEqual(element, tabElem.element) {
+                if attr as String == (kAXRoleAttribute as String) { return (.success, "AXTabButton" as CFTypeRef) }
+                if attr as String == (kAXValueAttribute as String) {
+                    let mode = roundMode.withLock { $0 }
+                    if mode == 2 {
+                        // Advance clock by 0.040s so that short budget (0.035s) times out
+                        currentTime.withLock { $0 += 0.040 }
+                    }
+                    return (.success, 1 as CFTypeRef)
+                }
+                if attr as String == (kAXChildrenAttribute as String) { return (.success, [] as CFTypeRef) }
+            }
+            return (.noValue, nil)
+        }
+
+        let reader = MockChromiumReader(windowIDs: [1, 2])
+        reader.titles.withLock {
+            $0[1] = "Page 1 - Google Chrome"
+            $0[2] = "Page 2 - Google Chrome"
+        }
+        reader.docs.withLock {
+            $0[1] = "https://example.com/1"
+            $0[2] = "https://example.com/2"
+        }
+        reader.customWalkTabStrip = { _, wid, maxNodes, timeoutSec, nowTicks in
+            let mode = roundMode.withLock { $0 }
+            if mode == 1 {
+                return .counts(selected: 1, total: 1)
+            } else if mode == 2 {
+                if wid == 2 {
+                    // Window 2 takes 0.065s, leaving 0.035s (< 0.050s) for window 1
+                    currentTime.withLock { $0 += 0.065 }
+                    return .counts(selected: 1, total: 1)
+                } else {
+                    // Window 1 runs real walk under short budget
+                    return liveReader.walkTabStrip(for: winElem.element, maxNodes: maxNodes, timeoutSeconds: timeoutSec, nowTicks: nowTicks)
+                }
+            } else {
+                return .notRun
+            }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [
+                SiteVisibleWindow(windowID: 2, pid: 100, layer: 0, title: "Page 2"),
+                SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")
+            ]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else if mode == 2 {
+                    round2Results.withLock { $0 = results }
+                    round2Gate.release()
+                } else {
+                    round3Results.withLock { $0 = results }
+                    round3Gate.release()
+                }
+            }
+        )
+
+        // Round 1: pass completes and carried result is stored
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2: window 1 starts with under 50 ms budget left and times out (.budgetCut). Carried result kept -> ordinary
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 += 1.5 }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        let r2 = round2Results.withLock { $0[1]!.read }
+        #expect(r2.verdict == .ordinary)
+
+        // Round 3: pass does not run (.notRun). Carried result is still held -> ordinary
+        roundMode.withLock { $0 = 3 }
+        currentTime.withLock { $0 += 1.5 }
+        await sampler.performPollForTesting()
+        await round3Gate.wait()
+
+        let r3 = round3Results.withLock { $0[1]!.read }
+        #expect(r3.verdict == .ordinary)
+    }
+
+    @Test func item10TwinNotRunMismatchedKeyIsCantTell() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round2Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.titles.withLock { $0[1] = "Page A - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://example.com/a" }
+        reader.customWalkTabStrip = { _, _, _, _, _ in
+            let mode = roundMode.withLock { $0 }
+            if mode == 1 {
+                return .counts(selected: 1, total: 1)
+            } else {
+                return .notRun // pass does not run in round 2
+            }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else {
+                    round2Results.withLock { $0 = results }
+                    round2Gate.release()
+                }
+            }
+        )
+
+        // Round 1: carried result for Page A
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2: title changes to Page B, pass does not run (.notRun). Key differs -> can't tell
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 += 1.5 }
+        reader.titles.withLock { $0[1] = "Page B - Google Chrome" }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        let r2 = round2Results.withLock { $0[1]!.read }
+        #expect(r2.verdict == .cantTell)
+    }
+
+    @Test func item10TwinFullBudgetTimeoutIsCantTell() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round2Results = OSAllocatedUnfairLock<[CGWindowID: (read: ChromiumPollRead, cgTitle: String, axTitle: String?)]>(initialState: [:])
+
+        let reader = MockChromiumReader(windowIDs: [1])
+        reader.titles.withLock { $0[1] = "Page 1 - Google Chrome" }
+        reader.docs.withLock { $0[1] = "https://example.com" }
+        reader.customWalkTabStrip = { _, _, _, timeoutSec, _ in
+            let mode = roundMode.withLock { $0 }
+            if mode == 1 {
+                return .counts(selected: 1, total: 1)
+            } else {
+                // Given full 50 ms (timeoutSec >= 0.050), times out -> .timedOut
+                currentTime.withLock { $0 += 0.055 }
+                return .timedOut
+            }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1")]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else {
+                    round2Results.withLock { $0 = results }
+                    round2Gate.release()
+                }
+            }
+        )
+
+        // Round 1: pass completes
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2: full budget timeout -> can't tell
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 += 1.5 }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        let r2 = round2Results.withLock { $0[1]!.read }
+        #expect(r2.verdict == .cantTell)
+    }
+
+    @Test func item10FullTimeoutsDoNotBlockChangedWindow() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let passesStartedRound2 = OSAllocatedUnfairLock<[CGWindowID]>(initialState: [])
+
+        let reader = MockChromiumReader(
+            windowIDs: [1, 2, 3],
+            onPassStart: { wid in
+                let mode = roundMode.withLock { $0 }
+                if mode == 2 {
+                    passesStartedRound2.withLock { $0.append(wid) }
+                }
+            }
+        )
+        for wid: CGWindowID in [1, 2, 3] {
+            reader.titles.withLock { $0[wid] = "Page \(wid) - Google Chrome" }
+            reader.docs.withLock { $0[wid] = "https://example.com/page\(wid)" }
+        }
+        reader.customWalkTabStrip = { _, wid, _, _, _ in
+            let mode = roundMode.withLock { $0 }
+            if mode == 1 {
+                if wid == 1 || wid == 2 {
+                    return .timedOut
+                }
+                return .counts(selected: 1, total: 1)
+            } else {
+                return .counts(selected: 1, total: 1)
+            }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            [
+                SiteVisibleWindow(windowID: 1, pid: 100, layer: 0, title: "Page 1"),
+                SiteVisibleWindow(windowID: 2, pid: 100, layer: 0, title: "Page 2"),
+                SiteVisibleWindow(windowID: 3, pid: 100, layer: 0, title: "Page 3")
+            ]
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, _, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else {
+                    round2Gate.release()
+                }
+            }
+        )
+
+        // Round 1: windows 1 and 2 time out on 50 ms
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2: window 3 changes title
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 += 0.5 }
+        reader.titles.withLock { $0[3] = "Changed Page 3 - Google Chrome" }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        let started = passesStartedRound2.withLock { $0 }
+        #expect(started.contains(CGWindowID(3)))
+    }
+
+    @Test func item10ChangedWindowRunsBeforeNotRunPasses() async {
+        let windowIDs: [CGWindowID] = Array(1...6)
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.0)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let passesStartedRound2 = OSAllocatedUnfairLock<[CGWindowID]>(initialState: [])
+
+        let reader = MockChromiumReader(
+            windowIDs: windowIDs,
+            onPassStart: { wid in
+                let mode = roundMode.withLock { $0 }
+                if mode == 2 {
+                    passesStartedRound2.withLock { $0.append(wid) }
+                }
+            }
+        )
+        for wid in windowIDs {
+            reader.titles.withLock { $0[wid] = "Page \(wid) - Google Chrome" }
+            reader.docs.withLock { $0[wid] = "https://example.com/page\(wid)" }
+        }
+        reader.customWalkTabStrip = { _, wid, _, _, _ in
+            let mode = roundMode.withLock { $0 }
+            if mode == 1 {
+                // Window 1 consumes entire budget so windows 2..6 are not run
+                if wid == 1 {
+                    currentTime.withLock { $0 += 0.100001 }
+                }
+                return .counts(selected: 1, total: 1)
+            } else {
+                return .counts(selected: 1, total: 1)
+            }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.edgePIDs = { [] }
+        hooks.bravePIDs = { [] }
+        hooks.safariPIDs = { [] }
+        hooks.pipPIDs = { [] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.copyOnScreen = {
+            windowIDs.map {
+                SiteVisibleWindow(windowID: $0, pid: 100, layer: 0, title: "Page \($0)")
+            }
+        }
+        hooks.chromiumReader = reader
+
+        let sampler = SiteSampler(
+            isSnapshot: true,
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, _, _, _ in
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else {
+                    round2Gate.release()
+                }
+            }
+        )
+
+        // Round 1: leaves windows 2..6 not run
+        await sampler.applySites(["bank.com"], generation: 1)
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+
+        // Round 2: window 6 has changed title
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 += 0.5 }
+        reader.titles.withLock { $0[6] = "New Title 6 - Google Chrome" }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+
+        let started = passesStartedRound2.withLock { $0 }
+        #expect(started.first == CGWindowID(6))
+    }
+
+    // MARK: - Item 14 Tests
+
+    @Test func item14PunycodeSideWindowIsCovered() {
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluateSideWindow(
+            windowID: 1,
+            staticTexts: ["bücher.de"],
+            walkOutcome: .complete,
+            rule6Record: &rule6,
+            sites: ["xn--bcher-kva.de"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .covered)
+        #expect(eval.host == "xn--bcher-kva.de")
+    }
+
+    @Test func item14FailedNormalizationIsCantTell() {
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluateSideWindow(
+            windowID: 1,
+            staticTexts: ["http://[invalid-host", "example.com"],
+            walkOutcome: .complete,
+            rule6Record: &rule6,
+            sites: ["bank.com"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .cantTell)
+    }
+
+    @Test func sideWindowDottedTextThatIsNotAnAddressStaysOrdinary() {
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluateSideWindow(
+            windowID: 1,
+            staticTexts: ["1.5x", "Loading...", "0:15", "example.com"],
+            walkOutcome: .complete,
+            rule6Record: &rule6,
+            sites: ["bank.com"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .ordinary)
+        #expect(eval.host == "example.com")
+    }
+
+    @Test func sideWindowPunycodeTopLevelDomainIsAnAddress() {
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluateSideWindow(
+            windowID: 1,
+            staticTexts: ["xn--e1afmkfd.xn--p1ai"],
+            walkOutcome: .complete,
+            rule6Record: &rule6,
+            sites: ["xn--e1afmkfd.xn--p1ai"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .covered)
+    }
+
+    @Test func item14TwinBareExampleIsOrdinary() {
+        var rule6: ChromiumRule6Record? = nil
+        let eval = ChromiumSiteRead.evaluateSideWindow(
+            windowID: 1,
+            staticTexts: ["example.com"],
+            walkOutcome: .complete,
+            rule6Record: &rule6,
+            sites: ["bank.com"],
+            now: 100.0
+        )
+        #expect(eval.verdict == .ordinary)
+        #expect(eval.host == "example.com")
     }
 }

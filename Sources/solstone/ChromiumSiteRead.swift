@@ -67,7 +67,9 @@ public struct ChromiumPassResult: Sendable, Equatable {
 
 public enum ChromiumTabStripOutcome: Sendable, Equatable {
     case notRun
-    case truncated
+    case overBudget
+    case timedOut
+    case budgetCut
     case failed
     case counts(selected: Int, total: Int)
 }
@@ -75,10 +77,12 @@ public enum ChromiumTabStripOutcome: Sendable, Equatable {
 public struct ChromiumRule6Record: Sendable, Equatable {
     public var waitStart: TimeInterval
     public var host: String
+    public var firstOrdinaryAt: TimeInterval?
 
-    public init(waitStart: TimeInterval, host: String) {
+    public init(waitStart: TimeInterval, host: String, firstOrdinaryAt: TimeInterval? = nil) {
         self.waitStart = waitStart
         self.host = host
+        self.firstOrdinaryAt = firstOrdinaryAt
     }
 }
 
@@ -264,18 +268,24 @@ public enum ChromiumSiteRead {
         // titles are torn, the first title failed, the title check failed, the pass did not run,
         // or the round missed its deadline.
         if case .covered(let host) = docClass {
-            rule6Record = ChromiumRule6Record(waitStart: now, host: host)
+            rule6Record = ChromiumRule6Record(waitStart: now, host: host, firstOrdinaryAt: nil)
             return ChromiumPageEvaluation(verdict: .covered, cause: nil, host: host)
         }
 
         // If doc read failed, verdict is cantTell / unread
         if docReadFailed || doc == nil {
-            if rule6Record != nil { rule6Record?.waitStart = now }
+            if rule6Record != nil {
+                rule6Record?.waitStart = now
+                rule6Record?.firstOrdinaryAt = nil
+            }
             return ChromiumPageEvaluation(verdict: .cantTell, cause: .unread, host: nil)
         }
 
         guard let doc = doc else {
-            if rule6Record != nil { rule6Record?.waitStart = now }
+            if rule6Record != nil {
+                rule6Record?.waitStart = now
+                rule6Record?.firstOrdinaryAt = nil
+            }
             return ChromiumPageEvaluation(verdict: .cantTell, cause: .unread, host: nil)
         }
 
@@ -290,20 +300,29 @@ public enum ChromiumSiteRead {
 
         // If initial or final AX title failed to read
         guard let initialAX = initialAXTitle, let finalAX = finalAXTitle else {
-            if rule6Record != nil { rule6Record?.waitStart = now }
+            if rule6Record != nil {
+                rule6Record?.waitStart = now
+                rule6Record?.firstOrdinaryAt = nil
+            }
             return ChromiumPageEvaluation(verdict: .cantTell, cause: .unread, host: docHost)
         }
 
         // Two AX titles that differ -> can't tell, cause unclear
         if initialAX != finalAX {
-            if rule6Record != nil { rule6Record?.waitStart = now }
+            if rule6Record != nil {
+                rule6Record?.waitStart = now
+                rule6Record?.firstOrdinaryAt = nil
+            }
             return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: docHost)
         }
 
         // Torn pair: CG title changed since previous read while AX title did not
         if let prevCG = previousCGTitle, let prevAX = previousAXTitle,
            cgTitle != prevCG, initialAX == prevAX {
-            if rule6Record != nil { rule6Record?.waitStart = now }
+            if rule6Record != nil {
+                rule6Record?.waitStart = now
+                rule6Record?.firstOrdinaryAt = nil
+            }
             return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: docHost)
         }
 
@@ -311,8 +330,12 @@ public enum ChromiumSiteRead {
         if doc.isEmpty {
             if cgTitle.isEmpty && initialAX.isEmpty {
                 if case .counts(_, let total) = tabStripOutcome, total == 0 {
-                    if let r6 = rule6Record {
-                        if now - r6.waitStart < 5.0 {
+                    if var r6 = rule6Record {
+                        if r6.firstOrdinaryAt == nil {
+                            r6.firstOrdinaryAt = now
+                        }
+                        if now - r6.firstOrdinaryAt! < 5.0 {
+                            rule6Record = r6
                             return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: nil)
                         } else {
                             rule6Record = nil
@@ -322,7 +345,10 @@ public enum ChromiumSiteRead {
                     return ChromiumPageEvaluation(verdict: .ordinary, cause: nil, host: nil)
                 }
             }
-            if rule6Record != nil { rule6Record?.waitStart = now }
+            if rule6Record != nil {
+                rule6Record?.waitStart = now
+                rule6Record?.firstOrdinaryAt = nil
+            }
             return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: nil)
         }
 
@@ -363,7 +389,10 @@ public enum ChromiumSiteRead {
         }
 
         guard singlePane else {
-            if rule6Record != nil { rule6Record?.waitStart = now }
+            if rule6Record != nil {
+                rule6Record?.waitStart = now
+                rule6Record?.firstOrdinaryAt = nil
+            }
             return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: docHost)
         }
 
@@ -371,8 +400,12 @@ public enum ChromiumSiteRead {
         switch docClass {
         case .ordinaryNonHttp:
             // Check Rule 6 memory
-            if let r6 = rule6Record {
-                if now - r6.waitStart < 5.0 {
+            if var r6 = rule6Record {
+                if r6.firstOrdinaryAt == nil {
+                    r6.firstOrdinaryAt = now
+                }
+                if now - r6.firstOrdinaryAt! < 5.0 {
+                    rule6Record = r6
                     return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: nil)
                 } else {
                     rule6Record = nil
@@ -383,8 +416,12 @@ public enum ChromiumSiteRead {
 
         case .ordinaryHttp(let host):
             // Check Rule 6 memory
-            if let r6 = rule6Record {
-                if now - r6.waitStart < 5.0 {
+            if var r6 = rule6Record {
+                if r6.firstOrdinaryAt == nil {
+                    r6.firstOrdinaryAt = now
+                }
+                if now - r6.firstOrdinaryAt! < 5.0 {
+                    rule6Record = r6
                     return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: host)
                 } else {
                     rule6Record = nil
@@ -394,11 +431,14 @@ public enum ChromiumSiteRead {
             return ChromiumPageEvaluation(verdict: .ordinary, cause: nil, host: host)
 
         case .cantTell(let cause):
-            if rule6Record != nil { rule6Record?.waitStart = now }
+            if rule6Record != nil {
+                rule6Record?.waitStart = now
+                rule6Record?.firstOrdinaryAt = nil
+            }
             return ChromiumPageEvaluation(verdict: .cantTell, cause: cause, host: docHost)
 
         case .covered(let host):
-            rule6Record = ChromiumRule6Record(waitStart: now, host: host)
+            rule6Record = ChromiumRule6Record(waitStart: now, host: host, firstOrdinaryAt: nil)
             return ChromiumPageEvaluation(verdict: .covered, cause: nil, host: host)
         }
     }
@@ -447,26 +487,31 @@ public enum ChromiumSiteRead {
         now: TimeInterval
     ) -> ChromiumPageEvaluation {
         if walkOutcome == .failed || walkOutcome == .timedOut {
-            if rule6Record != nil { rule6Record?.waitStart = now }
+            if rule6Record != nil {
+                rule6Record?.waitStart = now
+                rule6Record?.firstOrdinaryAt = nil
+            }
             return ChromiumPageEvaluation(verdict: .cantTell, cause: .unread, host: nil)
         }
         if walkOutcome == .overBudget {
-            if rule6Record != nil { rule6Record?.waitStart = now }
+            if rule6Record != nil {
+                rule6Record?.waitStart = now
+                rule6Record?.firstOrdinaryAt = nil
+            }
             return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: nil)
         }
 
-        // Side-window host: no spaces; localhost or at least one dot whose last label is letters only; optional port.
         var hosts = Set<String>()
         for text in staticTexts {
             let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if candidate.contains(where: { $0.isWhitespace }) { continue }
 
             var hostPort = candidate
-            // Strip scheme if present
+            var scheme: String? = nil
             if let schemeRange = hostPort.range(of: "://") {
+                scheme = String(hostPort[..<schemeRange.lowerBound])
                 hostPort = String(hostPort[schemeRange.upperBound...])
             }
-            // Strip trailing path/query/fragment
             if let slashIdx = hostPort.firstIndex(of: "/") {
                 hostPort = String(hostPort[..<slashIdx])
             }
@@ -477,7 +522,6 @@ public enum ChromiumSiteRead {
                 hostPort = String(hostPort[..<fIdx])
             }
 
-            // Strip port
             var rawHost = hostPort
             if let colonIdx = hostPort.lastIndex(of: ":") {
                 let portPart = hostPort[hostPort.index(after: colonIdx)...]
@@ -487,31 +531,49 @@ public enum ChromiumSiteRead {
             }
 
             let lower = rawHost.lowercased()
-            if lower == "localhost" {
-                hosts.insert("localhost")
+            // Host-like: a scheme, localhost, or a dotted name whose last label is letters or punycode (xn--).
+            // Other dotted text in a PiP window, such as a playback rate or an ellipsis, isn't an address.
+            let labels = lower.split(separator: ".", omittingEmptySubsequences: false)
+            let lastLabel = labels.count >= 2 ? String(labels[labels.count - 1]) : ""
+            let dottedName = !lastLabel.isEmpty && (lastLabel.hasPrefix("xn--") || lastLabel.allSatisfy { $0 >= "a" && $0 <= "z" })
+            let isHostLike = scheme != nil || lower == "localhost" || dottedName
+            if !isHostLike {
                 continue
             }
-            if lower.contains(".") {
-                let parts = lower.split(separator: ".", omittingEmptySubsequences: false)
-                if parts.count >= 2, let last = parts.last, !last.isEmpty,
-                   last.allSatisfy({ ($0 >= "a" && $0 <= "z") || ($0 >= "A" && $0 <= "Z") }) {
-                    hosts.insert(lower)
-                }
+
+            let urlToNormalize: String
+            if let scheme = scheme {
+                urlToNormalize = "\(scheme)://\(rawHost)"
+            } else {
+                urlToNormalize = "https://\(rawHost)"
             }
+
+            guard let normalized = SiteRule.normalizeReadHost(urlToNormalize) else {
+                if rule6Record != nil {
+                    rule6Record?.waitStart = now
+                    rule6Record?.firstOrdinaryAt = nil
+                }
+                return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: nil)
+            }
+            hosts.insert(normalized)
         }
 
         // Covered if any host is covered
         for h in hosts {
             if sites.contains(where: { SiteRule.covers(siteHost: $0, host: h) }) {
-                rule6Record = ChromiumRule6Record(waitStart: now, host: h)
+                rule6Record = ChromiumRule6Record(waitStart: now, host: h, firstOrdinaryAt: nil)
                 return ChromiumPageEvaluation(verdict: .covered, cause: nil, host: h)
             }
         }
 
         // Ordinary if exactly one host and it is not covered
         if hosts.count == 1, let h = hosts.first {
-            if let r6 = rule6Record {
-                if now - r6.waitStart < 5.0 {
+            if var r6 = rule6Record {
+                if r6.firstOrdinaryAt == nil {
+                    r6.firstOrdinaryAt = now
+                }
+                if now - r6.firstOrdinaryAt! < 5.0 {
+                    rule6Record = r6
                     return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: h)
                 } else {
                     rule6Record = nil
@@ -522,7 +584,10 @@ public enum ChromiumSiteRead {
         }
 
         // Otherwise can't tell
-        if rule6Record != nil { rule6Record?.waitStart = now }
+        if rule6Record != nil {
+            rule6Record?.waitStart = now
+            rule6Record?.firstOrdinaryAt = nil
+        }
         return ChromiumPageEvaluation(verdict: .cantTell, cause: .unclear, host: nil)
     }
 

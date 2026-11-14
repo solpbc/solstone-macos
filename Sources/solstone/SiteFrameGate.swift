@@ -218,14 +218,19 @@ public final class SiteFrameGate {
         isOutNow: Bool,
         now: TimeInterval = HostClock.seconds(ticks: mach_absolute_time())
     ) -> Bool {
-        guard let poll = latestCompletePoll(at: now) else {
-            return isOutNow
+        guard let poll = polls.last(where: { p in p.windows.contains(where: { $0.chromium?.browser == browser }) }) else {
+            chromiumSitOutStates.removeValue(forKey: browser)
+            return false
         }
         var state = chromiumSitOutStates[browser, default: ChromiumSitOutState()]
         let browserWindows = poll.windows.filter { $0.chromium?.browser == browser }
         guard !browserWindows.isEmpty else {
             chromiumSitOutStates.removeValue(forKey: browser)
             return false
+        }
+
+        if browserWindows.contains(where: { $0.chromium?.isPending == true }) && now < poll.start + 0.5 {
+            return isOutNow
         }
 
         let evaluated = browserWindows.map { win in
@@ -278,7 +283,11 @@ public final class SiteFrameGate {
     /// say: idle frames never reach the gate, so a quiet screen would stay held after one drop.
     /// So it also takes a window in the latest poll that would hold a frame now.
     public func isHoldingNow(now: TimeInterval, holdFor: TimeInterval = 3.0) -> Bool {
-        guard !heldSince.isEmpty, let poll = latestCompletePoll(at: now) else { return false }
+        guard !heldSince.isEmpty, let poll = polls.last else { return false }
+        let hasPendingInsideDeadline = (now < poll.start + 0.5) && poll.windows.contains(where: { $0.chromium?.isPending == true })
+        if hasPendingInsideDeadline {
+            return heldSince.values.contains(where: { now - $0 >= holdFor })
+        }
         for (display, since) in heldSince {
             let keptOut = liveKeptOut[display] ?? []
             let blocking = poll.windows.contains { window in
@@ -539,18 +548,20 @@ public final class SiteFrameGate {
                 }
                 if let firstEntry = sortedEntries.first {
                     if firstEntry.read.readStart > c {
-                        var prevOrdinary = false
+                        var validPrev = false
                         if earlyIdx > 0 {
                             let prevPoll = polls[earlyIdx - 1]
                             if let prevWin = prevPoll.windows.first(where: { $0.windowID == wid }),
                                let prevCh = prevWin.chromium {
                                 let (pv, _) = effectiveChromiumVerdict(for: prevCh)
-                                if pv == .ordinary {
-                                    prevOrdinary = true
+                                if pv == .ordinary,
+                                   prevCh.readStart <= c,
+                                   firstEntry.read.readStart - prevCh.readStart <= Self.maxPollGap + 1e-5 {
+                                    validPrev = true
                                 }
                             }
                         }
-                        if !prevOrdinary {
+                        if !validPrev {
                             hasChromiumGap = true
                         }
                     }

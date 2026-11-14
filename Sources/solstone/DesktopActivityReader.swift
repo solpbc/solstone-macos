@@ -291,111 +291,144 @@ struct DesktopActivityReader: Sendable {
             }
         } else if let browser, (browser == .chrome || browser == .edge || browser == .brave) {
             if focusedWindow == nil {
-                siteUndecided = true
+                // Only a left-out list withholds the title. With an empty list it's kept, as before.
+                if !settings.excludedSites.isEmpty {
+                    siteUndecided = true
+                }
                 documentURL = nil
             } else {
                 let win = focusedWindow!
                 let cg1 = cgTitle
-                let ax1 = axTitle
+                let ax1_open = seams.axTitle(win)
                 let (doc1, docFailed1) = seams.readDocument(win)
+                let ax1_close = seams.axTitle(win)
 
                 seams.settle()
 
                 let cg2 = seams.cgTitle(app.pid, screenGranted)
-                let ax2 = seams.axTitle(win)
+                let ax2_open = seams.axTitle(win)
                 let (doc2, docFailed2) = seams.readDocument(win)
+                let ax2_close = seams.axTitle(win)
 
-                let wid = windowID.map { CGWindowID($0) }
-                let prevCG = wid != nil ? snapshot.latestCGTitle[wid!] : nil
-                let prevAX = wid != nil ? snapshot.latestAXTitle[wid!] : nil
+                let ax1TornOrNil = (ax1_open == nil || ax1_close == nil || ax1_open != ax1_close)
+                let ax2TornOrNil = (ax2_open == nil || ax2_close == nil || ax2_open != ax2_close)
 
-                func tabStripOutcome(cg: String?, ax: String?, doc: String?) -> ChromiumTabStripOutcome {
-                    if ax == cg || (doc?.isEmpty == true) {
-                        return seams.chromiumReader.walkTabStrip(for: win, maxNodes: 3000, timeoutSeconds: 0.050, nowTicks: { mach_absolute_time() })
-                    }
-                    return .notRun
-                }
-
-                let outcome1 = tabStripOutcome(cg: cg1, ax: ax1, doc: doc1)
-                let outcome2 = tabStripOutcome(cg: cg2, ax: ax2, doc: doc2)
-
-                if !settings.excludedSites.isEmpty {
-                    let eval1 = ChromiumSiteRead.evaluateActivity(
-                        browser: browser,
-                        cgTitle: cg1 ?? "",
-                        axTitle: ax1 ?? "",
-                        doc: doc1,
-                        docReadFailed: docFailed1,
-                        previousCGTitle: prevCG,
-                        previousAXTitle: prevAX,
-                        tabStripOutcome: outcome1,
-                        sites: settings.excludedSites
-                    )
-                    let eval2 = ChromiumSiteRead.evaluateActivity(
-                        browser: browser,
-                        cgTitle: cg2 ?? "",
-                        axTitle: ax2 ?? "",
-                        doc: doc2,
-                        docReadFailed: docFailed2,
-                        previousCGTitle: prevCG,
-                        previousAXTitle: prevAX,
-                        tabStripOutcome: outcome2,
-                        sites: settings.excludedSites
-                    )
-
-                    let snap = wid != nil ? snapshot.latestCompleteRead[wid!] : nil
-                    if eval1.verdict == .covered || eval2.verdict == .covered || snap?.verdict == .covered {
-                        return DesktopActivityObservation(rows: [])
-                    }
-
-                    var valid = true
-                    if eval1.verdict != .ordinary || eval2.verdict != .ordinary { valid = false }
-                    if eval1.host == nil || eval2.host == nil || eval1.host != eval2.host { valid = false }
-                    if let snap {
-                        let nowSec = HostClock.seconds(ticks: seams.nowTicks())
-                        if snap.verdict != .ordinary { valid = false }
-                        if nowSec - snap.start > 1.0 { valid = false }
-                        if snap.host != eval1.host { valid = false }
-                        if snap.listGeneration < snapshot.currentGeneration { valid = false }
-                    } else {
-                        valid = false
-                    }
-
-                    if !valid {
+                if ax1TornOrNil || ax2TornOrNil {
+                    // A read that can't vouch for the page drops its address. It withholds the title
+                    // only while a left-out list is set.
+                    if !settings.excludedSites.isEmpty {
                         siteUndecided = true
-                        documentURL = nil
-                    } else {
-                        if settings.urls && settings.accessibility {
-                            documentURL = doc2
-                        }
                     }
+                    documentURL = nil
                 } else {
-                    let eval1 = ChromiumSiteRead.evaluateActivity(
-                        browser: browser,
-                        cgTitle: cg1 ?? "",
-                        axTitle: ax1 ?? "",
-                        doc: doc1,
-                        docReadFailed: docFailed1,
-                        previousCGTitle: prevCG,
-                        previousAXTitle: prevAX,
-                        tabStripOutcome: outcome1,
-                        sites: []
-                    )
-                    let eval2 = ChromiumSiteRead.evaluateActivity(
-                        browser: browser,
-                        cgTitle: cg2 ?? "",
-                        axTitle: ax2 ?? "",
-                        doc: doc2,
-                        docReadFailed: docFailed2,
-                        previousCGTitle: prevCG,
-                        previousAXTitle: prevAX,
-                        tabStripOutcome: outcome2,
-                        sites: []
-                    )
+                    let ax1 = ax1_open!
+                    let ax2 = ax2_open!
 
-                    if eval1.verdict != .cantTell && eval2.verdict != .cantTell && doc1 == doc2 && doc1 != nil {
-                        if settings.urls && settings.accessibility {
-                            documentURL = doc1
+                    let wid = windowID.map { CGWindowID($0) }
+                    let prevCG = wid != nil ? snapshot.latestCGTitle[wid!] : nil
+                    let prevAX = wid != nil ? snapshot.latestAXTitle[wid!] : nil
+
+                    func tabStripOutcome(cg: String?, ax: String?, doc: String?) -> ChromiumTabStripOutcome {
+                        if ax == cg || (doc?.isEmpty == true) {
+                            return seams.chromiumReader.walkTabStrip(for: win, maxNodes: 3000, timeoutSeconds: 0.050, nowTicks: { mach_absolute_time() })
+                        }
+                        return .notRun
+                    }
+
+                    let outcome1 = tabStripOutcome(cg: cg1, ax: ax1, doc: doc1)
+                    let outcome2 = tabStripOutcome(cg: cg2, ax: ax2, doc: doc2)
+
+                    if !settings.excludedSites.isEmpty {
+                        let eval1 = ChromiumSiteRead.evaluateActivity(
+                            browser: browser,
+                            cgTitle: cg1 ?? "",
+                            axTitle: ax1,
+                            doc: doc1,
+                            docReadFailed: docFailed1,
+                            previousCGTitle: prevCG,
+                            previousAXTitle: prevAX,
+                            tabStripOutcome: outcome1,
+                            sites: settings.excludedSites
+                        )
+                        let eval2 = ChromiumSiteRead.evaluateActivity(
+                            browser: browser,
+                            cgTitle: cg2 ?? "",
+                            axTitle: ax2,
+                            doc: doc2,
+                            docReadFailed: docFailed2,
+                            previousCGTitle: prevCG,
+                            previousAXTitle: prevAX,
+                            tabStripOutcome: outcome2,
+                            sites: settings.excludedSites
+                        )
+
+                        let snap = wid != nil ? snapshot.latestCompleteRead[wid!] : nil
+                        if eval1.verdict == .covered || eval2.verdict == .covered || snap?.verdict == .covered {
+                            return DesktopActivityObservation(rows: [])
+                        }
+
+                        var valid = true
+                        if eval1.verdict != .ordinary || eval2.verdict != .ordinary { valid = false }
+
+                        if let h1 = eval1.host, let h2 = eval2.host {
+                            if h1 != h2 { valid = false }
+                            if let snap {
+                                let nowSec = HostClock.seconds(ticks: seams.nowTicks())
+                                if snap.verdict != .ordinary { valid = false }
+                                if nowSec - snap.start > 1.0 { valid = false }
+                                if snap.host != h1 { valid = false }
+                                if snap.listGeneration < snapshot.currentGeneration { valid = false }
+                            } else {
+                                valid = false
+                            }
+                        } else if eval1.host == nil && eval2.host == nil {
+                            // Two nil hosts match (ordinary non-http: file:, chrome://, etc.)
+                            if let snap {
+                                let nowSec = HostClock.seconds(ticks: seams.nowTicks())
+                                if snap.verdict != .ordinary { valid = false }
+                                if nowSec - snap.start > 1.0 { valid = false }
+                                if snap.listGeneration < snapshot.currentGeneration { valid = false }
+                            }
+                        } else {
+                            valid = false
+                        }
+
+                        if !valid {
+                            siteUndecided = true
+                            documentURL = nil
+                        } else {
+                            if settings.urls && settings.accessibility {
+                                documentURL = doc2
+                            }
+                        }
+                    } else {
+                        let eval1 = ChromiumSiteRead.evaluateActivity(
+                            browser: browser,
+                            cgTitle: cg1 ?? "",
+                            axTitle: ax1,
+                            doc: doc1,
+                            docReadFailed: docFailed1,
+                            previousCGTitle: prevCG,
+                            previousAXTitle: prevAX,
+                            tabStripOutcome: outcome1,
+                            sites: []
+                        )
+                        let eval2 = ChromiumSiteRead.evaluateActivity(
+                            browser: browser,
+                            cgTitle: cg2 ?? "",
+                            axTitle: ax2,
+                            doc: doc2,
+                            docReadFailed: docFailed2,
+                            previousCGTitle: prevCG,
+                            previousAXTitle: prevAX,
+                            tabStripOutcome: outcome2,
+                            sites: []
+                        )
+
+                        if eval1.verdict != .cantTell && eval2.verdict != .cantTell && doc1 == doc2 && doc1 != nil {
+                            if settings.urls && settings.accessibility {
+                                documentURL = doc1
+                            }
                         }
                     }
                 }

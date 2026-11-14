@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import ApplicationServices
 import CoreGraphics
 import CoreMedia
 import Darwin
 import Foundation
+import os
 import Testing
 @testable import solstone
 
@@ -13,7 +15,7 @@ import Testing
 struct SiteFrameGateTests {
     private let displayID: CGDirectDisplayID = 1
 
-    private func makeTicks(fromSeconds sec: TimeInterval) -> UInt64 {
+    nonisolated static func makeTicks(fromSeconds sec: TimeInterval) -> UInt64 {
         var info = mach_timebase_info()
         mach_timebase_info(&info)
         let nanos = sec * 1_000_000_000.0
@@ -22,7 +24,7 @@ struct SiteFrameGateTests {
 
     @Test func ordinaryBracketsReleasePreservesCaptureOrder() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         // Polls: 9.8 - 9.9, 10.1 - 10.2, 10.5 - 10.6, 10.8 - 10.9, 11.1 - 11.2, 11.4 - 11.5, 11.6 - 11.7
         gate.addPoll(SitePollSnapshot(start: 9.8, end: 9.9, windows: [SitePollWindow(windowID: 1, title: "Page")]))
@@ -46,8 +48,8 @@ struct SiteFrameGateTests {
         )
         gate.updateDecisions(decisions, axAvailable: true)
 
-        let frame1 = SiteHeldFrame(id: 101, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
-        let frame2 = SiteHeldFrame(id: 102, displayTicks: makeTicks(fromSeconds: 111.0), c: 11.0, originTicks: originTicks)
+        let frame1 = SiteHeldFrame(id: 101, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame2 = SiteHeldFrame(id: 102, displayTicks: Self.makeTicks(fromSeconds: 111.0), c: 11.0, originTicks: originTicks)
 
         _ = gate.enqueue(displayID: displayID, frame: frame1)
         _ = gate.enqueue(displayID: displayID, frame: frame2)
@@ -67,7 +69,7 @@ struct SiteFrameGateTests {
 
     @Test func pollGapDropsGapReason() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         // Gap between 9.9 and 10.5 is 0.6 s > 0.3 s max gap
         gate.addPoll(SitePollSnapshot(start: 9.8, end: 9.9, windows: [SitePollWindow(windowID: 1, title: "Page")]))
@@ -86,7 +88,7 @@ struct SiteFrameGateTests {
         )
         gate.updateDecisions(decisions, axAvailable: true)
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
 
         let actions = gate.evaluate(displayID: displayID, now: 11.0)
@@ -95,7 +97,7 @@ struct SiteFrameGateTests {
     }
 
     @Test func coveredInIntermediateOrLaterPollDropsCov() {
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         // Case A: Covered in intermediate poll
         do {
@@ -125,7 +127,7 @@ struct SiteFrameGateTests {
             )
             gate.updateDecisions(decisions, axAvailable: true)
 
-            let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+            let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
             _ = gate.enqueue(displayID: displayID, frame: frame)
             let actions = gate.evaluate(displayID: displayID, now: 11.0)
             #expect(actions == [.drop(id: 1, reason: .cov)])
@@ -159,7 +161,7 @@ struct SiteFrameGateTests {
             )
             gate.updateDecisions(decisions, axAvailable: true)
 
-            let frame = SiteHeldFrame(id: 2, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+            let frame = SiteHeldFrame(id: 2, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
             _ = gate.enqueue(displayID: displayID, frame: frame)
             let actions = gate.evaluate(displayID: displayID, now: 11.0)
             #expect(actions == [.drop(id: 2, reason: .cov)])
@@ -168,7 +170,7 @@ struct SiteFrameGateTests {
 
     @Test func pendingWithinHoldWaitsThenDropsAfterTwoSeconds() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         gate.addPoll(SitePollSnapshot(start: 9.8, end: 9.9, windows: [SitePollWindow(windowID: 1, title: "Pending")]))
         gate.addPoll(SitePollSnapshot(start: 10.1, end: 10.2, windows: [SitePollWindow(windowID: 1, title: "Pending")]))
@@ -177,7 +179,7 @@ struct SiteFrameGateTests {
         // No decision -> pending
         gate.updateDecisions(SiteDecision(), axAvailable: true)
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
 
         // Inside hold (now - c = 1.0 < 2.0) -> no action, still held
@@ -193,7 +195,7 @@ struct SiteFrameGateTests {
 
     @Test func pendingWindowDisappearingBetweenPollsDropsHold() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         // Earlier poll had window 1 (pending), later poll only has window 2 (ordinary)
         gate.addPoll(SitePollSnapshot(start: 9.8, end: 9.9, windows: [SitePollWindow(windowID: 1, title: "Pending")]))
@@ -212,7 +214,7 @@ struct SiteFrameGateTests {
         )
         gate.updateDecisions(decisions, axAvailable: true)
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
 
         // Even though now - c < 2.0, disappeared pending window drops .hold immediately
@@ -223,12 +225,12 @@ struct SiteFrameGateTests {
 
     @Test func fifthFrameDropsOldestAsStallCapacityNeverExceedsFour() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         for i in 1...4 {
             let actions = gate.enqueue(
                 displayID: displayID,
-                frame: SiteHeldFrame(id: UInt64(i), displayTicks: makeTicks(fromSeconds: 100.0 + Double(i)), c: 10.0 + Double(i), originTicks: originTicks)
+                frame: SiteHeldFrame(id: UInt64(i), displayTicks: Self.makeTicks(fromSeconds: 100.0 + Double(i)), c: 10.0 + Double(i), originTicks: originTicks)
             )
             #expect(actions.isEmpty)
             #expect(gate.heldCount == i)
@@ -237,7 +239,7 @@ struct SiteFrameGateTests {
         // 5th frame drops frame 1 with .stall
         let actions5 = gate.enqueue(
             displayID: displayID,
-            frame: SiteHeldFrame(id: 5, displayTicks: makeTicks(fromSeconds: 105.0), c: 15.0, originTicks: originTicks)
+            frame: SiteHeldFrame(id: 5, displayTicks: Self.makeTicks(fromSeconds: 105.0), c: 15.0, originTicks: originTicks)
         )
         #expect(actions5 == [.drop(id: 1, reason: .stall)])
         #expect(gate.heldCount == 4)
@@ -245,7 +247,7 @@ struct SiteFrameGateTests {
 
     @Test func nilDisplayTimeDropsTime() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         let frame = SiteHeldFrame(id: 99, displayTicks: nil, c: nil, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
@@ -257,7 +259,7 @@ struct SiteFrameGateTests {
 
     @Test func accessibilityUnavailableWithEmptyWindowListReleases() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         // AX unavailable with no Safari windows -> release
         gate.addPoll(SitePollSnapshot(start: 9.8, end: 9.9, windows: []))
@@ -265,7 +267,7 @@ struct SiteFrameGateTests {
         gate.addPoll(SitePollSnapshot(start: 10.5, end: 10.6, windows: []))
         gate.updateDecisions(SiteDecision(), axAvailable: false)
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
 
         let actions = gate.evaluate(displayID: displayID, now: 11.0)
@@ -281,7 +283,7 @@ struct SiteFrameGateTests {
         gate.addPoll(SitePollSnapshot(start: 12.1, end: 12.2, windows: [SitePollWindow(windowID: 1, title: "Safari Window")]))
         gate.addPoll(SitePollSnapshot(start: 12.5, end: 12.6, windows: []))
 
-        let frame2 = SiteHeldFrame(id: 2, displayTicks: makeTicks(fromSeconds: 120.0), c: 12.0, originTicks: originTicks)
+        let frame2 = SiteHeldFrame(id: 2, displayTicks: Self.makeTicks(fromSeconds: 120.0), c: 12.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame2)
 
         let actionsEarly = gate.evaluate(displayID: displayID, now: 12.7)
@@ -293,9 +295,9 @@ struct SiteFrameGateTests {
 
     @Test func drainDropsHeldFramesAsEnd() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
-        let frame = SiteHeldFrame(id: 42, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 42, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
         #expect(gate.heldCount == 1)
 
@@ -306,10 +308,10 @@ struct SiteFrameGateTests {
 
     @Test func deactivateAllDropsHeldFramesWithoutReleasing() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
-        _ = gate.enqueue(displayID: 1, frame: SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks))
-        _ = gate.enqueue(displayID: 2, frame: SiteHeldFrame(id: 2, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks))
+        _ = gate.enqueue(displayID: 1, frame: SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks))
+        _ = gate.enqueue(displayID: 2, frame: SiteHeldFrame(id: 2, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks))
         #expect(gate.heldCount == 2)
 
         let actions = gate.deactivateAll()
@@ -324,13 +326,13 @@ struct SiteFrameGateTests {
         let originDate = Date()
         let originTicks = mach_absolute_time()
 
-        let tickOffset1 = makeTicks(fromSeconds: 1.0)
+        let tickOffset1 = Self.makeTicks(fromSeconds: 1.0)
         let pts1 = gate.makeClampedPTS(displayID: displayID, displayTicks: originTicks + tickOffset1, originTicks: originTicks)
         #expect(pts1.timescale == 600)
 
         _ = gate.deactivate(displayID: displayID)
 
-        let tickOffset2 = makeTicks(fromSeconds: 2.0)
+        let tickOffset2 = Self.makeTicks(fromSeconds: 2.0)
         let pts2 = gate.makeClampedPTS(displayID: displayID, displayTicks: originTicks + tickOffset2, originTicks: originTicks)
         #expect(pts2.timescale == 600)
         #expect(pts2 > pts1)
@@ -344,7 +346,7 @@ struct SiteFrameGateTests {
 
     @Test func churnReleasesUncoveredFramesWithoutDrops() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
         var decisions = SiteDecision()
 
         // 5 seconds of polls spaced 0.25 s
@@ -375,7 +377,7 @@ struct SiteFrameGateTests {
             let c = Double(i) + 0.2
             _ = gate.enqueue(
                 displayID: displayID,
-                frame: SiteHeldFrame(id: UInt64(i + 1), displayTicks: makeTicks(fromSeconds: 100.0 + c), c: c, originTicks: originTicks)
+                frame: SiteHeldFrame(id: UInt64(i + 1), displayTicks: Self.makeTicks(fromSeconds: 100.0 + c), c: c, originTicks: originTicks)
             )
         }
 
@@ -395,7 +397,7 @@ struct SiteFrameGateTests {
 
     @Test func storedDecisionForOldTitleReleasesFrameAfterNewTitleRecorded() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         // Frame at c = 10.0 saw "TitleOld"
         gate.addPoll(SitePollSnapshot(start: 9.8, end: 9.9, windows: [SitePollWindow(windowID: 1, title: "TitleOld")]))
@@ -426,7 +428,7 @@ struct SiteFrameGateTests {
         )
         gate.updateDecisions(decisions, axAvailable: true)
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
 
         let actions = gate.evaluate(displayID: displayID, now: 11.5)
@@ -440,7 +442,7 @@ struct SiteFrameGateTests {
 
     @Test func bracketPollsWithIntermediateCoveredTitleOnSameWindowDropsFrame() {
         let gate = SiteFrameGate()
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
         var decisions = SiteDecision()
 
         // Bracket polls for window 1: title A, then C, then B
@@ -478,7 +480,7 @@ struct SiteFrameGateTests {
         )
         gate.updateDecisions(decisions, axAvailable: true)
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
 
         let actions = gate.evaluate(displayID: displayID, now: 11.0)
@@ -491,7 +493,7 @@ struct SiteFrameGateTests {
         let gate = SiteFrameGate()
         gate.updateDecisions(SiteDecision(), axAvailable: true)
         gate.updateSiteList(["bank.com"], generation: 1)
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         let read = ChromiumPollRead(
             verdict: .ordinary,
@@ -507,7 +509,7 @@ struct SiteFrameGateTests {
         gate.addPoll(SitePollSnapshot(start: 10.1, end: 10.2, windows: [win]))
         gate.addPoll(SitePollSnapshot(start: 10.5, end: 10.6, windows: [win]))
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
 
         let actions = gate.evaluate(displayID: displayID, now: 11.0)
@@ -523,7 +525,7 @@ struct SiteFrameGateTests {
         let gate = SiteFrameGate()
         gate.updateDecisions(SiteDecision(), axAvailable: true)
         gate.updateSiteList(["bank.com"], generation: 1)
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         let read = ChromiumPollRead(
             verdict: .covered,
@@ -539,7 +541,7 @@ struct SiteFrameGateTests {
         gate.addPoll(SitePollSnapshot(start: 10.1, end: 10.2, windows: [win]))
         gate.addPoll(SitePollSnapshot(start: 10.5, end: 10.6, windows: [win]))
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
 
         let actions = gate.evaluate(displayID: displayID, now: 11.0)
@@ -550,7 +552,7 @@ struct SiteFrameGateTests {
         let gate = SiteFrameGate()
         gate.updateDecisions(SiteDecision(), axAvailable: true)
         gate.updateSiteList(["bank.com"], generation: 1)
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         let ordinaryRead = ChromiumPollRead(
             verdict: .ordinary,
@@ -578,7 +580,7 @@ struct SiteFrameGateTests {
         gate.addPoll(SitePollSnapshot(start: 10.0, end: 10.1, windows: [pendingWin]))
         gate.addPoll(SitePollSnapshot(start: 10.5, end: 10.6, windows: [ordinaryWin]))
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
 
         // At now = 10.2 (< 10.0 + 0.5 deadline): frame is held, no actions emitted
@@ -611,8 +613,8 @@ struct SiteFrameGateTests {
         gate.addPoll(SitePollSnapshot(start: 7.1, end: 7.2, windows: [coveredWin]))
         gate.addPoll(SitePollSnapshot(start: 7.5, end: 7.6, windows: [coveredWin]))
 
-        let originTicks = makeTicks(fromSeconds: 100.0)
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 107.0), c: 7.0, originTicks: originTicks)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 107.0), c: 7.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
         let dropActions = gate.evaluate(displayID: displayID, now: 8.0)
         #expect(dropActions == [.drop(id: 1, reason: .cov)])
@@ -683,7 +685,7 @@ struct SiteFrameGateTests {
         let gate = SiteFrameGate()
         gate.updateDecisions(SiteDecision(), axAvailable: true)
         gate.updateSiteList(["bank.com"], generation: 1)
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         let initialRead = ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: -0.2, listGeneration: 1, browser: .chrome, isPending: false)
         let initialWin = SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: initialRead)
@@ -754,7 +756,7 @@ struct SiteFrameGateTests {
         let gate = SiteFrameGate()
         gate.updateDecisions(SiteDecision(), axAvailable: true)
         gate.updateSiteList(["bank.com"], generation: 1)
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         let chromePID: pid_t = 100
         let safariPID: pid_t = 200
@@ -843,11 +845,49 @@ struct SiteFrameGateTests {
         #expect(plan.wholeAppPIDs.contains(bravePID))
     }
 
-    @Test func hungSeamPerformPollReturnsAndFrameReleases() {
+    @Test func hungSeamPerformPollReturnsAndFrameReleases() async {
+        let hangBlocker = DispatchSemaphore(value: 0)
+        defer { hangBlocker.signal() }
+
+        struct HungReader: ChromiumWindowReading, @unchecked Sendable {
+            let hangBlocker: DispatchSemaphore
+            func copyWindows(for pid: pid_t) -> [AXUIElement]? {
+                _ = hangBlocker.wait(timeout: .now() + 10)
+                return nil
+            }
+            func focusedWindow(for pid: pid_t) -> AXUIElement? { nil }
+            func windowID(for window: AXUIElement) -> CGWindowID? { nil }
+            func readTitle(for window: AXUIElement) -> String? {
+                _ = hangBlocker.wait(timeout: .now() + 10)
+                return nil
+            }
+            func readDocument(for window: AXUIElement) -> (doc: String?, failed: Bool) { (nil, false) }
+            func walkTabStrip(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> ChromiumTabStripOutcome { .failed }
+            func walkSideWindow(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) { ([], .failed) }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.copyOnScreen = {
+            [SiteVisibleWindow(windowID: 10, pid: 100, layer: 0, title: "Chrome Page")]
+        }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: 10.0) }
+        hooks.chromiumReader = HungReader(hangBlocker: hangBlocker)
+
+        let sampler = SiteSampler(
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, _, _, _ in }
+        )
+
+        // The poll returns without waiting on the read queue
+        await sampler.performPollForTesting()
+
         let gate = SiteFrameGate()
         gate.updateDecisions(SiteDecision(), axAvailable: true)
         gate.updateSiteList(["bank.com"], generation: 1)
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         // Frame has no Chrome windows in its polls (only ordinary Safari)
         let safariWin = SitePollWindow(windowID: 20, title: "Example", pid: 200)
@@ -867,7 +907,7 @@ struct SiteFrameGateTests {
         )
         gate.updateDecisions(decisions, axAvailable: true)
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
+        let frame = SiteHeldFrame(id: 1, displayTicks: Self.makeTicks(fromSeconds: 110.0), c: 10.0, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
 
         // Frame with no Chrome window releases without waiting for any Chrome seam
@@ -886,8 +926,16 @@ struct SiteFrameGateTests {
         capture.updateSiteRule(["bank.com"])
         capture.receiveSiteDecision(SiteDecision(), axAvailable: true, generation: capture.siteListGeneration)
 
-        // Split view (unclear) read does not raise caution
-        capture.receiveChromiumCaution(browser: .chrome, caution: false)
+        // Sustained split view raises no caution
+        for _ in 1...10 {
+            let chk = ChromiumSiteRead.checkTitles(
+                cgTitle: "Page",
+                axTitle: "Page - Split view - Google Chrome",
+                browser: .chrome,
+                tabButtonCount: 1
+            )
+            #expect(chk == .inserted)
+        }
         #expect(capture.siteChromeCaution == false)
 
         // Covered Chrome takes Chrome out
@@ -896,13 +944,14 @@ struct SiteFrameGateTests {
         capture.receiveSitePoll(SitePollSnapshot(start: 10.0, end: 10.1, windows: [chromeWin]))
         #expect(capture.siteKeptOutBrowsers.contains(.chrome))
 
-        // Suspend clears every browser
-        capture.updateSiteRule([])
+        // Suspend with receiveSiteDecision(..., axAvailable: false) until siteAXFailures reaches siteAXFailuresToSuspend (2)
+        capture.receiveSiteDecision(SiteDecision(), axAvailable: false, generation: capture.siteListGeneration)
+        #expect(capture.siteRuleActive)
+        capture.receiveSiteDecision(SiteDecision(), axAvailable: false, generation: capture.siteListGeneration)
         #expect(!capture.siteRuleActive)
         #expect(capture.siteKeptOutBrowsers.isEmpty)
 
-        // After resume, covered Chrome takes Chrome out
-        capture.updateSiteRule(["bank.com"])
+        // After it resumes, a covered Chrome window takes Chrome out again
         capture.receiveSiteDecision(SiteDecision(), axAvailable: true, generation: capture.siteListGeneration)
         #expect(capture.siteRuleActive)
         capture.receiveSitePoll(SitePollSnapshot(start: 11.0, end: 11.1, windows: [chromeWin]))
@@ -915,7 +964,7 @@ struct SiteFrameGateTests {
         let gate = SiteFrameGate()
         gate.updateDecisions(SiteDecision(), axAvailable: true)
         gate.updateSiteList(["bank.com"], generation: 1)
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
 
         // Subcase 1: ordinary polls, one window's read starts 0.5 s apart around c, no release
         let winID: CGWindowID = 10
@@ -954,7 +1003,7 @@ struct SiteFrameGateTests {
     }
 
     @Test func lookBackCoveredAndCantTellDrops() {
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
         let winID: CGWindowID = 10
         let pid: pid_t = 100
 
@@ -1005,7 +1054,7 @@ struct SiteFrameGateTests {
         let gate = SiteFrameGate()
         gate.updateDecisions(SiteDecision(), axAvailable: true)
         gate.updateSiteList(["bank.com"], generation: 1)
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
         let winID: CGWindowID = 10
         let pid: pid_t = 100
 
@@ -1031,7 +1080,7 @@ struct SiteFrameGateTests {
         let gate = SiteFrameGate()
         gate.updateDecisions(SiteDecision(), axAvailable: true)
         gate.updateSiteList(["bank.com"], generation: 1)
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
         let winID: CGWindowID = 10
         let pid: pid_t = 100
 
@@ -1054,7 +1103,7 @@ struct SiteFrameGateTests {
     }
 
     @Test func earliestReadSliverReleasesWhenPreviousPollOrdinaryAndDropsWhenNot() {
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
         let winID: CGWindowID = 10
         let pid: pid_t = 100
 
@@ -1084,13 +1133,18 @@ struct SiteFrameGateTests {
             Issue.record("Expected frame to release when previous poll was ordinary")
         }
 
-        // Subcase 2: previous poll is not ordinary (cantTell) -> drops
+        // Subcase 2: previous poll is not ordinary (cantTell) -> drops .gap via look-back
+        // No can't-tell read is inside the bracket
         let gate2 = SiteFrameGate()
         gate2.updateDecisions(SiteDecision(), axAvailable: true)
         gate2.updateSiteList(["bank.com"], generation: 1)
 
         let ctPrev = ChromiumPollRead(verdict: .cantTell, cause: .unclear, host: nil, readStart: 9.75, listGeneration: 1, browser: .chrome, isPending: false)
-        gate2.addPoll(SitePollSnapshot(start: 9.7, end: 9.8, windows: [SitePollWindow(windowID: winID, title: "Unclear", pid: pid, chromium: ctPrev)]))
+        // Poll 0 (outside bracket): ctPrev at 9.75
+        gate2.addPoll(SitePollSnapshot(start: 9.7, end: 9.75, windows: [SitePollWindow(windowID: winID, title: "Unclear", pid: pid, chromium: ctPrev)]))
+        // Poll 1 (earlyIdx in bracket): empty windows, end 9.80 <= c (9.85)
+        gate2.addPoll(SitePollSnapshot(start: 9.78, end: 9.80, windows: []))
+        // Bracket polls: all ordinary
         gate2.addPoll(SitePollSnapshot(start: 9.9, end: 10.0, windows: [SitePollWindow(windowID: winID, title: "Example", pid: pid, chromium: ordNext)]))
         gate2.addPoll(SitePollSnapshot(start: 10.15, end: 10.25, windows: [SitePollWindow(windowID: winID, title: "Example", pid: pid, chromium: ordMid)]))
         gate2.addPoll(SitePollSnapshot(start: 10.4, end: 10.5, windows: [SitePollWindow(windowID: winID, title: "Example", pid: pid, chromium: ordLate)]))
@@ -1098,7 +1152,7 @@ struct SiteFrameGateTests {
         let frame2 = SiteHeldFrame(id: 2, displayTicks: originTicks, c: 9.85, originTicks: originTicks)
         _ = gate2.enqueue(displayID: displayID, frame: frame2)
         let actions2 = gate2.evaluate(displayID: displayID, now: 10.6)
-        #expect(actions2 == [.drop(id: 2, reason: .hold)])
+        #expect(actions2 == [.drop(id: 2, reason: .gap)])
     }
 
     @Test func lateOrdinaryIgnoredLateCoveredAppliedAndSitsBrowserOut() {
@@ -1132,8 +1186,9 @@ struct SiteFrameGateTests {
         gate.updateSiteList(["bank.com"], generation: 1)
         let log = IntakeIntervalLog()
         log.beginDisplay(String(displayID), at: 0.0)
+        log.hold(display: String(displayID), at: 9.0)
         gate.intakeLog = log
-        let originTicks = makeTicks(fromSeconds: 100.0)
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
         let winID: CGWindowID = 10
         let pid: pid_t = 100
 
@@ -1180,34 +1235,474 @@ struct SiteFrameGateTests {
         #expect(log2.screenRanges()[String(displayID)]?.isEmpty == false)
     }
 
-    @Test func incompleteLatestPollDoesNotClearHeldSinceAndDoesNotCallResume() {
+    @Test func item6ChromeAndEdgeHoldClearsWhenLastRoundFinishes() {
+        let state = AppState.forSnapshot(config: AppConfig())
+        let capture = state.captureManager
+        capture.updateSiteRule(["bank.com"])
+        capture.receiveSiteDecision(SiteDecision(), axAvailable: true, generation: capture.siteListGeneration)
+        let log = IntakeIntervalLog()
+        let base = capture.siteNowSeconds()
+        log.beginDisplay(String(displayID), at: 0.0)
+        log.hold(display: String(displayID), at: base - 3.5)
+        capture.siteFrameGate.intakeLog = log
+
+        // A drop has held the screen for at least 3 s
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
+        let covRead = ChromiumPollRead(verdict: .covered, cause: nil, host: "bank.com", readStart: base - 3.7, listGeneration: 1, browser: .chrome, isPending: false)
+        capture.receiveSitePoll(SitePollSnapshot(start: base - 3.8, end: base - 3.7, windows: [SitePollWindow(windowID: 10, title: "Bank", pid: 100, chromium: covRead)]))
+        capture.receiveSitePoll(SitePollSnapshot(start: base - 3.4, end: base - 3.3, windows: [SitePollWindow(windowID: 10, title: "Bank", pid: 100, chromium: covRead)]))
+        capture.receiveSitePoll(SitePollSnapshot(start: base - 2.9, end: base - 2.8, windows: [SitePollWindow(windowID: 10, title: "Bank", pid: 100, chromium: covRead)]))
+        let frame = SiteHeldFrame(id: 1, displayTicks: originTicks, c: base - 3.5, originTicks: originTicks)
+        _ = capture.siteFrameGate.enqueue(displayID: displayID, frame: frame)
+        _ = capture.siteFrameGate.evaluate(displayID: displayID, now: base - 2.7)
+        #expect(capture.siteFrameGate.heldSince[displayID] == base - 3.5)
+
+        // One poll dispatches Chrome and Edge
+        let chromePending = ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: base, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: true)
+        let edgePending = ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: base, listGeneration: capture.siteListGeneration, browser: .edge, isPending: true)
+        let chromeWin = SitePollWindow(windowID: 10, title: "Chrome", pid: 100, chromium: chromePending)
+        let edgeWin = SitePollWindow(windowID: 20, title: "Edge", pid: 200, chromium: edgePending)
+        capture.receiveSitePoll(SitePollSnapshot(start: base, end: base + 0.05, windows: [chromeWin, edgeWin]))
+
+        // Chrome completes ordinary while Edge is pending: held stays true and resume is not called
+        let chromeOrd = ChromiumPollRead(verdict: .ordinary, cause: nil, host: "example.com", readStart: base + 0.02, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: false)
+        capture.receiveChromiumReadComplete(browser: .chrome, results: [10: (read: chromeOrd, cgTitle: "Chrome", axTitle: "Chrome - Google Chrome")], startSec: base, generation: capture.siteListGeneration)
+        #expect(capture.siteFrameGate.heldSince[displayID] == base - 3.5)
+        #expect(capture.siteFrameGate.isHoldingNow(now: capture.siteNowSeconds()) == true)
+
+        // Edge completes ordinary: held is false and resume is called once
+        let edgeOrd = ChromiumPollRead(verdict: .ordinary, cause: nil, host: "example.org", readStart: base + 0.03, listGeneration: capture.siteListGeneration, browser: .edge, isPending: false)
+        capture.receiveChromiumReadComplete(browser: .edge, results: [20: (read: edgeOrd, cgTitle: "Edge", axTitle: "Edge - Microsoft Edge")], startSec: base, generation: capture.siteListGeneration)
+        #expect(capture.siteFrameGate.heldSince[displayID] == nil)
+        #expect(capture.siteFrameGate.isHoldingNow(now: capture.siteNowSeconds()) == false)
+        log.endDisplay(String(displayID), at: base + 1.0)
+        #expect(log.screenRanges()[String(displayID)]?.count == 2)
+    }
+
+    @Test func item13LateOrdinaryBecomesActivityMiss() {
+        let state = AppState.forSnapshot(config: AppConfig())
+        let capture = state.captureManager
+        let base = capture.siteNowSeconds()
+        let ordRead = ChromiumPollRead(verdict: .ordinary, cause: nil, host: "example.com", readStart: base - 0.6, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: false)
+        capture.receiveChromiumReadComplete(browser: .chrome, results: [10: (read: ordRead, cgTitle: "Page", axTitle: "Page - Google Chrome")], startSec: base - 0.6, generation: capture.siteListGeneration)
+        let snap = capture.chromiumActivitySnapshot.latestCompleteRead[10]
+        #expect(snap?.verdict == .cantTell)
+        #expect(snap?.start == base - 0.6)
+    }
+
+    @Test func item13TwinLateCoveredReachesActivity() {
+        let state = AppState.forSnapshot(config: AppConfig())
+        let capture = state.captureManager
+        let base = capture.siteNowSeconds()
+        let covRead = ChromiumPollRead(verdict: .covered, cause: nil, host: "bank.com", readStart: base - 0.6, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: false)
+        capture.receiveChromiumReadComplete(browser: .chrome, results: [10: (read: covRead, cgTitle: "Bank", axTitle: "Bank - Google Chrome")], startSec: base - 0.6, generation: capture.siteListGeneration)
+        let snap = capture.chromiumActivitySnapshot.latestCompleteRead[10]
+        #expect(snap?.verdict == .covered)
+        #expect(snap?.host == "bank.com")
+        #expect(snap?.start == base - 0.6)
+    }
+
+    // MARK: - Items 1, 6, 7 Tests
+
+    @Test func item1DelayCausesLookBackGapDrop() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 9.75)
+        let currentDelay = OSAllocatedUnfairLock(initialState: 0.0)
+
+        struct DelayedReader: ChromiumWindowReading, @unchecked Sendable {
+            let currentTime: OSAllocatedUnfairLock<Double>
+            let currentDelay: OSAllocatedUnfairLock<Double>
+            func copyWindows(for pid: pid_t) -> [AXUIElement]? {
+                let delay = currentDelay.withLock { $0 }
+                currentTime.withLock { $0 += delay }
+                return [AXUIElementCreateApplication(pid)]
+            }
+            func focusedWindow(for pid: pid_t) -> AXUIElement? { nil }
+            func windowID(for window: AXUIElement) -> CGWindowID? { 10 }
+            func readTitle(for window: AXUIElement) -> String? { "Page - Google Chrome" }
+            func readDocument(for window: AXUIElement) -> (doc: String?, failed: Bool) { ("https://example.com", false) }
+            func walkTabStrip(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> ChromiumTabStripOutcome { .counts(selected: 1, total: 1) }
+            func walkSideWindow(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) { ([], .complete) }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.copyOnScreen = { [SiteVisibleWindow(windowID: 10, pid: 100, layer: 0, title: "Page")] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.chromiumReader = DelayedReader(currentTime: currentTime, currentDelay: currentDelay)
+
+        let roundReadCaptured = OSAllocatedUnfairLock<ChromiumPollRead?>(initialState: nil)
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+
+        let sampler = SiteSampler(
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                roundReadCaptured.withLock { $0 = results[10]?.read }
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else {
+                    round2Gate.release()
+                }
+            }
+        )
+
+        // Round k-1: at 9.75 s (-0.25 s relative to 10.0), ordinary
+        currentTime.withLock { $0 = 9.75 }
+        currentDelay.withLock { $0 = 0.0 }
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+        let readKMinus1 = roundReadCaptured.withLock { $0 }!
+
+        // Round k: delayed 0.2 s, starts at 10.0, readStart becomes 10.2
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 10.0 }
+        currentDelay.withLock { $0 = 0.20 }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+        let readK = roundReadCaptured.withLock { $0 }!
+
+        let gate = SiteFrameGate()
+        gate.updateDecisions(SiteDecision(), axAvailable: true)
+        gate.updateSiteList(["bank.com"], generation: 1)
+        gate.addPoll(SitePollSnapshot(start: 9.75, end: 9.85, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readKMinus1)]))
+        gate.addPoll(SitePollSnapshot(start: 10.0, end: 10.3, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readK)]))
+        gate.addPoll(SitePollSnapshot(start: 10.4, end: 10.5, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readK)]))
+        gate.addPoll(SitePollSnapshot(start: 10.55, end: 10.65, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readK)]))
+
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
+        let frame = SiteHeldFrame(id: 1, displayTicks: originTicks, c: 10.02, originTicks: originTicks)
+        _ = gate.enqueue(displayID: displayID, frame: frame)
+
+        // Earliest readStart is 10.2 > c (10.02); look-back to k-1 (9.75) has gap 10.2 - 9.75 = 0.45 > 0.3 -> drops .gap
+        let actions = gate.evaluate(displayID: displayID, now: 10.7)
+        #expect(actions == [.drop(id: 1, reason: .gap)])
+    }
+
+    /// The early poll's read started after the frame, so the gate looks back one poll. That look-back
+    /// read joins the spacing chain: 0.45 s before the next read is too far apart to vouch for the frame.
+    @Test func item1LookBackReadTooFarBeforeTheNextReadDropsGap() {
+        func run(lookBackStart: TimeInterval) -> [SiteFrameAction] {
+            let gate = SiteFrameGate()
+            gate.updateDecisions(SiteDecision(), axAvailable: true)
+            gate.updateSiteList(["bank.com"], generation: 1)
+            func read(_ start: TimeInterval) -> ChromiumPollRead {
+                ChromiumPollRead(verdict: .ordinary, cause: nil, host: "example.com", readStart: start, listGeneration: 1, browser: .chrome, isPending: false)
+            }
+            func poll(_ start: TimeInterval, _ readStart: TimeInterval) -> SitePollSnapshot {
+                SitePollSnapshot(start: start, end: start + 0.05, windows: [SitePollWindow(windowID: 10, title: "Example", pid: 100, chromium: read(readStart))])
+            }
+            gate.addPoll(poll(9.5, lookBackStart)) // the look-back poll
+            gate.addPoll(poll(9.75, 9.95))         // early poll: ends before c, its read starts after c
+            gate.addPoll(poll(10.0, 10.2))
+            gate.addPoll(poll(10.2, 10.25))
+            gate.addPoll(poll(10.4, 10.45))        // first poll starting at or after c + 0.5
+            let originTicks = Self.makeTicks(fromSeconds: 100.0)
+            _ = gate.enqueue(displayID: displayID, frame: SiteHeldFrame(id: 1, displayTicks: originTicks, c: 9.85, originTicks: originTicks))
+            return gate.evaluate(displayID: displayID, now: 10.6)
+        }
+        #expect(run(lookBackStart: 9.5) == [.drop(id: 1, reason: .gap)])
+        // Twin: 0.25 s before the next read, the look-back read vouches for the frame.
+        if case .release(let id, _) = run(lookBackStart: 9.7).first {
+            #expect(id == 1)
+        } else {
+            Issue.record("Expected the frame to release when the look-back read is within 0.3 s")
+        }
+    }
+
+    @Test func item1TwinShorterDelayReleases() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 9.85)
+        let currentDelay = OSAllocatedUnfairLock(initialState: 0.0)
+
+        struct DelayedReader: ChromiumWindowReading, @unchecked Sendable {
+            let currentTime: OSAllocatedUnfairLock<Double>
+            let currentDelay: OSAllocatedUnfairLock<Double>
+            func copyWindows(for pid: pid_t) -> [AXUIElement]? {
+                let delay = currentDelay.withLock { $0 }
+                currentTime.withLock { $0 += delay }
+                return [AXUIElementCreateApplication(pid)]
+            }
+            func focusedWindow(for pid: pid_t) -> AXUIElement? { nil }
+            func windowID(for window: AXUIElement) -> CGWindowID? { 10 }
+            func readTitle(for window: AXUIElement) -> String? { "Page - Google Chrome" }
+            func readDocument(for window: AXUIElement) -> (doc: String?, failed: Bool) { ("https://example.com", false) }
+            func walkTabStrip(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> ChromiumTabStripOutcome { .counts(selected: 1, total: 1) }
+            func walkSideWindow(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) { ([], .complete) }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.copyOnScreen = { [SiteVisibleWindow(windowID: 10, pid: 100, layer: 0, title: "Page")] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.chromiumReader = DelayedReader(currentTime: currentTime, currentDelay: currentDelay)
+
+        let roundReadCaptured = OSAllocatedUnfairLock<ChromiumPollRead?>(initialState: nil)
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+
+        let sampler = SiteSampler(
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                roundReadCaptured.withLock { $0 = results[10]?.read }
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else {
+                    round2Gate.release()
+                }
+            }
+        )
+
+        currentTime.withLock { $0 = 9.85 }
+        currentDelay.withLock { $0 = 0.0 }
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+        let readKMinus1 = roundReadCaptured.withLock { $0 }!
+
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 10.0 }
+        currentDelay.withLock { $0 = 0.04 }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+        let readK = roundReadCaptured.withLock { $0 }!
+
+        let gate = SiteFrameGate()
+        gate.updateDecisions(SiteDecision(), axAvailable: true)
+        gate.updateSiteList(["bank.com"], generation: 0)
+        gate.addPoll(SitePollSnapshot(start: 9.85, end: 9.95, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readKMinus1)]))
+        gate.addPoll(SitePollSnapshot(start: 10.0, end: 10.15, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readK)]))
+        gate.addPoll(SitePollSnapshot(start: 10.2, end: 10.3, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readK)]))
+        gate.addPoll(SitePollSnapshot(start: 10.55, end: 10.65, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readK)]))
+
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
+        let frame = SiteHeldFrame(id: 1, displayTicks: originTicks, c: 10.02, originTicks: originTicks)
+        _ = gate.enqueue(displayID: displayID, frame: frame)
+
+        // Shorter delay (0.04 s): readStart 10.04 - 9.85 = 0.19 <= 0.3 s -> releases
+        let actions = gate.evaluate(displayID: displayID, now: 10.7)
+        #expect(actions.count == 1)
+        if case .release(let id, _) = actions.first {
+            #expect(id == 1)
+        } else {
+            Issue.record("Expected frame to release with shorter delay")
+        }
+    }
+
+    @Test func item1LookBackReadStartsAfterCDropsGap() async {
+        let currentTime = OSAllocatedUnfairLock(initialState: 10.01)
+
+        struct MockReader: ChromiumWindowReading, @unchecked Sendable {
+            func copyWindows(for pid: pid_t) -> [AXUIElement]? { [AXUIElementCreateApplication(pid)] }
+            func focusedWindow(for pid: pid_t) -> AXUIElement? { nil }
+            func windowID(for window: AXUIElement) -> CGWindowID? { 10 }
+            func readTitle(for window: AXUIElement) -> String? { "Page - Google Chrome" }
+            func readDocument(for window: AXUIElement) -> (doc: String?, failed: Bool) { ("https://example.com", false) }
+            func walkTabStrip(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> ChromiumTabStripOutcome { .counts(selected: 1, total: 1) }
+            func walkSideWindow(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval, nowTicks: @escaping @Sendable () -> UInt64) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) { ([], .complete) }
+        }
+
+        var hooks = SiteSamplerHooks()
+        hooks.chromePIDs = { [100] }
+        hooks.copyOnScreen = { [SiteVisibleWindow(windowID: 10, pid: 100, layer: 0, title: "Page")] }
+        hooks.nowTicks = { Self.makeTicks(fromSeconds: currentTime.withLock { $0 }) }
+        hooks.chromiumReader = MockReader()
+
+        let roundReadCaptured = OSAllocatedUnfairLock<ChromiumPollRead?>(initialState: nil)
+        let roundMode = OSAllocatedUnfairLock(initialState: 1)
+        let round1Gate = OneShotContinuationGate()
+        let round2Gate = OneShotContinuationGate()
+
+        let sampler = SiteSampler(
+            hooks: hooks,
+            onPoll: { _ in },
+            onDecisionUpdate: { _, _, _ in },
+            onChromiumReadComplete: { _, results, _, _ in
+                roundReadCaptured.withLock { $0 = results[10]?.read }
+                let mode = roundMode.withLock { $0 }
+                if mode == 1 {
+                    round1Gate.release()
+                } else {
+                    round2Gate.release()
+                }
+            }
+        )
+
+        // Previous poll has readStart = 10.01 (> c = 10.00)
+        currentTime.withLock { $0 = 10.01 }
+        await sampler.performPollForTesting()
+        await round1Gate.wait()
+        let readPrev = roundReadCaptured.withLock { $0 }!
+
+        // Next poll has readStart = 10.15
+        roundMode.withLock { $0 = 2 }
+        currentTime.withLock { $0 = 10.15 }
+        await sampler.performPollForTesting()
+        await round2Gate.wait()
+        let readNext = roundReadCaptured.withLock { $0 }!
+
+        let gate = SiteFrameGate()
+        gate.updateDecisions(SiteDecision(), axAvailable: true)
+        gate.updateSiteList(["bank.com"], generation: 1)
+        gate.addPoll(SitePollSnapshot(start: 9.7, end: 9.8, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readPrev)]))
+        gate.addPoll(SitePollSnapshot(start: 9.85, end: 9.95, windows: []))
+        gate.addPoll(SitePollSnapshot(start: 10.05, end: 10.15, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readNext)]))
+        gate.addPoll(SitePollSnapshot(start: 10.55, end: 10.65, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: readNext)]))
+
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
+        let frame = SiteHeldFrame(id: 1, displayTicks: originTicks, c: 10.00, originTicks: originTicks)
+        _ = gate.enqueue(displayID: displayID, frame: frame)
+
+        // Previous read's readStart (10.01) is > c (10.00), so look-back drops .gap
+        let actions = gate.evaluate(displayID: displayID, now: 10.7)
+        #expect(actions == [.drop(id: 1, reason: .gap)])
+    }
+
+    @Test func item6PendingPollKeepsScreenHeldUntilOrdinaryCompletion() {
+        let state = AppState.forSnapshot(config: AppConfig())
+        let capture = state.captureManager
+        capture.updateSiteRule(["bank.com"])
+        capture.receiveSiteDecision(SiteDecision(), axAvailable: true, generation: capture.siteListGeneration)
+        let log = IntakeIntervalLog()
+        let base = capture.siteNowSeconds()
+        log.beginDisplay(String(displayID), at: 0.0)
+        log.hold(display: String(displayID), at: base - 3.5)
+        capture.siteFrameGate.intakeLog = log
+
+        // After a drop, screen is held
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
+        let covRead = ChromiumPollRead(verdict: .covered, cause: nil, host: "bank.com", readStart: base - 3.7, listGeneration: 1, browser: .chrome, isPending: false)
+        capture.receiveSitePoll(SitePollSnapshot(start: base - 3.8, end: base - 3.7, windows: [SitePollWindow(windowID: 10, title: "Bank", pid: 100, chromium: covRead)]))
+        capture.receiveSitePoll(SitePollSnapshot(start: base - 3.4, end: base - 3.3, windows: [SitePollWindow(windowID: 10, title: "Bank", pid: 100, chromium: covRead)]))
+        capture.receiveSitePoll(SitePollSnapshot(start: base - 2.9, end: base - 2.8, windows: [SitePollWindow(windowID: 10, title: "Bank", pid: 100, chromium: covRead)]))
+        let frame = SiteHeldFrame(id: 1, displayTicks: originTicks, c: base - 3.5, originTicks: originTicks)
+        _ = capture.siteFrameGate.enqueue(displayID: displayID, frame: frame)
+        _ = capture.siteFrameGate.evaluate(displayID: displayID, now: base - 2.7)
+        #expect(capture.siteFrameGate.heldSince[displayID] == base - 3.5)
+
+        // receiveSitePoll with pending poll (now < poll.start + 0.5) keeps screen held
+        let pendingRead = ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: base, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: true)
+        let win = SitePollWindow(windowID: 10, title: "Pending", pid: 100, chromium: pendingRead)
+        capture.receiveSitePoll(SitePollSnapshot(start: base, end: base + 0.05, windows: [win]))
+        #expect(capture.siteFrameGate.heldSince[displayID] == base - 3.5)
+        #expect(capture.siteFrameGate.isHoldingNow(now: capture.siteNowSeconds()))
+
+        // When round completes ordinary, held is clear and resume is called
+        let ordRead = ChromiumPollRead(verdict: .ordinary, cause: nil, host: "example.com", readStart: base + 0.02, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: false)
+        capture.receiveChromiumReadComplete(browser: .chrome, results: [10: (read: ordRead, cgTitle: "Example", axTitle: "Example - Google Chrome")], startSec: base, generation: capture.siteListGeneration)
+        #expect(capture.siteFrameGate.heldSince[displayID] == nil)
+        #expect(!capture.siteFrameGate.isHoldingNow(now: capture.siteNowSeconds()))
+    }
+
+    @Test func item6TwinMissThenOrdinaryNeverSitsOut() {
+        let state = AppState.forSnapshot(config: AppConfig())
+        let capture = state.captureManager
+        capture.updateSiteRule(["bank.com"])
+        capture.receiveSiteDecision(SiteDecision(), axAvailable: true, generation: capture.siteListGeneration)
+
+        // One missed poll
+        let base = capture.siteNowSeconds()
+        let missWin = SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: base, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: false))
+        capture.receiveSitePoll(SitePollSnapshot(start: base, end: base + 0.05, windows: [missWin]))
+        capture.receiveChromiumMiss(browser: .chrome, windowID: 10, cgTitle: "Page", startSec: base, generation: capture.siteListGeneration)
+        #expect(!capture.siteKeptOutBrowsers.contains(.chrome))
+
+        // Followed by 5 s of ordinary rounds delivered as pending polls followed by completions
+        for _ in 0..<10 {
+            let t = capture.siteNowSeconds()
+            let pendingRead = ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: t, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: true)
+            let win = SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: pendingRead)
+            capture.receiveSitePoll(SitePollSnapshot(start: t, end: t + 0.05, windows: [win]))
+            #expect(!capture.siteKeptOutBrowsers.contains(.chrome))
+
+            let ordRead = ChromiumPollRead(verdict: .ordinary, cause: nil, host: "example.com", readStart: t + 0.02, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: false)
+            capture.receiveChromiumReadComplete(browser: .chrome, results: [10: (read: ordRead, cgTitle: "Page", axTitle: "Page - Google Chrome")], startSec: t, generation: capture.siteListGeneration)
+            #expect(!capture.siteKeptOutBrowsers.contains(.chrome))
+        }
+        #expect(!capture.siteKeptOutBrowsers.contains(.chrome))
+    }
+
+    @Test func item6TwinFrameReleasingWhileNewestPollPendingResumesAtC() {
         let gate = SiteFrameGate()
         gate.updateDecisions(SiteDecision(), axAvailable: true)
         gate.updateSiteList(["bank.com"], generation: 1)
         let log = IntakeIntervalLog()
         log.beginDisplay(String(displayID), at: 0.0)
+        log.hold(display: String(displayID), at: 9.0)
         gate.intakeLog = log
-        let originTicks = makeTicks(fromSeconds: 100.0)
-        let winID: CGWindowID = 10
-        let pid: pid_t = 100
 
-        // Prior complete poll is covered, causing drop
-        let covRead = ChromiumPollRead(verdict: .covered, cause: nil, host: "bank.com", readStart: 7.0, listGeneration: 1, browser: .chrome, isPending: false)
-        gate.addPoll(SitePollSnapshot(start: 6.8, end: 6.9, windows: [SitePollWindow(windowID: winID, title: "Bank", pid: pid, chromium: covRead)]))
-        gate.addPoll(SitePollSnapshot(start: 7.1, end: 7.2, windows: [SitePollWindow(windowID: winID, title: "Bank", pid: pid, chromium: covRead)]))
-        gate.addPoll(SitePollSnapshot(start: 7.5, end: 7.6, windows: [SitePollWindow(windowID: winID, title: "Bank", pid: pid, chromium: covRead)]))
+        // Earlier polls: ordinary
+        let ord1 = ChromiumPollRead(verdict: .ordinary, cause: nil, host: "example.com", readStart: 9.75, listGeneration: 1, browser: .chrome, isPending: false)
+        let ord2 = ChromiumPollRead(verdict: .ordinary, cause: nil, host: "example.com", readStart: 9.85, listGeneration: 1, browser: .chrome, isPending: false)
+        gate.addPoll(SitePollSnapshot(start: 9.7, end: 9.8, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: ord1)]))
+        gate.addPoll(SitePollSnapshot(start: 9.82, end: 9.9, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: ord2)]))
+        gate.addPoll(SitePollSnapshot(start: 10.10, end: 10.15, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: ord2)]))
+        gate.addPoll(SitePollSnapshot(start: 10.30, end: 10.35, windows: [SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: ord2)]))
 
-        let frame = SiteHeldFrame(id: 1, displayTicks: originTicks, c: 7.0, originTicks: originTicks)
+        // Newest poll is pending
+        let pending = ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: 10.40, listGeneration: 1, browser: .chrome, isPending: true)
+        gate.addPoll(SitePollSnapshot(start: 10.40, end: 10.45, windows: [SitePollWindow(windowID: 10, title: "Pending", pid: 100, chromium: pending)]))
+
+        let originTicks = Self.makeTicks(fromSeconds: 100.0)
+        let frame = SiteHeldFrame(id: 1, displayTicks: originTicks, c: 9.80, originTicks: originTicks)
         _ = gate.enqueue(displayID: displayID, frame: frame)
-        _ = gate.evaluate(displayID: displayID, now: 8.0)
-        #expect(gate.heldSince[displayID] == 7.0)
 
-        // Incomplete latest poll added (pending read, deadline not yet passed at now = 10.2 < 10.0 + 0.5)
-        let pendingRead = ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: 10.0, listGeneration: 1, browser: .chrome, isPending: true)
-        gate.addPoll(SitePollSnapshot(start: 10.0, end: 10.1, windows: [SitePollWindow(windowID: winID, title: "Pending", pid: pid, chromium: pendingRead)]))
+        // Frame releases and calls resume at frame's c (9.80)
+        let actions = gate.evaluate(displayID: displayID, now: 10.42)
+        #expect(actions.count == 1)
+        if case .release = actions.first {
+            log.endDisplay(String(displayID), at: 11.0)
+            let ranges = log.screenRanges()[String(displayID)] ?? []
+            #expect(!ranges.isEmpty)
+            #expect(ranges.last?.0 == 9.80)
+        } else {
+            Issue.record("Expected frame to release")
+        }
+    }
 
-        // isHoldingNow does not use incomplete poll, does not clear heldSince, does not call resume
-        #expect(gate.isHoldingNow(now: 10.2) == true)
-        #expect(gate.heldSince[displayID] == 7.0)
+    @Test func item6TwinEdgePendingDoesNotFreezeChromeSitOut() {
+        let gate = SiteFrameGate()
+        gate.updateDecisions(SiteDecision(), axAvailable: true)
+        gate.updateSiteList(["bank.com"], generation: 1)
+
+        // Poll at 10.0 with ordinary Chrome and pending Edge (now = 10.2 < 10.0 + 0.5)
+        let chromeOrd = ChromiumPollRead(verdict: .ordinary, cause: nil, host: "example.com", readStart: 10.05, listGeneration: 1, browser: .chrome, isPending: false)
+        let edgePending = ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: 10.0, listGeneration: 1, browser: .edge, isPending: true)
+        let chromeWin = SitePollWindow(windowID: 10, title: "Page", pid: 100, chromium: chromeOrd)
+        let edgeWin = SitePollWindow(windowID: 20, title: "Edge", pid: 200, chromium: edgePending)
+
+        gate.addPoll(SitePollSnapshot(start: 10.0, end: 10.1, windows: [chromeWin, edgeWin]))
+
+        // Chrome was out; Edge's pending round does not freeze Chrome's sit-out
+        let chromeOut = gate.chromiumShouldSitOut(for: .chrome, isOutNow: true, now: 10.2)
+        #expect(chromeOut == false)
+    }
+
+    @Test func item7CoveredPollFollowedByMissedPollTakesBrowserOutImmediately() {
+        let state = AppState.forSnapshot(config: AppConfig())
+        let capture = state.captureManager
+        capture.updateSiteRule(["bank.com"])
+        capture.receiveSiteDecision(SiteDecision(), axAvailable: true, generation: capture.siteListGeneration)
+
+        let base = capture.siteNowSeconds()
+        let pendingK = ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: base, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: true)
+        capture.receiveSitePoll(SitePollSnapshot(start: base, end: base + 0.05, windows: [SitePollWindow(windowID: 10, title: "Bank", pid: 100, chromium: pendingK)]))
+
+        // Poll k+1 arrives missed first at base + 0.1
+        let missKPlus1 = ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: base + 0.1, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: false)
+        capture.receiveSitePoll(SitePollSnapshot(start: base + 0.1, end: base + 0.15, windows: [SitePollWindow(windowID: 10, title: "Bank", pid: 100, chromium: missKPlus1)]))
+        capture.receiveChromiumMiss(browser: .chrome, windowID: 10, cgTitle: "Bank", startSec: base + 0.1, generation: capture.siteListGeneration)
+
+        // Poll k completes covered
+        let covRead = ChromiumPollRead(verdict: .covered, cause: nil, host: "bank.com", readStart: base + 0.02, listGeneration: capture.siteListGeneration, browser: .chrome, isPending: false)
+        capture.receiveChromiumReadComplete(browser: .chrome, results: [10: (read: covRead, cgTitle: "Bank", axTitle: "Bank - Google Chrome")], startSec: base, generation: capture.siteListGeneration)
+
+        // The browser goes out at once
+        #expect(capture.siteKeptOutBrowsers.contains(.chrome))
     }
 }

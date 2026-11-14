@@ -184,8 +184,8 @@ struct WatchdogIdentityEligibilityTests {
     }
 
     @Test func criterion10FirmlinkNormalizationIsDirect() {
-        let dataPath = URL(fileURLWithPath: "/System/Volumes/Data/Users/jer/Library/Caches", isDirectory: true)
-        #expect(WatchdogAppLocationEligibility.normalized(dataPath).path == "/Users/jer/Library/Caches")
+        let dataPath = URL(fileURLWithPath: "/System/Volumes/Data/Users/owner/Library/Caches", isDirectory: true)
+        #expect(WatchdogAppLocationEligibility.normalized(dataPath).path == "/Users/owner/Library/Caches")
     }
 
     @Test func criterion11TemporaryAndTranslocationComponentsAreIneligible() {

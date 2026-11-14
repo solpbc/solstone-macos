@@ -189,7 +189,9 @@ actor SiteSampler {
     private var previousTitles: [CGWindowID: (cg: String, ax: String)] = [:]
     private var passResults: [CGWindowID: ChromiumPassResult] = [:]
     private var rememberedHosts: [CGWindowID: [(host: String, time: TimeInterval)]] = [:]
-    private var truncatedPasses: [PrivateBrowser: Set<CGWindowID>] = [:]
+    private var passAttemptTimes: [CGWindowID: TimeInterval] = [:]
+    private var budgetCutPasses: [PrivateBrowser: Set<CGWindowID>] = [:]
+    private var lastKnownKeys: [CGWindowID: (axTitle: String, docHash: Int)] = [:]
 
     private let onPoll: @MainActor @Sendable (SitePollSnapshot) -> Void
     private let onDecisionUpdate: @MainActor @Sendable (SiteDecision, Bool, UInt64) -> Void
@@ -463,6 +465,7 @@ actor SiteSampler {
                 for w in sortedWins {
                     if var r6 = rule6Records[w.wid] {
                         r6.waitStart = startSec
+                        r6.firstOrdinaryAt = nil
                         rule6Records[w.wid] = r6
                     }
                     failureCounts[browser, default: 0] += 1
@@ -534,18 +537,23 @@ actor SiteSampler {
         let localPrevTitles = previousTitles
         let localPassResults = passResults
         let localRemembered = rememberedHosts
-        let truncated = truncatedPasses[browser] ?? []
+        let localAttemptTimes = passAttemptTimes
+        let localBudgetCut = budgetCutPasses[browser] ?? []
+        let localLastKnownKeys = lastKnownKeys
 
         queue.async { [weak self] in
             guard let self else { return }
             var results: [CGWindowID: (read: ChromiumPollRead, completed: Bool, cgTitle: String, axTitle: String?)] = [:]
-            var newTruncated: Set<CGWindowID> = []
             var updatedRule6 = localRule6
             var updatedPassResults = localPassResults
             var updatedPrevTitles = localPrevTitles
             var updatedRemembered = localRemembered
+            var updatedAttemptTimes = localAttemptTimes
+            var newBudgetCut: Set<CGWindowID> = []
+            var updatedLastKnownKeys = localLastKnownKeys
+            var readStarts: [CGWindowID: TimeInterval] = [:]
 
-            // 1. Group PIDs and copy AX windows
+            // Group PIDs and copy AX windows
             let pids = Set(windows.map(\.pid))
             var axElementsByWindowID: [CGWindowID: AXUIElement] = [:]
             for pid in pids {
@@ -558,55 +566,25 @@ actor SiteSampler {
                 }
             }
 
-            // 2. Separate into side windows (layer 3) and page windows (layer 0)
             let sideWindows = windows.filter { $0.layer == 3 }
             let pageWindows = windows.filter { $0.layer == 0 }
 
-            // Evaluate side windows
-            for w in sideWindows {
-                guard let elem = axElementsByWindowID[w.wid] else {
-                    if var r6 = updatedRule6[w.wid] {
-                        r6.waitStart = HostClock.seconds(ticks: nowTicks())
-                        updatedRule6[w.wid] = r6
-                    }
-                    results[w.wid] = (
-                        read: ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: startSec, listGeneration: currentGeneration, browser: browser, isPending: false),
-                        completed: false,
-                        cgTitle: w.title,
-                        axTitle: nil
-                    )
-                    continue
-                }
-                let (texts, outcome) = reader.walkSideWindow(for: elem, maxNodes: 300, timeoutSeconds: 0.150, nowTicks: nowTicks)
-                let eval = ChromiumSiteRead.evaluateSideWindow(
-                    windowID: w.wid,
-                    staticTexts: texts,
-                    walkOutcome: outcome,
-                    rule6Record: &updatedRule6[w.wid],
-                    sites: currentSites,
-                    now: HostClock.seconds(ticks: nowTicks())
-                )
-                results[w.wid] = (
-                    read: ChromiumPollRead(verdict: eval.verdict, cause: eval.cause, host: eval.host, readStart: startSec, listGeneration: currentGeneration, browser: browser, isPending: false),
-                    completed: outcome != .failed,
-                    cgTitle: w.title,
-                    axTitle: nil
-                )
-            }
-
-            // Evaluate page windows
-            // Step a: opening title and AXDocument for every page window, back to back
+            // 1. Opening title and AXDocument for every page window, back to back.
+            // Stamp readStart from hooks.nowTicks immediately before opening title read.
             var openingTitles: [CGWindowID: String?] = [:]
             var docs: [CGWindowID: String?] = [:]
             var docFailed: [CGWindowID: Bool] = [:]
 
             for w in pageWindows {
                 guard let elem = axElementsByWindowID[w.wid] else {
+                    readStarts[w.wid] = startSec
                     openingTitles[w.wid] = nil
                     docs[w.wid] = nil
                     docFailed[w.wid] = true
                     continue
                 }
+                let winStartSec = HostClock.seconds(ticks: nowTicks())
+                readStarts[w.wid] = winStartSec
                 let title = reader.readTitle(for: elem)
                 let (d, failed) = reader.readDocument(for: elem)
                 openingTitles[w.wid] = title
@@ -620,7 +598,7 @@ actor SiteSampler {
                 }
             }
 
-            // Step b & c: closing titles for windows with no pass due
+            // 2. Closing titles for page windows with no pass due.
             var closingTitles: [CGWindowID: String?] = [:]
             var windowsNeedingPass: [CGWindowID] = []
 
@@ -649,27 +627,77 @@ actor SiteSampler {
                 windowsNeedingPass.append(w.wid)
             }
 
-            // Step d: passes in priority order
+            // 3. Side-window walks. Stamp readStart immediately before that walk.
+            for w in sideWindows {
+                guard let elem = axElementsByWindowID[w.wid] else {
+                    readStarts[w.wid] = startSec
+                    if var r6 = updatedRule6[w.wid] {
+                        r6.waitStart = startSec
+                        r6.firstOrdinaryAt = nil
+                        updatedRule6[w.wid] = r6
+                    }
+                    results[w.wid] = (
+                        read: ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: startSec, listGeneration: currentGeneration, browser: browser, isPending: false),
+                        completed: false,
+                        cgTitle: w.title,
+                        axTitle: nil
+                    )
+                    continue
+                }
+                let sideStartSec = HostClock.seconds(ticks: nowTicks())
+                readStarts[w.wid] = sideStartSec
+                let (texts, outcome) = reader.walkSideWindow(for: elem, maxNodes: 300, timeoutSeconds: 0.150, nowTicks: nowTicks)
+                let eval = ChromiumSiteRead.evaluateSideWindow(
+                    windowID: w.wid,
+                    staticTexts: texts,
+                    walkOutcome: outcome,
+                    rule6Record: &updatedRule6[w.wid],
+                    sites: currentSites,
+                    now: HostClock.seconds(ticks: nowTicks())
+                )
+                let isCompleted = (outcome != .failed && outcome != .timedOut)
+                results[w.wid] = (
+                    read: ChromiumPollRead(verdict: eval.verdict, cause: eval.cause, host: eval.host, readStart: sideStartSec, listGeneration: currentGeneration, browser: browser, isPending: false),
+                    completed: isCompleted,
+                    cgTitle: w.title,
+                    axTitle: nil
+                )
+            }
+
+            // 4. Passes.
+            // Changed windows go first. Among refresh-due windows, promote one previous-round .budgetCut window.
             func isChanged(_ wid: CGWindowID) -> Bool {
-                guard let carried = updatedPassResults[wid] else { return true }
                 let openTitle = (openingTitles[wid] ?? nil) ?? ""
                 let docStr = (docs[wid] ?? nil) ?? ""
                 let docHash = ChromiumSiteRead.documentIdentityHash(doc: docStr, axTitle: openTitle)
-                return carried.axTitle != openTitle || carried.docHash != docHash
+                guard let prevKey = localLastKnownKeys[wid] else { return true }
+                return prevKey.axTitle != openTitle || prevKey.docHash != docHash
             }
 
-            let sortedPassWindows = windowsNeedingPass.sorted { a, b in
-                let aTrunc = truncated.contains(a)
-                let bTrunc = truncated.contains(b)
-                if aTrunc != bTrunc { return aTrunc }
-                let aChanged = isChanged(a)
-                let bChanged = isChanged(b)
-                if aChanged != bChanged { return aChanged }
-                let aTime = updatedPassResults[a]?.time ?? 0
-                let bTime = updatedPassResults[b]?.time ?? 0
+            let changedPassWindows = windowsNeedingPass.filter { isChanged($0) }.sorted(by: <)
+            let refreshDuePassWindows = windowsNeedingPass.filter { !isChanged($0) }
+
+            let budgetCutCandidates = refreshDuePassWindows.filter { localBudgetCut.contains($0) }
+            let promoted = budgetCutCandidates.min { a, b in
+                let aTime = updatedAttemptTimes[a] ?? 0
+                let bTime = updatedAttemptTimes[b] ?? 0
                 if aTime != bTime { return aTime < bTime }
                 return a < b
             }
+
+            let remainingRefreshDue = refreshDuePassWindows.filter { $0 != promoted }
+            let sortedRemaining = remainingRefreshDue.sorted { a, b in
+                let aTime = updatedAttemptTimes[a] ?? 0
+                let bTime = updatedAttemptTimes[b] ?? 0
+                if aTime != bTime { return aTime < bTime }
+                return a < b
+            }
+
+            var sortedPassWindows: [CGWindowID] = changedPassWindows
+            if let promoted {
+                sortedPassWindows.append(promoted)
+            }
+            sortedPassWindows.append(contentsOf: sortedRemaining)
 
             var tabStripOutcomes: [CGWindowID: ChromiumTabStripOutcome] = [:]
             let passStartTicks = nowTicks()
@@ -683,6 +711,7 @@ actor SiteSampler {
                     continue
                 }
                 let budget = min(0.050, 0.100 - passElapsed)
+                updatedAttemptTimes[wid] = HostClock.seconds(ticks: nowTicks())
                 let outcome = reader.walkTabStrip(for: elem, maxNodes: 3000, timeoutSeconds: budget, nowTicks: nowTicks)
                 let closeTitle = reader.readTitle(for: elem)
                 closingTitles[wid] = closeTitle
@@ -690,10 +719,15 @@ actor SiteSampler {
 
                 let openTitle = openingTitles[wid] ?? nil
                 let docStr = docs[wid] ?? nil
-                if outcome == .truncated {
-                    newTruncated.insert(wid)
+
+                switch outcome {
+                case .overBudget, .timedOut:
                     updatedPassResults.removeValue(forKey: wid)
-                } else if case .counts(let sel, let tot) = outcome {
+                case .budgetCut:
+                    newBudgetCut.insert(wid)
+                case .notRun:
+                    break
+                case .counts(let sel, let tot):
                     if openTitle == closeTitle {
                         let openingHash = ChromiumSiteRead.documentIdentityHash(doc: docStr ?? "", axTitle: openTitle ?? "")
                         updatedPassResults[wid] = ChromiumPassResult(
@@ -707,46 +741,95 @@ actor SiteSampler {
                     } else {
                         updatedPassResults.removeValue(forKey: wid)
                     }
-                } else if outcome == .failed {
+                case .failed:
                     updatedPassResults.removeValue(forKey: wid)
                 }
             }
 
-            // Step e: evaluate each page window
+            // 5. Evaluate page windows
             for w in pageWindows {
                 let docStr = docs[w.wid] ?? nil
                 let dFailed = docFailed[w.wid] ?? true
+                let winReadStart = readStarts[w.wid] ?? startSec
                 guard let elem = axElementsByWindowID[w.wid], !dFailed, let docStr else {
                     if var r6 = updatedRule6[w.wid] {
                         r6.waitStart = HostClock.seconds(ticks: nowTicks())
+                        r6.firstOrdinaryAt = nil
                         updatedRule6[w.wid] = r6
                     }
                     results[w.wid] = (
-                        read: ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: startSec, listGeneration: currentGeneration, browser: browser, isPending: false),
+                        read: ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: winReadStart, listGeneration: currentGeneration, browser: browser, isPending: false),
                         completed: false,
                         cgTitle: w.title,
                         axTitle: nil
                     )
                     continue
                 }
+
                 let openTitle = openingTitles[w.wid] ?? nil
-                let closeTitle = closingTitles[w.wid] ?? reader.readTitle(for: elem)
-                let finalAX = closeTitle ?? openTitle
+                guard let openTitle = openTitle else {
+                    if var r6 = updatedRule6[w.wid] {
+                        r6.waitStart = HostClock.seconds(ticks: nowTicks())
+                        r6.firstOrdinaryAt = nil
+                        updatedRule6[w.wid] = r6
+                    }
+                    results[w.wid] = (
+                        read: ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: winReadStart, listGeneration: currentGeneration, browser: browser, isPending: false),
+                        completed: false,
+                        cgTitle: w.title,
+                        axTitle: nil
+                    )
+                    continue
+                }
+
+                let openingHash = ChromiumSiteRead.documentIdentityHash(doc: docStr, axTitle: openTitle)
+                updatedLastKnownKeys[w.wid] = (axTitle: openTitle, docHash: openingHash)
+
+                let closeTitle = closingTitles[w.wid] ?? nil
+                guard let closeTitle = closeTitle else {
+                    // Nil closing title is can't tell, cause .unread, completed: false
+                    if var r6 = updatedRule6[w.wid] {
+                        r6.waitStart = HostClock.seconds(ticks: nowTicks())
+                        r6.firstOrdinaryAt = nil
+                        updatedRule6[w.wid] = r6
+                    }
+                    results[w.wid] = (
+                        read: ChromiumPollRead(verdict: .cantTell, cause: .unread, host: nil, readStart: winReadStart, listGeneration: currentGeneration, browser: browser, isPending: false),
+                        completed: false,
+                        cgTitle: w.title,
+                        axTitle: nil
+                    )
+                    continue
+                }
+
                 let prev = localPrevTitles[w.wid]
+
                 let effOutcome: ChromiumTabStripOutcome
-                if let outcome = tabStripOutcomes[w.wid] {
-                    effOutcome = outcome
-                } else if let carried = updatedPassResults[w.wid] {
+                let rawOutcome = tabStripOutcomes[w.wid]
+                if rawOutcome == .budgetCut || rawOutcome == .notRun || rawOutcome == nil {
+                    if let carried = updatedPassResults[w.wid],
+                       carried.axTitle == openTitle && carried.docHash == openingHash {
+                        effOutcome = .counts(selected: carried.selectedTabCount, total: carried.totalTabCount)
+                    } else if let raw = rawOutcome {
+                        effOutcome = raw
+                    } else {
+                        effOutcome = .notRun
+                    }
+                } else if let raw = rawOutcome {
+                    effOutcome = raw
+                } else if let carried = updatedPassResults[w.wid],
+                          carried.axTitle == openTitle && carried.docHash == openingHash {
                     effOutcome = .counts(selected: carried.selectedTabCount, total: carried.totalTabCount)
                 } else {
                     effOutcome = .notRun
                 }
+
                 let eval = ChromiumSiteRead.evaluatePageWindow(
                     windowID: w.wid,
                     browser: browser,
                     cgTitle: w.title,
                     initialAXTitle: openTitle,
-                    finalAXTitle: finalAX,
+                    finalAXTitle: closeTitle,
                     doc: docStr,
                     docReadFailed: false,
                     previousCGTitle: prev?.cg,
@@ -756,12 +839,12 @@ actor SiteSampler {
                     sites: currentSites,
                     now: HostClock.seconds(ticks: nowTicks())
                 )
-                updatedPrevTitles[w.wid] = (cg: w.title, ax: finalAX ?? "")
+                updatedPrevTitles[w.wid] = (cg: w.title, ax: closeTitle)
                 results[w.wid] = (
-                    read: ChromiumPollRead(verdict: eval.verdict, cause: eval.cause, host: eval.host, readStart: startSec, listGeneration: currentGeneration, browser: browser, isPending: false),
+                    read: ChromiumPollRead(verdict: eval.verdict, cause: eval.cause, host: eval.host, readStart: winReadStart, listGeneration: currentGeneration, browser: browser, isPending: false),
                     completed: true,
                     cgTitle: w.title,
-                    axTitle: finalAX
+                    axTitle: closeTitle
                 )
             }
 
@@ -769,12 +852,16 @@ actor SiteSampler {
                 await self.roundFinished(
                     browser: browser,
                     startSec: startSec,
+                    generation: currentGeneration,
                     results: results,
                     rule6: updatedRule6,
                     passResults: updatedPassResults,
                     prevTitles: updatedPrevTitles,
                     rememberedHosts: updatedRemembered,
-                    truncated: newTruncated
+                    attemptTimes: updatedAttemptTimes,
+                    budgetCut: newBudgetCut,
+                    lastKnownKeys: updatedLastKnownKeys,
+                    dispatchedRule6: localRule6
                 )
             }
         }
@@ -783,45 +870,122 @@ actor SiteSampler {
     func roundFinished(
         browser: PrivateBrowser,
         startSec: TimeInterval,
+        generation: UInt64,
         results: [CGWindowID: (read: ChromiumPollRead, completed: Bool, cgTitle: String, axTitle: String?)],
         rule6: [CGWindowID: ChromiumRule6Record],
         passResults: [CGWindowID: ChromiumPassResult],
         prevTitles: [CGWindowID: (cg: String, ax: String)],
         rememberedHosts: [CGWindowID: [(host: String, time: TimeInterval)]],
-        truncated: Set<CGWindowID>
+        attemptTimes: [CGWindowID: TimeInterval],
+        budgetCut: Set<CGWindowID>,
+        lastKnownKeys: [CGWindowID: (axTitle: String, docHash: Int)],
+        dispatchedRule6: [CGWindowID: ChromiumRule6Record]
     ) {
         inFlight[browser] = false
         let nowSec = HostClock.seconds(ticks: hooks.nowTicks())
         let deadlineMissed = nowSec >= startSec + 0.5
 
-        for (k, v) in rule6 {
-            if let existing = self.rule6Records[k] {
-                if deadlineMissed && v.waitStart > existing.waitStart {
-                    continue
-                }
-            }
-            self.rule6Records[k] = v
-        }
-        for (k, v) in passResults { self.passResults[k] = v }
-        for (k, v) in prevTitles { self.previousTitles[k] = v }
-        for (k, list) in rememberedHosts {
-            var existing = self.rememberedHosts[k, default: []].filter { nowSec - $0.time <= 5.0 }
-            for entry in list {
-                if !existing.contains(where: { $0.host == entry.host && abs($0.time - entry.time) < 1e-4 }) {
-                    existing.append(entry)
-                }
-            }
-            self.rememberedHosts[k] = existing
-        }
-        self.truncatedPasses[browser] = truncated
+        let currentGeneration = self.appliedGeneration
+        let currentSites = self.sites
 
-        let sortedIDs = results.keys.sorted()
-        for wid in sortedIDs {
-            guard let res = results[wid] else { continue }
-            if res.completed {
+        // Pre-merge: if the round's list generation is older than the current one and a host it read is covered under the current list, start a rule-6 record
+        if generation < currentGeneration {
+            for wid in results.keys {
+                var candidateHosts: [String] = []
+                if let h = results[wid]?.read.host {
+                    candidateHosts.append(h)
+                }
+                if let rem = rememberedHosts[wid] {
+                    candidateHosts.append(contentsOf: rem.filter { nowSec - $0.time <= 5.0 }.map(\.host))
+                }
+                for h in candidateHosts {
+                    if currentSites.contains(where: { SiteRule.covers(siteHost: $0, host: h) }) {
+                        self.rule6Records[wid] = ChromiumRule6Record(waitStart: nowSec, host: h, firstOrdinaryAt: nil)
+                        break
+                    }
+                }
+            }
+        }
+
+        // Writes rule-6, pass results, previous titles, and remembered hosts only for window ids in this round's results
+        for wid in results.keys {
+            if let v = passResults[wid] {
+                self.passResults[wid] = v
+            } else {
+                self.passResults.removeValue(forKey: wid)
+            }
+
+            if let pt = prevTitles[wid] {
+                self.previousTitles[wid] = pt
+            }
+
+            if let list = rememberedHosts[wid] {
+                var existing = self.rememberedHosts[wid, default: []].filter { nowSec - $0.time <= 5.0 }
+                for entry in list {
+                    if !existing.contains(where: { $0.host == entry.host && abs($0.time - entry.time) < 1e-4 }) {
+                        existing.append(entry)
+                    }
+                }
+                self.rememberedHosts[wid] = existing
+            }
+
+            if let at = attemptTimes[wid] {
+                self.passAttemptTimes[wid] = at
+            }
+            if let lk = lastKnownKeys[wid] {
+                self.lastKnownKeys[wid] = lk
+            }
+        }
+        self.budgetCutPasses[browser] = budgetCut
+
+        // Rule-6 merge:
+        if deadlineMissed {
+            for wid in results.keys {
+                if let res = results[wid], res.read.verdict == .covered, let host = res.read.host {
+                    let r6 = rule6[wid] ?? ChromiumRule6Record(waitStart: nowSec, host: host, firstOrdinaryAt: nil)
+                    self.rule6Records[wid] = r6
+                } else if let existing = self.rule6Records[wid] {
+                    self.rule6Records[wid] = ChromiumRule6Record(
+                        waitStart: max(existing.waitStart, nowSec),
+                        host: existing.host,
+                        firstOrdinaryAt: nil
+                    )
+                }
+            }
+        } else {
+            for wid in results.keys {
+                if let roundR6 = rule6[wid] {
+                    if let existing = self.rule6Records[wid] {
+                        if roundR6.waitStart >= existing.waitStart {
+                            self.rule6Records[wid] = roundR6
+                        }
+                    } else {
+                        self.rule6Records[wid] = roundR6
+                    }
+                } else {
+                    if let dispatched = dispatchedRule6[wid],
+                       let existing = self.rule6Records[wid],
+                       existing.waitStart == dispatched.waitStart {
+                        self.rule6Records.removeValue(forKey: wid)
+                    }
+                }
+            }
+        }
+
+        // Caution:
+        if deadlineMissed {
+            failureCounts[browser, default: 0] += results.count
+        } else {
+            var roundHasFault = false
+            for wid in results.keys {
+                guard let res = results[wid] else { continue }
+                if !res.completed {
+                    roundHasFault = true
+                    failureCounts[browser, default: 0] += 1
+                }
+            }
+            if !roundHasFault {
                 failureCounts[browser] = 0
-            } else if !deadlineMissed {
-                failureCounts[browser, default: 0] += 1
             }
         }
 
