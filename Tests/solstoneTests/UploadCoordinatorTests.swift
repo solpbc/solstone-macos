@@ -207,6 +207,34 @@ struct UploadCoordinatorTests {
         #expect(coordinator.lastErrorReason == nil)
     }
 
+    @Test func offlineRetriesBackOffAndStartOverWhenSomethingChanges() throws {
+        let minutes = (0..<7).map { UploadCoordinator.offlineRetryDelay(afterRetries: $0) }
+        #expect(minutes == [60, 120, 240, 480, 900, 900, 900].map { Duration.seconds($0) })
+
+        let coordinator = try makeCoordinator(now: Date(timeIntervalSince1970: 1_700_000_000))
+        func offline() {
+            coordinator.handleProgressEvent(.offline(
+                error: "timed out",
+                healthReason: observerHealthFailureReason(from: URLError(.timedOut)),
+                requestedPath: IngestProtocolV3.segmentsDayPath("20260703")
+            ))
+        }
+        for _ in 0..<5 { offline() }
+        #expect(coordinator.offlineRetriesForTesting == 5)
+        // A new network: the waiting retry comes back to a minute.
+        coordinator.noteNetworkChanged()
+        #expect(coordinator.offlineRetriesForTesting == 1)
+        offline(); offline()
+        #expect(coordinator.offlineRetriesForTesting == 3)
+        // A sealed segment or a connected tunnel asks for a sync: the backoff starts over.
+        coordinator.triggerSync()
+        #expect(coordinator.offlineRetriesForTesting == 0)
+        offline()
+        #expect(coordinator.offlineRetriesForTesting == 1)
+        coordinator.handleProgressEvent(.journalContactSucceeded(context: nil))
+        #expect(coordinator.offlineRetriesForTesting == 0)
+    }
+
     @Test func lastErrorReasonUsesTypedSanitizedTokens() throws {
         let coordinator = try makeCoordinator(
             now: Date(timeIntervalSince1970: 1_700_000_000)

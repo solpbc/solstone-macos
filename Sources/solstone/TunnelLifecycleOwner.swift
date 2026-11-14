@@ -276,6 +276,8 @@ final class TunnelLifecycleOwner {
     private let retirementControlBudget: Duration
     @ObservationIgnored
     private let pathMonitor: PathMonitor
+    /// Called on the main actor when the network path changes after the first reading.
+    @ObservationIgnored var onNetworkPathChange: (@MainActor () -> Void)?
     @ObservationIgnored
     private let probe: @Sendable (Int, Duration) async -> Bool
     @ObservationIgnored
@@ -1801,6 +1803,7 @@ final class TunnelLifecycleOwner {
     private func handlePathStatus(_ status: NetworkPathStatus) {
         let previous = currentPathSignature
         currentPathSignature = status.signature
+        if let previous, previous != status.signature { onNetworkPathChange?() }
         if networkAvailable != status.isSatisfied {
             networkAvailable = status.isSatisfied
             updateConnectionVerdict()

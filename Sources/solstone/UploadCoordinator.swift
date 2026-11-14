@@ -122,6 +122,8 @@ public final class UploadCoordinator {
     // MARK: - Retry State
 
     private var retryTask: Task<Void, Never>?
+    /// Offline retries since the journal last answered or something new gave a reason to sync.
+    private var offlineRetries = 0
     private var syncingPresenter = SyncingPresenter()
     private var presentedStatusTask: Task<Void, Never>?
 
@@ -372,8 +374,14 @@ public final class UploadCoordinator {
         await syncService.sync()
     }
 
-    /// Trigger sync (called when segment completes)
+    /// Trigger sync (called when segment completes, the tunnel connects, or settings change).
+    /// Something new to send or a new way to reach the journal starts the offline backoff over.
     public func triggerSync() {
+        offlineRetries = 0
+        syncNow()
+    }
+
+    private func syncNow() {
         guard automaticSyncEnabled, !syncPaused, isPairedIngestReady else {
             return
         }
@@ -467,6 +475,7 @@ public final class UploadCoordinator {
 
         case .uploadSucceeded(_, let proof, let context):
             guard ordinaryProgressIsCurrent(context) else { return }
+            offlineRetries = 0
             handleProvenDelivery(proof: JournalConnectionFingerprint(value: proof))
 
         case .uploadFailed(_, _, let healthReason, let requestedPath, let context):
@@ -476,6 +485,7 @@ public final class UploadCoordinator {
 
         case .journalContactSucceeded(let context):
             guard ordinaryProgressIsCurrent(context) else { return }
+            offlineRetries = 0
             let now = nowProvider()
             lastSyncedAt = now
             if let fingerprint = journalIdentityProvider().fingerprint {
@@ -492,6 +502,7 @@ public final class UploadCoordinator {
 
         case .syncComplete(let context, let remaining, let unwritten):
             guard ordinaryProgressIsCurrent(context) else { return }
+            offlineRetries = 0
             status = .synced
             pendingCount = remaining
             unwrittenSegments = unwritten
@@ -603,12 +614,30 @@ public final class UploadCoordinator {
         }
     }
 
+    /// How long an offline sync waits before trying again: a minute, doubling to 15 minutes.
+    /// Each try walks the segment tree twice and asks the journal, so a journal that stays
+    /// away is asked less and less often until something changes.
+    nonisolated static func offlineRetryDelay(afterRetries retries: Int) -> Duration {
+        .seconds(min(900, 60 << min(retries, 4)))
+    }
+
+    /// A different network may reach the journal: a waiting retry comes back to a minute.
+    func noteNetworkChanged() {
+        let waiting = retryTask != nil && offlineRetries > 0
+        offlineRetries = 0
+        if waiting { scheduleRetry() }
+    }
+
+    var offlineRetriesForTesting: Int { offlineRetries }
+
     private func scheduleRetry() {
         retryTask?.cancel()
+        let delay = Self.offlineRetryDelay(afterRetries: offlineRetries)
+        offlineRetries += 1
         retryTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(60))
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self else { return }
-            self.triggerSync()
+            self.syncNow()
         }
     }
 }

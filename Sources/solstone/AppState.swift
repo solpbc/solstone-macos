@@ -3079,6 +3079,7 @@ public final class AppState {
 
     internal func startTunnelLifecycleOwner() {
         _ = pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
+        tunnelLifecycleOwner.onNetworkPathChange = { [weak self] in self?.uploadCoordinator.noteNetworkChanged() }
         tunnelLifecycleOwner.start()
         Task { await pairingCoordinator.recoverDurableInvalidation() }
         startTunnelLifecycleObservation()
