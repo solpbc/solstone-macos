@@ -1104,6 +1104,8 @@ struct CaptureManagerRotationWatchdogTests {
             isScreenLocked: { false }
         )
         box.manager = manager
+        // The website rule must not depend on whether this build host grants Accessibility.
+        manager.accessibilityProbe = AccessibilityProbe(readWorks: { true }, prompt: {})
         manager.displayInfosForTesting = [
             DisplayInfo(displayID: 1, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16)),
             DisplayInfo(displayID: 2, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16))
@@ -1241,6 +1243,8 @@ struct CaptureManagerRotationWatchdogTests {
             isScreenLocked: { false }
         )
         box.manager = manager
+        // The website rule must not depend on whether this build host grants Accessibility.
+        manager.accessibilityProbe = AccessibilityProbe(readWorks: { true }, prompt: {})
         manager.displayInfosForTesting = [
             DisplayInfo(displayID: 1, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16)),
             DisplayInfo(displayID: 2, width: 16, height: 16, bounds: CGRect(x: 0, y: 0, width: 16, height: 16))
