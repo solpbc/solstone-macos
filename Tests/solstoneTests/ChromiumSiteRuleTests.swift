@@ -1228,12 +1228,22 @@ struct ChromiumSiteRuleTests {
             guard let wid = windowID(for: window) else { return (nil, true) }
             return (docs.withLock { $0[wid] }, false)
         }
-        func walkTabStrip(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval) -> ChromiumTabStripOutcome {
+        func walkTabStrip(
+            for window: AXUIElement,
+            maxNodes: Int = 3000,
+            timeoutSeconds: TimeInterval = 0.05,
+            nowTicks: @escaping @Sendable () -> UInt64 = { mach_absolute_time() }
+        ) -> ChromiumTabStripOutcome {
             guard let wid = windowID(for: window) else { return .failed }
             onPassStart(wid)
             return .counts(selected: 1, total: 1)
         }
-        func walkSideWindow(for window: AXUIElement, maxNodes: Int, timeoutSeconds: TimeInterval) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) {
+        func walkSideWindow(
+            for window: AXUIElement,
+            maxNodes: Int = 300,
+            timeoutSeconds: TimeInterval = 0.15,
+            nowTicks: @escaping @Sendable () -> UInt64 = { mach_absolute_time() }
+        ) -> (staticTexts: [String], outcome: ChromiumSiteRead.WalkOutcome) {
             ([], .complete)
         }
     }

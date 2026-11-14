@@ -577,7 +577,7 @@ actor SiteSampler {
                     )
                     continue
                 }
-                let (texts, outcome) = reader.walkSideWindow(for: elem, maxNodes: 300, timeoutSeconds: 0.150)
+                let (texts, outcome) = reader.walkSideWindow(for: elem, maxNodes: 300, timeoutSeconds: 0.150, nowTicks: nowTicks)
                 let eval = ChromiumSiteRead.evaluateSideWindow(
                     windowID: w.wid,
                     staticTexts: texts,
@@ -683,7 +683,7 @@ actor SiteSampler {
                     continue
                 }
                 let budget = min(0.050, 0.100 - passElapsed)
-                let outcome = reader.walkTabStrip(for: elem, maxNodes: 3000, timeoutSeconds: budget)
+                let outcome = reader.walkTabStrip(for: elem, maxNodes: 3000, timeoutSeconds: budget, nowTicks: nowTicks)
                 let closeTitle = reader.readTitle(for: elem)
                 closingTitles[wid] = closeTitle
                 tabStripOutcomes[wid] = outcome

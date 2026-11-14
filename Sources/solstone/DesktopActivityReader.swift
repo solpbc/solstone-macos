@@ -65,6 +65,104 @@ struct DesktopActivityObservation: Sendable {
     var urlUnavailable = false
 }
 
+struct DesktopActivityFrontWindow: Sendable, Equatable {
+    var windowID: UInt32?
+    var title: String?
+
+    init(windowID: UInt32? = nil, title: String? = nil) {
+        self.windowID = windowID
+        self.title = title
+    }
+}
+
+struct DesktopActivityReadSeams: Sendable {
+    var chromiumReader: ChromiumWindowReading
+    var preflightScreenCapture: @Sendable () -> Bool
+    var frontWindow: @Sendable (pid_t) -> DesktopActivityFrontWindow?
+    var focusedRead: @Sendable (AXUIElement) -> (element: AXUIElement?, error: AXError)
+    var role: @Sendable (AXUIElement) -> String?
+    var axWindowID: @Sendable (AXUIElement) -> CGWindowID?
+    var axTitle: @Sendable (AXUIElement) -> String?
+    var cgTitle: @Sendable (pid_t, Bool) -> String?
+    var readDocument: @Sendable (AXUIElement) -> (doc: String?, failed: Bool)
+    var settle: @Sendable () -> Void
+    var nowTicks: @Sendable () -> UInt64
+
+    init(
+        chromiumReader: ChromiumWindowReading,
+        preflightScreenCapture: @escaping @Sendable () -> Bool,
+        frontWindow: @escaping @Sendable (pid_t) -> DesktopActivityFrontWindow?,
+        focusedRead: @escaping @Sendable (AXUIElement) -> (element: AXUIElement?, error: AXError),
+        role: @escaping @Sendable (AXUIElement) -> String?,
+        axWindowID: @escaping @Sendable (AXUIElement) -> CGWindowID?,
+        axTitle: @escaping @Sendable (AXUIElement) -> String?,
+        cgTitle: @escaping @Sendable (pid_t, Bool) -> String?,
+        readDocument: @escaping @Sendable (AXUIElement) -> (doc: String?, failed: Bool),
+        settle: @escaping @Sendable () -> Void,
+        nowTicks: @escaping @Sendable () -> UInt64
+    ) {
+        self.chromiumReader = chromiumReader
+        self.preflightScreenCapture = preflightScreenCapture
+        self.frontWindow = frontWindow
+        self.focusedRead = focusedRead
+        self.role = role
+        self.axWindowID = axWindowID
+        self.axTitle = axTitle
+        self.cgTitle = cgTitle
+        self.readDocument = readDocument
+        self.settle = settle
+        self.nowTicks = nowTicks
+    }
+
+    static func production(permit: DesktopActivityReadPermit) -> DesktopActivityReadSeams {
+        DesktopActivityReadSeams(
+            chromiumReader: LiveChromiumWindowReader(),
+            preflightScreenCapture: { CGPreflightScreenCaptureAccess() },
+            frontWindow: { pid in
+                let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+                guard let win = windows.first(where: {
+                    ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0
+                }) else { return nil }
+                return DesktopActivityFrontWindow(
+                    windowID: win[kCGWindowNumber as String] as? UInt32,
+                    title: win[kCGWindowName as String] as? String
+                )
+            },
+            focusedRead: { parent in
+                DesktopActivityReader.element(parent, kAXFocusedWindowAttribute, permit: permit)
+            },
+            role: { el in
+                DesktopActivityReader.string(el, kAXRoleAttribute, permit: permit)
+            },
+            axWindowID: { window in
+                var wid: CGWindowID = 0
+                guard permit.isValid, _AXUIElementGetWindow(window, &wid) == .success else { return nil }
+                return wid
+            },
+            axTitle: { el in
+                DesktopActivityReader.string(el, kAXTitleAttribute, permit: permit)
+            },
+            cgTitle: { pid, screenGranted in
+                guard screenGranted else { return nil }
+                let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+                return windows.first { ($0[kCGWindowOwnerPID as String] as? Int32) == pid &&
+                    ($0[kCGWindowLayer as String] as? Int) == 0 }?[kCGWindowName as String] as? String
+            },
+            readDocument: { window in
+                DesktopActivityReader.readAXDocument(window)
+            },
+            settle: {
+                if DesktopActivityReader.pairSettle > 0 {
+                    Thread.sleep(forTimeInterval: DesktopActivityReader.pairSettle)
+                }
+            },
+            nowTicks: {
+                mach_absolute_time()
+            }
+        )
+    }
+}
+
 /// Cross-app work stays off the UI actor. Only the foreground window's title and a browser's
 /// document URL are read; editable address values are deliberately never read.
 final class DesktopActivityReadPermit: Sendable {
@@ -82,13 +180,16 @@ struct DesktopActivityReader: Sendable {
 
     let permit: DesktopActivityReadPermit
     let walkSeam: WalkSeam
+    let seams: DesktopActivityReadSeams
 
     init(
         permit: DesktopActivityReadPermit,
-        walkSeam: @escaping WalkSeam = { WebAreaWalker.walk($0, mode: $1, permit: $2, elementTimeout: $3) }
+        walkSeam: @escaping WalkSeam = { WebAreaWalker.walk($0, mode: $1, permit: $2, elementTimeout: $3) },
+        seams: DesktopActivityReadSeams? = nil
     ) {
         self.permit = permit
         self.walkSeam = walkSeam
+        self.seams = seams ?? .production(permit: permit)
     }
 
     /// A Safari read that can't vouch for the window: cut short, or with a page whose address
@@ -119,10 +220,10 @@ struct DesktopActivityReader: Sendable {
         snapshot: ChromiumActivitySnapshot = ChromiumActivitySnapshot()
     ) -> DesktopActivityObservation {
         guard permit.isValid, !settings.excludes(app) else { return DesktopActivityObservation(rows: []) }
-        let screenGranted = permit.isValid && CGPreflightScreenCaptureAccess()
+        let screenGranted = permit.isValid && seams.preflightScreenCapture()
         guard permit.isValid else { return DesktopActivityObservation(rows: []) }
-        let window = Self.frontWindow(pid: app.pid)
-        let cgTitle = screenGranted ? window?[kCGWindowName as String] as? String : nil
+        let window = seams.frontWindow(app.pid)
+        let cgTitle = screenGranted ? window?.title : nil
         let browser = PrivateBrowser.forBundleIdentifier(app.bundleID)
         let needsAX = (settings.accessibility && (settings.titles || settings.urls)) ||
             (settings.excludePrivate && settings.privateAccessibility && browser != nil) ||
@@ -130,21 +231,21 @@ struct DesktopActivityReader: Sendable {
         var axTitle: String?
         var axDenied = false
         var focusedWindow: AXUIElement?
-        var windowID = window?[kCGWindowNumber as String] as? UInt32
+        var windowID = window?.windowID
         if needsAX {
             let application = AXUIElementCreateApplication(app.pid)
             AXUIElementSetMessagingTimeout(application, 0.05)
-            let focusedRead = element(application, kAXFocusedWindowAttribute)
+            let focusedRead = seams.focusedRead(application)
             axDenied = focusedRead.error == .apiDisabled
             if let focused = focusedRead.element,
-               string(focused, kAXRoleAttribute) == kAXWindowRole {
+               seams.role(focused) == kAXWindowRole {
                 // A focused AX window is authoritative for the title and document URL.
                 var axID: CGWindowID = 0
-                if permit.isValid, _AXUIElementGetWindow(focused, &axID) == .success,
-                   windowID == nil || windowID == axID {
-                    windowID = axID
+                if permit.isValid, let id = seams.axWindowID(focused),
+                   windowID == nil || windowID == id {
+                    windowID = id
                     focusedWindow = focused
-                    axTitle = string(focused, kAXTitleAttribute)
+                    axTitle = seams.axTitle(focused)
                 }
             } else {
                 windowID = nil
@@ -196,15 +297,13 @@ struct DesktopActivityReader: Sendable {
                 let win = focusedWindow!
                 let cg1 = cgTitle
                 let ax1 = axTitle
-                let (doc1, docFailed1) = readAXDocument(win)
+                let (doc1, docFailed1) = seams.readDocument(win)
 
-                if Self.pairSettle > 0 {
-                    Thread.sleep(forTimeInterval: Self.pairSettle)
-                }
+                seams.settle()
 
-                let cg2 = screenGranted ? Self.frontWindow(pid: app.pid)?[kCGWindowName as String] as? String : nil
-                let ax2 = string(win, kAXTitleAttribute)
-                let (doc2, docFailed2) = readAXDocument(win)
+                let cg2 = seams.cgTitle(app.pid, screenGranted)
+                let ax2 = seams.axTitle(win)
+                let (doc2, docFailed2) = seams.readDocument(win)
 
                 let wid = windowID.map { CGWindowID($0) }
                 let prevCG = wid != nil ? snapshot.latestCGTitle[wid!] : nil
@@ -212,7 +311,7 @@ struct DesktopActivityReader: Sendable {
 
                 func tabStripOutcome(cg: String?, ax: String?, doc: String?) -> ChromiumTabStripOutcome {
                     if ax == cg || (doc?.isEmpty == true) {
-                        return LiveChromiumWindowReader().walkTabStrip(for: win, maxNodes: 3000, timeoutSeconds: 0.050)
+                        return seams.chromiumReader.walkTabStrip(for: win, maxNodes: 3000, timeoutSeconds: 0.050, nowTicks: { mach_absolute_time() })
                     }
                     return .notRun
                 }
@@ -253,7 +352,7 @@ struct DesktopActivityReader: Sendable {
                     if eval1.verdict != .ordinary || eval2.verdict != .ordinary { valid = false }
                     if eval1.host == nil || eval2.host == nil || eval1.host != eval2.host { valid = false }
                     if let snap {
-                        let nowSec = HostClock.seconds(ticks: mach_absolute_time())
+                        let nowSec = HostClock.seconds(ticks: seams.nowTicks())
                         if snap.verdict != .ordinary { valid = false }
                         if nowSec - snap.start > 1.0 { valid = false }
                         if snap.host != eval1.host { valid = false }
@@ -360,17 +459,17 @@ struct DesktopActivityReader: Sendable {
     }
 
     private func readPairAgain(app: DesktopActivityApp, screenGranted: Bool, focused: AXUIElement, mode: WebAreaWalkMode) -> DesktopActivityPairRead {
-        Thread.sleep(forTimeInterval: Self.pairSettle)
+        seams.settle()
         let walk = walkSeam(focused, mode, permit, Self.activityElementTimeout)
         return DesktopActivityPairRead(
-            cgTitle: screenGranted ? Self.frontWindow(pid: app.pid)?[kCGWindowName as String] as? String : nil,
-            axTitle: string(focused, kAXTitleAttribute),
+            cgTitle: seams.cgTitle(app.pid, screenGranted),
+            axTitle: seams.axTitle(focused),
             urls: walk.urls,
             complete: walk.completeness == .complete
         )
     }
 
-    private func element(_ parent: AXUIElement, _ attribute: String) -> (element: AXUIElement?, error: AXError) {
+    fileprivate static func element(_ parent: AXUIElement, _ attribute: String, permit: DesktopActivityReadPermit) -> (element: AXUIElement?, error: AXError) {
         guard permit.isValid else { return (nil, .cannotComplete) }
         var value: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(parent, attribute as CFString, &value)
@@ -378,7 +477,7 @@ struct DesktopActivityReader: Sendable {
         return (unsafeDowncast(value, to: AXUIElement.self), .success)
     }
 
-    private func readAXDocument(_ window: AXUIElement) -> (doc: String?, failed: Bool) {
+    fileprivate static func readAXDocument(_ window: AXUIElement) -> (doc: String?, failed: Bool) {
         AXUIElementSetMessagingTimeout(window, 0.025)
         var val: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(window, "AXDocument" as CFString, &val)
@@ -388,7 +487,7 @@ struct DesktopActivityReader: Sendable {
         return (s, false)
     }
 
-    private func string(_ element: AXUIElement, _ attribute: String) -> String? {
+    fileprivate static func string(_ element: AXUIElement, _ attribute: String, permit: DesktopActivityReadPermit) -> String? {
         AXUIElementSetMessagingTimeout(element, 0.025)
         var value: CFTypeRef?
         guard permit.isValid, AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }

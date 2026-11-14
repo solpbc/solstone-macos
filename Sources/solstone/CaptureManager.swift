@@ -183,6 +183,7 @@ public final class CaptureManager {
     private let rotationTimeoutSeconds: TimeInterval
     private let captureZoneSource: CaptureZoneSource
     private var now: @Sendable () -> Date
+    private var siteNowSeconds: @Sendable () -> TimeInterval
     // Test-only bypass for fake segment factories without ScreenCaptureKit display state; defaults false.
     private let allowsEmptyDisplayConfigurationForTesting: Bool
 
@@ -373,6 +374,7 @@ public final class CaptureManager {
         rotationTimeoutSeconds: TimeInterval = 30,
         captureZoneSource: CaptureZoneSource = .device,
         now: @escaping @Sendable () -> Date = Date.init,
+        siteNowSeconds: @escaping @Sendable () -> TimeInterval = { HostClock.seconds(ticks: mach_absolute_time()) },
         allowsEmptyDisplayConfigurationForTesting: Bool = false,
         microphoneDevices: @escaping @MainActor () -> [AudioInputDevice] = MicrophoneMonitor.listInputDevices,
         layoutReader: @escaping (AudioDeviceID) -> MicrophoneMonitor.MicrophoneLayoutResult = CaptureManager.defaultLayoutReader,
@@ -406,6 +408,7 @@ public final class CaptureManager {
             rotationTimeoutSeconds: rotationTimeoutSeconds,
             captureZoneSource: captureZoneSource,
             now: now,
+            siteNowSeconds: siteNowSeconds,
             allowsEmptyDisplayConfigurationForTesting: allowsEmptyDisplayConfigurationForTesting,
             microphoneDevices: microphoneDevices,
             layoutReader: layoutReader,
@@ -442,6 +445,7 @@ public final class CaptureManager {
         rotationTimeoutSeconds: TimeInterval = 30,
         captureZoneSource: CaptureZoneSource = .device,
         now: @escaping @Sendable () -> Date = Date.init,
+        siteNowSeconds: @escaping @Sendable () -> TimeInterval = { HostClock.seconds(ticks: mach_absolute_time()) },
         allowsEmptyDisplayConfigurationForTesting: Bool = false,
         microphoneDevices: @escaping @MainActor () -> [AudioInputDevice] = MicrophoneMonitor.listInputDevices,
         layoutReader: @escaping (AudioDeviceID) -> MicrophoneMonitor.MicrophoneLayoutResult = CaptureManager.defaultLayoutReader,
@@ -482,6 +486,7 @@ public final class CaptureManager {
         self.rotationTimeoutSeconds = rotationTimeoutSeconds
         self.captureZoneSource = captureZoneSource
         self.now = now
+        self.siteNowSeconds = siteNowSeconds
         self.allowsEmptyDisplayConfigurationForTesting = allowsEmptyDisplayConfigurationForTesting
         self.microphoneDevices = microphoneDevices
         self.layoutReader = layoutReader
@@ -825,7 +830,7 @@ public final class CaptureManager {
                 keptOut.insert(.safari)
             }
             for browser in [PrivateBrowser.chrome, .edge, .brave] {
-                if siteRuleActive && siteFrameGate.chromiumShouldSitOut(for: browser, isOutNow: siteKeptOutBrowsers.contains(browser)) {
+                if siteRuleActive && siteFrameGate.chromiumShouldSitOut(for: browser, isOutNow: siteKeptOutBrowsers.contains(browser), now: siteNowSeconds()) {
                     keptOut.insert(browser)
                 }
             }
@@ -853,7 +858,7 @@ public final class CaptureManager {
         startSec: TimeInterval,
         generation: UInt64
     ) {
-        let now = HostClock.seconds(ticks: mach_absolute_time())
+        let now = siteNowSeconds()
         for (wid, res) in results {
             siteFrameGate.patchChromiumPoll(start: startSec, windowID: wid, read: res.read, at: now)
             chromiumActivitySnapshot.latestCGTitle[wid] = res.cgTitle
@@ -944,7 +949,7 @@ public final class CaptureManager {
                 keptOut.remove(.safari)
             }
             for browser in [PrivateBrowser.chrome, .edge, .brave] {
-                if siteFrameGate.chromiumShouldSitOut(for: browser, isOutNow: siteKeptOutBrowsers.contains(browser)) {
+                if siteFrameGate.chromiumShouldSitOut(for: browser, isOutNow: siteKeptOutBrowsers.contains(browser), now: siteNowSeconds()) {
                     keptOut.insert(browser)
                 } else {
                     keptOut.remove(browser)
