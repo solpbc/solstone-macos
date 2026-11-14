@@ -95,6 +95,9 @@ actor ScreenshotEngine {
     private let onDelivered: @Sendable () async -> Void
     private let fileURL: URL
     private var ledger = ScreenshotLedger()
+    /// What `ledger.json` holds now. A tick that changed only `lastChecked` (or nothing) leaves
+    /// the file alone: the check time is shown from memory, and a restart checks again at once.
+    private var saved: ScreenshotLedger?
     private var capability: Bool?
     private var capabilityAskedAt: Date?
     /// Moves when a new pairing starts the setup again, so a send that was already on its way
@@ -124,6 +127,7 @@ actor ScreenshotEngine {
         if let data = try? Data(contentsOf: fileURL),
            let decoded = try? JSONDecoder().decode(ScreenshotLedger.self, from: data) {
             ledger = decoded
+            saved = decoded
         }
     }
 
@@ -530,9 +534,14 @@ actor ScreenshotEngine {
     }
 
     private func save() {
+        var unchecked = ledger
+        unchecked.lastChecked = saved?.lastChecked
+        // Before the owner allows the folder there is nothing to keep.
+        guard unchecked != (saved ?? ScreenshotLedger()) else { return }
         do {
             let data = try JSONEncoder().encode(ledger)
             try data.write(to: fileURL, options: .atomic)
+            saved = ledger
         } catch {
             screenshotLog.error("screenshots ledger not saved: \(error.localizedDescription, privacy: .public)")
         }

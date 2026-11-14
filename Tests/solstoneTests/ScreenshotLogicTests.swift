@@ -297,6 +297,42 @@ struct ScreenshotEngineTests {
         )
     }
 
+    private func fileNumber(_ url: URL) throws -> Int? {
+        try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int
+    }
+
+    @Test func unchangedTicksLeaveTheLedgerFileAlone() async throws {
+        let reader = FakeShots()
+        let dir = try directory()
+        reader.files = [shot(hash: "aa", when: now())]
+        let engine = ScreenshotEngine(directory: dir, reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
+        _ = await engine.allow(now: now(), pause: .running, paired: true)
+        await engine.confirm(now: now())
+        _ = await engine.tick(now: now(), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        let file = dir.appendingPathComponent("ledger.json")
+        let before = try fileNumber(file)
+        for tick in 1...100 {
+            _ = await engine.tick(now: now().addingTimeInterval(Double(tick) * 15), pause: .running,
+                                     serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false)
+        }
+        #expect(try fileNumber(file) == before)
+        // A real change is still saved.
+        reader.files.append(shot(path: "/Users/a/Desktop/two.png", hash: "bb", when: now()))
+        _ = await engine.tick(now: now().addingTimeInterval(1_600), pause: .running, serverURL: nil, paired: true, syncPaused: true)
+        #expect(try fileNumber(file) != before)
+        let saved = try JSONDecoder().decode(ScreenshotLedger.self, from: Data(contentsOf: file))
+        #expect(saved.items.map(\.id).sorted() == ["aa", "bb"])
+    }
+
+    @Test func ticksBeforeAllowWriteNoLedger() async throws {
+        let dir = try directory()
+        let engine = ScreenshotEngine(directory: dir, reader: FakeShots(), transport: FakeShotTransport(), timeZone: { self.denver })
+        for tick in 0..<20 {
+            _ = await engine.tick(now: now().addingTimeInterval(Double(tick) * 15), pause: .running, serverURL: nil, paired: false, syncPaused: true)
+        }
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("ledger.json").path))
+    }
+
     @Test func nothingIsListedUntilAllow() async throws {
         let reader = FakeShots()
         let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport(), timeZone: { self.denver })
