@@ -435,7 +435,9 @@ public enum UICopy {
     public static let SETTINGS_TAB_UPDATES_DONE_A11Y = "solstone is up to date"
     public static let SETTINGS_ATTENTION_PERMISSIONS = "permissions needed"
     public static let SETTINGS_ATTENTION_PRIVATE_WINDOWS = "can't check private windows in Safari, Chrome, Edge and Brave"
-    public static let PRIVATE_WINDOWS_CHECKING = "checking Accessibility access…"
+    public static func privateWindowsChecking(macOSMajor: Int) -> String {
+        "checking for \(Websites.accessibilityName(macOSMajor: macOSMajor))…"
+    }
     public static let SETTINGS_ATTENTION_JOURNAL = "journal setup needed"
     public static let SETTINGS_ATTENTION_UPDATE_AVAILABLE = "update available"
     public static let SETTINGS_ATTENTION_UPDATE_CHECK_FAILED = "update check failed"
@@ -682,7 +684,9 @@ public enum UICopy {
     public enum Websites {
         public static let DESCRIPTION_PARAGRAPH_1 = "while a website you leave out shows in any Safari, Chrome, Edge or Brave window on your screen, even one behind other windows, that browser stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. the rest of your screen keeps going into your journal. leaving out bank.com leaves out login.bank.com too."
         public static let HOW_THIS_WORKS = "how this works"
-        public static let DESCRIPTION_PARAGRAPH_2 = "to check, solstone reads the address of the page each Safari, Chrome, Edge and Brave window shows, through Accessibility, and compares it with this list on this mac. the address goes into activity unless you turn browser addresses off."
+        public static func descriptionParagraph2(macOSMajor: Int) -> String {
+            "to check, solstone reads the address of the page each Safari, Chrome, Edge and Brave window shows, with \(accessibilityName(macOSMajor: macOSMajor)), and compares it with this list on this mac. the address goes into activity unless you turn browser addresses off."
+        }
         public static let LIMITS_DISCLOSURE = "checked in Safari, Chrome, Edge and Brave. Firefox, other browsers, beta and preview versions of these, and web apps added to the Dock from Safari aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, the solstone app stops taking in your screen for a moment while it checks, and for a few seconds when the page is one you leave out. while a Chrome, Edge or Brave window shows two pages side by side, solstone can't tell which websites it shows, so after a moment that browser stays out of what the solstone app takes in from your screen until the window shows one page again. a website shown inside another website's page isn't recognized. neither is a website open in a Chrome, Edge or Brave side panel or sidebar. a left-out website's tab title can still show in a browser's tab bar. a minimized browser window's picture in the Dock can still show. a page that changes without changing its window title, or a page open for less than half a second, can be missed, and in Chrome, Edge or Brave its picture can stay on screen, and go into your journal, for a few seconds after you leave it. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you stop leaving out there comes off this list, so Safari, Chrome, Edge and Brave windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well. while any website is left out, Picture in Picture from Safari, and from other apps that use macOS's own player, stays out of what the solstone app takes in from your screen. Picture in Picture from Chrome, Edge or Brave counts as a window of that browser: while it shows something from a website you leave out, that browser stays out of what the solstone app takes in from your screen."
         /// What System Settings calls this list on the owner's macOS.
         public static func accessibilityName(macOSMajor: Int) -> String {
@@ -695,7 +699,9 @@ public enum UICopy {
         public static func errorNeedsAccessibility(macOSMajor: Int) -> String {
             "allow \(accessibilityName(macOSMajor: macOSMajor)) first, so solstone can tell which website a window shows."
         }
-        public static let ACTIVITY_ACCESSIBILITY_HELP = "with Accessibility (called Device Control and Data Access on macOS 27), activity can add browser addresses to your journal, and window titles when screen recording is unavailable. checking browsers for the websites you leave out uses the same access, whether this setting is on or off."
+        public static func activityAccessibilityHelp(macOSMajor: Int) -> String {
+            "with \(accessibilityName(macOSMajor: macOSMajor)), activity can add browser addresses to your journal, and window titles when screen recording is unavailable. checking browsers for the websites you leave out uses the same access, whether this setting is on or off."
+        }
         public static func activityAccessibilityOffInMacOS(macOSMajor: Int) -> String {
             "macOS has \(accessibilityName(macOSMajor: macOSMajor)) off for solstone."
         }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- on macos 27, settings now calls Accessibility by the name macos gives it there, Device Control and Data Access, everywhere it comes up.
+
 ## [2.0.68] - 2026-11-14
 
 ### Changed

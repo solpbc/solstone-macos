@@ -733,7 +733,7 @@ struct SettingsView: View {
                     appState.updateConfig(config)
                 }
             ))
-            Text("adds app names, window titles and active or idle time to your journal, and browser addresses if you allow accessibility. it starts and pauses with screen and computer sound.")
+            Text("adds app names, window titles and active or idle time to your journal, and browser addresses if you allow \(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)). it starts and pauses with screen and computer sound.")
                 .font(.subheadline).foregroundStyle(.secondary)
             if appState.config.isActivityEnabled {
                 Toggle("keep activity on while paused", isOn: Binding(
@@ -761,7 +761,7 @@ struct SettingsView: View {
                 ))
                 Text("addresses include the site and path, without query strings or fragments.")
                     .font(.subheadline).foregroundStyle(.secondary)
-                Toggle("allow accessibility for activity", isOn: Binding(
+                Toggle("allow \(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)) for activity", isOn: Binding(
                     get: { appState.config.activityAccessibilityEnabled && !appState.activityAccessibilityOffInMacOS },
                     set: { enabled in
                         if enabled && appState.activityAccessibilityOffInMacOS {
@@ -776,7 +776,7 @@ struct SettingsView: View {
                     }
                 ))
                 .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibility)
-                Text(UICopy.Websites.ACTIVITY_ACCESSIBILITY_HELP)
+                Text(UICopy.Websites.activityAccessibilityHelp(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
                     .font(.subheadline).foregroundStyle(.secondary)
                 if appState.activityAccessibilityOffInMacOS {
                     Text(UICopy.Websites.activityAccessibilityOffInMacOS(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
@@ -3527,7 +3527,7 @@ struct SettingsView: View {
 
                 DisclosureGroup(UICopy.Websites.HOW_THIS_WORKS) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_2)
+                        Text(UICopy.Websites.descriptionParagraph2(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
                         Text(UICopy.Websites.LIMITS_DISCLOSURE)
                     }
                     .font(.caption)
@@ -3620,13 +3620,13 @@ struct SettingsView: View {
                         .disabled(!appState.config.excludePrivateBrowsing)
                         .focused($privateWindowKeyboardFocused)
                         .accessibilityFocused($privateWindowAccessibilityFocused)
-                        .accessibilityHint("turning this on asks for Accessibility access. solstone uses it to read these browsers' window titles and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity.")
+                        .accessibilityHint("turning this on asks for \(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)). solstone uses it to read these browsers' window titles and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity.")
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibility)
-                    Text(Self.privateWindowAccessibilityExplanation)
+                    Text(Self.privateWindowAccessibilityExplanation(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     DisclosureGroup("details") {
-                        Text("checked on Safari 27, Chrome 154, Edge 154 and Brave 1.96 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a new window from these browsers is kept out of your journal for a moment while it is checked. turning this off stops the reads; to remove the access too, turn solstone off in System Settings, under Privacy & Security, in Accessibility (Device Control and Data Access on macOS 27).")
+                        Text("checked on Safari 27, Chrome 154, Edge 154 and Brave 1.96 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a new window from these browsers is kept out of your journal for a moment while it is checked. turning this off stops the reads; to remove the access too, turn solstone off in System Settings, under Privacy & Security, in \(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)).")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -3665,14 +3665,16 @@ struct SettingsView: View {
     }
 
 
-    static let privateWindowAccessibilityExplanation = "this needs Accessibility access (called Device Control and Data Access on macOS 27). solstone uses it to read the window titles these browsers give to accessibility tools, and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity. turning this on asks for it."
+    static func privateWindowAccessibilityExplanation(macOSMajor: Int) -> String {
+        "this needs \(UICopy.Websites.accessibilityName(macOSMajor: macOSMajor)). solstone uses it to read the window titles these browsers give to accessibility tools, and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity. turning this on asks for it."
+    }
 
     @ViewBuilder
     var privateWindowAccessibilityStatus: some View {
         VStack(alignment: .leading, spacing: 6) {
             switch privateWindowAccessibilityState {
             case .checking:
-                Label(UICopy.PRIVATE_WINDOWS_CHECKING, systemImage: "hourglass")
+                Label(UICopy.privateWindowsChecking(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion), systemImage: "hourglass")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             case .waiting:
@@ -3681,7 +3683,7 @@ struct SettingsView: View {
                         .font(.caption)
                 }
                 Label {
-                    Text("waiting for Accessibility access. allow solstone in System Settings; it asks for your mac's password. until then, private windows in Safari, Chrome, Edge and Brave reach your journal.")
+                    Text("waiting for \(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)). allow solstone in System Settings; it asks for your mac's password. until then, private windows in Safari, Chrome, Edge and Brave reach your journal.")
                 } icon: {
                     Image(systemName: "hourglass").foregroundStyle(.secondary)
                 }
