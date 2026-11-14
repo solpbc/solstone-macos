@@ -161,6 +161,10 @@ public final class BrowserIntakeStore: @unchecked Sendable {
     private var deliveryStopped = false
 
     private var storedFloorMs: UInt64 = 0
+    /// The floor the age_clock row holds. A status read may run up to `ageFloorDeferMs` ahead of
+    /// it in memory; anything else that advances the floor, and a clean stop, saves it.
+    private var persistedFloorMs: UInt64 = 0
+    static let ageFloorDeferMs: UInt64 = 60_000
     private var observedFloorMs: UInt64 = 0
     private var earliestHeldMs: UInt64 = 0
     private var staleAnchorMs: UInt64 = 0
@@ -832,6 +836,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
             ageCheckpoint = BrowserAgeStamp(bootID: bootID, elapsedMs: UInt64(sqlite3_column_int64(stmt, 1)))
             storedFloorMs = max(storedFloorMs, UInt64(sqlite3_column_int64(stmt, 2)))
         }
+        persistedFloorMs = storedFloorMs
         destinationGeneration = try query("SELECT destination_generation FROM connection WHERE id = 1") { stmt -> String? in
             let rc = try stepChecked(stmt)
             if rc == SQLITE_DONE { return nil }
@@ -1220,7 +1225,7 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         lock.withLock { storedFloorMs }
     }
 
-    private func updateFloorMsLocked(wallNowMs: UInt64) throws -> UInt64 {
+    private func updateFloorMsLocked(wallNowMs: UInt64, deferrable: Bool = false) throws -> UInt64 {
         guard let stamp = ageClock(), stamp.elapsedMs <= UInt64(Int64.max),
               !stamp.bootID.isEmpty, stamp.bootID.utf8.count <= 128 else {
             isStoreFailed = true
@@ -1235,7 +1240,16 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         let (advanced, overflow) = storedFloorMs.addingReportingOverflow(elapsed)
         let target = max(wallNowMs, overflow ? UInt64(Int64.max) : min(advanced, UInt64(Int64.max)))
         guard target <= UInt64(Int64.max) else { throw BrowserIntakeStoreError.localIO }
-        if target == storedFloorMs, sameBoot, ageCheckpoint?.elapsedMs == stamp.elapsedMs { return storedFloorMs }
+        let unsaved = storedFloorMs != persistedFloorMs
+        if target == storedFloorMs, sameBoot, ageCheckpoint?.elapsedMs == stamp.elapsedMs, !unsaved { return storedFloorMs }
+        // Within one boot the saved (elapsed, floor) pair recomputes the floor exactly, so a status
+        // read keeps a small advance in memory. Only a reboot can lose it, and never more than this.
+        if deferrable, sameBoot, target >= persistedFloorMs, target - persistedFloorMs < Self.ageFloorDeferMs {
+            ageCheckpoint = stamp
+            storedFloorMs = target
+            observedFloorMs = max(observedFloorMs, storedFloorMs)
+            return storedFloorMs
+        }
         do {
             try execute("BEGIN IMMEDIATE;")
             try query("INSERT OR REPLACE INTO age_clock (id, boot_id, elapsed_ms, floor_ms) VALUES (1, ?, ?, ?)") { stmt in
@@ -1252,14 +1266,24 @@ public final class BrowserIntakeStore: @unchecked Sendable {
         }
         ageCheckpoint = stamp
         storedFloorMs = target
+        persistedFloorMs = target
         observedFloorMs = max(observedFloorMs, storedFloorMs)
         return storedFloorMs
     }
 
-    public func updateFloorMs(wallNowMs: UInt64) throws -> UInt64 {
+    /// `deferrable` is for status reads: the advance may stay in memory up to `ageFloorDeferMs`.
+    public func updateFloorMs(wallNowMs: UInt64, deferrable: Bool = false) throws -> UInt64 {
         lock.lock()
         defer { lock.unlock() }
-        return try updateFloorMsLocked(wallNowMs: wallNowMs)
+        return try updateFloorMsLocked(wallNowMs: wallNowMs, deferrable: deferrable)
+    }
+
+    /// Saves a floor a status read kept in memory. A clean stop calls this.
+    public func persistFloor() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard storedFloorMs != persistedFloorMs else { return }
+        _ = try updateFloorMsLocked(wallNowMs: storedFloorMs)
     }
 
     public func currentStatus(nowMs: UInt64, monotonicFreshnessMs: UInt64) -> [String: Any] {

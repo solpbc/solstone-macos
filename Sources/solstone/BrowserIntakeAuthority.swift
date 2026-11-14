@@ -138,6 +138,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         defer { lock.unlock() }
         admissionClosed = true
         stopped = true
+        try store.persistFloor()
         if let periodId = store.getOpenPeriodId() {
             try store.finalizePeriod(periodId: periodId, reason: "owner_stop", civilDate: wallClock(), timeZone: timeZone, openReplacement: false)
         }
@@ -160,7 +161,7 @@ public final class BrowserIntakeAuthority: @unchecked Sendable {
         let elapsed = durationMs(monotonicClock.now() - floorMonotonicAnchor)
         let (advanced, overflow) = floorAnchorMs.addingReportingOverflow(elapsed)
         let candidate = overflow ? UInt64(Int64.max) : min(advanced, UInt64(Int64.max))
-        return try store.updateFloorMs(wallNowMs: max(wallNowMs, candidate))
+        return try store.updateFloorMs(wallNowMs: max(wallNowMs, candidate), deferrable: true)
     }
 
     public func status() -> [String: Any] {

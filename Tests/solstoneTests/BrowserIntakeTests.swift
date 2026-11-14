@@ -2031,6 +2031,51 @@ struct BrowserIntakeAdmissionTests {
         #expect(!store.storeIsFailed())
     }
 
+    private func savedAgeFloor(_ root: URL) throws -> UInt64 {
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(root.appendingPathComponent("intake.sqlite").path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(db); throw BrowserIntakeStoreError.localIO
+        }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT floor_ms FROM age_clock WHERE id = 1", -1, &stmt, nil) == SQLITE_OK else {
+            throw BrowserIntakeStoreError.localIO
+        }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { throw BrowserIntakeStoreError.localIO }
+        return UInt64(sqlite3_column_int64(stmt, 0))
+    }
+
+    @Test func statusReadsSaveTheAgeFloorAboutOnceAMinuteAndAStopSavesTheRest() throws {
+        let url = try root()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let projection = try BrowserContractProjection(rootURL: vendorURL)
+        let store = try BrowserIntakeStore(rootURL: url, projection: projection,
+            ioInjector: BrowserIntakeIOInjector(), ageClock: BrowserCountingAgeClock().now)
+        let clock = BrowserTestClock(Date(timeIntervalSince1970: 1_700_000_000))
+        let authority = BrowserIntakeAuthority(store: store, projection: projection, wallClock: { clock.now })
+        _ = try authority.testConnectionGeneration(identityToken: "renewal-pairing")
+        let first = try savedAgeFloor(url)
+        var saves = 0, saved = first
+        // Five minutes of renewals every 5 s with nothing held.
+        for _ in 0..<60 {
+            clock.now = clock.now.addingTimeInterval(5)
+            _ = authority.status()
+            let now = try savedAgeFloor(url)
+            if now != saved { saves += 1; saved = now }
+            // What a reboot could lose is never more than a minute.
+            #expect(store.getFloorMs() - now < BrowserIntakeStore.ageFloorDeferMs)
+        }
+        // About once a minute (the first can fall a few ms short of the minute and wait a tick).
+        #expect((4...5).contains(saves))
+        #expect(store.getFloorMs() >= first + 300_000)
+        clock.now = clock.now.addingTimeInterval(20)
+        _ = authority.status()
+        try authority.stopAndFinalize()
+        #expect(try savedAgeFloor(url) == store.getFloorMs())
+        #expect(!store.storeIsFailed())
+    }
+
     @Test func metadataOnlyPressurePersistsWithoutAgeEviction() throws {
         let url = try root()
         defer { try? FileManager.default.removeItem(at: url) }
