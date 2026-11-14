@@ -1022,6 +1022,8 @@ struct SiteExclusionRecordingTests {
 
         let storage = StorageManager(baseDirectory: root)
         let manager = CaptureManager(storageManager: storage)
+        // While something needs readings (here, desktop activity), the list alone decides.
+        manager.setActivityNeedsSiteReads(true)
 
         manager.updateSiteRule(["a.com"])
         manager.updateSiteRule([])

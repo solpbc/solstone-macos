@@ -356,6 +356,12 @@ public final class SiteFrameGate {
         heldSince[displayID] = c
     }
 
+    /// Forgets every reading. Called when sampling stops and again when it starts after a stop,
+    /// so a frame is only ever bracketed by readings from one unbroken run of the sampler.
+    public func clearPolls() {
+        polls.removeAll()
+    }
+
     public func addPoll(_ poll: SitePollSnapshot) {
         polls.append(poll)
         // Keep about 8 seconds of polls (at 4 Hz, 32-40 polls)

@@ -23,6 +23,12 @@ final class DesktopActivitySource {
     private let now: @MainActor () -> Date
     private let onSealed: @MainActor () -> Void
     private let chromiumSnapshot: @MainActor () -> ChromiumActivitySnapshot
+    /// Waits, bounded, for the website sampler's first reading after it starts, so a browser's
+    /// address read right after unlock or resume has a fresh reading to stand on.
+    private let siteReading: @MainActor () async -> Void
+    /// Told whether activity is collecting, the one time it reads browsers for the website rule.
+    private let onCollectingChanged: @MainActor (Bool) -> Void
+    private var collecting = false
     private var generation: UInt64 = 0
     private var notifiedPublication = 0
     private var worker: Task<Void, Never>?
@@ -44,11 +50,21 @@ final class DesktopActivitySource {
          chromiumSnapshot: @escaping @MainActor () -> ChromiumActivitySnapshot = { ChromiumActivitySnapshot() },
          reader: @escaping @Sendable (DesktopActivityApp, DesktopActivitySettings, DesktopActivityReadPermit, ChromiumActivitySnapshot) -> DesktopActivityObservation = { DesktopActivityReader(permit: $2).read(app: $0, settings: $1, snapshot: $3) },
          now: @escaping @MainActor () -> Date = Date.init,
-         onSealed: @escaping @MainActor () -> Void = {}) {
+         onSealed: @escaping @MainActor () -> Void = {},
+         siteReading: @escaping @MainActor () async -> Void = {},
+         onCollectingChanged: @escaping @MainActor (Bool) -> Void = { _ in }) {
         store = DesktopActivityStore(storage: storage)
         self.eligibility = eligibility; self.locked = locked; self.captureOpen = captureOpen; self.foreground = foreground
         self.chromiumSnapshot = chromiumSnapshot
         self.reader = reader; self.now = now; self.onSealed = onSealed
+        self.siteReading = siteReading; self.onCollectingChanged = onCollectingChanged
+    }
+
+    private func updateCollecting() {
+        let next = started && enabled && !paused && !failed
+        guard next != collecting else { return }
+        collecting = next
+        onCollectingChanged(next)
     }
 
     convenience init(storage: StorageManager,
@@ -77,6 +93,7 @@ final class DesktopActivitySource {
         do { try store.recover(); notifyPublication() } catch { fail() }
         started = true
         configure(config)
+        updateCollecting()
         updateTimer()
         activation = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
@@ -114,6 +131,7 @@ final class DesktopActivitySource {
         if failed {
             do { try store.recover(); failed = false } catch { fail(); return }
         }
+        updateCollecting()
         sample()
     }
 
@@ -128,6 +146,7 @@ final class DesktopActivitySource {
             notifyPublication()
         } catch { fail() }
         paused = !eligibility()
+        updateCollecting()
     }
 
     /// Called as a capture segment's capture ends, before it is finished: its activity goes in it.
@@ -139,6 +158,7 @@ final class DesktopActivitySource {
     func stop() {
         invalidate()
         started = false
+        updateCollecting()
         timer?.invalidate(); timer = nil
         if let activation { NSWorkspace.shared.notificationCenter.removeObserver(activation); self.activation = nil }
     }
@@ -147,6 +167,7 @@ final class DesktopActivitySource {
 
     @discardableResult func sample() -> Task<Void, Never>? {
         paused = !eligibility()
+        updateCollecting()
         guard enabled, !failed else { return nil }
         if paused {
             // Lock is a lifecycle observation, with no foreground facts. Owner pause wins.
@@ -164,8 +185,10 @@ final class DesktopActivitySource {
         let revision = generation, selected = settings, read = reader
         let permit = DesktopActivityReadPermit()
         readPermit = permit
-        let snapshot = chromiumSnapshot()
+        let wait = siteReading, takeSnapshot = chromiumSnapshot
         worker = Task { [weak self] in
+            await wait()
+            let snapshot = takeSnapshot()
             let result = await Task.detached(priority: .utility) { read(app, selected, permit, snapshot) }.value
             guard let self else { return }
             self.worker = nil
@@ -192,6 +215,7 @@ final class DesktopActivitySource {
 
     private func fail() {
         failed = true
+        updateCollecting()
         readPermit?.revoke()
         generation &+= 1
         Logger.storage.error("Desktop activity storage is unavailable")

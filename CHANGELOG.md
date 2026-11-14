@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - the solstone app writes to this mac's disk much less while nothing is changing. before, it saved the same empty screenshots file again and again, even with screenshots never turned on.
+- with websites left out, the solstone app no longer keeps checking your browser windows while this mac is locked, asleep or paused.
 
 ## [2.0.68] - 2026-11-14
 

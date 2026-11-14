@@ -148,7 +148,9 @@ public final class CaptureManager {
     // MARK: - Properties
 
     private let storageManager: StorageManager
-    private var currentSegment: (any CaptureSegmentWriting)?
+    private var currentSegment: (any CaptureSegmentWriting)? {
+        didSet { updateSiteSamplerDemand() }
+    }
 
     /// Called with a segment's `.incomplete` directory as its capture ends, before it is finished,
     /// so desktop activity for its interval is written into it. A discarded segment is not offered.
@@ -217,7 +219,9 @@ public final class CaptureManager {
         }
     }
     public var onScreenActiveSourcesChanged: (@MainActor (Bool) -> Void)?
-    private var sessionSources: CaptureSources = []
+    private var sessionSources: CaptureSources = [] {
+        didSet { updateSiteSamplerDemand() }
+    }
     internal var sessionSourcesForTesting: CaptureSources { sessionSources }
     internal var configuredSourcesIncludeScreen: (@MainActor () -> Bool)?
     private let noteStore = ProtectedVideoNoteStore()
@@ -256,8 +260,31 @@ public final class CaptureManager {
     internal var displayInfosForTesting: [DisplayInfo]? = nil
 #endif
     internal private(set) var siteListGeneration: UInt64 = 0
-    private var siteListContinuation: AsyncStream<(UInt64, [String])>.Continuation?
+    private enum SiteSamplerCommand: Sendable {
+        case sites(UInt64, [String])
+        case demand(Bool)
+    }
+    private var siteListContinuation: AsyncStream<SiteSamplerCommand>.Continuation?
     private var siteListTask: Task<Void, Never>?
+    /// The website sampler runs only while screen capture records or is starting, or desktop
+    /// activity collects. It stops `siteSamplerStopGrace` after the last of them ends, so a lock,
+    /// sleep or pause with websites listed stops its 4 Hz poll, 1 Hz walk and 2 s probe.
+    private(set) var siteSamplerDemanded = false
+    private var siteScreenStarting = false
+    private var siteActivityDemand = false
+    private var siteSamplerStopTask: Task<Void, Never>?
+    private var siteSamplerHasStopped = false
+    /// Host seconds when the current run started, after an earlier stop. A reading begun before
+    /// it belongs to the run that ended and is ignored.
+    private var siteRunStart: TimeInterval = -.infinity
+    /// The run has delivered a reading, and which Chromium reads that first reading started are
+    /// still out.
+    private var siteRunHasReading = false
+    private var siteRunPendingBrowserReads: Set<CGWindowID> = []
+    private var siteReadingWaiters: [UUID: (browserReads: Bool, continuation: CheckedContinuation<Void, Never>)] = [:]
+    internal var siteSamplerStopGrace: Duration = .seconds(5)
+    internal var siteReadingWait: Duration = .seconds(2)
+    internal var siteSamplerHooks = SiteSamplerHooks()
     internal var accessibilityProbe = AccessibilityProbe()
     public var isSnapshot: Bool = false
     private var windowListProvider: @MainActor () -> [OnScreenWindowRecord]
@@ -822,7 +849,13 @@ public final class CaptureManager {
     }
 
     func receiveSitePoll(_ poll: SitePollSnapshot) {
+        guard poll.start >= siteRunStart else { return }
         siteFrameGate.addPoll(poll)
+        if !siteRunHasReading {
+            siteRunHasReading = true
+            siteRunPendingBrowserReads = Set(poll.windows.compactMap { $0.chromium?.isPending == true ? $0.windowID : nil })
+            resumeReadySiteReadingWaiters()
+        }
         currentSegment?.reevaluateSiteFrames()
         if siteFrameGate.currentAXAvailable {
             var keptOut = Set<PrivateBrowser>()
@@ -861,6 +894,12 @@ public final class CaptureManager {
         let now = siteNowSeconds()
         let deadlineMissed = now >= startSec + 0.5
         let arrivingVerdictIsCovered = results.values.contains(where: { $0.read.verdict == .covered })
+        defer {
+            if !siteRunPendingBrowserReads.isEmpty, startSec >= siteRunStart {
+                siteRunPendingBrowserReads.subtract(results.filter { !$0.value.read.isPending }.keys)
+                resumeReadySiteReadingWaiters()
+            }
+        }
 
         for (wid, res) in results {
             siteFrameGate.patchChromiumPoll(start: startSec, windowID: wid, read: res.read, at: now)
@@ -920,6 +959,7 @@ public final class CaptureManager {
         generation: UInt64
     ) {
         let now = siteNowSeconds()
+        if startSec >= siteRunStart, siteRunPendingBrowserReads.remove(windowID) != nil { resumeReadySiteReadingWaiters() }
         chromiumActivitySnapshot.latestCGTitle[windowID] = cgTitle
         chromiumActivitySnapshot.latestCompleteRead[windowID] = ChromiumActivityWindowSnapshot(
             verdict: .cantTell,
@@ -1052,6 +1092,7 @@ public final class CaptureManager {
             let sampler = SiteSampler(
                 probe: accessibilityProbe,
                 isSnapshot: isSnapshot,
+                hooks: siteSamplerHooks,
                 onPoll: { [weak self] poll in
                     self?.receiveSitePoll(poll)
                 },
@@ -1070,16 +1111,87 @@ public final class CaptureManager {
             )
             siteSampler = sampler
 
-            let (stream, continuation) = AsyncStream<(UInt64, [String])>.makeStream()
+            let (stream, continuation) = AsyncStream<SiteSamplerCommand>.makeStream()
             siteListContinuation = continuation
             siteListTask = Task { [sampler] in
-                for await (gen, s) in stream {
-                    await sampler.applySites(s, generation: gen)
+                for await command in stream {
+                    switch command {
+                    case .sites(let gen, let s): await sampler.applySites(s, generation: gen)
+                    case .demand(let needed): await sampler.setDemand(needed)
+                    }
                 }
             }
+            continuation.yield(.demand(siteSamplerDemanded))
         }
 
-        siteListContinuation?.yield((currentGen, sites))
+        siteListContinuation?.yield(.sites(currentGen, sites))
+    }
+
+    /// Desktop activity reads browsers for the website rule only while it collects.
+    func setActivityNeedsSiteReads(_ needed: Bool) {
+        guard needed != siteActivityDemand else { return }
+        siteActivityDemand = needed
+        updateSiteSamplerDemand()
+    }
+
+    private func updateSiteSamplerDemand() {
+        let wanted = siteActivityDemand || siteScreenStarting
+            || (currentSegment != nil && sessionSources.contains(.screen))
+        if wanted {
+            siteSamplerStopTask?.cancel()
+            siteSamplerStopTask = nil
+            guard !siteSamplerDemanded else { return }
+            siteSamplerDemanded = true
+            if siteSamplerHasStopped {
+                siteRunStart = siteNowSeconds()
+                siteFrameGate.clearPolls()
+            }
+            siteRunHasReading = false
+            siteRunPendingBrowserReads = []
+            siteListContinuation?.yield(.demand(true))
+        } else {
+            guard siteSamplerDemanded, siteSamplerStopTask == nil else { return }
+            siteSamplerStopTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: self?.siteSamplerStopGrace ?? .seconds(5))
+                guard let self, !Task.isCancelled else { return }
+                self.siteSamplerStopTask = nil
+                self.siteSamplerDemanded = false
+                self.siteSamplerHasStopped = true
+                self.siteRunHasReading = false
+                self.siteRunPendingBrowserReads = []
+                self.siteFrameGate.clearPolls()
+                self.siteListContinuation?.yield(.demand(false))
+            }
+        }
+    }
+
+    /// Waits, at most `siteReadingWait`, for the sampler's first reading of this run, and with
+    /// `browserReads` also for the Chromium reads that reading started. Returns at once when the
+    /// website rule is off or the reading is already in. If none comes, frames stay held as
+    /// before: nothing is released without readings on both sides of it.
+    func awaitSiteReading(browserReads: Bool) async {
+        guard siteRuleActive, !isSnapshot, siteSamplerDemanded,
+              !siteReadingReady(browserReads: browserReads) else { return }
+        let id = UUID()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            siteReadingWaiters[id] = (browserReads, continuation)
+            let wait = siteReadingWait
+            Task { @MainActor in
+                try? await Task.sleep(for: wait)
+                self.siteReadingWaiters.removeValue(forKey: id)?.continuation.resume()
+            }
+        }
+    }
+
+    private func siteReadingReady(browserReads: Bool) -> Bool {
+        siteRunHasReading && (!browserReads || siteRunPendingBrowserReads.isEmpty)
+    }
+
+    private func resumeReadySiteReadingWaiters() {
+        for (id, waiter) in siteReadingWaiters where siteReadingReady(browserReads: waiter.browserReads) {
+            siteReadingWaiters.removeValue(forKey: id)
+            waiter.continuation.resume()
+        }
     }
 
     internal func waitForSiteListDrain(timeoutSeconds: TimeInterval = 2.0) async throws {
@@ -1378,6 +1490,13 @@ public final class CaptureManager {
         // holds an excluded app or a private window.
         var screenFilters = filtersByDisplayID
         if sessionSources.contains(.screen) {
+            // With websites listed, the sampler's first reading of this run is in before any
+            // stream starts, so every frame has a reading before it. The segment set below keeps
+            // the sampler running once this returns.
+            siteScreenStarting = true
+            updateSiteSamplerDemand()
+            defer { siteScreenStarting = false; updateSiteSamplerDemand() }
+            await awaitSiteReading(browserReads: false)
             windowExclusionManager.resetForNewSegment()
             if !displays.isEmpty {
                 screenFilters = await windowExclusionManager.filtersForNewSegment(displays: displays, base: filtersByDisplayID)

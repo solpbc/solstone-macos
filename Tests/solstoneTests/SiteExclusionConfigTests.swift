@@ -210,6 +210,8 @@ struct SiteExclusionConfigTests {
         )
         let loginService = FakeLoginItemService(watchdogStatus: .notRegistered, mainAppStatus: .notFound)
         let state = AppState.forLoginItemTest(config: AppConfig(), loginService: loginService)
+        // Readings are needed: here, desktop activity is collecting.
+        state.captureManager.setActivityNeedsSiteReads(true)
 
         let polling = ManualAccessibilityPolling()
         let reader = AccessibilitySampleReader(false)

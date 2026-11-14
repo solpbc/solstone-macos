@@ -3353,7 +3353,9 @@ public final class AppState {
             },
             captureOpen: { [weak manager] in manager?.hasOpenSegment ?? false },
             chromiumSnapshot: { [weak manager] in manager?.chromiumActivitySnapshot ?? ChromiumActivitySnapshot() },
-            onSealed: { [weak self] in self?.uploadCoordinator.triggerSync() }
+            onSealed: { [weak self] in self?.uploadCoordinator.triggerSync() },
+            siteReading: { [weak manager] in await manager?.awaitSiteReading(browserReads: true) },
+            onCollectingChanged: { [weak manager] in manager?.setActivityNeedsSiteReads($0) }
         )
         activitySource = source
         // Activity during capture goes into the capture segment it describes, as on Linux and Windows.

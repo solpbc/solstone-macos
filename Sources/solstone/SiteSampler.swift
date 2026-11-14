@@ -182,6 +182,10 @@ actor SiteSampler {
     private var isWalking = false
     private var isAXWorking: Bool = false
     private var appliedGeneration: UInt64 = 0
+    /// Whether anything needs readings now. With websites listed, the loops run only while this
+    /// holds. On its own a sampler runs whenever websites are listed; the capture manager says
+    /// when screen capture and desktop activity need none.
+    private var demanded = true
 
     private var inFlight: [PrivateBrowser: Bool] = [:]
     private var failureCounts: [PrivateBrowser: Int] = [:]
@@ -282,7 +286,16 @@ actor SiteSampler {
 
         if newSites.isEmpty {
             stop()
-        } else if pollTimer == nil {
+        } else if pollTimer == nil, demanded {
+            await start()
+        }
+    }
+
+    func setDemand(_ needed: Bool) async {
+        demanded = needed
+        if !needed {
+            stop()
+        } else if pollTimer == nil, !sites.isEmpty {
             await start()
         }
     }
