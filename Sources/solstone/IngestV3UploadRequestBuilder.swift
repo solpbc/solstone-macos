@@ -182,8 +182,9 @@ struct IngestV3UploadRequestBuilder {
         try ioHooks?.beforeWrite()
         try bodyHandle.write(contentsOf: Data("--\(boundary)--\r\n".utf8))
         try ioHooks?.beforeSync()
+        // Without hooks the body is a temporary copy, rebuilt for every pass and removed once sent,
+        // so nothing ever reads it after a crash and flushing it to the drive bought nothing.
         if let ioHooks { try ioHooks.sync(bodyHandle) }
-        else { try bodyHandle.synchronize() }
         guard let bodySize = try? bodyURL.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
             throw UploadError.preparationFailed
         }
