@@ -430,7 +430,7 @@ private final class WatchdogHarness {
             cachesURL: { rootURL.appendingPathComponent("Caches", isDirectory: true) },
             temporaryDirectoryURL: { rootURL.appendingPathComponent("Temporary", isDirectory: true) },
             volumeIsLocal: { _ in true },
-            runningCandidates: { candidateStore.current ?? [] },
+            runningCandidates: { _ in candidateStore.current ?? [] },
             openApplication: { _, completion in
                 launchStore.append(true)
                 completionStore.append(completion)

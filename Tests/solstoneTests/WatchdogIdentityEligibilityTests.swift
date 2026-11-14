@@ -351,6 +351,30 @@ struct WatchdogIdentityEligibilityTests {
         #expect(faults.all[0].contains("no-enclosing-app"))
     }
 
+    @Test @MainActor func pollingAsksOnlyAboutTheSupervisedApp() throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = try makeApp(at: root, named: "observer.app", bundleIdentifier: "app.solstone.observer")
+        let asked = LockedArray<String>([])
+        nonisolated(unsafe) var poll: (@MainActor @Sendable () -> Void)?
+        var dependencies = watchdogDependencies(writerExecutableURL: app.executableURL)
+        dependencies.cachesURL = { root.appendingPathComponent("Caches", isDirectory: true) }
+        dependencies.temporaryDirectoryURL = { root.appendingPathComponent("Temporary", isDirectory: true) }
+        dependencies.runningCandidates = { bundleIdentifier in
+            asked.append(bundleIdentifier)
+            return []
+        }
+        dependencies.schedulePollTimer = { callback in
+            poll = callback
+            return Timer(timeInterval: 1, repeats: false) { _ in }
+        }
+        let coordinator = WatchdogCoordinator(dependencies: dependencies)
+
+        #expect(coordinator.start() == .polling)
+        for _ in 0..<3 { poll?() }
+        #expect(asked.all == Array(repeating: "app.solstone.observer", count: 4))
+    }
+
     @Test @MainActor func criterion18And20ConflictingStartupDoesNotLaunchOverCopy() throws {
         let root = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -361,7 +385,7 @@ struct WatchdogIdentityEligibilityTests {
         var dependencies = watchdogDependencies(writerExecutableURL: app.executableURL)
         dependencies.cachesURL = { root.appendingPathComponent("Caches", isDirectory: true) }
         dependencies.temporaryDirectoryURL = { root.appendingPathComponent("Temporary", isDirectory: true) }
-        dependencies.runningCandidates = {
+        dependencies.runningCandidates = { _ in
             [WatchdogRunningCandidate(
                 bundleIdentifier: "app.solstone.observer",
                 processIdentifier: 77,
@@ -495,7 +519,7 @@ private func watchdogDependencies(writerExecutableURL: URL) -> WatchdogCoordinat
         cachesURL: { URL(fileURLWithPath: "/Users/test/Library/Caches", isDirectory: true) },
         temporaryDirectoryURL: { URL(fileURLWithPath: "/var/folders/test/T", isDirectory: true) },
         volumeIsLocal: { _ in true },
-        runningCandidates: { [] },
+        runningCandidates: { _ in [] },
         openApplication: { _, _ in },
         writeStateRecord: { _ in },
         logBootstrapFault: { _ in },

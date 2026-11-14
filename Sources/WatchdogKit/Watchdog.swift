@@ -21,7 +21,9 @@ final class WatchdogCoordinator {
         var cachesURL: () -> URL
         var temporaryDirectoryURL: () -> URL
         var volumeIsLocal: (URL) -> Bool?
-        var runningCandidates: () -> [WatchdogRunningCandidate]
+        /// Running copies of the app with this bundle identifier. Only those are read: the
+        /// version of every other running app is never needed.
+        var runningCandidates: (_ bundleIdentifier: String) -> [WatchdogRunningCandidate]
         var openApplication: (URL, @escaping @Sendable (NSRunningApplication?, Error?) -> Void) -> Void
         var writeStateRecord: (WatchdogStateRecord) throws -> Void
         var logBootstrapFault: (String) -> Void
@@ -39,8 +41,8 @@ final class WatchdogCoordinator {
             volumeIsLocal: { url in
                 try? url.resourceValues(forKeys: [.volumeIsLocalKey]).volumeIsLocal
             },
-            runningCandidates: {
-                NSWorkspace.shared.runningApplications.map { application in
+            runningCandidates: { bundleIdentifier in
+                NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).map { application in
                     WatchdogCoordinator.candidate(from: application)
                 }
             },
@@ -62,9 +64,11 @@ final class WatchdogCoordinator {
             clock: SystemMonotonicClock(),
             recordSupervisionTransition: { _ in },
             schedulePollTimer: { callback in
-                Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
+                let timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
                     Task { @MainActor in callback() }
                 }
+                timer.tolerance = 0.5
+                return timer
             }
         )
     }
@@ -109,7 +113,7 @@ final class WatchdogCoordinator {
 
         let now = dependencies.clock.now()
         transition(to: .retrying(failureCount: 0, nextAttemptAt: now), cause: .startup)
-        reconcileCandidates(dependencies.runningCandidates())
+        reconcileRunningCandidates()
         pollTimer = dependencies.schedulePollTimer { [weak self] in
             self?.pollObserverPresence()
         }
@@ -136,7 +140,12 @@ final class WatchdogCoordinator {
     }
 
     private func pollObserverPresence() {
-        reconcileCandidates(dependencies.runningCandidates())
+        reconcileRunningCandidates()
+    }
+
+    private func reconcileRunningCandidates() {
+        guard let identity else { return }
+        reconcileCandidates(dependencies.runningCandidates(identity.product.targetBundleID))
     }
 
     private func handleLaunchCompletion(sequence: UInt64, app: NSRunningApplication?, error: Error?) {
