@@ -105,6 +105,8 @@ final class TunnelLifecycleOwner {
     /// the keepalive answers every couple of seconds, and every inbound byte
     /// counts as hearing the journal.
     static let livenessSampleInterval: Duration = .seconds(1)
+    /// The reading may come this much late, so it can share a wakeup with other work.
+    nonisolated static let livenessSampleTolerance: Duration = .milliseconds(250)
     /// After this much silence the journal is asked directly, over the open tunnel.
     nonisolated static let probeAfterSilence: TimeInterval = 3
     /// One such check may take this long. Silence, then one slow check, fits inside
@@ -364,7 +366,9 @@ final class TunnelLifecycleOwner {
         pathMonitoringSource: (any PathMonitoringSource)? = nil,
         probe: @escaping @Sendable (Int, Duration) async -> Bool = TunnelLifecycleOwner.httpStatusProbe(localPort:timeout:),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
-        livenessSleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+        livenessSleep: @escaping @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0, tolerance: TunnelLifecycleOwner.livenessSampleTolerance)
+        },
         now: @escaping @Sendable () -> Date = { Date() },
         clientSelfSequencer: JournalClientSelfSequencer? = nil,
         relayAccessSequencer: JournalRelayAccessSequencer? = nil,
