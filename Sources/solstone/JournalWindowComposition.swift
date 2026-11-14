@@ -195,7 +195,7 @@ internal struct JournalWindowComposition: Sendable, Equatable {
         verdictClass: JournalWindowVerdictClass = .transient
     ) -> JournalWindowLoadCommand? {
         destination = newDestination
-        return beginLoad(resolvedBase: resolvedBase, verdictClass: verdictClass)
+        return beginLoad(resolvedBase: resolvedBase, verdictClass: verdictClass, forceLoad: true)
     }
 
     mutating func reload(
@@ -309,7 +309,8 @@ internal struct JournalWindowComposition: Sendable, Equatable {
 
     private mutating func beginLoad(
         resolvedBase: ResolvedHomeBase,
-        verdictClass: JournalWindowVerdictClass
+        verdictClass: JournalWindowVerdictClass,
+        forceLoad: Bool = false
     ) -> JournalWindowLoadCommand? {
         if case .url(let base) = resolvedBase,
            let command = Self.composeLoadCommand(
@@ -317,7 +318,7 @@ internal struct JournalWindowComposition: Sendable, Equatable {
             destination: destination,
             generation: generation &+ 1
            ) {
-            if state == .linkDown, shouldRecoverToLoaded(command: command) {
+            if !forceLoad, state == .linkDown, shouldRecoverToLoaded(command: command) {
                 generation += 1
                 state = .loaded
                 loadCommand = nil
@@ -627,11 +628,8 @@ internal final class JournalWindowSession {
         let url = URL(string: raw)
         let host = url?.host ?? ""
         let port = url?.port ?? defaultPort(for: url?.scheme)
-        let path = url?.path ?? ""
-        let query = url?.query ?? ""
-        let fragment = url?.fragment ?? ""
         Logger.journal.info(
-            "\(tag, privacy: .public) host=\(host, privacy: .public) port=\(port, privacy: .public) path=\(path, privacy: .private) query=\(query, privacy: .private) fragment=\(fragment, privacy: .private)"
+            "\(tag, privacy: .public) host=\(host, privacy: .public) port=\(port, privacy: .public)"
         )
     }
 

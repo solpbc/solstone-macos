@@ -275,6 +275,23 @@ public final class AppState {
     }
 
     public func handleIngressURLString(_ raw: String) {
+        switch JournalLink(raw) {
+        case .destination(let destination):
+            // A paired journal uses the app's window, including one on this Mac.
+            // The older saved-address setup has no tunnel and keeps its browser door.
+            if tunnelLifecycleOwner.sameMachineStoredPairingState == .noneHeld,
+               BundledJournalEndpoint.isBundledServiceURL(config.serverURL) {
+                openSameMacJournalInBrowser(destination)
+            } else {
+                openJournalWindowDirectly(destination)
+            }
+            return
+        case .invalid:
+            showInvalidJournalLinkNotice()
+            return
+        case .unrelated:
+            break
+        }
         switch translatePairingLink(raw) {
         case .success(let canonical):
             pendingPairingLinkError = nil
@@ -298,6 +315,17 @@ public final class AppState {
             pendingSettingsTab = "journal"
             NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
         }
+    }
+
+    @ObservationIgnored
+    internal var showInvalidJournalLinkNotice: @MainActor () -> Void = {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = UICopy.JOURNAL_LINK_INVALID_TITLE
+        alert.informativeText = UICopy.JOURNAL_LINK_INVALID_BODY
+        alert.addButton(withTitle: "close")
+        alert.runModal()
     }
 
     public func ingestStep5IfNeeded() {
