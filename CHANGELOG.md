@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- when your journal asks you to confirm something in the solstone app's journal window, like unpairing a device or redoing a day from scratch, the solstone app now shows you the question. before, it answered every one as if you'd pressed cancel, so nothing happened.
+
 ## [2.0.69] - 2026-11-14
 
 ### Added

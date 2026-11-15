@@ -1016,6 +1016,45 @@ struct JournalWindowRoutingTests {
 @Suite("JournalWindow WebKit")
 @MainActor
 struct JournalWindowWebKitTests {
+    @Test func pageConfirmAndPromptDrawASheetAndAnswerWhatTheOwnerChose() async throws {
+        let page = try await PanelPage.open()
+        defer { page.close() }
+        let panels = page.coordinator.panels
+
+        let declined = Task { try await page.webView.evaluateJavaScript("confirm('unpair this device?')") as? Bool }
+        let confirmSheet = try await page.waitForOpenSheet()
+        #expect(confirmSheet.messageText == "unpair this device?")
+        #expect(page.window.attachedSheet === confirmSheet.window)
+        #expect(confirmSheet.buttons.map(\.title) == ["ok", "cancel"])
+        panels.answer(accepted: false)
+        #expect(try await declined.value == false)
+
+        let accepted = Task { try await page.webView.evaluateJavaScript("confirm('unpair this device?')") as? Bool }
+        _ = try await page.waitForOpenSheet()
+        panels.answer(accepted: true)
+        #expect(try await accepted.value == true)
+
+        let renamed = Task { try await page.webView.evaluateJavaScript("prompt('rename this key', 'old name')") as? String }
+        let promptSheet = try await page.waitForOpenSheet()
+        let field = try #require(promptSheet.accessoryView as? NSTextField)
+        #expect(field.stringValue == "old name")
+        field.stringValue = "laptop"
+        panels.answer(accepted: true)
+        #expect(try await renamed.value == "laptop")
+    }
+
+    @Test func aSheetOpenWhenTheWindowGoesAwayAnswersCancel() async throws {
+        let page = try await PanelPage.open()
+        defer { page.close() }
+
+        let confirmed = Task { try await page.webView.evaluateJavaScript("confirm('unpair this device?')") as? Bool }
+        _ = try await page.waitForOpenSheet()
+        page.coordinator.tearDown()
+        #expect(try await confirmed.value == false)
+        #expect(page.coordinator.panels.openAlert == nil)
+        #expect(page.window.attachedSheet == nil)
+    }
+
     @Test func packagedHostContractSetsApplicationNameForUserAgent() throws {
         let sink = RecordingClassifiedLogSink()
         let product = JournalWebHostContract.userAgentProduct(
@@ -2055,6 +2094,57 @@ private func observeOpenJournalWindow(_ probe: JournalURLOpenProbe) -> NSObjectP
             probe.posted = true
         }
     }
+}
+
+@MainActor
+private struct PanelPage {
+    let webView: WKWebView
+    let window: NSWindow
+    let coordinator: JournalWebView.Coordinator
+
+    static func open() async throws -> PanelPage {
+        let coordinator = JournalWebView.Coordinator(
+            session: JournalWindowSession(resolveHomeBase: { .held }),
+            openExternalURL: { _ in }
+        )
+        let frame = NSRect(x: 0, y: 0, width: 480, height: 360)
+        let webView = WKWebView(frame: frame)
+        webView.uiDelegate = coordinator
+        let window = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = webView
+        let page = PanelPage(webView: webView, window: window, coordinator: coordinator)
+        webView.loadHTMLString("<!doctype html><title>ready</title>", baseURL: nil)
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while clock.now < deadline {
+            if try await webView.evaluateJavaScript("document.title") as? String == "ready" { return page }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        page.close()
+        throw PanelPageError.notReady
+    }
+
+    func waitForOpenSheet() async throws -> NSAlert {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while clock.now < deadline {
+            if let alert = coordinator.panels.openAlert, window.attachedSheet === alert.window { return alert }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw PanelPageError.noSheet
+    }
+
+    func close() {
+        coordinator.tearDown()
+        webView.uiDelegate = nil
+        window.close()
+    }
+}
+
+private enum PanelPageError: Error {
+    case notReady
+    case noSheet
 }
 
 @MainActor

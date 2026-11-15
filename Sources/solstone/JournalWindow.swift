@@ -373,6 +373,7 @@ struct JournalWebView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let seam: JournalWindowWebViewSeam
+        let panels = JournalWebPanels()
         private var pendingLoadGeneration: UInt64?
         private var isTornDown = false
 
@@ -385,6 +386,7 @@ struct JournalWebView: NSViewRepresentable {
 
         func tearDown() {
             isTornDown = true
+            panels.tearDown()
             seam.tearDown()
         }
 
@@ -500,6 +502,36 @@ struct JournalWebView: NSViewRepresentable {
             decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
         ) {
             decisionHandler(.deny)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            runJavaScriptAlertPanelWithMessage message: String,
+            initiatedByFrame frame: WKFrameInfo
+        ) async {
+            _ = await panels.present(.alert, message: message, over: webView)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            runJavaScriptConfirmPanelWithMessage message: String,
+            initiatedByFrame frame: WKFrameInfo
+        ) async -> Bool {
+            await panels.present(.confirm, message: message, over: webView) != .cancelled
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            runJavaScriptTextInputPanelWithPrompt prompt: String,
+            defaultText: String?,
+            initiatedByFrame frame: WKFrameInfo
+        ) async -> String? {
+            switch await panels.present(.prompt(defaultText: defaultText), message: prompt, over: webView) {
+            case .accepted(let text):
+                return text ?? ""
+            case .cancelled:
+                return nil
+            }
         }
 
         private func loadInCurrentWindow(_ command: JournalWindowLoadCommand, webView: WKWebView) {
