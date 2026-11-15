@@ -90,6 +90,8 @@ public struct BrowserHostRegistrationOutcome: Sendable, Equatable {
 public struct BrowserHostRegistrationReport: Sendable, Equatable {
     public let outcomes: [BrowserBrand: BrowserHostRegistrationOutcome]
     public let changedAny: Bool
+    /// Brave's copy of Chrome's manifest. Not part of `isComplete`: Brave is optional.
+    public var brave: BrowserHostRegistrationOutcome? = nil
     public var isComplete: Bool {
         BrowserBrand.nativeMessagingHosts.allSatisfy {
             outcomes[$0]?.state == .ready || outcomes[$0]?.state == .changed
@@ -143,67 +145,76 @@ public struct BrowserHostRegistration: Sendable {
         var outcomes: [BrowserBrand: BrowserHostRegistrationOutcome] = [:]
         var changedAny = false
         for brand in BrowserBrand.nativeMessagingHosts {
-            do {
-                let templateURL = contract
-                    .appendingPathComponent("registration", isDirectory: true)
-                    .appendingPathComponent(mode == .production ? "production" : "dev", isDirectory: true)
-                    .appendingPathComponent(brand.rawValue, isDirectory: true)
-                    .appendingPathComponent("macos.json")
-                let template = try fileSystem.read(templateURL)
-                guard var object = try JSONSerialization.jsonObject(with: template) as? [String: Any] else {
-                    outcomes[brand] = outcome(brand, .refused, nil, "invalid_template")
-                    continue
-                }
-                replacePathPlaceholder(in: &object, with: helperURL.path)
-                let bytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
-                let destination = registrationDirectory(for: brand).appendingPathComponent("\(host).json")
-                let directory = destination.deletingLastPathComponent()
-
-                if let profileRoot = browserOwnedProfileRoot(for: brand), fileSystem.info(profileRoot) == nil {
-                    outcomes[brand] = outcome(brand, .changed, destination.path, "browser_not_set_up")
-                    continue
-                }
-
-                if !repair, fileSystem.info(destination) == nil, !existingAncestorIsUnsafe(directory) {
-                    outcomes[brand] = outcome(brand, .changed, destination.path, "manifest_missing")
-                    continue
-                }
-                guard ensureSafeDirectory(directory, create: repair) else {
-                    outcomes[brand] = outcome(brand, .refused, destination.path, "unsafe_registration_directory")
-                    continue
-                }
-                if let currentInfo = fileSystem.info(destination) {
-                    guard currentInfo.kind == .regular, currentInfo.uid == effectiveUID else {
-                        outcomes[brand] = outcome(brand, .refused, destination.path, "unsafe_manifest")
-                        continue
-                    }
-                    if (try? fileSystem.read(destination)) == bytes {
-                        outcomes[brand] = outcome(brand, .ready, destination.path, nil)
-                        continue
-                    }
-                    guard repair else {
-                        outcomes[brand] = outcome(brand, .changed, destination.path, "manifest_change_required")
-                        continue
-                    }
-                } else if !repair {
-                    outcomes[brand] = outcome(brand, .changed, destination.path, "manifest_missing")
-                    continue
-                }
-                try fileSystem.writeAtomically(bytes, to: destination)
-                guard let verifyInfo = fileSystem.info(destination),
-                      verifyInfo.kind == .regular,
-                      verifyInfo.uid == effectiveUID,
-                      (try? fileSystem.read(destination)) == bytes else {
-                    outcomes[brand] = outcome(brand, .refused, destination.path, "manifest_verification_failed")
-                    continue
-                }
-                changedAny = true
-                outcomes[brand] = outcome(brand, .changed, destination.path, nil)
-            } catch {
-                outcomes[brand] = outcome(brand, .refused, nil, "registration_io")
-            }
+            let result = register(template: brand, directory: registrationDirectory(for: brand),
+                                  profileRoot: browserOwnedProfileRoot(for: brand),
+                                  contract: contract, host: host, mode: mode, repair: repair)
+            outcomes[brand] = result.outcome
+            changedAny = changedAny || result.changed
         }
-        return BrowserHostRegistrationReport(outcomes: outcomes, changedAny: changedAny)
+        // Brave runs the Chrome extension but reads native-messaging hosts from its own
+        // folder, so it gets Chrome's manifest there. Brave owns that folder, as Chrome
+        // owns its own: nothing is written until Brave has made it. Brave's result stays
+        // out of `outcomes`, so a Mac without Brave is still complete.
+        let brave = register(template: .chrome, directory: home.appendingPathComponent(Self.braveDirectory, isDirectory: true),
+                             profileRoot: home.appendingPathComponent(Self.braveProfileRoot, isDirectory: true),
+                             contract: contract, host: host, mode: mode, repair: repair)
+        changedAny = changedAny || brave.changed
+        return BrowserHostRegistrationReport(outcomes: outcomes, changedAny: changedAny, brave: brave.outcome)
+    }
+
+    static let braveProfileRoot = "Library/Application Support/BraveSoftware/Brave-Browser"
+    static let braveDirectory = braveProfileRoot + "/NativeMessagingHosts"
+
+    private func register(template brand: BrowserBrand, directory: URL, profileRoot: URL?, contract: URL, host: String,
+                          mode: BrowserHostRegistrationMode, repair: Bool) -> (outcome: BrowserHostRegistrationOutcome, changed: Bool) {
+        do {
+            let templateURL = contract
+                .appendingPathComponent("registration", isDirectory: true)
+                .appendingPathComponent(mode == .production ? "production" : "dev", isDirectory: true)
+                .appendingPathComponent(brand.rawValue, isDirectory: true)
+                .appendingPathComponent("macos.json")
+            let template = try fileSystem.read(templateURL)
+            guard var object = try JSONSerialization.jsonObject(with: template) as? [String: Any] else {
+                return (outcome(brand, .refused, nil, "invalid_template"), false)
+            }
+            replacePathPlaceholder(in: &object, with: helperURL.path)
+            let bytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
+            let destination = directory.appendingPathComponent("\(host).json")
+
+            if let profileRoot, fileSystem.info(profileRoot) == nil {
+                return (outcome(brand, .changed, destination.path, "browser_not_set_up"), false)
+            }
+
+            if !repair, fileSystem.info(destination) == nil, !existingAncestorIsUnsafe(directory) {
+                return (outcome(brand, .changed, destination.path, "manifest_missing"), false)
+            }
+            guard ensureSafeDirectory(directory, create: repair) else {
+                return (outcome(brand, .refused, destination.path, "unsafe_registration_directory"), false)
+            }
+            if let currentInfo = fileSystem.info(destination) {
+                guard currentInfo.kind == .regular, currentInfo.uid == effectiveUID else {
+                    return (outcome(brand, .refused, destination.path, "unsafe_manifest"), false)
+                }
+                if (try? fileSystem.read(destination)) == bytes {
+                    return (outcome(brand, .ready, destination.path, nil), false)
+                }
+                guard repair else {
+                    return (outcome(brand, .changed, destination.path, "manifest_change_required"), false)
+                }
+            } else if !repair {
+                return (outcome(brand, .changed, destination.path, "manifest_missing"), false)
+            }
+            try fileSystem.writeAtomically(bytes, to: destination)
+            guard let verifyInfo = fileSystem.info(destination),
+                  verifyInfo.kind == .regular,
+                  verifyInfo.uid == effectiveUID,
+                  (try? fileSystem.read(destination)) == bytes else {
+                return (outcome(brand, .refused, destination.path, "manifest_verification_failed"), false)
+            }
+            return (outcome(brand, .changed, destination.path, nil), true)
+        } catch {
+            return (outcome(brand, .refused, nil, "registration_io"), false)
+        }
     }
 
     private func isBundledProductionHelper() -> Bool {

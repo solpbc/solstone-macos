@@ -319,6 +319,54 @@ struct NativeHostRegistrationTests {
         }
     }
 
+    @Test func braveGetsChromesManifestInItsOwnFolderOnceBraveHasMadeIt() throws {
+        let home = URL(fileURLWithPath: "/fake-brave-home", isDirectory: true)
+        let helper = home.appendingPathComponent("Applications/Solstone.app/Contents/MacOS/solstone-browser-host")
+        let fs = NativeHostMemoryFileSystem(home: home, helper: helper)
+        fs.addBrowserProfiles()
+        let registration = BrowserHostRegistration(contractRoot: nativeHostVendorRoot(), home: home, helperURL: helper, fileSystem: fs)
+        let braveRoot = home.appendingPathComponent("Library/Application Support/BraveSoftware/Brave-Browser", isDirectory: true)
+        let braveSoftware = braveRoot.deletingLastPathComponent()
+
+        // No Brave: nothing is made for it, and the report is complete without it.
+        let noBrave = registration.repair(mode: .production)
+        #expect(noBrave.isComplete)
+        #expect(noBrave.brave?.reasonCode == "browser_not_set_up")
+        #expect(fs.info(braveSoftware) == nil)
+
+        fs.addEntry(braveSoftware, kind: .directory, uid: geteuid())
+        fs.addEntry(braveRoot, kind: .directory, uid: geteuid())
+        #expect(registration.check(mode: .production).brave?.reasonCode == "manifest_missing")
+        let first = registration.repair(mode: .production)
+        #expect(first.isComplete)
+        #expect(first.changedAny)
+        let bravePath = try #require(first.brave?.path)
+        #expect(bravePath == braveRoot.appendingPathComponent("NativeMessagingHosts/app.solstone.browser.json").path)
+        let chromePath = try #require(first.outcomes[.chrome]?.path)
+        #expect(try fs.read(URL(fileURLWithPath: bravePath)) == fs.read(URL(fileURLWithPath: chromePath)))
+
+        let writes = fs.writeCount
+        let second = registration.repair(mode: .production)
+        #expect(second.brave?.state == .ready)
+        #expect(!second.changedAny)
+        #expect(fs.writeCount == writes)
+    }
+
+    @Test func aBraveFolderOwnedBySomeoneElseIsRefusedAndLeavesTheRestComplete() {
+        let home = URL(fileURLWithPath: "/fake-brave-foreign-home", isDirectory: true)
+        let helper = home.appendingPathComponent("Applications/Solstone.app/Contents/MacOS/solstone-browser-host")
+        let fs = NativeHostMemoryFileSystem(home: home, helper: helper)
+        fs.addBrowserProfiles()
+        let braveRoot = home.appendingPathComponent("Library/Application Support/BraveSoftware/Brave-Browser", isDirectory: true)
+        fs.addEntry(braveRoot.deletingLastPathComponent(), kind: .directory, uid: geteuid())
+        fs.addEntry(braveRoot, kind: .directory, uid: geteuid() + 1)
+        let report = BrowserHostRegistration(contractRoot: nativeHostVendorRoot(), home: home, helperURL: helper, fileSystem: fs)
+            .repair(mode: .production)
+        #expect(report.isComplete)
+        #expect(report.brave?.state == .refused)
+        #expect(report.brave?.reasonCode == "unsafe_registration_directory")
+    }
+
     @Test func developmentRegistrationRequiresAnExplicitDevelopmentBuild() {
         let home = URL(fileURLWithPath: "/fake-development-home", isDirectory: true)
         let helper = home.appendingPathComponent("Solstone.app/Contents/MacOS/solstone-browser-host")
