@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.69] - 2026-11-14
+
 ### Added
 
 - when paired with your journal, the solstone app now opens journal links in its journal window.
@@ -20,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - the solstone extension in Brave now reaches the solstone app, so it uses the app's list of websites you leave out, as it does in Chrome and Edge. before, it kept its own list.
 - the solstone app writes to this mac's disk much less while nothing is changing. before, it saved the same empty screenshots file again and again, even with screenshots never turned on.
-- with websites left out, the solstone app no longer keeps checking your browser windows while this mac is locked, asleep or paused, which kept this mac busy for nothing.
+- with websites left out, the solstone app no longer keeps checking your browser windows while this mac is locked or asleep, which kept this mac busy for nothing.
 - while this mac is locked and nothing is going to your journal, the solstone app checks that it can still reach your journal about twice a minute. before, it checked every two seconds around the clock, which kept this mac and your journal busier than they needed to be.
 
 ## [2.0.68] - 2026-11-14
