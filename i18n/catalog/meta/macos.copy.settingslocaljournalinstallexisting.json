@@ -1,0 +1,16 @@
+{
+  "description": "install the journal app to bring it back online",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 47,
+  "source_revision": "30ee584ce698f496f43e00be822bc43036185cc5bcba8aff0df08cc3701619c0",
+  "risk": "routine",
+  "auto_merge": true
+}

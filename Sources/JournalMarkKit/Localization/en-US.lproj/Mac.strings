@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d61726b636f6e6669726d65646c696e65</key>
+	<string>this is your journal</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e61626f75742e70656e64696e6773657474696e6773746162</key>
+	<string>journal</string>
+	<key>m6d61636f732e6a6f75726e616c6d61726b67656e657269632e6d61726b</key>
+	<string>mark</string>
+	<key>m6d61636f732e6a6f75726e616c6d61726b67656e657269632e6e6f74</key>
+	<string>not</string>
+	<key>m6d61636f732e6a6f75726e616c6d61726b67656e657269632e70726573656e746564</key>
+	<string>presented</string>
+	<key>m6d61636f732e6a6f75726e616c6d61726b67656e657269632e756e617661696c61626c65</key>
+	<string>unavailable</string>
+	<key>m6d61636f732e6a6f75726e616c6d61726b67656e657269632e796f7572</key>
+	<string>your</string>
+	<key>m6d61636f732e6a6f75726e616c6d61726b67656e657269632e796f75726a6f75726e616c6d61726b6e6f7472656164796574</key>
+	<string>your journal, mark not read yet</string>
+	<key>m6d61636f732e6a6f75726e616c6d61726b67656e657269632e796f75726a6f75726e616c6e6f747365747570796574</key>
+	<string>your journal, not set up yet</string>
+	<key>m6d61636f732e6a6f75726e616c6d61726b67656e657269632e796f75726a6f75726e616c736d61726b756e617661696c61626c6572696768746e6f77</key>
+	<string>your journal's mark, unavailable right now</string>
+	<key>m6d61636f732e75692e6e6f6964656e7469747970726573656e746564</key>
+	<string>no identity presented</string>
+</dict>
+</plist>

@@ -16,10 +16,10 @@ enum SetupDownloadPresentation {
     static func rows(downloads: SetupDownloads?) -> [Row] {
         guard let downloads else { return [] }
         var result: [Row] = []
-        if let speech = row(name: "speech recognition", job: downloads.speech, action: downloads.speechAction) {
+        if let speech = row(name: MacStrings.macos_setup_speechrecognition(), job: downloads.speech, action: downloads.speechAction) {
             result.append(speech)
         }
-        if let thinking = row(name: "local thinking", job: downloads.thinking, action: downloads.thinkingAction) {
+        if let thinking = row(name: MacStrings.macos_setup_localthinking(), job: downloads.thinking, action: downloads.thinkingAction) {
             result.append(thinking)
         }
         return result
@@ -33,7 +33,7 @@ enum SetupDownloadPresentation {
             guard let action else { return nil }
             switch action {
             case .cancelThinking:
-                return "cancel"
+                return MacStrings.macos_desktop_shared_setup_cancel()
             case .startThinking, .retrySpeech:
                 return UICopy.SETUP_TRY_AGAIN
             }
@@ -46,7 +46,7 @@ enum SetupDownloadPresentation {
                 let totalStr = ByteCountFormatter.string(fromByteCount: Int64(clamping: total), countStyle: .file)
                 return Row(
                     name: name,
-                    detail: "\(done) of \(totalStr)",
+                    detail: MacStrings.macos_setup_of("\(done)", "\(totalStr)"),
                     fraction: job.fraction,
                     indeterminate: false,
                     actionTitle: actionTitle,
@@ -65,7 +65,7 @@ enum SetupDownloadPresentation {
         case .error:
             return Row(
                 name: name,
-                detail: "download failed.",
+                detail: MacStrings.macos_setup_downloadfailed(),
                 fraction: nil,
                 indeterminate: false,
                 actionTitle: actionTitle,
@@ -74,7 +74,7 @@ enum SetupDownloadPresentation {
         case .cancelled:
             return Row(
                 name: name,
-                detail: "cancelled",
+                detail: MacStrings.macos_setupdownloadpresentation_cancelled(),
                 fraction: nil,
                 indeterminate: false,
                 actionTitle: actionTitle,

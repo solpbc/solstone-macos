@@ -1,0 +1,28 @@
+{
+  "description": "no answer: {error}",
+  "context": "Shown by Sources/JournalLocalAccess/JournalLocalHTTPClient.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "04f68716447c601df71cd87a6593bd479b01486102d3c2e52c992b1dbfd68c94",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "description": "download updates in the background",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift. The same sentence is on Windows as windows.desktop.shared.updates.downloadupdatesinthebackground. Keep the two translations consistent.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 34,
+  "source_revision": "d15c80725c2df2d98ba0a4900b2f1a7f512dd8899e3d04287b9dac4196ed9b60",
+  "risk": "routine",
+  "auto_merge": true
+}

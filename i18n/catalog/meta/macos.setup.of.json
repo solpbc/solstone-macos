@@ -1,0 +1,25 @@
+{
+  "description": "{done} of {totalstr}",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupDownloadPresentation.swift.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "done",
+      "type": "string"
+    },
+    {
+      "name": "totalstr",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 20,
+  "source_revision": "0e56d2b8e2dbb9e7486011280df477455dfe6723fe60c31503c540db6e7b9a3b",
+  "risk": "routine",
+  "auto_merge": true
+}

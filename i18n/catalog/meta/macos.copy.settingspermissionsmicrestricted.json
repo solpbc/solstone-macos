@@ -1,0 +1,16 @@
+{
+  "description": "microphone access is restricted by this mac.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 44,
+  "source_revision": "350906280d4c0fc3ec667f9fe48da1ff086637d7d48377a439f86ce661282424",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "your journal, mark not read yet",
+  "context": "Shown by Sources/JournalMarkKit/JournalMarkGeneric.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "b92956c7f1831676c51ad52ae3cef3641e43b468ab047a2bbd9372ad5cbce3c4",
+  "risk": "routine",
+  "auto_merge": true
+}

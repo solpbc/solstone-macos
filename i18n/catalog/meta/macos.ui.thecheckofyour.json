@@ -1,0 +1,16 @@
+{
+  "description": "the check of your journal's mark didn't finish. that doesn't mean the marks disagree.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 85,
+  "source_revision": "af54d0251f61a666d277293e17144e6d08e4a6907bd54e92f5608d2c236cd67a",
+  "risk": "routine",
+  "auto_merge": true
+}

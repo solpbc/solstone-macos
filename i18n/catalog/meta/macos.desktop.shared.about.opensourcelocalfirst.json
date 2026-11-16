@@ -1,0 +1,16 @@
+{
+  "description": "open source, local-first.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/AboutView.swift. The same sentence is on Windows as windows.desktop.shared.about.opensourcelocalfirst. Keep the two translations consistent.",
+  "surfaces": [
+    "about"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 25,
+  "source_revision": "c6dd9a4ea9f7ee0cc0622978e3c65dc1bc4de0c163bfa1d0eaa6ba76c6f321ff",
+  "risk": "routine",
+  "auto_merge": true
+}

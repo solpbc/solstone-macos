@@ -1,0 +1,16 @@
+{
+  "description": "solstone is running from a location it might not find again next launch, so macOS may not remember its screen recording permission. install solstone in Applications, a reliable spot, and it will reopen.",
+  "context": "Shown by Sources/solstone/AppPlacementRepair.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "d7d805c8d6be3f1293e8984e2aa860f9904d36a8a128e6f3dab0cf322e375e42",
+  "risk": "routine",
+  "auto_merge": true
+}

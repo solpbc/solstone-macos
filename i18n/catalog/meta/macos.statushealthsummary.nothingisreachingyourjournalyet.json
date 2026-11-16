@@ -1,0 +1,16 @@
+{
+  "description": "nothing is reaching your journal yet",
+  "context": "Shown by Sources/solstone/StatusHealthSummary.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "6dae3dd68ee1be3811e0a6c5b1cc63487a56194e3fbaf55a58630f9887c1dcbf",
+  "risk": "routine",
+  "auto_merge": true
+}

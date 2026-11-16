@@ -1,0 +1,16 @@
+{
+  "description": "this segment has finished accepting audio.",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "a6fc43fdecf2df0d4959dcfa48ed490787b069c0994cbaf63dfd12df0cfe5f48",
+  "risk": "routine",
+  "auto_merge": true
+}

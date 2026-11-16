@@ -1,0 +1,16 @@
+{
+  "description": "your",
+  "context": "Shown by Sources/JournalMarkKit/JournalMarkGeneric.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "dcde812c60f1f532094c622a016d1d66334139d212cdf26cec77589a51a4be40",
+  "risk": "routine",
+  "auto_merge": true
+}

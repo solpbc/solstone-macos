@@ -1,0 +1,16 @@
+{
+  "description": "technical details",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.technicaldetails. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 17,
+  "source_revision": "c3189d69bac6ca72656625cc4d48917defe4b86752e031b227e8455a8a230659",
+  "risk": "routine",
+  "auto_merge": true
+}

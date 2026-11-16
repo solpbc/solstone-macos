@@ -91,7 +91,7 @@ public struct JournalLocalHTTPClient: Sendable {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw JournalLocalHTTPError.linkFailed("no answer: \(error)")
+            throw JournalLocalHTTPError.linkFailed(MacStrings.macos_journallocalhttpclient_noanswer("\(error)"))
         }
         let status = (answer.1 as? HTTPURLResponse)?.statusCode ?? 0
         switch Self.linkAnswer(status: status, body: answer.0, port: route.port) {
@@ -120,12 +120,12 @@ public struct JournalLocalHTTPClient: Sendable {
     static func linkAnswer(status: Int, body: Data, port: Int) -> LinkAnswer {
         switch status {
         case 200:
-            return oneTimeLink(in: body, port: port).map(LinkAnswer.link) ?? .failed("the answer held no usable link")
+            return oneTimeLink(in: body, port: port).map(LinkAnswer.link) ?? .failed(MacStrings.macos_journallocalhttpclient_theanswerheldno())
         case 404:
             return .noLinks
         default:
             let reason = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["error"] as? String
-            return .failed("status \(status): \(reason ?? "no reason given")")
+            return .failed(MacStrings.macos_journallocalhttpclient_status("\(status)", "\(reason ?? MacStrings.macos_localaccess_noreason())"))
         }
     }
 

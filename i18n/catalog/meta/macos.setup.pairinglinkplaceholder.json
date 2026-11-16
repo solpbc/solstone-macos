@@ -1,0 +1,16 @@
+{
+  "description": "paste pairing link",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupView.swift.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 18,
+  "source_revision": "81ced632adf7e1a4fec26568d693f816c707b1fee2a6c4756e3fdc07ed3a2916",
+  "risk": "routine",
+  "auto_merge": true
+}

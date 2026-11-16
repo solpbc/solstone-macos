@@ -1,0 +1,21 @@
+{
+  "description": "all good · on, synced to {journalslot}",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "journalslot",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 38,
+  "source_revision": "b1c07e908def666bead7fc2aceb251b339654d876941d737226a685a0792dbef",
+  "risk": "routine",
+  "auto_merge": true
+}

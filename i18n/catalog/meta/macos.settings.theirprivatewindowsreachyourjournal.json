@@ -1,0 +1,16 @@
+{
+  "description": "their private windows reach your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 41,
+  "source_revision": "d90681643231bea27e75f24145fdf09485fe7030c684a7f6d86b93c1a644f8cc",
+  "risk": "routine",
+  "auto_merge": true
+}

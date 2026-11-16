@@ -49,37 +49,37 @@ extension JournalHandoffStep {
     var ownerStatusMessage: String {
         switch self {
         case .idle:
-            return "ready to move your journal into its own app"
+            return MacStrings.macos_migration_readytomoveyourjournalintoits()
         case .acquiring(.fetchingAppcast),
              .acquiring(.selectingLatestSparkleVersion),
              .acquiring(.validatingLength):
-            return "checking for the journal app"
+            return MacStrings.macos_migration_checkingforthejournalapp()
         case .acquiring(.downloadingDMG):
-            return "getting the journal app"
+            return MacStrings.macos_migration_gettingthejournalapp()
         case .acquiring(.verifyingEdDSA),
              .acquiring(.mountingDMG),
              .acquiring(.verifyingJournalAppTrust):
-            return "checking the journal app"
+            return MacStrings.macos_migration_checkingthejournalapp()
         case .acquiring(.installingToApplications),
              .acquiring(.clearingQuarantine),
              .acquiring(.cleaningTemporaryFiles):
-            return "installing the journal app"
+            return MacStrings.macos_migration_installingthejournalapp()
         case .checkingRunningJournal:
-            return "getting journal ready"
+            return MacStrings.macos_migration_gettingjournalready()
         case .writingHandoff:
-            return "preparing your journal"
+            return MacStrings.macos_migration_preparingyourjournal()
         case .launchingJournal:
-            return "opening journal"
+            return MacStrings.macos_migration_openingjournal()
         case .waitingForAdoption:
-            return "waiting for journal to finish setup"
+            return MacStrings.macos_migration_waitingforjournaltofinishsetup()
         case .authGate:
-            return "checking the saved journal key"
+            return MacStrings.macos_migration_checkingthesavedjournalkey()
         case .flippingToExternal:
-            return "linking solstone to the journal app"
+            return MacStrings.macos_migration_linkingsolstonetothejournalapp()
         case .triggeringSyncDrain:
-            return "sending kept segments to your journal"
+            return MacStrings.macos_migration_sendingkeptsegmentstoyourjournal()
         case .completed:
-            return "your journal app is ready"
+            return MacStrings.macos_migration_yourjournalappisready()
         case .failed(let failure), .aborted(let failure):
             return failure.ownerMessage
         }
@@ -162,21 +162,21 @@ enum JournalHandoffFailure: Error, Equatable, Sendable {
     var ownerMessage: String {
         switch self {
         case .applicationsDirectoryUnavailable:
-            return "couldn't find /Applications. solstone did not change your journal link."
+            return MacStrings.macos_migration_couldntfindapplicationssolstonedidnot()
         case .applicationsDirectoryUnwritable:
             return UICopy.SETUP_COULDNT_INSTALL_JOURNAL_APP
         case .feedNotYetPublished:
-            return "the journal app isn't available yet. solstone is keeping everything safe on this mac"
+            return MacStrings.macos_migration_thejournalappisntavailableyet()
         case .runningJournalWouldNotQuit:
-            return "journal is still open. quit journal and try again."
+            return MacStrings.macos_migration_journalisstillopenquitjournaland()
         case .missingJournalPath, .journalPathMissing:
-            return "solstone couldn't find your journal folder. open settings and choose your journal again."
+            return MacStrings.macos_migration_solstonecouldntfindyourjournalfolder()
         case .authenticationFailed:
-            return "this journal didn't accept solstone's saved key. solstone did not change your link."
+            return MacStrings.macos_migration_thisjournaldidntacceptsolstones()
         case .adoptionTimedOut:
-            return "journal didn't finish setup in time. solstone did not change your journal link."
+            return MacStrings.macos_migration_journaldidntfinishsetupintime()
         case .cancelled:
-            return "journal handoff stopped. solstone did not change your journal link."
+            return MacStrings.macos_migration_journalhandoffstoppedsolstonedidnotchange()
         case .appcastUnavailable,
              .invalidAppcast,
              .missingLength,
@@ -191,7 +191,7 @@ enum JournalHandoffFailure: Error, Equatable, Sendable {
              .launchFailed,
              .initProbeFailed,
              .writeHandoffFailed:
-            return "journal handoff couldn't finish. solstone did not change your journal link."
+            return MacStrings.macos_migration_journalhandoffcouldntfinishsolstonedid()
         }
     }
 }

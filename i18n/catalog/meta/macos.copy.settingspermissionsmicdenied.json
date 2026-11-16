@@ -1,0 +1,16 @@
+{
+  "description": "microphone access is off. if you missed or declined the prompt, switch on solstone in System Settings.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 102,
+  "source_revision": "4dc79fc9162a854154fa302c84be1851f95b165e873867b64abb6c00139530de",
+  "risk": "routine",
+  "auto_merge": true
+}

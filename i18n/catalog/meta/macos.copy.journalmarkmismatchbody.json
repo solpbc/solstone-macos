@@ -1,0 +1,16 @@
+{
+  "description": "turn on microphone",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 18,
+  "source_revision": "db91446078946d3edb3753fa363f79335a783e94c7ee8c5681a5245c31d45525",
+  "risk": "routine",
+  "auto_merge": true
+}

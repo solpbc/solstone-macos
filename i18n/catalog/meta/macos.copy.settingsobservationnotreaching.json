@@ -1,0 +1,16 @@
+{
+  "description": "on · not reaching your journal",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 30,
+  "source_revision": "fb58f8e06e75e4fdb44e97ab02b62d6221371b61924ee9b780b8ec0dc474e29a",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "browser pages",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.sourcesbrowserpages. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 13,
+  "source_revision": "1d44e534666fbe9f2dd8fb0f5a80e8fecb937c140c8507c7711990aafeb21fdf",
+  "risk": "routine",
+  "auto_merge": true
+}

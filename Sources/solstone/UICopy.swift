@@ -1,81 +1,77 @@
+import Foundation
 import SolstoneCore
 
 public enum UICopy {
-    static let COMMAND_LINE_USAGE = """
-    solstone is the app in your menu bar, and it has no commands to run here.
-    to open it: open -a solstone
-    for journal commands, choose "open admin terminal" in the journal app's menu.
-    """
-    static let COMMAND_LINE_ALREADY_RUNNING = "solstone is already running. look for it in your menu bar."
+    static let COMMAND_LINE_USAGE = MacStrings.macos_ui_solstoneistheapp()
+    static let COMMAND_LINE_ALREADY_RUNNING = MacStrings.macos_ui_solstoneisalreadyrunning()
 
     enum Migration {
-        static let deferChoice = "not now"
-        static let replaceOfferTitle = "is this replacing one of your devices?"
-        static let replaceOfferBody = "you can keep both, or choose a device for this one to replace."
-        static let chooseDevice = "choose a device"
-        static let keepBoth = "keep both"
-        static let pickerTitle = "choose a device"
-        static let pickerEmpty = "no other paired devices"
-        static let cancel = "cancel"
-        static let replaceConfirmTitle = "replace \"{selected_device_label}\"?"
-        static let replaceConfirmBody = "this device continues its name and history. the selected device will lose access to your journal."
-        static let replaceDevice = "replace device"
-        static let offlineTitle = "can't reach your journal"
-        static let offlineBody = "anything waiting to send stays on this device. try again when your journal is reachable."
-        static let tryAgain = "try again"
-        static let storageUnavailableTitle = "saved connection unavailable"
-        static let storageUnavailableBody = "this device couldn't read its saved connection. anything waiting to send hasn't been removed."
-        static let technicalDetails = "technical details"
-        static let decidingTitle = "saving your choice"
-        static let decisionUnknownTitle = "checking your choice"
-        static let decisionUnknownBody = "your journal hasn't confirmed the result yet."
-        static let checkAgain = "check again"
-        static let listUnavailableTitle = "devices unavailable"
-        static let listUnavailableBody = "couldn't load the devices in your journal. try again when your journal is reachable."
-        static let targetMissingTitle = "device no longer available"
-        static let targetMissingBody = "that device is no longer listed in your journal. choose another device, or keep both."
-        static let decisionRefusedTitle = "choice needs attention"
-        static let decisionRefusedBody = "your journal couldn't apply this choice. your current connection still works."
-        static let replaceConfirmTitleFallback = "replace the selected device?"
+        static let deferChoice = MacStrings.macos_desktop_shared_copy_deferchoice()
+        static let replaceOfferTitle = MacStrings.macos_desktop_shared_copy_replaceoffertitle()
+        static let replaceOfferBody = MacStrings.macos_desktop_shared_copy_replaceofferbody()
+        static let chooseDevice = MacStrings.macos_desktop_shared_copy_choosedevice()
+        static let keepBoth = MacStrings.macos_desktop_shared_copy_keepboth()
+        static let pickerTitle = MacStrings.macos_desktop_shared_copy_choosedevice()
+        static let pickerEmpty = MacStrings.macos_desktop_shared_copy_pickerempty()
+        static let cancel = MacStrings.macos_desktop_shared_setup_cancel()
+        static func replaceConfirmTitle(_ label: String) -> String { MacStrings.macos_desktop_shared_copy_replaceconfirmtitle_argument(label) }
+        static let replaceConfirmBody = MacStrings.macos_desktop_shared_copy_replaceconfirmbody()
+        static let replaceDevice = MacStrings.macos_desktop_shared_copy_replacedevice()
+        static let offlineTitle = MacStrings.macos_desktop_shared_app_offlinetitle()
+        static let offlineBody = MacStrings.macos_desktop_shared_copy_offlinebody()
+        static let tryAgain = MacStrings.macos_desktop_shared_copy_tryagain()
+        static let storageUnavailableTitle = MacStrings.macos_desktop_shared_copy_storageunavailabletitle()
+        static let storageUnavailableBody = MacStrings.macos_desktop_shared_copy_storageunavailablebody()
+        static let technicalDetails = MacStrings.macos_desktop_shared_copy_technicaldetails()
+        static let decidingTitle = MacStrings.macos_desktop_shared_copy_decidingtitle()
+        static let decisionUnknownTitle = MacStrings.macos_desktop_shared_copy_decisionunknowntitle()
+        static let decisionUnknownBody = MacStrings.macos_desktop_shared_copy_decisionunknownbody()
+        static let checkAgain = MacStrings.macos_desktop_shared_copy_checkagain()
+        static let listUnavailableTitle = MacStrings.macos_desktop_shared_copy_listunavailabletitle()
+        static let listUnavailableBody = MacStrings.macos_desktop_shared_copy_listunavailablebody()
+        static let targetMissingTitle = MacStrings.macos_desktop_shared_copy_targetmissingtitle()
+        static let targetMissingBody = MacStrings.macos_desktop_shared_copy_targetmissingbody()
+        static let decisionRefusedTitle = MacStrings.macos_desktop_shared_copy_decisionrefusedtitle()
+        static let decisionRefusedBody = MacStrings.macos_desktop_shared_copy_decisionrefusedbody()
+        static let replaceConfirmTitleFallback = MacStrings.macos_desktop_shared_copy_replaceconfirmtitlefallback()
     }
 
-    public static let SOURCES_TITLE = "sources"
+    public static let SOURCES_TITLE = MacStrings.macos_desktop_shared_app_sourcestitle()
     enum Terminal {
-        static let sourceTitle = "terminal"
-        static let sourceHelp = "takes in your tmux sessions, and all of it goes into your journal. needs tmux on this mac, and works in any terminal session, including when you SSH into this mac."
-        static let moveTitle = "move solstone for tmux in?"
-        static let moveBody = "this moves solstone for tmux into this app, and solstone for tmux stops for good. what it still has waiting goes into your journal through this app, and anything that can't go stays on this mac."
-        static let moveBodyUnpaired = "this app isn't paired yet, so nothing goes into your journal until you pair it."
-        static let waitingForPairing = "pair this app with your journal"
-        static let waitingForMark = "confirm your journal's mark"
-        static let moveConfirm = "move it"
-        static let moveCancel = "not now"
-        static let oldAppWaiting = "solstone for tmux is still installed on this mac, so terminal stays off for now."
-        static let plistNotOurs = "the solstone for tmux login item on this mac isn't one solstone installed, so nothing was changed."
-        static let oldAppStillRunning = "solstone for tmux is still running."
-        static let oldSpoolUnreadable = "something solstone for tmux left couldn't be read."
+        static let sourceTitle = MacStrings.macos_ui_terminal()
+        static let sourceHelp = MacStrings.macos_ui_takesinyourtmux()
+        static let moveTitle = MacStrings.macos_ui_movesolstonefortmux()
+        static let moveBody = MacStrings.macos_ui_thismovessolstonefor()
+        static let moveBodyUnpaired = MacStrings.macos_ui_thisappisnt()
+        static let waitingForPairing = MacStrings.macos_ui_pairthisappwith()
+        static let waitingForMark = MacStrings.macos_copy_journalmarkconfirmaction()
+        static let moveConfirm = MacStrings.macos_ui_moveit()
+        static let moveCancel = MacStrings.macos_desktop_shared_copy_deferchoice()
+        static let oldAppWaiting = MacStrings.macos_ui_solstonefortmuxis()
+        static let plistNotOurs = MacStrings.macos_ui_thesolstonefortmux()
+        static let oldAppStillRunning = MacStrings.macos_ui_solstonefortmuxis2()
+        static let oldSpoolUnreadable = MacStrings.macos_ui_somethingsolstonefortmux()
 
         static func unreadableRecord(_ path: String) -> String {
-            "the record of moving solstone for tmux can't be read: \(path). please contact support, and don't delete it."
+            MacStrings.macos_ui_therecordofmoving("\(path)")
         }
 
-        static func unsendable(_ count: Int) -> String { "\(count) \(count == 1 ? "segment" : "segments") can't be sent" }
+        static func unsendable(_ count: Int) -> String { MacStrings.macos_ui_cantbesent_native_plural(count) }
 
         static func moveLine(_ record: TerminalTakeoverRecord) -> [String] {
             var lines: [String] = []
-            if record.phase < .done { lines.append("moving solstone for tmux in") }
+            if record.phase < .done { lines.append(MacStrings.macos_ui_movingsolstonefortmux()) }
             switch record.continuity {
             case .newStream(let reason, let attention):
-                lines.append("new terminal history from here, and what's already in your journal stays (\(reason))")
-                if attention { lines.append("this needs attention: please contact support") }
+                lines.append(MacStrings.macos_ui_newterminalhistoryfrom("\(reason)"))
+                if attention { lines.append(MacStrings.macos_ui_thisneedsattentionplease()) }
             case .continued, nil: break
             }
-            if let answer = record.lastAnswer { lines.append("waiting: \(answer)") }
+            if let answer = record.lastAnswer { lines.append(MacStrings.macos_ui_waiting("\(answer)")) }
             if record.heldCount != 0 {
-                let noun = record.heldCount == 1 ? "segment" : "segments"
-                lines.append("\(record.heldCount) old \(noun) couldn't go and stayed on this mac")
+                lines.append(MacStrings.macos_terminal_heldsegments(record.heldCount))
             }
-            lines.append(contentsOf: record.problems.map { "problem: \($0)" })
+            lines.append(contentsOf: record.problems.map { MacStrings.macos_ui_problem("\($0)") })
             return lines
         }
 
@@ -83,282 +79,285 @@ public enum UICopy {
         static func statusLine(_ state: TerminalSource.State) -> String? {
             switch state {
             case .off: return nil
-            case .running: return "terminal: running"
-            case .paused: return "terminal: paused"
-            case .tmuxNotFound: return "terminal: tmux isn't installed"
+            case .running: return MacStrings.macos_ui_terminalrunning()
+            case .paused: return MacStrings.macos_ui_terminalpaused()
+            case .tmuxNotFound: return MacStrings.macos_ui_terminaltmuxisnt()
             case .oldAppInstalled: return oldAppWaiting
-            case .restarting: return "terminal: stopped by an error, restarting"
+            case .restarting: return MacStrings.macos_ui_terminalstoppedbyan()
             }
         }
     }
 
     enum Obsidian {
-        static let TITLE = "Obsidian"
-        static let EXPLAINER = "the solstone app takes in the notes in one vault on this mac. all of them go into your journal, then each one as it changes. your vault stays as it is."
-        static let FOUND_VAULTS = "vaults on this mac"
-        static let CHOOSE_FOLDER = "choose a folder…"
-        static let PANEL_PROMPT = "choose"
-        static let PANEL_MESSAGE = "choose your Obsidian vault"
-        static let TURN_OFF_HELP = "turning this off removes nothing from your journal."
-        static let TURN_OFF = "turn off"
-        static let CONTINUE = "continue"
-        static let CANCEL = "cancel"
-        static let REFUSED_NOT_A_VAULT = "that folder isn't an Obsidian vault, so nothing was sent."
-        static let REFUSED_UNUSABLE_NAME = "this folder's name can't be used. rename it, then try again."
-        static let REFUSED_UNREADABLE = "the solstone app couldn't read that folder. check its access in System Settings, under Privacy & Security."
+        static let TITLE = MacStrings.macos_ui_obsidian()
+        static let EXPLAINER = MacStrings.macos_ui_thesolstoneapptakes()
+        static let FOUND_VAULTS = MacStrings.macos_ui_vaultsonthismac()
+        static let CHOOSE_FOLDER = MacStrings.macos_screenshot_chooseafolder()
+        static let PANEL_PROMPT = MacStrings.macos_ui_choose()
+        static let PANEL_MESSAGE = MacStrings.macos_ui_chooseyourobsidianvault()
+        static let TURN_OFF_HELP = MacStrings.macos_ui_turningthisoffremoves()
+        static let TURN_OFF = MacStrings.macos_ui_turnoff()
+        static let CONTINUE = MacStrings.macos_desktop_shared_copy_setupcontinue()
+        static let CANCEL = MacStrings.macos_desktop_shared_setup_cancel()
+        static let REFUSED_NOT_A_VAULT = MacStrings.macos_ui_thatfolderisnt()
+        static let REFUSED_UNUSABLE_NAME = MacStrings.macos_ui_thisfoldersname()
+        static let REFUSED_UNREADABLE = MacStrings.macos_ui_thesolstoneappcouldn()
 
         static func stateLine(_ phase: ObsidianVaultSource.Phase, vaultName: String?) -> String {
             switch phase {
             case .off: return TITLE
             case .on:
-                if let vaultName { return "Obsidian is on · \(vaultName)" }
-                return "Obsidian is on"
-            case .paused: return "Obsidian is paused. your notes wait on this mac."
-            case .waitingForJournalUpdate: return "waiting for a journal update. your notes wait on this mac."
-            case .needsAttention: return "Obsidian needs attention"
+                if let vaultName { return MacStrings.macos_ui_obsidianison("\(vaultName)") }
+                return MacStrings.macos_ui_obsidianison2()
+            case .paused: return MacStrings.macos_ui_obsidianispausedyour()
+            case .waitingForJournalUpdate: return MacStrings.macos_ui_waitingforajournal()
+            case .needsAttention: return MacStrings.macos_ui_obsidianneedsattention()
             }
         }
 
         static func attentionLine(vaultUnreadable: Bool, partUnreadable: Bool) -> String {
             if vaultUnreadable {
-                return "the solstone app can't read this vault. check that the folder is still there, and its access in System Settings, under Privacy & Security."
+                return MacStrings.macos_ui_thesolstoneappcan()
             }
             if partUnreadable {
-                return "part of this vault can't be read. the rest of the vault keeps going into your journal."
+                return MacStrings.macos_ui_partofthisvault()
             }
-            return "some notes couldn't go into your journal. the solstone app tries them again the next time it restarts."
+            return MacStrings.macos_ui_somenotescouldnt()
         }
 
-        static func lastChecked(_ time: String) -> String { "last checked \(time)" }
+        static func lastChecked(_ time: String) -> String { MacStrings.macos_updates_lastchecked("\(time)") }
 
-        static func waiting(_ count: Int) -> String { "\(count) waiting to sync" }
+        static func waiting(_ count: Int) -> String { MacStrings.macos_ui_waitingtosync_native(MacStrings.number(count)) }
 
-        static func progress(sent: Int, found: Int) -> String { "\(sent) of \(found) notes in your journal" }
+        static func progress(sent: Int, found: Int) -> String { MacStrings.macos_ui_ofnotesinyour(MacStrings.number(sent), MacStrings.number(found)) }
 
-        static func notOnThisMac(_ count: Int) -> String { "\(count) not on this mac yet" }
+        static func notOnThisMac(_ count: Int) -> String { MacStrings.macos_ui_notonthismac_native(MacStrings.number(count)) }
 
-        static func tooLarge(_ count: Int) -> String { "\(count) over 4 MB, not sent" }
+        static func tooLarge(_ count: Int) -> String { MacStrings.macos_ui_over4mbnot_native(MacStrings.number(count)) }
 
         static func alreadySynced(vault: String, device: String?, date: String?) -> String {
-            let from = device.map { "from \($0)" } ?? "from another device"
-            let when = date.map { ", last updated \($0)" } ?? ""
-            return "your journal already has a vault named \(vault) \(from)\(when). if you continue, changes from both devices go into your journal."
+            let from = device.map { MacStrings.macos_screenshot_from("\($0)") } ?? MacStrings.macos_ui_fromanotherdevice()
+            let when = date.map { MacStrings.macos_ui_lastupdated("\($0)") } ?? ""
+            return MacStrings.macos_ui_yourjournalalreadyhas("\(vault)", "\(from)", "\(when)")
         }
     }
 
     // Audio health
-    public static let AUDIO_SOURCE_SYSTEM = "computer sound"
-    public static let AUDIO_SOURCE_MICROPHONE = "a microphone"
+    public static let AUDIO_SOURCE_SYSTEM = MacStrings.macos_uicopy_computersound()
+    public static let AUDIO_SOURCE_MICROPHONE = MacStrings.macos_copy_audiosourcemicrophone()
     /// Owner-facing audio health, naming each source. Nil when nothing needs saying.
     public static func audioIssue(recovering: [String], recovered: [String]) -> String? {
         func list(_ names: [String]) -> String {
             let unique = names.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-            return unique.count <= 1 ? (unique.first ?? "") : unique.dropLast().joined(separator: ", ") + " and " + unique.last!
+            if MacStrings.language != "en-US" {
+                let formatter = ListFormatter()
+                formatter.locale = Locale(identifier: MacStrings.language)
+                return formatter.string(from: unique) ?? unique.joined(separator: ", ")
+            }
+            return unique.count <= 1 ? (unique.first ?? "") : MacStrings.macos_list_andpair(unique.dropLast().joined(separator: ", "), unique.last!)
         }
         if !recovering.isEmpty {
-            let verb = Set(recovering).count > 1 ? "aren't" : "isn't"
-            return "\(list(recovering)) \(verb) coming through right now. the solstone app is trying again on its own."
+            return MacStrings.macos_audio_recovering(Set(recovering).count, list(recovering))
         }
         if !recovered.isEmpty {
-            let verb = Set(recovered).count > 1 ? "are" : "is"
-            return "\(list(recovered)) dropped out earlier and \(verb) back. part of this segment may be missing."
+            return MacStrings.macos_audio_recovered(Set(recovered).count, list(recovered))
         }
         return nil
     }
 
     // Microphones
-    public static let MICROPHONES_LIST_CAPTION = "every microphone that's on goes into your journal."
-    public static let MICROPHONE_MODE_WHEN_IN_USE = "when another app uses it"
-    public static let MICROPHONE_MODE_ALWAYS = "always"
-    public static let MICROPHONE_MODE_OFF = "off"
-    public static let MICROPHONE_MODE_HELP = "a bluetooth headset sounds worse while its microphone is open, so by default it only goes into your journal while another app, such as a call app, is already using it."
-    public static let MICROPHONE_ALWAYS_CALL_MODE = "set to always, this headset stays in call mode, so everything you hear through it sounds like a phone call."
-    public static let MICROPHONE_NEEDS_CHOICE = "this interface has more than two inputs. pick an input for your journal."
-    public static let MICROPHONE_INPUTS_CHANGED = "this interface's inputs changed. pick an input for your journal."
-    public static let MICROPHONE_LAYOUT_UNAVAILABLE = "this interface's inputs can't be read."
-    public static let MICROPHONE_INPUT_RETRY = "try again"
+    public static let MICROPHONES_LIST_CAPTION = MacStrings.macos_copy_microphoneslistcaption()
+    public static let MICROPHONE_MODE_WHEN_IN_USE = MacStrings.macos_copy_microphonemodewheninuse()
+    public static let MICROPHONE_MODE_ALWAYS = MacStrings.macos_ui_always()
+    public static let MICROPHONE_MODE_OFF = MacStrings.macos_desktop_shared_app_microphonemodeoff()
+    public static let MICROPHONE_MODE_HELP = MacStrings.macos_copy_microphonemodehelp()
+    public static let MICROPHONE_ALWAYS_CALL_MODE = MacStrings.macos_copy_microphonealwayscallmode()
+    public static let MICROPHONE_NEEDS_CHOICE = MacStrings.macos_copy_microphoneneedschoice()
+    public static let MICROPHONE_INPUTS_CHANGED = MacStrings.macos_copy_microphoneinputschanged()
+    public static let MICROPHONE_LAYOUT_UNAVAILABLE = MacStrings.macos_copy_microphonelayoutunavailable()
+    public static let MICROPHONE_INPUT_RETRY = MacStrings.macos_desktop_shared_copy_tryagain()
     public static func microphoneInputTitle(number: Int, label: String?) -> String {
         if let label, !label.isEmpty {
-            return "input \(number), \(label)"
+            return MacStrings.macos_copy_input("\(number)", "\(label)")
         }
-        return "input \(number)"
+        return MacStrings.macos_copy_input2("\(number)")
     }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-    public static let SOURCES_HELP = "what you turn on here goes into your journal."
-    public static let SOURCES_NONE = "every source is off"
-    public static let SOURCES_NONE_REASON = "nothing new is taken in until you turn one back on. turning sources off doesn't hold back what's already kept on this mac."
-    public static let SOURCES_BROWSER_PAGES = "browser pages"
+    public static let SOURCES_HELP = MacStrings.macos_copy_sourceshelp()
+    public static let SOURCES_NONE = MacStrings.macos_copy_sourcesnone()
+    public static let SOURCES_NONE_REASON = MacStrings.macos_copy_sourcesnonereason()
+    public static let SOURCES_BROWSER_PAGES = MacStrings.macos_desktop_shared_copy_sourcesbrowserpages()
 
     // Group & store
-    public static let SOURCES_BROWSERS_GROUP_TITLE = "browsers"
-    public static let SOURCES_BROWSERS_NO_HISTORY = "no browser connected yet"
-    public static let SOURCES_BROWSERS_STORES_CONFIGURED = "add the solstone extension to a browser on this mac. what you share goes into your journal."
-    public static func sourcesBrowserAddAction(browser: String) -> String { "add to \(browser)" }
-    public static func sourcesBrowserLaunchFailure(browser: String) -> String { "couldn't open the store page in \(browser)." }
+    public static let SOURCES_BROWSERS_GROUP_TITLE = MacStrings.macos_ui_browsers()
+    public static let SOURCES_BROWSERS_NO_HISTORY = MacStrings.macos_copy_sourcesbrowsersnohistory()
+    public static let SOURCES_BROWSERS_STORES_CONFIGURED = MacStrings.macos_ui_addthesolstoneextension()
+    public static func sourcesBrowserAddAction(browser: String) -> String { MacStrings.macos_copy_addto("\(browser)") }
+    public static func sourcesBrowserLaunchFailure(browser: String) -> String { MacStrings.macos_copy_couldntopenthestorepagein("\(browser)") }
 
     // Rows
     public static func sourcesBrowserRowLabel(browser: String, profileCount: Int) -> String {
-        profileCount > 1 ? "\(browser) · \(profileCount) profiles" : browser
+        profileCount > 1 ? MacStrings.macos_copy_profiles_native("\(browser)", "\(profileCount)") : browser
     }
-    public static let SOURCES_BROWSER_CONNECTED_NOW = "connected now"
-    public static func sourcesBrowserLastSeen(_ relative: String) -> String { "last seen \(relative)" }
-    public static func sourcesBrowserConnectedLastPage(_ relative: String) -> String { "connected now · last page \(relative)" }
-    public static func sourcesBrowserLastPage(_ relative: String) -> String { "last page \(relative)" }
-    public static let SOURCES_BROWSER_NEEDS_EXT_UPDATE = "needs an extension update"
-    public static let SOURCES_BROWSER_NEEDS_APP_UPDATE = "needs a solstone app update"
-    public static let SOURCES_BROWSER_ROW_NOT_CONNECTED = "not connected yet"
-    public static let SOURCES_BROWSER_ROW_CANT_FIND_APP = "can't find the solstone app"
-    public static let SOURCES_BROWSER_ROW_SAFARI_OFF = "turned off in Safari"
+    public static let SOURCES_BROWSER_CONNECTED_NOW = MacStrings.macos_desktop_shared_copy_sourcesbrowserconnectednow()
+    public static func sourcesBrowserLastSeen(_ relative: String) -> String { MacStrings.macos_copy_lastseen("\(relative)") }
+    public static func sourcesBrowserConnectedLastPage(_ relative: String) -> String { MacStrings.macos_copy_connectednowlastpage("\(relative)") }
+    public static func sourcesBrowserLastPage(_ relative: String) -> String { MacStrings.macos_copy_lastpage("\(relative)") }
+    public static let SOURCES_BROWSER_NEEDS_EXT_UPDATE = MacStrings.macos_copy_sourcesbrowserneedsextupdate()
+    public static let SOURCES_BROWSER_NEEDS_APP_UPDATE = MacStrings.macos_copy_sourcesbrowserneedsappupdate()
+    public static let SOURCES_BROWSER_ROW_NOT_CONNECTED = MacStrings.macos_uicopy_notconnectedyet()
+    public static let SOURCES_BROWSER_ROW_CANT_FIND_APP = MacStrings.macos_uicopy_cantfindthesolstoneapp()
+    public static let SOURCES_BROWSER_ROW_SAFARI_OFF = MacStrings.macos_uicopy_turnedoffinsafari()
 
     // State lines
-    public static let SOURCES_BROWSER_INTAKE_OFF = "browser pages are off. nothing new is taken in from your browsers."
-    public static let SOURCES_BROWSER_DRAINING = "browser pages are off. nothing new is taken in from your browsers; turning them off doesn't hold back what's already kept on this mac."
-    public static let SOURCES_BROWSER_NEWER_EXTENSION = "the solstone extension in a browser needs a newer solstone app. look under updates."
-    public static let SOURCES_BROWSER_FULL = "the room on this mac for what you share from your browsers is full."
-    public static let SOURCES_BROWSER_STALE = "some browser pages have waited more than a week to go into your journal. they're still kept on this mac."
-    public static let SOURCES_BROWSER_CANNOT_START = "browser pages can't start right now."
-    public static let SOURCES_BROWSER_UNKNOWN = "browser status isn't known yet."
-    public static let SOURCES_BROWSER_HELD = "new browser pages aren't being taken in right now."
-    public static let SOURCES_BROWSER_LOST_AND_HELD = "some browser pages couldn't be kept, so they won't go into your journal. new browser pages aren't being taken in right now."
-    public static let SOURCES_BROWSER_PAUSED = "paused with the rest of the solstone app, unless the solstone extension is set to keep going. pausing doesn't hold back what's already taken in."
-    public static let SOURCES_BROWSER_DELIVERY_FAILED = "kept on this mac, not reaching your journal right now"
-    public static let SOURCES_BROWSER_REGISTRATION_BROKEN = "your browsers can't find the solstone app on this mac."
-    public static let SOURCES_BROWSER_DISCARD = "discard waiting browser pages"
-    public static let SOURCES_BROWSER_DISCARD_CONFIRM = "browser pages still waiting to be sent will be removed from this device."
-    public static let SOURCES_BROWSER_DISCARD_COMMIT = "discard pages"
-    public static let SOURCES_BROWSER_DISCARDED = "discarded"
-    public static let SOURCES_BROWSER_DISCARD_FAILED = "couldn't finish discarding. what's left is still on this mac."
+    public static let SOURCES_BROWSER_INTAKE_OFF = MacStrings.macos_copy_sourcesbrowserintakeoff()
+    public static let SOURCES_BROWSER_DRAINING = MacStrings.macos_copy_sourcesbrowserdraining()
+    public static let SOURCES_BROWSER_NEWER_EXTENSION = MacStrings.macos_copy_sourcesbrowsernewerextension()
+    public static let SOURCES_BROWSER_FULL = MacStrings.macos_copy_sourcesbrowserfull()
+    public static let SOURCES_BROWSER_STALE = MacStrings.macos_copy_sourcesbrowserstale()
+    public static let SOURCES_BROWSER_CANNOT_START = MacStrings.macos_copy_sourcesbrowsercannotstart()
+    public static let SOURCES_BROWSER_UNKNOWN = MacStrings.macos_copy_sourcesbrowserunknown()
+    public static let SOURCES_BROWSER_HELD = MacStrings.macos_desktop_shared_copy_sourcesbrowserheld()
+    public static let SOURCES_BROWSER_LOST_AND_HELD = MacStrings.macos_copy_sourcesbrowserlostandheld()
+    public static let SOURCES_BROWSER_PAUSED = MacStrings.macos_copy_sourcesbrowserpaused()
+    public static let SOURCES_BROWSER_DELIVERY_FAILED = MacStrings.macos_copy_sourcesbrowserdeliveryfailed()
+    public static let SOURCES_BROWSER_REGISTRATION_BROKEN = MacStrings.macos_copy_sourcesbrowserregistrationbroken()
+    public static let SOURCES_BROWSER_DISCARD = MacStrings.macos_desktop_shared_copy_sourcesbrowserdiscard()
+    public static let SOURCES_BROWSER_DISCARD_CONFIRM = MacStrings.macos_desktop_shared_copy_sourcesbrowserdiscardconfirm()
+    public static let SOURCES_BROWSER_DISCARD_COMMIT = MacStrings.macos_desktop_shared_copy_sourcesbrowserdiscardcommit()
+    public static let SOURCES_BROWSER_DISCARDED = MacStrings.macos_ui_discarded()
+    public static let SOURCES_BROWSER_DISCARD_FAILED = MacStrings.macos_copy_sourcesbrowserdiscardfailed()
 
     // Repair
-    public static let SOURCES_BROWSER_REPAIR_ACTION = "repair"
-    public static let SOURCES_BROWSER_REPAIRED = "repaired"
-    public static func sourcesBrowserRepairFailed(reason: String) -> String { "couldn't repair: \(reason)" }
+    public static let SOURCES_BROWSER_REPAIR_ACTION = MacStrings.macos_ui_repair()
+    public static let SOURCES_BROWSER_REPAIRED = MacStrings.macos_ui_repaired()
+    public static func sourcesBrowserRepairFailed(reason: String) -> String { MacStrings.macos_copy_couldntrepair("\(reason)") }
     public static func browserSetupReason(_ code: String?) -> String {
         switch code {
-        case "listener_down": return "the app isn't available"
-        case "endpoint_collision": return "the app's connection couldn't be checked"
+        case "listener_down": return MacStrings.macos_copy_theappisntavailable()
+        case "endpoint_collision": return MacStrings.macos_copy_theappsconnectioncouldntbe()
         case "helper_path_not_bundled", "unsafe_helper_path", "invalid_contract", "invalid_template":
-            return "the app's files couldn't be checked"
+            return MacStrings.macos_copy_theappsfilescouldntbe()
         case "manifest_missing", "manifest_change_required", "unsafe_registration_directory", "unsafe_manifest", "manifest_verification_failed", "registration_io":
-            return "the browser setup couldn't be changed"
-        default: return "the setup couldn't be checked"
+            return MacStrings.macos_copy_thebrowsersetupcouldntbechanged()
+        default: return MacStrings.macos_copy_thesetupcouldntbechecked()
         }
     }
-    public static let SOURCES_BROWSER_FOOTNOTE = "the solstone extension works in Chrome, Edge, Firefox and Safari."
-    public static let SOURCES_BROWSER_SAFARI_SETTINGS_ACTION = "open Safari settings"
-    public static let SOURCES_BROWSER_SAFARI_UNAVAILABLE = "can't check the solstone extension in Safari"
-    public static let SOURCES_BROWSER_SAFARI_ON = "on in Safari"
-    public static let SOURCES_BROWSER_SAFARI_OFF = "off in Safari. check solstone under extensions to turn it on."
-    public static let SOURCES_BROWSER_SAFARI_SETTINGS_FAILED = "couldn't open Safari settings. in Safari, open settings, then extensions."
+    public static let SOURCES_BROWSER_FOOTNOTE = MacStrings.macos_ui_thesolstoneextensionworks()
+    public static let SOURCES_BROWSER_SAFARI_SETTINGS_ACTION = MacStrings.macos_copy_sourcesbrowsersafarisettingsaction()
+    public static let SOURCES_BROWSER_SAFARI_UNAVAILABLE = MacStrings.macos_copy_sourcesbrowsersafariunavailable()
+    public static let SOURCES_BROWSER_SAFARI_ON = MacStrings.macos_copy_sourcesbrowsersafarion()
+    public static let SOURCES_BROWSER_SAFARI_OFF = MacStrings.macos_copy_sourcesbrowsersafarioff()
+    public static let SOURCES_BROWSER_SAFARI_SETTINGS_FAILED = MacStrings.macos_copy_sourcesbrowsersafarisettingsfailed()
 
     // Menu row
-    public static func menubarBrowsersLive(_ brands: String) -> String { "browsers · \(brands)" }
-    public static let MENUBAR_BROWSERS_NONE_CONNECTED = "browsers · none connected now"
-    public static let MENUBAR_BROWSERS_NONE_YET = "browsers · none yet"
-    public static let MENUBAR_BROWSERS_OFF = "browsers · off"
-    public static let MENUBAR_BROWSERS_PAUSED = "browsers · solstone paused"
+    public static func menubarBrowsersLive(_ brands: String) -> String { MacStrings.macos_copy_browsers("\(brands)") }
+    public static let MENUBAR_BROWSERS_NONE_CONNECTED = MacStrings.macos_desktop_shared_copy_menubarbrowsersnoneconnected()
+    public static let MENUBAR_BROWSERS_NONE_YET = MacStrings.macos_copy_menubarbrowsersnoneyet()
+    public static let MENUBAR_BROWSERS_OFF = MacStrings.macos_desktop_shared_copy_menubarbrowsersoff()
+    public static let MENUBAR_BROWSERS_PAUSED = MacStrings.macos_copy_menubarbrowserspaused()
 
     // Headlines
-    public static let SOURCES_BROWSER_HEADLINE_READY = "on · browser pages only"
-    public static let SOURCES_BROWSER_HEADLINE_WAITING = "on · waiting for a browser to connect"
+    public static let SOURCES_BROWSER_HEADLINE_READY = MacStrings.macos_copy_sourcesbrowserheadlineready()
+    public static let SOURCES_BROWSER_HEADLINE_WAITING = MacStrings.macos_copy_sourcesbrowserheadlinewaiting()
 
     // Legend footnote
-    public static let SETTINGS_HELP_BROWSER_FOOTNOTE = "the solstone extension shows the same icons in your browser's toolbar, for what you share from that browser."
+    public static let SETTINGS_HELP_BROWSER_FOOTNOTE = MacStrings.macos_ui_thesolstoneextensionshows()
 
     // Diagnostics labels
-    public static let DIAGNOSTICS_BROWSER_PAGES_LABEL = "browser pages"
-    public static let DIAGNOSTICS_BROWSERS_SEEN_LABEL = "browsers seen"
-    public static let DIAGNOSTICS_BROWSER_SETUP_LABEL = "browser setup"
+    public static let DIAGNOSTICS_BROWSER_PAGES_LABEL = MacStrings.macos_desktop_shared_copy_sourcesbrowserpages()
+    public static let DIAGNOSTICS_BROWSERS_SEEN_LABEL = MacStrings.macos_copy_diagnosticsbrowsersseenlabel()
+    public static let DIAGNOSTICS_BROWSER_SETUP_LABEL = MacStrings.macos_copy_diagnosticsbrowsersetuplabel()
 #else
-    public static let SOURCES_HELP = "what you turn on here goes into your journal."
-    public static let SOURCES_NONE = "both sources are off"
-    public static let SOURCES_NONE_REASON = "nothing is going into your journal until you turn one back on."
-    public static let SOURCES_BROWSER_SAFARI_UNAVAILABLE = "can't check the solstone extension in Safari"
+    public static let SOURCES_HELP = MacStrings.macos_copy_sourceshelp()
+    public static let SOURCES_NONE = MacStrings.macos_copy_sourcesnone2()
+    public static let SOURCES_NONE_REASON = MacStrings.macos_copy_sourcesnonereason2()
+    public static let SOURCES_BROWSER_SAFARI_UNAVAILABLE = MacStrings.macos_copy_sourcesbrowsersafariunavailable()
 #endif
 
-    public static let CREATE_JOURNAL_ON_THIS_MAC = "create a new journal on this mac"
+    public static let CREATE_JOURNAL_ON_THIS_MAC = MacStrings.macos_copy_createjournalonthismac()
 
     // Native Setup
-    public static let SETUP_JOURNAL_STILL_BEING_SET_UP = "your journal is still being set up."
-    public static let SETUP_OPENING_YOUR_JOURNAL = "opening your journal…"
-    public static let SETUP_OPEN_THE_JOURNAL_APP_TO_CONTINUE = "open the journal app to continue."
-    public static let SETUP_COULDNT_INSTALL_JOURNAL_APP = "couldn't install the journal app in Applications. download it, drag it into Applications and enter an administrator's name and password when your mac asks. then try again."
-    public static let JOURNAL_APP_DOWNLOAD = "download the journal app"
-    public static let SETUP_COULDNT_REACH_YOUR_JOURNAL = "couldn't reach your journal. try again."
-    public static let SETUP_COULDNT_FINISH = "couldn't finish setup. try again."
-    public static let SETUP_COULDNT_SAVE_PROGRESS = "couldn't save setup progress."
-    public static let SETUP_TRY_AGAIN = "try again"
-    public static let SETUP_MICROPHONE = "microphone"
-    public static let SETUP_MICROPHONE_EXPLAINER = "the microphone stays off until you turn it on. what you turn on goes into your journal."
-    public static let SETUP_TURN_ON_MICROPHONE = "turn on microphone"
-    public static let SETUP_NOT_NOW = "not now"
-    public static let SETUP_CONTINUE = "continue"
-    public static let SETUP_SCREEN_AND_COMPUTER_SOUND = "screen and computer sound"
-    public static let SETUP_SCREEN_EXPLAINER = "your screen and its computer sound go into your journal, with the apps you use and their window titles. they stay off until you turn them on."
-    public static let SETUP_SCREEN_STORAGE = "what you share stays on this mac until it goes into your journal on your own devices. your journal is always private, only yours."
-    public static let SETUP_SCREEN_LEFT_OUT = "1Password, Bitwarden and the other password manager apps listed in settings are left out, but a password manager inside your browser isn't."
-    public static let SETUP_TURN_ON_SCREEN = "turn on screen and computer sound"
-    public static let SETUP_SCREEN_SHOWS_HERE = "your screen shows here once it's on."
-    public static let SETUP_CONNECT_TO_YOUR_JOURNAL = "connect to your journal"
-    public static let SETUP_CONNECTING_TO_YOUR_JOURNAL = "connecting to your journal…"
-    public static let SETUP_COULDNT_VERIFY_MARK = "couldn't verify your journal's mark. try again."
-    public static let SETUP_ACKNOWLEDGEMENT_FAILED = "your journal didn't get the reply. try again."
-    public static let SETUP_OPEN_YOUR_JOURNAL = "open your journal"
-    public static let SETUP_FINISH = "finish"
-    public static let SETUP_CONNECTED_TO_YOUR_JOURNAL = "connected to your journal"
-    public static let SETUP_WINDOW_TITLE = "set up solstone"
-    public static let SETUP_APP_LABEL = "the solstone app"
-    public static let SETUP_WELCOME_HEADLINE = "welcome to solstone."
-    public static let SETUP_WELCOME_BODY_1 = "the solstone app takes in what you share with it, and all of it goes into your journal."
-    public static let SETUP_WELCOME_BODY_2 = "your journal is always private, only yours."
-    public static let SETUP_JOURNAL_CARD_HEADING = "your journal"
-    public static let SETUP_JOURNAL_CARD_BODY = "everything the solstone app takes in goes into your journal. your journal lives on a computer you choose."
-    public static let SETUP_CREATE_JOURNAL_CHOICE = "create your journal on this mac"
-    public static let SETUP_CONNECT_JOURNAL_CHOICE = "connect to a journal you already have"
-    public static let SETUP_MICROPHONE_HEADLINE = "share your conversations"
-    public static let SETUP_SCREEN_HEADLINE = "share your screen and computer sound"
-    public static let SETUP_MICROPHONE_STATUS_ON = "microphone on"
-    public static let SETUP_MICROPHONE_STATUS_PAUSED = "microphone paused"
-    public static let SETUP_MICROPHONE_STATUS_OFF = "microphone off"
-    public static let SETUP_SCREEN_STATUS_ON = "screen on"
-    public static let SETUP_SCREEN_STATUS_PAUSED = "screen paused"
-    public static let SETUP_SCREEN_STATUS_OFF = "screen off"
-    public static let SETUP_SCREEN_FRAME_CAPTION = "your screen, a moment ago"
+    public static let SETUP_JOURNAL_STILL_BEING_SET_UP = MacStrings.macos_copy_setupjournalstillbeingsetup()
+    public static let SETUP_OPENING_YOUR_JOURNAL = MacStrings.macos_copy_setupopeningyourjournal()
+    public static let SETUP_OPEN_THE_JOURNAL_APP_TO_CONTINUE = MacStrings.macos_copy_setupopenthejournalapptocontinue()
+    public static let SETUP_COULDNT_INSTALL_JOURNAL_APP = MacStrings.macos_copy_setupcouldntinstalljournalapp()
+    public static let JOURNAL_APP_DOWNLOAD = MacStrings.macos_copy_journalappdownload()
+    public static let SETUP_COULDNT_REACH_YOUR_JOURNAL = MacStrings.macos_copy_setupcouldntreachyourjournal()
+    public static let SETUP_COULDNT_FINISH = MacStrings.macos_copy_setupcouldntfinish()
+    public static let SETUP_COULDNT_SAVE_PROGRESS = MacStrings.macos_copy_journalmarkunverifiedbody()
+    public static let SETUP_TRY_AGAIN = MacStrings.macos_desktop_shared_copy_tryagain()
+    public static let SETUP_MICROPHONE = MacStrings.macos_copy_accessibilityexplanation()
+    public static let SETUP_MICROPHONE_EXPLAINER = MacStrings.macos_copy_journalmarkmismatchtitle()
+    public static let SETUP_TURN_ON_MICROPHONE = MacStrings.macos_copy_journalmarkmismatchbody()
+    public static let SETUP_NOT_NOW = MacStrings.macos_desktop_shared_copy_deferchoice()
+    public static let SETUP_CONTINUE = MacStrings.macos_desktop_shared_copy_setupcontinue()
+    public static let SETUP_SCREEN_AND_COMPUTER_SOUND = MacStrings.macos_copy_setupscreenandcomputersound()
+    public static let SETUP_SCREEN_EXPLAINER = MacStrings.macos_copy_setupscreenexplainer()
+    public static let SETUP_SCREEN_STORAGE = MacStrings.macos_copy_setupscreenstorage()
+    public static let SETUP_SCREEN_LEFT_OUT = MacStrings.macos_copy_setupscreenleftout()
+    public static let SETUP_TURN_ON_SCREEN = MacStrings.macos_copy_setupturnonscreen()
+    public static let SETUP_SCREEN_SHOWS_HERE = MacStrings.macos_copy_setupscreenshowshere()
+    public static let SETUP_CONNECT_TO_YOUR_JOURNAL = MacStrings.macos_copy_setupconnecttoyourjournal()
+    public static let SETUP_CONNECTING_TO_YOUR_JOURNAL = MacStrings.macos_app_setupconnectingtoyourjournal()
+    public static let SETUP_COULDNT_VERIFY_MARK = MacStrings.macos_copy_setupcouldntverifymark()
+    public static let SETUP_ACKNOWLEDGEMENT_FAILED = MacStrings.macos_copy_setupacknowledgementfailed()
+    public static let SETUP_OPEN_YOUR_JOURNAL = MacStrings.macos_desktop_shared_copy_setupopenyourjournal()
+    public static let SETUP_FINISH = MacStrings.macos_ui_finish()
+    public static let SETUP_CONNECTED_TO_YOUR_JOURNAL = MacStrings.macos_desktop_shared_copy_setupconnectedtoyourjournal()
+    public static let SETUP_WINDOW_TITLE = MacStrings.macos_desktop_shared_copy_setupwindowtitle()
+    public static let SETUP_APP_LABEL = MacStrings.macos_desktop_shared_copy_setupapplabel()
+    public static let SETUP_WELCOME_HEADLINE = MacStrings.macos_copy_setupwelcomeheadline()
+    public static let SETUP_WELCOME_BODY_1 = MacStrings.macos_desktop_shared_about_setupwelcomebody1()
+    public static let SETUP_WELCOME_BODY_2 = MacStrings.macos_desktop_shared_copy_setupwelcomebody2()
+    public static let SETUP_JOURNAL_CARD_HEADING = MacStrings.macos_desktop_shared_copy_setupjournalcardheading()
+    public static let SETUP_JOURNAL_CARD_BODY = MacStrings.macos_copy_setupjournalcardbody()
+    public static let SETUP_CREATE_JOURNAL_CHOICE = MacStrings.macos_copy_setupcreatejournalchoice()
+    public static let SETUP_CONNECT_JOURNAL_CHOICE = MacStrings.macos_copy_setupconnectjournalchoice()
+    public static let SETUP_MICROPHONE_HEADLINE = MacStrings.macos_desktop_shared_copy_setupmicrophoneheadline()
+    public static let SETUP_SCREEN_HEADLINE = MacStrings.macos_copy_setupscreenheadline()
+    public static let SETUP_MICROPHONE_STATUS_ON = MacStrings.macos_copy_setupmicrophonestatuson()
+    public static let SETUP_MICROPHONE_STATUS_PAUSED = MacStrings.macos_copy_setupmicrophonestatuspaused()
+    public static let SETUP_MICROPHONE_STATUS_OFF = MacStrings.macos_copy_setupmicrophonestatusoff()
+    public static let SETUP_SCREEN_STATUS_ON = MacStrings.macos_copy_setupscreenstatuson()
+    public static let SETUP_SCREEN_STATUS_PAUSED = MacStrings.macos_copy_setupscreenstatuspaused()
+    public static let SETUP_SCREEN_STATUS_OFF = MacStrings.macos_copy_setupscreenstatusoff()
+    public static let SETUP_SCREEN_FRAME_CAPTION = MacStrings.macos_desktop_shared_copy_setupscreenframecaption()
     public static func connectedTo(mark: String) -> String {
-        "connected to \(mark)"
+        MacStrings.macos_copy_connectedto("\(mark)")
     }
-    public static let SETUP_CONNECTED_EXPLANATION = "the solstone app on this mac and your journal are connected. what you turn on goes into your journal."
-    public static let SETUP_BACK = "back"
+    public static let SETUP_CONNECTED_EXPLANATION = MacStrings.macos_copy_setupconnectedexplanation()
+    public static let SETUP_BACK = MacStrings.macos_desktop_shared_copy_setupback()
     public static func setupStepProgress(n: Int, m: Int) -> String {
-        "step \(n) of \(m)"
+        MacStrings.macos_copy_stepof("\(n)", "\(m)")
     }
 
-    public static let SOURCES_SEGMENTS_EXPLAINER = "screens and audio you turn on here go into your journal in five-minute segments. until your journal confirms receipt, they wait on this mac. by default, the confirmed local copy is removed."
-    public static let SOURCES_MICROPHONE = "microphone"
-    public static let SOURCES_SCREEN = "screen and computer sound"
-    public static let SOURCES_OFF = "off"
-    public static let SOURCES_STARTING = "starting…"
-    public static let SOURCES_OPEN_ACTION = "open sources →"
-    public static let PERMISSIONS_OPEN_ACTION = "open permissions →"
+    public static let SOURCES_SEGMENTS_EXPLAINER = MacStrings.macos_copy_sourcessegmentsexplainer()
+    public static let SOURCES_MICROPHONE = MacStrings.macos_copy_accessibilityexplanation()
+    public static let SOURCES_SCREEN = MacStrings.macos_copy_setupscreenandcomputersound()
+    public static let SOURCES_OFF = MacStrings.macos_desktop_shared_app_microphonemodeoff()
+    public static let SOURCES_STARTING = MacStrings.macos_ui_starting()
+    public static let SOURCES_OPEN_ACTION = MacStrings.macos_copy_sourcesopenaction()
+    public static let PERMISSIONS_OPEN_ACTION = MacStrings.macos_copy_permissionsopenaction()
 
     // Selected, but macOS hasn't granted either one.
-    public static let SOURCES_UNAVAILABLE = "the source you turned on didn't start"
-    public static let SOURCES_UNAVAILABLE_REASON = "the device may be in use by another app, or unplugged."
-    public static let SOURCES_NONE_GRANTED = "what you turned on isn't granted yet"
-    public static let SOURCES_GRANT_OR_CHANGE = "grant it below, or turn on the other source instead."
+    public static let SOURCES_UNAVAILABLE = MacStrings.macos_copy_sourcesunavailable()
+    public static let SOURCES_UNAVAILABLE_REASON = MacStrings.macos_copy_sourcesunavailablereason()
+    public static let SOURCES_NONE_GRANTED = MacStrings.macos_copy_sourcesnonegranted()
+    public static let SOURCES_GRANT_OR_CHANGE = MacStrings.macos_copy_sourcesgrantorchange()
 
     // Per-source notices, shown beside a session that is running on the other source.
-    public static let SOURCES_MIC_DENIED = "microphone permission not granted. screen and computer sound can run on their own."
-    public static let SOURCES_SCREEN_DENIED = "screen permission not granted. microphone can run on its own."
-    public static let SOURCES_MIC_UNAVAILABLE = "microphone unavailable. screen and computer sound are running."
-    public static let SOURCES_SCREEN_UNAVAILABLE = "screen and computer sound unavailable. microphone is running."
+    public static let SOURCES_MIC_DENIED = MacStrings.macos_uicopy_microphonepermissionnotgrantedscreenandcomput()
+    public static let SOURCES_SCREEN_DENIED = MacStrings.macos_copy_sourcesscreendenied()
+    public static let SOURCES_MIC_UNAVAILABLE = MacStrings.macos_uicopy_microphoneunavailablescreenandcomputersoundar()
+    public static let SOURCES_SCREEN_UNAVAILABLE = MacStrings.macos_uicopy_screenandcomputersoundunavailablemicrophoneis()
 
-    public static let SOURCES_RESTART_READY = "granted. solstone needs to restart before what's on your screen can go into your journal."
-    public static let SOURCES_RESTART = "restart now"
+    public static let SOURCES_RESTART_READY = MacStrings.macos_copy_sourcesrestartready()
+    public static let SOURCES_RESTART = MacStrings.macos_copy_sourcesrestart()
 
     public static func sourceNames(_ sources: CaptureSources) -> String {
         switch (sources.contains(.microphone), sources.contains(.screen)) {
-        case (true, true): return "microphone, screen and computer sound"
+        case (true, true): return MacStrings.macos_uicopy_microphonescreenandcomputersound()
         case (true, false): return SOURCES_MICROPHONE
         case (false, true): return SOURCES_SCREEN
         case (false, false): return SOURCES_OFF
@@ -367,353 +366,357 @@ public enum UICopy {
 
     public static func sourceStatus(_ sources: CaptureSources, isPaused: Bool = false) -> String {
         guard !sources.isEmpty else { return SOURCES_OFF }
-        return "\(isPaused ? "paused" : "on") · \(sourceNames(sources))"
+        return isPaused ? MacStrings.macos_sources_statuspaused(sourceNames(sources)) : MacStrings.macos_sources_statuson(sourceNames(sources))
     }
 
-    public static let JOURNAL_WINDOW_TITLE = "your journal"
-    public static let JOURNAL_WINDOW_LOADING = "opening your journal…"
-    public static let JOURNAL_WINDOW_ERROR = "your journal couldn't load"
-    public static let JOURNAL_LINK_INVALID_TITLE = "this journal link isn't valid."
-    public static let JOURNAL_LINK_INVALID_BODY = "copy the full link from your chat and open it again."
-    public static let JOURNAL_WINDOW_RETRY = "try again"
-    public static let JOURNAL_PANEL_OK = "ok"
-    public static let JOURNAL_PANEL_CANCEL = "cancel"
-    public static let JOURNAL_MODE_THIS_MAC_LABEL = "this mac"
-    public static let JOURNAL_MODE_ANOTHER_MACHINE_LABEL = "another device"
-    public static let PAIRING_LINK_PLACEHOLDER = "paste pairing link"
-    public static let PAIRING_NOTENTITLED_RECOVERY = "your journal is paired, but it isn't on the paid plan, so it can't sync over the internet. you can still reach it directly, without the plan, whenever your journal is reachable."
-    public static let PAIRING_DISCONNECT_CONFIRM = "disconnect this mac from your journal? your journal keeps everything. you can pair again anytime."
-    public static let PAIRING_SAVE_FAILED = "pairing worked, but this mac couldn't save it. try again."
-    public static let SAME_MACHINE_LINK_ALREADY_LINKED = "already linked to your journal on this mac."
-    public static let LOCAL_JOURNAL_NOT_YOURS = "the journal running on this mac isn't yours, so the solstone app won't connect to it, open it or show its mark. on a shared mac, it's usually someone else's journal."
-    public static let SAME_MACHINE_LINK_UNREACHABLE = "couldn't reach your journal on this mac. make sure the journal app is open, then try again."
-    public static let JOURNAL_LINK_FAILED = "couldn't open your journal in your browser. try again."
-    public static let SAME_MACHINE_LINK_REFUSED = "your journal on this mac didn't accept the request to link. try again, or paste a pairing link from your journal's network app below."
-    public static let SAME_MACHINE_LINK_UNEXPECTED = "your journal on this mac sent back something the solstone app couldn't use. try again, or paste a pairing link from your journal's network app below."
-    public static let SAME_MACHINE_LINK_UNFINISHED = "linking didn't finish. try again."
-    public static let SAME_MACHINE_LINK_CREDENTIALS_UNAVAILABLE = "this mac couldn't read its saved connection, so it can't link yet. try again, or restart solstone."
-    public static let SAME_MACHINE_LINK_OTHER_JOURNAL = "this mac is already paired with a journal on another device."
+    public static let JOURNAL_WINDOW_TITLE = MacStrings.macos_desktop_shared_copy_setupjournalcardheading()
+    public static let JOURNAL_WINDOW_LOADING = MacStrings.macos_copy_setupopeningyourjournal()
+    public static let JOURNAL_WINDOW_ERROR = MacStrings.macos_copy_journalwindowerror()
+    public static let JOURNAL_LINK_INVALID_TITLE = MacStrings.macos_uicopy_thisjournallinkisntvalid()
+    public static let JOURNAL_LINK_INVALID_BODY = MacStrings.macos_uicopy_copythefulllinkfromyourchatandopenitagain()
+    public static let JOURNAL_WINDOW_RETRY = MacStrings.macos_desktop_shared_copy_tryagain()
+    public static let JOURNAL_PANEL_OK = MacStrings.macos_desktop_shared_settings_severity()
+    public static let JOURNAL_PANEL_CANCEL = MacStrings.macos_desktop_shared_setup_cancel()
+    public static let JOURNAL_MODE_THIS_MAC_LABEL = MacStrings.macos_copy_journalmodethismaclabel()
+    public static let JOURNAL_MODE_ANOTHER_MACHINE_LABEL = MacStrings.macos_copy_journalmodeanothermachinelabel()
+    public static let PAIRING_LINK_PLACEHOLDER = MacStrings.macos_setup_pairinglinkplaceholder()
+    public static let PAIRING_NOTENTITLED_RECOVERY = MacStrings.macos_copy_pairingnotentitledrecovery()
+    public static let PAIRING_DISCONNECT_CONFIRM = MacStrings.macos_copy_pairingdisconnectconfirm()
+    public static let PAIRING_SAVE_FAILED = MacStrings.macos_copy_pairingsavefailed()
+    public static let SAME_MACHINE_LINK_ALREADY_LINKED = MacStrings.macos_copy_samemachinelinkalreadylinked()
+    public static let LOCAL_JOURNAL_NOT_YOURS = MacStrings.macos_ui_thejournalrunningon()
+    public static let SAME_MACHINE_LINK_UNREACHABLE = MacStrings.macos_copy_samemachinelinkunreachable()
+    public static let JOURNAL_LINK_FAILED = MacStrings.macos_ui_couldntopenyour()
+    public static let SAME_MACHINE_LINK_REFUSED = MacStrings.macos_copy_samemachinelinkrefused()
+    public static let SAME_MACHINE_LINK_UNEXPECTED = MacStrings.macos_copy_samemachinelinkunexpected()
+    public static let SAME_MACHINE_LINK_UNFINISHED = MacStrings.macos_copy_samemachinelinkunfinished()
+    public static let SAME_MACHINE_LINK_CREDENTIALS_UNAVAILABLE = MacStrings.macos_copy_samemachinelinkcredentialsunavailable()
+    public static let SAME_MACHINE_LINK_OTHER_JOURNAL = MacStrings.macos_copy_samemachinelinkotherjournal()
     public static func relinkNeedsPairingLink(address: String?) -> String {
         guard let address else {
-            return "linking again takes a pairing link. get one from your journal's network app and paste it below."
+            return MacStrings.macos_copy_linkingagaintakesapairinglinkget()
         }
-        return "this mac is set up for a journal at \(address), so linking again takes a pairing link from that journal. get one from its network app and paste it below."
+        return MacStrings.macos_copy_thismacissetupfora("\(address)")
     }
-    public static let JOURNAL_MARK_CONFIRM_QUESTION = "does this match your journal?"
-    public static let JOURNAL_MARK_CONFIRM_SUBTEXT = "your journal shows this same mark in its network app. it should match, exactly."
-    public static let JOURNAL_MARK_CONFIRM_BUTTON = "yes, this is my journal"
-    public static let JOURNAL_MARK_MISMATCH_BUTTON = "that doesn't match"
-    public static let JOURNAL_MARK_UNVERIFIED_TITLE = "couldn't verify"
-    public static let JOURNAL_MARK_UNVERIFIED_BODY = "the check of your journal's mark didn't finish. that doesn't mean the marks disagree."
-    public static let JOURNAL_MARK_UNVERIFIED_CONTINUE_BUTTON = "continue anyway"
-    public static let JOURNAL_MARK_UNVERIFIED_CANCEL_BUTTON = "cancel pairing"
-    public static let JOURNAL_MARK_MISMATCH_TITLE = "not paired"
-    public static let JOURNAL_MARK_MISMATCH_BODY = "nothing this mac has kept went to that journal through this link. you may have pasted the wrong link, or something isn't right. try again, or reach us and we'll help."
-    public static let JOURNAL_MARK_MISMATCH_FRESH_LINK = "get a fresh link"
-    public static let JOURNAL_MARK_SWITCH_NOT_CHANGED_TITLE = "not changed"
-    public static let UNKNOWN_JOURNAL_ROW_RELAY = "unknown journal seen through the relay"
-    public static let UNKNOWN_JOURNAL_VIEW_DETAILS = "view details"
-    public static let UNKNOWN_JOURNAL_HEADING = "something answered instead of your journal"
-    public static let UNKNOWN_JOURNAL_BODY_RELAY = "something answered this mac through the relay, and it isn't the journal this mac is paired with. this is less certain than a direct connection."
-    public static let UNKNOWN_JOURNAL_LABEL_WHAT_ANSWERED = "what answered"
-    public static let UNKNOWN_JOURNAL_LABEL_YOUR_JOURNAL = "your journal"
-    public static let UNKNOWN_JOURNAL_CAPTION_CLAIMED = "claimed, not verified"
-    public static let UNKNOWN_JOURNAL_CAPTION_NOT_PRESENTED = "no identity presented"
+    public static let JOURNAL_MARK_CONFIRM_QUESTION = MacStrings.macos_desktop_shared_copy_journalmarkconfirmquestion()
+    public static let JOURNAL_MARK_CONFIRM_SUBTEXT = MacStrings.macos_copy_journalmarkconfirmsubtext()
+    public static let JOURNAL_MARK_CONFIRM_BUTTON = MacStrings.macos_desktop_shared_copy_journalmarkconfirmbutton()
+    public static let JOURNAL_MARK_MISMATCH_BUTTON = MacStrings.macos_desktop_shared_copy_journalmarkmismatchbutton()
+    public static let JOURNAL_MARK_UNVERIFIED_TITLE = MacStrings.macos_desktop_shared_copy_journalmarkunverifiedtitle()
+    public static let JOURNAL_MARK_UNVERIFIED_BODY = MacStrings.macos_ui_thecheckofyour()
+    public static let JOURNAL_MARK_UNVERIFIED_CONTINUE_BUTTON = MacStrings.macos_desktop_shared_copy_journalmarkunverifiedcontinuebutton()
+    public static let JOURNAL_MARK_UNVERIFIED_CANCEL_BUTTON = MacStrings.macos_desktop_shared_copy_journalmarkunverifiedcancelbutton()
+    public static let JOURNAL_MARK_MISMATCH_TITLE = MacStrings.macos_desktop_shared_app_notpaired()
+    public static let JOURNAL_MARK_MISMATCH_BODY = MacStrings.macos_ui_nothingthismachas()
+    public static let JOURNAL_MARK_MISMATCH_FRESH_LINK = MacStrings.macos_copy_journalmarkmismatchfreshlink()
+    public static let JOURNAL_MARK_SWITCH_NOT_CHANGED_TITLE = MacStrings.macos_ui_notchanged()
+    public static let UNKNOWN_JOURNAL_ROW_RELAY = MacStrings.macos_ui_unknownjournalseenthrough()
+    public static let UNKNOWN_JOURNAL_VIEW_DETAILS = MacStrings.macos_ui_viewdetails()
+    public static let UNKNOWN_JOURNAL_HEADING = MacStrings.macos_ui_somethingansweredinsteadof()
+    public static let UNKNOWN_JOURNAL_BODY_RELAY = MacStrings.macos_ui_somethingansweredthismac()
+    public static let UNKNOWN_JOURNAL_LABEL_WHAT_ANSWERED = MacStrings.macos_ui_whatanswered()
+    public static let UNKNOWN_JOURNAL_LABEL_YOUR_JOURNAL = MacStrings.macos_desktop_shared_copy_setupjournalcardheading()
+    public static let UNKNOWN_JOURNAL_CAPTION_CLAIMED = MacStrings.macos_ui_claimednotverified()
+    public static let UNKNOWN_JOURNAL_CAPTION_NOT_PRESENTED = MacStrings.macos_ui_noidentitypresented()
     public static func unknownJournalRow(address: String) -> String {
-        "unknown journal seen at \(address)"
+        MacStrings.macos_ui_unknownjournalseenat("\(address)")
     }
     public static func unknownJournalBody(address: String) -> String {
-        "something answered this mac at \(address), and it isn't the journal this mac is paired with. this could be another device now using that address, or your journal, if its identity was reset. if the mark under \"what answered\" matches the one your journal shows now, pair this mac again."
+        MacStrings.macos_ui_somethingansweredthismac2("\(address)")
     }
-    public static let JOURNAL_MARK_SWITCH_NOT_CHANGED_BODY = "your current pairing stays in use. nothing this mac has kept went to that journal through this link."
-    public static let JOURNAL_MARK_MISMATCH_SUPPORT = "email support@solstone.app"
-    public static let SETTINGS_PREREQ_PERMISSIONS = "you'll also need to grant permissions →"
-    public static let SETTINGS_NEXT_CONNECT_JOURNAL = "next: connect your journal →"
-    public static let SETTINGS_NEXT_CHECK_STATUS = "next: check status →"
-    public static let SETTINGS_LOCAL_JOURNAL_FOUND_EXISTING = "found an existing journal on this mac"
-    public static let SETTINGS_LOCAL_JOURNAL_INSTALL_EXISTING = "install the journal app to bring it back online"
-    public static let SETTINGS_LOCAL_JOURNAL_OPEN_EXISTING = "open the journal app to bring it back online"
-    public static let SETTINGS_JOURNAL_OPEN = "open journal"
-    public static let SETTINGS_TAB_DONE_A11Y = "configured"
-    public static let SETTINGS_TAB_ATTENTION_A11Y = "needs attention"
-    public static let SETTINGS_TAB_UPDATES_DONE_A11Y = "solstone is up to date"
-    public static let SETTINGS_ATTENTION_PERMISSIONS = "permissions needed"
-    public static let SETTINGS_ATTENTION_PRIVATE_WINDOWS = "can't check private windows in Safari, Chrome, Edge and Brave"
+    public static let JOURNAL_MARK_SWITCH_NOT_CHANGED_BODY = MacStrings.macos_ui_yourcurrentpairingstays()
+    public static let JOURNAL_MARK_MISMATCH_SUPPORT = MacStrings.macos_copy_journalmarkmismatchsupport()
+    public static let SETTINGS_PREREQ_PERMISSIONS = MacStrings.macos_copy_settingsprereqpermissions()
+    public static let SETTINGS_NEXT_CONNECT_JOURNAL = MacStrings.macos_copy_settingsnextconnectjournal()
+    public static let SETTINGS_NEXT_CHECK_STATUS = MacStrings.macos_copy_settingsnextcheckstatus()
+    public static let SETTINGS_LOCAL_JOURNAL_FOUND_EXISTING = MacStrings.macos_copy_settingslocaljournalfoundexisting()
+    public static let SETTINGS_LOCAL_JOURNAL_INSTALL_EXISTING = MacStrings.macos_copy_settingslocaljournalinstallexisting()
+    public static let SETTINGS_LOCAL_JOURNAL_OPEN_EXISTING = MacStrings.macos_copy_settingslocaljournalopenexisting()
+    public static let SETTINGS_JOURNAL_OPEN = MacStrings.macos_desktop_shared_copy_settingsjournalopen()
+    public static let SETTINGS_TAB_DONE_A11Y = MacStrings.macos_ui_configured()
+    public static let SETTINGS_TAB_ATTENTION_A11Y = MacStrings.macos_desktop_shared_copy_settingstabattentiona11y()
+    public static let SETTINGS_TAB_UPDATES_DONE_A11Y = MacStrings.macos_desktop_shared_copy_settingstabupdatesdonea11y()
+    public static let SETTINGS_ATTENTION_PERMISSIONS = MacStrings.macos_copy_settingsattentionpermissions()
+    public static let SETTINGS_ATTENTION_PRIVATE_WINDOWS = MacStrings.macos_copy_settingsattentionprivatewindows()
     public static func privateWindowsChecking(macOSMajor: Int) -> String {
-        "checking for \(Websites.accessibilityName(macOSMajor: macOSMajor))…"
+        MacStrings.macos_uicopy_checkingfor("\(Websites.accessibilityName(macOSMajor: macOSMajor))")
     }
-    public static let SETTINGS_ATTENTION_JOURNAL = "journal setup needed"
-    public static let SETTINGS_ATTENTION_UPDATE_AVAILABLE = "update available"
-    public static let SETTINGS_ATTENTION_UPDATE_CHECK_FAILED = "update check failed"
+    public static let SETTINGS_ATTENTION_JOURNAL = MacStrings.macos_copy_settingsattentionjournal()
+    public static let SETTINGS_ATTENTION_UPDATE_AVAILABLE = MacStrings.macos_copy_settingsattentionupdateavailable()
+    public static let SETTINGS_ATTENTION_UPDATE_CHECK_FAILED = MacStrings.macos_copy_settingsattentionupdatecheckfailed()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
-    public static let MENUBAR_SOURCES_OFF_OPEN_SETTINGS = "every source is off · open sources →"
+    public static let MENUBAR_SOURCES_OFF_OPEN_SETTINGS = MacStrings.macos_copy_menubarsourcesoffopensettings()
 #else
-    public static let MENUBAR_SOURCES_OFF_OPEN_SETTINGS = "both sources are off · open sources →"
+    public static let MENUBAR_SOURCES_OFF_OPEN_SETTINGS = MacStrings.macos_copy_menubarsourcesoffopensettings2()
 #endif
-    public static let MENUBAR_NO_SOURCE_OPEN_SETTINGS = "waiting on a permission · open permissions →"
-    public static let MENUBAR_OBSERVING_CONNECTED = "on, connected"
-    public static let MENUBAR_OBSERVATION_WEDGE_OPEN_SETTINGS = "needs attention · open settings →"
-    public static let MENUBAR_OBSERVING_OFFLINE_SAVED_LOCALLY = "on, offline (saved locally) →"
-    public static let MENUBAR_LOCAL_ONLY_SETUP_JOURNAL = "on · set up your journal →"
-    public static let MENUBAR_SYNC_PAUSED = "on, sync paused"
-    public static let MENUBAR_SAFARI_KEPT_OUT = "Safari left out of screen →"
-    public static let MENUBAR_SITE_SCREEN_HELD = "screen paused for websites you left out"
-    public static let MENUBAR_A11Y_SAFARI_KEPT_OUT = "Safari is left out of what the solstone app takes in from your screen"
+    public static let MENUBAR_NO_SOURCE_OPEN_SETTINGS = MacStrings.macos_copy_menubarnosourceopensettings()
+    public static let MENUBAR_OBSERVING_CONNECTED = MacStrings.macos_copy_menubarobservingconnected()
+    public static let MENUBAR_OBSERVATION_WEDGE_OPEN_SETTINGS = MacStrings.macos_copy_menubarobservationwedgeopensettings()
+    public static let MENUBAR_OBSERVING_OFFLINE_SAVED_LOCALLY = MacStrings.macos_copy_menubarobservingofflinesavedlocally()
+    public static let MENUBAR_LOCAL_ONLY_SETUP_JOURNAL = MacStrings.macos_copy_menubarlocalonlysetupjournal()
+    public static let MENUBAR_SYNC_PAUSED = MacStrings.macos_copy_menubarsyncpaused()
+    public static let MENUBAR_SAFARI_KEPT_OUT = MacStrings.macos_uicopy_safarileftoutofscreen()
+    public static let MENUBAR_SITE_SCREEN_HELD = MacStrings.macos_ui_screenpausedforwebsites()
+    public static let MENUBAR_A11Y_SAFARI_KEPT_OUT = MacStrings.macos_uicopy_safariisleftoutofwhatthesolstoneapptakesinfro()
 
     public static func formattedBrowserList(_ browsers: [PrivateBrowser]) -> String {
         let order: [PrivateBrowser] = [.safari, .chrome, .edge, .brave]
         let present = order.filter { browsers.contains($0) }
         let names = present.compactMap { browser -> String? in
             switch browser {
-            case .safari: return "Safari"
-            case .chrome: return "Chrome"
-            case .edge: return "Edge"
-            case .brave: return "Brave"
+            case .safari: return MacStrings.macos_settings_safari()
+            case .chrome: return MacStrings.macos_uicopy_chrome()
+            case .edge: return MacStrings.macos_uicopy_edge()
+            case .brave: return MacStrings.macos_uicopy_brave()
             default: return nil
             }
+        }
+        if MacStrings.language != "en-US" {
+            let formatter = ListFormatter()
+            formatter.locale = Locale(identifier: MacStrings.language)
+            return formatter.string(from: names) ?? names.joined(separator: ", ")
         }
         if names.count <= 1 {
             return names.first ?? ""
         } else if names.count == 2 {
-            return "\(names[0]) and \(names[1])"
+            return MacStrings.macos_uicopy_and("\(names[0])", "\(names[1])")
         } else {
             let leading = names.dropLast().joined(separator: ", ")
-            return "\(leading) and \(names.last!)"
+            return MacStrings.macos_uicopy_and("\(leading)", "\(names.last!)")
         }
     }
 
     public static func browserKeptOutMenuTitle(browsers: [PrivateBrowser]) -> String {
         let names = formattedBrowserList(browsers)
-        return "\(names) left out of screen →"
+        return MacStrings.macos_uicopy_leftoutofscreen("\(names)")
     }
 
     public static func browserKeptOutAccessibilityLabel(browsers: [PrivateBrowser]) -> String {
         let order: [PrivateBrowser] = [.safari, .chrome, .edge, .brave]
         let present = order.filter { browsers.contains($0) }
         let names = formattedBrowserList(present)
-        let one = present.count == 1
-        return "\(names) \(one ? "is" : "are") left out of what the solstone app takes in from your screen"
+        return MacStrings.macos_browser_leftoutspoken(present.count, names)
     }
-    public static let MENUBAR_STARTING = "starting…"
-    public static let MENUBAR_AWAITING_MARK_CONFIRMATION = "on · confirm your journal's mark →"
-    public static let MENUBAR_A11Y_PERMISSIONS_NEEDED = "solstone · permissions needed"
-    public static let MENUBAR_A11Y_NEEDS_ATTENTION = "solstone · needs attention"
-    public static let MENUBAR_A11Y_ERROR = "solstone · error"
-    public static let MENUBAR_A11Y_STARTING = "solstone · starting"
-    public static let MENUBAR_A11Y_JOURNAL_SETUP_NEEDED = "solstone · journal setup needed"
-    public static let MENUBAR_A11Y_WAITING_FOR_JOURNAL = "solstone · waiting for journal"
-    public static let MENUBAR_A11Y_OBSERVING_SYNC_PAUSED = "solstone · on, sync paused"
-    public static let MENUBAR_A11Y_OBSERVING_SAVED_LOCALLY = "solstone · on, saved locally"
-    public static let MENUBAR_A11Y_PAUSED = "solstone · paused"
-    public static let MENUBAR_A11Y_OBSERVING_CONNECTED = "solstone · on, connected"
-    public static let MENUBAR_A11Y_AWAITING_MARK_CONFIRMATION = "solstone · confirm your journal's mark"
-    public static let JOURNAL_MARK_HELD = "waiting for you to confirm your journal's mark"
-    public static let JOURNAL_MARK_HELD_CAPTION = "nothing waiting goes into your journal until you do."
-    public static let JOURNAL_MARK_CONFIRM_ACTION = "confirm your journal's mark"
-    public static let SETTINGS_OBSERVATION_OBSERVING = "on · reaching your journal"
-    public static let SETTINGS_OBSERVATION_CONNECTING = "connecting"
-    public static let SETTINGS_OBSERVATION_PAUSED = "paused"
-    public static let SETTINGS_OBSERVATION_PROTECTED_VIDEO = "paused for protected video"
-    public static let SETTINGS_OBSERVATION_NOT_REACHING = "on · not reaching your journal"
-    public static let SETTINGS_OBSERVATION_NO_JOURNAL = "on · no journal"
-    public static let SETTINGS_OBSERVATION_ATTENTION = "needs your attention"
-    public static let SETTINGS_OBSERVATION_SAVED_LOCALLY = "on · saved on this mac, not reaching your journal right now"
-    public static let SETTINGS_OBSERVATION_ERROR = "something's broken"
-    public static let SETTINGS_TRY_AGAIN = "try again"
-    public static let SETTINGS_TRY_AGAIN_IN_FLIGHT = "trying again…"
-    public static let SETTINGS_OBSERVATION_RECOVERY_FALLBACK = "screen and audio stopped and couldn't start again on their own."
-    public static let SETTINGS_SETUP_GROUP_TITLE = "check my setup"
-    public static let SETTINGS_SETUP_VERDICT_READY = "your setup is ready"
-    public static let SETTINGS_SETUP_VERDICT_UNAVAILABLE = "some setup checks are unavailable"
-    public static let SETTINGS_SETUP_SHARED_NOT_REQUIRED = "not needed on this mac"
-    public static let SETTINGS_SETUP_SHARED_COULD_NOT_CHECK = "couldn't check"
-    public static let SETTINGS_SETUP_SHARED_GRANTED = "granted"
-    public static let SETTINGS_SETUP_SHARED_NOT_GRANTED = "not granted"
-    public static let SETTINGS_SETUP_SHARED_CHECKING = "checking"
-    public static let SETTINGS_SETUP_SOL_APP_LABEL = "solstone app"
-    public static let SETTINGS_SETUP_SOL_APP_READY = "in Applications"
-    public static let SETTINGS_SETUP_SOL_APP_NEEDS_ATTENTION = "needs to be moved"
-    public static let SETTINGS_SETUP_SOL_APP_ACTION = "open Applications →"
-    public static let SETTINGS_SETUP_JOURNAL_APP_LABEL = "journal app"
-    public static let SETTINGS_SETUP_JOURNAL_APP_READY = "installed"
-    public static let SETTINGS_SETUP_JOURNAL_APP_NEEDS_ATTENTION = "not installed"
-    public static let SETTINGS_SETUP_JOURNAL_APP_ACTION = "open journal settings →"
-    public static let SETTINGS_SETUP_JOURNAL_LINK_LABEL = "your journal"
-    public static let SETTINGS_SETUP_JOURNAL_LINK_READY = "linked"
-    public static let SETTINGS_SETUP_JOURNAL_LINK_NEEDS_ATTENTION = "not linked"
-    public static let SETTINGS_SETUP_JOURNAL_LINK_ACTION = "connect your journal →"
-    public static let SETTINGS_SETUP_SCREEN_RECORDING_LABEL = "screen recording"
-    public static let SETTINGS_SETUP_SCREEN_RECORDING_ACTION = "grant access →"
-    public static let SETTINGS_SETUP_MICROPHONE_LABEL = "microphone"
-    public static let SETTINGS_SETUP_MICROPHONE_ACTION = "grant access →"
-    public static let SETTINGS_LAST_DELIVERY_LABEL = "last added to your journal"
-    public static let SETTINGS_LAST_DELIVERY_NEVER = "nothing added yet"
-    public static let SETTINGS_LAST_DELIVERY_NOT_LINKED = "your journal isn't linked"
-    public static let SETTINGS_DIAGNOSTICS_TITLE = "diagnostics"
-    public static let SETTINGS_DIAGNOSTICS_INTRO = "a short summary for troubleshooting."
-    public static let SETTINGS_DIAGNOSTICS_SHOW = "show diagnostics"
-    public static let SETTINGS_DIAGNOSTICS_HIDE = "hide diagnostics"
-    public static let SETTINGS_DIAGNOSTICS_COPY = "copy diagnostics"
-    public static let SETTINGS_DIAGNOSTICS_COPIED = "copied"
-    public static let SETTINGS_DIAGNOSTICS_COPY_ANNOUNCEMENT = "diagnostics copied to the clipboard"
-    public static let SETTINGS_DIAGNOSTICS_COPY_FAILED = "couldn't copy diagnostics"
-    public static let SETTINGS_DIAGNOSTICS_CHECKED_AT = "checked at"
-    public static let SETTINGS_DIAGNOSTICS_APP_VERSION = "app version"
-    public static let SETTINGS_DIAGNOSTICS_SCREEN_RECORDING = "screen recording"
-    public static let SETTINGS_DIAGNOSTICS_MICROPHONE = "microphone"
-    public static let SETTINGS_DIAGNOSTICS_SCREEN_AND_AUDIO = "sources"
-    public static let SETTINGS_DIAGNOSTICS_LAST_JOURNAL_CONNECTION = "last journal connection"
-    public static let SETTINGS_DIAGNOSTICS_INGEST_REASON = "journal intake"
-    public static let SETTINGS_DIAGNOSTICS_INGEST_ROUTE = "journal intake address"
-    public static let SETTINGS_DIAGNOSTICS_JOURNAL_LINK = "journal link"
-    public static let SETTINGS_DIAGNOSTICS_NO_LINK_REFUSALS = "nothing turned away or ended early"
+    public static let MENUBAR_STARTING = MacStrings.macos_ui_starting()
+    public static let MENUBAR_AWAITING_MARK_CONFIRMATION = MacStrings.macos_copy_menubarawaitingmarkconfirmation()
+    public static let MENUBAR_A11Y_PERMISSIONS_NEEDED = MacStrings.macos_copy_menubara11ypermissionsneeded()
+    public static let MENUBAR_A11Y_NEEDS_ATTENTION = MacStrings.macos_copy_menubara11yneedsattention()
+    public static let MENUBAR_A11Y_ERROR = MacStrings.macos_copy_menubara11yerror()
+    public static let MENUBAR_A11Y_STARTING = MacStrings.macos_copy_menubara11ystarting()
+    public static let MENUBAR_A11Y_JOURNAL_SETUP_NEEDED = MacStrings.macos_copy_menubara11yjournalsetupneeded()
+    public static let MENUBAR_A11Y_WAITING_FOR_JOURNAL = MacStrings.macos_copy_menubara11ywaitingforjournal()
+    public static let MENUBAR_A11Y_OBSERVING_SYNC_PAUSED = MacStrings.macos_copy_menubara11yobservingsyncpaused()
+    public static let MENUBAR_A11Y_OBSERVING_SAVED_LOCALLY = MacStrings.macos_copy_menubara11yobservingsavedlocally()
+    public static let MENUBAR_A11Y_PAUSED = MacStrings.macos_copy_menubara11ypaused()
+    public static let MENUBAR_A11Y_OBSERVING_CONNECTED = MacStrings.macos_copy_menubara11yobservingconnected()
+    public static let MENUBAR_A11Y_AWAITING_MARK_CONFIRMATION = MacStrings.macos_copy_menubara11yawaitingmarkconfirmation()
+    public static let JOURNAL_MARK_HELD = MacStrings.macos_copy_journalmarkheld()
+    public static let JOURNAL_MARK_HELD_CAPTION = MacStrings.macos_copy_journalmarkheldcaption()
+    public static let JOURNAL_MARK_CONFIRM_ACTION = MacStrings.macos_copy_journalmarkconfirmaction()
+    public static let SETTINGS_OBSERVATION_OBSERVING = MacStrings.macos_copy_settingsobservationobserving()
+    public static let SETTINGS_OBSERVATION_CONNECTING = MacStrings.macos_ui_connecting()
+    public static let SETTINGS_OBSERVATION_PAUSED = MacStrings.macos_ui_paused()
+    public static let SETTINGS_OBSERVATION_PROTECTED_VIDEO = MacStrings.macos_copy_settingsobservationprotectedvideo()
+    public static let SETTINGS_OBSERVATION_NOT_REACHING = MacStrings.macos_copy_settingsobservationnotreaching()
+    public static let SETTINGS_OBSERVATION_NO_JOURNAL = MacStrings.macos_copy_settingsobservationnojournal()
+    public static let SETTINGS_OBSERVATION_ATTENTION = MacStrings.macos_copy_settingsobservationattention()
+    public static let SETTINGS_OBSERVATION_SAVED_LOCALLY = MacStrings.macos_copy_settingsobservationsavedlocally()
+    public static let SETTINGS_OBSERVATION_ERROR = MacStrings.macos_copy_settingsobservationerror()
+    public static let SETTINGS_TRY_AGAIN = MacStrings.macos_desktop_shared_copy_tryagain()
+    public static let SETTINGS_TRY_AGAIN_IN_FLIGHT = MacStrings.macos_copy_settingstryagaininflight()
+    public static let SETTINGS_OBSERVATION_RECOVERY_FALLBACK = MacStrings.macos_uicopy_screenandaudiostoppedandcouldntstartagainonth()
+    public static let SETTINGS_SETUP_GROUP_TITLE = MacStrings.macos_copy_settingssetupgrouptitle()
+    public static let SETTINGS_SETUP_VERDICT_READY = MacStrings.macos_copy_settingssetupverdictready()
+    public static let SETTINGS_SETUP_VERDICT_UNAVAILABLE = MacStrings.macos_copy_settingssetupverdictunavailable()
+    public static let SETTINGS_SETUP_SHARED_NOT_REQUIRED = MacStrings.macos_copy_settingssetupsharednotrequired()
+    public static let SETTINGS_SETUP_SHARED_COULD_NOT_CHECK = MacStrings.macos_copy_settingssetupsharedcouldnotcheck()
+    public static let SETTINGS_SETUP_SHARED_GRANTED = MacStrings.macos_ui_granted()
+    public static let SETTINGS_SETUP_SHARED_NOT_GRANTED = MacStrings.macos_copy_settingssetupsharednotgranted()
+    public static let SETTINGS_SETUP_SHARED_CHECKING = MacStrings.macos_ui_checking()
+    public static let SETTINGS_SETUP_SOL_APP_LABEL = MacStrings.macos_copy_settingssetupsolapplabel()
+    public static let SETTINGS_SETUP_SOL_APP_READY = MacStrings.macos_copy_settingssetupsolappready()
+    public static let SETTINGS_SETUP_SOL_APP_NEEDS_ATTENTION = MacStrings.macos_copy_settingssetupsolappneedsattention()
+    public static let SETTINGS_SETUP_SOL_APP_ACTION = MacStrings.macos_copy_settingssetupsolappaction()
+    public static let SETTINGS_SETUP_JOURNAL_APP_LABEL = MacStrings.macos_copy_settingssetupjournalapplabel()
+    public static let SETTINGS_SETUP_JOURNAL_APP_READY = MacStrings.macos_ui_installed()
+    public static let SETTINGS_SETUP_JOURNAL_APP_NEEDS_ATTENTION = MacStrings.macos_copy_settingssetupjournalappneedsattention()
+    public static let SETTINGS_SETUP_JOURNAL_APP_ACTION = MacStrings.macos_copy_settingssetupjournalappaction()
+    public static let SETTINGS_SETUP_JOURNAL_LINK_LABEL = MacStrings.macos_desktop_shared_copy_setupjournalcardheading()
+    public static let SETTINGS_SETUP_JOURNAL_LINK_READY = MacStrings.macos_ui_linked()
+    public static let SETTINGS_SETUP_JOURNAL_LINK_NEEDS_ATTENTION = MacStrings.macos_copy_settingssetupjournallinkneedsattention()
+    public static let SETTINGS_SETUP_JOURNAL_LINK_ACTION = MacStrings.macos_copy_settingssetupjournallinkaction()
+    public static let SETTINGS_SETUP_SCREEN_RECORDING_LABEL = MacStrings.macos_copy_settingssetupscreenrecordinglabel()
+    public static let SETTINGS_SETUP_SCREEN_RECORDING_ACTION = MacStrings.macos_copy_settingssetupscreenrecordingaction()
+    public static let SETTINGS_SETUP_MICROPHONE_LABEL = MacStrings.macos_copy_accessibilityexplanation()
+    public static let SETTINGS_SETUP_MICROPHONE_ACTION = MacStrings.macos_copy_settingssetupscreenrecordingaction()
+    public static let SETTINGS_LAST_DELIVERY_LABEL = MacStrings.macos_copy_settingslastdeliverylabel()
+    public static let SETTINGS_LAST_DELIVERY_NEVER = MacStrings.macos_copy_settingslastdeliverynever()
+    public static let SETTINGS_LAST_DELIVERY_NOT_LINKED = MacStrings.macos_app_settingslastdeliverynotlinked()
+    public static let SETTINGS_DIAGNOSTICS_TITLE = MacStrings.macos_ui_diagnostics()
+    public static let SETTINGS_DIAGNOSTICS_INTRO = MacStrings.macos_copy_settingsdiagnosticsintro()
+    public static let SETTINGS_DIAGNOSTICS_SHOW = MacStrings.macos_copy_settingsdiagnosticsshow()
+    public static let SETTINGS_DIAGNOSTICS_HIDE = MacStrings.macos_copy_settingsdiagnosticshide()
+    public static let SETTINGS_DIAGNOSTICS_COPY = MacStrings.macos_copy_descriptionparagraph1()
+    public static let SETTINGS_DIAGNOSTICS_COPIED = MacStrings.macos_about_copied()
+    public static let SETTINGS_DIAGNOSTICS_COPY_ANNOUNCEMENT = MacStrings.macos_copy_limitsdisclosure()
+    public static let SETTINGS_DIAGNOSTICS_COPY_FAILED = MacStrings.macos_copy_accessibilitycaution()
+    public static let SETTINGS_DIAGNOSTICS_CHECKED_AT = MacStrings.macos_copy_settingsdiagnosticscheckedat()
+    public static let SETTINGS_DIAGNOSTICS_APP_VERSION = MacStrings.macos_copy_settingsdiagnosticsappversion()
+    public static let SETTINGS_DIAGNOSTICS_SCREEN_RECORDING = MacStrings.macos_copy_settingssetupscreenrecordinglabel()
+    public static let SETTINGS_DIAGNOSTICS_MICROPHONE = MacStrings.macos_copy_accessibilityexplanation()
+    public static let SETTINGS_DIAGNOSTICS_SCREEN_AND_AUDIO = MacStrings.macos_desktop_shared_app_sourcestitle()
+    public static let SETTINGS_DIAGNOSTICS_LAST_JOURNAL_CONNECTION = MacStrings.macos_copy_settingsdiagnosticslastjournalconnection()
+    public static let SETTINGS_DIAGNOSTICS_INGEST_REASON = MacStrings.macos_copy_settingsdiagnosticsingestreason()
+    public static let SETTINGS_DIAGNOSTICS_INGEST_ROUTE = MacStrings.macos_copy_settingsdiagnosticsingestroute()
+    public static let SETTINGS_DIAGNOSTICS_JOURNAL_LINK = MacStrings.macos_copy_settingsdiagnosticsjournallink()
+    public static let SETTINGS_DIAGNOSTICS_NO_LINK_REFUSALS = MacStrings.macos_copy_settingsdiagnosticsnolinkrefusals()
     public static func diagnosticsStreamLimitRefused(count: Int, last: String) -> String {
-        "your journal turned away \(count) requests at its limit · last \(last)"
+        MacStrings.macos_copy_yourjournalturnedawayrequestsatits_native(MacStrings.number(count), "\(last)")
     }
     // ⛔ Never "lost the connection": this line exists only because the journal
     // sent a reset, which it can only do over a live link. Saying the
     // connection dropped would print the misleading symptom back as the
     // diagnosis, which is the failure this row was added to end.
     public static func diagnosticsStreamDropped(count: Int, last: String) -> String {
-        "your journal ended \(count) requests early · last \(last)"
+        MacStrings.macos_copy_yourjournalendedrequestsearlylast_native(MacStrings.number(count), "\(last)")
     }
-    public static let SETTINGS_DIAGNOSTICS_RECENT_STATE_CODES = "recent state codes"
-    public static let SETTINGS_DIAGNOSTICS_GRANTED = "granted"
-    public static let SETTINGS_DIAGNOSTICS_NOT_GRANTED = "not granted"
-    public static let SETTINGS_DIAGNOSTICS_CHECKING = "checking"
-    public static let SETTINGS_DIAGNOSTICS_COULD_NOT_CHECK = "couldn't check"
-    public static let SETTINGS_DIAGNOSTICS_ON = "on"
-    public static let SETTINGS_DIAGNOSTICS_PAUSED = "paused"
-    public static let SETTINGS_DIAGNOSTICS_OFF = "off"
-    public static let SETTINGS_DIAGNOSTICS_ERROR = "error"
-    public static let SETTINGS_DIAGNOSTICS_NO_CONNECTION = "no connection yet"
-    public static let SETTINGS_DIAGNOSTICS_NO_RECENT_CODES = "no recent state codes"
-    public static let JOURNAL_ADDRESSES_LABEL = "addresses"
-    public static let JOURNAL_RELAY_LABEL = "relay"
-    public static let JOURNAL_RELAY_OFF = "off"
+    public static let SETTINGS_DIAGNOSTICS_RECENT_STATE_CODES = MacStrings.macos_copy_settingsdiagnosticsrecentstatecodes()
+    public static let SETTINGS_DIAGNOSTICS_GRANTED = MacStrings.macos_ui_granted()
+    public static let SETTINGS_DIAGNOSTICS_NOT_GRANTED = MacStrings.macos_copy_settingssetupsharednotgranted()
+    public static let SETTINGS_DIAGNOSTICS_CHECKING = MacStrings.macos_ui_checking()
+    public static let SETTINGS_DIAGNOSTICS_COULD_NOT_CHECK = MacStrings.macos_copy_settingssetupsharedcouldnotcheck()
+    public static let SETTINGS_DIAGNOSTICS_ON = MacStrings.macos_desktop_shared_app_settingsdiagnosticson()
+    public static let SETTINGS_DIAGNOSTICS_PAUSED = MacStrings.macos_ui_paused()
+    public static let SETTINGS_DIAGNOSTICS_OFF = MacStrings.macos_desktop_shared_app_microphonemodeoff()
+    public static let SETTINGS_DIAGNOSTICS_ERROR = MacStrings.macos_ui_error()
+    public static let SETTINGS_DIAGNOSTICS_NO_CONNECTION = MacStrings.macos_copy_settingsdiagnosticsnoconnection()
+    public static let SETTINGS_DIAGNOSTICS_NO_RECENT_CODES = MacStrings.macos_copy_settingsdiagnosticsnorecentcodes()
+    public static let JOURNAL_ADDRESSES_LABEL = MacStrings.macos_ui_addresses()
+    public static let JOURNAL_RELAY_LABEL = MacStrings.macos_ui_relay()
+    public static let JOURNAL_RELAY_OFF = MacStrings.macos_desktop_shared_app_microphonemodeoff()
     public static func journalRelayOn(host: String) -> String {
-        "on \u{00B7} \(host)"
+        MacStrings.macos_copy_on("\(host)")
     }
-    public static let JOURNAL_CONNECTED_THROUGH_LABEL = "connected through"
-    public static let JOURNAL_CONNECTED_THROUGH_RELAY = "the relay"
-    public static let JOURNAL_ADDRESSES_TRIED_LABEL = "addresses tried"
+    public static let JOURNAL_CONNECTED_THROUGH_LABEL = MacStrings.macos_copy_journalconnectedthroughlabel()
+    public static let JOURNAL_CONNECTED_THROUGH_RELAY = MacStrings.macos_copy_journalconnectedthroughrelay()
+    public static let JOURNAL_ADDRESSES_TRIED_LABEL = MacStrings.macos_copy_journaladdressestriedlabel()
     /// `tried A` · `tried A and B` · `tried A, B and C`
     public static func journalTriedAddresses(_ addresses: [String]) -> String? {
         guard let last = addresses.last else { return nil }
-        guard addresses.count > 1 else { return "tried \(last)" }
-        return "tried \(addresses.dropLast().joined(separator: ", ")) and \(last)"
+        guard addresses.count > 1 else { return MacStrings.macos_copy_tried("\(last)") }
+        return MacStrings.macos_copy_triedand("\(addresses.dropLast().joined(separator: ", "))", "\(last)")
     }
-    public static let SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT = "if solstone is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old solstone entry and try enabling screen recording again."
-    public static let SETTINGS_NEXT_GRANT_PERMISSIONS = "next: grant permissions →"
-    public static let SETTINGS_PERMISSIONS_SCREEN_EXPLAINER = "grant it so what you share can go into your journal."
-    public static let SETTINGS_PERMISSIONS_MIC_EXPLAINER = "grant it so what you share can go into your journal."
-    public static let SETTINGS_PERMISSIONS_MIC_DENIED = "microphone access is off. if you missed or declined the prompt, switch on solstone in System Settings."
-    public static let SETTINGS_PERMISSIONS_MIC_RESTRICTED = "microphone access is restricted by this mac."
-    public static let SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS = "open System Settings →"
-    public static let SETTINGS_PERMISSIONS_LIVE_ON = "on"
-    public static let SETTINGS_PERMISSIONS_LIVE_ON_HINT = "you can pause everything at any time."
-    public static let SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT = "nothing new from this app goes into your journal while it's paused."
-    public static let SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT = "while this app is paused, only activity goes into your journal."
+    public static let SETTINGS_PERMISSIONS_SCREEN_RECORDING_RESET_HINT = MacStrings.macos_copy_settingspermissionsscreenrecordingresethint()
+    public static let SETTINGS_NEXT_GRANT_PERMISSIONS = MacStrings.macos_copy_settingsnextgrantpermissions()
+    public static let SETTINGS_PERMISSIONS_SCREEN_EXPLAINER = MacStrings.macos_copy_settingspermissionsscreenexplainer()
+    public static let SETTINGS_PERMISSIONS_MIC_EXPLAINER = MacStrings.macos_copy_settingspermissionsscreenexplainer()
+    public static let SETTINGS_PERMISSIONS_MIC_DENIED = MacStrings.macos_copy_settingspermissionsmicdenied()
+    public static let SETTINGS_PERMISSIONS_MIC_RESTRICTED = MacStrings.macos_copy_settingspermissionsmicrestricted()
+    public static let SETTINGS_PERMISSIONS_OPEN_SYSTEM_SETTINGS = MacStrings.macos_copy_settingspermissionsopensystemsettings()
+    public static let SETTINGS_PERMISSIONS_LIVE_ON = MacStrings.macos_desktop_shared_app_settingsdiagnosticson()
+    public static let SETTINGS_PERMISSIONS_LIVE_ON_HINT = MacStrings.macos_copy_settingspermissionsliveonhint()
+    public static let SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT = MacStrings.macos_copy_settingspermissionslivepausedhint()
+    public static let SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT = MacStrings.macos_copy_settingspermissionslivepausedactivityhint()
 
     /// The paused hint must not say nothing goes in while activity still does.
     public static func pausedHint(activityGoesOn: Bool) -> String {
         activityGoesOn ? SETTINGS_PERMISSIONS_LIVE_PAUSED_ACTIVITY_HINT : SETTINGS_PERMISSIONS_LIVE_PAUSED_HINT
     }
-    public static let SETTINGS_PERMISSIONS_LIVE_OFF = "off"
-    public static let SETTINGS_PERMISSIONS_LIVE_OFF_HINT = "turned off in sources."
-    public static let SETTINGS_PERMISSIONS_LIVE_NOT_RUNNING = "granted, not on right now"
-    public static let SETTINGS_PERMISSIONS_CHECK_STATUS = "check status →"
-    public static let SETTINGS_PERMISSIONS_MICROPHONE_BREADCRUMB = "System Settings › Privacy & Security › Microphone"
-    public static let SETTINGS_PERMISSIONS_SCREEN_RECORDING_BREADCRUMB = "System Settings › Privacy & Security › Screen & System Audio Recording"
-    public static let SETTINGS_PERMISSIONS_SCREEN_WAITING = "waiting for you to switch on solstone in System Settings…"
-    public static let SETTINGS_PERMISSIONS_SCREEN_REOPEN = "already switched it on? reopen solstone"
-    public static let SETTINGS_PERMISSIONS_ENABLE_SCREEN_RECORDING = "enable screen recording →"
-    public static let SETTINGS_PERMISSIONS_ENABLE_MICROPHONE = "enable microphone"
-    public static let SETTINGS_HELP_ICON_RECORDING = "on · reaching your journal"
-    public static let SETTINGS_HELP_ICON_CONNECTING = "connecting"
-    public static let SETTINGS_HELP_ICON_PAUSED = "paused, or every source off"
-    public static let SETTINGS_HELP_ICON_ATTENTION = "needs your attention"
-    public static let SETTINGS_HELP_ICON_OFFLINE = "on · saved on this mac, not reaching your journal right now"
-    public static let SETTINGS_HELP_ICON_ERROR = "something's broken"
-    public static let SETTINGS_LOG_EXPORT_TITLE = "recent logs"
-    public static let SETTINGS_LOG_EXPORT_INTRO = "read up to the last 24 hours of logs from solstone on this mac. save a copy if you want one."
-    public static let SETTINGS_LOG_EXPORT_ACTION = "show recent logs"
-    public static let SETTINGS_LOG_EXPORT_WORKING = "reading recent logs…"
-    public static let SETTINGS_LOG_EXPORT_SAVE = "save a copy…"
-    public static let SETTINGS_LOG_EXPORT_FAILED = "couldn't read recent logs"
-    public static let SETTINGS_LOG_EXPORT_PARTIAL = "some logs couldn't be read"
-    public static let SETTINGS_LOG_EXPORT_EMPTY = "no logs in the last 24 hours"
-    public static let SETTINGS_LOG_EXPORT_WRITE_FAILED = "couldn't save the copy"
-    public static let SETTINGS_LOG_EXPORT_PREVIEW_SUBSET = "showing the newest %d of %d entries. saving writes all of them."
+    public static let SETTINGS_PERMISSIONS_LIVE_OFF = MacStrings.macos_desktop_shared_app_microphonemodeoff()
+    public static let SETTINGS_PERMISSIONS_LIVE_OFF_HINT = MacStrings.macos_copy_settingspermissionsliveoffhint()
+    public static let SETTINGS_PERMISSIONS_LIVE_NOT_RUNNING = MacStrings.macos_copy_settingspermissionslivenotrunning()
+    public static let SETTINGS_PERMISSIONS_CHECK_STATUS = MacStrings.macos_copy_settingspermissionscheckstatus()
+    public static let SETTINGS_PERMISSIONS_MICROPHONE_BREADCRUMB = MacStrings.macos_copy_settingspermissionsmicrophonebreadcrumb()
+    public static let SETTINGS_PERMISSIONS_SCREEN_RECORDING_BREADCRUMB = MacStrings.macos_copy_settingspermissionsscreenrecordingbreadcrumb()
+    public static let SETTINGS_PERMISSIONS_SCREEN_WAITING = MacStrings.macos_copy_settingspermissionsscreenwaiting()
+    public static let SETTINGS_PERMISSIONS_SCREEN_REOPEN = MacStrings.macos_copy_settingspermissionsscreenreopen()
+    public static let SETTINGS_PERMISSIONS_ENABLE_SCREEN_RECORDING = MacStrings.macos_copy_settingspermissionsenablescreenrecording()
+    public static let SETTINGS_PERMISSIONS_ENABLE_MICROPHONE = MacStrings.macos_copy_settingspermissionsenablemicrophone()
+    public static let SETTINGS_HELP_ICON_RECORDING = MacStrings.macos_copy_settingsobservationobserving()
+    public static let SETTINGS_HELP_ICON_CONNECTING = MacStrings.macos_ui_connecting()
+    public static let SETTINGS_HELP_ICON_PAUSED = MacStrings.macos_ui_pausedoreverysource()
+    public static let SETTINGS_HELP_ICON_ATTENTION = MacStrings.macos_copy_settingsobservationattention()
+    public static let SETTINGS_HELP_ICON_OFFLINE = MacStrings.macos_copy_settingsobservationsavedlocally()
+    public static let SETTINGS_HELP_ICON_ERROR = MacStrings.macos_copy_settingsobservationerror()
+    public static let SETTINGS_LOG_EXPORT_TITLE = MacStrings.macos_desktop_shared_copy_settingslogexporttitle()
+    public static let SETTINGS_LOG_EXPORT_INTRO = MacStrings.macos_copy_settingslogexportintro()
+    public static let SETTINGS_LOG_EXPORT_ACTION = MacStrings.macos_copy_settingslogexportaction()
+    public static let SETTINGS_LOG_EXPORT_WORKING = MacStrings.macos_copy_settingslogexportworking()
+    public static let SETTINGS_LOG_EXPORT_SAVE = MacStrings.macos_desktop_shared_copy_settingslogexportsave()
+    public static let SETTINGS_LOG_EXPORT_FAILED = MacStrings.macos_copy_settingslogexportfailed()
+    public static let SETTINGS_LOG_EXPORT_PARTIAL = MacStrings.macos_copy_settingslogexportpartial()
+    public static let SETTINGS_LOG_EXPORT_EMPTY = MacStrings.macos_copy_settingslogexportempty()
+    public static let SETTINGS_LOG_EXPORT_WRITE_FAILED = MacStrings.macos_copy_settingslogexportwritefailed()
+    public static let SETTINGS_LOG_EXPORT_PREVIEW_SUBSET = MacStrings.macos_copy_settingslogexportpreviewsubset()
     // The status card names the same state the help legend names, in the same words,
     // so the red dot and its explanation cannot drift apart.
-    public static let STATUS_CAPTURE_ERROR_TITLE = "something's broken"
-    public static let ERROR_LOGIN_ITEM = "your mac wouldn't change \"start at login\". use the switch to try again."
-    public static let ERROR_SAVE_CONFIG = "couldn't save that change. try it again."
-    public static let ERROR_START_OBSERVING = "screen and audio couldn't start. check permissions in settings, then try again."
+    public static let STATUS_CAPTURE_ERROR_TITLE = MacStrings.macos_copy_settingsobservationerror()
+    public static let ERROR_LOGIN_ITEM = MacStrings.macos_copy_errorloginitem()
+    public static let ERROR_SAVE_CONFIG = MacStrings.macos_copy_errorsaveconfig()
+    public static let ERROR_START_OBSERVING = MacStrings.macos_uicopy_screenandaudiocouldntstartcheckpermissionsins()
 
     public static func menubarErrorOpenSettings(_ message: String) -> String {
-        "error: \(message) →"
+        MacStrings.macos_copy_error("\(message)")
     }
 
     public static func settingsSetupVerdictNeedsAttention(_ count: Int) -> String {
-        count == 1 ? "1 thing needs attention" : "\(count) things need attention"
+        MacStrings.macos_uicopy_thingsneedattention_plural(count)
     }
 
     // Keyboard shortcut
-    public static let SHORTCUT_SECTION_TITLE = "keyboard shortcut"
-    public static let SHORTCUT_SECTION_DESCRIPTION = "pause or resume from any app"
-    public static let SHORTCUT_OFF = "off"
-    public static let SHORTCUT_SET = "set shortcut"
-    public static let SHORTCUT_PRESS = "press a shortcut"
-    public static let SHORTCUT_CLEAR = "clear"
-    public static let SHORTCUT_CANCEL = "cancel"
-    public static let SHORTCUT_ERROR_CMD_OR_CTRL = "use command or control with another key."
-    public static let SHORTCUT_ERROR_CONFLICT = "this shortcut is used by macos. choose another."
-    public static let SHORTCUT_ERROR_UNAVAILABLE = "this shortcut is unavailable. choose another."
-    public static let SHORTCUT_MENU_RECOVERY = "shortcut unavailable. open settings to choose another."
-    public static let SHORTCUT_PERMISSION_NOTE = "no extra macos permission is needed."
+    public static let SHORTCUT_SECTION_TITLE = MacStrings.macos_copy_shortcutsectiontitle()
+    public static let SHORTCUT_SECTION_DESCRIPTION = MacStrings.macos_copy_shortcutsectiondescription()
+    public static let SHORTCUT_OFF = MacStrings.macos_desktop_shared_app_microphonemodeoff()
+    public static let SHORTCUT_SET = MacStrings.macos_copy_shortcutset()
+    public static let SHORTCUT_PRESS = MacStrings.macos_copy_shortcutpress()
+    public static let SHORTCUT_CLEAR = MacStrings.macos_ui_clear()
+    public static let SHORTCUT_CANCEL = MacStrings.macos_desktop_shared_setup_cancel()
+    public static let SHORTCUT_ERROR_CMD_OR_CTRL = MacStrings.macos_copy_shortcuterrorcmdorctrl()
+    public static let SHORTCUT_ERROR_CONFLICT = MacStrings.macos_copy_shortcuterrorconflict()
+    public static let SHORTCUT_ERROR_UNAVAILABLE = MacStrings.macos_copy_shortcuterrorunavailable()
+    public static let SHORTCUT_MENU_RECOVERY = MacStrings.macos_copy_shortcutmenurecovery()
+    public static let SHORTCUT_PERMISSION_NOTE = MacStrings.macos_copy_shortcutpermissionnote()
 
     // Screen failure
-    public static let SCREEN_INTAKE_STOPPED = "a screen isn't coming through. open settings."
-    public static let SCREEN_INTAKE_COULD_NOT_START = "a screen could not start. open settings."
+    public static let SCREEN_INTAKE_STOPPED = MacStrings.macos_copy_screenintakestopped()
+    public static let SCREEN_INTAKE_COULD_NOT_START = MacStrings.macos_copy_screenintakecouldnotstart()
 
     // Microphones empty state
-    public static let MICROPHONES_EMPTY_TITLE = "no microphones available"
-    public static let MICROPHONES_EMPTY_ACCESS_DESCRIPTION = "check microphone access in permissions."
-    public static let MICROPHONES_EMPTY_OPEN_PERMISSIONS = "open permissions"
-    public static let MICROPHONES_EMPTY_CONNECT_DESCRIPTION = "connect a microphone. for bluetooth, check that it is connected in system settings."
-    public static let MICROPHONES_EMPTY_OPEN_SOUND = "open sound settings"
+    public static let MICROPHONES_EMPTY_TITLE = MacStrings.macos_copy_microphonesemptytitle()
+    public static let MICROPHONES_EMPTY_ACCESS_DESCRIPTION = MacStrings.macos_copy_microphonesemptyaccessdescription()
+    public static let MICROPHONES_EMPTY_OPEN_PERMISSIONS = MacStrings.macos_copy_microphonesemptyopenpermissions()
+    public static let MICROPHONES_EMPTY_CONNECT_DESCRIPTION = MacStrings.macos_copy_microphonesemptyconnectdescription()
+    public static let MICROPHONES_EMPTY_OPEN_SOUND = MacStrings.macos_copy_microphonesemptyopensound()
 
     public enum Websites {
-        public static let DESCRIPTION_PARAGRAPH_1 = "while a website you leave out shows in any Safari, Chrome, Edge or Brave window on your screen, even one behind other windows, that browser stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. the rest of your screen keeps going into your journal. leaving out bank.com leaves out login.bank.com too."
-        public static let HOW_THIS_WORKS = "how this works"
+        public static let DESCRIPTION_PARAGRAPH_1 = MacStrings.macos_uicopy_whileawebsiteyouleaveoutshowsinanysafarichrom()
+        public static let HOW_THIS_WORKS = MacStrings.macos_ui_howthisworks()
         public static func descriptionParagraph2(macOSMajor: Int) -> String {
-            "to check, solstone reads the address of the page each Safari, Chrome, Edge and Brave window shows, with \(accessibilityName(macOSMajor: macOSMajor)), and compares it with this list on this mac. the address goes into activity unless you turn browser addresses off."
+            MacStrings.macos_uicopy_tochecksolstonereadstheaddressofthepageeachsa("\(accessibilityName(macOSMajor: macOSMajor))")
         }
-        public static let LIMITS_DISCLOSURE = "checked in Safari, Chrome, Edge and Brave. Firefox, other browsers, beta and preview versions of these, and web apps added to the Dock from Safari aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, the solstone app stops taking in your screen for a moment while it checks, and for a few seconds when the page is one you leave out. while a Chrome, Edge or Brave window shows two pages side by side, solstone can't tell which websites it shows, so after a moment that browser stays out of what the solstone app takes in from your screen until the window shows one page again. a website shown inside another website's page isn't recognized. neither is a website open in a Chrome, Edge or Brave side panel or sidebar. a left-out website's tab title can still show in a browser's tab bar. a minimized browser window's picture in the Dock can still show. a page that changes without changing its window title, or a page open for less than half a second, can be missed, and in Chrome, Edge or Brave its picture can stay on screen, and go into your journal, for a few seconds after you leave it. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you stop leaving out there comes off this list, so Safari, Chrome, Edge and Brave windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well. while any website is left out, Picture in Picture from Safari, and from other apps that use macOS's own player, stays out of what the solstone app takes in from your screen. Picture in Picture from Chrome, Edge or Brave counts as a window of that browser: while it shows something from a website you leave out, that browser stays out of what the solstone app takes in from your screen."
+        public static let LIMITS_DISCLOSURE = MacStrings.macos_uicopy_checkedinsafarichromeedgeandbravefirefoxother()
         /// What System Settings calls this list on the owner's macOS.
         public static func accessibilityName(macOSMajor: Int) -> String {
-            macOSMajor >= 27 ? "Device Control and Data Access" : "Accessibility"
+            macOSMajor >= 27 ? MacStrings.macos_ui_devicecontrolanddata() : MacStrings.macos_ui_accessibility()
         }
         public static func accessibilityCaution(macOSMajor: Int) -> String {
-            "to leave websites out, solstone needs \(accessibilityName(macOSMajor: macOSMajor)), so it can read which website each Safari, Chrome, Edge and Brave window shows. once it's allowed, activity also adds browser addresses to your journal, except for websites you leave out. you can turn addresses off under activity."
+            MacStrings.macos_uicopy_toleavewebsitesoutsolstoneneedssoitcanreadwhi("\(accessibilityName(macOSMajor: macOSMajor))")
         }
-        public static let NOT_KEPT_OUT_YET = "until it's allowed, these websites aren't kept out of your journal."
+        public static let NOT_KEPT_OUT_YET = MacStrings.macos_uicopy_untilitsallowedthesewebsitesarentkeptoutofyou()
         public static func errorNeedsAccessibility(macOSMajor: Int) -> String {
-            "allow \(accessibilityName(macOSMajor: macOSMajor)) first, so solstone can tell which website a window shows."
+            MacStrings.macos_uicopy_allowfirstsosolstonecantellwhichwebsiteawindo("\(accessibilityName(macOSMajor: macOSMajor))")
         }
         public static func activityAccessibilityHelp(macOSMajor: Int) -> String {
-            "with \(accessibilityName(macOSMajor: macOSMajor)), activity can add browser addresses to your journal, and window titles when screen recording is unavailable. checking browsers for the websites you leave out uses the same access, whether this setting is on or off."
+            MacStrings.macos_uicopy_withactivitycanaddbrowseraddressestoyourjourn("\(accessibilityName(macOSMajor: macOSMajor))")
         }
         public static func activityAccessibilityOffInMacOS(macOSMajor: Int) -> String {
-            "macOS has \(accessibilityName(macOSMajor: macOSMajor)) off for solstone."
+            MacStrings.macos_ui_macoshasofffor("\(accessibilityName(macOSMajor: macOSMajor))")
         }
-        public static let OPEN_SYSTEM_SETTINGS = "open System Settings"
+        public static let OPEN_SYSTEM_SETTINGS = MacStrings.macos_settings_opensystemsettings()
         public static func browserCaution(browser: String) -> String {
-            "solstone can't read page addresses in \(browser) right now, so \(browser) stays out of what it takes in from your screen until it can."
+            MacStrings.macos_uicopy_solstonecantreadpageaddressesinrightnowsostay("\(browser)", "\(browser)")
         }
-        public static let ERROR_INVALID_ADDRESS = "enter a website address, like bank.com."
-        public static let ERROR_LIMIT_REACHED = "you can leave out up to 200 websites."
+        public static let ERROR_INVALID_ADDRESS = MacStrings.macos_copy_errorinvalidaddress()
+        public static let ERROR_LIMIT_REACHED = MacStrings.macos_copy_errorlimitreached()
     }
 }

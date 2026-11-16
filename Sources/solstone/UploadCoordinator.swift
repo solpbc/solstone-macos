@@ -405,13 +405,13 @@ public final class UploadCoordinator {
     /// Validates the currently connected paired loopback journal, not the
     /// editable legacy external-service fields.
     public func testPairedIngestConnection() async -> String? {
-        guard pairedIngestIdentity != nil, ordinaryAdmission() else { return "Not configured" }
+        guard pairedIngestIdentity != nil, ordinaryAdmission() else { return MacStrings.macos_upload_notconfigured() }
         switch await resolver.resolve() {
         case .url(let serverURL):
             let today = IngestDayKey.string(from: nowProvider())
             return await client.testPairedIngestConnection(serverURL: serverURL, day: today)
         case .held:
-            return "Not configured"
+            return MacStrings.macos_upload_notconfigured()
         }
     }
 

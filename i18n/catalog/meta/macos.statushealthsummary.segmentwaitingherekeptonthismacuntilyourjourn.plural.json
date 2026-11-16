@@ -1,0 +1,27 @@
+{
+  "description": "{ $count } segment waiting here · kept on this mac until your journal can read that day",
+  "context": "Native presentation. Preserve the complete sentence and reorder its named arguments as needed.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "count",
+      "type": "cardinal",
+      "numeric_style": "ungrouped",
+      "min": 0
+    }
+  ],
+  "format_intent": "cardinal",
+  "max_length": 1000,
+  "source_revision": "197211bef699b0c8d284eb463e668cf76444b59c201769fb4a9eabd66c895194",
+  "risk": "routine",
+  "auto_merge": true,
+  "selector": {
+    "name": "count",
+    "type": "cardinal"
+  }
+}

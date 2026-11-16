@@ -1,0 +1,16 @@
+{
+  "description": "resync all",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 10,
+  "source_revision": "baa049d67307d2f1d0e97b0a57cda9973a05526b325987263464eb25874ed50d",
+  "risk": "routine",
+  "auto_merge": true
+}

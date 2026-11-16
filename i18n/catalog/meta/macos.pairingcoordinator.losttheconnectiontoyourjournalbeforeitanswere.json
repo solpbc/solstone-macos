@@ -1,0 +1,16 @@
+{
+  "description": "lost the connection to your journal before it answered. try again.",
+  "context": "Shown by Sources/solstone/PairingCoordinator.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "123383142f400ca829eb07bd350dc6a022ad37620bcd436998ec5a13516777d3",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "enable microphone",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 17,
+  "source_revision": "9b80002c23f93311890f0406a9ef1ce1b2b35fcc6da08a0d20d7b2106812515c",
+  "risk": "routine",
+  "auto_merge": true
+}

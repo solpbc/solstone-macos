@@ -1,0 +1,21 @@
+{
+  "description": "on · { $sources }",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "sources",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "0c26a638f2196b058e1e2710f3e64a97b2276f5ac742e3b0909aafc1e7ba8b9a",
+  "risk": "routine",
+  "auto_merge": true
+}

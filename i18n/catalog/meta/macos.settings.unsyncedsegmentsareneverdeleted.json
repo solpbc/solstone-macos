@@ -1,0 +1,16 @@
+{
+  "description": "unsynced segments are never deleted.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 36,
+  "source_revision": "eda0cad7b90e5ece227bfd6206bff9e3f92b96b84eac2d58301564874cb0d2fb",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -14,11 +14,11 @@ enum DeckSource: String, CaseIterable, Hashable, Sendable {
 
     var label: String {
         switch self {
-        case .audio: return "audio"
-        case .screen: return "screen"
-        case .terminal: return "terminal"
-        case .browsers: return "browsers"
-        case .obsidian: return "Obsidian"
+        case .audio: return MacStrings.macos_desktopshellmodel_audio()
+        case .screen: return MacStrings.macos_setupscreenframe_screen()
+        case .terminal: return MacStrings.macos_ui_terminal()
+        case .browsers: return MacStrings.macos_ui_browsers()
+        case .obsidian: return MacStrings.macos_ui_obsidian()
         case .screenshots: return ScreenshotCopy.label
         }
     }
@@ -59,13 +59,13 @@ enum DeckStateWord: String, Equatable, Sendable, CaseIterable {
 
     var word: String {
         switch self {
-        case .off: return "off"
-        case .on: return "on"
-        case .paused: return "paused"
-        case .settingUp: return "setting up"
-        case .readyToSetUp: return "ready to set up"
-        case .checking: return "checking…"
-        case .needsAttention: return "needs attention"
+        case .off: return MacStrings.macos_desktop_shared_app_microphonemodeoff()
+        case .on: return MacStrings.macos_desktop_shared_app_settingsdiagnosticson()
+        case .paused: return MacStrings.macos_ui_paused()
+        case .settingUp: return MacStrings.macos_desktopshellmodel_settingup()
+        case .readyToSetUp: return MacStrings.macos_desktopshellmodel_readytosetup()
+        case .checking: return MacStrings.macos_screenshot_checking()
+        case .needsAttention: return MacStrings.macos_desktop_shared_copy_settingstabattentiona11y()
         }
     }
 
@@ -118,30 +118,30 @@ struct DeckTile: Equatable, Sendable {
 }
 
 enum DeckCopy {
-    static let offPaired = "turn it on any time."
-    static let offUnpaired = "turn it on any time."
-    static let screenWithActivity = "with computer sound and activity"
-    static let screenWithoutActivity = "with computer sound"
-    static let activityStillOn = "activity is still on."
-    static let microphoneDenied = "microphone access is off for the solstone app."
-    static let microphoneRestricted = "microphone access is restricted by this mac."
-    static let microphoneNeeded = "the solstone app needs microphone access."
-    static let screenDenied = "screen recording is off for the solstone app."
-    static let screenNeeded = "the solstone app needs screen recording access."
-    static let screenStopped = "a screen isn't coming through."
-    static let screenCouldNotStart = "a screen couldn't start."
-    static let tmuxMissing = "tmux isn't installed."
-    static let chooseVault = "choose a vault to start."
-    static let protectedVideo = "paused for protected video"
-    static let onThisDevice = "on this device"
-    static let notReachingJournal = "not reaching your journal right now"
+    static let offPaired = MacStrings.macos_desktopshellmodel_turnitonanytime()
+    static let offUnpaired = MacStrings.macos_desktopshellmodel_turnitonanytime()
+    static let screenWithActivity = MacStrings.macos_desktopshellmodel_withcomputersoundandactivity()
+    static let screenWithoutActivity = MacStrings.macos_desktopshellmodel_withcomputersound()
+    static let activityStillOn = MacStrings.macos_desktopshellmodel_activityisstillon()
+    static let microphoneDenied = MacStrings.macos_desktopshellmodel_microphoneaccessisoffforthesolstoneapp()
+    static let microphoneRestricted = MacStrings.macos_copy_settingspermissionsmicrestricted()
+    static let microphoneNeeded = MacStrings.macos_desktopshellmodel_thesolstoneappneedsmicrophoneaccess()
+    static let screenDenied = MacStrings.macos_desktopshellmodel_screenrecordingisoffforthesolstoneapp()
+    static let screenNeeded = MacStrings.macos_desktopshellmodel_thesolstoneappneedsscreenrecordingaccess()
+    static let screenStopped = MacStrings.macos_desktopshellmodel_ascreenisntcomingthrough()
+    static let screenCouldNotStart = MacStrings.macos_desktopshellmodel_ascreencouldntstart()
+    static let tmuxMissing = MacStrings.macos_desktopshellmodel_tmuxisntinstalled()
+    static let chooseVault = MacStrings.macos_desktopshellmodel_chooseavaulttostart()
+    static let protectedVideo = MacStrings.macos_copy_settingsobservationprotectedvideo()
+    static let onThisDevice = MacStrings.macos_desktopstatuspane_onthisdevice()
+    static let notReachingJournal = MacStrings.macos_desktopshellmodel_notreachingyourjournalrightnow()
 
-    static let audioTakesIn = "while this is on, the solstone app takes in sound from your microphones, and all of it goes into your journal."
-    static let screenTakesIn = "while this is on, the solstone app takes in what's on your screen, the sound your mac plays, and which apps and windows you're using, and all of it goes into your journal."
-    static let terminalTakesIn = "the solstone app takes in your tmux sessions, and all of it goes into your journal. needs tmux on this mac, and works in any terminal session, including when you SSH into this mac."
-    static let browsersSetUp = "add the solstone extension to a browser on this mac."
-    static let browsersNeedJournal = "browser pages start once you pair this mac with a journal."
-    static let browsersTakesIn = "on the sites you allow, the solstone extension takes in the page's text and rough layout, and all of it goes into your journal."
+    static let audioTakesIn = MacStrings.macos_desktopshellmodel_whilethisisonthesolstoneapptakesinsoundfromyo()
+    static let screenTakesIn = MacStrings.macos_desktopshellmodel_whilethisisonthesolstoneapptakesinwhatsonyour()
+    static let terminalTakesIn = MacStrings.macos_desktopshellmodel_thesolstoneapptakesinyourtmuxsessionsandallof()
+    static let browsersSetUp = MacStrings.macos_desktopshellmodel_addthesolstoneextensiontoabrowseronthismac()
+    static let browsersNeedJournal = MacStrings.macos_desktopshellmodel_browserpagesstartonceyoupairthismacwithajourn()
+    static let browsersTakesIn = MacStrings.macos_desktopshellmodel_onthesitesyouallowthesolstoneextensiontakesin()
 }
 
 // MARK: - inputs
@@ -193,7 +193,7 @@ struct DeckInputs: Equatable, Sendable {
     /// Activity is going into the journal right now.
     var activityGoingIn = true
     var activityFailed = false
-    var activityFailedLine = "activity couldn't be saved. check free space on this mac."
+    var activityFailedLine = MacStrings.macos_desktopshellmodel_activitycouldntbesavedcheckfreespaceonthismac()
     var privateWindowsNeedAttention = false
     var privateWindowsLine = ""
 
@@ -294,7 +294,7 @@ private func deriveScreenTile(_ i: DeckInputs) -> DeckTile {
     case .denied:
         return DeckTile(source: .screen, state: .needsAttention, subline: DeckCopy.screenDenied, reason: DeckCopy.screenDenied, action: .openScreenRecordingSettings, switchOn: true)
     case .needsRestart:
-        let line = "granted. solstone needs to restart before what's on your screen can go into your journal."
+        let line = MacStrings.macos_copy_sourcesrestartready()
         return DeckTile(source: .screen, state: .needsAttention, subline: line, reason: line, action: .restartApp, switchOn: true)
     case .notAsked:
         return DeckTile(source: .screen, state: .readyToSetUp, subline: nil, reason: DeckCopy.screenNeeded, action: .askScreenRecording, switchOn: true)
@@ -338,7 +338,7 @@ private func deriveTerminalTile(_ i: DeckInputs) -> DeckTile {
     case .tmuxNotFound:
         return DeckTile(source: .terminal, state: .needsAttention, subline: DeckCopy.tmuxMissing, reason: DeckCopy.tmuxMissing, action: nil, switchOn: true)
     case .oldAppInstalled:
-        let line = "solstone for tmux is still installed on this mac, so terminal stays off for now."
+        let line = MacStrings.macos_ui_solstonefortmuxis()
         return DeckTile(source: .terminal, state: .needsAttention, subline: line, reason: line, action: nil, switchOn: true)
     case .paused:
         return DeckTile(source: .terminal, state: .paused, subline: nil, reason: nil, action: nil, switchOn: true)
@@ -363,7 +363,9 @@ private func deriveBrowsersTile(_ i: DeckInputs) -> DeckTile {
     case .starting:
         return DeckTile(source: .browsers, state: .settingUp, subline: nil, reason: nil, action: nil, switchOn: true)
     case .running(let connected):
-        let line = connected.isEmpty ? nil : ListFormatter.localizedString(byJoining: connected)
+        let formatter = ListFormatter()
+        if MacStrings.language != "en-US" { formatter.locale = Locale(identifier: MacStrings.language) }
+        let line = connected.isEmpty ? nil : formatter.string(from: connected)
         return DeckTile(source: .browsers, state: .on, subline: line, reason: nil, action: nil, switchOn: true)
     case .checking:
         return DeckTile(source: .browsers, state: .checking, subline: nil, reason: nil, action: nil, switchOn: true)
@@ -385,13 +387,13 @@ private func deriveObsidianTile(_ i: DeckInputs) -> DeckTile {
     case .off, .unknown:
         return DeckTile(source: .obsidian, state: .off, subline: i.paired ? DeckCopy.offPaired : DeckCopy.offUnpaired, reason: DeckCopy.chooseVault, action: .chooseVault, switchOn: false)
     case .needsAttention:
-        let line = i.obsidianAttentionLine ?? "some notes couldn't go into your journal. the solstone app tries them again the next time it restarts."
+        let line = i.obsidianAttentionLine ?? MacStrings.macos_ui_somenotescouldnt()
         return DeckTile(source: .obsidian, state: .needsAttention, subline: line, reason: line, action: nil, switchOn: true)
     case .paused:
-        let line = "Obsidian is paused. your notes wait on this mac."
+        let line = MacStrings.macos_ui_obsidianispausedyour()
         return DeckTile(source: .obsidian, state: .paused, subline: i.obsidianVaultName, reason: line, action: nil, switchOn: true)
     case .waitingForJournalUpdate:
-        let line = "waiting for a journal update. your notes wait on this mac."
+        let line = MacStrings.macos_ui_waitingforajournal()
         return DeckTile(source: .obsidian, state: .settingUp, subline: line, reason: line, action: nil, switchOn: true)
     case .on:
         return DeckTile(source: .obsidian, state: .on, subline: i.obsidianVaultName, reason: nil, action: nil, switchOn: true)
@@ -431,17 +433,17 @@ enum JournalPill: Equatable, Sendable {
 
     var text: String {
         switch self {
-        case .needsNewLink: return "your journal needs a new link"
-        case .notPaired: return "not paired"
-        case .confirmMark(let n): return n > 0 ? "confirm the mark · \(n) waiting" : "confirm the mark"
-        case .syncPaused(let n): return n > 0 ? "sync paused · \(n) waiting" : "sync paused"
-        case .pairAgain(let n): return n > 0 ? "pair again · \(n) waiting" : "pair again"
-        case .offline(let n): return "offline · \(n) waiting"
-        case .connecting: return "connecting…"
-        case .syncing(let n): return "\(n) syncing"
-        case .waiting(let n): return "\(n) waiting"
-        case .waitingToSync: return "waiting to sync"
-        case .connected, .connectedHeld: return "connected"
+        case .needsNewLink: return MacStrings.macos_app_yourjournalneedsanewlink()
+        case .notPaired: return MacStrings.macos_desktop_shared_app_notpaired()
+        case .confirmMark(let n): return n > 0 ? MacStrings.macos_desktopshellmodel_confirmthemarkwaiting("\(n)") : MacStrings.macos_desktopstatuspane_confirmthemark()
+        case .syncPaused(let n): return n > 0 ? MacStrings.macos_desktopshellmodel_syncpausedwaiting("\(n)") : MacStrings.macos_app_syncpaused()
+        case .pairAgain(let n): return n > 0 ? MacStrings.macos_desktopshellmodel_pairagainwaiting("\(n)") : MacStrings.macos_desktopshellmodel_pairagain()
+        case .offline(let n): return MacStrings.macos_desktopshellmodel_offlinewaiting("\(n)")
+        case .connecting: return MacStrings.macos_desktopstatuspane_connecting()
+        case .syncing(let n): return MacStrings.macos_desktopshellmodel_syncing("\(n)")
+        case .waiting(let n): return MacStrings.macos_desktopshellmodel_waiting("\(n)")
+        case .waitingToSync: return MacStrings.macos_desktopstatuspane_waitingtosync()
+        case .connected, .connectedHeld: return MacStrings.macos_desktopshellmodel_connected()
         }
     }
 
@@ -548,9 +550,9 @@ func deckUploadPhase(_ status: UploadCoordinator.Status) -> DeckUploadPhase {
 /// The greeting bands every solstone app shares.
 func deckGreeting(forHour hour: Int) -> String {
     switch hour {
-    case 5...11: return "good morning"
-    case 12...16: return "good afternoon"
-    default: return "good evening"
+    case 5...11: return MacStrings.macos_desktopshellmodel_goodmorning()
+    case 12...16: return MacStrings.macos_desktopshellmodel_goodafternoon()
+    default: return MacStrings.macos_desktopshellmodel_goodevening()
     }
 }
 
@@ -558,14 +560,13 @@ func deckGreeting(forHour hour: Int) -> String {
 /// The header line while paused. Nil when nothing is paused.
 func pausedTimeLeftLine(isPaused: Bool, remaining: TimeInterval?) -> String? {
     guard isPaused else { return nil }
-    guard let remaining else { return "paused until you resume" }
-    if remaining < 60 { return "paused, less than a minute left" }
+    guard let remaining else { return MacStrings.macos_desktopshellmodel_pauseduntilyouresume() }
+    if remaining < 60 { return MacStrings.macos_desktopshellmodel_pausedlessthanaminuteleft() }
     let minutes = Int((remaining / 60).rounded(.up))
-    if minutes < 60 { return "paused, \(minutes) min left" }
+    if minutes < 60 { return MacStrings.macos_desktopshellmodel_pausedminleft(MacStrings.number(minutes)) }
     let hours = minutes / 60
     let rest = minutes % 60
-    let hourText = hours == 1 ? "1 hour" : "\(hours) hours"
-    return rest == 0 ? "paused, \(hourText) left" : "paused, \(hourText) \(rest) min left"
+    return rest == 0 ? MacStrings.macos_pause_deckhours(hours) : MacStrings.macos_pause_deckhoursminutes(hours, String(rest))
 }
 
 // MARK: - what a source has taken in
@@ -573,6 +574,7 @@ func pausedTimeLeftLine(isPaused: Bool, remaining: TimeInterval?) -> String? {
 struct SourceTotalFacts: Equatable, Sendable {
     /// `so far`'s value.
     var soFar: String
+    var totalOnly: String? = nil
     /// `last taken in`'s value; nil while nothing has been taken in.
     var lastTakenIn: String?
 }
@@ -600,12 +602,13 @@ func sourceTotalFacts(
     }
     let lastDate = last.flatMap(SourceTotals.parseInstant)
     guard amount > 0 || lastDate != nil else {
-        return SourceTotalFacts(soFar: "nothing yet", lastTakenIn: nil)
+        return SourceTotalFacts(soFar: MacStrings.macos_desktopshellmodel_nothingyet(), lastTakenIn: nil)
     }
     let startedText = startedWords(started, now: now, calendar: calendar)
     let total = totalWords(amount, unit: unit)
     return SourceTotalFacts(
-        soFar: startedText.map { "\(total), since \($0)" } ?? total,
+        soFar: startedText.map { MacStrings.macos_desktopshellmodel_since(total, "\($0)") } ?? total,
+        totalOnly: total,
         lastTakenIn: lastDate.map { relativeWords($0, now: now, calendar: calendar) }
     )
 }
@@ -619,17 +622,17 @@ func totalWords(_ amount: Int, unit: SourceTotalUnit) -> String {
     }
     switch unit {
     case .seconds:
-        if amount < 60 { return "less than a minute" }
+        if amount < 60 { return MacStrings.macos_desktopshellmodel_lessthanaminute() }
         if amount < 3600 {
             let minutes = amount / 60
-            return minutes == 1 ? "1 minute" : "\(grouped(minutes)) minutes"
+            return MacStrings.macos_desktopshellmodel_minutes_plural(minutes, "\(grouped(minutes))")
         }
         let hours = amount / 3600
-        return hours == 1 ? "1 hour" : "\(grouped(hours)) hours"
+        return MacStrings.macos_source_hours(hours, grouped(hours))
     case .pages:
-        return amount == 1 ? "1 page" : "\(grouped(amount)) pages"
+        return MacStrings.macos_desktopshellmodel_pages_plural(amount, "\(grouped(amount))")
     case .notes:
-        return amount == 1 ? "1 note" : "\(grouped(amount)) notes"
+        return MacStrings.macos_desktopshellmodel_notes_plural(amount, "\(grouped(amount))")
     case .screenshots:
         return ScreenshotCopy.total(amount)
     }
@@ -644,22 +647,25 @@ private func startedWords(_ day: String, now: Date, calendar: Calendar) -> Strin
 }
 
 private func monthDayWords(_ date: Date, now: Date, calendar: Calendar) -> String {
-    let month = calendar.monthSymbols[calendar.component(.month, from: date) - 1].lowercased()
-    let day = calendar.component(.day, from: date)
-    let year = calendar.component(.year, from: date)
-    return year == calendar.component(.year, from: now) ? "\(month) \(day)" : "\(month) \(day), \(year)"
+    let formatter = DateFormatter()
+    formatter.calendar = calendar
+    formatter.timeZone = calendar.timeZone
+    formatter.locale = Locale(identifier: MacStrings.language)
+    let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+    formatter.setLocalizedDateFormatFromTemplate(sameYear ? "MMMMd" : "yMMMMd")
+    return formatter.string(from: date).lowercased(with: formatter.locale)
 }
 
 func relativeWords(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
     let seconds = max(0, now.timeIntervalSince(date))
-    if seconds < 60 { return "just now" }
-    if seconds < 3600 { return "\(Int(seconds / 60)) min ago" }
+    if seconds < 60 { return MacStrings.macos_desktop_shared_app_justnow() }
+    if seconds < 3600 { return MacStrings.macos_desktopshellmodel_minago(MacStrings.number(Int(seconds / 60))) }
     if calendar.isDate(date, inSameDayAs: now) {
         let hours = Int(seconds / 3600)
-        return hours == 1 ? "1 hour ago" : "\(hours) hours ago"
+        return MacStrings.macos_desktopshellmodel_hoursago_plural(hours)
     }
     if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
-        return "yesterday"
+        return MacStrings.macos_desktopshellmodel_yesterday()
     }
     return monthDayWords(date, now: now, calendar: calendar)
 }
@@ -693,11 +699,7 @@ struct SourceTotalColumns: Equatable, Sendable {
 
 func sourceTotalColumns(_ view: SourceTotals.View?, source: DeckSource, now: Date, calendar: Calendar = .current) -> SourceTotalColumns? {
     guard let facts = sourceTotalFacts(view, source: source, now: now, calendar: calendar) else { return nil }
-    guard facts.lastTakenIn != nil || !facts.soFar.hasPrefix("nothing") else {
-        return SourceTotalColumns(soFar: facts.soFar, lastTakenIn: nil)
-    }
-    let total = facts.soFar.components(separatedBy: ", since ").first ?? facts.soFar
-    return SourceTotalColumns(soFar: total, lastTakenIn: facts.lastTakenIn)
+    return SourceTotalColumns(soFar: facts.totalOnly ?? facts.soFar, lastTakenIn: facts.lastTakenIn)
 }
 
 // MARK: - the menu bar menu
@@ -716,15 +718,15 @@ enum ShellMenuRow: Equatable, Sendable {
 
     var title: String {
         switch self {
-        case .attention(let source): return "\(source.label) needs attention"
+        case .attention(let source): return MacStrings.macos_desktopshellmodel_needsattention("\(source.label)")
         case .status(let line): return line
-        case .pause: return "pause"
-        case .resume: return "resume"
+        case .pause: return MacStrings.macos_desktop_shared_setup_wizardpausefailure()
+        case .resume: return MacStrings.macos_desktop_shared_setup_wizardpausefailure2()
         case .divider: return ""
-        case .openSettings: return "open settings"
-        case .openJournal: return "open journal"
-        case .about: return "about solstone"
-        case .quit: return "quit solstone"
+        case .openSettings: return MacStrings.macos_desktopshellmodel_opensettings()
+        case .openJournal: return MacStrings.macos_desktop_shared_copy_settingsjournalopen()
+        case .about: return MacStrings.macos_desktop_shared_app_aboutsolstone()
+        case .quit: return MacStrings.macos_menu_quitsolstone()
         }
     }
 }
@@ -755,5 +757,5 @@ func shellMenuRows(
 /// The status pane's row for one source, always present: the total and the time, or `nothing yet`
 /// under `so far` with `last taken in` empty, whether or not the record could be read.
 func statusSourceRow(_ view: SourceTotals.View?, source: DeckSource, now: Date, calendar: Calendar = .current) -> SourceTotalColumns {
-    sourceTotalColumns(view, source: source, now: now, calendar: calendar) ?? SourceTotalColumns(soFar: "nothing yet", lastTakenIn: nil)
+    sourceTotalColumns(view, source: source, now: now, calendar: calendar) ?? SourceTotalColumns(soFar: MacStrings.macos_desktopshellmodel_nothingyet(), lastTakenIn: nil)
 }

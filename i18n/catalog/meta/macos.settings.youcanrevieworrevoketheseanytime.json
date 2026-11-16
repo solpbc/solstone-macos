@@ -1,0 +1,16 @@
+{
+  "description": "you can review or revoke these anytime in",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 41,
+  "source_revision": "bf9f8818d25747c2c09b02fd564770644be975c7bbbfda5e79a4f6d8d97b60ea",
+  "risk": "routine",
+  "auto_merge": true
+}

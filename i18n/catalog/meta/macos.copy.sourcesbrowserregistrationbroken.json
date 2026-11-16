@@ -1,0 +1,16 @@
+{
+  "description": "your browsers can't find the solstone app on this mac.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 54,
+  "source_revision": "ea18571161aba601b858976bf1fbbe2b3ca9d1548d1df23843987aa1f696d835",
+  "risk": "routine",
+  "auto_merge": true
+}

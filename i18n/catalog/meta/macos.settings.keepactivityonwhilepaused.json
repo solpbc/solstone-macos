@@ -1,0 +1,16 @@
+{
+  "description": "keep activity on while paused",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 29,
+  "source_revision": "cff9086d97f9e0fd101c0eded8b1c3db2463a63abc09a7186090378405da0aad",
+  "risk": "routine",
+  "auto_merge": true
+}

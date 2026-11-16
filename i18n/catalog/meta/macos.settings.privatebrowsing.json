@@ -1,0 +1,16 @@
+{
+  "description": "private browsing",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 16,
+  "source_revision": "13a61dbe71e2ef0a97edb7f8abf3a626ace3cde11a81e2c2c95dd56dea06ded8",
+  "risk": "routine",
+  "auto_merge": true
+}

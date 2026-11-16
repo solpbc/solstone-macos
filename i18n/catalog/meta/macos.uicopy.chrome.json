@@ -1,0 +1,16 @@
+{
+  "description": "Chrome",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "490c7adf735e55a3ab9f6cf006c5ff1e727485f72d5808627e0096d867ead476",
+  "risk": "routine",
+  "auto_merge": true
+}

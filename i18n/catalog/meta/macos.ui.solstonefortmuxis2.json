@@ -1,0 +1,16 @@
+{
+  "description": "solstone for tmux is still running.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 35,
+  "source_revision": "2b24afa5322d6225fefa85f453a0f0f3c49e0dfa6ab252cfa538dc3f89674a39",
+  "risk": "routine",
+  "auto_merge": true
+}

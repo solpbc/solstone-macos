@@ -1,0 +1,28 @@
+{
+  "description": "### Added - you can now run on-screen analysis entirely on your own Apple Silicon Mac. choose the on-device option in settings, and that ...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesTabView.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1663,
+  "source_revision": "2d28cc6e351e6b05a59d58582688870b13435bb7494994b99d96cf8c238ea20e",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "ws",
+      "kind": "whitespace",
+      "value": "\n"
+    },
+    {
+      "name": "ws2",
+      "kind": "whitespace",
+      "value": "\n\n"
+    }
+  ]
+}

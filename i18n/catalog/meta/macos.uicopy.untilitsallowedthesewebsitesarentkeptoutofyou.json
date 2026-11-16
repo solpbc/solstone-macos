@@ -1,0 +1,16 @@
+{
+  "description": "until it's allowed, these websites aren't kept out of your journal.",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "565112a5011cbf40361a252c348f6cf5bca1fdf17c1fcad6a9e1f6af9ee87d30",
+  "risk": "routine",
+  "auto_merge": true
+}

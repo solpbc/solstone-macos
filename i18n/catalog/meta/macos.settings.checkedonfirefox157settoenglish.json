@@ -1,0 +1,16 @@
+{
+  "description": "checked on Firefox 157 set to English; a browser update or another language can change a title, and then a private window there may reach...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 577,
+  "source_revision": "9012255e38ce8294fbc9533118923900c2290b679a188f8c445660940532384a",
+  "risk": "routine",
+  "auto_merge": true
+}

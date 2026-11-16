@@ -1,0 +1,16 @@
+{
+  "description": "use 1-minute segments instead of 5-minute for testing",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 53,
+  "source_revision": "3ff9e887455bf3a0e198b5256fb29186504b5016fda50e616464ff2a7cae7a51",
+  "risk": "routine",
+  "auto_merge": true
+}

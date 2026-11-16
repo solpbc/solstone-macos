@@ -1,0 +1,16 @@
+{
+  "description": "a download is already in progress",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 33,
+  "source_revision": "8495ae58fd9cb8676a2b6dc9aa67422e0b43603e2c077f309007d893afbec1a3",
+  "risk": "routine",
+  "auto_merge": true
+}

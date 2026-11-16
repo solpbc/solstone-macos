@@ -1,0 +1,16 @@
+{
+  "description": "linking didn't finish. try again.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 33,
+  "source_revision": "18f12b7f1091b11857397ff015107bcd09b76e048fa07c6f1ea82d92b1c38adb",
+  "risk": "routine",
+  "auto_merge": true
+}

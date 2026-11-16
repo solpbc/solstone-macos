@@ -1,0 +1,21 @@
+{
+  "description": "last checked {relative} · no update found",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "relative",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 41,
+  "source_revision": "b04775f926c7432f7267eae1d3e26ce31b7335c5a1e99f31b52352ed881b0281",
+  "risk": "routine",
+  "auto_merge": true
+}

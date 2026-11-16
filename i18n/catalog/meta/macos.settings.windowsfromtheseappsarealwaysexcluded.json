@@ -1,0 +1,16 @@
+{
+  "description": "windows from these apps are always excluded.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 44,
+  "source_revision": "469edd832fc10b2bd9f84603c94158e6edb1af713544d0701fa53ed4eea6b7ed",
+  "risk": "routine",
+  "auto_merge": true
+}

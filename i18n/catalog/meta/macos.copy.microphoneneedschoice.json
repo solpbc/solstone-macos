@@ -1,0 +1,16 @@
+{
+  "description": "this interface has more than two inputs. pick an input for your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 72,
+  "source_revision": "23ff5d3aeea342da2a7f25157c763928e4d92d3bc250a3cca1545f5bc869ebcc",
+  "risk": "routine",
+  "auto_merge": true
+}

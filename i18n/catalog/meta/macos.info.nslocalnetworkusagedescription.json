@@ -1,0 +1,16 @@
+{
+  "description": "the solstone app takes in what you share with it, and all of it goes into your journal.",
+  "context": "macOS bundle metadata: NSLocalNetworkUsageDescription. Permission usage descriptions are consent wording.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "3cad74fd1f0dee4b9f1b2429a347722fff8e231a2721a20ecd42b34484c7ce09",
+  "risk": "consent",
+  "auto_merge": false
+}

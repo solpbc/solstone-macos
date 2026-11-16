@@ -1,0 +1,16 @@
+{
+  "description": "you'll see how many screenshots there are before any come in.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 61,
+  "source_revision": "ba13e55fa7b2c9565c7b18841bafa2967a801fee77163ddcd633f3ef3680a48d",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "journal unreachable",
+  "context": "Shown by Sources/solstone/TerminalTakeover.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "dae1b14e7d70363f555c4fc615479b6dfb96e800fb16a369e0e110be6b5def76",
+  "risk": "routine",
+  "auto_merge": true
+}

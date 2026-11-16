@@ -1,0 +1,16 @@
+{
+  "description": "ready",
+  "context": "Shown by Sources/solstone/SetupDownloadFooter.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "4be2aa9b54044ad2fe7b7fd45f4446ed82608b0e81e09b1dbdcb91fb66e38d54",
+  "risk": "routine",
+  "auto_merge": true
+}

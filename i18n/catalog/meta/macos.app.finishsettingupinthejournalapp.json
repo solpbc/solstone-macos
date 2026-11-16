@@ -1,0 +1,16 @@
+{
+  "description": "finish setting up in the journal app. your journal will appear here when it's ready",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/FreshJournalFlow.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 83,
+  "source_revision": "ccd13a57f539a6a6c3ec1649ce087b870f6882b7805b09c6c32e1f8438aabd39",
+  "risk": "routine",
+  "auto_merge": true
+}

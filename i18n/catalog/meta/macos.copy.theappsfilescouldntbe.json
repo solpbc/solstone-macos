@@ -1,0 +1,16 @@
+{
+  "description": "the app's files couldn't be checked",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 35,
+  "source_revision": "f6d8bca58504ecc730eb4161cd8feeaec18fac33d05c493b6702328d76787ee7",
+  "risk": "routine",
+  "auto_merge": true
+}

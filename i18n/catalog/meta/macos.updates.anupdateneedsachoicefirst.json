@@ -1,0 +1,16 @@
+{
+  "description": "an update needs a choice first",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 30,
+  "source_revision": "aa2af04926915aa6f8d43e9944abab42e15742ab2d65802972af83b358b635c6",
+  "risk": "routine",
+  "auto_merge": true
+}

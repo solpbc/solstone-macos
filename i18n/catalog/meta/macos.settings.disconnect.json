@@ -1,0 +1,16 @@
+{
+  "description": "disconnect",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 10,
+  "source_revision": "dab9a110087b8e4346ef42ab06bb8afe951fe1326a825efd32c86ba637ef6e2c",
+  "risk": "routine",
+  "auto_merge": true
+}

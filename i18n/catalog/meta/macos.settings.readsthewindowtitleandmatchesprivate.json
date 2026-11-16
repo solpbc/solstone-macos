@@ -1,0 +1,16 @@
+{
+  "description": "reads the window title and matches private windows in Firefox set to English. Safari, Chrome, Edge and Brave don't show private mode in t...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 360,
+  "source_revision": "8f9e5528be41fae18a5398b0111143065757874314462c7e3bf1e6e45a60a74e",
+  "risk": "routine",
+  "auto_merge": true
+}

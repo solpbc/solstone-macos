@@ -1,0 +1,21 @@
+{
+  "description": "Failed to start new segment: { $error }",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "error",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f8c71df24f635c375b0f3e00da876538903ec87d6bc16a26e59e73ebf89b3ed8",
+  "risk": "routine",
+  "auto_merge": true
+}

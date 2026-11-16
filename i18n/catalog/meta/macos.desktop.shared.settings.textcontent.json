@@ -1,0 +1,16 @@
+{
+  "description": "retry",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift. The same sentence is on Windows as windows.desktop.shared.settings.textcontent. Keep the two translations consistent.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 5,
+  "source_revision": "c5d68dbb6fc144551ddb124066eb837eabe9d1b3f6b0e371d4b45a563b47a759",
+  "risk": "routine",
+  "auto_merge": true
+}

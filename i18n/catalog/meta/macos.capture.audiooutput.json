@@ -1,0 +1,16 @@
+{
+  "description": "Failed to create audio output",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "7e9c66a81cbf57f78b410aff8508aa88293f829429939f969b30ce57c8575790",
+  "risk": "routine",
+  "auto_merge": true
+}

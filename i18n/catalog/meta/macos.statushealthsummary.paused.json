@@ -1,0 +1,28 @@
+{
+  "description": "paused · {journalSlot}",
+  "context": "Shown by Sources/solstone/StatusHealthSummary.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "b1cf206c3413b5abde19268432234c6dcae5cc52e4f0074416b16e506678ae81",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

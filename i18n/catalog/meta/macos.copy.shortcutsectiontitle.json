@@ -1,0 +1,16 @@
+{
+  "description": "keyboard shortcut",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 17,
+  "source_revision": "5c30e78611a69027df3535a744dcefd6d576e23fd4132c39285f220e54d7a80c",
+  "risk": "routine",
+  "auto_merge": true
+}

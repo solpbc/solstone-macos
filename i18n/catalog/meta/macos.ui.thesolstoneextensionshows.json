@@ -1,0 +1,16 @@
+{
+  "description": "the solstone extension shows the same icons in your browser's toolbar, for what you share from that browser.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 108,
+  "source_revision": "5e3c770acd5c62d582cea11d32daa09707900ecb03ab0ef3e4e2cb691e33352c",
+  "risk": "routine",
+  "auto_merge": true
+}

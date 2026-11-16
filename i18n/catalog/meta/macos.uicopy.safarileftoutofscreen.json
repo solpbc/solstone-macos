@@ -1,0 +1,16 @@
+{
+  "description": "Safari left out of screen →",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "e1c9bb4387514e5e8316fd8d0fba2e2ebb1da272456dcecc76f4fc129b23d10c",
+  "risk": "routine",
+  "auto_merge": true
+}

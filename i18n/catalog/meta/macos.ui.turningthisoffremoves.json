@@ -1,0 +1,16 @@
+{
+  "description": "turning this off removes nothing from your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 51,
+  "source_revision": "59b097f56becf7e2e1a12492358178a868810871711410488b77591bde7f60b4",
+  "risk": "routine",
+  "auto_merge": true
+}

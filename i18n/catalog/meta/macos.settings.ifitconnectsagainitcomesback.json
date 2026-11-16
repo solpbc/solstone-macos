@@ -1,0 +1,16 @@
+{
+  "description": "if it connects again, it comes back at its default setting. to keep it off, turn it off instead.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 96,
+  "source_revision": "e994c786e4818170344b4f29ed79624652cbe9a9b9407f61d313d7570f6a72d3",
+  "risk": "routine",
+  "auto_merge": true
+}

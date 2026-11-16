@@ -64,23 +64,23 @@ extension SettingsView {
 
     var shelfRowItems: [ShelfRowItem] {
         [
-            ShelfRowItem(row: .home, title: "home", systemImage: "house", badge: .blank),
+            ShelfRowItem(row: .home, title: MacStrings.macos_desktopshellviews_home2(), systemImage: "house", badge: .blank),
             // A notice that belongs to no tile badges the row it belongs to: an unknown journal on
             // your journal, a shortcut needing repair on this mac, an update on updates.
             ShelfRowItem(
-                row: .service, title: "your journal", systemImage: "book.closed",
+                row: .service, title: MacStrings.macos_desktop_shared_copy_setupjournalcardheading(), systemImage: "book.closed",
                 badge: appState.serviceNeedsAttention || !appState.tunnelLifecycleOwner.unknownJournals.notices.isEmpty
                     ? .attention : (appState.serviceIsDone ? .done : .blank)
             ),
             ShelfRowItem(
-                row: .observer, title: "this mac", systemImage: "laptopcomputer",
+                row: .observer, title: MacStrings.macos_copy_journalmodethismaclabel(), systemImage: "laptopcomputer",
                 badge: appState.shortcutController.isUnavailableOrConflict ? .attention : .blank
             ),
             ShelfRowItem(
                 row: .updates, title: UpdatesCopy(provider: .solstone).tabTitle, systemImage: "arrow.down.circle",
                 badge: updatesSidebarBadge(for: updateController.durableUpdateStatus)
             ),
-            ShelfRowItem(row: .help, title: "help", systemImage: "questionmark.circle", badge: .blank),
+            ShelfRowItem(row: .help, title: MacStrings.macos_desktop_shared_settings_help(), systemImage: "questionmark.circle", badge: .blank),
         ]
     }
 
@@ -246,8 +246,8 @@ struct ShelfToggleButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel("sidebar")
-        .accessibilityValue(isOpen ? "open" : "closed")
+        .accessibilityLabel(MacStrings.macos_desktopshellchrome_sidebar())
+        .accessibilityValue(isOpen ? MacStrings.macos_desktopshellchrome_open() : MacStrings.macos_desktopshellchrome_closed())
         .accessibilityIdentifier(AXID.Deck.shelfButton)
     }
 }

@@ -1,0 +1,16 @@
+{
+  "description": "grant it so what you share can go into your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 52,
+  "source_revision": "09f560a89e9eb13440c509a3484d642d6064717377010a7db31ba0384ae19b07",
+  "risk": "routine",
+  "auto_merge": true
+}

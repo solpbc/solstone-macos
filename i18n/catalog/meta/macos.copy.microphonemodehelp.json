@@ -1,0 +1,16 @@
+{
+  "description": "a bluetooth headset sounds worse while its microphone is open, so by default it only goes into your journal while another app, such as a ...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 167,
+  "source_revision": "127c8bcb302425475ca979e4202acb1d01a30849d88bbbc63441d560146c79a2",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,21 @@
+{
+  "description": "{value}: repaired at launch",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/BrowserOwnerSurface.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 27,
+  "source_revision": "0c8ccf36bbdf791860eedd55324d6929fff4b8a96059bb194f6fc9ee1d10e210",
+  "risk": "routine",
+  "auto_merge": true
+}

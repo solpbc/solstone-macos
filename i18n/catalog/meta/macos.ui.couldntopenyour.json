@@ -1,0 +1,16 @@
+{
+  "description": "couldn't open your journal in your browser. try again.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 54,
+  "source_revision": "be51613395cd47b47f8675c1e6376c4f1715e5f81597905139e09769c9ef3688",
+  "risk": "routine",
+  "auto_merge": true
+}

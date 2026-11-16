@@ -1,0 +1,16 @@
+{
+  "description": "screens and audio you turn on here go into your journal in five-minute segments. until your journal confirms receipt, they wait on this m...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 189,
+  "source_revision": "4a2bb2dc9bd12687edc0dbb1fc840df5e1d1fc7a7ef5a3eeda2d8bd318d24ed7",
+  "risk": "routine",
+  "auto_merge": true
+}

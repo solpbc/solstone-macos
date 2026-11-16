@@ -1,0 +1,16 @@
+{
+  "description": "some browser pages have waited more than a week to go into your journal. they're still kept on this mac.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 104,
+  "source_revision": "54a5226fdd764f07fafbd76e883d9ad406b30bc42bf9ed09f1c793818254f5a2",
+  "risk": "routine",
+  "auto_merge": true
+}

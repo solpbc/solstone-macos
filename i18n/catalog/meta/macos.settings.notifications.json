@@ -1,0 +1,16 @@
+{
+  "description": "notifications",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 13,
+  "source_revision": "1f494307abce4c1b5422e9d978b4479c368c55040275271a87fdca51f609fe4c",
+  "risk": "routine",
+  "auto_merge": true
+}

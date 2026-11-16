@@ -1,0 +1,16 @@
+{
+  "description": "your screen, a moment ago",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.setupscreenframecaption. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 25,
+  "source_revision": "5014757263ac0c83becdd5b29f2e87881c987ab62b6660891ae3a306afab2585",
+  "risk": "routine",
+  "auto_merge": true
+}

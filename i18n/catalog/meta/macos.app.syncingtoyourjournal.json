@@ -1,0 +1,16 @@
+{
+  "description": "syncing to your journal",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 23,
+  "source_revision": "861b65182f9f6cee29eca7e2664a4d09e9d304908d048affe9d6052dd42485d5",
+  "risk": "routine",
+  "auto_merge": true
+}

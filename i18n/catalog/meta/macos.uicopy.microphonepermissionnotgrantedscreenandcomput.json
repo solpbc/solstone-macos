@@ -1,0 +1,16 @@
+{
+  "description": "microphone permission not granted. screen and computer sound can run on their own.",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "2b9cfe82ce9d45aca373dd5a00f8ffb5bb8f7d4bd95a159ffa84f2ae74d8899b",
+  "risk": "routine",
+  "auto_merge": true
+}

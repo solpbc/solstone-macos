@@ -1,0 +1,16 @@
+{
+  "description": "add the solstone extension to a browser on this mac. what you share goes into your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 91,
+  "source_revision": "1a24ee12fca6112c66c6b94e7eaa36f2912043aad0ab5ee47e93ee191965da9a",
+  "risk": "routine",
+  "auto_merge": true
+}

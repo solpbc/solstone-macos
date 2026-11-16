@@ -1,0 +1,25 @@
+{
+  "description": "{ $name } { $version }",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "name",
+      "type": "string"
+    },
+    {
+      "name": "version",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "2a0c811ad1b20ece1fd438fb3e79a57bea3955d6ae9cf5d4cde9739263098f5d",
+  "risk": "routine",
+  "auto_merge": true
+}

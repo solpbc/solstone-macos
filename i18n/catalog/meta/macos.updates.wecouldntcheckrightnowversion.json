@@ -1,0 +1,21 @@
+{
+  "description": "we couldn't check right now. version {version} was found earlier.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "version",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 65,
+  "source_revision": "12f88d0c0cb0a53d0b719fcf224a0e2c559f4f1a20d27482e87e8cf7ef695d5d",
+  "risk": "routine",
+  "auto_merge": true
+}

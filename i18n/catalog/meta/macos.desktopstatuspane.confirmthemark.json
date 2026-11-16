@@ -1,0 +1,16 @@
+{
+  "description": "confirm the mark",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DesktopStatusPane.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 16,
+  "source_revision": "073f21abc0d84175c8103f4f4fe9595b87d1a6459fb03c4930c5ccca8b009a15",
+  "risk": "routine",
+  "auto_merge": true
+}

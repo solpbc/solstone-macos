@@ -1,0 +1,16 @@
+{
+  "description": "couldn't finish discarding. what's left is still on this mac.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 61,
+  "source_revision": "11acc2b1fe5713bd0c9f5783cf137d176c19b816a48160481c7e36d35c022534",
+  "risk": "routine",
+  "auto_merge": true
+}

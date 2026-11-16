@@ -1,0 +1,25 @@
+{
+  "description": "input {number}, {label}",
+  "context": "the solstone app, speaking to the owner, in shared app copy. More than one inserted value needs its own grammar. One message can select once. Split, or name the second value's grammar only in this note.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "number",
+      "type": "string"
+    },
+    {
+      "name": "label",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 23,
+  "source_revision": "56938fe5db0e1e675610fedb9d23907d8dc4eb3cc45fde994478b239eb0854db",
+  "risk": "routine",
+  "auto_merge": true
+}

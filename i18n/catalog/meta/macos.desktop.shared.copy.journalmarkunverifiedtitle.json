@@ -1,0 +1,16 @@
+{
+  "description": "couldn't verify",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.journalmarkunverifiedtitle. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 15,
+  "source_revision": "aa6e7152a854a3961902434044a9def3936433e0aaf787a07211e11baf8e9990",
+  "risk": "routine",
+  "auto_merge": true
+}

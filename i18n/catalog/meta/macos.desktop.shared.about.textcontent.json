@@ -1,0 +1,16 @@
+{
+  "description": "copy",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/AboutView.swift. The same sentence is on Windows as windows.desktop.shared.about.textcontent. Keep the two translations consistent.",
+  "surfaces": [
+    "about"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 4,
+  "source_revision": "7080b571d8e9a243e0f5ee2d250e53b9578ef07310d7a048d070b490cf45621c",
+  "risk": "routine",
+  "auto_merge": true
+}

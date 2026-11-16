@@ -1,0 +1,16 @@
+{
+  "description": "local address, name:port, or https://...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 40,
+  "source_revision": "0f9d9096216b6b8cd13ac3c7cf2d101c2fff3074d7e7f0e126077707cbfa6d7e",
+  "risk": "routine",
+  "auto_merge": true
+}

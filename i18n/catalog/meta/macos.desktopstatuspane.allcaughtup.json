@@ -1,0 +1,16 @@
+{
+  "description": "all caught up",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DesktopStatusPane.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 13,
+  "source_revision": "a46d323846dda1933875664c8b76968391b5c075ca60832744f5b9881f81453c",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "the updater couldn't start.",
+  "context": "Shown by Sources/UpdateKit/UpdateController.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "d0d9ddb111436eac664652b66fd6b945c1f7d8d9590d82af3dc29b6afb267fa7",
+  "risk": "routine",
+  "auto_merge": true
+}

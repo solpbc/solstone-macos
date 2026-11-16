@@ -1,0 +1,16 @@
+{
+  "description": "solstone macos app",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "ff8788d7f95d2296b1ed108c06cbd813525a25f7fa7ef805e5f7c42a32c5b48d",
+  "risk": "routine",
+  "auto_merge": true
+}

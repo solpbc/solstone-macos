@@ -1,0 +1,16 @@
+{
+  "description": "turned off in Safari",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "8c09df2dd6c78300ab6ee609e1c7a1ec2d5a154d808d9247b1de801c288e0b38",
+  "risk": "routine",
+  "auto_merge": true
+}

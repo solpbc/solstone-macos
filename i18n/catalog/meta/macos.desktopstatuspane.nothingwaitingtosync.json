@@ -1,0 +1,16 @@
+{
+  "description": "nothing waiting to sync",
+  "context": "Shown by Sources/solstone/DesktopStatusPane.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "0463171b32b618779191425fa35463e9190d54c1ec6d98a5d8bcb5bc1e3742b4",
+  "risk": "routine",
+  "auto_merge": true
+}

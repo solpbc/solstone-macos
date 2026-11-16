@@ -1,0 +1,25 @@
+{
+  "description": "paused, { $hours } hr { $minutes } min left",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "hours",
+      "type": "string"
+    },
+    {
+      "name": "minutes",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "fd5abe535019187af8c962f2f03b66876c526617589523929e8fb69e18098114",
+  "risk": "routine",
+  "auto_merge": true
+}

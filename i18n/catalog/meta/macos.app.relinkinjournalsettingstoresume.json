@@ -1,0 +1,16 @@
+{
+  "description": "re-link in journal settings to resume syncing.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 46,
+  "source_revision": "19583e1591d3a1ad8db7fd02b890595ad37cf523bdbc676f52c5cc84d40e4c60",
+  "risk": "routine",
+  "auto_merge": true
+}

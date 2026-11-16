@@ -1,0 +1,16 @@
+{
+  "description": "connected to your journal",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.setupconnectedtoyourjournal. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 25,
+  "source_revision": "628f17577d1ef3be7ae2978c3751eda78f71873687ebfbbdb7f99a2e73a12d1d",
+  "risk": "routine",
+  "auto_merge": true
+}

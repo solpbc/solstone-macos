@@ -1,0 +1,16 @@
+{
+  "description": "it's already in your journal.",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "7b2e18ff174e43a78d88190288d99d6501705e3063bdd1bf333224e28a36dfac",
+  "risk": "routine",
+  "auto_merge": true
+}

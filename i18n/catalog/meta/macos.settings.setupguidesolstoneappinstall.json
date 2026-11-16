@@ -1,0 +1,16 @@
+{
+  "description": "setup guide: solstone.app/install",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 33,
+  "source_revision": "bfe7543e8dc2c2dc7dcb65bce3e96af361a2b556215dd4330c5bc36afd182f5c",
+  "risk": "routine",
+  "auto_merge": true
+}

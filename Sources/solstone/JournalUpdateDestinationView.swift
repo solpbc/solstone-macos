@@ -33,29 +33,29 @@ struct JournalUpdateDestinationView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("paired journal \(owner.journalVersion.displayValue)")
+            Text(MacStrings.macos_updates_pairedjournal("\(owner.journalVersion.displayValue)"))
                 .font(.headline)
                 .accessibilityIdentifier(UpdatesAXID.pairedJournalVersion)
-            Text("solstone and your journal update separately. their version numbers can differ.")
+            Text(MacStrings.macos_updates_solstoneandyourjournalupdateseparatelytheir())
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             if canOpenLocalApp {
-                Button(isOpening ? "opening journal…" : "open journal app") {
+                Button(isOpening ? MacStrings.macos_journalupdatedestinationview_openingjournal() : MacStrings.macos_journalupdatedestinationview_openjournalapp()) {
                     Task { await openJournalApp() }
                 }
                 .disabled(isOpening)
-                Text("choose updates in the journal app's sidebar.")
+                Text(MacStrings.macos_updates_chooseupdatesinthejournalapps())
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                Text("update your journal on the computer that runs it.")
+                Text(MacStrings.macos_updates_updateyourjournalonthecomputerthat())
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             if let launchError {
                 Text(launchError).font(.caption).foregroundStyle(.secondary)
             }
-            Link("journal update help", destination: helpURL)
+            Link(MacStrings.macos_updates_journalupdatehelp(), destination: helpURL)
         }
         .task(id: owner.cachedPairingIdentity) {
             launchError = nil
@@ -86,13 +86,13 @@ struct JournalUpdateDestinationView: View {
         guard await verify(expected),
               let application = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "app.solstone.journal") else {
             verifiedLocalPairing = nil
-            launchError = "couldn't open the journal app for this journal. follow journal update help."
+            launchError = MacStrings.macos_updates_launcherror()
             return
         }
         do {
             _ = try await NSWorkspace.shared.openApplication(at: application, configuration: .init())
         } catch {
-            launchError = "couldn't open the journal app. follow journal update help."
+            launchError = MacStrings.macos_updates_launcherror2()
         }
     }
 }

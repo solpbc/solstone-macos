@@ -1,0 +1,16 @@
+{
+  "description": "icon states",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 11,
+  "source_revision": "4450088136a4bd692bd6bb1bdba8d25780efc8b5c4f040b1371d0fcd9efad108",
+  "risk": "routine",
+  "auto_merge": true
+}

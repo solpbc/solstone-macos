@@ -1,0 +1,16 @@
+{
+  "description": "open screenshots",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "af47ae70ea0a97b436e9a96bf3443fa70d79ab65a6902f6b794eac8df3ae5501",
+  "risk": "routine",
+  "auto_merge": true
+}

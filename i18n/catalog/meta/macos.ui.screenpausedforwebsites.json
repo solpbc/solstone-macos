@@ -1,0 +1,16 @@
+{
+  "description": "screen paused for websites you left out",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 39,
+  "source_revision": "d74b937bbe505af134c06bba0097a29ee28e2130331ebfbb9e44b084103630f9",
+  "risk": "routine",
+  "auto_merge": true
+}

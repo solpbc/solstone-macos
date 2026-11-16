@@ -1,0 +1,16 @@
+{
+  "description": "nothing moved. your journal was always here. you know it by its mark.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 69,
+  "source_revision": "08bfba05f0e4b2b637343010cf251dad6d93e70123d8fc39c4ed23a7ee56e262",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "shortcut unavailable. open settings to choose another.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 54,
+  "source_revision": "bdace90b6ab8f2b2f2e65aa86f1e0ca405f118db2caeaecd01622c800e25c853",
+  "risk": "routine",
+  "auto_merge": true
+}

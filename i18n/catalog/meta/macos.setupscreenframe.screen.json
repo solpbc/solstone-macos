@@ -1,0 +1,16 @@
+{
+  "description": "screen",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/SetupChrome/SetupScreenFrame.swift.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 6,
+  "source_revision": "f6702f70ff7b2220f024bedf51578531ec8e258bd867d46c90eaefbee8aed882",
+  "risk": "routine",
+  "auto_merge": true
+}

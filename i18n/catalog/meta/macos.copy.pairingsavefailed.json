@@ -1,0 +1,16 @@
+{
+  "description": "pairing worked, but this mac couldn't save it. try again.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 57,
+  "source_revision": "65b557c1bf5d19797cd87853f61418b7ecd244bcd1ba9adffd57af14cf1d30a0",
+  "risk": "routine",
+  "auto_merge": true
+}

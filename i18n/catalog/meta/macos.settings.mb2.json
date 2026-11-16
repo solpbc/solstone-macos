@@ -1,0 +1,21 @@
+{
+  "description": "{storageusedmb} MB",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "storageusedmb",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 18,
+  "source_revision": "fa2ae0d656685725d5735f41615ac1f7d30688c9351f59cb451893df2fb6b04c",
+  "risk": "routine",
+  "auto_merge": true
+}

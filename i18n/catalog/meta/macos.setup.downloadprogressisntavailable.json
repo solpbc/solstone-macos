@@ -1,0 +1,16 @@
+{
+  "description": "download progress isn't available.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupDownloadFooter.swift.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 34,
+  "source_revision": "c94a065ed0c4e1c71beef9a3cfe46557ab873d22ac49cf1fb88d862122b35e63",
+  "risk": "routine",
+  "auto_merge": true
+}

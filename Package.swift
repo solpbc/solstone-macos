@@ -6,6 +6,7 @@ import PackageDescription
 
 let package = Package(
     name: "solstone",
+    defaultLocalization: "en-US",
     platforms: [
         .macOS(.v15)
     ],
@@ -31,6 +32,7 @@ let package = Package(
         .target(
             name: "SolstoneCore",
             path: "Sources/SolstoneCore",
+            resources: [.process("Localization")],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
@@ -38,6 +40,7 @@ let package = Package(
         .target(
             name: "JournalLocalAccess",
             path: "Sources/JournalLocalAccess",
+            resources: [.process("Localization")],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
@@ -49,6 +52,7 @@ let package = Package(
             ],
             path: "Sources/JournalMarkKit",
             resources: [
+                .process("Localization"),
                 .copy("Resources")
             ],
             swiftSettings: [
@@ -66,6 +70,7 @@ let package = Package(
             ],
             path: "Sources/SetupChrome",
             resources: [
+                .process("Localization"),
                 .copy("Resources")
             ],
             swiftSettings: [
@@ -82,6 +87,7 @@ let package = Package(
                 .target(name: "Sparkle")
             ],
             path: "Sources/UpdateKit",
+            resources: [.process("Localization")],
             swiftSettings: [
                 .swiftLanguageMode(.v6)
             ]
@@ -108,6 +114,7 @@ let package = Package(
                 "host-contract.provenance.json"
             ],
             resources: [
+                .process("Localization"),
                 .copy("Resources")
             ],
             swiftSettings: [

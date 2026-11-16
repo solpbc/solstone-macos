@@ -1,0 +1,16 @@
+{
+  "description": "discard waiting browser pages",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.sourcesbrowserdiscard. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 29,
+  "source_revision": "1dcc5d3596ee8e00a0c4ee69f5add4d39b7445460131de0cfcb1098bf89c55d5",
+  "risk": "routine",
+  "auto_merge": true
+}

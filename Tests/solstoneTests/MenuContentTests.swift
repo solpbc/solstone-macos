@@ -315,17 +315,17 @@ struct MenuContentTests {
     }
 
     @Test func pausedHeaderShowsAutoResumeCountdown() {
-        #expect(pausedHeaderText(timeRemaining: "8 mins") == "paused, 8 min left")
-        #expect(pausedHeaderText(timeRemaining: "1 min") == "paused, 1 min left")
-        #expect(pausedHeaderText(timeRemaining: "2 hrs 5 mins") == "paused, 2 hr 5 min left")
-        #expect(pausedHeaderText(timeRemaining: "45 secs") == "paused, 45 sec left")
-        #expect(pausedHeaderText(timeRemaining: "1 hr") == "paused, 1 hr left")
+        #expect(pausedHeaderText(timeRemaining: 480) == "paused, 8 min left")
+        #expect(pausedHeaderText(timeRemaining: 60) == "paused, 1 min left")
+        #expect(pausedHeaderText(timeRemaining: 7500) == "paused, 2 hr 5 min left")
+        #expect(pausedHeaderText(timeRemaining: 45) == "paused, 45 sec left")
+        #expect(pausedHeaderText(timeRemaining: 3600) == "paused, 1 hr left")
         #expect(pausedHeaderText(timeRemaining: nil) == "paused")
     }
 
     @Test func pausedHeaderMappingIsNonMemoized() {
-        #expect(pausedHeaderText(timeRemaining: "8 mins") != pausedHeaderText(timeRemaining: "45 secs"))
-        #expect(pausedHeaderText(timeRemaining: "1 min") != pausedHeaderText(timeRemaining: nil))
+        #expect(pausedHeaderText(timeRemaining: 480) != pausedHeaderText(timeRemaining: 45))
+        #expect(pausedHeaderText(timeRemaining: 60) != pausedHeaderText(timeRemaining: nil))
     }
 
     @Test func openJournalMenuItemKeepsConfigurationGateAndUsesIntentPath() throws {

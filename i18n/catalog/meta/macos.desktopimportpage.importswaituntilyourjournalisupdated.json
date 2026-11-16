@@ -1,0 +1,16 @@
+{
+  "description": "imports wait until your journal is updated.",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "4f6a53939aedfab18bb1a37f96b87c43d59fa5eb0df641519d41e3d2df555c71",
+  "risk": "routine",
+  "auto_merge": true
+}

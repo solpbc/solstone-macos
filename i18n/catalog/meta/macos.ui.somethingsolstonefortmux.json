@@ -1,0 +1,16 @@
+{
+  "description": "something solstone for tmux left couldn't be read.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 50,
+  "source_revision": "c37d7ff2b6ac21a0df6062ae99ddf55c0ea57b5acedf65acf799be7f691f14c8",
+  "risk": "routine",
+  "auto_merge": true
+}

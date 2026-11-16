@@ -1,0 +1,16 @@
+{
+  "description": "the copy is already gone, so this only clears it from here.",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "66b139afe15ad2432ee3c51b6b82aa3ed184e31192f21ae1ea242da241fb3b1f",
+  "risk": "routine",
+  "auto_merge": true
+}

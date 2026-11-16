@@ -1,0 +1,16 @@
+{
+  "description": "takes in your tmux sessions, and all of it goes into your journal. needs tmux on this mac, and works in any terminal session, including w...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 163,
+  "source_revision": "8b88847ed9cc5ccd4299e30025a2027bafcc31959bcd649453c65e9f8b2ece2a",
+  "risk": "routine",
+  "auto_merge": true
+}

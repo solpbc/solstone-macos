@@ -1,0 +1,826 @@
+{
+  "sourceLanguage": "en-US",
+  "version": "1.0",
+  "strings": {
+    "m6d61636f732e61626f75742e736f6c73746f6e65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "solstone"
+          }
+        }
+      }
+    },
+    "m6d61636f732e61626f75742e736f6c73746f6e65617070": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "solstone.app"
+          }
+        }
+      }
+    },
+    "m6d61636f732e636f70792e73657474696e6773617474656e74696f6e757064617465636865636b6661696c6564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "update check failed"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e61626f75742e70656e64696e6773657474696e6773746162": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "journal"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e6170702e6a7573746e6f77": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "just now"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e636f70792e636865636b616761696e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "check again"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e74657874636f6e74656e74": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "retry"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e75706461746573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "updates"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e73657475702e63616e63656c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cancel"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e6175746f6d6174696375706461746573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "automatic updates"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e636865636b666f72757064617465736175746f6d61746963616c6c79": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "check for updates automatically"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e636865636b6e6f77": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "check now"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e6469736d697373": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "dismiss"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e646f776e6c6f6164": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "download"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e646f776e6c6f616475706461746573696e7468656261636b67726f756e64": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "download updates in the background"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e6576657279646179": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "every day"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e65766572796d6f6e7468": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "every month"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e65766572797765656b": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "every week"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e686f776f6674656e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "how often"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e6e65766572636865636b6564666f7275706461746573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "never checked for updates"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e74657874636f6e74656e74": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "read the full notes online"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f702e7368617265642e757064617465732e77686174736e6577": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "what's new"
+          }
+        }
+      }
+    },
+    "m6d61636f732e73637265656e73686f742e636865636b696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "checking…"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465636f6e74726f6c6c65722e74686575706461746572636f756c646e747374617274": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the updater couldn't start."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465636f6e74726f6c6c65722e74686575706461746573797374656d636f756c646e7462657072657061726564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the update system couldn't be prepared."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e61646f776e6c6f61646973616c7265616479696e70726f6772657373": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a download is already in progress"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e61646f776e6c6f6164697366696e697368696e677570": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a download is finishing up"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e616e696e7374616c6c68616e646f66666973616c7265616479696e70726f6772657373": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "an install handoff is already in progress"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e616e7570646174656e656564736163686f6963656669727374": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "an update needs a choice first"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e6175746f6d61746963636865636b736172656f6666796f7563616e7374696c6c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "automatic checks are off. you can still check manually."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e636865636b696e67666f7275706461746573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "checking for updates"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e646562756772656c656173656e6f746573313330": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "### Added\n- you can now run on-screen analysis entirely on your own Apple Silicon Mac. choose the on-device option in settings, and that work runs locally, with nothing about those frames going to a cloud provider. it's opt-in, vision-only for now, and needs a Mac with at least 16 GB of memory. a one-time model download happens the first time you turn it on.\n- the menu bar now tells you when your journal needs attention and opens settings for restart or setup.\n- you can now power solstone with your Anthropic or OpenAI account without installing anything separately. enable the provider in settings and paste your key, and solstone installs what it needs on its own.\n\n### Changed\n- the timeline view is rebuilt. it fits any window width, shows where each entry came from with a link to that day, and refreshes in place as new days roll up.\n- long todo lists load faster. solstone now shows a focused first screen with a \"show more\" control, instead of rendering the entire list up front.\n- pairing a phone is more reliable, and the paused state in the menu now reads \"paused - 8 min left\" so the remaining pause time is obvious when solstone resumes.\n\n### Fixed\n- videos and audio in your journal that wouldn't play now play correctly, with a clearer message on the rare file that still can't.\n- when transcription hit a dense stretch of speech it could fail outright; it now recovers on its own, and segments that did fail are surfaced instead of disappearing silently.\n- pages occasionally got stuck loading on a cold start, and the paused and error menu-bar icons had lost their sun in 1.2.1. both are resolved, alongside internal stability improvements."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e64656275677374617465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "debug state"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e646566657272656477696c6c636f6e74696e756561667465726a6f75726e616c7365747570": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "deferred, will continue after journal setup."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e646566657272656477696c6c636f6e74696e75656166746572796f75726a6f75726e616c6973": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "deferred, will continue after your journal is ready."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e646f776e6c6f6164636f6d706c657465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "download complete, %1$@."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e646f776e6c6f61646564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ downloaded."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e646f776e6c6f6164696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "downloading %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e646f776e6c6f6164696e67616e757064617465696e7468656261636b67726f756e64": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "downloading an update in the background…"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e646f776e6c6f6164696e67696e7468656261636b67726f756e64": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "downloading %1$@ in the background…"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e656e61626c656175746f6d61746963636865636b73": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "enable automatic checks"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e66696e616c697a696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "finalizing"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e66696e697368696e677570696e7468656261636b67726f756e64": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "finishing up %1$@ in the background…"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e66696e697368696e677570696e7468656261636b67726f756e6432": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "finishing up in the background…"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e696e7374616c6c616e6472657374617274": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "install and restart %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e696e7374616c6c696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "installing %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e697368616e64696e676f6666746f746865696e7374616c6c6572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ is handing off to the installer."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e69737265616479746f646f776e6c6f6164": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ %2$@ is ready to download."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e697372656164797768656e796f75617265": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ %2$@ is ready when you are"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e69746c6c62656170706c6965647468656e65787474696d65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "it'll be applied the next time you quit and reopen %1$@."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e6c617374636865636b6564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "last checked %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e6c617374636865636b6564636865636b6661696c6564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "last checked %1$@ · check failed"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e6c617374636865636b65646e6f757064617465666f756e64": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "last checked %1$@ · no update found"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e6c617374636865636b656476657273696f6e666f756e64": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "last checked %1$@ · version %2$@ found"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e6c617374636865636b656476657273696f6e7265616479746f696e7374616c6c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "last checked %1$@ · version %2$@ ready to install"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e6c6f6f6b696e67666f727468656c617465737476657273696f6e6e6f77": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "looking for the latest version now."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e6e6f75736167656461746169736576657273656e74757064617465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no usage data is ever sent. update checks fetch the version list, then download the update itself in the background."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e6f66646f776e6c6f61646564": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ of %2$@ downloaded."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e707265706172696e67746865646f776e6c6f61646564757064617465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "preparing the downloaded update"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e7265616479746f696e7374616c6c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ready to install %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e7265616479746f696e7374616c6c76": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ready to install v%1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e72657374617274746f696e7374616c6c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "restart %1$@ to install"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e7265747279696e67": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "retrying…"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e7468657570646174656973646f776e6c6f61646564616e6472656164797768656e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the update is downloaded and ready when you are. %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e7468657570646174656973646f776e6c6f61646564616e6477696c6c696e7374616c6c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the update is downloaded and will install when %1$@ relaunches. %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e746869736275696c6463616e74636865636b666f7275706461746573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "this build can't check for updates on its own. download the latest from %1$@."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e757064617465636865636b736172656e7472756e6e696e6772696768746e6f77": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "update checks aren't running right now"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e75706461746573617265756e617661696c61626c65696e746869736275696c64": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "updates are unavailable in this build"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e75706461746573756e617661696c61626c65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "updates unavailable"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e76657273696f6e6973617661696c61626c65": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "version %1$@ is available"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e77616974696e67666f7274686575706461746572746f66696e697368": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "waiting for the updater to finish"
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e7765636f756c646e74636865636b72696768746e6f77": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "we couldn't check right now."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e7765636f756c646e74636865636b72696768746e6f7776657273696f6e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "we couldn't check right now. version %1$@ was found earlier."
+          }
+        }
+      }
+    },
+    "m6d61636f732e757064617465732e77696c6c6c6574796f756b6e6f777768656e746865757064617465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ will let you know when the update is ready to install."
+          }
+        }
+      }
+    },
+    "m6d61636f732e75706461746573636f70792e616e7570646174656861736265656e7265616479666f726166657764617973726573746172747468656170706e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "an update has been ready for a few days. restart the %1$@ app now to install it, or choose later. %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e75706461746573636f70792e6465666572726564757064617465": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "deferred update"
+          }
+        }
+      }
+    },
+    "m6d61636f732e75706461746573636f70792e646566657272656475706461746532": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "deferred update %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e75706461746573636f70792e696e74616b6577696c6c70617573657768696c65746865736f6c73746f6e656170707265737461727473": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "intake will pause while the solstone app restarts."
+          }
+        }
+      }
+    },
+    "m6d61636f732e75706461746573636f70792e697377616974696e67746f696e7374616c6c": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ %2$@ is waiting to install"
+          }
+        }
+      }
+    },
+    "m6d61636f732e75706461746573636f70792e6c61746572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "later"
+          }
+        }
+      }
+    },
+    "m6d61636f732e75706461746573636f70792e796f75726a6f75726e616c77696c6c6265756e617661696c61626c657768696c657468656a6f75726e616c6170": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "your journal will be unavailable while the journal app restarts."
+          }
+        }
+      }
+    },
+    "m6d61636f732e75706461746573746162766965772e756e6b6e6f776e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "unknown"
+          }
+        }
+      }
+    }
+  }
+}

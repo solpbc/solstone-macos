@@ -1,0 +1,16 @@
+{
+  "description": "the solstone for tmux login item on this mac isn't one solstone installed, so nothing was changed.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 98,
+  "source_revision": "769c2f7db2d103e293925d170ccecb38ecf43caf8ad4242377a3fc96175251a9",
+  "risk": "routine",
+  "auto_merge": true
+}

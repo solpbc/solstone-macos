@@ -1,0 +1,71 @@
+{
+  "description": "this is solstone for macos. the solstone app takes in what you share with it, and all of it goes into your journal. installed at: {value}...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value",
+      "type": "string"
+    },
+    {
+      "name": "value2",
+      "type": "string"
+    },
+    {
+      "name": "value3",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 436,
+  "source_revision": "4fda4b6c1c64c801e89644215d6b092992bcfa6a87ced9f8e25b74980803f9c1",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "ws",
+      "kind": "whitespace",
+      "value": "\n"
+    },
+    {
+      "name": "path",
+      "kind": "accepted-input",
+      "value": "~/Library/Application Support/Solstone/captures/"
+    },
+    {
+      "name": "cmd",
+      "kind": "command",
+      "value": "/usr/bin/log"
+    },
+    {
+      "name": "flag",
+      "kind": "flag",
+      "value": "--predicate"
+    },
+    {
+      "name": "flag2",
+      "kind": "flag",
+      "value": "--last"
+    },
+    {
+      "name": "span",
+      "kind": "accepted-input",
+      "value": "1h"
+    },
+    {
+      "name": "ws2",
+      "kind": "whitespace",
+      "value": "\n\n"
+    },
+    {
+      "name": "url",
+      "kind": "url",
+      "value": "https://github.com/solpbc/solstone-macos"
+    }
+  ]
+}

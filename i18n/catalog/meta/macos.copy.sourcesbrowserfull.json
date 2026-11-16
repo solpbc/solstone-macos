@@ -1,0 +1,16 @@
+{
+  "description": "the room on this mac for what you share from your browsers is full.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 67,
+  "source_revision": "db8f95da0750dd9f54a433f9e680c82b18abe76810d8292128d859206b182647",
+  "risk": "routine",
+  "auto_merge": true
+}

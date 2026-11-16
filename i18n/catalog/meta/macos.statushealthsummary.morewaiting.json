@@ -1,0 +1,28 @@
+{
+  "description": "{pendingCount} more waiting",
+  "context": "Shown by Sources/solstone/StatusHealthSummary.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "0252b2665be1bff4070c322bf42c1ff5efa91ba1c329fc7276b4f45254e60d4b",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

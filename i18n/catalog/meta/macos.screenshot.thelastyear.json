@@ -1,0 +1,16 @@
+{
+  "description": "the last year",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 13,
+  "source_revision": "456ba3c9118a767bb78bae6d9a3f271d2063012ea2c1f590ffe5db4fd1c925f0",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "your journal needs a new link",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 29,
+  "source_revision": "26ab0891dfb49acd5245319b8921937cc111b493e2fc2fb101c821a6680685fa",
+  "risk": "routine",
+  "auto_merge": true
+}

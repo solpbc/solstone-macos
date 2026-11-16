@@ -1,0 +1,21 @@
+{
+  "description": "this mac is set up for a journal at {address}, so linking again takes a pairing link from that journal. get one from its network app and ...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "address",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 152,
+  "source_revision": "0ec8bcd6bdffb529081d9cb64394cd454f1c89dd466d0fdabe4ff4715bb0cbe2",
+  "risk": "routine",
+  "auto_merge": true
+}

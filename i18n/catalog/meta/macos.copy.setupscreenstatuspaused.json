@@ -1,0 +1,16 @@
+{
+  "description": "screen paused",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 13,
+  "source_revision": "e5b67c2558525989f09aa490a25ae139ad1ff92eeef6e018238471c8f049d69b",
+  "risk": "routine",
+  "auto_merge": true
+}

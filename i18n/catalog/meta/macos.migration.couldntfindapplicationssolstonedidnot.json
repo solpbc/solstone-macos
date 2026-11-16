@@ -1,0 +1,16 @@
+{
+  "description": "couldn't find /Applications. solstone did not change your journal link.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalMigration.swift.",
+  "surfaces": [
+    "migration"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 71,
+  "source_revision": "19cb183f8d6edfb77a6bb27c28c6472a73ef348af23dff7c5c1944a73f672837",
+  "risk": "routine",
+  "auto_merge": true
+}

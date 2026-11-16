@@ -1,0 +1,28 @@
+{
+  "description": "waiting for {UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)}. allow solstone in System Settings; it asks for your mac's password. until then, private windows in Safari, Chrome, Edge and Brave reach your journal.",
+  "context": "Shown by Sources/solstone/SettingsView.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "1b0fb75ea53569b1750fe214520040adbf51a1046bd7bbb94b2ddedfab82008e",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

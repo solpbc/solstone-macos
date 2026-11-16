@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>solstone</string>
+	<key>CFBundleName</key>
+	<string>solstone</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 sol pbc. all rights reserved.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>the solstone app takes in what you share with it, and all of it goes into your journal.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>the solstone app takes in what you share with it, and all of it goes into your journal.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>the solstone app takes in what you share with it, and all of it goes into your journal.</string>
+	<key>NSSystemAudioRecordingUsageDescription</key>
+	<string>the solstone app takes in what you share with it, and all of it goes into your journal.</string>
+</dict>
+</plist>

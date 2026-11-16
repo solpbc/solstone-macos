@@ -75,7 +75,7 @@ func agentInstructionsJournalValue(pairedAddresses: [String], serverURL: String?
     if let serverURL, !serverURL.isEmpty {
         return serverURL
     }
-    return "not configured"
+    return MacStrings.macos_settings_notconfigured()
 }
 
 func journalLocationLabel(isSameMacJournalDoor: Bool) -> String {
@@ -92,12 +92,12 @@ func pairingResultText(
     switch state {
     case .paired:
         guard !isPairedHome || sameMachineHomeMigrationComplete else { return nil }
-        return "paired ✓"
+        return MacStrings.macos_settings_paired()
     case .alreadyConnected:
         guard !isPairedHome || sameMachineHomeMigrationComplete else { return nil }
-        return "already paired ✓"
+        return MacStrings.macos_settings_alreadypaired()
     case .switched:
-        return "switched ✓"
+        return MacStrings.macos_settings_switched()
     case .idle, .pairing, .switchConfirmPending, .switchMarkPending, .switchDeclined, .saveFailed, .failed:
         return nil
     }
@@ -382,7 +382,7 @@ struct SettingsView: View {
             get: { appState.setupModel.handoffRefusal != nil },
             set: { if !$0 { appState.setupModel.dismissHandoffRefusal() } }
         )) {
-            Button("ok", role: .cancel) { appState.setupModel.dismissHandoffRefusal() }
+            Button(MacStrings.macos_desktop_shared_settings_severity(), role: .cancel) { appState.setupModel.dismissHandoffRefusal() }
         }
     }
 
@@ -725,7 +725,7 @@ struct SettingsView: View {
 
     var activityControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle("activity", isOn: Binding(
+            Toggle(MacStrings.macos_settings_activity(), isOn: Binding(
                 get: { appState.config.isActivityEnabled },
                 set: { enabled in
                     var config = appState.config
@@ -733,35 +733,35 @@ struct SettingsView: View {
                     appState.updateConfig(config)
                 }
             ))
-            Text("adds app names, window titles and active or idle time to your journal, and browser addresses if you allow \(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)). it starts and pauses with screen and computer sound.")
+            Text(MacStrings.macos_settingsview_addsappnameswindowtitlesandactiveoridletimeto("\(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))"))
                 .font(.subheadline).foregroundStyle(.secondary)
             if appState.config.isActivityEnabled {
-                Toggle("keep activity on while paused", isOn: Binding(
+                Toggle(MacStrings.macos_settings_keepactivityonwhilepaused(), isOn: Binding(
                     get: { appState.config.activityContinuesThroughPause },
                     set: { value in
                         var config = appState.config; config.activityContinuesThroughPause = value
                         appState.updateConfig(config)
                     }
                 ))
-                Text("activity keeps going when you pause, and when screen and computer sound are off.")
+                Text(MacStrings.macos_settingsview_activitykeepsgoingwhenyoupauseandwhenscreenan())
                     .font(.subheadline).foregroundStyle(.secondary)
-                Toggle("window titles", isOn: Binding(
+                Toggle(MacStrings.macos_desktop_shared_settings_windowtitles(), isOn: Binding(
                     get: { appState.config.activityTitlesEnabled },
                     set: { value in
                         var config = appState.config; config.activityTitlesEnabled = value
                         appState.updateConfig(config)
                     }
                 ))
-                Toggle("browser addresses", isOn: Binding(
+                Toggle(MacStrings.macos_settings_browseraddresses(), isOn: Binding(
                     get: { appState.config.activityURLsEnabled },
                     set: { value in
                         var config = appState.config; config.activityURLsEnabled = value
                         appState.updateConfig(config)
                     }
                 ))
-                Text("addresses include the site and path, without query strings or fragments.")
+                Text(MacStrings.macos_settings_addressesincludethesiteandpathwithout())
                     .font(.subheadline).foregroundStyle(.secondary)
-                Toggle("allow \(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)) for activity", isOn: Binding(
+                Toggle(MacStrings.macos_settingsview_allowforactivity("\(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))"), isOn: Binding(
                     get: { appState.config.activityAccessibilityEnabled && !appState.activityAccessibilityOffInMacOS },
                     set: { enabled in
                         if enabled && appState.activityAccessibilityOffInMacOS {
@@ -785,12 +785,12 @@ struct SettingsView: View {
                     Button(UICopy.Websites.OPEN_SYSTEM_SETTINGS) { appState.askForAccessibility() }
                         .accessibilityIdentifier(AXID.Settings.Sources.activityAccessibilityOpenSettings)
                 }
-                Text("activity follows your exclusions. it continues while screen and audio step aside for protected video. a title does not mean you watched or read it.")
+                Text(MacStrings.macos_settings_activityfollowsyourexclusionsitcontinueswhile())
                     .font(.subheadline).foregroundStyle(.secondary)
             }
             if let activity = appState.activitySource, activity.enabled, !activity.failed {
-                if activity.titleUnavailable { Text("window titles are unavailable").foregroundStyle(.secondary) }
-                if activity.urlUnavailable { Text("browser addresses are unavailable").foregroundStyle(.secondary) }
+                if activity.titleUnavailable { Text(MacStrings.macos_settings_windowtitlesareunavailable()).foregroundStyle(.secondary) }
+                if activity.urlUnavailable { Text(MacStrings.macos_settings_browseraddressesareunavailable()).foregroundStyle(.secondary) }
             }
         }
     }
@@ -940,7 +940,7 @@ struct SettingsView: View {
                         }
                         .disabled(custody.isDiscarding || !custody.canRequestDiscard)
                         .accessibilityIdentifier(AXID.Settings.Sources.browserWaitingConfirm)
-                        Button("cancel") { appState.browserPendingDiscard.cancelDiscard() }
+                        Button(MacStrings.macos_desktop_shared_setup_cancel()) { appState.browserPendingDiscard.cancelDiscard() }
                             .disabled(custody.isDiscarding)
                             .accessibilityIdentifier(AXID.Settings.Sources.browserWaitingCancel)
                     }
@@ -1052,7 +1052,7 @@ struct SettingsView: View {
     var screenRecordingPermissionCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                Text("screen recording")
+                Text(MacStrings.macos_copy_settingssetupscreenrecordinglabel())
                     .font(.headline)
                 AXStateCompanion(
                     id: AXID.Settings.Permissions.screenRecordingState,
@@ -1150,7 +1150,7 @@ struct SettingsView: View {
     var microphonePermissionCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                Text("microphone")
+                Text(MacStrings.macos_copy_accessibilityexplanation())
                     .font(.headline)
                 AXStateCompanion(
                     id: AXID.Settings.Permissions.microphoneState,
@@ -1196,10 +1196,10 @@ struct SettingsView: View {
 
     var permissionsReviewRow: some View {
         HStack(spacing: 4) {
-            Text("you can review or revoke these anytime in")
+            Text(MacStrings.macos_settings_youcanrevieworrevoketheseanytime())
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Button("System Settings") {
+            Button(MacStrings.macos_settings_systemsettings()) {
                 NSWorkspace.shared.open(
                     URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
                 )
@@ -1293,9 +1293,9 @@ struct SettingsView: View {
 
     var observerTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            GroupBox("general") {
+            GroupBox(MacStrings.macos_settings_general()) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Toggle("start at login", isOn: Binding(
+                    Toggle(MacStrings.macos_desktop_shared_setup_startatlogin(), isOn: Binding(
                         get: { appState.isLoginItemEnabled },
                         set: { appState.setLoginItemEnabled($0) }
                     ))
@@ -1314,7 +1314,7 @@ struct SettingsView: View {
                 }
             }
 
-            GroupBox("notifications") {
+            GroupBox(MacStrings.macos_settings_notifications()) {
                 VStack(alignment: .leading, spacing: 6) {
                     notificationAuthorizationDetails
                 }
@@ -1402,10 +1402,10 @@ struct SettingsView: View {
     var notificationAuthorizationDetails: some View {
         if appState.notificationAuthorizationStatus == .provisional {
             VStack(alignment: .leading, spacing: 6) {
-                Text("want solstone's notes to show up with a banner and sound?")
+                Text(MacStrings.macos_settings_wantsolstonesnotestoshowup())
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("turn on banners") {
+                Button(MacStrings.macos_settings_turnonbanners()) {
                     appState.elevateNotifications()
                 }
                 .font(.caption)
@@ -1413,20 +1413,20 @@ struct SettingsView: View {
             }
         } else if appState.notificationAuthorizationStatus == .denied {
             VStack(alignment: .leading, spacing: 4) {
-                Text("notifications are turned off for solstone")
+                Text(MacStrings.macos_settings_notificationsareturnedoffforsolstone())
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("macOS is blocking these. you can turn them back on anytime.")
+                Text(MacStrings.macos_settings_macosisblockingtheseyoucanturn())
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("open notification settings") {
+                Button(MacStrings.macos_settings_opennotificationsettings()) {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=app.solstone.observer") {
                         NSWorkspace.shared.open(url)
                     }
                 }
                 .font(.caption)
                 .buttonStyle(.link)
-                Text("System Settings → Notifications → solstone")
+                Text(MacStrings.macos_settings_systemsettingsnotificationssolstone())
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1543,7 +1543,7 @@ struct SettingsView: View {
                 value: appState.pairingCoordinator.state.axToken
             )
 
-            Text("your journal")
+            Text(MacStrings.macos_desktop_shared_copy_setupjournalcardheading())
                 .font(.title2)
                 .fontWeight(.semibold)
 
@@ -1567,7 +1567,7 @@ struct SettingsView: View {
     var configuredJournalPanel: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                LabeledContent("journal") {
+                LabeledContent(MacStrings.macos_desktop_shared_about_pendingsettingstab()) {
                     Text(resolvedJournalName)
                         .accessibilityIdentifier(AXID.Settings.Service.journalNameState)
                         .accessibilityValue(resolvedJournalName)
@@ -1594,7 +1594,7 @@ struct SettingsView: View {
                     )
                 }
 
-                LabeledContent("where") {
+                LabeledContent(MacStrings.macos_settings_where()) {
                     Text(journalLocationLabel)
                 }
 
@@ -1605,7 +1605,7 @@ struct SettingsView: View {
                 } else {
                     let presentation = journalConnectionPresentation
                     VStack(alignment: .leading, spacing: 4) {
-                        LabeledContent("connection") {
+                        LabeledContent(MacStrings.macos_desktopstatuspane_connection()) {
                             HStack(spacing: 6) {
                                 Circle()
                                     .fill(presentation.severity.color)
@@ -1645,7 +1645,7 @@ struct SettingsView: View {
 
                 if affordances.showRelink && !pairingCanUnpair {
                     HStack {
-                        Button("re-link") {
+                        Button(MacStrings.macos_unknownjournalnotice_relink()) {
                             relinkJournal()
                         }
                         .accessibilityIdentifier(AXID.Settings.Service.journalRelink)
@@ -1676,7 +1676,7 @@ struct SettingsView: View {
                 }
 
                 if pairingCanUnpair {
-                    Button("pair to another journal") {
+                    Button(MacStrings.macos_settings_pairtoanotherjournal()) {
                         showPairingFlow.toggle()
                     }
                     .accessibilityIdentifier(AXID.Settings.Service.pairJournalAnotherDevice)
@@ -1692,7 +1692,7 @@ struct SettingsView: View {
         }
 
         if !appState.tunnelLifecycleOwner.hasPersistedPairing {
-            DisclosureGroup("advanced") {
+            DisclosureGroup(MacStrings.macos_settings_advanced()) {
                 externalServiceSection
             }
         }
@@ -1741,7 +1741,7 @@ struct SettingsView: View {
             localJournalDiscoveryPanel
         }
 
-        DisclosureGroup("advanced") {
+        DisclosureGroup(MacStrings.macos_settings_advanced()) {
             externalServiceSection
         }
     }
@@ -1754,7 +1754,7 @@ struct SettingsView: View {
                     HStack(spacing: 8) {
                         ProgressView()
                             .scaleEffect(0.5)
-                        Text("looking for your journal on this mac")
+                        Text(MacStrings.macos_settings_lookingforyourjournalonthismac())
                             .foregroundStyle(.secondary)
                     }
                     AXStateCompanion(
@@ -1768,7 +1768,7 @@ struct SettingsView: View {
                 } else {
                     switch localJournalDiscoveryPanelModel {
                     case .foundRunning(let mark):
-                        Text("found your journal on this mac")
+                        Text(MacStrings.macos_settings_foundyourjournalonthismac())
                             .font(.headline)
                         JournalMarkView(mark: mark)
                         AXStateCompanion(
@@ -1932,7 +1932,7 @@ struct SettingsView: View {
     }
 
     var localJournalPairButton: some View {
-        Button("pair to a journal on another device") {
+        Button(MacStrings.macos_settings_pairtoajournalonanotherdevice()) {
             showPairingFlow = true
         }
         .accessibilityIdentifier(AXID.Settings.Service.pairJournalAnotherDevice)
@@ -1944,11 +1944,11 @@ struct SettingsView: View {
                 .foregroundStyle(.orange)
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 4) {
-                Text("your journal is getting its own app")
+                Text(MacStrings.macos_settings_yourjournalisgettingitsownapp())
                     .font(.headline)
-                Text("nothing moved. your journal was always here. you know it by its mark.")
+                Text(MacStrings.macos_settings_nothingmovedyourjournalwasalwayshere())
                     .font(.callout)
-                Text("segments are kept on this mac until your journal is back")
+                Text(MacStrings.macos_settings_segmentsarekeptonthismacuntil())
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if journalHandoffOrchestrator.step != .idle || appState.journalHandoffActive {
@@ -1968,7 +1968,7 @@ struct SettingsView: View {
             Button {
                 journalHandoffOrchestrator.start(appState: appState)
             } label: {
-                Label("start", systemImage: "arrow.right.circle")
+                Label(MacStrings.macos_desktop_shared_settings_alignitems(), systemImage: "arrow.right.circle")
             }
             .disabled(appState.journalHandoffActive)
             .accessibilityIdentifier(AXID.Settings.Service.journalHandoffStart)
@@ -2041,10 +2041,10 @@ struct SettingsView: View {
     }
 
     var externalJournalSyncSection: some View {
-        GroupBox("sync") {
+        GroupBox(MacStrings.macos_settings_sync()) {
             VStack(alignment: .leading, spacing: 8) {
                 uploadStatusView
-                Toggle("pause sync", isOn: Binding(
+                Toggle(MacStrings.macos_settings_pausesync(), isOn: Binding(
                     get: { appState.config.syncPaused },
                     set: { newValue in
                         var config = appState.config
@@ -2052,7 +2052,7 @@ struct SettingsView: View {
                         appState.updateConfig(config)
                     }
                 ))
-                .help("keeps solstone running locally but stops sending to your journal")
+                .help(MacStrings.macos_settings_keepssolstonerunninglocallybutstopssending())
                 .accessibilityIdentifier(AXID.Settings.Status.pauseSync)
                 lastDeliveryDetailRow
                 if let error = appState.uploadCoordinator.lastError {
@@ -2062,10 +2062,10 @@ struct SettingsView: View {
                         .accessibilityIdentifier(AXID.Settings.Status.lastErrorState)
                         .accessibilityValue(appState.uploadCoordinator.lastErrorReason ?? "")
                 }
-                Button("resync all") {
+                Button(MacStrings.macos_settings_resyncall()) {
                     appState.uploadCoordinator.forceFullSync()
                 }
-                .help("re-check all days, including previously synced ones")
+                .help(MacStrings.macos_settings_recheckalldaysincludingpreviouslysynced())
                 .accessibilityIdentifier(AXID.Settings.Status.resyncAll)
                 .disabled(!appState.isPairedIngestReady || appState.config.syncPaused)
             }
@@ -2094,11 +2094,11 @@ struct SettingsView: View {
     }
 
     var externalJournalStorageSection: some View {
-        GroupBox("kept on this mac") {
+        GroupBox(MacStrings.macos_settings_keptonthismac()) {
             VStack(alignment: .leading) {
-                 LabeledContent("currently using") {
+                 LabeledContent(MacStrings.macos_settings_currentlyusing()) {
                      if let used = storageUsedMB {
-                         Text("\(used) MB")
+                         Text(MacStrings.macos_settings_mb("\(used)"))
                      } else {
                          ProgressView()
                              .scaleEffect(0.5)
@@ -2110,25 +2110,25 @@ struct SettingsView: View {
                  }
                  .padding(.vertical, 4)
 
-                 LabeledContent("storage folder") {
-                     Button("open in Finder") {
+                 LabeledContent(MacStrings.macos_settings_storagefolder()) {
+                     Button(MacStrings.macos_settings_openinfinder()) {
                          NSWorkspace.shared.open(appState.storageManager.baseDirectory)
                      }
                      .accessibilityIdentifier(AXID.Settings.Observer.cacheFolderOpen)
                  }
                  .padding(.vertical, 4)
 
-                 Toggle("keep confirmed segments for debugging", isOn: preserveSyncedSegmentsBinding)
+                 Toggle(MacStrings.macos_settings_keepconfirmedsegmentsfordebugging(), isOn: preserveSyncedSegmentsBinding)
                      .accessibilityIdentifier(AXID.Settings.Observer.preserveSyncedSegments)
                      .padding(.vertical, 4)
 
-                 Text("when on, segments your journal has confirmed are moved to a separate folder on this mac instead of being removed. they build up until you delete them yourself.")
+                 Text(MacStrings.macos_settings_whenonsegmentsyourjournalhasconfirmed())
                      .font(.caption)
                      .foregroundStyle(.secondary)
 
                  if appState.config.preserveSyncedSegments {
-                     LabeledContent("preserved segments") {
-                         Button("open in Finder") {
+                     LabeledContent(MacStrings.macos_settings_preservedsegments()) {
+                         Button(MacStrings.macos_settings_openinfinder()) {
                              let folder = SyncService.preservedSegmentsDirectory(for: appState.storageManager)
                              try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                              NSWorkspace.shared.open(folder)
@@ -2175,7 +2175,7 @@ struct SettingsView: View {
     }
 
     var pairingSection: some View {
-        GroupBox("pairing") {
+        GroupBox(MacStrings.macos_settings_pairing()) {
             VStack(alignment: .leading, spacing: 12) {
                 if relinkNeedsPairingLink {
                     Text(UICopy.relinkNeedsPairingLink(address: journalAddressForOwner(appState.config.serverURL)))
@@ -2184,7 +2184,7 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("pairing link").font(.caption).foregroundStyle(.secondary)
+                    Text(MacStrings.macos_settings_pairinglink()).font(.caption).foregroundStyle(.secondary)
                     TextField(UICopy.PAIRING_LINK_PLACEHOLDER, text: $pairingLink)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier(AXID.Settings.Service.pairingLink)
@@ -2196,7 +2196,7 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    Button("pair") {
+                    Button(MacStrings.macos_desktop_shared_setup_pair()) {
                         submitPairingLink()
                     }
                     .disabled(pairingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pairingIsBusy)
@@ -2232,14 +2232,14 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         HStack {
-                            Button("switch") {
+                            Button(MacStrings.macos_settings_switch()) {
                                 Task {
                                     await appState.pairingCoordinator.confirmSwitch()
                                 }
                             }
                             .accessibilityIdentifier(AXID.Settings.Service.pairingSwitchConfirm)
 
-                            Button("cancel") {
+                            Button(MacStrings.macos_desktop_shared_setup_cancel()) {
                                 appState.pairingCoordinator.cancelSwitch()
                             }
                             .accessibilityIdentifier(AXID.Settings.Service.pairingSwitchCancel)
@@ -2412,10 +2412,7 @@ struct SettingsView: View {
             $0.cid == appState.pairingCoordinator.selectedReplacementCID
         }?.displayLabel
         guard let label, !label.isEmpty else { return UICopy.Migration.replaceConfirmTitleFallback }
-        return UICopy.Migration.replaceConfirmTitle.replacingOccurrences(
-            of: "{selected_device_label}",
-            with: label
-        )
+        return UICopy.Migration.replaceConfirmTitle(label)
     }
 
     func openMigrationTechnicalDetails() {
@@ -2432,12 +2429,12 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack {
-                        Button("disconnect", role: .destructive) {
+                        Button(MacStrings.macos_settings_disconnect(), role: .destructive) {
                             disconnectPairing()
                         }
                         .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectConfirm)
 
-                        Button("cancel") {
+                        Button(MacStrings.macos_desktop_shared_setup_cancel()) {
                             disconnectConfirmPending = false
                         }
                         .accessibilityIdentifier(AXID.Settings.Service.pairingDisconnectCancel)
@@ -2446,7 +2443,7 @@ struct SettingsView: View {
             } else {
                 HStack {
                     Spacer()
-                    Button("disconnect") {
+                    Button(MacStrings.macos_settings_disconnect()) {
                         disconnectConfirmPending = true
                     }
                     .buttonStyle(.plain)
@@ -2464,7 +2461,7 @@ struct SettingsView: View {
         if let mark = appState.confirmedMark, pairingCanUnpair {
             JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkCompared)
         } else if let result = pairingResultText {
-            LabeledContent("pairing") {
+            LabeledContent(MacStrings.macos_settings_pairing()) {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle")
                         .foregroundStyle(.primary)
@@ -2511,7 +2508,7 @@ struct SettingsView: View {
         case .none, .mismatchFreshLinkAndSupport:
             EmptyView()
         case .reevaluatePairing:
-            Button("retry") {
+            Button(MacStrings.macos_desktop_shared_settings_textcontent()) {
                 Task {
                     await appState.reevaluateTunnelPairing()
                 }
@@ -2519,7 +2516,7 @@ struct SettingsView: View {
             .disabled(pairingIsBusy)
             .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
         case .coalescedReconnect:
-            Button("retry") {
+            Button(MacStrings.macos_desktop_shared_settings_textcontent()) {
                 Task {
                     await appState.tunnelLifecycleOwner.requestCoalescedReconnect()
                 }
@@ -2527,7 +2524,7 @@ struct SettingsView: View {
             .disabled(pairingIsBusy)
             .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
         case .retryRevokedRetirement:
-            Button("retry") {
+            Button(MacStrings.macos_desktop_shared_settings_textcontent()) {
                 Task {
                     await appState.retryRevokedPairingRetirement()
                 }
@@ -2535,14 +2532,14 @@ struct SettingsView: View {
             .disabled(pairingIsBusy)
             .accessibilityIdentifier(AXID.Settings.Service.pairingRetry)
         case .paidPlan:
-            Button("set up the paid plan ↗") {
+            Button(MacStrings.macos_settings_setupthepaidplan()) {
                 openEntitlementURL()
             }
             .font(.caption)
             .accessibilityIdentifier(AXID.Settings.Service.pairingPaidPlanLink)
 
             if entitlementOpenFailed {
-                Text("https://link.solstone.app")
+                Text(MacStrings.macos_settings_httpslinksolstoneapp())
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -2579,7 +2576,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier(AXID.Settings.Service.pairingMismatchSupport)
             }
             if supportOpenFailed {
-                Text("support@solstone.app")
+                Text(MacStrings.macos_settings_supportsolstoneapp())
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -2603,7 +2600,7 @@ struct SettingsView: View {
     var pairingConnectionTruthRow: some View {
         let presentation = journalConnectionPresentation
         return VStack(alignment: .leading, spacing: 4) {
-            LabeledContent("connection") {
+            LabeledContent(MacStrings.macos_desktopstatuspane_connection()) {
                 HStack(spacing: 6) {
                     Circle()
                         .fill(presentation.severity.color)
@@ -2621,14 +2618,14 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             if presentation.failureCause == .notEntitled {
-                Button("set up the paid plan ↗") {
+                Button(MacStrings.macos_settings_setupthepaidplan()) {
                     openEntitlementURL()
                 }
                 .font(.caption)
                 .accessibilityIdentifier(AXID.Settings.Service.pairingPaidPlanLink)
 
                 if entitlementOpenFailed {
-                    Text("https://link.solstone.app")
+                    Text(MacStrings.macos_settings_httpslinksolstoneapp())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
@@ -2639,13 +2636,13 @@ struct SettingsView: View {
 
     var pairingDisconnectConfirmText: String {
         if let mark = appState.confirmedMark {
-            return "disconnect this mac from \(JournalMarkSlot.join(mark.words))? your journal keeps everything. you can pair again anytime."
+            return MacStrings.macos_settings_disconnectthismacfromyourjournalkeeps("\(JournalMarkSlot.join(mark.words))")
         }
         return UICopy.PAIRING_DISCONNECT_CONFIRM
     }
 
     var pairingSwitchConfirmText: String {
-        "this link is for a different journal. switch to it?"
+        MacStrings.macos_settings_thislinkisforadifferentjournal()
     }
 
     @ViewBuilder
@@ -2656,7 +2653,7 @@ struct SettingsView: View {
                 Text(failure.message(address: appState.pairingCoordinator.failedAddress))
                     .font(.caption)
                     .foregroundStyle(.red)
-                Button("retry") {
+                Button(MacStrings.macos_desktop_shared_settings_textcontent()) {
                     submitPairingLink()
                 }
                 .disabled(pairingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pairingIsBusy)
@@ -2671,7 +2668,7 @@ struct SettingsView: View {
                 Text(UICopy.PAIRING_SAVE_FAILED)
                     .font(.caption)
                     .foregroundStyle(.red)
-                Button("retry") {
+                Button(MacStrings.macos_desktop_shared_settings_textcontent()) {
                     submitPairingLink()
                 }
                 .disabled(pairingLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || pairingIsBusy)
@@ -2691,7 +2688,7 @@ struct SettingsView: View {
             failureCause: failureCause
         ), !coordinatorShowsPairingRetry {
             HStack {
-                Button("retry") {
+                Button(MacStrings.macos_desktop_shared_settings_textcontent()) {
                     Task {
                         switch action {
                         case .reevaluatePairing:
@@ -2771,34 +2768,34 @@ struct SettingsView: View {
 
     @ViewBuilder
     var externalServiceSection: some View {
-        GroupBox("connection") {
+        GroupBox(MacStrings.macos_desktopstatuspane_connection()) {
             VStack(alignment: .leading, spacing: 12) {
-                Link("setup guide: solstone.app/install", destination: URL(string: "https://solstone.app/install")!)
+                Link(MacStrings.macos_settings_setupguidesolstoneappinstall(), destination: URL(string: "https://solstone.app/install")!)
                     .font(.callout)
                     .accessibilityIdentifier(AXID.Settings.Service.externalSetupGuide)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("address").font(.caption).foregroundStyle(.secondary)
-                    TextField("local address, name:port, or https://...", text: $observerURL)
+                    Text(MacStrings.macos_settings_address()).font(.caption).foregroundStyle(.secondary)
+                    TextField(MacStrings.macos_settings_localaddressnameportorhttps(), text: $observerURL)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier(AXID.Settings.Service.externalAddress)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("key").font(.caption).foregroundStyle(.secondary)
-                    TextField("paste key from your journal", text: $observerKey)
+                    Text(MacStrings.macos_settings_key()).font(.caption).foregroundStyle(.secondary)
+                    TextField(MacStrings.macos_settings_pastekeyfromyourjournal(), text: $observerKey)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier(AXID.Settings.Service.externalKey)
                 }
 
                 HStack {
-                    Button("test connection") {
+                    Button(MacStrings.macos_settings_testconnection()) {
                         testServiceConnection()
                     }
                     .disabled(!appState.isPairedIngestReady || appState.connectionTestState == .testing)
                     .accessibilityIdentifier(AXID.Settings.Service.externalTestConnection)
 
-                    Button("connect") {
+                    Button(MacStrings.macos_settings_connect()) {
                         let url = normalizeServerURL(observerURL)
                         saveService(url: url, key: observerKey, mode: .external)
                     }
@@ -2823,7 +2820,7 @@ struct SettingsView: View {
                 }
 
                 if appState.connectionTestState == .success {
-                    Button("view status →") {
+                    Button(MacStrings.macos_settings_viewstatus()) {
                         navigate(.status)
                     }
                     .font(.caption)
@@ -2833,7 +2830,7 @@ struct SettingsView: View {
             }
             .padding(.vertical, 4)
         }
-        Text("your memories are sent only to your configured journal. nothing else, nowhere else.")
+        Text(MacStrings.macos_settings_yourmemoriesaresentonlytoyour())
             .font(.caption)
             .foregroundStyle(.secondary)
             .padding(.top, 4)
@@ -3092,7 +3089,7 @@ struct SettingsView: View {
 
     var microphoneTab: some View {
         VStack(alignment: .leading, spacing: 20) {
-            GroupBox("microphone priority") {
+            GroupBox(MacStrings.macos_settings_microphonepriority()) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(UICopy.MICROPHONES_LIST_CAPTION)
                         .font(.caption)
@@ -3128,15 +3125,15 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("microphone gain") {
+            GroupBox(MacStrings.macos_settings_microphonegain()) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("boost microphone input level. changes take effect immediately.")
+                    Text(MacStrings.macos_settings_boostmicrophoneinputlevelchangestakeeffect())
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Picker("gain", selection: microphoneGainBinding) {
+                    Picker(MacStrings.macos_settings_gain(), selection: microphoneGainBinding) {
                         ForEach([1, 2, 4, 8], id: \.self) { value in
-                            Text("\(value)x").tag(Float(value))
+                            Text(MacStrings.macos_settings_x("\(value)")).tag(Float(value))
                         }
                     }
                     .pickerStyle(.segmented)
@@ -3145,7 +3142,7 @@ struct SettingsView: View {
                         id: AXID.Settings.Microphones.gainState,
                         value: axIntegerString(Int(snapGain(appState.config.microphoneGain).rounded()))
                     )
-                    Text("stronger boost can pick up more background noise in quiet rooms.")
+                    Text(MacStrings.macos_settings_strongerboostcanpickupmorebackground())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -3160,13 +3157,13 @@ struct SettingsView: View {
     }
 
     var audioProcessingGroup: some View {
-        GroupBox("audio processing") {
+        GroupBox(MacStrings.macos_settings_audioprocessing()) {
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("silence music in computer sound", isOn: silenceMusicBinding)
-                    .help("silences background music when nobody's talking")
+                Toggle(MacStrings.macos_settingsview_silencemusicincomputersound(), isOn: silenceMusicBinding)
+                    .help(MacStrings.macos_settings_silencesbackgroundmusicwhennobodystalking())
                     .accessibilityIdentifier(AXID.Settings.Microphones.silenceMusic)
 
-                Text("silences portions of computer sound where music is detected but no speech.")
+                Text(MacStrings.macos_settingsview_silencesportionsofcomputersoundwheremusicisde())
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -3304,14 +3301,14 @@ struct SettingsView: View {
     }
 
     var excludedAppsGroup: some View {
-        GroupBox("excluded apps") {
+        GroupBox(MacStrings.macos_desktop_shared_settings_excludedapps()) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("windows from these apps are always excluded.")
+                Text(MacStrings.macos_settings_windowsfromtheseappsarealwaysexcluded())
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 if appState.config.excludedApps.isEmpty {
-                    Text("no apps excluded")
+                    Text(MacStrings.macos_settings_noappsexcluded())
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 20)
@@ -3326,7 +3323,7 @@ struct SettingsView: View {
                                         .foregroundStyle(.red)
                                 }
                                 .buttonStyle(.plain)
-                                .help("remove app")
+                                .help(MacStrings.macos_settings_removeapp())
                                 .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppRemove(app.name))
                             }
                             .padding(.vertical, 2)
@@ -3344,23 +3341,23 @@ struct SettingsView: View {
                 )
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("currently open apps")
+                    Text(MacStrings.macos_settings_currentlyopenapps())
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
                     switch pickerEvaluation.availability {
                     case .needsScreenRecording:
-                        Text("grant access to see open apps")
+                        Text(MacStrings.macos_settings_grantaccesstoseeopenapps())
                             .foregroundStyle(.secondary)
                     case .nothingAvailable:
-                        Text("nothing available right now")
+                        Text(MacStrings.macos_settings_nothingavailablerightnow())
                             .foregroundStyle(.secondary)
                     case .ready:
                         Picker("", selection: Binding<String?>(
                             get: { nil },
                             set: { if let app = $0 { addExcludedApp(name: app) } }
                         )) {
-                            Text("choose an open app…").tag(String?.none)
+                            Text(MacStrings.macos_settings_chooseanopenapp()).tag(String?.none)
                             ForEach(pickerEvaluation.candidateNames, id: \.self) { name in
                                 Text(name).tag(String?.some(name))
                             }
@@ -3377,15 +3374,15 @@ struct SettingsView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        TextField("app name", text: $newExcludedApp)
+                        TextField(MacStrings.macos_settingsview_appname(), text: $newExcludedApp)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit { addExcludedApp() }
                             .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppField)
-                        Button("add") { addExcludedApp() }
+                        Button(MacStrings.macos_desktop_shared_settings_add()) { addExcludedApp() }
                             .disabled(newExcludedApp.trimmingCharacters(in: .whitespaces).isEmpty)
                             .accessibilityIdentifier(AXID.Settings.Privacy.excludedAppAdd)
                     }
-                    Text("a typed name works only when it matches the app's name exactly, as it shows under currently open apps.")
+                    Text(MacStrings.macos_settingsview_atypednameworksonlywhenitmatchestheappsnameex())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -3396,14 +3393,14 @@ struct SettingsView: View {
     }
 
     var titlePatternsGroup: some View {
-        GroupBox("title patterns") {
+        GroupBox(MacStrings.macos_settings_titlepatterns()) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("hide windows whose title contains these keywords.")
+                Text(MacStrings.macos_settings_hidewindowswhosetitlecontainsthesekeywords())
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 if appState.config.excludedTitlePatterns.isEmpty {
-                    Text("no patterns added")
+                    Text(MacStrings.macos_settings_nopatternsadded())
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 20)
@@ -3418,7 +3415,7 @@ struct SettingsView: View {
                                         .foregroundStyle(.red)
                                 }
                                 .buttonStyle(.plain)
-                                .help("remove pattern")
+                                .help(MacStrings.macos_settings_removepattern())
                                 .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternRemove(pattern))
                             }
                             .padding(.vertical, 2)
@@ -3430,11 +3427,11 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    TextField("reddit, facebook, etc.", text: $newTitlePattern)
+                    TextField(MacStrings.macos_settings_redditfacebooketc(), text: $newTitlePattern)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { addTitlePattern() }
                         .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternField)
-                    Button("add") { addTitlePattern() }
+                    Button(MacStrings.macos_desktop_shared_settings_add()) { addTitlePattern() }
                         .disabled(newTitlePattern.trimmingCharacters(in: .whitespaces).isEmpty)
                         .accessibilityIdentifier(AXID.Settings.Privacy.titlePatternAdd)
                 }
@@ -3444,7 +3441,7 @@ struct SettingsView: View {
     }
 
     func websitesGroup(scrollProxy: ScrollViewProxy) -> some View {
-        GroupBox("websites you leave out") {
+        GroupBox(MacStrings.macos_settings_websitesyouleaveout()) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(UICopy.Websites.DESCRIPTION_PARAGRAPH_1)
                     .font(.caption)
@@ -3479,7 +3476,7 @@ struct SettingsView: View {
                 }
 
                 if appState.config.excludedSites.isEmpty {
-                    Text("no websites left out")
+                    Text(MacStrings.macos_settings_nowebsitesleftout())
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 20)
@@ -3494,7 +3491,7 @@ struct SettingsView: View {
                                         .foregroundStyle(.red)
                                 }
                                 .buttonStyle(.plain)
-                                .help("stop leaving out")
+                                .help(MacStrings.macos_settings_stopleavingout())
                                 .accessibilityIdentifier(AXID.Settings.Privacy.websiteRemove(site))
                             }
                             .padding(.vertical, 2)
@@ -3507,12 +3504,12 @@ struct SettingsView: View {
 
                 if !appState.websitesNeedAccessibility {
                     HStack {
-                        TextField("bank.com", text: $newWebsite)
+                        TextField(MacStrings.macos_settings_bankcom(), text: $newWebsite)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit { addWebsite() }
                             .onChange(of: newWebsite) { websiteError = nil }
                             .accessibilityIdentifier(AXID.Settings.Privacy.websiteField)
-                        Button("leave out") { addWebsite() }
+                        Button(MacStrings.macos_settings_leaveout()) { addWebsite() }
                             .disabled(newWebsite.trimmingCharacters(in: .whitespaces).isEmpty)
                             .accessibilityIdentifier(AXID.Settings.Privacy.websiteAdd)
                     }
@@ -3549,16 +3546,16 @@ struct SettingsView: View {
     }
 
     var protectedVideoGroup: some View {
-        GroupBox("protected video") {
+        GroupBox(MacStrings.macos_settings_protectedvideo()) {
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("pause screen and audio while protected video is on screen", isOn: pauseProtectedVideoBinding)
+                Toggle(MacStrings.macos_settingsview_pausescreenandaudiowhileprotectedvideoisonscr(), isOn: pauseProtectedVideoBinding)
                     .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideo)
-                Text("pauses screen and audio while supported streaming video apps or websites are visible, so the video doesn't go black. a short note of the service and window title goes into your journal.")
+                Text(MacStrings.macos_settingsview_pausesscreenandaudiowhilesupportedstreamingvi())
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 if appState.config.protectedVideoTitlePatterns.isEmpty {
-                    Text("no patterns added")
+                    Text(MacStrings.macos_settings_nopatternsadded())
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 20)
@@ -3573,7 +3570,7 @@ struct SettingsView: View {
                                         .foregroundStyle(.red)
                                 }
                                 .buttonStyle(.plain)
-                                .help("remove pattern")
+                                .help(MacStrings.macos_settings_removepattern())
                                 .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternRemove(pattern))
                             }
                             .padding(.vertical, 2)
@@ -3585,11 +3582,11 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    TextField("mubi", text: $newProtectedVideoPattern)
+                    TextField(MacStrings.macos_settings_mubi(), text: $newProtectedVideoPattern)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { addProtectedVideoPattern() }
                         .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternField)
-                    Button("add") { addProtectedVideoPattern() }
+                    Button(MacStrings.macos_desktop_shared_settings_add()) { addProtectedVideoPattern() }
                         .disabled(newProtectedVideoPattern.trimmingCharacters(in: .whitespaces).isEmpty)
                         .accessibilityIdentifier(AXID.Settings.Privacy.protectedVideoPatternAdd)
                 }
@@ -3599,16 +3596,16 @@ struct SettingsView: View {
     }
 
     func privateBrowsingGroup(scrollProxy: ScrollViewProxy) -> some View {
-        GroupBox("private browsing") {
+        GroupBox(MacStrings.macos_settings_privatebrowsing()) {
             VStack(alignment: .leading, spacing: 4) {
-                Toggle("keep private windows out of your journal: Firefox set to English", isOn: excludePrivateBrowsingBinding)
-                    .help("reads the window title and matches private windows in Firefox set to English. Safari, Chrome, Edge and Brave don't show private mode in that title; the option below checks them another way. other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps.")
+                Toggle(MacStrings.macos_settings_keepprivatewindowsoutofyourjournal(), isOn: excludePrivateBrowsingBinding)
+                    .help(MacStrings.macos_settings_readsthewindowtitleandmatchesprivate())
                     .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsing)
-                Text("this reads the window title and keeps Firefox private windows out of your journal. a new Firefox window is kept out of your journal for a moment while it is checked.")
+                Text(MacStrings.macos_settings_thisreadsthewindowtitleandkeeps())
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                DisclosureGroup("details") {
-                    Text("checked on Firefox 157 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a web page can end its own title the way Firefox marks a private window, and then an ordinary Firefox window showing it is kept out too. Safari, Chrome, Edge and Brave don't show private mode in that title; the option below checks them another way. other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps above.")
+                DisclosureGroup(MacStrings.macos_settings_details()) {
+                    Text(MacStrings.macos_settings_checkedonfirefox157settoenglish())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3616,17 +3613,17 @@ struct SettingsView: View {
                 .font(.caption)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Toggle("also check Safari, Chrome, Edge and Brave", isOn: excludePrivateBrowsingAccessibilityBinding)
+                    Toggle(MacStrings.macos_settings_alsochecksafarichromeedgeandbrave(), isOn: excludePrivateBrowsingAccessibilityBinding)
                         .disabled(!appState.config.excludePrivateBrowsing)
                         .focused($privateWindowKeyboardFocused)
                         .accessibilityFocused($privateWindowAccessibilityFocused)
-                        .accessibilityHint("turning this on asks for \(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)). solstone uses it to read these browsers' window titles and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity.")
+                        .accessibilityHint(MacStrings.macos_settingsview_turningthisonasksforsolstoneusesittoreadthese("\(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))"))
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibility)
                     Text(Self.privateWindowAccessibilityExplanation(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    DisclosureGroup("details") {
-                        Text("checked on Safari 27, Chrome 154, Edge 154 and Brave 1.96 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a new window from these browsers is kept out of your journal for a moment while it is checked. turning this off stops the reads; to remove the access too, turn solstone off in System Settings, under Privacy & Security, in \(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)).")
+                    DisclosureGroup(MacStrings.macos_settings_details()) {
+                        Text(MacStrings.macos_settingsview_checkedonsafari27chrome154edge154andbrave196s("\(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -3666,7 +3663,7 @@ struct SettingsView: View {
 
 
     static func privateWindowAccessibilityExplanation(macOSMajor: Int) -> String {
-        "this needs \(UICopy.Websites.accessibilityName(macOSMajor: macOSMajor)). solstone uses it to read the window titles these browsers give to accessibility tools, and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity. turning this on asks for it."
+        MacStrings.macos_settingsview_thisneedssolstoneusesittoreadthewindowtitlest("\(UICopy.Websites.accessibilityName(macOSMajor: macOSMajor))")
     }
 
     @ViewBuilder
@@ -3683,21 +3680,21 @@ struct SettingsView: View {
                         .font(.caption)
                 }
                 Label {
-                    Text("waiting for \(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)). allow solstone in System Settings; it asks for your mac's password. until then, private windows in Safari, Chrome, Edge and Brave reach your journal.")
+                    Text(MacStrings.macos_settingsview_waitingforallowsolstoneinsystemsettingsitasks("\(UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion))"))
                 } icon: {
                     Image(systemName: "hourglass").foregroundStyle(.secondary)
                 }
                 .font(.caption)
                 HStack {
-                    Button("open System Settings") { AccessibilityTitleReader.openSystemSettings() }
+                    Button(MacStrings.macos_settings_opensystemsettings()) { AccessibilityTitleReader.openSystemSettings() }
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityOpenSettings)
-                    Button("already allowed? reopen solstone") { relaunchApp() }
+                    Button(MacStrings.macos_settings_alreadyallowedreopensolstone()) { relaunchApp() }
                         .buttonStyle(.link)
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityReopen)
                 }
             case .working:
                 Label {
-                    Text("on: solstone can read these browsers' window titles, so their private windows are kept out of your journal.")
+                    Text(MacStrings.macos_settings_onsolstonecanreadthesebrowserswindow())
                 } icon: {
                     Image(systemName: "checkmark.circle").foregroundStyle(.green)
                 }
@@ -3709,16 +3706,16 @@ struct SettingsView: View {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                 }
                 .font(.caption)
-                Text("their private windows reach your journal.")
+                Text(MacStrings.macos_settings_theirprivatewindowsreachyourjournal())
                     .font(.caption)
                 HStack {
-                    Button("open System Settings") { AccessibilityTitleReader.openSystemSettings() }
+                    Button(MacStrings.macos_settings_opensystemsettings()) { AccessibilityTitleReader.openSystemSettings() }
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityOpenSettings)
-                    Button("already allowed? reopen solstone") { relaunchApp() }
+                    Button(MacStrings.macos_settings_alreadyallowedreopensolstone()) { relaunchApp() }
                         .buttonStyle(.link)
                         .accessibilityIdentifier(AXID.Settings.Privacy.privateBrowsingAccessibilityReopen)
                 }
-                Text("if solstone is on in System Settings and reopening doesn't help, remove solstone from that list with the minus button, then turn this option off and on again.")
+                Text(MacStrings.macos_settings_ifsolstoneisoninsystemsettings())
                     .font(.caption)
                     .foregroundStyle(.secondary)
             case .off:
@@ -3872,9 +3869,9 @@ struct SettingsView: View {
 
     var storageGlanceText: String {
         if let storageUsedMB {
-            return "\(storageUsedMB) MB"
+            return MacStrings.macos_settings_mb2("\(storageUsedMB)")
         }
-        return "calculating"
+        return MacStrings.macos_settingsview_calculating()
     }
 
     var statusFooterText: String {
@@ -4199,7 +4196,7 @@ struct SettingsView: View {
             // it twice. When the owner has turned every source off, the card above says so and
             // carries the way back, and this group has nothing left of its own to say.
             if !statusGroupIsFullyClaimedByVerdict {
-            GroupBox("solstone") {
+            GroupBox(MacStrings.macos_about_solstone()) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(renderedObservationText)
                         .font(.title2)
@@ -4212,7 +4209,7 @@ struct SettingsView: View {
                             let remaining = appState.captureManager.segmentTimeRemaining
                             let mins = Int(remaining) / 60
                             let secs = Int(remaining) % 60
-                            Text(String(format: "next save in %d:%02d", mins, secs))
+                            Text(MacStrings.macos_storage_nextsave(MacStrings.number(mins), String(format: "%02d", secs)))
                                 .foregroundStyle(.secondary)
                             AXStateCompanion(
                                 id: AXID.Settings.Status.nextSegmentSeconds,
@@ -4247,13 +4244,13 @@ struct SettingsView: View {
             }
 
             if resolvedServiceMode(for: appState.config) == .external {
-                GroupBox("kept on this mac") {
+                GroupBox(MacStrings.macos_settings_keptonthismac()) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(storageGlanceText)
-                        Text("unsynced segments are never deleted.")
+                        Text(MacStrings.macos_settings_unsyncedsegmentsareneverdeleted())
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Button("storage settings →") {
+                        Button(MacStrings.macos_settings_storagesettings()) {
                             navigate(.service)
                         }
                         .font(.caption)
@@ -4273,10 +4270,10 @@ struct SettingsView: View {
             }
 
             #if DEBUG
-            GroupBox("debug") {
+            GroupBox(MacStrings.macos_settings_debug()) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Toggle("1-minute segments", isOn: debugSegmentsBinding)
-                        .help("use 1-minute segments instead of 5-minute for testing")
+                    Toggle(MacStrings.macos_settings_n1minutesegments(), isOn: debugSegmentsBinding)
+                        .help(MacStrings.macos_settings_use1minutesegmentsinsteadof5())
                         .accessibilityIdentifier(AXID.Settings.Status.debugOneMinuteSegments)
                 }
                 .padding(.vertical, 4)
@@ -4407,34 +4404,23 @@ struct SettingsView: View {
     // MARK: - Help Tab
 
     var agentInstructions: String {
-        """
-        this is solstone for macos.
-        the solstone app takes in what you share with it, and all of it goes into your journal.
-        installed at: \(Bundle.main.bundlePath)
-        files: ~/Library/Application Support/Solstone/captures/
-        logs: /usr/bin/log show --predicate '\(SolstoneLogSubsystem.persistedHelpPredicate)' --last 1h
-        your journal's address: \(agentInstructionsJournalValue(pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses, serverURL: appState.config.serverURL))
-
-        if intake isn't running, check settings → permissions.
-        if it's not syncing, check settings → journal.
-        source: https://github.com/solpbc/solstone-macos
-        """
+        MacStrings.macos_settings_thisissolstoneformacosthesolstone("\(Bundle.main.bundlePath)", "\(SolstoneLogSubsystem.persistedHelpPredicate)", "\(agentInstructionsJournalValue(pairedAddresses: appState.tunnelLifecycleOwner.pairedAddresses, serverURL: appState.config.serverURL))")
     }
 
     var helpTab: some View {
         let displayedAbout = aboutBlock
         return VStack(alignment: .leading, spacing: 20) {
-            GroupBox("get help") {
+            GroupBox(MacStrings.macos_desktop_shared_settings_gethelp()) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("need a hand? reach us. we're happy to help.")
+                    Text(MacStrings.macos_settings_needahandreach())
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Link("get help", destination: SupportReportURL.help)
+                    Link(MacStrings.macos_desktop_shared_settings_gethelp(), destination: SupportReportURL.help)
                         .accessibilityIdentifier(AXID.Settings.Help.supportSite)
-                    Button("report a problem") {
+                    Button(MacStrings.macos_desktop_shared_settings_reportaproblem()) {
                         openProblemReport(aboutSnapshot: displayedAbout)
                     }
-                    Link("support@solstone.app", destination: URL(string: "mailto:support@solstone.app?subject=solstone%20(macOS)")!)
+                    Link(MacStrings.macos_settings_supportsolstoneapp(), destination: URL(string: "mailto:support@solstone.app?subject=solstone%20(macOS)")!)
                         .accessibilityIdentifier(AXID.Settings.Help.supportEmail)
                     Text(displayedAbout)
                         .font(.caption)
@@ -4447,7 +4433,7 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("icon states") {
+            GroupBox(MacStrings.macos_settings_iconstates()) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(MenubarIconState.helpLegend, id: \.state.axToken) { entry in
                         HStack(spacing: 6) {
@@ -4565,9 +4551,9 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            GroupBox("agent instructions") {
+            GroupBox(MacStrings.macos_settings_agentinstructions()) {
                 VStack(alignment: .trailing, spacing: 8) {
-                    Text("working with a coding agent? hand it this context.")
+                    Text(MacStrings.macos_settings_workingwithacodingagenthandit())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -4580,7 +4566,7 @@ struct SettingsView: View {
                     .frame(height: 160)
                     .accessibilityIdentifier(AXID.Settings.Help.agentInstructions)
 
-                    Button("copy") {
+                    Button(MacStrings.macos_desktop_shared_about_textcontent()) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(agentInstructions, forType: .string)
                     }
@@ -4764,11 +4750,7 @@ struct SettingsView: View {
 
             if document.entryCount > LogExportBounds.previewEntryLimit {
                 Text(
-                    String(
-                        format: UICopy.SETTINGS_LOG_EXPORT_PREVIEW_SUBSET,
-                        LogExportBounds.previewEntryLimit,
-                        document.entryCount
-                    )
+MacStrings.macos_logs_previewsubset(MacStrings.number(LogExportBounds.previewEntryLimit), MacStrings.number(document.entryCount))
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -5022,7 +5004,7 @@ struct MicrophoneRow: View {
                             .foregroundStyle(entry.isDisabled ? .orange : .green)
                     }
                     .buttonStyle(.plain)
-                    .help(entry.isDisabled ? "enable microphone" : "disable microphone")
+                    .help(entry.isDisabled ? MacStrings.macos_copy_settingspermissionsenablemicrophone() : MacStrings.macos_settingsview_disablemicrophone())
                     .accessibilityIdentifier(AXID.Settings.Microphones.deviceToggle(entry.uid))
                 }
 
@@ -5030,7 +5012,7 @@ struct MicrophoneRow: View {
                 // re-added by the next device sync, so removing it would not stick, and could bring
                 // back one that was off at its default. Turning it off is the control for that.
                 if !entry.isConnected {
-                    Text("disconnected")
+                    Text(MacStrings.macos_settings_disconnected())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Button(action: onDelete) {
@@ -5038,7 +5020,7 @@ struct MicrophoneRow: View {
                             .foregroundStyle(.red)
                     }
                     .buttonStyle(.plain)
-                    .help("if it connects again, it comes back at its default setting. to keep it off, turn it off instead.")
+                    .help(MacStrings.macos_settings_ifitconnectsagainitcomesback())
                     .accessibilityIdentifier(AXID.Settings.Microphones.deviceRemove(entry.uid))
                 }
             }

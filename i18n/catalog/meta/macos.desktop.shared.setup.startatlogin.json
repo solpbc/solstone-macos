@@ -1,0 +1,16 @@
+{
+  "description": "start at login",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupView.swift. The same sentence is on Windows as windows.desktop.shared.setup.startatlogin. Keep the two translations consistent.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 14,
+  "source_revision": "400dc03cfecbca5197603b0fd8d2c4b78b13a71441042ed723cee3bfaef2a7c3",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,29 @@
+{
+  "description": "your journal already has a vault named {vault} {from}{when}. if you continue, changes from both devices go into your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "vault",
+      "type": "string"
+    },
+    {
+      "name": "from",
+      "type": "string"
+    },
+    {
+      "name": "when",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 125,
+  "source_revision": "b3a723f2a8f231299f7769eb1adbc109f7efdf816d36fad51c5c7949556d5517",
+  "risk": "routine",
+  "auto_merge": true
+}

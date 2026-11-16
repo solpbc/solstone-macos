@@ -1,0 +1,16 @@
+{
+  "description": "enable screen recording →",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 25,
+  "source_revision": "ef858fe8c890b5dafef9c3ddd3a40922795bc98bafe3eced600dddacc1a5c3f1",
+  "risk": "routine",
+  "auto_merge": true
+}

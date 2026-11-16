@@ -1,0 +1,16 @@
+{
+  "description": "retrying…",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 9,
+  "source_revision": "ea7c079d18652dad97d57dabf4e8bd20fb1959283ca7cbc94988e41cd7ea0dfa",
+  "risk": "routine",
+  "auto_merge": true
+}

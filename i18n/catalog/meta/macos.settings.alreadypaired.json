@@ -1,0 +1,16 @@
+{
+  "description": "already paired ✓",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 16,
+  "source_revision": "15268f047d7f5242f2566c7235e9eaca277727e8eb7c56aaf6ea72298381795e",
+  "risk": "routine",
+  "auto_merge": true
+}

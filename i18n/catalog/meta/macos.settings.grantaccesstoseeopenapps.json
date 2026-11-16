@@ -1,0 +1,16 @@
+{
+  "description": "grant access to see open apps",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 29,
+  "source_revision": "14f8819e7829c526fda2ab5d3c02e14e6a3c7b3781b1c16e5b42743eb9c346bb",
+  "risk": "consent",
+  "auto_merge": false
+}

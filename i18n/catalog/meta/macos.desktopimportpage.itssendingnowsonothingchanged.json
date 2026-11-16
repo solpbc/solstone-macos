@@ -1,0 +1,16 @@
+{
+  "description": "it's sending now, so nothing changed.",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "8633ff2c4258780054697aa0ff5a4211ae41c536b17c8b426f20c21cc7f10224",
+  "risk": "routine",
+  "auto_merge": true
+}

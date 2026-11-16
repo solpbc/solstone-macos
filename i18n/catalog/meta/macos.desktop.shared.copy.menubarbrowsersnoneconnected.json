@@ -1,0 +1,16 @@
+{
+  "description": "browsers · none connected now",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. This message was paired with the Windows desktop copy in the source census; the current Windows catalog has no declared twin.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 29,
+  "source_revision": "4dcdf6f99fa19a1a4b32e07807b30732ec92909e4099dc63378bfa8ecd6b7abd",
+  "risk": "routine",
+  "auto_merge": true
+}

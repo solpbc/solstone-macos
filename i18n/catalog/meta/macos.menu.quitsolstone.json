@@ -1,0 +1,16 @@
+{
+  "description": "quit solstone",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/MenuContent.swift.",
+  "surfaces": [
+    "menu"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 13,
+  "source_revision": "cc4e223b5506c489b0915f568426b7be8b90e809dee43f5732cff0e24a009231",
+  "risk": "routine",
+  "auto_merge": true
+}

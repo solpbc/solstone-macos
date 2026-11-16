@@ -198,7 +198,7 @@ actor TerminalTakeoverDriver {
         if let reply = await transport.sendMigration(serverURL: serverURL, body: migration.body) {
             answer = TerminalMigrationAnswer.classify(status: reply.status, reason: reply.reason)
         } else {
-            answer = .retry("journal unreachable")
+            answer = .retry(MacStrings.macos_terminaltakeover_journalunreachable())
         }
         switch answer {
         case .settled(let settled):

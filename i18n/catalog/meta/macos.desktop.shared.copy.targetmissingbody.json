@@ -1,0 +1,16 @@
+{
+  "description": "that device is no longer listed in your journal. choose another device, or keep both.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.targetmissingbody. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 85,
+  "source_revision": "5db3e79d359a4824feaffd5844aed87649bfb70ed54e02349e83f72b4c78a687",
+  "risk": "routine",
+  "auto_merge": true
+}

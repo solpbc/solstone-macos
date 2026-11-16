@@ -1,0 +1,16 @@
+{
+  "description": "retrying the last upload",
+  "context": "Shown by Sources/solstone/StatusHealthSummary.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "5199bd811ae254430202bc003698f1fdfc5d8ec036abb659b1ed68a74db5d6b7",
+  "risk": "routine",
+  "auto_merge": true
+}

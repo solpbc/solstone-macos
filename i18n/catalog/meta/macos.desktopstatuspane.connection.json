@@ -1,0 +1,16 @@
+{
+  "description": "connection",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DesktopStatusPane.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 10,
+  "source_revision": "00c84f19116cf703cf67bb4e27545cca9a74b4272625421412c415f8b86fccba",
+  "risk": "routine",
+  "auto_merge": true
+}

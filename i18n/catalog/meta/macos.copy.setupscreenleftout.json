@@ -1,0 +1,16 @@
+{
+  "description": "1Password, Bitwarden and the other password manager apps listed in settings are left out, but a password manager inside your browser isn't.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 139,
+  "source_revision": "4d3b6ed14a3dc78aed01c013418729f8d052ee06ebd41a87e1bbeae7679be782",
+  "risk": "routine",
+  "auto_merge": true
+}

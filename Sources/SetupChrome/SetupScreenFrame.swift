@@ -37,7 +37,7 @@ public struct SetupScreenFrame: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .accessibilityLabel(Text("screen"))
+                        .accessibilityLabel(Text(MacStrings.macos_setupscreenframe_screen()))
                         .accessibilityIdentifier(accessibilityIdentifier)
                         .accessibilityValue(Text(accessibilityValue ?? ""))
                 } else {

@@ -1,0 +1,16 @@
+{
+  "description": "while this is on, the solstone app takes in what's on your screen, the sound your mac plays, and which apps and windows you're using, and all of it goes into your journal.",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "fb0e9210948760d54dfb55d7a8618e1956784899f63cf5751d0d545632d08418",
+  "risk": "routine",
+  "auto_merge": true
+}

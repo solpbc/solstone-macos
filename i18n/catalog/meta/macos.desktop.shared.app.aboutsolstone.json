@@ -1,0 +1,16 @@
+{
+  "description": "about solstone",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SolstoneCaptureApp.swift. The same sentence is on Windows as windows.desktop.shared.app.aboutsolstone. Keep the two translations consistent.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 14,
+  "source_revision": "e2da95a6dab94aa91456a081add79540afc8bad1a044ab13d293496fb0e0d2b3",
+  "risk": "routine",
+  "auto_merge": true
+}

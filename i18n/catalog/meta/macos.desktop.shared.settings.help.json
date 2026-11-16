@@ -1,0 +1,16 @@
+{
+  "description": "help",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift. The same sentence is on Windows as windows.desktop.shared.settings.help. Keep the two translations consistent.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 4,
+  "source_revision": "415751cbf18016f4c7489c82d0ce79d737f2fa01c17a285f4b51320ebb3aac66",
+  "risk": "routine",
+  "auto_merge": true
+}

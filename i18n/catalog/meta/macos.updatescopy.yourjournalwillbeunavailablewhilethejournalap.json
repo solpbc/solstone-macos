@@ -1,0 +1,16 @@
+{
+  "description": "your journal will be unavailable while the journal app restarts.",
+  "context": "Shown by Sources/UpdateKit/UpdatesCopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "c45bf2918652ad1945b7f61679fa561f58f627d9dbd71a586bfee61dcc3890a8",
+  "risk": "routine",
+  "auto_merge": true
+}

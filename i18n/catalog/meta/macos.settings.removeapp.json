@@ -1,0 +1,16 @@
+{
+  "description": "remove app",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 10,
+  "source_revision": "5f29d128a67fbcc16898e764f06276bb7dc97b430decda6b9de53d44a9bc5342",
+  "risk": "routine",
+  "auto_merge": true
+}

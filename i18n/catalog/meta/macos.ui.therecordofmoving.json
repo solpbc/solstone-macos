@@ -1,0 +1,21 @@
+{
+  "description": "the record of moving solstone for tmux can't be read: {path}. please contact support, and don't delete it.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "path",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 106,
+  "source_revision": "f8c94ede8e7667373f52f816e6e415708178acc20631b28696a0c65dd0967162",
+  "risk": "routine",
+  "auto_merge": true
+}

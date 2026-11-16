@@ -1,0 +1,16 @@
+{
+  "description": "move solstone.app to Applications in Finder, then open it there.",
+  "context": "Shown by Sources/solstone/AppPlacementRepair.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "5cfa9bba7419c7037c8f0e4dd35856f7ba6f599b2781b68948c9698b4633cc33",
+  "risk": "routine",
+  "auto_merge": true
+}

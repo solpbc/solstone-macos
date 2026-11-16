@@ -1,0 +1,25 @@
+{
+  "description": "{done} of {total} screenshots in your journal",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "done",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 45,
+  "source_revision": "4d1a87663f01b9da584c8dda7ff341a1231defb4202d584f95dd9252d28956f0",
+  "risk": "routine",
+  "auto_merge": true
+}

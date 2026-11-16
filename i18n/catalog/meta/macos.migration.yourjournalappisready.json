@@ -1,0 +1,16 @@
+{
+  "description": "your journal app is ready",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalMigration.swift.",
+  "surfaces": [
+    "migration"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 25,
+  "source_revision": "0b5969703f8156c5937dddc270f5a1b7b5b301ed93ffdf659c55ae9e71251743",
+  "risk": "routine",
+  "auto_merge": true
+}

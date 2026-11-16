@@ -1,0 +1,16 @@
+{
+  "description": "couldn't open Safari settings. in Safari, open settings, then extensions.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 73,
+  "source_revision": "d4f28fc95b0f91d0afc94bad7c403c0236151044e183481727ce29157cd3e8d9",
+  "risk": "routine",
+  "auto_merge": true
+}

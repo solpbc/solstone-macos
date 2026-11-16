@@ -47,17 +47,17 @@ public enum UploadError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "invalid journal address"
+            return MacStrings.macos_app_invalidjournaladdress()
         case .noFiles:
-            return "No files to upload"
+            return MacStrings.macos_uploadclient_nofilestoupload()
         case .invalidRequest:
-            return "upload exceeds journal limits"
+            return MacStrings.macos_uploadclient_uploadexceedsjournallimits()
         case .preparationFailed:
-            return "couldn't prepare files for upload"
+            return MacStrings.macos_uploadclient_couldntpreparefilesforupload()
         case .invalidResponse:
-            return "invalid journal response"
+            return MacStrings.macos_uploadclient_invalidjournalresponse()
         case .serverError(let serverError):
-            return "journal error (\(serverError.statusCode))"
+            return MacStrings.macos_uploadclient_journalerror("\(serverError.statusCode)")
         }
     }
 }
@@ -144,7 +144,7 @@ public struct UploadClient: Sendable {
         if isLocalNetworkHost(host) {
             switch error.code {
             case .cannotConnectToHost, .notConnectedToInternet, .networkConnectionLost, .timedOut:
-                return "can't reach your journal at this address. check that it's running and reachable."
+                return MacStrings.macos_uploadclient_cantreachyourjournalatthisaddresscheckthatits()
             default:
                 break
             }
@@ -152,13 +152,13 @@ public struct UploadClient: Sendable {
 
         switch error.code {
         case .notConnectedToInternet:
-            return "No internet connection"
+            return MacStrings.macos_uploadclient_nointernetconnection()
         case .cannotFindHost:
-            return "journal not found"
+            return MacStrings.macos_uploadclient_journalnotfound()
         case .cannotConnectToHost:
-            return "can't reach your journal"
+            return MacStrings.macos_desktop_shared_app_offlinetitle()
         case .timedOut:
-            return "Connection timed out"
+            return MacStrings.macos_uploadclient_connectiontimedout()
         default:
             return classifiedObserverHealthOwnerCopy(.urlErrorCode(error.code.rawValue))
         }
@@ -183,7 +183,7 @@ public struct UploadClient: Sendable {
     ) async -> String? {
         let targetDay = day ?? IngestDayKey.string(from: now())
         guard let url = URL(string: "\(serverURL)\(IngestProtocolV3.segmentsDayPath(targetDay))") else {
-            return "Invalid URL"
+            return MacStrings.macos_upload_invalidurl()
         }
         do {
             _ = try await getSegmentsDay(serverURL: serverURL, day: targetDay)

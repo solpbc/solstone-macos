@@ -1,0 +1,16 @@
+{
+  "description": "your memories are sent only to your configured journal. nothing else, nowhere else.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 83,
+  "source_revision": "15d62d386d43a149f8d44a69224c336298828f94b5e53be0dc27cfa8dbd79905",
+  "risk": "routine",
+  "auto_merge": true
+}

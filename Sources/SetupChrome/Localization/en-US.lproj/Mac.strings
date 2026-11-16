@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>m6d61636f732e6163636573736962696c6974792e646f776e6c6f6164616374696f6e</key>
+	<string>%1$@ %2$@</string>
+	<key>m6d61636f732e6163636573736962696c6974792e646f776e6c6f6164726f77</key>
+	<string>%1$@, %2$@</string>
+	<key>m6d61636f732e736574757073637265656e6672616d652e73637265656e</key>
+	<string>screen</string>
+</dict>
+</plist>

@@ -1,0 +1,16 @@
+{
+  "description": "waiting for a connection",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalIngestPresentation.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 24,
+  "source_revision": "55e4000e252c4d62965498334f4b52b39dee929fe2f65bc8ee777ec7b7f9f71e",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "window titles",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift. The same sentence is on Windows as windows.desktop.shared.settings.windowtitles. Keep the two translations consistent.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 13,
+  "source_revision": "958f10758456cc73a6e0006a8ff1c7a654b03a8e6a1c2a4fd9cb21bb844694d1",
+  "risk": "routine",
+  "auto_merge": true
+}

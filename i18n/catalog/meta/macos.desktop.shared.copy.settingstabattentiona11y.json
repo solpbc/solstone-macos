@@ -1,0 +1,16 @@
+{
+  "description": "needs attention",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.settingstabattentiona11y. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 15,
+  "source_revision": "45cab31c4ee6314bb387731f0a8cec71ce70686b35352a27dab6f2ac88280859",
+  "risk": "routine",
+  "auto_merge": true
+}

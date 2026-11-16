@@ -1,0 +1,16 @@
+{
+  "description": "hide windows whose title contains these keywords.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 49,
+  "source_revision": "2bb5f67c7474e8545f13c10130e5e18f881bfe3d685935e68f9fbff6c5c932d8",
+  "risk": "routine",
+  "auto_merge": true
+}

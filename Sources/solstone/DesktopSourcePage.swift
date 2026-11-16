@@ -128,7 +128,7 @@ extension SettingsView {
                     microphonePermissionCard
                 }
                 audioHealthNoteView(for: .microphone)
-                pageSection("microphones")
+                pageSection(MacStrings.macos_desktopsource_microphones())
                 microphoneTab
             }
             .overlay(alignment: .topLeading) {
@@ -150,15 +150,15 @@ extension SettingsView {
                         case .screenHeld: Text(UICopy.MENUBAR_SITE_SCREEN_HELD).font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                    pageSection("goes along with it")
+                    pageSection(MacStrings.macos_desktopsource_goesalongwithit())
                     activityControls
                     audioProcessingGroup
-                    pageSection("left out")
+                    pageSection(MacStrings.macos_desktopsource_leftout())
                     excludedAppsGroup
                     titlePatternsGroup
-                    sharedListLine("this list applies to activity too")
+                    sharedListLine(MacStrings.macos_desktopsource_thislistappliesto())
                     websitesGroup(scrollProxy: scrollProxy)
-                    sharedListLine("this list applies to activity and browsers too")
+                    sharedListLine(MacStrings.macos_desktopsource_thislistappliesto2())
                     protectedVideoGroup
                     privateBrowsingGroup(scrollProxy: scrollProxy)
                 }
@@ -190,9 +190,9 @@ extension SettingsView {
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             VStack(alignment: .leading, spacing: 14) {
                 browserSourcesGroup
-                pageSection("left out")
+                pageSection(MacStrings.macos_desktopsource_leftout())
                 websitesGroup(scrollProxy: scrollProxy)
-                sharedListLine("this list applies to screen and activity too")
+                sharedListLine(MacStrings.macos_desktopsource_thislistappliesto3())
             }
 #else
             EmptyView()
@@ -287,9 +287,9 @@ struct SourceTotalRows: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             if let facts = sourceTotalFacts(appState.sourceTotalsView, source: source, now: context.date) {
                 VStack(spacing: 6) {
-                    factRow("so far", facts.soFar)
+                    factRow(MacStrings.macos_desktopsource_sofar(), facts.soFar)
                     if let last = facts.lastTakenIn {
-                        factRow("last taken in", last)
+                        factRow(MacStrings.macos_desktopsource_lasttakenin(), last)
                     }
                 }
                 .font(.callout)

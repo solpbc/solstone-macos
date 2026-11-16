@@ -1,0 +1,16 @@
+{
+  "description": "a download is finishing up",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 26,
+  "source_revision": "d6658099a06372af63d826644b0be3d37718e8727b8b36422961c79a8fbaa0e6",
+  "risk": "routine",
+  "auto_merge": true
+}

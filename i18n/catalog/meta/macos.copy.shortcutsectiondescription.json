@@ -1,0 +1,16 @@
+{
+  "description": "pause or resume from any app",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 28,
+  "source_revision": "c064668a237565da7168435bb6997d8ef13ac6ab6770a631f102b9e2b1220ac7",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "your mac wouldn't change \"start at login\". use the switch to try again.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 71,
+  "source_revision": "41337e323bbe89ff33c80ce4ae9bec48e62e8fa4753014a6f0f018c4e48e724c",
+  "risk": "routine",
+  "auto_merge": true
+}

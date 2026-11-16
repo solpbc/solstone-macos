@@ -1,0 +1,16 @@
+{
+  "description": "pairing was revoked. pair again to reconnect.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/TunnelLifecycleOwner.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 45,
+  "source_revision": "eaf6f133aa0f91de9666a98652f826ee21b8f08e862e462bd872cddf6e70579e",
+  "risk": "routine",
+  "auto_merge": true
+}

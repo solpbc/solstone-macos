@@ -1,0 +1,16 @@
+{
+  "description": "System Settings › Privacy & Security › Microphone",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 49,
+  "source_revision": "624391023516faeb22f29748c977dac3204249ec68829f54801d7b603622dcca",
+  "risk": "routine",
+  "auto_merge": true
+}

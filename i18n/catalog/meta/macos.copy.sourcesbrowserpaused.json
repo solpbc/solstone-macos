@@ -1,0 +1,16 @@
+{
+  "description": "paused with the rest of the solstone app, unless the solstone extension is set to keep going. pausing doesn't hold back what's already ta...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 144,
+  "source_revision": "b22e6a7045a9ca5292dc98966d23dd80377aa07c4a22dff065dd26b217a53c8e",
+  "risk": "routine",
+  "auto_merge": true
+}

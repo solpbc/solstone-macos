@@ -1,0 +1,16 @@
+{
+  "description": "No internet connection",
+  "context": "Shown by Sources/solstone/UploadClient.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "67802fae4781365d7c51691561fb112e4396eab3cb9e19e79445c78b95dd9e56",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "journal",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/SolstoneCore/SolstoneCoreAbout.swift. The same sentence is on Windows as windows.desktop.shared.about.pendingsettingstab. Keep the two translations consistent.",
+  "surfaces": [
+    "about"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 7,
+  "source_revision": "a2066fbd38242d700ca044704ab3b2162561180f1e524d0b34c07041ce88978f",
+  "risk": "routine",
+  "auto_merge": true
+}

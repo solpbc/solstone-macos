@@ -1,0 +1,28 @@
+{
+  "description": "{source.label} needs attention",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "72b9c576e9911ffc808f0821898d7449ed767ddfce41eb5dd7cd00cdf3ed4403",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

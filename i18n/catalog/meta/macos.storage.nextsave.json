@@ -1,0 +1,25 @@
+{
+  "description": "next save in { $minutes }:{ $seconds }",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "minutes",
+      "type": "string"
+    },
+    {
+      "name": "seconds",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "ab3082e2e87ce70a9bab3c81c27092e59a441fece57d31ec2cb9095cf43b1983",
+  "risk": "routine",
+  "auto_merge": true
+}

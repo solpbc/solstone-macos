@@ -1,0 +1,21 @@
+{
+  "description": "last added to your journal { $relative } · nothing waiting",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "relative",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "05f123dd628a2be4e38a3c443137f75b24eb702bb86b7e0cde24c33d0acb117c",
+  "risk": "routine",
+  "auto_merge": true
+}

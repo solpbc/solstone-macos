@@ -1,0 +1,16 @@
+{
+  "description": "email support@solstone.app",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 26,
+  "source_revision": "d180ac209d31ef8f470499d9284acd914daee0aae8fe8adfbe7fbde8793860fa",
+  "risk": "routine",
+  "auto_merge": true
+}

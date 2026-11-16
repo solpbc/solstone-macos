@@ -1,0 +1,16 @@
+{
+  "description": "ok",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift. The same sentence is on Windows as windows.desktop.shared.settings.severity. Keep the two translations consistent.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 2,
+  "source_revision": "7215fe69aa21a2b073c5e6c8c18daaa73b91c9d619b7e8fb38d01d84f8d53a3f",
+  "risk": "routine",
+  "auto_merge": true
+}

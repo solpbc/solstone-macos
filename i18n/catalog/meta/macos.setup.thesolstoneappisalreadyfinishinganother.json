@@ -1,0 +1,16 @@
+{
+  "description": "the solstone app is already finishing another setup.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupModel.swift.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 52,
+  "source_revision": "4e68a28731fa92714bdf6e0fdfb8d06c1b7621cea077518aa3b2e3373dbdfb8b",
+  "risk": "routine",
+  "auto_merge": true
+}

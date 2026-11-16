@@ -1,0 +1,16 @@
+{
+  "description": "set to always, this headset stays in call mode, so everything you hear through it sounds like a phone call.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 107,
+  "source_revision": "d3d8e5e642f957757ced9bf530ebacc6bf901d1384134208773d38bcf03343ab",
+  "risk": "routine",
+  "auto_merge": true
+}

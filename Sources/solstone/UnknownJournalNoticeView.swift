@@ -118,7 +118,7 @@ private struct UnknownJournalNoticeRow: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier(AXID.Settings.Service.unknownJournalYourJournal(notice.site.axKey))
             }
-            Button("re-link") {
+            Button(MacStrings.macos_unknownjournalnotice_relink()) {
                 onPairAgain()
             }
             .disabled(pairAgainDisabled)

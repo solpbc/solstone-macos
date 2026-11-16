@@ -1,0 +1,31 @@
+{
+  "description": "{ $names } dropped out earlier and is back. part of that time may be missing.",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "count",
+      "type": "cardinal",
+      "numeric_style": "ungrouped",
+      "min": 0
+    },
+    {
+      "name": "names",
+      "type": "string"
+    }
+  ],
+  "format_intent": "cardinal",
+  "max_length": 1000,
+  "source_revision": "df69427444321261d571651484e7a87f2660cc9fc866ebbba7e5bb809a87fe40",
+  "risk": "routine",
+  "auto_merge": true,
+  "selector": {
+    "name": "count",
+    "type": "cardinal"
+  }
+}

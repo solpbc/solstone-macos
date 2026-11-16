@@ -1,0 +1,16 @@
+{
+  "description": "source code on github",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/AboutView.swift.",
+  "surfaces": [
+    "about"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 21,
+  "source_revision": "de3dab7e17d7c0f97b7abf174156658da631ba33db6926e0e9aea29497450f4a",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "left out",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DesktopSourcePage.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 8,
+  "source_revision": "edc1ebab89f4f14ab192bf3219eb43426b6c92a7d652fb4ae74284e4eeb836d0",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "use command or control with another key.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 40,
+  "source_revision": "354c9a2af8b3034ccc772ad9759229937f9da86435c40e3952fb7efef8e57975",
+  "risk": "routine",
+  "auto_merge": true
+}

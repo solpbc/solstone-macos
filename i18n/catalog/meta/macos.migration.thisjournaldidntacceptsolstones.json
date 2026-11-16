@@ -1,0 +1,16 @@
+{
+  "description": "this journal didn't accept solstone's saved key. solstone did not change your link.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalMigration.swift.",
+  "surfaces": [
+    "migration"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 83,
+  "source_revision": "308096970c792fae344adfb36d1ab49ceb467d3d4d7ebe78a462259a5c0baa0d",
+  "risk": "routine",
+  "auto_merge": true
+}

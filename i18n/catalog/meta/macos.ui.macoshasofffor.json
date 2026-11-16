@@ -1,0 +1,21 @@
+{
+  "description": "macOS has {value} off for solstone.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 35,
+  "source_revision": "4fd99365fef0a0958b98e93fd151f2687304447afae1b3720309b9f13503d482",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "keep private windows out of your journal: Firefox set to English",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 64,
+  "source_revision": "df6de34b9fdef46bd9afe47b8ed0368b28ab287731d3c0876473cb15c09433e9",
+  "risk": "routine",
+  "auto_merge": true
+}

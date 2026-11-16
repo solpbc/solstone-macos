@@ -1,0 +1,16 @@
+{
+  "description": "no websites left out",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 20,
+  "source_revision": "7326943ca9dfc326e6b865b50a3ddc537d6b0d8de61281541f9e6b9244a8be51",
+  "risk": "routine",
+  "auto_merge": true
+}

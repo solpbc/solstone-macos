@@ -1,0 +1,16 @@
+{
+  "description": "title patterns",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 14,
+  "source_revision": "abe3c3b7f0d478d253c0c7402f0a9898ff6f546909538783d2ad1cbdc07a351c",
+  "risk": "routine",
+  "auto_merge": true
+}

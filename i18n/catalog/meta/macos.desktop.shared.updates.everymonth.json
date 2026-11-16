@@ -1,0 +1,16 @@
+{
+  "description": "every month",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift. The same sentence is on Windows as windows.desktop.shared.updates.everymonth. Keep the two translations consistent.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 11,
+  "source_revision": "c26f646d455b3a81d5ecf13a6ea6c7348b89f7dab62b5851843cbd95facaefe0",
+  "risk": "routine",
+  "auto_merge": true
+}

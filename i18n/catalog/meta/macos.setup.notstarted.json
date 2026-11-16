@@ -1,0 +1,16 @@
+{
+  "description": "not started",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupDownloadFooter.swift.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 11,
+  "source_revision": "e5f20617e4ffbec0ec6bf6659e1f30da772b316d53bcbb80102a3b6af5c8b6a3",
+  "risk": "routine",
+  "auto_merge": true
+}

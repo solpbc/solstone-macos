@@ -37,7 +37,7 @@ struct PermissionSourceLiveRowView: View {
                     EmptyView()
                 case .paused(.owner):
                     let _ = appState.pauseManager.refreshTick
-                    Text(pausedHeaderText(timeRemaining: appState.pauseManager.formatTimeRemaining()))
+                    Text(pausedHeaderText(timeRemaining: appState.pauseManager.remainingTime))
                 case .paused(.protectedVideo):
                     Text(UICopy.SETTINGS_OBSERVATION_PROTECTED_VIDEO)
                 case .off:
@@ -56,24 +56,24 @@ struct PermissionSourceLiveRowView: View {
             Spacer()
 
             if controls.pause {
-                Menu("pause") {
-                    Button("15 minutes") {
+                Menu(MacStrings.macos_desktop_shared_setup_wizardpausefailure()) {
+                    Button(MacStrings.macos_setup_n15minutes()) {
                         appState.pauseManager.pause(for: .minutes(15))
                     }
-                    Button("30 minutes") {
+                    Button(MacStrings.macos_setup_n30minutes()) {
                         appState.pauseManager.pause(for: .minutes(30))
                     }
-                    Button("1 hour") {
+                    Button(MacStrings.macos_setup_n1hour()) {
                         appState.pauseManager.pause(for: .minutes(60))
                     }
-                    Button("until I resume") {
+                    Button(MacStrings.macos_setup_untiliresume()) {
                         appState.pauseManager.pause(for: .indefinite)
                     }
                 }
                 .fixedSize()
                 .accessibilityIdentifier(pauseAXID)
             } else if controls.resume {
-                Button("resume") {
+                Button(MacStrings.macos_desktop_shared_setup_wizardpausefailure2()) {
                     appState.pauseManager.resume()
                 }
                 .accessibilityIdentifier(resumeAXID)

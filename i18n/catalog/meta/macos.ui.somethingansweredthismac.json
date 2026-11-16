@@ -1,0 +1,16 @@
+{
+  "description": "something answered this mac through the relay, and it isn't the journal this mac is paired with. this is less certain than a direct conne...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 143,
+  "source_revision": "0d8090fd2296e0c1adcf40948162793c4fe53c1c8e72be2e19914c44804009ec",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "pair",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupView.swift. The same sentence is on Windows as windows.desktop.shared.setup.pair. Keep the two translations consistent.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 4,
+  "source_revision": "f33950c3b423936f0d95d53ff109a3cdf1fd950c2efb34a8faebcca4d6b453e7",
+  "risk": "routine",
+  "auto_merge": true
+}

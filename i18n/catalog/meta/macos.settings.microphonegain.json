@@ -1,0 +1,16 @@
+{
+  "description": "microphone gain",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 15,
+  "source_revision": "b0435188476c6cb7dada9ef2f1c2cc784671ac197c416494601d272d77899ae1",
+  "risk": "routine",
+  "auto_merge": true
+}

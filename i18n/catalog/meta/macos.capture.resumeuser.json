@@ -1,0 +1,16 @@
+{
+  "description": "user",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "ea0cb37ceaf1acd5fce5a18d544c4121d7a34fea3a1625714e4365aa877fc8b1",
+  "risk": "routine",
+  "auto_merge": true
+}

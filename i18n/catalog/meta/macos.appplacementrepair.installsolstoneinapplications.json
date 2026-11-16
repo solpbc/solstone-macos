@@ -1,0 +1,16 @@
+{
+  "description": "install solstone in Applications",
+  "context": "Shown by Sources/solstone/AppPlacementRepair.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "7b343fe7364ebeec6ccb2f19a47eb356b159869af899a1ed1b67a0103db78fb8",
+  "risk": "routine",
+  "auto_merge": true
+}

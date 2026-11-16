@@ -1,0 +1,16 @@
+{
+  "description": "so far",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DesktopSourcePage.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 6,
+  "source_revision": "60116d5214b82e4e83135129d4ea5b06dda2d8ed07008d0c33125e8c49e9d61b",
+  "risk": "routine",
+  "auto_merge": true
+}

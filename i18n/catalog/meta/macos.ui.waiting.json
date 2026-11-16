@@ -1,0 +1,21 @@
+{
+  "description": "waiting: {answer}",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "answer",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 17,
+  "source_revision": "0101dee2d08d3dfb0b56bce94a0facd3ae753e9e2d9edf5d1f9604f1ce8e5b4d",
+  "risk": "routine",
+  "auto_merge": true
+}

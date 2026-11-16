@@ -1,0 +1,16 @@
+{
+  "description": "while this is on, the solstone app takes in the screenshots you take on this mac, and your journal keeps each one at the minute you took it.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 140,
+  "source_revision": "d2a8bbd2b7f8e7d4134c5d78a99bfbb4e50bf768245636d67a68bbe51c871c21",
+  "risk": "routine",
+  "auto_merge": true
+}

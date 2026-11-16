@@ -1,0 +1,16 @@
+{
+  "description": "only what the solstone app can tell is a screenshot comes in.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 61,
+  "source_revision": "557462eda1f6800f1aba8a5905d4a2f024d9b6020532e3729a333f2b56ca2de7",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "automatic checks are off. you can still check manually.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 55,
+  "source_revision": "95cfa09d4dc9048f5446d986f6cf1d1aff9abe70eacac3b8febc6914e3ba9bd2",
+  "risk": "routine",
+  "auto_merge": true
+}

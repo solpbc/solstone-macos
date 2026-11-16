@@ -1,0 +1,16 @@
+{
+  "description": "share your conversations",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.setupmicrophoneheadline. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 24,
+  "source_revision": "7f6e62a81b27f600c71dbf721702526ca1802fa2d7bbbd60c5898ce4e7b3a399",
+  "risk": "routine",
+  "auto_merge": true
+}

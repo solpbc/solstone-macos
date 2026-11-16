@@ -1,0 +1,16 @@
+{
+  "description": "this interface's inputs changed. pick an input for your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 64,
+  "source_revision": "22b366bb0aa5af85a279a8f83b6ef0a03cdbe9efe8b6eeaeb6e44dd165644f9e",
+  "risk": "routine",
+  "auto_merge": true
+}

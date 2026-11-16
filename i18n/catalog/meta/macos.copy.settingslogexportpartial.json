@@ -1,0 +1,16 @@
+{
+  "description": "some logs couldn't be read",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 26,
+  "source_revision": "ad6154d56b4dcba9f906bf9894c7bf49c689415eb74f5361930ca1d37f94aa39",
+  "risk": "routine",
+  "auto_merge": true
+}

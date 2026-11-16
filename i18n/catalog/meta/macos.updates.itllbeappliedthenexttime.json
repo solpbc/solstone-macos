@@ -1,0 +1,21 @@
+{
+  "description": "it'll be applied the next time you quit and reopen {value}.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 59,
+  "source_revision": "f189cb4d23e9ce3840cc5365426d935864e452409af578bc989f1577f5d70014",
+  "risk": "routine",
+  "auto_merge": true
+}

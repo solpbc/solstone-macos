@@ -1,0 +1,16 @@
+{
+  "description": "some browser pages couldn't be kept, so they won't go into your journal. new browser pages aren't being taken in right now.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 123,
+  "source_revision": "92bd777f3cadef5ed131b99948d3305478a53f46d50814218e4192cf224f0948",
+  "risk": "routine",
+  "auto_merge": true
+}

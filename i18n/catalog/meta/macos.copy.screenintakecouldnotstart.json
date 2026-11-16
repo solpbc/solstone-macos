@@ -1,0 +1,16 @@
+{
+  "description": "a screen could not start. open settings.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 40,
+  "source_revision": "b3b230d75d1a286f7d0132c64e02567804b33322779d010200b8ed5205f4594d",
+  "risk": "routine",
+  "auto_merge": true
+}

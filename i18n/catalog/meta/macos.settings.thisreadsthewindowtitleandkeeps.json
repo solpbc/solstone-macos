@@ -1,0 +1,16 @@
+{
+  "description": "this reads the window title and keeps Firefox private windows out of your journal. a new Firefox window is kept out of your journal for a...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 165,
+  "source_revision": "9941711347ad970c1b50dc30e0bdb3e68669271e0d491ca4aba2a76ac16448dc",
+  "risk": "routine",
+  "auto_merge": true
+}

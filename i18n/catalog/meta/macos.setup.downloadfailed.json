@@ -1,0 +1,16 @@
+{
+  "description": "download failed.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupDownloadFooter.swift.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 16,
+  "source_revision": "8e3c35e753a5bc054f42cea14725484fc3c2c1936e43d8285dc266ebcc1444b0",
+  "risk": "routine",
+  "auto_merge": true
+}

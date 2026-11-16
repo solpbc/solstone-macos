@@ -1,0 +1,16 @@
+{
+  "description": "yesterday",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "823def133635a3b0d655bb9f2266d6a236e2057253451dc6445efda1a59b2579",
+  "risk": "routine",
+  "auto_merge": true
+}

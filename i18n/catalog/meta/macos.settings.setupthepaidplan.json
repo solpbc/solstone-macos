@@ -1,0 +1,16 @@
+{
+  "description": "set up the paid plan ↗",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 22,
+  "source_revision": "71e90c776d4841a0db35044d3e77911ec85d27c52689eaf9cfa5c5e8f5141c5d",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "System Settings › Privacy & Security › Screen & System Audio Recording",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 70,
+  "source_revision": "ccb67b92b7774a361404ea27a856f4013ce70874b8beca15dcabced203c4ad9b",
+  "risk": "routine",
+  "auto_merge": true
+}

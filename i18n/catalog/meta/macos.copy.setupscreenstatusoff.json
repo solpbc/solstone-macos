@@ -1,0 +1,16 @@
+{
+  "description": "screen off",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 10,
+  "source_revision": "edf2d84a72d1c73d43371eb5373d3f8afecaccac6e82b33e31a2ae446d84d04f",
+  "risk": "routine",
+  "auto_merge": true
+}

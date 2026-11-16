@@ -1,0 +1,16 @@
+{
+  "description": "the answer held no usable link",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/JournalLocalAccess/JournalLocalHTTPClient.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 30,
+  "source_revision": "93c3575737a2c7b2a21bd5e08c82c01430d28e63e112eca983022beee0f69619",
+  "risk": "routine",
+  "auto_merge": true
+}

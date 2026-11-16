@@ -1,0 +1,16 @@
+{
+  "description": "Obsidian",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 8,
+  "source_revision": "8c729b41dda9031327f2a05422eb394fd8688dd2a8e3f586966c24b7a41bca3b",
+  "risk": "routine",
+  "auto_merge": true
+}

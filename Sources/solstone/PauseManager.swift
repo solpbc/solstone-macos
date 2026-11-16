@@ -208,6 +208,11 @@ public final class PauseManager {
         updateUIRefreshTimer()
     }
 
+    public var remainingTime: TimeInterval? {
+        guard pauseState.isPaused else { return nil }
+        return pauseState.timeRemaining(at: now())
+    }
+
     /// Format remaining time as a human-readable string with natural units
     public func formatTimeRemaining() -> String? {
         guard pauseState.isPaused else { return nil }
@@ -224,18 +229,18 @@ public final class PauseManager {
 
         if hours > 0 {
             if mins > 30 {
-                return "\(hours + 1) hrs"
+                return MacStrings.macos_pausemanager_hrs("\(hours + 1)")
             } else if hours == 1 && mins == 0 {
-                return "1 hr"
+                return MacStrings.macos_pausemanager_n1hr()
             } else if mins > 0 {
-                return "\(hours) hrs \(mins) mins"
+                return MacStrings.macos_pausemanager_hrsmins(MacStrings.number(hours), "\(mins)")
             } else {
-                return "\(hours) hrs"
+                return MacStrings.macos_pausemanager_hrs(MacStrings.number(hours))
             }
         } else if mins > 0 {
-            return mins == 1 ? "1 min" : "\(mins) mins"
+            return MacStrings.macos_pausemanager_mins_plural(mins)
         } else {
-            return "\(totalSeconds) secs"
+            return MacStrings.macos_pausemanager_secs("\(totalSeconds)")
         }
     }
 

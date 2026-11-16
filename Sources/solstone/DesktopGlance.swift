@@ -56,13 +56,13 @@ struct ShellMenuContent: View {
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
         case .pause:
             Menu(row.title) {
-                Button("15 minutes") { appState.pauseManager.pause(for: .minutes(15)) }
+                Button(MacStrings.macos_setup_n15minutes()) { appState.pauseManager.pause(for: .minutes(15)) }
                     .accessibilityIdentifier(AXID.Menubar.pauseFifteenMinutes)
-                Button("30 minutes") { appState.pauseManager.pause(for: .minutes(30)) }
+                Button(MacStrings.macos_setup_n30minutes()) { appState.pauseManager.pause(for: .minutes(30)) }
                     .accessibilityIdentifier(AXID.Menubar.pauseThirtyMinutes)
-                Button("1 hour") { appState.pauseManager.pause(for: .minutes(60)) }
+                Button(MacStrings.macos_setup_n1hour()) { appState.pauseManager.pause(for: .minutes(60)) }
                     .accessibilityIdentifier(AXID.Menubar.pauseOneHour)
-                Button("until I resume") { appState.pauseManager.pause(for: .indefinite) }
+                Button(MacStrings.macos_setup_untiliresume()) { appState.pauseManager.pause(for: .indefinite) }
                     .accessibilityIdentifier(AXID.Menubar.pauseIndefinite)
             }
             .accessibilityIdentifier(AXID.Menubar.pauseMenu)
@@ -91,8 +91,8 @@ struct ShellMenuContent: View {
 /// The menu's status line for a pill: caught up gets its lead beside the pill's word.
 func menuStatusLine(_ pill: JournalPill) -> String {
     switch pill {
-    case .connected: return "connected · all caught up"
-    case .waiting: return "connected · \(pill.text)"
+    case .connected: return MacStrings.macos_desktopglance_connectedallcaughtup()
+    case .waiting: return MacStrings.macos_desktopglance_connected("\(pill.text)")
     default: return pill.text
     }
 }

@@ -1,0 +1,16 @@
+{
+  "description": "turn on screen and computer sound",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 33,
+  "source_revision": "a5f7b1d06b3904279c9cde6f5c7e98347c11d5ebc666a19f7aee08fa0804eb99",
+  "risk": "routine",
+  "auto_merge": true
+}

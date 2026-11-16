@@ -1,0 +1,16 @@
+{
+  "description": "solstone · journal link needs attention",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SolstoneCaptureApp.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 39,
+  "source_revision": "e20cd9810cff5b24c13b0c2b7f50bf8ecb5e72fdc2a19bbf68ceb554439819e4",
+  "risk": "routine",
+  "auto_merge": true
+}

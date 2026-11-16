@@ -1,0 +1,21 @@
+{
+  "description": "ready to install {version}",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "version",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 26,
+  "source_revision": "c572dc9ca3b47a6b35b9af6b5ac11150467641660428cfae25c10378fd44265f",
+  "risk": "routine",
+  "auto_merge": true
+}

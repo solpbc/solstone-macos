@@ -1,0 +1,16 @@
+{
+  "description": "browser addresses are unavailable",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 33,
+  "source_revision": "3711048bfd368e03a4b6fc066e4089b23d764e555d729f4ac43803a35103a223",
+  "risk": "routine",
+  "auto_merge": true
+}

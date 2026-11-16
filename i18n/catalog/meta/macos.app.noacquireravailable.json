@@ -1,0 +1,16 @@
+{
+  "description": "no acquirer available",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/FreshJournalFlow.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 21,
+  "source_revision": "def44758e1b205d8bca8108d4d2df8886b0fbd3b6e309f447d46fb54a12c0744",
+  "risk": "routine",
+  "auto_merge": true
+}

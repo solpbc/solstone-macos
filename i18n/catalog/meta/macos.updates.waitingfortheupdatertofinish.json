@@ -1,0 +1,16 @@
+{
+  "description": "waiting for the updater to finish",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 33,
+  "source_revision": "b8515442c2a29e4e11e86b0faf6a1de3fae90be5a9dab87213767dc65e27db4e",
+  "risk": "routine",
+  "auto_merge": true
+}

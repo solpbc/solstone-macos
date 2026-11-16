@@ -1,0 +1,16 @@
+{
+  "description": "this interface's inputs can't be read.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 38,
+  "source_revision": "36e91b51dcd7e48c2e1da41cd6c6b963e0ac92780a1d81b11a25d63f802b97a7",
+  "risk": "routine",
+  "auto_merge": true
+}

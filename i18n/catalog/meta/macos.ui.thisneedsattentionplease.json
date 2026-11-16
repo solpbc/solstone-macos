@@ -1,0 +1,16 @@
+{
+  "description": "this needs attention: please contact support",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 44,
+  "source_revision": "74f930707df119f6a3da0e1ffab69ba994d8e0019364d0f2eae36c55d9cedd48",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -68,7 +68,7 @@ enum TerminalMigrationAnswer: Equatable, Sendable {
         case let reason?:
             return .retry(reason)
         case nil:
-            return .retry("status \(status)")
+            return .retry(MacStrings.macos_terminalcontinuityplan_status("\(status)"))
         }
     }
 }

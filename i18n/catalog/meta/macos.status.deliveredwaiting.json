@@ -1,0 +1,25 @@
+{
+  "description": "last added to your journal { $relative } · { $waiting } waiting",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "relative",
+      "type": "string"
+    },
+    {
+      "name": "waiting",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "12eedb81365098eac7abb209cbebce81dc4431001bf0c330b64e467b1a9fd806",
+  "risk": "routine",
+  "auto_merge": true
+}

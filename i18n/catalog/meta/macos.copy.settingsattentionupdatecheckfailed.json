@@ -1,0 +1,16 @@
+{
+  "description": "update check failed",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 19,
+  "source_revision": "7b3952733c3461f586eba56bb776f2dabf5c5c6421ffe4c3b4174ccac9877dcc",
+  "risk": "routine",
+  "auto_merge": true
+}

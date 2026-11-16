@@ -1,0 +1,16 @@
+{
+  "description": "screen recording is off for the solstone app.",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f51f04725d5bbf293ee1030b47506810c5ba5cdbc8887c49b2f00bde345a729d",
+  "risk": "routine",
+  "auto_merge": true
+}

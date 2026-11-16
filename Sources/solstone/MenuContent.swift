@@ -81,7 +81,7 @@ struct MenuContent: View {
 
         Section {
             if appState.canOpenJournal {
-                Button("open journal") {
+                Button(MacStrings.macos_desktop_shared_copy_settingsjournalopen()) {
                     appState.requestOpenJournal(.root)
                 }
                 .accessibilityIdentifier(AXID.Menubar.openJournalButton)
@@ -115,7 +115,7 @@ struct MenuContent: View {
                 }
             }
             .accessibilityIdentifier(AXID.Menubar.settingsButton)
-            Button("about solstone") {
+            Button(MacStrings.macos_desktop_shared_app_aboutsolstone()) {
                 openWindow(id: "about")
                 appState.didOpenWindow(.about)
                 NSApp.activate(ignoringOtherApps: true)
@@ -125,7 +125,7 @@ struct MenuContent: View {
 
         Divider()
 
-        Button("quit solstone") {
+        Button(MacStrings.macos_menu_quitsolstone()) {
             appState.appQuitCoordinator.requestAppOwnedQuit()
         }
         .accessibilityIdentifier(AXID.Menubar.quitButton)
@@ -195,14 +195,14 @@ struct MenuContent: View {
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
         case .journalMigrationNeeded:
-            Button("your journal needs a new link →") {
+            Button(MacStrings.macos_menu_yourjournalneedsanewlink()) {
                 openSettings(tab: "journal")
             }
             .accessibilityIdentifier(AXID.Menubar.journalMigrationNeededButton)
             .accessibilityValue(rowState.axToken)
 
         case .connectionWaiting:
-            Button("connecting to your journal…") {
+            Button(MacStrings.macos_app_setupconnectingtoyourjournal()) {
                 openSettings(tab: "status")
             }
             .accessibilityIdentifier(AXID.Menubar.journalState)
@@ -227,7 +227,7 @@ struct MenuContent: View {
 
         case .paused:
             let _ = appState.pauseManager.refreshTick
-            Text(pausedHeaderText(timeRemaining: appState.pauseManager.formatTimeRemaining()))
+            Text(pausedHeaderText(timeRemaining: appState.pauseManager.remainingTime))
                 .accessibilityValue(rowState.axToken)
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
 
@@ -348,27 +348,27 @@ struct MenuContent: View {
     @ViewBuilder
     private var pauseResumeSection: some View {
         if hasPauseControl {
-            Menu("pause") {
-                Button("15 minutes") {
+            Menu(MacStrings.macos_desktop_shared_setup_wizardpausefailure()) {
+                Button(MacStrings.macos_setup_n15minutes()) {
                     appState.pauseManager.pause(for: .minutes(15))
                 }
                 .accessibilityIdentifier(AXID.Menubar.pauseFifteenMinutes)
-                Button("30 minutes") {
+                Button(MacStrings.macos_setup_n30minutes()) {
                     appState.pauseManager.pause(for: .minutes(30))
                 }
                 .accessibilityIdentifier(AXID.Menubar.pauseThirtyMinutes)
-                Button("1 hour") {
+                Button(MacStrings.macos_setup_n1hour()) {
                     appState.pauseManager.pause(for: .minutes(60))
                 }
                 .accessibilityIdentifier(AXID.Menubar.pauseOneHour)
-                Button("until I resume") {
+                Button(MacStrings.macos_setup_untiliresume()) {
                     appState.pauseManager.pause(for: .indefinite)
                 }
                 .accessibilityIdentifier(AXID.Menubar.pauseIndefinite)
             }
             .accessibilityIdentifier(AXID.Menubar.pauseMenu)
         } else if hasResumeControl {
-            Button("resume") { appState.pauseManager.resume() }
+            Button(MacStrings.macos_desktop_shared_setup_wizardpausefailure2()) { appState.pauseManager.resume() }
                 .accessibilityIdentifier(AXID.Menubar.resumeButton)
         }
     }
@@ -377,10 +377,16 @@ struct MenuContent: View {
 
 }
 
-func pausedHeaderText(timeRemaining: String?) -> String {
-    guard let t = timeRemaining else { return "paused" }
-    let compact = t.replacingOccurrences(of: " mins", with: " min")
-                   .replacingOccurrences(of: " secs", with: " sec")
-                   .replacingOccurrences(of: " hrs", with: " hr")
-    return "paused, \(compact) left"
+func pausedHeaderText(timeRemaining: TimeInterval?) -> String {
+    guard let remaining = timeRemaining else { return MacStrings.macos_ui_paused() }
+    let totalSeconds = Int(remaining)
+    let hours = totalSeconds / 3600
+    let minutes = (totalSeconds % 3600) / 60
+    if hours > 0 {
+        if minutes > 30 { return MacStrings.macos_pause_menuhours(String(hours + 1)) }
+        if minutes > 0 { return MacStrings.macos_pause_menuhoursminutes(String(hours), String(minutes)) }
+        return MacStrings.macos_pause_menuhours(String(hours))
+    }
+    if minutes > 0 { return MacStrings.macos_pause_menuminutes(String(minutes)) }
+    return MacStrings.macos_pause_menuseconds(String(totalSeconds))
 }

@@ -1,0 +1,28 @@
+{
+  "description": "to check, solstone reads the address of the page each Safari, Chrome, Edge and Brave window shows, with {accessibilityName(macOSMajor: macOSMajor)}, and compares it with this list on this mac. the address goes into activity unless you turn browser addresses off.",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "42ae7d11cee55c78deba0f26c17bf322f89cf253b1fb08c5c6d1c20b9a6f8ac2",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

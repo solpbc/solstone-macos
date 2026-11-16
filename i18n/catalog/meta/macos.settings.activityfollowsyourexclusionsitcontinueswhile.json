@@ -1,0 +1,16 @@
+{
+  "description": "activity follows your exclusions. it continues while screen and audio step aside for protected video. a title does not mean you watched o...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 147,
+  "source_revision": "a5518dc16b749fceee9f9b482cf8c77a50480d1ef666d83d4fb93120dea8eb9c",
+  "risk": "routine",
+  "auto_merge": true
+}

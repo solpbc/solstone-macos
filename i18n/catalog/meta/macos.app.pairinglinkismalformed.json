@@ -1,0 +1,16 @@
+{
+  "description": "pairing link is malformed",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/PairingCoordinator.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 25,
+  "source_revision": "26b2dff20db6fed9f1c4367d1bdbab48ac21a25aa13e3b011be8e1c88b2255e3",
+  "risk": "routine",
+  "auto_merge": true
+}

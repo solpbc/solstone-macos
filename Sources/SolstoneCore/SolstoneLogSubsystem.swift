@@ -24,15 +24,15 @@ public enum SolstoneLogSubsystem {
     public static func displayName(for subsystem: String) -> String {
         switch subsystem {
         case observer:
-            return "the solstone app"
+            return MacStrings.macos_desktop_shared_copy_setupapplabel()
         case journal:
-            return "your journal"
+            return MacStrings.macos_desktop_shared_copy_setupjournalcardheading()
         case observerSPL:
-            return "the private network"
+            return MacStrings.macos_solstonelogsubsystem_theprivatenetwork()
         case watchdog, WatchdogProduct.observer.loggerSubsystem, WatchdogProduct.journal.loggerSubsystem:
-            return "the helper that keeps them running"
+            return MacStrings.macos_solstonelogsubsystem_thehelperthatkeepsthemrunning()
         default:
-            return "another part of solstone"
+            return MacStrings.macos_solstonelogsubsystem_anotherpartofsolstone()
         }
     }
 

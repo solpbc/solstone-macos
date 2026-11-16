@@ -1,0 +1,16 @@
+{
+  "description": "your journal couldn't apply this choice. your current connection still works.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.decisionrefusedbody. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 77,
+  "source_revision": "97f27503a7c5b1e79e6f2ec9821352948b5e2bd53153c633512a2e0de8684dca",
+  "risk": "routine",
+  "auto_merge": true
+}

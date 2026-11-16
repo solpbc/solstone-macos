@@ -1,0 +1,28 @@
+{
+  "description": "with {accessibilityName(macOSMajor: macOSMajor)}, activity can add browser addresses to your journal, and window titles when screen recording is unavailable. checking browsers for the websites you leave out uses the same access, whether this setting is on or off.",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "d39cde270fb0bb3b2e23ff5c5b04001eddf519c8e7bd3bb718ee062677b42afa",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

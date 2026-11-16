@@ -1,0 +1,16 @@
+{
+  "description": "solstone · on, connected",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 24,
+  "source_revision": "a6f45b2cb1047d0710f2c3d07c3a4ca91c4f7388b5b5f576e81bb7475ff25712",
+  "risk": "routine",
+  "auto_merge": true
+}

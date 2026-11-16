@@ -1,0 +1,16 @@
+{
+  "description": "your journal can't take this kind of file",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "b3a66eeb1f67961d93144ad189f5088d0eb713a034225cad09898f5feaff482d",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,25 @@
+{
+  "description": "step {n} of {m}",
+  "context": "the solstone app, speaking to the owner, in shared app copy. Two numbers each need a cardinal (frames kept out and frames blacked out, or step and total). The profile allows one select. Split into two messages.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "n",
+      "type": "string"
+    },
+    {
+      "name": "m",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 15,
+  "source_revision": "9b7bab83b14c95df2d9d2dc391789bd04d54b2895041ad884ba3d5c1f0c8e6e9",
+  "risk": "routine",
+  "auto_merge": true
+}

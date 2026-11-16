@@ -1,0 +1,16 @@
+{
+  "description": "this pairing link contains an address that can't be used for direct pairing. get a fresh link from your journal and try again.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/PairingCoordinator.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 126,
+  "source_revision": "9345ab96b1da70c74d7033564bdb32f4b9eb4be9d7d2ca916e83f240350ccf7b",
+  "risk": "routine",
+  "auto_merge": true
+}

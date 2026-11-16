@@ -1,0 +1,16 @@
+{
+  "description": "good evening",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "e3b2ffd624ec0340855653ff431ea00cea6e3617e4b83ec776778853531380b8",
+  "risk": "routine",
+  "auto_merge": true
+}

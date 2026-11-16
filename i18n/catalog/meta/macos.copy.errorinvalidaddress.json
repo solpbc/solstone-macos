@@ -1,0 +1,16 @@
+{
+  "description": "enter a website address, like bank.com.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 39,
+  "source_revision": "e2fb783d08b7c31d93ce1df1ab277c6daae90ea48464176a420b932414fe059a",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,21 @@
+{
+  "description": "screenshots on this mac save to your {name}. the solstone app needs access to that folder.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "name",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 90,
+  "source_revision": "eb016c0d82518994d55ab779de16d5e8ce940bf3eb6d79c01d021183ce89b71f",
+  "risk": "routine",
+  "auto_merge": true
+}

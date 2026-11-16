@@ -1,0 +1,16 @@
+{
+  "description": "this couldn't be read. add it again",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "6719e14f791bf1d360e9cea2f55298ac2f0bd0c3133861280072e4651d3d00bf",
+  "risk": "routine",
+  "auto_merge": true
+}

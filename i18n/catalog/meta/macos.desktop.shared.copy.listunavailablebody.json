@@ -1,0 +1,16 @@
+{
+  "description": "couldn't load the devices in your journal. try again when your journal is reachable.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.listunavailablebody. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 84,
+  "source_revision": "2a3800fb50f60a0db4b2afe5b63ce682c6c9ee78e38d5d84eecb123ebae12da6",
+  "risk": "routine",
+  "auto_merge": true
+}

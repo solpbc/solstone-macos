@@ -1,0 +1,16 @@
+{
+  "description": "storage settings →",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 18,
+  "source_revision": "a6b39c584bf1ab657f47b5a1dd91c7d1c808b03f851f198d21ac7addf8e51fa6",
+  "risk": "routine",
+  "auto_merge": true
+}

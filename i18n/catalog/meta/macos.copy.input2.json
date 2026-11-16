@@ -1,0 +1,21 @@
+{
+  "description": "input {number}",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "number",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 14,
+  "source_revision": "0dabbe7fd34745e3fb28083dec84fbdeac60ef18ccf4d1ce6cbae4333914ec99",
+  "risk": "routine",
+  "auto_merge": true
+}

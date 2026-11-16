@@ -1,0 +1,16 @@
+{
+  "description": "turn it on any time.",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "0c37b1ad747673591574ca6e6aed61a52317627c5b1f9f8855d3f1b1242f2ad9",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -40,6 +40,17 @@ enum ResumeReason: Sendable, Equatable {
         }
     }
 
+    var displayTrigger: String {
+        switch self {
+        case .wake: MacStrings.macos_capture_resumewake()
+        case .unlock: MacStrings.macos_capture_resumeunlock()
+        case .user: MacStrings.macos_capture_resumeuser()
+        case .pauseDeadline: MacStrings.macos_capture_resumepausedeadline()
+        case .recovery: MacStrings.macos_capture_resumerecovery()
+        case .protectedVideoCleared: MacStrings.macos_capture_resumeprotectedvideocleared()
+        }
+    }
+
     var clearsPauseReasons: Set<PauseReason> {
         switch self {
         case .wake, .unlock:
@@ -563,7 +574,7 @@ final class CaptureExecutor {
             return .vetoed
         case .timedOut:
             Logger.capture.info("[Executor] rotate(\(reason.trigger, privacy: .public)) timed out")
-            return .threw(TransitionFailure(message: "Segment rotation timed out", isPermissionError: false))
+            return .threw(TransitionFailure(message: MacStrings.macos_capture_rotationtimeout(), isPermissionError: false))
         case .failed(let failure):
             Logger.capture.info("[Executor] rotate(\(reason.trigger, privacy: .public)) failed: \(failure.message, privacy: .public)")
             return .threw(failure)
@@ -689,7 +700,7 @@ final class CaptureExecutor {
                 isPermissionError: isPermissionError(error)
             )
             delegate.lifecycleTransitionToError(
-                message: "Failed to resume after \(reason.trigger): \(failure.message)",
+                message: MacStrings.macos_capture_resume(reason.displayTrigger, failure.message),
                 error: error,
                 trigger: "\(reason.trigger)_failed"
             )

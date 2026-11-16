@@ -1,0 +1,16 @@
+{
+  "description": "on · waiting for a browser to connect",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 37,
+  "source_revision": "11cdf67f26edf4b426a91f0c163b72d8f0047f4c163f73d524e34a312f2ce3ea",
+  "risk": "routine",
+  "auto_merge": true
+}

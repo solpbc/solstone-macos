@@ -1,0 +1,16 @@
+{
+  "description": "nothing this mac has kept went to that journal through this link. you may have pasted the wrong link, or something isn't right. try again...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 166,
+  "source_revision": "5d96674c2143c0e0e8f4df1b94f1a38e2f09d6ecbf50cfa6d91099fb69ab0821",
+  "risk": "routine",
+  "auto_merge": true
+}

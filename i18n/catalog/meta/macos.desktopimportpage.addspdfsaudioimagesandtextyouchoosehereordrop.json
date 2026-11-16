@@ -1,0 +1,16 @@
+{
+  "description": "adds PDFs, audio, images and text you choose here or drop on this window.",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "a6083025abbd13f0f4780213aca41257368e33e39e77c49c8a8c6eb9808f614f",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,21 @@
+{
+  "description": "unknown journal seen at {address}",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "address",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 33,
+  "source_revision": "af745005b8b36b4360451aafe2050262244ef9652bed6c00c1e926ea6f906400",
+  "risk": "routine",
+  "auto_merge": true
+}

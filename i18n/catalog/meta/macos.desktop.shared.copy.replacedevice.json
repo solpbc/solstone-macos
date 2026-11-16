@@ -1,0 +1,16 @@
+{
+  "description": "replace device",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.replacedevice. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 14,
+  "source_revision": "800200af9b5acbf1067df3b9e1592f3662ca4e42433bcbf3544da16d5b5559a6",
+  "risk": "routine",
+  "auto_merge": true
+}

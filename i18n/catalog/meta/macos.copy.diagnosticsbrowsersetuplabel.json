@@ -1,0 +1,16 @@
+{
+  "description": "browser setup",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 13,
+  "source_revision": "ef216d78f53d24eae53fcdd17ebb64cd729e8d9849b947aa69c44a73dd09d281",
+  "risk": "routine",
+  "auto_merge": true
+}

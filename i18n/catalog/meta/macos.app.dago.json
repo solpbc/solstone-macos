@@ -1,0 +1,21 @@
+{
+  "description": "{value}d ago",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 12,
+  "source_revision": "c7e61230172696f74ec1d3d4c9d59b158ef49127c3d75595c45e192453ea41ae",
+  "risk": "routine",
+  "auto_merge": true
+}

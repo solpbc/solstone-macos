@@ -1,0 +1,16 @@
+{
+  "description": "the solstone app can't read this vault. check that the folder is still there, and its access in System Settings, under Privacy & Security.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 138,
+  "source_revision": "bf3ccfe2a5b8308c72d3a738703861e68ac873344fb1e801895e46e81dbd1953",
+  "risk": "routine",
+  "auto_merge": true
+}

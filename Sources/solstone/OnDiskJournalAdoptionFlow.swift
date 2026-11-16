@@ -146,7 +146,7 @@ final class OnDiskJournalAdoptionFlow {
 
     private func assertDiscoveryCapableBuild(at url: URL) throws {
         guard isDiscoveryCapableBuild(at: url) else {
-            throw JournalHandoffFailure.trustFailed("journal app build is too old for on-disk journal discovery")
+            throw JournalHandoffFailure.trustFailed(MacStrings.macos_app_journalappbuildistoooldfor())
         }
     }
 
@@ -154,7 +154,7 @@ final class OnDiskJournalAdoptionFlow {
         guard let build = journalBuildFromInfoPlist(at: url),
               build >= dependencies.discoveryCapableBuild
         else {
-            throw JournalHandoffFailure.trustFailed("journal app build is too old for on-disk journal discovery")
+            throw JournalHandoffFailure.trustFailed(MacStrings.macos_app_journalappbuildistoooldfor())
         }
     }
 

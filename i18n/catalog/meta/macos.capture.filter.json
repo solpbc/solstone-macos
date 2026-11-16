@@ -1,0 +1,21 @@
+{
+  "description": "Missing SCContentFilter for display { $display }",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "display",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "08562543a04d0df775565768db7439c8484c70e1b2e4ee38dd05e39bbabfa1c6",
+  "risk": "routine",
+  "auto_merge": true
+}

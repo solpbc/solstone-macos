@@ -1,0 +1,16 @@
+{
+  "description": "connected · all caught up",
+  "context": "Shown by Sources/solstone/DesktopGlance.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "b8ca845d9180e8f2869610ab414bf6caa8c3273ea5394eed8a81280224db1ebe",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "what's already in your journal stays when you pause or turn this off.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 69,
+  "source_revision": "88d091123442517ed9e24a0fc07f81919cb38d25ec542373965970d004011c5b",
+  "risk": "routine",
+  "auto_merge": true
+}

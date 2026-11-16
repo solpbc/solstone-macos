@@ -88,8 +88,8 @@ public enum JournalIconCompositor {
         }
         if let wordLayout = JournalIconWordLayout.outlinedPaths(
             for: [
-                JournalIconWordInput(word: "your", baselineY: JournalIconTileGeometry.ownerWordBaselines(tileSide: 100)[0]),
-                JournalIconWordInput(word: "journal", baselineY: JournalIconTileGeometry.ownerWordBaselines(tileSide: 100)[1])
+                JournalIconWordInput(word: JournalMarkGeneric.words[0], baselineY: JournalIconTileGeometry.ownerWordBaselines(tileSide: 100)[0]),
+                JournalIconWordInput(word: JournalMarkGeneric.words[1], baselineY: JournalIconTileGeometry.ownerWordBaselines(tileSide: 100)[1])
             ],
             tileSide: side
         ) {

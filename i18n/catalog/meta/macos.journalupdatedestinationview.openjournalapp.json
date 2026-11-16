@@ -1,0 +1,16 @@
+{
+  "description": "open journal app",
+  "context": "Shown by Sources/solstone/JournalUpdateDestinationView.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "9218def3c93d90242b7598b5e1a1d88c3ff1abff67d9f73f0ab909be8a5a629f",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,21 @@
+{
+  "description": "download complete, {finalizingsuffix}.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "finalizingsuffix",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 38,
+  "source_revision": "cea4c1acf7295f6adcdeaced98c8c7599c948737508c9c84e4b41c8599cdf5af",
+  "risk": "routine",
+  "auto_merge": true
+}

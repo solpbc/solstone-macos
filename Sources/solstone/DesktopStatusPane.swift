@@ -47,7 +47,7 @@ extension SettingsView {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("your journal")
+                Text(MacStrings.macos_desktop_shared_copy_setupjournalcardheading())
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 if let facts = snapshotJournalFacts {
@@ -55,7 +55,7 @@ extension SettingsView {
                         StatusFactRow(label: fact[0], value: fact[1])
                     }
                 } else if appState.deckHasJournal {
-                    StatusFactRow(label: "connection", value: statusConnectionValue(
+                    StatusFactRow(label: MacStrings.macos_desktopstatuspane_connection(), value: statusConnectionValue(
                         pill, connectionLine: appState.tunnelLifecycleOwner.connectionVerdict.message
                     ))
                     statusLastDeliveryRow
@@ -64,17 +64,17 @@ extension SettingsView {
                     }
                 }
                 if resolvedServiceMode(for: appState.config) == .external {
-                    StatusFactRow(label: "kept on this mac", value: storageGlanceText)
+                    StatusFactRow(label: MacStrings.macos_settings_keptonthismac(), value: storageGlanceText)
                 }
             }
             .font(.callout)
 
-            DisclosureGroup("technical details") {
+            DisclosureGroup(MacStrings.macos_desktop_shared_copy_technicaldetails()) {
                 VStack(alignment: .leading, spacing: 12) {
                     statusSetupRows
                     #if DEBUG
-                    Toggle("1-minute segments", isOn: debugSegmentsBinding)
-                        .help("use 1-minute segments instead of 5-minute for testing")
+                    Toggle(MacStrings.macos_settings_n1minutesegments(), isOn: debugSegmentsBinding)
+                        .help(MacStrings.macos_settings_use1minutesegmentsinsteadof5())
                         .accessibilityIdentifier(AXID.Settings.Status.debugOneMinuteSegments)
                     #endif
                 }
@@ -105,41 +105,41 @@ extension SettingsView {
         VStack(alignment: .leading, spacing: 4) {
             switch pill {
             case .connected:
-                Text("all caught up").font(DeckStyle.name(26))
-                Text("everything is in your journal").foregroundStyle(.secondary)
+                Text(MacStrings.macos_desktopstatuspane_allcaughtup()).font(DeckStyle.name(26))
+                Text(MacStrings.macos_desktopstatuspane_everythingisinyour()).foregroundStyle(.secondary)
             case .syncing(let n):
                 Text("\(n)").font(DeckStyle.name(34))
-                Text("syncing to your journal…").foregroundStyle(.secondary)
+                Text(MacStrings.macos_app_syncingtoyourjournal2()).foregroundStyle(.secondary)
             case .waiting(let n):
                 Text("\(n)").font(DeckStyle.name(34))
                 Text(DeckCopy.onThisDevice).foregroundStyle(.secondary)
             case .waitingToSync:
-                Text("waiting to sync").font(DeckStyle.name(22))
-                Text("on this device").foregroundStyle(.secondary)
+                Text(MacStrings.macos_desktopstatuspane_waitingtosync()).font(DeckStyle.name(22))
+                Text(MacStrings.macos_desktopstatuspane_onthisdevice()).foregroundStyle(.secondary)
             case .connectedHeld(.segmentsNotWritten):
-                Text("nothing waiting to sync").font(DeckStyle.name(22))
+                Text(MacStrings.macos_desktopstatuspane_nothingwaitingtosync()).font(DeckStyle.name(22))
             case .connectedHeld(.importsNeedYou):
                 Text(ImportCopy.importsNeedYou).font(DeckStyle.name(22))
                 Text(ImportCopy.openImportToSeeWhy).foregroundStyle(.secondary)
             case .connecting:
-                Text("connecting…").font(DeckStyle.name(22))
+                Text(MacStrings.macos_desktopstatuspane_connecting()).font(DeckStyle.name(22))
             case .offline:
                 // The pill's own words, as every computer says them, then where the waiting items are.
                 Text(pill.text).font(DeckStyle.name(22))
                 Text(DeckCopy.onThisDevice).foregroundStyle(.secondary)
             case .syncPaused(let n):
                 if n > 0 { Text("\(n)").font(DeckStyle.name(34)) }
-                Text("sync paused").font(n > 0 ? .body : DeckStyle.name(22)).foregroundStyle(n > 0 ? .secondary : .primary)
-                if n > 0 { Text("on this device").foregroundStyle(.secondary) }
-                Button("your journal") { navigate(.service) }.buttonStyle(.link)
+                Text(MacStrings.macos_app_syncpaused()).font(n > 0 ? .body : DeckStyle.name(22)).foregroundStyle(n > 0 ? .secondary : .primary)
+                if n > 0 { Text(MacStrings.macos_desktopstatuspane_onthisdevice()).foregroundStyle(.secondary) }
+                Button(MacStrings.macos_desktop_shared_copy_setupjournalcardheading()) { navigate(.service) }.buttonStyle(.link)
             case .notPaired:
-                Text("not paired").font(DeckStyle.name(22))
-                Button("connect a journal") { navigate(.service) }
+                Text(MacStrings.macos_desktop_shared_app_notpaired()).font(DeckStyle.name(22))
+                Button(MacStrings.macos_desktopstatuspane_connectajournal()) { navigate(.service) }
             case .confirmMark(let n):
                 if n > 0 { Text("\(n)").font(DeckStyle.name(34)) }
-                Text("waiting for you to confirm your journal's mark")
-                Text("nothing waiting goes into your journal until you do.").foregroundStyle(.secondary)
-                Button("confirm the mark") {
+                Text(MacStrings.macos_copy_journalmarkheld())
+                Text(MacStrings.macos_copy_journalmarkheldcaption()).foregroundStyle(.secondary)
+                Button(MacStrings.macos_desktopstatuspane_confirmthemark()) {
                     NotificationCenter.default.post(name: .reaskJournalMark, object: nil)
                 }
             case .pairAgain(let n):
@@ -148,7 +148,7 @@ extension SettingsView {
                 configuredJournalRecoveryRow(for: appState.tunnelLifecycleOwner.connectionVerdict.failureCause)
             case .needsNewLink:
                 Text(pill.text).font(DeckStyle.name(20))
-                Button("your journal") { navigate(.service) }
+                Button(MacStrings.macos_desktop_shared_copy_setupjournalcardheading()) { navigate(.service) }
             }
         }
     }
@@ -203,10 +203,10 @@ struct StatusSourceRows: View {
             let view = appState.sourceTotalsView
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("sources")
+                    Text(MacStrings.macos_desktop_shared_app_sourcestitle())
                     Spacer()
-                    Text("so far").frame(width: 92, alignment: .trailing)
-                    Text("last taken in").frame(width: 92, alignment: .trailing)
+                    Text(MacStrings.macos_desktopsource_sofar()).frame(width: 92, alignment: .trailing)
+                    Text(MacStrings.macos_desktopsource_lasttakenin()).frame(width: 92, alignment: .trailing)
                 }
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -282,7 +282,7 @@ struct UnwrittenSegmentRows: View {
                     Spacer(minLength: 8)
                     Button(UnwrittenCopy.remove) { confirming = segment }
                         .disabled(passRunning)
-                        .accessibilityLabel("\(UnwrittenCopy.remove) \(name)")
+                        .accessibilityLabel(MacStrings.macos_accessibility_removeitem(name))
                         .accessibilityIdentifier(AXID.Deck.unwrittenRemove(segment.day, segment.segment))
                 }
                 .accessibilityElement(children: .contain)
@@ -308,11 +308,11 @@ struct UnwrittenSegmentRows: View {
 }
 
 enum UnwrittenCopy {
-    static let reason = "your journal couldn't take all of this."
-    static let remove = "remove"
-    static let cancel = "cancel"
-    static let confirmMessage = "this removes the copy on this device, so what your journal didn't take won't reach it."
-    static func confirmTitle(_ name: String) -> String { "remove \(name)?" }
+    static let reason = MacStrings.macos_desktopstatuspane_yourjournalcouldnttakeallofthis()
+    static let remove = MacStrings.macos_desktopimportpage_remove()
+    static let cancel = MacStrings.macos_desktop_shared_setup_cancel()
+    static let confirmMessage = MacStrings.macos_desktopstatuspane_thisremovesthecopyonthisdevicesowhatyourjourn()
+    static func confirmTitle(_ name: String) -> String { MacStrings.macos_desktopstatuspane_remove("\(name)") }
 }
 
 /// Whether `remove` waits: a pass is running unless sync is paused.

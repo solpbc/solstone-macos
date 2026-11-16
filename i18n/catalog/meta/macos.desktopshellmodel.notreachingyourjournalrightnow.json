@@ -1,0 +1,16 @@
+{
+  "description": "not reaching your journal right now",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f087a4fc5665883866af27798237193213478dc10e3ef82a8b5d4251081d7968",
+  "risk": "routine",
+  "auto_merge": true
+}

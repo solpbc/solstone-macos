@@ -1,0 +1,16 @@
+{
+  "description": "your journal couldn't accept this.",
+  "context": "Shown by Sources/solstone/ImportLogic.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "d435c8631acda1d4319822137cb42e685b303dbbcb653f4fd2928cb8c3fae451",
+  "risk": "routine",
+  "auto_merge": true
+}

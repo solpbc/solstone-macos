@@ -1,0 +1,16 @@
+{
+  "description": "there isn't enough room on this device",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f777ce5f6cb034722ed3c9240fc3ffb1d20a394ea9afa1d85964135c2516607d",
+  "risk": "routine",
+  "auto_merge": true
+}

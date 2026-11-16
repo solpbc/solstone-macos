@@ -1,0 +1,16 @@
+{
+  "description": "read up to the last 24 hours of logs from solstone on this mac. save a copy if you want one.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 92,
+  "source_revision": "c8bf5b740dbbf4aec35a7f8da7f3953abc9f5974b8e141769f5f5831f6e2067b",
+  "risk": "routine",
+  "auto_merge": true
+}

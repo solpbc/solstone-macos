@@ -1,0 +1,16 @@
+{
+  "description": "catching up · retrying an upload",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 32,
+  "source_revision": "0bc94c88a6d92d1ac464ec72a2fb0e658a1f8482d2b945a57a92982c1ae04b13",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "connection unavailable",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 22,
+  "source_revision": "bdee42dc3f59ec1608aa2404b4e166128502c3cf0c0719052b3a0832b4a51af4",
+  "risk": "routine",
+  "auto_merge": true
+}

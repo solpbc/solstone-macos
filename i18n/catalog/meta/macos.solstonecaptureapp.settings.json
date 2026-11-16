@@ -1,0 +1,16 @@
+{
+  "description": "settings…",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SolstoneCaptureApp.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 9,
+  "source_revision": "d396ab2551c9cf209434282e96c5f142ce18fe279d9d28fdf28152083e680a03",
+  "risk": "routine",
+  "auto_merge": true
+}

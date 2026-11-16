@@ -1,0 +1,16 @@
+{
+  "description": "keeps solstone running locally but stops sending to your journal",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 64,
+  "source_revision": "cfed20eae8a11e03228e4a270928e4932fd066034324a2f44549aa28e9085381",
+  "risk": "routine",
+  "auto_merge": true
+}

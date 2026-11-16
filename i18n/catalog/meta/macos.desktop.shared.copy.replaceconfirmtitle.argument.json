@@ -1,0 +1,21 @@
+{
+  "description": "replace \"{ $selecteddevicelabel }\"?",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered. The same sentence is on Windows as windows.desktop.shared.copy.replaceconfirmtitle. Keep the two translations consistent.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "selecteddevicelabel",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "44fcdc086dccb0d89810356e2b96643cf90d3ae3781f0146307e7730ee3ff85b",
+  "risk": "routine",
+  "auto_merge": true
+}

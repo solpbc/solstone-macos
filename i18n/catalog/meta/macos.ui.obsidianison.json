@@ -1,0 +1,21 @@
+{
+  "description": "Obsidian is on · {vaultname}",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "vaultname",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 28,
+  "source_revision": "dbebaf2724bdb4db236e23dfda63b2e760d8aa616c2aaf04386945328a25724e",
+  "risk": "routine",
+  "auto_merge": true
+}

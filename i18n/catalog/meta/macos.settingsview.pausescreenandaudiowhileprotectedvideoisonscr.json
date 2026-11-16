@@ -1,0 +1,16 @@
+{
+  "description": "pause screen and audio while protected video is on screen",
+  "context": "Shown by Sources/solstone/SettingsView.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "c794f021aaf8bd24392b0322620622ec50d4bb06c81cf5ed646a0368e86ae49b",
+  "risk": "routine",
+  "auto_merge": true
+}

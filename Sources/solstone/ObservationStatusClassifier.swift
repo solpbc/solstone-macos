@@ -289,12 +289,12 @@ internal func settingsRowLabel(
 
     if let reason = surfacedReason {
         return SettingsRowLabel(
-            title: "settings… · \(attentionSuffix(reason, verdict: verdict))",
+            title: MacStrings.macos_app_settings("\(attentionSuffix(reason, verdict: verdict))"),
             showsAttentionIcon: true
         )
     } else {
         return SettingsRowLabel(
-            title: "settings…",
+            title: MacStrings.macos_solstonecaptureapp_settings(),
             showsAttentionIcon: false
         )
     }

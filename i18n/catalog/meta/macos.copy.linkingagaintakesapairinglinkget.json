@@ -1,0 +1,16 @@
+{
+  "description": "linking again takes a pairing link. get one from your journal's network app and paste it below.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 95,
+  "source_revision": "073bbb1d1118c05b4787464a511cabfe7892c3d2fce19b393d3698afe6cb27f1",
+  "risk": "routine",
+  "auto_merge": true
+}

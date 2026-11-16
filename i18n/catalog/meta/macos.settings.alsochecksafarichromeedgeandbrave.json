@@ -1,0 +1,16 @@
+{
+  "description": "also check Safari, Chrome, Edge and Brave",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 41,
+  "source_revision": "5409968ae05546fb9ff57ecb48a3ef8f256223bab6e3398d60ab9c6180b35101",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "pauses screen and audio while supported streaming video apps or websites are visible, so the video doesn't go black. a short note of the service and window title goes into your journal.",
+  "context": "Shown by Sources/solstone/SettingsView.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "c02ecfcf4ca36a9eefdde0dc6b280a20ab3dcbe3cc820e2043650f1f0444dacb",
+  "risk": "routine",
+  "auto_merge": true
+}

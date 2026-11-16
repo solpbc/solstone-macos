@@ -1,0 +1,16 @@
+{
+  "description": "silence music in computer sound",
+  "context": "Shown by Sources/solstone/SettingsView.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "85c3305b0dbdacf6c338c313b8950c2125d640fe12d8eb273c3d10a530b079dc",
+  "risk": "routine",
+  "auto_merge": true
+}

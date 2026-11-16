@@ -1,0 +1,16 @@
+{
+  "description": "you can pause everything at any time.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 37,
+  "source_revision": "432f4eb0deda0413c5bf56138c3a3d9bc34801707b19a457e49c96c8e1455268",
+  "risk": "routine",
+  "auto_merge": true
+}

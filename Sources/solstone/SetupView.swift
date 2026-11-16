@@ -271,7 +271,7 @@ struct SetupView: View {
                             JournalMarkView(mark: mark, isConfirmed: appState.isJournalMarkCompared)
                             HStack {
                                 if !appState.isJournalMarkConfirmed {
-                                    Button("pair") {
+                                    Button(MacStrings.macos_desktop_shared_setup_pair()) {
                                         appState.beginOwnerPairingAttempt()
                                         journalMarkDriver.startIfUnconfirmed(appState: appState)
                                         Task {
@@ -556,7 +556,7 @@ struct SetupView: View {
                             get: { appState.isLoginItemEnabled },
                             set: { appState.setLoginItemEnabled($0) }
                         ),
-                        label: "start at login",
+                        label: MacStrings.macos_desktop_shared_setup_startatlogin(),
                         accessibilityIdentifier: AXID.Settings.Setup.Connection.loginItem
                     )
 
@@ -612,14 +612,14 @@ struct SetupView: View {
 
     private var pairingLinkBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("or pair to a journal on another device")
+            Text(MacStrings.macos_setup_orpairtoajournalonanother())
                 .font(.subheadline)
                 .foregroundStyle(SetupChromeColor.softInk(for: colorScheme))
             HStack(spacing: 8) {
-                TextField("paste pairing link", text: $pairingLinkInput)
+                TextField(MacStrings.macos_setup_pairinglinkplaceholder(), text: $pairingLinkInput)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier(AXID.Settings.Service.pairingLink)
-                Button("connect") {
+                Button(MacStrings.macos_settings_connect()) {
                     Task {
                         _ = await appState.submitPairingInput(pairingLinkInput)
                     }

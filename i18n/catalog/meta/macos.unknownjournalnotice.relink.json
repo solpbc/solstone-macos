@@ -1,0 +1,16 @@
+{
+  "description": "re-link",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UnknownJournalNoticeView.swift.",
+  "surfaces": [
+    "notice"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 7,
+  "source_revision": "5a20c5e8991c4c74b6d9f7450627cd7a3166d415288f45bb2d78b85520b26a8f",
+  "risk": "routine",
+  "auto_merge": true
+}

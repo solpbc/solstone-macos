@@ -1,0 +1,16 @@
+{
+  "description": "browser status isn't known yet.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 31,
+  "source_revision": "18d7b201d54d8757be5f226d7b2520b0f5f762582b455497dfa39ee964b57a21",
+  "risk": "routine",
+  "auto_merge": true
+}

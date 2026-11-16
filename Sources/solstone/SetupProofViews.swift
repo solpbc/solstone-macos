@@ -24,7 +24,7 @@ enum SetupProofDecisionResolver {
         source: CaptureSources,
         liveState: PermissionSourceLiveState,
         controls: PermissionSourceLiveControls,
-        timeRemaining: String? = nil,
+        timeRemaining: TimeInterval? = nil,
         activityGoesOn: (PermissionSourcePauseReason) -> Bool = { _ in false }
     ) -> SetupProofDecision {
         let isScreen = source.contains(.screen)
@@ -114,7 +114,7 @@ struct SetupMicrophoneProofView: View {
                 source: .microphone,
                 liveState: liveState,
                 controls: controls,
-                timeRemaining: { _ = appState.pauseManager.refreshTick; return appState.pauseManager.formatTimeRemaining() }(),
+                timeRemaining: { _ = appState.pauseManager.refreshTick; return appState.pauseManager.remainingTime }(),
                 activityGoesOn: appState.config.activityGoesOn(whilePausedFor:)
             )
 
@@ -169,24 +169,24 @@ struct SetupMicrophoneProofView: View {
     @ViewBuilder
     private func trailingControls(decision: SetupProofDecision) -> some View {
         if decision.showPauseMenu {
-            Menu("pause") {
-                Button("15 minutes") {
+            Menu(MacStrings.macos_desktop_shared_setup_wizardpausefailure()) {
+                Button(MacStrings.macos_setup_n15minutes()) {
                     appState.pauseManager.pause(for: .minutes(15))
                 }
-                Button("30 minutes") {
+                Button(MacStrings.macos_setup_n30minutes()) {
                     appState.pauseManager.pause(for: .minutes(30))
                 }
-                Button("1 hour") {
+                Button(MacStrings.macos_setup_n1hour()) {
                     appState.pauseManager.pause(for: .minutes(60))
                 }
-                Button("until I resume") {
+                Button(MacStrings.macos_setup_untiliresume()) {
                     appState.pauseManager.pause(for: .indefinite)
                 }
             }
             .fixedSize()
             .accessibilityIdentifier(AXID.Settings.Permissions.microphonePause)
         } else if decision.showResume {
-            Button("resume") {
+            Button(MacStrings.macos_desktop_shared_setup_wizardpausefailure2()) {
                 appState.pauseManager.resume()
             }
             .accessibilityIdentifier(AXID.Settings.Permissions.microphoneResume)
@@ -228,7 +228,7 @@ struct SetupScreenProofView: View {
                     source: .screen,
                     liveState: liveState,
                     controls: controls,
-                    timeRemaining: { _ = appState.pauseManager.refreshTick; return appState.pauseManager.formatTimeRemaining() }(),
+                    timeRemaining: { _ = appState.pauseManager.refreshTick; return appState.pauseManager.remainingTime }(),
                     activityGoesOn: appState.config.activityGoesOn(whilePausedFor:)
                 )
 
@@ -294,24 +294,24 @@ struct SetupScreenProofView: View {
     @ViewBuilder
     private func trailingControls(decision: SetupProofDecision) -> some View {
         if decision.showPauseMenu {
-            Menu("pause") {
-                Button("15 minutes") {
+            Menu(MacStrings.macos_desktop_shared_setup_wizardpausefailure()) {
+                Button(MacStrings.macos_setup_n15minutes()) {
                     appState.pauseManager.pause(for: .minutes(15))
                 }
-                Button("30 minutes") {
+                Button(MacStrings.macos_setup_n30minutes()) {
                     appState.pauseManager.pause(for: .minutes(30))
                 }
-                Button("1 hour") {
+                Button(MacStrings.macos_setup_n1hour()) {
                     appState.pauseManager.pause(for: .minutes(60))
                 }
-                Button("until I resume") {
+                Button(MacStrings.macos_setup_untiliresume()) {
                     appState.pauseManager.pause(for: .indefinite)
                 }
             }
             .fixedSize()
             .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingPause)
         } else if decision.showResume {
-            Button("resume") {
+            Button(MacStrings.macos_desktop_shared_setup_wizardpausefailure2()) {
                 appState.pauseManager.resume()
             }
             .accessibilityIdentifier(AXID.Settings.Permissions.screenRecordingResume)

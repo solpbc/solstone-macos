@@ -1,0 +1,16 @@
+{
+  "description": "microphone priority",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 19,
+  "source_revision": "c857b2a8a4a87f535643ba0d0520f741851ea7536d88bcafa94e3cc0565695d2",
+  "risk": "routine",
+  "auto_merge": true
+}

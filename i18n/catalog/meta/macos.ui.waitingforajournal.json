@@ -1,0 +1,16 @@
+{
+  "description": "waiting for a journal update. your notes wait on this mac.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 58,
+  "source_revision": "a9d6fcf92ea53ea1cb449eb9734851c8b566d7cfc064710635ccd997f483694a",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "solstone paused",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/BrowserOwnerSurface.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 15,
+  "source_revision": "c360af7f9e839380e72cc9dc62710b74134ce657fefba06299f9a42767a68e3a",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "automatic updates",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift. The same sentence is on Windows as windows.desktop.shared.updates.automaticupdates. Keep the two translations consistent.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 17,
+  "source_revision": "f1020836f6ee4b9f27c60e2f4cd34f39c6b19d3d2ef964227806745be09acc4f",
+  "risk": "routine",
+  "auto_merge": true
+}

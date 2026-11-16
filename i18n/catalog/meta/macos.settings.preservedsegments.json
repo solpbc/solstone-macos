@@ -1,0 +1,16 @@
+{
+  "description": "preserved segments",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 18,
+  "source_revision": "18842b7108e7b9d2922c8f2d6b3b7bc2adfea9f891bd10d09654de2f14161743",
+  "risk": "routine",
+  "auto_merge": true
+}

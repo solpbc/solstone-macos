@@ -1,0 +1,16 @@
+{
+  "description": "continue anyway",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.journalmarkunverifiedcontinuebutton. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 15,
+  "source_revision": "4d7fc01c5b267830aaac9620b91dff8e45170e63af3b624cd03d614fe1587419",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "couldn't install the journal app in Applications. download it, drag it into Applications and enter an administrator's name and password w...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 171,
+  "source_revision": "3ba4afbd0a56a0a56c0d16ce6966073cd9faec3cdcb9c12bf7412291143e2457",
+  "risk": "routine",
+  "auto_merge": true
+}

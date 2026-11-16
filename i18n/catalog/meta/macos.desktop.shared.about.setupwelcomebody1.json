@@ -1,0 +1,16 @@
+{
+  "description": "the solstone app takes in what you share with it, and all of it goes into your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/AboutView.swift. The same sentence is on Windows as windows.desktop.shared.about.setupwelcomebody1. Keep the two translations consistent.",
+  "surfaces": [
+    "about"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 87,
+  "source_revision": "3cad74fd1f0dee4b9f1b2429a347722fff8e231a2721a20ecd42b34484c7ce09",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "tmux isn't installed.",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "681e10066733bd146049d41b7874dcbd3a4f6e5837bc778362a471eca223aaea",
+  "risk": "routine",
+  "auto_merge": true
+}

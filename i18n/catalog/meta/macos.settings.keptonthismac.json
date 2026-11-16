@@ -1,0 +1,16 @@
+{
+  "description": "kept on this mac",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 16,
+  "source_revision": "3bdf9aaae04b7f52e34a4827a1e4acdd651f19554c4881bc168ed58ff2879b98",
+  "risk": "routine",
+  "auto_merge": true
+}

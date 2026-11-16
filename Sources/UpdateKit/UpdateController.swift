@@ -1307,8 +1307,8 @@ public final class UpdateController {
         }
     }
 
-    private static let updaterFactoryNilReason = "the update system couldn't be prepared."
-    private static let updaterStartFailedReason = "the updater couldn't start."
+    private static let updaterFactoryNilReason = MacStrings.macos_updatecontroller_theupdatesystemcouldntbeprepared()
+    private static let updaterStartFailedReason = MacStrings.macos_updatecontroller_theupdatercouldntstart()
 
     private static func loadPersistedStatus(from defaults: UserDefaults) -> (status: ReconciledUpdateStatus, migrated: Bool) {
         if let data = defaults.data(forKey: statusKey),

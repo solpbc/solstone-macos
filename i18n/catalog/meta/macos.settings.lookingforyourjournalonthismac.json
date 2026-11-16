@@ -1,0 +1,16 @@
+{
+  "description": "looking for your journal on this mac",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 36,
+  "source_revision": "50b6fd5fdc6f59f943760744efb99af2058b703eca5770c9cc76cd28ff5d26a8",
+  "risk": "routine",
+  "auto_merge": true
+}

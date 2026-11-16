@@ -1,0 +1,16 @@
+{
+  "description": "segments on this mac",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DiagnosticReport.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 20,
+  "source_revision": "409a043c2b43dd56d70a094d4e6a1cb64acd38fe9f4578df1f0d6a2c884e4bd3",
+  "risk": "routine",
+  "auto_merge": true
+}

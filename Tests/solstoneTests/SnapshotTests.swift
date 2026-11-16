@@ -294,7 +294,7 @@ struct SnapshotTests {
         markPermissionsReady(state)
         state.isRecording = true
         state.pauseManager.pause(for: .seconds(125))
-        let expectedHeader = pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining())
+        let expectedHeader = pausedHeaderText(timeRemaining: state.pauseManager.remainingTime)
         #expect(expectedHeader.hasPrefix("paused, "))
         #expect(expectedHeader.hasSuffix(" left"))
         let updateController = makeSnapshotUpdateController()
@@ -306,13 +306,13 @@ struct SnapshotTests {
         markPermissionsReady(longState)
         longState.isRecording = true
         longState.pauseManager.pause(for: .seconds(125))
-        let headerLong = pausedHeaderText(timeRemaining: longState.pauseManager.formatTimeRemaining())
+        let headerLong = pausedHeaderText(timeRemaining: longState.pauseManager.remainingTime)
 
         let state = AppState.forSnapshot()
         markPermissionsReady(state)
         state.isRecording = true
         state.pauseManager.pause(for: .seconds(35))
-        let expectedHeader = pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining())
+        let expectedHeader = pausedHeaderText(timeRemaining: state.pauseManager.remainingTime)
         #expect(expectedHeader.hasPrefix("paused, "))
         #expect(expectedHeader.hasSuffix(" left"))
         #expect(headerLong != expectedHeader)
@@ -325,7 +325,7 @@ struct SnapshotTests {
         markPermissionsReady(state)
         state.isRecording = true
         state.pauseManager.pause(for: .indefinite)
-        #expect(pausedHeaderText(timeRemaining: state.pauseManager.formatTimeRemaining()) == "paused")
+        #expect(pausedHeaderText(timeRemaining: state.pauseManager.remainingTime) == "paused")
         let updateController = makeSnapshotUpdateController()
         try render(MenuContent(appState: state, updateController: updateController), size: menuSize, to: "menu-paused-indefinite.png")
     }

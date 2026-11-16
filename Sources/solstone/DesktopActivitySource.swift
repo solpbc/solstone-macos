@@ -38,8 +38,8 @@ final class DesktopActivitySource {
     @ObservationIgnored nonisolated(unsafe) private var activation: NSObjectProtocol?
 
     var statusText: String {
-        if failed { return "activity couldn't be saved. check free space on this mac." }
-        return !enabled ? "activity is off" : (paused ? "activity is paused" : "activity is on")
+        if failed { return MacStrings.macos_desktopactivitysource_activitycouldntbesavedcheckfreespaceonthismac() }
+        return !enabled ? MacStrings.macos_desktopactivitysource_activityisoff() : (paused ? MacStrings.macos_desktopactivitysource_activityispaused() : MacStrings.macos_desktopactivitysource_activityison())
     }
 
     init(storage: StorageManager,

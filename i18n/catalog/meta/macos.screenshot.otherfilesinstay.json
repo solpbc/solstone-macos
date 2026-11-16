@@ -1,0 +1,21 @@
+{
+  "description": "other files in {name} stay where they are.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "name",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 42,
+  "source_revision": "b5d53825a4ae015ffdd1666fccad3240a095bf4f52684b38d627bef9342f0084",
+  "risk": "routine",
+  "auto_merge": true
+}

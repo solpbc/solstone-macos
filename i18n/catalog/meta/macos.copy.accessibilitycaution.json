@@ -1,0 +1,16 @@
+{
+  "description": "couldn't copy diagnostics",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 25,
+  "source_revision": "94ac827bdd015a86bec5511a8e3b34f1362c50e50e3ac17011d855d437cfab06",
+  "risk": "routine",
+  "auto_merge": true
+}

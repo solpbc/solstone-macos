@@ -874,13 +874,13 @@ public final class SegmentWriter {
         public var errorDescription: String? {
             switch self {
             case .failedToCreateScreenshotCapturer(let displayID):
-                return "Failed to create screenshot capturer for display \(displayID)"
+                return MacStrings.macos_capture_screenshot("\(displayID)")
             case .failedToCreateAudioOutput:
-                return "Failed to create audio output"
+                return MacStrings.macos_capture_audiooutput()
             case .segmentFinishing:
-                return "this segment has finished accepting audio."
+                return MacStrings.macos_capture_finishedaudio()
             case .missingContentFilter(let displayID):
-                return "Missing SCContentFilter for display \(displayID)"
+                return MacStrings.macos_capture_filter("\(displayID)")
             }
         }
     }

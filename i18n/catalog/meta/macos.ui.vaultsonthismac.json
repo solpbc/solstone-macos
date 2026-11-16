@@ -1,0 +1,16 @@
+{
+  "description": "vaults on this mac",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 18,
+  "source_revision": "4eaf46a9244316697bc9a7f1da4a809811ffa0f25b7235a921b0e8f1de23cbd9",
+  "risk": "routine",
+  "auto_merge": true
+}

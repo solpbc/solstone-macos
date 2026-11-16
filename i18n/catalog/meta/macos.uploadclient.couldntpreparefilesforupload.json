@@ -1,0 +1,16 @@
+{
+  "description": "couldn't prepare files for upload",
+  "context": "Shown by Sources/solstone/UploadClient.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "d6b30779d4a8119c0d38f748a07f98f1993c7005bf334649278bce252d0773b3",
+  "risk": "routine",
+  "auto_merge": true
+}

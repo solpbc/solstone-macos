@@ -1,0 +1,25 @@
+{
+  "description": "showing the newest { $shown } of { $total } entries. saving writes all of them.",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "shown",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "9ac24f57046d97bd7132885c162a5012c4a9b8a26df08b68dcdc4ea9d7d4a01e",
+  "risk": "routine",
+  "auto_merge": true
+}

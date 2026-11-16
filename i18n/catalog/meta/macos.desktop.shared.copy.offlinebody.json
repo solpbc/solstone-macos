@@ -1,0 +1,16 @@
+{
+  "description": "anything waiting to send stays on this device. try again when your journal is reachable.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.offlinebody. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 88,
+  "source_revision": "a80352b820b0083c4516367346119574b4aa64087c83ce102e46654d1fee8579",
+  "risk": "routine",
+  "auto_merge": true
+}

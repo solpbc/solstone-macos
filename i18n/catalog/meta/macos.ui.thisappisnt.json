@@ -1,0 +1,16 @@
+{
+  "description": "this app isn't paired yet, so nothing goes into your journal until you pair it.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 79,
+  "source_revision": "7dd074299006d4b8ba43ac9d0453f7e401e95e1742596865c0d7f40757499c33",
+  "risk": "routine",
+  "auto_merge": true
+}

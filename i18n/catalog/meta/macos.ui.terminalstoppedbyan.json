@@ -1,0 +1,16 @@
+{
+  "description": "terminal: stopped by an error, restarting",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 41,
+  "source_revision": "2f48c5f986021f0ae348d3a06a5ef0b81e098c94b96e972b114f44637ebfea2c",
+  "risk": "routine",
+  "auto_merge": true
+}

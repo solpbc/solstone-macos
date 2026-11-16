@@ -1,0 +1,16 @@
+{
+  "description": "the journal running on this mac isn't yours, so the solstone app won't connect to it, open it or show its mark. on a shared mac, it's usu...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 165,
+  "source_revision": "c7d79d167104a5d5f8135064b0114733603c768eb2a942087190834aec1c6162",
+  "risk": "routine",
+  "auto_merge": true
+}

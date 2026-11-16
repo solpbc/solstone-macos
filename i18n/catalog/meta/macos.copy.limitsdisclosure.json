@@ -1,0 +1,16 @@
+{
+  "description": "diagnostics copied to the clipboard",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 35,
+  "source_revision": "b8796e5695e217fb4863fd360a86e2d11264c7916b53708614edb75438b49ba1",
+  "risk": "routine",
+  "auto_merge": true
+}

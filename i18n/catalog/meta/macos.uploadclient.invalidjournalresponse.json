@@ -1,0 +1,16 @@
+{
+  "description": "invalid journal response",
+  "context": "Shown by Sources/solstone/UploadClient.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "474143c15ca9d7714ce2387252f94b808e22bf5605a8a19c5fc04beacaa6ff16",
+  "risk": "routine",
+  "auto_merge": true
+}

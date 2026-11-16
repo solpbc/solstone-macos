@@ -1,0 +1,16 @@
+{
+  "description": "the solstone app takes in the notes in one vault on this mac. all of them go into your journal, then each one as it changes. your vault s...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 151,
+  "source_revision": "fefc911d4fe9d0cab4cd9edd7684d8be9cf0a06ad422473e88467690a0f2d718",
+  "risk": "routine",
+  "auto_merge": true
+}

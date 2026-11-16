@@ -1,0 +1,16 @@
+{
+  "description": "can't find the solstone app",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "712584fcc21109a2d8d03dff4689450a2a6bf5da6fe2dfc85cd1a121359b1320",
+  "risk": "routine",
+  "auto_merge": true
+}

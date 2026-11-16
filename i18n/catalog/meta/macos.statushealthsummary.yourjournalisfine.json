@@ -1,0 +1,16 @@
+{
+  "description": "your journal is fine",
+  "context": "Shown by Sources/solstone/StatusHealthSummary.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "a5f44dccf8b1a7ef7762b94f7653f463ff604ca86e75ed85c2eaa1ca1c412209",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "the journal app isn't available yet. solstone is keeping everything safe on this mac",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalMigration.swift.",
+  "surfaces": [
+    "migration"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 84,
+  "source_revision": "a760bdad73d4a11bfe742384db9633bae3eaa4fa8077457b7f321ac138d8d029",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,25 @@
+{
+  "description": "{value}: couldn't set up ({reason})",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/BrowserOwnerSurface.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value",
+      "type": "string"
+    },
+    {
+      "name": "reason",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 35,
+  "source_revision": "1e4b9ea2514ea1f9b37f38cbdc35494dc857d80730217428fba214e40d658e45",
+  "risk": "routine",
+  "auto_merge": true
+}

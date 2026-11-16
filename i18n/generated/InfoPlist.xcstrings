@@ -1,0 +1,76 @@
+{
+  "sourceLanguage": "en-US",
+  "version": "1.0",
+  "strings": {
+    "CFBundleName": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "solstone"
+          }
+        }
+      }
+    },
+    "CFBundleDisplayName": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "solstone"
+          }
+        }
+      }
+    },
+    "NSScreenCaptureUsageDescription": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the solstone app takes in what you share with it, and all of it goes into your journal."
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the solstone app takes in what you share with it, and all of it goes into your journal."
+          }
+        }
+      }
+    },
+    "NSSystemAudioRecordingUsageDescription": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the solstone app takes in what you share with it, and all of it goes into your journal."
+          }
+        }
+      }
+    },
+    "NSLocalNetworkUsageDescription": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the solstone app takes in what you share with it, and all of it goes into your journal."
+          }
+        }
+      }
+    },
+    "NSHumanReadableCopyright": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "© 2026 sol pbc. all rights reserved."
+          }
+        }
+      }
+    }
+  }
+}

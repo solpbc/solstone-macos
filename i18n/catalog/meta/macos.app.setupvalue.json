@@ -1,0 +1,21 @@
+{
+  "description": "{brandnames} ready",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/BrowserOwnerSurface.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "brandnames",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 18,
+  "source_revision": "f0c16f005ab379180e431487cef7206441f1fabfd36bdc5fe75bb7c0e35caae0",
+  "risk": "routine",
+  "auto_merge": true
+}

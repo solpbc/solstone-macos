@@ -1,0 +1,25 @@
+{
+  "description": "the update is downloaded and will install when {value} relaunches. {restartexplanation}",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value",
+      "type": "string"
+    },
+    {
+      "name": "restartexplanation",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 87,
+  "source_revision": "18bf0931858b27c2688c210142cdc1b45fcae401fb3c04eaef85f762098aa16c",
+  "risk": "routine",
+  "auto_merge": true
+}

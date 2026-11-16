@@ -1,0 +1,16 @@
+{
+  "description": "can't check the solstone extension in Safari",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 44,
+  "source_revision": "4529ae32e0d76af58941e47e36ef8a246774d6a2481fe6deeeea8f939c19bd75",
+  "risk": "routine",
+  "auto_merge": true
+}

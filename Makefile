@@ -194,10 +194,10 @@ ax-contract:
 	AX_CONTRACT_REGEN=1 ./scripts/run-ci.sh -c release -Xswiftc -DSOLSTONE_TEST_SUPPORT --filter AXContractTests.contractMatchesCommittedFileOrRegenerates
 	AX_CONTRACT_REGEN=1 ./scripts/run-ci.sh --filter AXContractTests.contractMatchesCommittedFileOrRegenerates
 
-ci: check-sparkle
+ci: check-sparkle check-catalog
 	@./scripts/run-ci.sh
 
-ci-release: check-sparkle
+ci-release: check-sparkle check-catalog
 	@./scripts/run-ci.sh -c release -Xswiftc -DSOLSTONE_TEST_SUPPORT
 
 .PHONY: ci-release
@@ -392,6 +392,10 @@ assemble-dist-bundle: terminal-helper
 	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_solstone.bundle" solstone.app/Contents/Resources/
 	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_JournalMarkKit.bundle" solstone.app/Contents/Resources/
 	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_SetupChrome.bundle" solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_SolstoneCore.bundle" solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_JournalLocalAccess.bundle" solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_UpdateKit.bundle" solstone.app/Contents/Resources/
+	@cp -R i18n/generated/AppResources/ solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp \
@@ -446,6 +450,7 @@ endif
 	@sed -e 's/__SHORT_VERSION__/$(DIST_VERSION)/' -e 's/__BUNDLE_VERSION__/$(DIST_BUILD)/' \
 		$(SAFARI_APPEX_SOURCE)/Info.plist > $(SAFARI_APPEX_BUNDLE)/Contents/Info.plist
 	@cp -R $(SAFARI_EXTENSION_FILES)/. $(SAFARI_APPEX_BUNDLE)/Contents/Resources/
+	@cp -R i18n/generated/ExtensionResources/ $(SAFARI_APPEX_BUNDLE)/Contents/Resources/
 	@codesign --force --options runtime --timestamp \
 		--entitlements $(SAFARI_APPEX_SOURCE)/entitlements.plist \
 		--sign "$(DEVELOPER_ID_APP)" --keychain "$(SIGNING_KEYCHAIN)" \
@@ -502,6 +507,10 @@ assemble-adhoc-bundle: terminal-helper
 	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_solstone.bundle" solstone.app/Contents/Resources/
 	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_JournalMarkKit.bundle" solstone.app/Contents/Resources/
 	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_SetupChrome.bundle" solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_SolstoneCore.bundle" solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_JournalLocalAccess.bundle" solstone.app/Contents/Resources/
+	@cp -r "$(SWIFT_PRODUCTS_DIR)/solstone_UpdateKit.bundle" solstone.app/Contents/Resources/
+	@cp -R i18n/generated/AppResources/ solstone.app/Contents/Resources/
 	@cp -R "$(SPARKLE_FRAMEWORK)" solstone.app/Contents/Frameworks/
 	@install_name_tool -add_rpath "@executable_path/../Frameworks" solstone.app/Contents/MacOS/solstone
 	@codesign --force --options runtime --timestamp=none \
@@ -1101,3 +1110,11 @@ github-release:
 .PHONY: check-sparkle
 check-sparkle:
 	python3 scripts/sparkle_dependency.py verify
+
+.PHONY: check-catalog catalog
+check-catalog:
+	python3 scripts/i18n.py --check
+
+catalog:
+	@test -n "$(I18N_COMPILER)" || { echo "set I18N_COMPILER to the pinned i18n-catalog executable" >&2; exit 1; }
+	python3 scripts/i18n.py --compiler "$(I18N_COMPILER)"

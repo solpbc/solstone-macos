@@ -1,0 +1,16 @@
+{
+  "description": "your journal stopped accepting this device. imports wait here until you pair again.",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "cea99f832598070e0233a06b3da37ae43727c0405cab4dfe92aec26ebaa91fc9",
+  "risk": "routine",
+  "auto_merge": true
+}

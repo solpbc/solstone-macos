@@ -1,0 +1,16 @@
+{
+  "description": "boost microphone input level. changes take effect immediately.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 62,
+  "source_revision": "ef3e738717088ffd07cffc90bd0c279353e5c795de7797e9ae1a9560d2935e5c",
+  "risk": "routine",
+  "auto_merge": true
+}

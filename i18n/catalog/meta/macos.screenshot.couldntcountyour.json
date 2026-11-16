@@ -1,0 +1,16 @@
+{
+  "description": "couldn't count your screenshots.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 32,
+  "source_revision": "0690224cfa5639d3339e18b0a4106c87f5272579b02cb01118b12f3cdb2758ee",
+  "risk": "routine",
+  "auto_merge": true
+}

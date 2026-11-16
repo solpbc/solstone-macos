@@ -1,0 +1,23 @@
+{
+  "description": "© 2026 sol pbc. all rights reserved.",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered. The company mark sol pbc stays unchanged in every language.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "e5daafc94878be78a128afd5209e73d172c410c761467715f7fac41d74befce7",
+  "risk": "legal",
+  "auto_merge": false,
+  "protected_slots": [
+    {
+      "name": "company",
+      "kind": "mark-word",
+      "value": "sol pbc"
+    }
+  ]
+}

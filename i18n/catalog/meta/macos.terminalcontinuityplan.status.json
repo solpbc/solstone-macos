@@ -1,0 +1,28 @@
+{
+  "description": "status {status}",
+  "context": "Shown by Sources/solstone/TerminalContinuityPlan.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "8844aa4dbea2c3897231041ba963421a479e58b0b2fce28d2c85d4ed826d9170",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

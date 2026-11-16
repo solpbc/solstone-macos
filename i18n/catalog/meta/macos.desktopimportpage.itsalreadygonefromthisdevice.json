@@ -1,0 +1,16 @@
+{
+  "description": "it's already gone from this device.",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "a7395bc91d560f5394392ab5d0bdcee49050bc9e132b04e01d93962c025af58e",
+  "risk": "routine",
+  "auto_merge": true
+}

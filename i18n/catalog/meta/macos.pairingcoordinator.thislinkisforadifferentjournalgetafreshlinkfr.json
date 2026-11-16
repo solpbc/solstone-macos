@@ -1,0 +1,16 @@
+{
+  "description": "this link is for a different journal. get a fresh link from the journal you want.",
+  "context": "Shown by Sources/solstone/PairingCoordinator.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "8c66b68e169f2be70285166ab76f7095f347a5037ae2918711d62588e4b55a53",
+  "risk": "routine",
+  "auto_merge": true
+}

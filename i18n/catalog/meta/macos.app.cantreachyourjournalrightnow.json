@@ -1,0 +1,16 @@
+{
+  "description": "can't reach your journal right now",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/TunnelLifecycleOwner.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 34,
+  "source_revision": "88d90652dda9563ce3507c7448ccb1b4467c98e027c4e200639de48a11b91965",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "open journal settings →",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 23,
+  "source_revision": "5dc39b62a8a66f3eb2e2c4b1a090b0ac734e617548b92c8e89c8a409345b9a81",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "recent logs",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.settingslogexporttitle. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 11,
+  "source_revision": "103a741e1ab2ac12836aa27026a0987df11109687a6ec82ff008940b4319dc3e",
+  "risk": "routine",
+  "auto_merge": true
+}

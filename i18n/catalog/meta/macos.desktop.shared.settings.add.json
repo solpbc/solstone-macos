@@ -1,0 +1,16 @@
+{
+  "description": "add",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift. The same sentence is on Windows as windows.desktop.shared.settings.add. Keep the two translations consistent.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 3,
+  "source_revision": "719486b47950597897ae38e2be369ba7411603aad3e9197652e2873c81ba65e6",
+  "risk": "routine",
+  "auto_merge": true
+}

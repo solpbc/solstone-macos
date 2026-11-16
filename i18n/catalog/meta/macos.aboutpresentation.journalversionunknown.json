@@ -1,0 +1,16 @@
+{
+  "description": "journal version unknown",
+  "context": "Shown by Sources/solstone/AboutPresentation.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "5cc93d7bd847866f929f1fbbea9f29c6a6060f9e7e66e8ac58f6487805cfa70d",
+  "risk": "routine",
+  "auto_merge": true
+}

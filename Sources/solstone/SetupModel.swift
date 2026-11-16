@@ -31,8 +31,8 @@ final class SetupModel {
 
     var handoffRefusalMessage: String? {
         switch handoffRefusal {
-        case .heldPairing: "the solstone app is already connected to a journal."
-        case .continuationInProgress: "the solstone app is already finishing another setup."
+        case .heldPairing: MacStrings.macos_setup_thesolstoneappisalreadyconnectedto()
+        case .continuationInProgress: MacStrings.macos_setup_thesolstoneappisalreadyfinishinganother()
         case nil: nil
         }
     }

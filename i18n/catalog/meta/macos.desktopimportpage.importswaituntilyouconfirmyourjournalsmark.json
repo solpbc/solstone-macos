@@ -1,0 +1,16 @@
+{
+  "description": "imports wait until you confirm your journal's mark.",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "e49899e9879e9e241925ce79c59b08f15d07660534328453ddc5c7e88b0e56a6",
+  "risk": "routine",
+  "auto_merge": true
+}

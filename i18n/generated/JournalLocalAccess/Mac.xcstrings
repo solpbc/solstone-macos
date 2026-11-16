@@ -1,0 +1,46 @@
+{
+  "sourceLanguage": "en-US",
+  "version": "1.0",
+  "strings": {
+    "m6d61636f732e6a6f75726e616c6c6f63616c68747470636c69656e742e6e6f616e73776572": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no answer: %1$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6a6f75726e616c6c6f63616c68747470636c69656e742e737461747573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "status %1$@: %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6a6f75726e616c6c6f63616c68747470636c69656e742e746865616e7377657268656c646e6f": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the answer held no usable link"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6c6f63616c6163636573732e6e6f726561736f6e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no reason given"
+          }
+        }
+      }
+    }
+  }
+}

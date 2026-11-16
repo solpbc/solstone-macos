@@ -1,0 +1,16 @@
+{
+  "description": "sync hasn't checked yet",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalIngestPresentation.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 23,
+  "source_revision": "e91c38c804c0ff96df4031b0b5b0b9be3205511ebcf4fb86635c1589ca1f5bdf",
+  "risk": "routine",
+  "auto_merge": true
+}

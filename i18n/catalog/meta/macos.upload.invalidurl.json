@@ -1,0 +1,16 @@
+{
+  "description": "Invalid URL",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "92575a495004bd66627099c966f2d1318f218d0d5380155ecf3a49aa24e0c822",
+  "risk": "routine",
+  "auto_merge": true
+}

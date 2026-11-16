@@ -1,0 +1,16 @@
+{
+  "description": "read the full notes online",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift. The same sentence is on Windows as windows.desktop.shared.updates.textcontent. Keep the two translations consistent.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 26,
+  "source_revision": "6c00ea2138f58f2fed1896aa39167b0d55c9b31684cde7b50ea0c6d2dbe97605",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "your journal is paired, but it isn't on the paid plan, so it can't sync over the internet. you can still reach it directly, without the p...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 177,
+  "source_revision": "a309040d1ae2afb3bd1df0a66817ceb6b6e13ee99cebbfc0b7ea8e9af091ca77",
+  "risk": "routine",
+  "auto_merge": true
+}

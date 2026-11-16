@@ -1,0 +1,16 @@
+{
+  "description": "check microphone access in permissions.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 39,
+  "source_revision": "4649b7b416e7612946c141e967c7b4d62023d34bc4f9b6f15096cb10fa333ed9",
+  "risk": "routine",
+  "auto_merge": true
+}

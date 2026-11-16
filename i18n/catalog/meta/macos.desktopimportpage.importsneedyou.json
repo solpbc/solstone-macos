@@ -1,0 +1,16 @@
+{
+  "description": "imports need you",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "916fb76ec8ae9602c0a1a55e8ffd28fc4db1d0c72890a43c57ddcfbfb2bc0450",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "the app's connection couldn't be checked",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 40,
+  "source_revision": "0e2f1fbce4fd05f7738f2cc9f17192e34594c335a90d3de5d6e45be79451d850",
+  "risk": "routine",
+  "auto_merge": true
+}

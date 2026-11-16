@@ -1,0 +1,16 @@
+{
+  "description": "pair to a journal on another device",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 35,
+  "source_revision": "2cd88c1d5402829cd727c04f9ded0ea38e343c269241e72a9609a29715298133",
+  "risk": "routine",
+  "auto_merge": true
+}

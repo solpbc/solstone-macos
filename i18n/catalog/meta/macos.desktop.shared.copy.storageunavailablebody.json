@@ -1,0 +1,16 @@
+{
+  "description": "this device couldn't read its saved connection. anything waiting to send hasn't been removed.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.storageunavailablebody. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 93,
+  "source_revision": "974e5f24a18d0f6c48d38f48f5fe1efe8dbfdb3759b79c0f7143432a1025cbab",
+  "risk": "routine",
+  "auto_merge": true
+}

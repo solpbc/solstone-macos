@@ -1,0 +1,16 @@
+{
+  "description": "just now",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift. The same sentence is on Windows as windows.desktop.shared.app.justnow. Keep the two translations consistent.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 8,
+  "source_revision": "95d31b7ca8349d7453fae3cd77f41a7476baa262a222237aa2dfb2b4d2cc9f86",
+  "risk": "routine",
+  "auto_merge": true
+}

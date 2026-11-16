@@ -1,0 +1,16 @@
+{
+  "description": "want solstone's notes to show up with a banner and sound?",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 57,
+  "source_revision": "aa8e346d3e57dcd11a5ba064c25253a2d1626a88c9d9069511ae9227aefa5c07",
+  "risk": "routine",
+  "auto_merge": true
+}

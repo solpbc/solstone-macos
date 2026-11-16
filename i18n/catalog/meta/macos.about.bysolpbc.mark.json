@@ -1,0 +1,23 @@
+{
+  "description": "by sol pbc",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/AboutView.swift. The company mark sol pbc stays unchanged in every language.",
+  "surfaces": [
+    "about"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 10,
+  "source_revision": "8ac1d6e48c16a18487693a39acf03fe4eb25282324f12ed67fc0a87fbca7ade3",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "company",
+      "kind": "mark-word",
+      "value": "sol pbc"
+    }
+  ]
+}

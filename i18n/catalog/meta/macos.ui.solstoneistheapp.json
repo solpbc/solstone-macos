@@ -1,0 +1,23 @@
+{
+  "description": "solstone is the app in your menu bar, and it has no commands to run here. to open it: open -a solstone for journal commands, choose \"open...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 181,
+  "source_revision": "158eb7f715261f347ae59da78834885efe02c26b03ad01936bd1456820e148e8",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "ws",
+      "kind": "whitespace",
+      "value": "\n"
+    }
+  ]
+}

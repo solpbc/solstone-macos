@@ -1,0 +1,16 @@
+{
+  "description": "solstone and your journal update separately. their version numbers can differ.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalUpdateDestinationView.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 78,
+  "source_revision": "07a4c0d750f9d1440842dcc3e8e0ff594853bc287ea9373bb1996a86427e79eb",
+  "risk": "routine",
+  "auto_merge": true
+}

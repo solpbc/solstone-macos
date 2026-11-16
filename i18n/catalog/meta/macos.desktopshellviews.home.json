@@ -1,0 +1,16 @@
+{
+  "description": "‹ home",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DesktopShellViews.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 6,
+  "source_revision": "5d065415ad873799519185ca30e3f17fa68ea4ee49fe67ad2f3f120ab21eaf4c",
+  "risk": "routine",
+  "auto_merge": true
+}

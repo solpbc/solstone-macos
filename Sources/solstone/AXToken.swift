@@ -791,7 +791,7 @@ extension SettingsObservationAXState {
     var headline: String {
         switch self {
         case .off:
-            return "off"
+            return MacStrings.macos_desktop_shared_app_microphonemodeoff()
         case .observing:
             return UICopy.SETTINGS_OBSERVATION_OBSERVING
         case .connecting:

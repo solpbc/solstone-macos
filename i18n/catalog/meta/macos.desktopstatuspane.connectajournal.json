@@ -1,0 +1,16 @@
+{
+  "description": "connect a journal",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DesktopStatusPane.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 17,
+  "source_revision": "fcd7518187826a73aa525355a48daec05e8301fda665cd3046bb00c52dd218fa",
+  "risk": "routine",
+  "auto_merge": true
+}

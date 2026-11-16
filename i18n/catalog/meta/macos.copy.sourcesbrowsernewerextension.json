@@ -1,0 +1,16 @@
+{
+  "description": "the solstone extension in a browser needs a newer solstone app. look under updates.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 83,
+  "source_revision": "fb8764b51547fbb0e7977bafab4d72a0ae48c41623c7ae6fde3e7f875955ebf9",
+  "risk": "routine",
+  "auto_merge": true
+}

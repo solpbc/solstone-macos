@@ -160,7 +160,7 @@ enum ImportOutcome: Equatable, Sendable {
 
 enum ImportOperation: Sendable { case save, start }
 
-let importGenericRefusal = "your journal couldn't accept this."
+let importGenericRefusal = MacStrings.macos_importlogic_yourjournalcouldntacceptthis()
 
 /// Reads the journal's answer, as the Android app does. A 403 from this Mac's own loopback proxy
 /// (it marks its refusals) is not the journal refusing the pairing.

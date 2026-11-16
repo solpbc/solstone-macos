@@ -1,0 +1,16 @@
+{
+  "description": "screen and audio stopped and couldn't start again on their own.",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "64d10f065ab3aede93a30f279e940ec780fdbf03e07faa8dcf3e5f26d661c7f3",
+  "risk": "routine",
+  "auto_merge": true
+}

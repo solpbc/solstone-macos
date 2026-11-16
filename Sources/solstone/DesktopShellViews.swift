@@ -188,12 +188,12 @@ extension SettingsView {
                 Button {
                     closePane()
                 } label: {
-                    Text("‹ home")
+                    Text(MacStrings.macos_desktopshellviews_home())
                         .font(.system(size: 13))
                         .foregroundStyle(SetupChromeColor.solOrange)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("home")
+                .accessibilityLabel(MacStrings.macos_desktopshellviews_home2())
                 .accessibilityIdentifier(AXID.Deck.paneBack)
             }
             HStack(spacing: 8) {
@@ -214,7 +214,7 @@ extension SettingsView {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("close")
+                    .accessibilityLabel(MacStrings.macos_desktopshellviews_close())
                     .accessibilityIdentifier(AXID.Deck.paneClose)
                 }
             }
@@ -223,8 +223,8 @@ extension SettingsView {
 
     private var addMorePane: some View {
         VStack(alignment: .leading, spacing: 12) {
-            paneHeader("add more")
-            Text("already on home")
+            paneHeader(MacStrings.macos_desktopshellviews_addmore())
+            Text(MacStrings.macos_desktopshellviews_alreadyonhome())
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             ForEach(appState.deckTiles, id: \.source) { tile in
@@ -269,7 +269,7 @@ struct AddMoreTile: View {
                     Spacer(minLength: 8)
                     name
                 }
-                Text("sources")
+                Text(MacStrings.macos_desktop_shared_app_sourcestitle())
                     .font(.system(size: 11))
                     .foregroundStyle(SetupChromeColor.faintInk(for: scheme))
             }
@@ -283,12 +283,12 @@ struct AddMoreTile: View {
                 .stroke(selected ? SetupChromeColor.solOrange : SetupChromeColor.hairline2(for: scheme),
                         style: StrokeStyle(lineWidth: selected ? 2 : 1, dash: selected ? [] : [4, 3]))
         )
-        .accessibilityLabel("add more, sources")
+        .accessibilityLabel(MacStrings.macos_desktopshellviews_addmoresources())
         .accessibilityIdentifier(AXID.Deck.addMore)
     }
 
     private var name: some View {
-        Text("add more")
+        Text(MacStrings.macos_desktopshellviews_addmore())
             .font(DeckStyle.name(compact ? 16 : 17))
             .foregroundStyle(SetupChromeColor.ink(for: scheme))
     }

@@ -8,9 +8,9 @@ import SwiftUI
 /// `JournalIconTileGeometry` (shared with the app-icon compositor) — never re-declared here,
 /// so a palette fix in one place can't drift from the other.
 nonisolated enum JournalMarkGeneric {
-    static let words = ["your", "journal"]
-    static let spokenValue = "your journal, not set up yet"
-    static let readPendingSpokenValue = "your journal, mark not read yet"
+    static let words = [MacStrings.macos_journalmarkgeneric_your(), MacStrings.macos_desktop_shared_about_pendingsettingstab()]
+    static let spokenValue = MacStrings.macos_journalmarkgeneric_yourjournalnotsetupyet()
+    static let readPendingSpokenValue = MacStrings.macos_journalmarkgeneric_yourjournalmarknotreadyet()
 }
 
 public enum JournalMarkSlot {
@@ -20,9 +20,9 @@ public enum JournalMarkSlot {
 }
 
 public enum JournalMarkUnavailable {
-    public static let words = ["mark", "unavailable"]
+    public static let words = [MacStrings.macos_journalmarkgeneric_mark(), MacStrings.macos_journalmarkgeneric_unavailable()]
     public static var slot: String { JournalMarkSlot.join(words) }
-    public static let accessibleName = "your journal's mark, unavailable right now"
+    public static let accessibleName = MacStrings.macos_journalmarkgeneric_yourjournalsmarkunavailablerightnow()
 }
 
 public struct JournalMarkUnavailableView: View {
@@ -74,8 +74,8 @@ public struct JournalMarkUnavailableView: View {
 }
 
 public enum JournalMarkNotPresented {
-    public static let words = ["not", "presented"]
-    public static let accessibleName = "no identity presented"
+    public static let words = [MacStrings.macos_journalmarkgeneric_not(), MacStrings.macos_journalmarkgeneric_presented()]
+    public static let accessibleName = MacStrings.macos_ui_noidentitypresented()
     /// Neutral ink. Brand colour here would claim an affiliation with whatever answered.
     static let chipHex = "#6E6453"
 }

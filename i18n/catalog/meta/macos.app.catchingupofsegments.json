@@ -1,0 +1,25 @@
+{
+  "description": "catching up · {checked} of {total} segments",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "checked",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 43,
+  "source_revision": "3731f268c403ec8f3ff9b7ccbc46e7482449b290aac97bd23dcf6202ebe2f35a",
+  "risk": "routine",
+  "auto_merge": true
+}

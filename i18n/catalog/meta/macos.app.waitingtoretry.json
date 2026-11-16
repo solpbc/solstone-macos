@@ -1,0 +1,16 @@
+{
+  "description": "waiting to retry",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalIngestPresentation.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 16,
+  "source_revision": "c939c7cce48ea9f6100b9df39b2e6545660c5afcb22843d03f06d565b054dd34",
+  "risk": "routine",
+  "auto_merge": true
+}

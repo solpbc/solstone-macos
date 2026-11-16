@@ -1,0 +1,16 @@
+{
+  "description": "this list applies to screen and activity too",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DesktopSourcePage.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 44,
+  "source_revision": "40461cb9c96ce2cba28125170502c4d2b1521843ce6e2be09159e05009a4eca2",
+  "risk": "routine",
+  "auto_merge": true
+}

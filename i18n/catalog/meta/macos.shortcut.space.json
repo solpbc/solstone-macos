@@ -1,0 +1,16 @@
+{
+  "description": "Space",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "c07af6187426ddd6ad011203d685aa7dc1419c81eb462a7aeae227ab1bb2e13f",
+  "risk": "routine",
+  "auto_merge": true
+}

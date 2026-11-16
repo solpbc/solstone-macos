@@ -1,0 +1,16 @@
+{
+  "description": "every day",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift. The same sentence is on Windows as windows.desktop.shared.updates.everyday. Keep the two translations consistent.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 9,
+  "source_revision": "1ba80179cc71ffcf420e8984b9461925b4accb5c3bc3aa3229a5f4c06e914425",
+  "risk": "routine",
+  "auto_merge": true
+}

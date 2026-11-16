@@ -1,0 +1,16 @@
+{
+  "description": "speech recognition",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupDownloadFooter.swift.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 18,
+  "source_revision": "0efddbeb59fa413cdd7aa843d8a76e3737248acfd3ca60bf757d2b20312c0e00",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "re-check all days, including previously synced ones",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 51,
+  "source_revision": "7cfc1c7f64c7f62e55fbbef51dd45264c20e79118501975e4222061ab6ad2cd7",
+  "risk": "routine",
+  "auto_merge": true
+}

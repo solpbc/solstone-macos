@@ -1,0 +1,16 @@
+{
+  "description": "downloading an update in the background…",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 40,
+  "source_revision": "204a05c15a65bc2b8412f9e7a1c8afab911a3ab5fbe372ada541068e215e9e3d",
+  "risk": "routine",
+  "auto_merge": true
+}

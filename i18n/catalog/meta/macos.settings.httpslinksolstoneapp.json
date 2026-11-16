@@ -1,0 +1,23 @@
+{
+  "description": "https://link.solstone.app",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 25,
+  "source_revision": "16f75bff09e5d171ab40c10d4b7d65573bca598e2b1a5951df0c9ce73afa945a",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "url",
+      "kind": "url",
+      "value": "https://link.solstone.app"
+    }
+  ]
+}

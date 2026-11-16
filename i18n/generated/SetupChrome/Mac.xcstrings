@@ -1,0 +1,36 @@
+{
+  "sourceLanguage": "en-US",
+  "version": "1.0",
+  "strings": {
+    "m6d61636f732e6163636573736962696c6974792e646f776e6c6f6164616374696f6e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6163636573736962696c6974792e646f776e6c6f6164726f77": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@, %2$@"
+          }
+        }
+      }
+    },
+    "m6d61636f732e736574757073637265656e6672616d652e73637265656e": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "screen"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "description": "on",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/PermissionSourceLiveState.swift. The same sentence is on Windows as windows.desktop.shared.app.settingsdiagnosticson. Keep the two translations consistent.",
+  "surfaces": [
+    "permissions"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 2,
+  "source_revision": "40d611c1c8b58aebd4ae5eef8a0723365b0d1bcaa7cba752d40a13221a70bdca",
+  "risk": "routine",
+  "auto_merge": true
+}

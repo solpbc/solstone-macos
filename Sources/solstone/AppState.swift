@@ -324,7 +324,7 @@ public final class AppState {
         alert.alertStyle = .warning
         alert.messageText = UICopy.JOURNAL_LINK_INVALID_TITLE
         alert.informativeText = UICopy.JOURNAL_LINK_INVALID_BODY
-        alert.addButton(withTitle: "close")
+        alert.addButton(withTitle: MacStrings.macos_desktopshellviews_close())
         alert.runModal()
     }
 

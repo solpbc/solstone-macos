@@ -1,0 +1,16 @@
+{
+  "description": "checked in Safari, Chrome, Edge and Brave. Firefox, other browsers, beta and preview versions of these, and web apps added to the Dock from Safari aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, the solstone app stops taking in your screen for a moment while it checks, and for a few seconds when the page is one you leave out. while a Chrome, Edge or Brave window shows two pages side by side, solstone can't tell which websites it shows, so after a moment that browser stays out of what the solstone app takes in from your screen until the window shows one page again. a website shown inside another website's page isn't recognized. neither is a website open in a Chrome, Edge or Brave side panel or sidebar. a left-out website's tab title can still show in a browser's tab bar. a minimized browser window's picture in the Dock can still show. a page that changes without changing its window title, or a page open for less than half a second, can be missed, and in Chrome, Edge or Brave its picture can stay on screen, and go into your journal, for a few seconds after you leave it. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you stop leaving out there comes off this list, so Safari, Chrome, Edge and Brave windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well. while any website is left out, Picture in Picture from Safari, and from other apps that use macOS's own player, stays out of what the solstone app takes in from your screen. Picture in Picture from Chrome, Edge or Brave counts as a window of that browser: while it shows something from a website you leave out, that browser stays out of what the solstone app takes in from your screen.",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "872630eb7804b66773ccf9346316b1a0c9476fa4190626b58d4f7f62aeef3e94",
+  "risk": "routine",
+  "auto_merge": true
+}

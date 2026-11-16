@@ -1,0 +1,16 @@
+{
+  "description": "download",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift. The same sentence is on Windows as windows.desktop.shared.updates.download. Keep the two translations consistent.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 8,
+  "source_revision": "5da5ece3ca03104810ab6fbf99c2306c376ac8053f51c919291d63283d27d737",
+  "risk": "routine",
+  "auto_merge": true
+}

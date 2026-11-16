@@ -1,0 +1,16 @@
+{
+  "description": "this moves solstone for tmux into this app, and solstone for tmux stops for good. what it still has waiting goes into your journal throug...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 194,
+  "source_revision": "1e72569fd89ad3c38fe9c6997de72c4e42e738e6732262a30ea389615a267090",
+  "risk": "routine",
+  "auto_merge": true
+}

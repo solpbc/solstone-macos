@@ -1,0 +1,16 @@
+{
+  "description": "sending kept segments to your journal",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalMigration.swift.",
+  "surfaces": [
+    "migration"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 37,
+  "source_revision": "9e4c4a097b1323fdabc61f5c6e9224c2a180a515416f0d4d91e4416bf459027f",
+  "risk": "routine",
+  "auto_merge": true
+}

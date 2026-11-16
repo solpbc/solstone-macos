@@ -1,0 +1,21 @@
+{
+  "description": "new terminal history from here, and what's already in your journal stays ({reason})",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "reason",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 83,
+  "source_revision": "c35c3441f5e5d9c773dd8608ce04fd0be4b823e1a77c0fe504cdeb6524ee433c",
+  "risk": "routine",
+  "auto_merge": true
+}

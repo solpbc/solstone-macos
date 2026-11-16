@@ -1,0 +1,16 @@
+{
+  "description": "less than a minute",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "5c441b5545a3c8c5769b456df4206e481d1a742b75dab807f1e673f487b95cc0",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "if solstone is already in Applications but doesn't appear in Screen & System Audio Recording, remove any old solstone entry and try enabl...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 164,
+  "source_revision": "ddcac7b81d1d9b0e8bdee93e329437d0c0f16f2e35384ff866f8113d57cd3b22",
+  "risk": "routine",
+  "auto_merge": true
+}

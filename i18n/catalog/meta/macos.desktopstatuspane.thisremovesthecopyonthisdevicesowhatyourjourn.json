@@ -1,0 +1,16 @@
+{
+  "description": "this removes the copy on this device, so what your journal didn't take won't reach it.",
+  "context": "Shown by Sources/solstone/DesktopStatusPane.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "30aadec59a39f5fcfe2eeb2846b22a2815d7044e15b7d75c1ae83cfe840d546d",
+  "risk": "routine",
+  "auto_merge": true
+}

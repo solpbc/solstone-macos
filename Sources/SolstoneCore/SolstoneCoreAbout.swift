@@ -194,6 +194,56 @@ public enum SolstoneCoreAbout {
         return appLine + "\n" + journalLine
     }
 
+    public static func displayCaptureBlock(
+        appVersion: String,
+        appBuild: String?,
+        osVersion: String,
+        arch: String?,
+        journalVersion: String?,
+        journalBuild: String? = nil,
+        journalOS: String? = nil,
+        journalOSVersion: String? = nil,
+        journalArch: String? = nil,
+        journalAge: String? = nil,
+        unknownJournal: String? = nil
+    ) -> String {
+        let appLine = displayLine(
+            name: MacStrings.macos_about_displayappname(),
+            version: appVersion,
+            build: appBuild,
+            os: "macos",
+            osVersion: osVersion,
+            arch: arch
+        )
+        let journalLine = (journalVersion == nil || journalVersion?.isEmpty == true) && unknownJournal != nil ? unknownJournal! : displayLine(
+            name: MacStrings.macos_about_displayjournalname(),
+            version: journalVersion,
+            build: journalBuild,
+            os: journalOS,
+            osVersion: journalOSVersion,
+            arch: journalArch,
+            age: journalAge
+        )
+        return appLine + "\n" + journalLine
+    }
+
+    public static func displayLine(
+        name: String, version: String?, build: String? = nil,
+        os: String? = nil, osVersion: String? = nil, arch: String? = nil, age: String? = nil
+    ) -> String {
+        guard let version, !version.isEmpty else { return MacStrings.macos_about_displayunknown(name) }
+        var components = [MacStrings.macos_about_displayversion(name, version.trimmingLeadingV())]
+        if let build, !build.isEmpty, let os, buildOperatingSystems.contains(os) {
+            components[0] += " (\(build))"
+        }
+        if let os, !os.isEmpty {
+            components.append(os + (osVersion.map { $0.isEmpty ? "" : " \($0)" } ?? ""))
+        }
+        if let arch, !arch.isEmpty { components.append(normalizedArch(arch)) }
+        let value = components.joined(separator: separator)
+        return age.map { MacStrings.macos_about_displayaged(value, $0) } ?? value
+    }
+
     public static func numericOSVersion(_ version: OperatingSystemVersion) -> String {
         if version.patchVersion == 0 {
             return "\(version.majorVersion).\(version.minorVersion)"

@@ -1,0 +1,16 @@
+{
+  "description": "sync resumes once your journal can read that day",
+  "context": "Shown by Sources/solstone/StatusHealthSummary.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "a62611eb19ed0a2226cdab93c6f76488b9a404b56b3c99aa62961625c4c98673",
+  "risk": "routine",
+  "auto_merge": true
+}

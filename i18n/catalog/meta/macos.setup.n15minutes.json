@@ -1,0 +1,16 @@
+{
+  "description": "15 minutes",
+  "context": "the solstone app, speaking to the owner, during setup. The number does not vary. The translator writes the whole phrase, including the number word. No count argument. This is the fixed-cardinal shape, not a select.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 10,
+  "source_revision": "c47a4e90abaaca82efdfa329e224cf47db51f1b2fa7a803455450c0a6c72c7ce",
+  "risk": "routine",
+  "auto_merge": true
+}

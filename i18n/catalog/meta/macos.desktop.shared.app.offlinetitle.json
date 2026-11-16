@@ -1,0 +1,16 @@
+{
+  "description": "can't reach your journal",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift. The same sentence is on Windows as windows.desktop.shared.app.offlinetitle. Keep the two translations consistent.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 24,
+  "source_revision": "e1d247ea71783fbcef28a3ee242ad1c0d69bba1febd8a4aae9fb1a2173f49336",
+  "risk": "routine",
+  "auto_merge": true
+}

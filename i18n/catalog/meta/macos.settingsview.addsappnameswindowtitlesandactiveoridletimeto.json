@@ -1,0 +1,28 @@
+{
+  "description": "adds app names, window titles and active or idle time to your journal, and browser addresses if you allow {UICopy.Websites.accessibilityName(macOSMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)}. it starts and pauses with screen and computer sound.",
+  "context": "Shown by Sources/solstone/SettingsView.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "38515c235e7ff34eacec3de672e12ce3d62e2d0883c4027561727e6b6c114f06",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

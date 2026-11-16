@@ -1,0 +1,16 @@
+{
+  "description": "the microphone stays off until you turn it on. what you turn on goes into your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 87,
+  "source_revision": "cb15d48c0910d3c8b23d2be23bc6d6b0c7e4354dfbe377010dfd0b16ef816a9f",
+  "risk": "routine",
+  "auto_merge": true
+}

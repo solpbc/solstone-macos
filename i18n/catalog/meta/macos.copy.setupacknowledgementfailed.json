@@ -1,0 +1,16 @@
+{
+  "description": "your journal didn't get the reply. try again.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 45,
+  "source_revision": "c0f9fa88d8605b36504aa476f4426a17001c15996a47d87e2f998e03e1cc2cbb",
+  "risk": "routine",
+  "auto_merge": true
+}

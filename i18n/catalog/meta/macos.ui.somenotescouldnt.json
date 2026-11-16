@@ -1,0 +1,16 @@
+{
+  "description": "some notes couldn't go into your journal. the solstone app tries them again the next time it restarts.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 102,
+  "source_revision": "ef9cf50169fca77ce16509cb4bc664d7a0f8d026ee2e8a3d8fdbbf0c842f4d6b",
+  "risk": "routine",
+  "auto_merge": true
+}

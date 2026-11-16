@@ -1,0 +1,16 @@
+{
+  "description": "your current pairing stays in use. nothing this mac has kept went to that journal through this link.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 100,
+  "source_revision": "716fd9fa6db2bdbed378f02ffaadb1d6f069bd81131dc4845417a37ee8f0a318",
+  "risk": "routine",
+  "auto_merge": true
+}

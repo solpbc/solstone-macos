@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>m6d61636f732e6a6f75726e616c6c6f63616c68747470636c69656e742e6e6f616e73776572</key>
+	<string>no answer: %1$@</string>
+	<key>m6d61636f732e6a6f75726e616c6c6f63616c68747470636c69656e742e737461747573</key>
+	<string>status %1$@: %2$@</string>
+	<key>m6d61636f732e6a6f75726e616c6c6f63616c68747470636c69656e742e746865616e7377657268656c646e6f</key>
+	<string>the answer held no usable link</string>
+	<key>m6d61636f732e6c6f63616c6163636573732e6e6f726561736f6e</key>
+	<string>no reason given</string>
+</dict>
+</plist>

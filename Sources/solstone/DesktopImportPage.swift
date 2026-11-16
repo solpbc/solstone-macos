@@ -9,59 +9,59 @@ import UniformTypeIdentifiers
 
 /// Import's words. Every one but the three computer lines is the phones' word for word.
 enum ImportCopy {
-    static let title = "import"
-    static let tileSubline = "files"
-    static let adds = "adds PDFs, audio, images and text you choose here or drop on this window."
-    static let choose = "choose files…"
-    static let screenshotsPointer = "screenshots come in on their own."
-    static let setUpScreenshots = "set up screenshots"
-    static let openScreenshots = "open screenshots"
-    static let interrupted = "something you were adding didn't finish saving. add it again."
-    static let ok = "ok"
-    static let recent = "recent"
-    static let onThisDevice = "on this device"
-    static let waiting = "waiting"
-    static let sending = "sending"
-    static let missingCopy = "the copy on this device is missing"
-    static let tryNow = "try now"
-    static let remove = "remove"
-    static let cancel = "cancel"
-    static let missingCopyRemove = "the copy is already gone, so this only clears it from here."
-    static let savedRemove = "this removes the copy on this device. your journal may still bring in the copy it already has."
-    static let plainRemove = "this removes the copy on this device, so it won't reach your journal."
-    static let nothingSaved = "nothing was saved on this device."
-    static let importsNeedYou = "imports need you"
-    static let openImportToSeeWhy = "open import to see why"
-    static let storeUnreadable = "couldn't read imports on this device. nothing has been removed. restart the solstone app to try again."
+    static let title = MacStrings.macos_desktopimportpage_import()
+    static let tileSubline = MacStrings.macos_desktopimportpage_files()
+    static let adds = MacStrings.macos_desktopimportpage_addspdfsaudioimagesandtextyouchoosehereordrop()
+    static let choose = MacStrings.macos_desktopimportpage_choosefiles()
+    static let screenshotsPointer = MacStrings.macos_desktopimportpage_screenshotscomeinontheirown()
+    static let setUpScreenshots = MacStrings.macos_desktopimportpage_setupscreenshots()
+    static let openScreenshots = MacStrings.macos_desktopimportpage_openscreenshots()
+    static let interrupted = MacStrings.macos_desktopimportpage_somethingyouwereaddingdidntfinishsavingaddita()
+    static let ok = MacStrings.macos_desktop_shared_settings_severity()
+    static let recent = MacStrings.macos_desktopimportpage_recent()
+    static let onThisDevice = MacStrings.macos_desktopstatuspane_onthisdevice()
+    static let waiting = MacStrings.macos_desktopimportpage_waiting()
+    static let sending = MacStrings.macos_desktopimportpage_sending()
+    static let missingCopy = MacStrings.macos_desktopimportpage_thecopyonthisdeviceismissing()
+    static let tryNow = MacStrings.macos_desktopimportpage_trynow()
+    static let remove = MacStrings.macos_desktopimportpage_remove()
+    static let cancel = MacStrings.macos_desktop_shared_setup_cancel()
+    static let missingCopyRemove = MacStrings.macos_desktopimportpage_thecopyisalreadygonesothisonlyclearsitfromher()
+    static let savedRemove = MacStrings.macos_desktopimportpage_thisremovesthecopyonthisdeviceyourjournalmays()
+    static let plainRemove = MacStrings.macos_desktopimportpage_thisremovesthecopyonthisdevicesoitwontreachyo()
+    static let nothingSaved = MacStrings.macos_desktopimportpage_nothingwassavedonthisdevice()
+    static let importsNeedYou = MacStrings.macos_desktopimportpage_importsneedyou()
+    static let openImportToSeeWhy = MacStrings.macos_desktopimportpage_openimporttoseewhy()
+    static let storeUnreadable = MacStrings.macos_desktopimportpage_couldntreadimportsonthisdevicenothinghasbeenr()
 
-    static func removeTitle(_ name: String) -> String { "remove \(name)?" }
-    static func saving(_ done: Int, _ total: Int) -> String { "saving on this device: \(done + 1) of \(total)" }
-    static func saved(_ count: Int) -> String { "saved on this device: \(count)" }
+    static func removeTitle(_ name: String) -> String { MacStrings.macos_desktopimportpage_remove2("\(name)") }
+    static func saving(_ done: Int, _ total: Int) -> String { MacStrings.macos_desktopimportpage_savingonthisdeviceof(MacStrings.number(done + 1), MacStrings.number(total)) }
+    static func saved(_ count: Int) -> String { MacStrings.macos_desktopimportpage_savedonthisdevice(MacStrings.number(count)) }
 
     static func recent(_ snapshot: ImportSnapshot) -> String {
         if snapshot.countsAsWaiting > 0 || (snapshot.needsOwner && snapshot.waiting == .journalTooOld) {
             switch snapshot.waiting {
-            case .unpaired: return "imports wait on this device until you connect a journal."
-            case .awaitingConfirmation: return "imports wait until you confirm your journal's mark."
-            case .pairingRefused: return "your journal stopped accepting this device. imports wait here until you pair again."
-            case .checkingJournal: return "checking your journal."
-            case .journalTooOld: return "imports wait until your journal is updated."
-            case .sending: return "sending to your journal."
-            case .waiting: return "waiting to go to your journal."
+            case .unpaired: return MacStrings.macos_desktopimportpage_importswaitonthisdeviceuntilyouconnectajourna()
+            case .awaitingConfirmation: return MacStrings.macos_desktopimportpage_importswaituntilyouconfirmyourjournalsmark()
+            case .pairingRefused: return MacStrings.macos_desktopimportpage_yourjournalstoppedacceptingthisdeviceimportsw()
+            case .checkingJournal: return MacStrings.macos_desktopimportpage_checkingyourjournal()
+            case .journalTooOld: return MacStrings.macos_desktopimportpage_importswaituntilyourjournalisupdated()
+            case .sending: return MacStrings.macos_desktopimportpage_sendingtoyourjournal()
+            case .waiting: return MacStrings.macos_desktopimportpage_waitingtogotoyourjournal()
             }
         }
-        if !snapshot.rows.isEmpty { return "not going to your journal right now. each one says why." }
-        if snapshot.deliveredToCurrentJournal { return "in your journal." }
-        return "nothing yet."
+        if !snapshot.rows.isEmpty { return MacStrings.macos_desktopimportpage_notgoingtoyourjournalrightnoweachonesayswhy() }
+        if snapshot.deliveredToCurrentJournal { return MacStrings.macos_desktopimportpage_inyourjournal() }
+        return MacStrings.macos_desktopimportpage_nothingyet()
     }
 
     static func refusal(_ reason: ImportIntakeRefusal) -> String {
         switch reason {
-        case .unsupportedType: return "your journal can't take this kind of file"
-        case .cannotConvert: return "this device can't convert this photo"
-        case .unreadable: return "this couldn't be read. add it again"
-        case .tooLarge: return "it's larger than your journal takes"
-        case .noSpace: return "there isn't enough room on this device"
+        case .unsupportedType: return MacStrings.macos_desktopimportpage_yourjournalcanttakethiskindoffile()
+        case .cannotConvert: return MacStrings.macos_desktopimportpage_thisdevicecantconvertthisphoto()
+        case .unreadable: return MacStrings.macos_desktopimportpage_thiscouldntbereadadditagain()
+        case .tooLarge: return MacStrings.macos_desktopimportpage_itslargerthanyourjournaltakes()
+        case .noSpace: return MacStrings.macos_desktopimportpage_thereisntenoughroomonthisdevice()
         }
     }
 
@@ -69,10 +69,10 @@ enum ImportCopy {
     static func change(_ result: ImportActionResult) -> String? {
         switch result {
         case .done, .removed: return nil
-        case .alreadyDelivered: return "it's already in your journal."
-        case .gone: return "it's already gone from this device."
-        case .busy: return "it's sending now, so nothing changed."
-        case .notApplicable, .storeUnreadable: return "nothing changed. it may have moved on; check the list."
+        case .alreadyDelivered: return MacStrings.macos_desktopimportpage_itsalreadyinyourjournal()
+        case .gone: return MacStrings.macos_desktopimportpage_itsalreadygonefromthisdevice()
+        case .busy: return MacStrings.macos_desktopimportpage_itssendingnowsonothingchanged()
+        case .notApplicable, .storeUnreadable: return MacStrings.macos_desktopimportpage_nothingchangeditmayhavemovedoncheckthelist()
         }
     }
 
@@ -258,7 +258,7 @@ struct DesktopImportPage: View {
                     .accessibilityLabel("\(ImportCopy.tryNow), \(row.name)")
                 }
                 Button(ImportCopy.remove) { confirming = row }
-                    .accessibilityLabel("\(ImportCopy.remove) \(row.name)")
+                    .accessibilityLabel(MacStrings.macos_accessibility_removeitem(row.name))
             }
         }
         .font(.callout)

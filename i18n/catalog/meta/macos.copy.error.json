@@ -1,0 +1,21 @@
+{
+  "description": "error: {message} →",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "message",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 18,
+  "source_revision": "ccd0bf10a3352af5862bd04cdc6749b56d420a5d78fc50b5034691f4af64c7ce",
+  "risk": "routine",
+  "auto_merge": true
+}

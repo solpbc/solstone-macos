@@ -98,6 +98,14 @@ Server Key: UserDefaults
 - Interleaved track reading during remix ensures AVAssetWriter receives data from all tracks together
 - `SingleTrackAudioWriter` uses an RMS threshold only to batch silent buffers while writing
 
+## String catalog
+
+- Author native interface copy in i18n/catalog/source/en-US.ftl with a translator sidecar in i18n/catalog/meta. This includes menu items, settings, alerts, notifications, accessibility text, terminal messages and localized app metadata.
+- Regenerate with the compiler pinned in i18n/compiler.json, following i18n/README.md. Use the generated MacStrings calls; never add English defaults beside them or edit generated resources alone.
+- Use complete messages with named values and native cardinals. Keep technical identifiers, protocol records, logs and external application-title matchers separate from translated presentation.
+- Each shared library owns its resource bundle. Keep public APIs source-compatible; a consumer receives the committed native resources when it updates its dependency.
+- Only approved languages belong in production resources. Pseudo resources are local verification artifacts.
+
 ## Logging
 
 Uses macOS unified logging (`os.Logger`) with subsystem `app.solstone.observer`. Categories: `general`, `capture`, `audio`, `upload`, `setup`, `storage`. See the `live-logging` skill for full details.

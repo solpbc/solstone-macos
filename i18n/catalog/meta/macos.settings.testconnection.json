@@ -1,0 +1,16 @@
+{
+  "description": "test connection",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 15,
+  "source_revision": "53c1e02a4eebd0eecc66c1cc960e1f9607543661ea3aff26eac23a274198e1fb",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "screen and audio couldn't start. check permissions in settings, then try again.",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "2cd065cc96a853c1caf0083c4b2a2f637a0b45a23247a39f964b5e5202a22e45",
+  "risk": "routine",
+  "auto_merge": true
+}

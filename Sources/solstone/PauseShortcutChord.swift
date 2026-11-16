@@ -83,7 +83,7 @@ public struct PauseShortcutChord: Hashable, Sendable, Codable {
         switch keyCode {
         case 36: return "↩"
         case 48: return "⇥"
-        case 49: return "Space"
+        case 49: return MacStrings.macos_shortcut_space()
         case 51: return "⌫"
         case 53: return "⎋"
         case 96: return "F5"
@@ -156,7 +156,7 @@ public struct PauseShortcutChord: Hashable, Sendable, Codable {
         case 46: return "M"
         case 47: return "."
         case 48: return "⇥"
-        case 49: return "Space"
+        case 49: return MacStrings.macos_shortcut_space()
         case 50: return "`"
         case 51: return "⌫"
         case 53: return "⎋"
@@ -176,7 +176,7 @@ public struct PauseShortcutChord: Hashable, Sendable, Codable {
         case 124: return "→"
         case 125: return "↓"
         case 126: return "↑"
-        default: return "Key\(keyCode)"
+        default: return MacStrings.macos_shortcut_key("\(keyCode)")
         }
     }
 

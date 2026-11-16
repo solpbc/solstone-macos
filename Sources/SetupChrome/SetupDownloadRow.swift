@@ -70,7 +70,7 @@ public struct SetupDownloadRow: View {
             }
             .frame(width: Self.width)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(Text([name, detail].compactMap { $0 }.joined(separator: ", ")))
+            .accessibilityLabel(Text(detail.map { MacStrings.macos_accessibility_downloadrow(name, $0) } ?? name))
 
             if let actionTitle {
                 Button(actionTitle, action: action)
@@ -78,7 +78,7 @@ public struct SetupDownloadRow: View {
                     .lineLimit(1)
                     .fixedSize()
                     .disabled(!actionEnabled)
-                    .accessibilityLabel(Text("\(name) \(actionTitle)"))
+                    .accessibilityLabel(Text(MacStrings.macos_accessibility_downloadaction(name, actionTitle)))
                     .modifier(OptionalAccessibilityIdentifier(identifier: actionIdentifier))
             }
         }

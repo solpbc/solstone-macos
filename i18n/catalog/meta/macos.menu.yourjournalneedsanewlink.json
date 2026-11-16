@@ -1,0 +1,16 @@
+{
+  "description": "your journal needs a new link →",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/MenuContent.swift.",
+  "surfaces": [
+    "menu"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 31,
+  "source_revision": "d7359f18316005cad6e68c31c93b457b429ac7a4d206fb66c55f72f5515d4d4f",
+  "risk": "routine",
+  "auto_merge": true
+}

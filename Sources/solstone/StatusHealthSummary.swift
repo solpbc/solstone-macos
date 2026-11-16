@@ -52,21 +52,21 @@ internal struct StatusHealthSummary: Equatable, Sendable {
 internal func coarseRelativeTime(_ date: Date, now: Date) -> String {
     let interval = now.timeIntervalSince(date)
     if interval < 60 {
-        return "just now"
+        return MacStrings.macos_desktop_shared_app_justnow()
     }
     if interval < 3_600 {
-        return "\(Int(interval / 60))m ago"
+        return MacStrings.macos_app_mago(MacStrings.number(Int(interval / 60)))
     }
     if interval < 86_400 {
-        return "\(Int(interval / 3_600))h ago"
+        return MacStrings.macos_app_hago(MacStrings.number(Int(interval / 3_600)))
     }
-    return "\(Int(interval / 86_400))d ago"
+    return MacStrings.macos_app_dago(MacStrings.number(Int(interval / 86_400)))
 }
 
 internal func bundledStatusFooterText(permissionsGranted: Bool, microphoneCount: Int) -> String {
-    let permissions = permissionsGranted ? "permissions granted" : "permissions need attention"
-    let microphones = microphoneCount == 1 ? "1 microphone" : "\(microphoneCount) microphones"
-    return "everything stays on this mac · \(permissions) · \(microphones)"
+    return permissionsGranted
+        ? MacStrings.macos_status_footergranted(microphoneCount)
+        : MacStrings.macos_status_footerattention(microphoneCount)
 }
 
 extension StatusHealthSummary {
@@ -96,16 +96,13 @@ extension StatusHealthSummary {
         // A migrated Mac can retain successful delivery and mark-confirmation records
         // after its device-bound pairing is gone. Absence leads every connection state.
         if !hasPersistedPairing {
-            let waiting = pendingCount > 0
-                ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting on this mac. "
-                : ""
             return .init(
                 severity: isRecording || pendingCount > 0 ? .attention : .calm,
                 title: UICopy.SETTINGS_LAST_DELIVERY_NOT_LINKED,
-                subtitle: waiting + "re-link in journal settings to resume syncing.",
+                subtitle: pendingCount > 0 ? MacStrings.macos_status_relinkwaiting(pendingCount) : MacStrings.macos_app_relinkinjournalsettingstoresume(),
                 axValue: "external_not_linked",
                 action: StatusHealthAction(
-                    label: "open journal settings",
+                    label: MacStrings.macos_app_openjournalsettings(),
                     settingsTab: "service",
                     reasksJournalMark: false
                 )
@@ -219,8 +216,8 @@ extension StatusHealthSummary {
         if isBundled {
             return .init(
                 severity: .attention,
-                title: "your journal needs a new link",
-                subtitle: "open your journal panel to connect this mac again",
+                title: MacStrings.macos_app_yourjournalneedsanewlink(),
+                subtitle: MacStrings.macos_app_openyourjournalpaneltoconnectthis(),
                 axValue: MenubarStatusRowState.journalMigrationNeeded.axToken
             )
         } else {
@@ -263,16 +260,16 @@ extension StatusHealthSummary {
                 return .init(
                     severity: .attention,
                     title: reason,
-                    subtitle: "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") kept on this mac",
+                    subtitle: MacStrings.macos_app_segmentkeptonthismac_native_plural(pendingCount),
                     axValue: "external_blocked"
                 )
             case .awaitingTunnel:
                 let subtitle = pendingCount > 0
-                    ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here"
-                    : "sync resumes when the journal connection is ready"
+                    ? MacStrings.macos_statushealthsummary_segmentwaitinghere_plural(pendingCount)
+                    : MacStrings.macos_statushealthsummary_syncresumeswhenthejournalconnectionisready()
                 return .init(
                     severity: .warn,
-                    title: "connecting to your journal…",
+                    title: MacStrings.macos_app_setupconnectingtoyourjournal(),
                     subtitle: subtitle,
                     axValue: "external_awaiting_tunnel"
                 )
@@ -283,18 +280,18 @@ extension StatusHealthSummary {
                     // No "nothing is lost" here: the journal has reported a day it cannot read, and
                     // this app can vouch only for what is still on this mac.
                     let subtitle = pendingCount > 0
-                        ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here · kept on this mac until your journal can read that day"
-                        : "sync resumes once your journal can read that day"
+                        ? MacStrings.macos_statushealthsummary_segmentwaitingherekeptonthismacuntilyourjourn_plural(pendingCount)
+                        : MacStrings.macos_statushealthsummary_syncresumesonceyourjournalcanreadthatday()
                     return .init(
                         severity: .attention,
-                        title: "your journal couldn't read \(ownerDayLabel(day))",
+                        title: MacStrings.macos_app_yourjournalcouldntread("\(ownerDayLabel(day))"),
                         subtitle: subtitle,
                         axValue: "external_offline"
                     )
                 }
                 let subtitle = pendingCount > 0
-                    ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting here · nothing is lost, sync resumes when it's back"
-                    : "nothing is lost · sync resumes when it's back"
+                    ? MacStrings.macos_statushealthsummary_segmentwaitingherenothingislostsyncresumeswhe_plural(pendingCount)
+                    : MacStrings.macos_statushealthsummary_nothingislostsyncresumeswhenitsback()
                 if let reason = lastHealthReason {
                     switch reason {
                     case .pairingRevoked, .journalNotServing, .journalRefused,
@@ -311,7 +308,7 @@ extension StatusHealthSummary {
                 }
                 return .init(
                     severity: .attention,
-                    title: "can't reach your journal",
+                    title: MacStrings.macos_desktop_shared_app_offlinetitle(),
                     subtitle: subtitle,
                     axValue: "external_offline"
                 )
@@ -327,11 +324,11 @@ extension StatusHealthSummary {
                     return summary
                 }
                 let subtitle = pendingCount > 0
-                    ? "\(pendingCount) segment\(pendingCount == 1 ? "" : "s") waiting"
-                    : "retrying the last upload"
+                    ? MacStrings.macos_statushealthsummary_segmentwaiting_plural(pendingCount)
+                    : MacStrings.macos_statushealthsummary_retryingthelastupload()
                 return .init(
                     severity: .warn,
-                    title: "catching up · retrying an upload",
+                    title: MacStrings.macos_app_catchingupretryinganupload(),
                     subtitle: subtitle,
                     axValue: "external_retrying"
                 )
@@ -348,8 +345,8 @@ extension StatusHealthSummary {
                 }
                 return .init(
                     severity: .warn,
-                    title: "catching up · \(checked) of \(total) segments",
-                    subtitle: "syncing to your journal",
+                    title: MacStrings.macos_app_catchingupofsegments(MacStrings.number(checked), MacStrings.number(total)),
+                    subtitle: MacStrings.macos_app_syncingtoyourjournal(),
                     axValue: "external_syncing"
                 )
             case .uploading:
@@ -363,10 +360,10 @@ extension StatusHealthSummary {
                 ) {
                     return summary
                 }
-                let subtitle = pendingCount > 0 ? "\(pendingCount) more waiting" : "syncing to your journal"
+                let subtitle = pendingCount > 0 ? MacStrings.macos_statushealthsummary_morewaiting(MacStrings.number(pendingCount)) : MacStrings.macos_app_syncingtoyourjournal()
                 return .init(
                     severity: .warn,
-                    title: "catching up · sending the latest",
+                    title: MacStrings.macos_app_catchingupsendingthelatest(),
                     subtitle: subtitle,
                     axValue: "external_uploading"
                 )
@@ -399,20 +396,19 @@ extension StatusHealthSummary {
                 ) {
                     return summary
                 }
-                let waiting = pendingCount == 0 ? " · nothing waiting" : " · \(pendingCount) waiting"
                 switch lastDeliveryOutcome {
                 case .delivered(let date):
                     return .init(
                         severity: .good,
-                        title: "all good · on, synced to \(journalSlot)",
-                        subtitle: "\(UICopy.SETTINGS_LAST_DELIVERY_LABEL) \(coarseRelativeTime(date, now: now))\(waiting)",
+                        title: MacStrings.macos_app_allgoodonsyncedto("\(journalSlot)"),
+                        subtitle: pendingCount == 0 ? MacStrings.macos_status_deliveredempty(coarseRelativeTime(date, now: now)) : MacStrings.macos_status_deliveredwaiting(coarseRelativeTime(date, now: now), String(pendingCount)),
                         axValue: "external_synced"
                     )
                 case .noDeliveryYet:
                     return .init(
                         severity: .calm,
                         title: UICopy.SETTINGS_OBSERVATION_OBSERVING,
-                        subtitle: "\(UICopy.SETTINGS_LAST_DELIVERY_NEVER)\(waiting)",
+                        subtitle: pendingCount == 0 ? MacStrings.macos_status_neverempty() : MacStrings.macos_status_neverwaiting(String(pendingCount)),
                         axValue: "external_no_delivery_yet"
                     )
                 case .notLinked:
@@ -449,7 +445,7 @@ extension StatusHealthSummary {
             lastHealthReason: lastHealthReason
         ) {
         case .connectionWaiting: return .awaitingTunnel
-        case .offline: return .offline("connection unavailable")
+        case .offline: return .offline(MacStrings.macos_app_connectionunavailable())
         case .observing:
             switch status {
             // Connected, and an upload that could not get through waits for its retry.
@@ -472,11 +468,11 @@ extension StatusHealthSummary {
     ) -> StatusHealthSummary? {
         if isPaused || ownerPauseHeldIdle {
             let subtitle = isBundled
-                ? "journal healthy on this mac"
-                : (isSynced ? "synced to \(journalSlot)" : "paused · \(journalSlot)")
+                ? MacStrings.macos_app_journalhealthyonthismac()
+                : (isSynced ? MacStrings.macos_statushealthsummary_syncedto("\(journalSlot)") : MacStrings.macos_statushealthsummary_paused("\(journalSlot)"))
             return StatusHealthSummary(
                 severity: .warn,
-                title: "solstone is paused",
+                title: MacStrings.macos_app_solstoneispaused(),
                 subtitle: subtitle,
                 axValue: "paused"
             )
@@ -486,8 +482,8 @@ extension StatusHealthSummary {
                 severity: .calm,
                 title: UICopy.MENUBAR_STARTING,
                 subtitle: isBundled
-                    ? "your journal is fine"
-                    : "nothing is reaching your journal yet",
+                    ? MacStrings.macos_statushealthsummary_yourjournalisfine()
+                    : MacStrings.macos_statushealthsummary_nothingisreachingyourjournalyet(),
                 axValue: "off"
             )
         }

@@ -1,0 +1,438 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>m6d61636f732e6170702e7365676d656e746b6570746f6e746869736d61632e6e61746976652e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ segment kept on this mac</string>
+			<key>other</key>
+			<string>%2$@ segments kept on this mac</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e617564696f2e7265636f7665726564</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ dropped out earlier and is back. part of this segment may be missing.</string>
+			<key>other</key>
+			<string>%2$@ dropped out earlier and are back. part of this segment may be missing.</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e617564696f2e7265636f766572696e67</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ isn't coming through right now. the solstone app is trying again on its own.</string>
+			<key>other</key>
+			<string>%2$@ aren't coming through right now. the solstone app is trying again on its own.</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e62726f777365722e686f75727361676f</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 hour ago</string>
+			<key>other</key>
+			<string>%2$@ hours ago</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e62726f777365722e6c6566746f757473706f6b656e</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ is left out of what the solstone app takes in from your screen</string>
+			<key>other</key>
+			<string>%2$@ are left out of what the solstone app takes in from your screen</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e686f75727361676f2e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 hour ago</string>
+			<key>other</key>
+			<string>%2$@ hours ago</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6d696e757465732e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 minute</string>
+			<key>other</key>
+			<string>%2$@ minutes</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6e6f7465732e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 note</string>
+			<key>other</key>
+			<string>%2$@ notes</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e70616765732e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 page</string>
+			<key>other</key>
+			<string>%2$@ pages</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e70617573652e6465636b686f757273</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>paused, 1 hour left</string>
+			<key>other</key>
+			<string>paused, %2$@ hours left</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e70617573652e6465636b686f7572736d696e75746573</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>paused, 1 hour %2$@ min left</string>
+			<key>other</key>
+			<string>paused, %3$@ hours %2$@ min left</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e70617573656d616e616765722e6d696e732e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 min</string>
+			<key>other</key>
+			<string>%2$@ mins</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e73637265656e73686f74636f70792e73637265656e73686f74732e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 screenshot</string>
+			<key>other</key>
+			<string>%2$@ screenshots</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e73637265656e73686f74732e6272696e67696e</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>bring in 1 screenshot</string>
+			<key>other</key>
+			<string>bring in %2$@ screenshots</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e73637265656e73686f74732e63616e6e6f746272696e67</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 screenshot can't come in, so it stays in the folder.</string>
+			<key>other</key>
+			<string>%2$@ screenshots can't come in, so they stay in the folder.</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e73637265656e73686f74732e63616e6e6f7472656164</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>couldn't read 1 screenshot.</string>
+			<key>other</key>
+			<string>couldn't read %2$@ screenshots.</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e736f757263652e686f757273</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 hour</string>
+			<key>other</key>
+			<string>%2$@ hours</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e7374617475732e666f6f746572617474656e74696f6e</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>everything stays on this mac · permissions need attention · 1 microphone</string>
+			<key>other</key>
+			<string>everything stays on this mac · permissions need attention · %2$@ microphones</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e7374617475732e666f6f7465726772616e746564</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>everything stays on this mac · permissions granted · 1 microphone</string>
+			<key>other</key>
+			<string>everything stays on this mac · permissions granted · %2$@ microphones</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e7374617475732e72656c696e6b77616974696e67</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ segment waiting on this mac. re-link in journal settings to resume syncing.</string>
+			<key>other</key>
+			<string>%2$@ segments waiting on this mac. re-link in journal settings to resume syncing.</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e7365676d656e7477616974696e672e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ segment waiting</string>
+			<key>other</key>
+			<string>%2$@ segments waiting</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e7365676d656e7477616974696e67686572652e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ segment waiting here</string>
+			<key>other</key>
+			<string>%2$@ segments waiting here</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e7365676d656e7477616974696e67686572656b6570746f6e746869736d6163756e74696c796f75726a6f75726e2e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ segment waiting here · kept on this mac until your journal can read that day</string>
+			<key>other</key>
+			<string>%2$@ segments waiting here · kept on this mac until your journal can read that day</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e7365676d656e7477616974696e67686572656e6f7468696e6769736c6f737473796e63726573756d65737768652e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ segment waiting here · nothing is lost, sync resumes when it's back</string>
+			<key>other</key>
+			<string>%2$@ segments waiting here · nothing is lost, sync resumes when it's back</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e7465726d696e616c2e68656c647365676d656e7473</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ old segment couldn't go and stayed on this mac</string>
+			<key>other</key>
+			<string>%2$@ old segments couldn't go and stayed on this mac</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e75692e63616e74626573656e742e6e61746976652e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ segment can't be sent</string>
+			<key>other</key>
+			<string>%2$@ segments can't be sent</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e7569636f70792e7468696e67736e656564617474656e74696f6e2e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 thing needs attention</string>
+			<key>other</key>
+			<string>%2$@ things need attention</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

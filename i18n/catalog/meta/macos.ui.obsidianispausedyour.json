@@ -1,0 +1,16 @@
+{
+  "description": "Obsidian is paused. your notes wait on this mac.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 48,
+  "source_revision": "47ef9228bdd75f84bf03eeefe8789ae57f0b5c3cf6f1954f7aa700a438c303f0",
+  "risk": "routine",
+  "auto_merge": true
+}

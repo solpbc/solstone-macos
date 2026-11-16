@@ -1,0 +1,16 @@
+{
+  "description": "another part of solstone",
+  "context": "Shown by Sources/SolstoneCore/SolstoneLogSubsystem.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f69b997fe48d61de4a33c6fa5f0952855328e0847a5437b9866bab7958117f35",
+  "risk": "routine",
+  "auto_merge": true
+}

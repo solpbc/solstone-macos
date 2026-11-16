@@ -1,0 +1,28 @@
+{
+  "description": "deferred update {version}",
+  "context": "Shown by Sources/UpdateKit/UpdatesCopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f841952f3fb12886381bc35ad4c53b18210c2f915ec0b8367042dc8e72d6a74b",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "description": "browsers · {brands}",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "brands",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 19,
+  "source_revision": "fff3a63246c66608acbd12cebec24aab7f3fbee67284bbd4c7a75562f9978f08",
+  "risk": "routine",
+  "auto_merge": true
+}

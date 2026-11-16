@@ -1,0 +1,16 @@
+{
+  "description": "stop leaving out",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 16,
+  "source_revision": "c375d14aca28d9379f387c0df80e76718ee5df3d03a2fc3a4cf3db5da61c8f78",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -460,7 +460,7 @@ public func browserPageRows(
             }
         }
         // `no browser connected yet` belongs to the page, not to a row named for one browser.
-        if page.status == UICopy.SOURCES_BROWSERS_NO_HISTORY {
+        if row.lastPage == nil, row.lastSeen == nil, !(row.brand == .safari && safari == .off) {
             page.status = UICopy.SOURCES_BROWSER_ROW_NOT_CONNECTED
         }
         return page
@@ -475,13 +475,13 @@ public func browserStoreOfferVisible(_ rows: [BrowserBrandRow], offered: Set<Bro
 public func formatRelativeBucket(_ bucket: BrowserRelativeTimeBucket) -> String {
     switch bucket {
     case .justNow:
-        return "just now"
+        return MacStrings.macos_desktop_shared_app_justnow()
     case .minutes(let m):
-        return "\(m) min ago"
+        return MacStrings.macos_app_minago_native("\(m)")
     case .hours(let h):
-        return h == 1 ? "1 hour ago" : "\(h) hours ago"
+        return MacStrings.macos_browser_hoursago(h)
     case .yesterday:
-        return "yesterday"
+        return MacStrings.macos_browser_yesterday()
     case .date(let d):
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -498,19 +498,19 @@ public func buildBrowserDiagnosticRows(
     let pagesHuman: String
     let pagesMachine: String
     if !snapshot.intakeEnabled {
-        pagesHuman = "off"
+        pagesHuman = MacStrings.macos_desktop_shared_app_microphonemodeoff()
         pagesMachine = "off"
     } else if snapshot.capture == "paused" {
-        pagesHuman = "solstone paused"
+        pagesHuman = MacStrings.macos_app_pageshuman()
         pagesMachine = "paused"
     } else if let hold = ownerHold(snapshot) {
-        pagesHuman = "held"
+        pagesHuman = MacStrings.macos_browser_held()
         pagesMachine = hold
     } else if browserIntakeIsReady(snapshot, now: now) {
-        pagesHuman = "on"
+        pagesHuman = MacStrings.macos_desktop_shared_app_settingsdiagnosticson()
         pagesMachine = "on"
     } else {
-        pagesHuman = "held"
+        pagesHuman = MacStrings.macos_browser_held()
         pagesMachine = snapshot.listener != .available ? "listener_down" : "intake_unavailable"
     }
 
@@ -519,7 +519,7 @@ public func buildBrowserDiagnosticRows(
         guard let bucket = row.lastSeen else { return nil }
         return "\(row.brand.displayName) (\(formatRelativeBucket(bucket)))"
     }
-    let browsersSeen = seenParts.isEmpty ? "none yet" : seenParts.joined(separator: ", ")
+    let browsersSeen = seenParts.isEmpty ? MacStrings.macos_desktop_shared_app_emptytext() : seenParts.joined(separator: ", ")
 
     let allReady = BrowserBrand.nativeMessagingHosts.allSatisfy {
         snapshot.registration[$0]?.state == .ready || snapshot.registration[$0]?.state == .changed
@@ -527,18 +527,18 @@ public func buildBrowserDiagnosticRows(
     let setupValue: String
     if allReady && snapshot.listener == .available {
         let brandNames = BrowserBrand.nativeMessagingHosts.map(\.displayName).joined(separator: ", ")
-        setupValue = "\(brandNames) ready"
+        setupValue = MacStrings.macos_app_setupvalue("\(brandNames)")
     } else {
         let brandParts = BrowserBrand.nativeMessagingHosts.map { brand -> String in
             let reg = snapshot.registration[brand]
             if snapshot.listener == .available, reg?.state == .changed {
-                return "\(brand.displayName): repaired at launch"
+                return MacStrings.macos_app_repairedatlaunch("\(brand.displayName)")
             }
             if snapshot.listener == .available, reg?.state == .ready {
-                return "\(brand.displayName): ready"
+                return MacStrings.macos_app_ready("\(brand.displayName)")
             }
             let reason = UICopy.browserSetupReason(snapshot.listener == .available ? reg?.reasonCode : "listener_down")
-            return "\(brand.displayName): couldn't set up (\(reason))"
+            return MacStrings.macos_app_couldntsetup("\(brand.displayName)", "\(reason)")
         }
         setupValue = brandParts.joined(separator: ", ")
     }

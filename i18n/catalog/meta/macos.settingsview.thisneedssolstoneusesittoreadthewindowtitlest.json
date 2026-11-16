@@ -1,0 +1,28 @@
+{
+  "description": "this needs {UICopy.Websites.accessibilityName(macOSMajor: macOSMajor)}. solstone uses it to read the window titles these browsers give to accessibility tools, and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity. turning this on asks for it.",
+  "context": "Shown by Sources/solstone/SettingsView.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f91157a9c45cf0e435fbdcd95dcce784556a37b0b6a367290078ca1ee39c698f",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

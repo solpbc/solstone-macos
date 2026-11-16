@@ -1,0 +1,25 @@
+{
+  "description": "Failed to resume after { $trigger }: { $error }",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "trigger",
+      "type": "string"
+    },
+    {
+      "name": "error",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f345dc6aa5108ffac3e9f6699d6d335cae7cd111d31caf463b101226cbaa76fb",
+  "risk": "routine",
+  "auto_merge": true
+}

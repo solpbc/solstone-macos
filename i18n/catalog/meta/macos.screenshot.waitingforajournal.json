@@ -1,0 +1,16 @@
+{
+  "description": "waiting for a journal update. your screenshots wait on this mac.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 64,
+  "source_revision": "f7f138e844f947143b27625f532d013a031c43bb348eec12e4dc1a26aeabc29b",
+  "risk": "routine",
+  "auto_merge": true
+}

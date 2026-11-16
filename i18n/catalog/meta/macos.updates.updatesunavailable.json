@@ -1,0 +1,16 @@
+{
+  "description": "updates unavailable",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 19,
+  "source_revision": "cf3ed91a55f71d3f6912b06fbc5af4fcce1213ba2e32a7e6b4421b87abbab524",
+  "risk": "routine",
+  "auto_merge": true
+}

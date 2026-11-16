@@ -1,0 +1,16 @@
+{
+  "description": "browser pages still waiting to be sent will be removed from this device.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.sourcesbrowserdiscardconfirm. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 72,
+  "source_revision": "7d15368c25b28e7cda98a3154b504f1f55c97479ed6c724734cc5056a9e541a9",
+  "risk": "routine",
+  "auto_merge": true
+}

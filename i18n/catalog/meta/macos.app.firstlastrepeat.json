@@ -1,0 +1,33 @@
+{
+  "description": "{value} · first {value2} · last {value3} · repeat {value4}",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DiagnosticReport.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value",
+      "type": "string"
+    },
+    {
+      "name": "value2",
+      "type": "string"
+    },
+    {
+      "name": "value3",
+      "type": "string"
+    },
+    {
+      "name": "value4",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 58,
+  "source_revision": "1791cdc21447b352ccd2eaca23bf872e00285c2cbc411d77c306fbb57cff0cdb",
+  "risk": "routine",
+  "auto_merge": true
+}

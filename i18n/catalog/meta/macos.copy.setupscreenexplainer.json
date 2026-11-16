@@ -1,0 +1,16 @@
+{
+  "description": "your screen and its computer sound go into your journal, with the apps you use and their window titles. they stay off until you turn them...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 141,
+  "source_revision": "e4292c4ceda87c56d878ebef3b001c6d9ac335bb2dc8e9b02636e92a3f5bd2eb",
+  "risk": "routine",
+  "auto_merge": true
+}

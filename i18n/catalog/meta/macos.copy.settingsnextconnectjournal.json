@@ -1,0 +1,16 @@
+{
+  "description": "next: connect your journal →",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 28,
+  "source_revision": "9200450094b44aec1fd1fab7ec88e9b9ffc3fb319f333433205a3aafff4e94c3",
+  "risk": "routine",
+  "auto_merge": true
+}

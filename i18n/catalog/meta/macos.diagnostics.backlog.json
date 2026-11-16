@@ -1,0 +1,29 @@
+{
+  "description": "pending={ $count } · oldest_pending_folder_age_s={ $age } · preserved_failure_folders={ $preserved } (delivery unknown)",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered. Keep the metric keys pending, oldest_pending_folder_age_s and preserved_failure_folders unchanged; they identify diagnostic fields.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "count",
+      "type": "string"
+    },
+    {
+      "name": "age",
+      "type": "string"
+    },
+    {
+      "name": "preserved",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "7d08ec66ca6cef7a3da48ad48b515e71746f3e6141b4cf2b4ca9b0ed4c9e9702",
+  "risk": "routine",
+  "auto_merge": true
+}

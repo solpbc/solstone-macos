@@ -1,0 +1,16 @@
+{
+  "description": "excluded apps",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift. The same sentence is on Windows as windows.desktop.shared.settings.excludedapps. Keep the two translations consistent.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 13,
+  "source_revision": "4da894c05505f37fc65e6beeb14852c7933862dbd4c53477455e668b499188d6",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "browser pages can't start right now.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 36,
+  "source_revision": "2757c2c4631cad113e2911e27afc900d808c717702055cc0bcfc45a2e763cb32",
+  "risk": "routine",
+  "auto_merge": true
+}

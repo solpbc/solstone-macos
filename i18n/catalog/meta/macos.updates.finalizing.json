@@ -1,0 +1,16 @@
+{
+  "description": "finalizing",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 10,
+  "source_revision": "45b10ced12ff229808906a5a8fe9fec3013661ccf4d5cd8c4b645c12bfe88c44",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "activity keeps going when you pause, and when screen and computer sound are off.",
+  "context": "Shown by Sources/solstone/SettingsView.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "d4a62d9159309ab58d3a2dbd2f0c1e9b8169e93159a6ee7d55c5a03b545b46c6",
+  "risk": "routine",
+  "auto_merge": true
+}

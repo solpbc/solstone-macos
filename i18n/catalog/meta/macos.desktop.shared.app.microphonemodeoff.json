@@ -1,0 +1,16 @@
+{
+  "description": "off",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift. The same sentence is on Windows as windows.desktop.shared.app.microphonemodeoff. Keep the two translations consistent.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 3,
+  "source_revision": "586bf5ca34678fde5d5ee91f0d9afc705ee026707d1342de2557fe14bed025a4",
+  "risk": "routine",
+  "auto_merge": true
+}

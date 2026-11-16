@@ -1,0 +1,16 @@
+{
+  "description": "waiting for a direct network route or relay connection",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/TunnelLifecycleOwner.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 54,
+  "source_revision": "e3eb1b8d976949e014f228d0773d1e06846f91fa8e6bf69cdff9e8f86f497c87",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "couldn't verify your journal's mark. try again.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 47,
+  "source_revision": "93153420728efb7f6d4a7b7bb8ea13c867a7ad63821345f75f48452cb4e4be24",
+  "risk": "routine",
+  "auto_merge": true
+}

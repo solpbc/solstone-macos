@@ -1,0 +1,27 @@
+{
+  "description": "1 min",
+  "context": "Native presentation. Preserve the complete sentence and reorder its named arguments as needed.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "count",
+      "type": "cardinal",
+      "numeric_style": "ungrouped",
+      "min": 0
+    }
+  ],
+  "format_intent": "cardinal",
+  "max_length": 1000,
+  "source_revision": "0e16f550e983b3652d6898be006d74b105f58a1871bdc11758f58faf8446328b",
+  "risk": "routine",
+  "auto_merge": true,
+  "selector": {
+    "name": "count",
+    "type": "cardinal"
+  }
+}

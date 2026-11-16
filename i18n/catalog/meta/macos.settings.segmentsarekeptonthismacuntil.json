@@ -1,0 +1,16 @@
+{
+  "description": "segments are kept on this mac until your journal is back",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 56,
+  "source_revision": "4880519026cb6d96e7725745be2c8827864adfc02d370243087f33df39fecb48",
+  "risk": "routine",
+  "auto_merge": true
+}

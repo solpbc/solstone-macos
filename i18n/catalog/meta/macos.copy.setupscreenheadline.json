@@ -1,0 +1,16 @@
+{
+  "description": "share your screen and computer sound",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 36,
+  "source_revision": "1ffba09f9dbaff8d42efed12b9f28ee25188f85d414a9a9dbe571026f52a84a5",
+  "risk": "routine",
+  "auto_merge": true
+}

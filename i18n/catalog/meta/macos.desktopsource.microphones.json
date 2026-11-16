@@ -1,0 +1,16 @@
+{
+  "description": "microphones",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/DesktopSourcePage.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 11,
+  "source_revision": "4fa2e7842b967f60f02083a34ab40cbb27d0429456862960ec6b2d48e361a0d1",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -24,7 +24,7 @@ extension FreshJournalState {
         case .launching:
             return JournalHandoffStep.launchingJournal.ownerStatusMessage
         case .waitingForJournal:
-            return "finish setting up in the journal app. your journal will appear here when it's ready"
+            return MacStrings.macos_app_finishsettingupinthejournalapp()
         case .failed(let failure):
             return failure.ownerMessage
         }
@@ -230,7 +230,7 @@ final class FreshJournalFlow {
             return installed
         } else {
             guard let acquirer = dependencies.acquirer else {
-                throw JournalHandoffFailure.trustFailed("no acquirer available")
+                throw JournalHandoffFailure.trustFailed(MacStrings.macos_app_noacquireravailable())
             }
             return try await acquirer.acquire { phase in
                 self.state = .acquiring(phase)

@@ -1,0 +1,16 @@
+{
+  "description": "nothing waiting goes into your journal until you do.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 52,
+  "source_revision": "06848e5492b9be7592ddb123b55d0e858002dd872bc92e14ba309e42a95604d1",
+  "risk": "routine",
+  "auto_merge": true
+}

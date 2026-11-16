@@ -1,0 +1,21 @@
+{
+  "description": "journal error ({serverError.statusCode})",
+  "context": "Shown by Sources/solstone/UploadClient.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "1ec4702ef5586f32d7bbe507407d51c83623ac1150943544b1dcde0e6a0655c6",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "Capture manager not initialized",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "c1eeb65d685265417b168c5a580ad8b2aa5b91318a055790aa7da540c2b3a183",
+  "risk": "routine",
+  "auto_merge": true
+}

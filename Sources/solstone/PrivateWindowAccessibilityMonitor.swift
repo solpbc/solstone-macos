@@ -124,9 +124,9 @@ struct PrivateWindowAccessibilityAnnouncementPolicy {
         guard isVisible, let previous, previous != state else { return nil }
         switch state {
         case .working:
-            return "private windows in Safari, Chrome, Edge and Brave are kept out of your journal"
+            return MacStrings.macos_accessibility_privatewindowskept()
         case .notWorking:
-            return "checking Safari, Chrome, Edge and Brave is not working, so their private windows reach your journal"
+            return MacStrings.macos_accessibility_privatewindowsnotworking()
         case .off, .checking, .waiting:
             return nil
         }

@@ -1,0 +1,16 @@
+{
+  "description": "an install handoff is already in progress",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 41,
+  "source_revision": "61920b4819756d224f32c229a71cb6d65b88d17b445f3d203a21008dafee9264",
+  "risk": "routine",
+  "auto_merge": true
+}

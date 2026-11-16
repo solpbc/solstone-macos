@@ -198,7 +198,7 @@ func discoverOnDiskJournal(
     }
 
     let defaultPath = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-        .appendingPathComponent("journal", isDirectory: true)
+        .appendingPathComponent( "journal", isDirectory: true)
         .standardizedFileURL
         .path
     if !candidates.contains(defaultPath) {

@@ -1,0 +1,16 @@
+{
+  "description": "a public benefit corporation. your data is never sold or shared, by binding legal covenant.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/AboutView.swift.",
+  "surfaces": [
+    "about"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 91,
+  "source_revision": "c96bf2fdb5ff49e63fd8d4e5cd490c79c47176418721a55b8c43509b7cbd50e1",
+  "risk": "legal",
+  "auto_merge": false
+}

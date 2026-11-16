@@ -1,0 +1,16 @@
+{
+  "description": "new browser pages aren't being taken in right now.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.sourcesbrowserheld. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 50,
+  "source_revision": "7f82a2d33f5cbb461d2847579110afeb66b709e7b86382d10e142c0e38a1ee70",
+  "risk": "routine",
+  "auto_merge": true
+}

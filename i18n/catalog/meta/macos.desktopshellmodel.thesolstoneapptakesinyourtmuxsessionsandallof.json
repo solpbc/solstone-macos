@@ -1,0 +1,16 @@
+{
+  "description": "the solstone app takes in your tmux sessions, and all of it goes into your journal. needs tmux on this mac, and works in any terminal session, including when you SSH into this mac.",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "3f63851152bbf8de7cacdf9b8d31989c38e635bb7d749a7782bffe9c0861f76c",
+  "risk": "routine",
+  "auto_merge": true
+}

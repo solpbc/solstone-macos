@@ -1,0 +1,16 @@
+{
+  "description": "when on, segments your journal has confirmed are moved to a separate folder on this mac instead of being removed. they build up until you...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 159,
+  "source_revision": "3b1c4b82590e180f6279a16167d061612b39a8b421b011200577227b1b42920c",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "cancel pairing",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.journalmarkunverifiedcancelbutton. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 14,
+  "source_revision": "af7a6389b2176aa7aec4fdf66bcb7d7d993a59f3759f59e4d47eb02c627a8d12",
+  "risk": "routine",
+  "auto_merge": true
+}

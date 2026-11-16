@@ -46,7 +46,7 @@ enum SetupSettingsWindowConfigurator {
                 memory.appliedInitialSetupSize = true
             }
         } else {
-            window.title = "solstone"
+            window.title = MacStrings.macos_about_solstone()
             if let memory = objc_getAssociatedObject(window, &setupWindowMemoryKey) as? SetupWindowMemory {
                 window.styleMask = memory.styleMask
                 // Settings' own title bar: opaque, title shown. These are not read back from

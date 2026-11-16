@@ -1,0 +1,16 @@
+{
+  "description": "no other paired devices",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.pickerempty. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 23,
+  "source_revision": "3663e0c4aeabddc784f88ce007e3c0902e8e26b076b2fb7c09ef8eb5390ce821",
+  "risk": "routine",
+  "auto_merge": true
+}

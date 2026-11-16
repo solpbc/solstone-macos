@@ -49,7 +49,7 @@ struct JournalConnectionVerdict: Sendable, Equatable {
 
     static let neutral = JournalConnectionVerdict(
         severity: .calm,
-        message: "not paired",
+        message: MacStrings.macos_desktop_shared_app_notpaired(),
         caption: nil,
         axToken: PairingConnectionAXState.disconnected.axToken,
         failureCause: nil
@@ -2336,7 +2336,7 @@ final class TunnelLifecycleOwner {
         triedAddresses: [String] = []
     ) -> JournalConnectionVerdict {
         if presented == .connected {
-            let msg = isPairedHome ? "connected to your journal on this mac" : "sync can connect through your journal"
+            let msg = isPairedHome ? MacStrings.macos_connection_samemac() : MacStrings.macos_connection_throughjournal()
             return JournalConnectionVerdict(
                 severity: .good,
                 message: msg,
@@ -2355,7 +2355,7 @@ final class TunnelLifecycleOwner {
             case .notEntitled:
                 return JournalConnectionVerdict(
                     severity: .attention,
-                    message: "can't sync over the internet yet",
+                    message: MacStrings.macos_app_cantsyncovertheinternetyet(),
                     caption: UICopy.PAIRING_NOTENTITLED_RECOVERY,
                     axToken: PairingConnectionAXState.notEntitled.axToken,
                     failureCause: .notEntitled
@@ -2363,7 +2363,7 @@ final class TunnelLifecycleOwner {
             case .revoked, .refusalsExhausted:
                 return JournalConnectionVerdict(
                     severity: .attention,
-                    message: "pairing was revoked. pair again to reconnect.",
+                    message: MacStrings.macos_app_pairingwasrevokedpairagaintoreconnect(),
                     caption: nil,
                     axToken: PairingConnectionAXState.revoked.axToken,
                     failureCause: .revoked
@@ -2371,7 +2371,7 @@ final class TunnelLifecycleOwner {
             case .loopbackUnavailable:
                 return JournalConnectionVerdict(
                     severity: .attention,
-                    message: "paired, but the local connection couldn't start",
+                    message: MacStrings.macos_app_pairedbutthelocalconnectioncouldnt(),
                     caption: nil,
                     axToken: PairingConnectionAXState.loopbackUnavailable.axToken,
                     failureCause: .loopbackUnavailable
@@ -2379,7 +2379,7 @@ final class TunnelLifecycleOwner {
             case .keychainUnavailable:
                 return JournalConnectionVerdict(
                     severity: .attention,
-                    message: "paired, but this mac couldn't read the pairing",
+                    message: MacStrings.macos_app_pairedbutthismaccouldntread(),
                     caption: nil,
                     axToken: PairingConnectionAXState.keychainUnavailable.axToken,
                     failureCause: .keychainUnavailable
@@ -2390,8 +2390,8 @@ final class TunnelLifecycleOwner {
         if !isTunnelManaged {
             return JournalConnectionVerdict(
                 severity: .attention,
-                message: "can't reach your journal right now",
-                caption: "waiting for a direct network route or relay connection",
+                message: MacStrings.macos_app_cantreachyourjournalrightnow(),
+                caption: MacStrings.macos_app_waitingforadirectnetworkrouteor(),
                 axToken: PairingConnectionAXState.noRoute.axToken,
                 failureCause: .noRoute
             )
@@ -2400,7 +2400,7 @@ final class TunnelLifecycleOwner {
         if presented == .connecting {
             return JournalConnectionVerdict(
                 severity: .warn,
-                message: "connecting to your journal…",
+                message: MacStrings.macos_app_setupconnectingtoyourjournal(),
                 caption: nil,
                 axToken: PairingConnectionAXState.connecting.axToken,
                 failureCause: nil
@@ -2409,7 +2409,7 @@ final class TunnelLifecycleOwner {
 
         return JournalConnectionVerdict(
             severity: .attention,
-            message: "can't reach your journal right now",
+            message: MacStrings.macos_app_cantreachyourjournalrightnow(),
             caption: UICopy.journalTriedAddresses(triedAddresses),
             axToken: PairingConnectionAXState.unreachable.axToken,
             failureCause: .unreachable(nil)

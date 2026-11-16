@@ -1,0 +1,21 @@
+{
+  "description": "your journal couldn't read {value}",
+  "context": "the solstone app, speaking to the owner, in the app. A string argument records no gender, case, noun class, or classifier. Where the sentence must agree, show the name as its own label and keep the sentence free of it.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 34,
+  "source_revision": "7a6a37651d574e01cb366009b2ad762ec4d4bc1cd6c35a87f48fefe6904180ca",
+  "risk": "routine",
+  "auto_merge": true
+}

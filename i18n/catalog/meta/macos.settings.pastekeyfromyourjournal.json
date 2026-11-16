@@ -1,0 +1,16 @@
+{
+  "description": "paste key from your journal",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 27,
+  "source_revision": "9ad38125e35722c76920190393e908ee1de8bae789367cb5eb5f9dad8b6f9410",
+  "risk": "routine",
+  "auto_merge": true
+}

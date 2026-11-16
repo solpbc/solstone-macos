@@ -1,0 +1,16 @@
+{
+  "description": "not connected yet",
+  "context": "Shown by Sources/solstone/UICopy.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "37a3c212a8c7e1289e985f458f0b103c2a639a15da1cd5944f0d6eb56715fd09",
+  "risk": "routine",
+  "auto_merge": true
+}

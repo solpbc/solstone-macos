@@ -1,0 +1,16 @@
+{
+  "description": "none yet",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/BrowserOwnerSurface.swift. The same sentence is on Windows as windows.desktop.shared.app.emptytext. Keep the two translations consistent.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 8,
+  "source_revision": "c65034e558adc5b94a86bc26bf1f2ea13351c1c268d386b71c675375d665db17",
+  "risk": "routine",
+  "auto_merge": true
+}

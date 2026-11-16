@@ -1,0 +1,16 @@
+{
+  "description": "connected",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "0fa3d3df46986856c35358f0cc3bcf11834b476f740b1696e356678e3ba4cf99",
+  "risk": "routine",
+  "auto_merge": true
+}

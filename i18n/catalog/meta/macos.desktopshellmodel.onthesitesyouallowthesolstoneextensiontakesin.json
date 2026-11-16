@@ -1,0 +1,16 @@
+{
+  "description": "on the sites you allow, the solstone extension takes in the page's text and rough layout, and all of it goes into your journal.",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "9a1958729d9c0ff5bb1597e8f03fed2477e6a7219d2157c2f77e15dea5f434d2",
+  "risk": "routine",
+  "auto_merge": true
+}

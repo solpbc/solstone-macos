@@ -8,14 +8,14 @@ import os
 import SolstoneCore
 
 enum AppPlacementAlertCopy {
-    static let repairTitle = "install solstone in Applications"
-    static let repairBody = "solstone is running from a location it might not find again next launch, so macOS may not remember its screen recording permission. install solstone in Applications, a reliable spot, and it will reopen."
-    static let repairPrimaryButton = "install and reopen"
-    static let repairSecondaryButton = "quit solstone"
-    static let fallbackTitle = "solstone couldn't move itself"
-    static let fallbackBody = "move solstone.app to Applications in Finder, then open it there."
-    static let fallbackPrimaryButton = "open Applications"
-    static let fallbackSecondaryButton = "quit solstone"
+    static let repairTitle = MacStrings.macos_appplacementrepair_installsolstoneinapplications()
+    static let repairBody = MacStrings.macos_appplacementrepair_solstoneisrunningfromalocationitmightnotfinda()
+    static let repairPrimaryButton = MacStrings.macos_appplacementrepair_installandreopen()
+    static let repairSecondaryButton = MacStrings.macos_menu_quitsolstone()
+    static let fallbackTitle = MacStrings.macos_appplacementrepair_solstonecouldntmoveitself()
+    static let fallbackBody = MacStrings.macos_appplacementrepair_movesolstoneapptoapplicationsinfinderthenopen()
+    static let fallbackPrimaryButton = MacStrings.macos_appplacementrepair_openapplications()
+    static let fallbackSecondaryButton = MacStrings.macos_menu_quitsolstone()
 }
 
 enum AppPlacementRepairOutcome: Equatable {

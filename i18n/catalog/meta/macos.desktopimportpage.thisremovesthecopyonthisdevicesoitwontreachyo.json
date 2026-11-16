@@ -1,0 +1,16 @@
+{
+  "description": "this removes the copy on this device, so it won't reach your journal.",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "a0738d4b0613e43d450447fc30dad814e7ac92ae5fa53c7b3df2508a797efe1c",
+  "risk": "routine",
+  "auto_merge": true
+}

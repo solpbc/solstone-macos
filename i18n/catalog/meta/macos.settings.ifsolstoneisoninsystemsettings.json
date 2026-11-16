@@ -1,0 +1,16 @@
+{
+  "description": "if solstone is on in System Settings and reopening doesn't help, remove solstone from that list with the minus button, then turn this opt...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 158,
+  "source_revision": "5d8552303e433893fbbb62b40dfd654461e96489863245a0c35bb7fff7a644d1",
+  "risk": "routine",
+  "auto_merge": true
+}

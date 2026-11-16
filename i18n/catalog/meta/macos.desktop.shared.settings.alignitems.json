@@ -1,0 +1,16 @@
+{
+  "description": "start",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift. This message was paired with the Windows desktop copy in the source census; the current Windows catalog has no declared twin.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 5,
+  "source_revision": "47bdd3e1fd57d43740bb1cb835222ae44d90c2b3abea26c229541abf8ef224a9",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,28 @@
+{
+  "description": "{hours + 1} hrs",
+  "context": "Shown by Sources/solstone/PauseManager.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "385c8a6db29df2afe3059daf367adb47b41cfe4c85d2bd4313f5474351cdc7ff",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

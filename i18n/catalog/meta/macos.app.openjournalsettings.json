@@ -1,0 +1,16 @@
+{
+  "description": "open journal settings",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/StatusHealthSummary.swift.",
+  "surfaces": [
+    "status"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 21,
+  "source_revision": "551a84cfefbbcf455a335a32173e1da7f3ba53732c78520d5b1f2f8c310ffdc5",
+  "risk": "routine",
+  "auto_merge": true
+}

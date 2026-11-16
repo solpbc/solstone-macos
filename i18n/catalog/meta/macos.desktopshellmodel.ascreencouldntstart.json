@@ -1,0 +1,16 @@
+{
+  "description": "a screen couldn't start.",
+  "context": "Shown by Sources/solstone/DesktopShellModel.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "6134ade36c3db09f82ba26864693eb3fd26e7370d32bfe72c91c1e43b676a903",
+  "risk": "routine",
+  "auto_merge": true
+}

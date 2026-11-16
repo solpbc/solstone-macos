@@ -1,0 +1,16 @@
+{
+  "description": "no usage data is ever sent. update checks fetch the version list, then download the update itself in the background.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 116,
+  "source_revision": "90117aef6dc0c7c3b788422bba1c41bf940a57489ca02eb7f0f762a29b07f625",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "couldn't open the journal app for this journal. follow journal update help.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalUpdateDestinationView.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 75,
+  "source_revision": "4412d3835e0a0cec35d99dead1a89e2622a60c92847a670618371325b0cc81ad",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "a screenshot copied to the clipboard isn't saved, so it doesn't come in.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/ScreenshotCopy.swift.",
+  "surfaces": [
+    "screenshots"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 72,
+  "source_revision": "b53125deaca6e87c6f072ced422fb98a93c8b4bdfe8fe501ebd7ab1e0e7066c9",
+  "risk": "routine",
+  "auto_merge": true
+}

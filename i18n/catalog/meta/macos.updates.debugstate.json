@@ -1,0 +1,16 @@
+{
+  "description": "debug state",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesTabView.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 11,
+  "source_revision": "2912a3aa09e791746fa73a56bea5e485ec1c42986ebef970c42e722eb121ca65",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "solstone couldn't find your journal folder. open settings and choose your journal again.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalMigration.swift.",
+  "surfaces": [
+    "migration"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 88,
+  "source_revision": "dff4f34a752fc4b95970fd6f0e82191458467594e74be2585b225017589cc2b5",
+  "risk": "routine",
+  "auto_merge": true
+}

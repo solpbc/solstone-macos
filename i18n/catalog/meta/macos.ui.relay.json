@@ -1,0 +1,16 @@
+{
+  "description": "relay",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 5,
+  "source_revision": "d948cda8087f787d6005b301fbcd37091024dac0e1a98f0aca6c02e26c7ee87f",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -12,12 +12,12 @@ struct SetupDownloadFooter: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let downloads {
-                row(title: "speech recognition", job: downloads.speech, action: downloads.speechAction)
+                row(title: MacStrings.macos_setup_speechrecognition(), job: downloads.speech, action: downloads.speechAction)
                 if downloads.showsThinking {
-                    row(title: "local thinking", job: downloads.thinking, action: downloads.thinkingAction)
+                    row(title: MacStrings.macos_setup_localthinking(), job: downloads.thinking, action: downloads.thinkingAction)
                 }
             } else if readFailed {
-                Text("download progress isn't available.")
+                Text(MacStrings.macos_setup_downloadprogressisntavailable())
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -57,18 +57,18 @@ struct SetupDownloadFooter: View {
 
     private func actionLabel(_ action: SetupDownloadAction) -> String {
         switch action {
-        case .cancelThinking: "cancel"
+        case .cancelThinking: MacStrings.macos_desktop_shared_setup_cancel()
         case .startThinking, .retrySpeech: UICopy.SETUP_TRY_AGAIN
         }
     }
 
     private func stateText(_ state: SetupDownloadState) -> String {
         switch state {
-        case .idle: "not started"
-        case .downloading: "downloading…"
-        case .complete: "ready"
-        case .cancelled: "cancelled"
-        case .error: "download failed."
+        case .idle: MacStrings.macos_setup_notstarted()
+        case .downloading: MacStrings.macos_setupdownloadfooter_downloading()
+        case .complete: MacStrings.macos_setupdownloadfooter_ready()
+        case .cancelled: MacStrings.macos_setupdownloadfooter_cancelled()
+        case .error: MacStrings.macos_setup_downloadfailed()
         }
     }
 

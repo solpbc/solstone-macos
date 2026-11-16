@@ -1,0 +1,16 @@
+{
+  "description": "what answered",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 13,
+  "source_revision": "d4134fa9f47faa60579b7b34afb8dd52289378112162629a9edcbf060fca0c11",
+  "risk": "routine",
+  "auto_merge": true
+}

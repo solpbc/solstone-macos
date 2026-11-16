@@ -1,0 +1,16 @@
+{
+  "description": "while this app is paused, only activity goes into your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 63,
+  "source_revision": "5977c81da8494ce81a262ef4475a6ca75f169a8b762551a81626ec98e74c6cf1",
+  "risk": "routine",
+  "auto_merge": true
+}

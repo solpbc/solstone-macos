@@ -1,0 +1,16 @@
+{
+  "description": "working with a coding agent? hand it this context.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 50,
+  "source_revision": "76228789ab5e08667cd56a9c53a686bc25e9fe77087bd817cda44c5706a085b7",
+  "risk": "routine",
+  "auto_merge": true
+}

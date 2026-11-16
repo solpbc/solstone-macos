@@ -1,0 +1,16 @@
+{
+  "description": "this device continues its name and history. the selected device will lose access to your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift. The same sentence is on Windows as windows.desktop.shared.copy.replaceconfirmbody. Keep the two translations consistent.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 97,
+  "source_revision": "0367884051de386a3be2c5b9e5fc5663be6441835be07911290ebc3840140c83",
+  "risk": "routine",
+  "auto_merge": true
+}

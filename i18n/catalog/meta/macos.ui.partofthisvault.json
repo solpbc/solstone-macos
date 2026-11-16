@@ -1,0 +1,16 @@
+{
+  "description": "part of this vault can't be read. the rest of the vault keeps going into your journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 86,
+  "source_revision": "16b0c5b2359572ea2bfb865703427c56cff19a7458b936c22bc6d0f75ffe6be5",
+  "risk": "routine",
+  "auto_merge": true
+}

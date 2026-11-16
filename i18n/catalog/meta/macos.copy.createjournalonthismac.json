@@ -1,0 +1,16 @@
+{
+  "description": "create a new journal on this mac",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 32,
+  "source_revision": "8e68923cf3e29b5c6b0b3102d0d6365338c78589e9292e96125e1d22c3c43dba",
+  "risk": "routine",
+  "auto_merge": true
+}

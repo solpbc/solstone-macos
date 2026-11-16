@@ -1,0 +1,16 @@
+{
+  "description": "sync can connect through your journal",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "39c2cf10f9044c3ea3a09f0ec499205b7581c0e1c0560aa28070111451378641",
+  "risk": "routine",
+  "auto_merge": true
+}

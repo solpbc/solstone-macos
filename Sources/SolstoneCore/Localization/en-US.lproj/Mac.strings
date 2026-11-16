@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>m6d61636f732e61626f75742e646973706c617961676564</key>
+	<string>%1$@ · last seen %2$@</string>
+	<key>m6d61636f732e61626f75742e646973706c61796170706e616d65</key>
+	<string>solstone macos app</string>
+	<key>m6d61636f732e61626f75742e646973706c61796a6f75726e616c6e616d65</key>
+	<string>journal</string>
+	<key>m6d61636f732e61626f75742e646973706c6179756e6b6e6f776e</key>
+	<string>%1$@ unknown</string>
+	<key>m6d61636f732e61626f75742e646973706c617976657273696f6e</key>
+	<string>%1$@ %2$@</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657475706170706c6162656c</key>
+	<string>the solstone app</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657475706a6f75726e616c6361726468656164696e67</key>
+	<string>your journal</string>
+	<key>m6d61636f732e736f6c73746f6e656c6f6773756273797374656d2e616e6f74686572706172746f66736f6c73746f6e65</key>
+	<string>another part of solstone</string>
+	<key>m6d61636f732e736f6c73746f6e656c6f6773756273797374656d2e74686568656c706572746861746b656570737468656d72756e6e696e67</key>
+	<string>the helper that keeps them running</string>
+	<key>m6d61636f732e736f6c73746f6e656c6f6773756273797374656d2e746865707269766174656e6574776f726b</key>
+	<string>the private network</string>
+</dict>
+</plist>

@@ -1,0 +1,16 @@
+{
+  "description": "turn on banners",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SettingsView.swift.",
+  "surfaces": [
+    "settings"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 15,
+  "source_revision": "a503052ff72041ac3bd40856df32f8e1d44256609d0a196adccc81e11ff79106",
+  "risk": "routine",
+  "auto_merge": true
+}

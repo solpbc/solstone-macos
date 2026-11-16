@@ -1,0 +1,16 @@
+{
+  "description": "the solstone app is already connected to a journal.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupModel.swift.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 51,
+  "source_revision": "7d5c463bc2d9db2e644d75cabe32b5613bebde0b90665fd94be6e20206f92b90",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "deferred, will continue after your journal is ready.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 52,
+  "source_revision": "800c7417753a34197f600900fd3e35dbbf28a22c42167cc55828c8d30301d8fa",
+  "risk": "routine",
+  "auto_merge": true
+}

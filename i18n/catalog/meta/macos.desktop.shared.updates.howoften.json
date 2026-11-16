@@ -1,0 +1,16 @@
+{
+  "description": "how often",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift. The same sentence is on Windows as windows.desktop.shared.updates.howoften. Keep the two translations consistent.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 9,
+  "source_revision": "7989b404c7031cfb49ec8a716f8b3c00e7419a323711c6360df64835d970d17a",
+  "risk": "routine",
+  "auto_merge": true
+}

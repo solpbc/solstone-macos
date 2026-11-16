@@ -1,0 +1,16 @@
+{
+  "description": "local thinking",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupDownloadFooter.swift.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 14,
+  "source_revision": "466a0e9d6f5be749b4e000e5b2b785d9369b0f29a99fd10d793fea12a6d636d4",
+  "risk": "routine",
+  "auto_merge": true
+}

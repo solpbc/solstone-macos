@@ -14,6 +14,8 @@ For most people, download the app from <https://solstone.app/download/macos> and
 
 Build from source when you need to modify the app.
 
+For copy changes and native resource generation, see the [string catalog guide](i18n/README.md).
+
 ### Prerequisites
 
 - [mac, version 15 or later](Package.swift#L10)

@@ -279,7 +279,7 @@ struct SolstoneCaptureApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Window("solstone", id: "settings") {
+        Window(MacStrings.macos_about_solstone(), id: "settings") {
             if let startup {
                 SettingsSceneRoot(appState: startup.appState, updateController: startup.updateController)
             } else {
@@ -290,7 +290,7 @@ struct SolstoneCaptureApp: App {
         .defaultPosition(.center)
         .commands {
             CommandGroup(replacing: .appSettings) {
-                Button("settings…") {
+                Button(MacStrings.macos_solstonecaptureapp_settings()) {
                     if let appState = AppState.shared {
                         openSolstoneWindow(appState: appState, route: "observer")
                     }
@@ -299,7 +299,7 @@ struct SolstoneCaptureApp: App {
             }
         }
 
-        Window("about solstone", id: "about") {
+        Window(MacStrings.macos_desktop_shared_app_aboutsolstone(), id: "about") {
             if let startup {
                 AboutView(
                     aboutBlock: { AboutPresentation.windowBlock(journal: startup.appState.tunnelLifecycleOwner.journalVersion) },
@@ -360,7 +360,7 @@ internal func statusAccessibilityLabel(
     case .starting:
         UICopy.MENUBAR_A11Y_STARTING
     case .journalMigrationNeeded:
-        "solstone · journal link needs attention"
+        MacStrings.macos_app_solstonejournallinkneedsattention()
     case .connectionWaiting:
         UICopy.MENUBAR_A11Y_WAITING_FOR_JOURNAL
     case .localOnly:

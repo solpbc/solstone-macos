@@ -35,7 +35,7 @@ struct AboutView: View {
                     .frame(width: 64, height: 64)
                     .accessibilityIdentifier(AXID.About.logo)
 
-                Text("solstone")
+                Text(MacStrings.macos_about_solstone())
                     .font(.title)
                     .fontWeight(.bold)
                     .accessibilityIdentifier(AXID.About.title)
@@ -53,27 +53,27 @@ struct AboutView: View {
                     .accessibilityIdentifier(AXID.About.aboutState)
                     .accessibilityValue(displayedBlock)
 
-                Button("copy") {
+                Button(MacStrings.macos_desktop_shared_about_textcontent()) {
                     copyState = copyDisplayedBlock() ? .copied : .failed
                 }
                 .accessibilityIdentifier(AXID.About.aboutCopy)
                 if let copyState {
-                    Text(copyState == .copied ? "copied" : "couldn't copy. select the text and copy it.")
+                    Text(copyState == .copied ? MacStrings.macos_about_copied() : MacStrings.macos_desktop_shared_about_textcontent2())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier(AXID.About.aboutCopyFeedback)
                 }
 
-                Text("by sol pbc")
+                Text(MacStrings.macos_about_bysolpbc_mark())
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
-                Text("open source, local-first.")
+                Text(MacStrings.macos_desktop_shared_about_opensourcelocalfirst())
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
-                Text("a public benefit corporation. your data is never sold or shared, by binding legal covenant.")
+                Text(MacStrings.macos_about_apublicbenefitcorporationyourdatais())
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -81,7 +81,7 @@ struct AboutView: View {
 
             Spacer().frame(height: 12)
 
-            Text("the solstone app takes in what you share with it, and all of it goes into your journal.")
+            Text(MacStrings.macos_desktop_shared_about_setupwelcomebody1())
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -90,10 +90,10 @@ struct AboutView: View {
 
             // Links take sol orange, the one accent, at the darker text shade so they read on the panel.
             VStack(spacing: 4) {
-                Link("source code on github", destination: URL(string: "https://github.com/solpbc/solstone-macos")!)
+                Link(MacStrings.macos_about_sourcecodeongithub(), destination: URL(string: "https://github.com/solpbc/solstone-macos")!)
                     .font(.callout)
                     .accessibilityIdentifier(AXID.About.sourceCode)
-                Link("solstone.app", destination: URL(string: "https://solstone.app")!)
+                Link(MacStrings.macos_about_solstoneapp(), destination: URL(string: "https://solstone.app")!)
                     .font(.callout)
                     .accessibilityIdentifier(AXID.About.website)
             }

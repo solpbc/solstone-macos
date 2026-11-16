@@ -1,0 +1,16 @@
+{
+  "description": "journal handoff stopped. solstone did not change your journal link.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalMigration.swift.",
+  "surfaces": [
+    "migration"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 67,
+  "source_revision": "a2b0d15f54517f45d7eff53fe3c413df7c6844c21d8213cf1cc1f765dd11d3f2",
+  "risk": "routine",
+  "auto_merge": true
+}

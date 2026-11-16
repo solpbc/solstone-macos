@@ -1,0 +1,16 @@
+{
+  "description": "paired, but the local connection couldn't start",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/TunnelLifecycleOwner.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 47,
+  "source_revision": "792d6e3fb7c0d64716ca046cc561a816bab91dee21340abb1775c96224066b79",
+  "risk": "routine",
+  "auto_merge": true
+}

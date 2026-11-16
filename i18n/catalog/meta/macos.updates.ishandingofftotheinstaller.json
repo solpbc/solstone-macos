@@ -1,0 +1,21 @@
+{
+  "description": "{value} is handing off to the installer.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 40,
+  "source_revision": "01dd853faa0fc1427f4f3254488f40eaafb666811f809a5dca734112630cdb2d",
+  "risk": "routine",
+  "auto_merge": true
+}

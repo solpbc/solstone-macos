@@ -1,0 +1,16 @@
+{
+  "description": "screen permission not granted. microphone can run on its own.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 61,
+  "source_revision": "0d60db88c512576f41e011e91e1b1da0c3bc62bbc9579c9b6ba0b4607778d073",
+  "risk": "routine",
+  "auto_merge": true
+}

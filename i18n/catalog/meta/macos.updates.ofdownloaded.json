@@ -1,0 +1,25 @@
+{
+  "description": "{received} of {total} downloaded.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "received",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 33,
+  "source_revision": "e3bc333c364421fcdf888758f080787aecd4e6f43e80dc1643d56a5379721b15",
+  "risk": "routine",
+  "auto_merge": true
+}

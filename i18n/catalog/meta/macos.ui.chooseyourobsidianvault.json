@@ -1,0 +1,16 @@
+{
+  "description": "choose your Obsidian vault",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 26,
+  "source_revision": "724a5b39afeb2d6ddb260d48388880eb84959120a890270dd5fb4c487a7b4b36",
+  "risk": "routine",
+  "auto_merge": true
+}

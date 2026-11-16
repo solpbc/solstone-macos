@@ -305,7 +305,7 @@ final class PairingCoordinator {
             state = .failed(.invalidLink(Self.invalidLinkReason(error)))
             return
         } catch {
-            state = .failed(.invalidLink("pairing link is malformed"))
+            state = .failed(.invalidLink(MacStrings.macos_app_pairinglinkismalformed()))
             return
         }
 
@@ -1287,7 +1287,7 @@ final class PairingCoordinator {
         case .lanClosedBeforeResponse:
             return .connectionDropped
         case .directAddressNotLocal:
-            return .invalidLink("this pairing link contains an address that can't be used for direct pairing. get a fresh link from your journal and try again.")
+            return .invalidLink(MacStrings.macos_app_thispairinglinkcontainsanaddressthat())
         case .lanCandidatesExhausted(let sawCAFingerprintMismatch):
             return sawCAFingerprintMismatch ? .instanceMismatch : .homeUnreachable
         case .relayRequestFailed(let underlying):
@@ -1362,35 +1362,35 @@ final class PairingCoordinator {
     static func invalidLinkReason(_ error: PairURLError) -> String {
         switch error {
         case .wrongScheme(nil):
-            return "pairing link must use https"
+            return MacStrings.macos_pairingcoordinator_pairinglinkmustusehttps()
         case .wrongScheme(let scheme?):
-            return "pairing link must use https, got \(scheme)"
+            return MacStrings.macos_pairingcoordinator_pairinglinkmustusehttpsgot("\(scheme)")
         case .wrongHost(nil):
-            return "pairing link must use go.solstone.app"
+            return MacStrings.macos_pairingcoordinator_pairinglinkmustusegosolstoneapp()
         case .wrongHost(let host?):
-            return "pairing link must use go.solstone.app, got \(host)"
+            return MacStrings.macos_pairingcoordinator_pairinglinkmustusegosolstoneappgot("\(host)")
         case .wrongPath(let path):
-            return "pairing link path must be /p, got \(path)"
+            return MacStrings.macos_pairingcoordinator_pairinglinkpathmustbepgot("\(path)")
         case .missingFragment:
-            return "pairing link is missing its code"
+            return MacStrings.macos_pairingcoordinator_pairinglinkismissingitscode()
         case .invalidBase32(.outOfAlphabet(let character)):
-            return "pairing link contains an invalid character: \(character)"
+            return MacStrings.macos_pairingcoordinator_pairinglinkcontainsaninvalidcharacter("\(character)")
         case .invalidBase32(.nonCanonicalPadBits):
-            return "pairing link contains invalid encoded data"
+            return MacStrings.macos_pairingcoordinator_pairinglinkcontainsinvalidencodeddata()
         case .invalidVersion(let version):
-            return "pairing link version is unsupported: \(hexByte(version))"
+            return MacStrings.macos_pairingcoordinator_pairinglinkversionisunsupported("\(hexByte(version))")
         case .unsupportedAddrType(let addressType):
-            return "pairing link address type is unsupported: \(hexByte(addressType))"
+            return MacStrings.macos_pairingcoordinator_pairinglinkaddresstypeisunsupported("\(hexByte(addressType))")
         case .unsupportedCAFingerprintTag(let tag):
-            return "pairing link fingerprint type is unsupported: \(hexByte(tag))"
+            return MacStrings.macos_pairingcoordinator_pairinglinkfingerprinttypeisunsupported("\(hexByte(tag))")
         case .invalidRelayOrigin:
-            return "pairing link relay origin is invalid"
+            return MacStrings.macos_pairingcoordinator_pairinglinkrelayoriginisinvalid()
         case .truncated(_, let count), .lengthMismatch(_, let count):
-            return "pairing link data length is invalid: \(count) bytes"
+            return MacStrings.macos_pairingcoordinator_pairinglinkdatalengthisinvalidbytes(MacStrings.number(count))
         case .invalidCandidateCount:
-            return "pairing link contains invalid encoded data"
+            return MacStrings.macos_pairingcoordinator_pairinglinkcontainsinvalidencodeddata()
         case .disallowedDirectAddress, .malformedOuterURL:
-            return "pairing link is malformed"
+            return MacStrings.macos_app_pairinglinkismalformed()
         }
     }
 
@@ -1407,24 +1407,24 @@ extension PairingFailure {
     func message(address: String?) -> String {
         switch self {
         case .staleLink:
-            return "this pairing window closed or expired. get a fresh link from your journal's network app and try again."
+            return MacStrings.macos_pairingcoordinator_thispairingwindowclosedorexpiredgetafreshlink()
         case .homeUnreachable:
             if let address {
-                return "couldn't reach your journal at \(address). make sure it's running, then try again."
+                return MacStrings.macos_pairingcoordinator_couldntreachyourjournalatmakesureitsrunningth("\(address)")
             }
-            return "couldn't reach your journal. make sure it's running, then try again."
+            return MacStrings.macos_pairingcoordinator_couldntreachyourjournalmakesureitsrunningthen()
         case .relayUnauthorized:
-            return "your journal didn't accept this pairing link. get a fresh link from its network app and try again."
+            return MacStrings.macos_pairingcoordinator_yourjournaldidntacceptthispairinglinkgetafres()
         case .instanceMismatch:
-            return "this link is for a different journal. get a fresh link from the journal you want."
+            return MacStrings.macos_pairingcoordinator_thislinkisforadifferentjournalgetafreshlinkfr()
         case .network:
-            return "pairing couldn't reach your journal. check your connection and try again."
+            return MacStrings.macos_pairingcoordinator_pairingcouldntreachyourjournalcheckyourconnec()
         case .connectionDropped:
-            return "lost the connection to your journal before it answered. try again."
+            return MacStrings.macos_pairingcoordinator_losttheconnectiontoyourjournalbeforeitanswere()
         case .invalidLink(let reason):
             return reason
         case .localSetup:
-            return "pairing couldn't start on this mac. try again."
+            return MacStrings.macos_pairingcoordinator_pairingcouldntstartonthismactryagain()
         }
     }
 }

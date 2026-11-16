@@ -1,0 +1,16 @@
+{
+  "description": "never checked for updates",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/UpdateKit/UpdatesCopy.swift. The same sentence is on Windows as windows.desktop.shared.updates.nevercheckedforupdates. Keep the two translations consistent.",
+  "surfaces": [
+    "updates"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 25,
+  "source_revision": "343ee3e42a127172ed6fe2b4505516501823436b2cc1c003e4efea3a1998cb0e",
+  "risk": "routine",
+  "auto_merge": true
+}

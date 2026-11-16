@@ -1,0 +1,16 @@
+{
+  "description": "microphone paused",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 17,
+  "source_revision": "fd464fc564b972a9da958cf959a7e804a0a516b811f0bb0664191c5ad85e2d95",
+  "risk": "routine",
+  "auto_merge": true
+}

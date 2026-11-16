@@ -196,7 +196,7 @@ struct DeckResumeButton: View {
         Button {
             appState.pauseManager.resume()
         } label: {
-            Text("resume")
+            Text(MacStrings.macos_desktop_shared_setup_wizardpausefailure2())
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(SetupChromeColor.primaryLabel)
                 .padding(.horizontal, 12)
@@ -262,7 +262,7 @@ struct DeckJournalPill: View {
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("your journal")
+        .accessibilityLabel(MacStrings.macos_desktop_shared_copy_setupjournalcardheading())
         .accessibilityIdentifier(AXID.Deck.journalPill)
     }
 }

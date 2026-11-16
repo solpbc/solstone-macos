@@ -1,0 +1,1913 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>m6d61636f732e61626f75742e617075626c696362656e65666974636f72706f726174696f6e796f7572646174616973</key>
+	<string>a public benefit corporation. your data is never sold or shared, by binding legal covenant.</string>
+	<key>m6d61636f732e61626f75742e6279736f6c7062632e6d61726b</key>
+	<string>by sol pbc</string>
+	<key>m6d61636f732e61626f75742e636f70696564</key>
+	<string>copied</string>
+	<key>m6d61636f732e61626f75742e736f6c73746f6e65</key>
+	<string>solstone</string>
+	<key>m6d61636f732e61626f75742e736f6c73746f6e65617070</key>
+	<string>solstone.app</string>
+	<key>m6d61636f732e61626f75742e736f75726365636f64656f6e676974687562</key>
+	<string>source code on github</string>
+	<key>m6d61636f732e61626f757470726573656e746174696f6e2e6a6f75726e616c76657273696f6e756e6b6e6f776e</key>
+	<string>journal version unknown</string>
+	<key>m6d61636f732e6163636573736962696c6974792e7072697661746577696e646f77736b657074</key>
+	<string>private windows in Safari, Chrome, Edge and Brave are kept out of your journal</string>
+	<key>m6d61636f732e6163636573736962696c6974792e7072697661746577696e646f77736e6f74776f726b696e67</key>
+	<string>checking Safari, Chrome, Edge and Brave is not working, so their private windows reach your journal</string>
+	<key>m6d61636f732e6163636573736962696c6974792e72656d6f76656974656d</key>
+	<string>remove %1$@</string>
+	<key>m6d61636f732e6170702e616c6c676f6f646f6e73796e636564746f</key>
+	<string>all good · on, synced to %1$@</string>
+	<key>m6d61636f732e6170702e63616e747265616368796f75726a6f75726e616c72696768746e6f77</key>
+	<string>can't reach your journal right now</string>
+	<key>m6d61636f732e6170702e63616e7473796e636f766572746865696e7465726e6574796574</key>
+	<string>can't sync over the internet yet</string>
+	<key>m6d61636f732e6170702e6361746368696e6775706f667365676d656e7473</key>
+	<string>catching up · %1$@ of %2$@ segments</string>
+	<key>m6d61636f732e6170702e6361746368696e6775707265747279696e67616e75706c6f6164</key>
+	<string>catching up · retrying an upload</string>
+	<key>m6d61636f732e6170702e6361746368696e67757073656e64696e677468656c6174657374</key>
+	<string>catching up · sending the latest</string>
+	<key>m6d61636f732e6170702e636f6e6e656374696f6e756e617661696c61626c65</key>
+	<string>connection unavailable</string>
+	<key>m6d61636f732e6170702e636f756c646e7461646474686973746f796f75726a6f75726e616c</key>
+	<string>couldn't add this to your journal</string>
+	<key>m6d61636f732e6170702e636f756c646e747365747570</key>
+	<string>%1$@: couldn't set up (%2$@)</string>
+	<key>m6d61636f732e6170702e636f756c646e74756e6465727374616e64796f75726a6f75726e616c</key>
+	<string>couldn't understand your journal</string>
+	<key>m6d61636f732e6170702e6461676f</key>
+	<string>%1$@d ago</string>
+	<key>m6d61636f732e6170702e66696e69736873657474696e677570696e7468656a6f75726e616c617070</key>
+	<string>finish setting up in the journal app. your journal will appear here when it's ready</string>
+	<key>m6d61636f732e6170702e66697273746c617374726570656174</key>
+	<string>%1$@ · first %2$@ · last %3$@ · repeat %4$@</string>
+	<key>m6d61636f732e6170702e6861676f</key>
+	<string>%1$@h ago</string>
+	<key>m6d61636f732e6170702e696e76616c69646a6f75726e616c61646472657373</key>
+	<string>invalid journal address</string>
+	<key>m6d61636f732e6170702e6a6f75726e616c6170706275696c646973746f6f6f6c64666f72</key>
+	<string>journal app build is too old for on-disk journal discovery</string>
+	<key>m6d61636f732e6170702e6a6f75726e616c636f6e6e656374696f6e6572726f72</key>
+	<string>journal connection error</string>
+	<key>m6d61636f732e6170702e6a6f75726e616c6865616c7468796f6e746869736d6163</key>
+	<string>journal healthy on this mac</string>
+	<key>m6d61636f732e6170702e6a6f75726e616c77696e646f776c6f6164</key>
+	<string>journal-window: load</string>
+	<key>m6d61636f732e6170702e6d61676f</key>
+	<string>%1$@m ago</string>
+	<key>m6d61636f732e6170702e6d696e61676f2e6e6174697665</key>
+	<string>%1$@ min ago</string>
+	<key>m6d61636f732e6170702e6e6f6163717569726572617661696c61626c65</key>
+	<string>no acquirer available</string>
+	<key>m6d61636f732e6170702e6e6f7468696e67746f616464796574</key>
+	<string>nothing to add yet</string>
+	<key>m6d61636f732e6170702e6f70656e6a6f75726e616c73657474696e6773</key>
+	<string>open journal settings</string>
+	<key>m6d61636f732e6170702e6f70656e796f75726a6f75726e616c70616e656c746f636f6e6e65637474686973</key>
+	<string>open your journal panel to connect this mac again</string>
+	<key>m6d61636f732e6170702e706167657368756d616e</key>
+	<string>solstone paused</string>
+	<key>m6d61636f732e6170702e7061697265646275747468656c6f63616c636f6e6e656374696f6e636f756c646e74</key>
+	<string>paired, but the local connection couldn't start</string>
+	<key>m6d61636f732e6170702e706169726564627574746869736d6163636f756c646e7472656164</key>
+	<string>paired, but this mac couldn't read the pairing</string>
+	<key>m6d61636f732e6170702e70616972696e676c696e6b69736d616c666f726d6564</key>
+	<string>pairing link is malformed</string>
+	<key>m6d61636f732e6170702e70616972696e677761737265766f6b656470616972616761696e746f7265636f6e6e656374</key>
+	<string>pairing was revoked. pair again to reconnect.</string>
+	<key>m6d61636f732e6170702e7265616479</key>
+	<string>%1$@: ready</string>
+	<key>m6d61636f732e6170702e72656c696e6b696e6a6f75726e616c73657474696e6773746f726573756d65</key>
+	<string>re-link in journal settings to resume syncing.</string>
+	<key>m6d61636f732e6170702e726570616972656461746c61756e6368</key>
+	<string>%1$@: repaired at launch</string>
+	<key>m6d61636f732e6170702e7365676d656e74736f6e746869736d6163</key>
+	<string>segments on this mac</string>
+	<key>m6d61636f732e6170702e73657474696e6773</key>
+	<string>settings… · %1$@</string>
+	<key>m6d61636f732e6170702e73657474696e67736368616e6765647374617274696e676f766572</key>
+	<string>settings changed, starting over</string>
+	<key>m6d61636f732e6170702e73657474696e67736c61737464656c69766572796e6f746c696e6b6564</key>
+	<string>your journal isn't linked</string>
+	<key>m6d61636f732e6170702e7365747570636f6e6e656374696e67746f796f75726a6f75726e616c</key>
+	<string>connecting to your journal…</string>
+	<key>m6d61636f732e6170702e736574757076616c7565</key>
+	<string>%1$@ ready</string>
+	<key>m6d61636f732e6170702e736f6c73746f6e656973706175736564</key>
+	<string>solstone is paused</string>
+	<key>m6d61636f732e6170702e736f6c73746f6e656a6f75726e616c6c696e6b6e65656473617474656e74696f6e</key>
+	<string>solstone · journal link needs attention</string>
+	<key>m6d61636f732e6170702e73796e63636865636b636f6d706c657465</key>
+	<string>sync check complete</string>
+	<key>m6d61636f732e6170702e73796e636861736e74636865636b6564796574</key>
+	<string>sync hasn't checked yet</string>
+	<key>m6d61636f732e6170702e73796e63696e67746f796f75726a6f75726e616c</key>
+	<string>syncing to your journal</string>
+	<key>m6d61636f732e6170702e73796e63696e67746f796f75726a6f75726e616c32</key>
+	<string>syncing to your journal…</string>
+	<key>m6d61636f732e6170702e73796e63706175736564</key>
+	<string>sync paused</string>
+	<key>m6d61636f732e6170702e7468697370616972696e676c696e6b636f6e7461696e73616e6164647265737374686174</key>
+	<string>this pairing link contains an address that can't be used for direct pairing. get a fresh link from your journal and try again.</string>
+	<key>m6d61636f732e6170702e77616974696e67666f7261636f6e6e656374696f6e</key>
+	<string>waiting for a connection</string>
+	<key>m6d61636f732e6170702e77616974696e67666f72616469726563746e6574776f726b726f7574656f72</key>
+	<string>waiting for a direct network route or relay connection</string>
+	<key>m6d61636f732e6170702e77616974696e67746f7265747279</key>
+	<string>waiting to retry</string>
+	<key>m6d61636f732e6170702e796f75726a6f75726e616c636f756c646e7472656164</key>
+	<string>your journal couldn't read %1$@</string>
+	<key>m6d61636f732e6170702e796f75726a6f75726e616c69736e7474616b696e6774686973696e</key>
+	<string>your journal isn't taking this in</string>
+	<key>m6d61636f732e6170702e796f75726a6f75726e616c6e65656473616e65776c696e6b</key>
+	<string>your journal needs a new link</string>
+	<key>m6d61636f732e6170702e796f75726a6f75726e616c726566757365647468697373796e63</key>
+	<string>your journal refused this sync.</string>
+	<key>m6d61636f732e617070706c6163656d656e747265706169722e696e7374616c6c616e6472656f70656e</key>
+	<string>install and reopen</string>
+	<key>m6d61636f732e617070706c6163656d656e747265706169722e696e7374616c6c736f6c73746f6e65696e6170706c69636174696f6e73</key>
+	<string>install solstone in Applications</string>
+	<key>m6d61636f732e617070706c6163656d656e747265706169722e6d6f7665736f6c73746f6e65617070746f6170706c69636174696f6e73696e66696e6465727468656e6f70656e</key>
+	<string>move solstone.app to Applications in Finder, then open it there.</string>
+	<key>m6d61636f732e617070706c6163656d656e747265706169722e6f70656e6170706c69636174696f6e73</key>
+	<string>open Applications</string>
+	<key>m6d61636f732e617070706c6163656d656e747265706169722e736f6c73746f6e65636f756c646e746d6f7665697473656c66</key>
+	<string>solstone couldn't move itself</string>
+	<key>m6d61636f732e617070706c6163656d656e747265706169722e736f6c73746f6e65697372756e6e696e6766726f6d616c6f636174696f6e69746d696768746e6f7466696e6461</key>
+	<string>solstone is running from a location it might not find again next launch, so macOS may not remember its screen recording permission. install solstone in Applications, a reliable spot, and it will reopen.</string>
+	<key>m6d61636f732e62726f777365722e68656c64</key>
+	<string>held</string>
+	<key>m6d61636f732e62726f777365722e796573746572646179</key>
+	<string>yesterday</string>
+	<key>m6d61636f732e636170747572652e616c6c646973706c617973</key>
+	<string>all displays disconnected</string>
+	<key>m6d61636f732e636170747572652e617564696f6f7574707574</key>
+	<string>Failed to create audio output</string>
+	<key>m6d61636f732e636170747572652e6469726563746f7279</key>
+	<string>Failed to create segment directory: %1$@</string>
+	<key>m6d61636f732e636170747572652e66696c746572</key>
+	<string>Missing SCContentFilter for display %1$@</string>
+	<key>m6d61636f732e636170747572652e66696e6973686564617564696f</key>
+	<string>this segment has finished accepting audio.</string>
+	<key>m6d61636f732e636170747572652e6e65777365676d656e74</key>
+	<string>Failed to start new segment: %1$@</string>
+	<key>m6d61636f732e636170747572652e6e6f646973706c617973</key>
+	<string>No displays available for capture</string>
+	<key>m6d61636f732e636170747572652e6e6f74696e697469616c697a6564</key>
+	<string>Capture manager not initialized</string>
+	<key>m6d61636f732e636170747572652e726573756d65</key>
+	<string>Failed to resume after %1$@: %2$@</string>
+	<key>m6d61636f732e636170747572652e726573756d657061757365646561646c696e65</key>
+	<string>pauseDeadline</string>
+	<key>m6d61636f732e636170747572652e726573756d6570726f746563746564766964656f636c6561726564</key>
+	<string>protectedVideoCleared</string>
+	<key>m6d61636f732e636170747572652e726573756d657265636f76657279</key>
+	<string>recovery</string>
+	<key>m6d61636f732e636170747572652e726573756d65756e6c6f636b</key>
+	<string>unlock</string>
+	<key>m6d61636f732e636170747572652e726573756d6575736572</key>
+	<string>user</string>
+	<key>m6d61636f732e636170747572652e726573756d6577616b65</key>
+	<string>wake</string>
+	<key>m6d61636f732e636170747572652e726f746174696f6e74696d656f7574</key>
+	<string>Segment rotation timed out</string>
+	<key>m6d61636f732e636170747572652e73637265656e73686f74</key>
+	<string>Failed to create screenshot capturer for display %1$@</string>
+	<key>m6d61636f732e636f6e6e656374696f6e2e73616d656d6163</key>
+	<string>connected to your journal on this mac</string>
+	<key>m6d61636f732e636f6e6e656374696f6e2e7468726f7567686a6f75726e616c</key>
+	<string>sync can connect through your journal</string>
+	<key>m6d61636f732e636f70792e6163636573736962696c69747963617574696f6e</key>
+	<string>couldn't copy diagnostics</string>
+	<key>m6d61636f732e636f70792e6163636573736962696c6974796578706c616e6174696f6e</key>
+	<string>microphone</string>
+	<key>m6d61636f732e636f70792e616464746f</key>
+	<string>add to %1$@</string>
+	<key>m6d61636f732e636f70792e617564696f736f757263656d6963726f70686f6e65</key>
+	<string>a microphone</string>
+	<key>m6d61636f732e636f70792e62726f7773657273</key>
+	<string>browsers · %1$@</string>
+	<key>m6d61636f732e636f70792e636f6e6e65637465646e6f776c61737470616765</key>
+	<string>connected now · last page %1$@</string>
+	<key>m6d61636f732e636f70792e636f6e6e6563746564746f</key>
+	<string>connected to %1$@</string>
+	<key>m6d61636f732e636f70792e636f756c646e746f70656e74686573746f726570616765696e</key>
+	<string>couldn't open the store page in %1$@.</string>
+	<key>m6d61636f732e636f70792e636f756c646e74726570616972</key>
+	<string>couldn't repair: %1$@</string>
+	<key>m6d61636f732e636f70792e6372656174656a6f75726e616c6f6e746869736d6163</key>
+	<string>create a new journal on this mac</string>
+	<key>m6d61636f732e636f70792e6465736372697074696f6e70617261677261706831</key>
+	<string>copy diagnostics</string>
+	<key>m6d61636f732e636f70792e646961676e6f737469637362726f7773657273657475706c6162656c</key>
+	<string>browser setup</string>
+	<key>m6d61636f732e636f70792e646961676e6f737469637362726f77736572737365656e6c6162656c</key>
+	<string>browsers seen</string>
+	<key>m6d61636f732e636f70792e6572726f72</key>
+	<string>error: %1$@ →</string>
+	<key>m6d61636f732e636f70792e6572726f72696e76616c696461646472657373</key>
+	<string>enter a website address, like bank.com.</string>
+	<key>m6d61636f732e636f70792e6572726f726c696d697472656163686564</key>
+	<string>you can leave out up to 200 websites.</string>
+	<key>m6d61636f732e636f70792e6572726f726c6f67696e6974656d</key>
+	<string>your mac wouldn't change "start at login". use the switch to try again.</string>
+	<key>m6d61636f732e636f70792e6572726f7273617665636f6e666967</key>
+	<string>couldn't save that change. try it again.</string>
+	<key>m6d61636f732e636f70792e696e707574</key>
+	<string>input %1$@, %2$@</string>
+	<key>m6d61636f732e636f70792e696e70757432</key>
+	<string>input %1$@</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c61646472657373657374726965646c6162656c</key>
+	<string>addresses tried</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c617070646f776e6c6f6164</key>
+	<string>download the journal app</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c636f6e6e65637465647468726f7567686c6162656c</key>
+	<string>connected through</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c636f6e6e65637465647468726f75676872656c6179</key>
+	<string>the relay</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d61726b636f6e6669726d616374696f6e</key>
+	<string>confirm your journal's mark</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d61726b636f6e6669726d73756274657874</key>
+	<string>your journal shows this same mark in its network app. it should match, exactly.</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d61726b68656c64</key>
+	<string>waiting for you to confirm your journal's mark</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d61726b68656c6463617074696f6e</key>
+	<string>nothing waiting goes into your journal until you do.</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d61726b6d69736d61746368626f6479</key>
+	<string>turn on microphone</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d61726b6d69736d6174636866726573686c696e6b</key>
+	<string>get a fresh link</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d61726b6d69736d61746368737570706f7274</key>
+	<string>email support@solstone.app</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d61726b6d69736d617463687469746c65</key>
+	<string>the microphone stays off until you turn it on. what you turn on goes into your journal.</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d61726b756e7665726966696564626f6479</key>
+	<string>couldn't save setup progress.</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d6f6465616e6f746865726d616368696e656c6162656c</key>
+	<string>another device</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c6d6f6465746869736d61636c6162656c</key>
+	<string>this mac</string>
+	<key>m6d61636f732e636f70792e6a6f75726e616c77696e646f776572726f72</key>
+	<string>your journal couldn't load</string>
+	<key>m6d61636f732e636f70792e6c61737470616765</key>
+	<string>last page %1$@</string>
+	<key>m6d61636f732e636f70792e6c6173747365656e</key>
+	<string>last seen %1$@</string>
+	<key>m6d61636f732e636f70792e6c696d697473646973636c6f73757265</key>
+	<string>diagnostics copied to the clipboard</string>
+	<key>m6d61636f732e636f70792e6c696e6b696e67616761696e74616b65736170616972696e676c696e6b676574</key>
+	<string>linking again takes a pairing link. get one from your journal's network app and paste it below.</string>
+	<key>m6d61636f732e636f70792e6d656e75626172613131796177616974696e676d61726b636f6e6669726d6174696f6e</key>
+	<string>solstone · confirm your journal's mark</string>
+	<key>m6d61636f732e636f70792e6d656e75626172613131796572726f72</key>
+	<string>solstone · error</string>
+	<key>m6d61636f732e636f70792e6d656e75626172613131796a6f75726e616c73657475706e6565646564</key>
+	<string>solstone · journal setup needed</string>
+	<key>m6d61636f732e636f70792e6d656e75626172613131796e65656473617474656e74696f6e</key>
+	<string>solstone · needs attention</string>
+	<key>m6d61636f732e636f70792e6d656e75626172613131796f6273657276696e67636f6e6e6563746564</key>
+	<string>solstone · on, connected</string>
+	<key>m6d61636f732e636f70792e6d656e75626172613131796f6273657276696e6773617665646c6f63616c6c79</key>
+	<string>solstone · on, saved locally</string>
+	<key>m6d61636f732e636f70792e6d656e75626172613131796f6273657276696e6773796e63706175736564</key>
+	<string>solstone · on, sync paused</string>
+	<key>m6d61636f732e636f70792e6d656e7562617261313179706175736564</key>
+	<string>solstone · paused</string>
+	<key>m6d61636f732e636f70792e6d656e75626172613131797065726d697373696f6e736e6565646564</key>
+	<string>solstone · permissions needed</string>
+	<key>m6d61636f732e636f70792e6d656e75626172613131797374617274696e67</key>
+	<string>solstone · starting</string>
+	<key>m6d61636f732e636f70792e6d656e756261726131317977616974696e67666f726a6f75726e616c</key>
+	<string>solstone · waiting for journal</string>
+	<key>m6d61636f732e636f70792e6d656e756261726177616974696e676d61726b636f6e6669726d6174696f6e</key>
+	<string>on · confirm your journal's mark →</string>
+	<key>m6d61636f732e636f70792e6d656e7562617262726f77736572736e6f6e65796574</key>
+	<string>browsers · none yet</string>
+	<key>m6d61636f732e636f70792e6d656e7562617262726f7773657273706175736564</key>
+	<string>browsers · solstone paused</string>
+	<key>m6d61636f732e636f70792e6d656e756261726c6f63616c6f6e6c7973657475706a6f75726e616c</key>
+	<string>on · set up your journal →</string>
+	<key>m6d61636f732e636f70792e6d656e756261726e6f736f757263656f70656e73657474696e6773</key>
+	<string>waiting on a permission · open permissions →</string>
+	<key>m6d61636f732e636f70792e6d656e756261726f62736572766174696f6e77656467656f70656e73657474696e6773</key>
+	<string>needs attention · open settings →</string>
+	<key>m6d61636f732e636f70792e6d656e756261726f6273657276696e67636f6e6e6563746564</key>
+	<string>on, connected</string>
+	<key>m6d61636f732e636f70792e6d656e756261726f6273657276696e676f66666c696e6573617665646c6f63616c6c79</key>
+	<string>on, offline (saved locally) →</string>
+	<key>m6d61636f732e636f70792e6d656e75626172736f75726365736f66666f70656e73657474696e6773</key>
+	<string>every source is off · open sources →</string>
+	<key>m6d61636f732e636f70792e6d656e75626172736f75726365736f66666f70656e73657474696e677332</key>
+	<string>both sources are off · open sources →</string>
+	<key>m6d61636f732e636f70792e6d656e7562617273796e63706175736564</key>
+	<string>on, sync paused</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e65616c7761797363616c6c6d6f6465</key>
+	<string>set to always, this headset stays in call mode, so everything you hear through it sounds like a phone call.</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e65696e707574736368616e676564</key>
+	<string>this interface's inputs changed. pick an input for your journal.</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e656c61796f7574756e617661696c61626c65</key>
+	<string>this interface's inputs can't be read.</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e656d6f646568656c70</key>
+	<string>a bluetooth headset sounds worse while its microphone is open, so by default it only goes into your journal while another app, such as a call app, is already using it.</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e656d6f64657768656e696e757365</key>
+	<string>when another app uses it</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e656e6565647363686f696365</key>
+	<string>this interface has more than two inputs. pick an input for your journal.</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e6573656d7074796163636573736465736372697074696f6e</key>
+	<string>check microphone access in permissions.</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e6573656d707479636f6e6e6563746465736372697074696f6e</key>
+	<string>connect a microphone. for bluetooth, check that it is connected in system settings.</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e6573656d7074796f70656e7065726d697373696f6e73</key>
+	<string>open permissions</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e6573656d7074796f70656e736f756e64</key>
+	<string>open sound settings</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e6573656d7074797469746c65</key>
+	<string>no microphones available</string>
+	<key>m6d61636f732e636f70792e6d6963726f70686f6e65736c69737463617074696f6e</key>
+	<string>every microphone that's on goes into your journal.</string>
+	<key>m6d61636f732e636f70792e6f6e</key>
+	<string>on · %1$@</string>
+	<key>m6d61636f732e636f70792e70616972696e67646973636f6e6e656374636f6e6669726d</key>
+	<string>disconnect this mac from your journal? your journal keeps everything. you can pair again anytime.</string>
+	<key>m6d61636f732e636f70792e70616972696e676e6f74656e7469746c65647265636f76657279</key>
+	<string>your journal is paired, but it isn't on the paid plan, so it can't sync over the internet. you can still reach it directly, without the plan, whenever your journal is reachable.</string>
+	<key>m6d61636f732e636f70792e70616972696e67736176656661696c6564</key>
+	<string>pairing worked, but this mac couldn't save it. try again.</string>
+	<key>m6d61636f732e636f70792e7065726d697373696f6e736f70656e616374696f6e</key>
+	<string>open permissions →</string>
+	<key>m6d61636f732e636f70792e70726f66696c65732e6e6174697665</key>
+	<string>%1$@ · %2$@ profiles</string>
+	<key>m6d61636f732e636f70792e73616d656d616368696e656c696e6b616c72656164796c696e6b6564</key>
+	<string>already linked to your journal on this mac.</string>
+	<key>m6d61636f732e636f70792e73616d656d616368696e656c696e6b63726564656e7469616c73756e617661696c61626c65</key>
+	<string>this mac couldn't read its saved connection, so it can't link yet. try again, or restart solstone.</string>
+	<key>m6d61636f732e636f70792e73616d656d616368696e656c696e6b6f746865726a6f75726e616c</key>
+	<string>this mac is already paired with a journal on another device.</string>
+	<key>m6d61636f732e636f70792e73616d656d616368696e656c696e6b72656675736564</key>
+	<string>your journal on this mac didn't accept the request to link. try again, or paste a pairing link from your journal's network app below.</string>
+	<key>m6d61636f732e636f70792e73616d656d616368696e656c696e6b756e6578706563746564</key>
+	<string>your journal on this mac sent back something the solstone app couldn't use. try again, or paste a pairing link from your journal's network app below.</string>
+	<key>m6d61636f732e636f70792e73616d656d616368696e656c696e6b756e66696e6973686564</key>
+	<string>linking didn't finish. try again.</string>
+	<key>m6d61636f732e636f70792e73616d656d616368696e656c696e6b756e726561636861626c65</key>
+	<string>couldn't reach your journal on this mac. make sure the journal app is open, then try again.</string>
+	<key>m6d61636f732e636f70792e73637265656e696e74616b65636f756c646e6f747374617274</key>
+	<string>a screen could not start. open settings.</string>
+	<key>m6d61636f732e636f70792e73637265656e696e74616b6573746f70706564</key>
+	<string>a screen isn't coming through. open settings.</string>
+	<key>m6d61636f732e636f70792e73657474696e6773617474656e74696f6e6a6f75726e616c</key>
+	<string>journal setup needed</string>
+	<key>m6d61636f732e636f70792e73657474696e6773617474656e74696f6e7065726d697373696f6e73</key>
+	<string>permissions needed</string>
+	<key>m6d61636f732e636f70792e73657474696e6773617474656e74696f6e7072697661746577696e646f7773</key>
+	<string>can't check private windows in Safari, Chrome, Edge and Brave</string>
+	<key>m6d61636f732e636f70792e73657474696e6773617474656e74696f6e757064617465617661696c61626c65</key>
+	<string>update available</string>
+	<key>m6d61636f732e636f70792e73657474696e6773617474656e74696f6e757064617465636865636b6661696c6564</key>
+	<string>update check failed</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f737469637361707076657273696f6e</key>
+	<string>app version</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f7374696373636865636b65646174</key>
+	<string>checked at</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f737469637368696465</key>
+	<string>hide diagnostics</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f7374696373696e67657374726561736f6e</key>
+	<string>journal intake</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f7374696373696e67657374726f757465</key>
+	<string>journal intake address</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f7374696373696e74726f</key>
+	<string>a short summary for troubleshooting.</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f73746963736a6f75726e616c6c696e6b</key>
+	<string>journal link</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f73746963736c6173746a6f75726e616c636f6e6e656374696f6e</key>
+	<string>last journal connection</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f73746963736e6f636f6e6e656374696f6e</key>
+	<string>no connection yet</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f73746963736e6f6c696e6b7265667573616c73</key>
+	<string>nothing turned away or ended early</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f73746963736e6f726563656e74636f646573</key>
+	<string>no recent state codes</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f7374696373726563656e747374617465636f646573</key>
+	<string>recent state codes</string>
+	<key>m6d61636f732e636f70792e73657474696e6773646961676e6f737469637373686f77</key>
+	<string>show diagnostics</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c61737464656c69766572796c6162656c</key>
+	<string>last added to your journal</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c61737464656c69766572796e65766572</key>
+	<string>nothing added yet</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f63616c6a6f75726e616c666f756e646578697374696e67</key>
+	<string>found an existing journal on this mac</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f63616c6a6f75726e616c696e7374616c6c6578697374696e67</key>
+	<string>install the journal app to bring it back online</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f63616c6a6f75726e616c6f70656e6578697374696e67</key>
+	<string>open the journal app to bring it back online</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f676578706f7274616374696f6e</key>
+	<string>show recent logs</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f676578706f7274656d707479</key>
+	<string>no logs in the last 24 hours</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f676578706f72746661696c6564</key>
+	<string>couldn't read recent logs</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f676578706f7274696e74726f</key>
+	<string>read up to the last 24 hours of logs from solstone on this mac. save a copy if you want one.</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f676578706f72747061727469616c</key>
+	<string>some logs couldn't be read</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f676578706f727470726576696577737562736574</key>
+	<string>showing the newest %%d of %%d entries. saving writes all of them.</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f676578706f7274776f726b696e67</key>
+	<string>reading recent logs…</string>
+	<key>m6d61636f732e636f70792e73657474696e67736c6f676578706f727477726974656661696c6564</key>
+	<string>couldn't save the copy</string>
+	<key>m6d61636f732e636f70792e73657474696e67736e657874636865636b737461747573</key>
+	<string>next: check status →</string>
+	<key>m6d61636f732e636f70792e73657474696e67736e657874636f6e6e6563746a6f75726e616c</key>
+	<string>next: connect your journal →</string>
+	<key>m6d61636f732e636f70792e73657474696e67736e6578746772616e747065726d697373696f6e73</key>
+	<string>next: grant permissions →</string>
+	<key>m6d61636f732e636f70792e73657474696e67736f62736572766174696f6e617474656e74696f6e</key>
+	<string>needs your attention</string>
+	<key>m6d61636f732e636f70792e73657474696e67736f62736572766174696f6e6572726f72</key>
+	<string>something's broken</string>
+	<key>m6d61636f732e636f70792e73657474696e67736f62736572766174696f6e6e6f6a6f75726e616c</key>
+	<string>on · no journal</string>
+	<key>m6d61636f732e636f70792e73657474696e67736f62736572766174696f6e6e6f747265616368696e67</key>
+	<string>on · not reaching your journal</string>
+	<key>m6d61636f732e636f70792e73657474696e67736f62736572766174696f6e6f6273657276696e67</key>
+	<string>on · reaching your journal</string>
+	<key>m6d61636f732e636f70792e73657474696e67736f62736572766174696f6e70726f746563746564766964656f</key>
+	<string>paused for protected video</string>
+	<key>m6d61636f732e636f70792e73657474696e67736f62736572766174696f6e73617665646c6f63616c6c79</key>
+	<string>on · saved on this mac, not reaching your journal right now</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e73636865636b737461747573</key>
+	<string>check status →</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e73656e61626c656d6963726f70686f6e65</key>
+	<string>enable microphone</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e73656e61626c6573637265656e7265636f7264696e67</key>
+	<string>enable screen recording →</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e736c6976656e6f7472756e6e696e67</key>
+	<string>granted, not on right now</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e736c6976656f666668696e74</key>
+	<string>turned off in sources.</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e736c6976656f6e68696e74</key>
+	<string>you can pause everything at any time.</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e736c697665706175736564616374697669747968696e74</key>
+	<string>while this app is paused, only activity goes into your journal.</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e736c69766570617573656468696e74</key>
+	<string>nothing new from this app goes into your journal while it's paused.</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e736d696364656e696564</key>
+	<string>microphone access is off. if you missed or declined the prompt, switch on solstone in System Settings.</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e736d696372657374726963746564</key>
+	<string>microphone access is restricted by this mac.</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e736d6963726f70686f6e6562726561646372756d62</key>
+	<string>System Settings › Privacy &amp; Security › Microphone</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e736f70656e73797374656d73657474696e6773</key>
+	<string>open System Settings →</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e7373637265656e6578706c61696e6572</key>
+	<string>grant it so what you share can go into your journal.</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e7373637265656e7265636f7264696e6762726561646372756d62</key>
+	<string>System Settings › Privacy &amp; Security › Screen &amp; System Audio Recording</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e7373637265656e7265636f7264696e67726573657468696e74</key>
+	<string>if solstone is already in Applications but doesn't appear in Screen &amp; System Audio Recording, remove any old solstone entry and try enabling screen recording again.</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e7373637265656e72656f70656e</key>
+	<string>already switched it on? reopen solstone</string>
+	<key>m6d61636f732e636f70792e73657474696e67737065726d697373696f6e7373637265656e77616974696e67</key>
+	<string>waiting for you to switch on solstone in System Settings…</string>
+	<key>m6d61636f732e636f70792e73657474696e67737072657265717065726d697373696f6e73</key>
+	<string>you'll also need to grant permissions →</string>
+	<key>m6d61636f732e636f70792e73657474696e6773736574757067726f75707469746c65</key>
+	<string>check my setup</string>
+	<key>m6d61636f732e636f70792e73657474696e677373657475706a6f75726e616c617070616374696f6e</key>
+	<string>open journal settings →</string>
+	<key>m6d61636f732e636f70792e73657474696e677373657475706a6f75726e616c6170706c6162656c</key>
+	<string>journal app</string>
+	<key>m6d61636f732e636f70792e73657474696e677373657475706a6f75726e616c6170706e65656473617474656e74696f6e</key>
+	<string>not installed</string>
+	<key>m6d61636f732e636f70792e73657474696e677373657475706a6f75726e616c6c696e6b616374696f6e</key>
+	<string>connect your journal →</string>
+	<key>m6d61636f732e636f70792e73657474696e677373657475706a6f75726e616c6c696e6b6e65656473617474656e74696f6e</key>
+	<string>not linked</string>
+	<key>m6d61636f732e636f70792e73657474696e6773736574757073637265656e7265636f7264696e67616374696f6e</key>
+	<string>grant access →</string>
+	<key>m6d61636f732e636f70792e73657474696e6773736574757073637265656e7265636f7264696e676c6162656c</key>
+	<string>screen recording</string>
+	<key>m6d61636f732e636f70792e73657474696e67737365747570736861726564636f756c646e6f74636865636b</key>
+	<string>couldn't check</string>
+	<key>m6d61636f732e636f70792e73657474696e677373657475707368617265646e6f746772616e746564</key>
+	<string>not granted</string>
+	<key>m6d61636f732e636f70792e73657474696e677373657475707368617265646e6f747265717569726564</key>
+	<string>not needed on this mac</string>
+	<key>m6d61636f732e636f70792e73657474696e67737365747570736f6c617070616374696f6e</key>
+	<string>open Applications →</string>
+	<key>m6d61636f732e636f70792e73657474696e67737365747570736f6c6170706c6162656c</key>
+	<string>solstone app</string>
+	<key>m6d61636f732e636f70792e73657474696e67737365747570736f6c6170706e65656473617474656e74696f6e</key>
+	<string>needs to be moved</string>
+	<key>m6d61636f732e636f70792e73657474696e67737365747570736f6c6170707265616479</key>
+	<string>in Applications</string>
+	<key>m6d61636f732e636f70792e73657474696e67737365747570766572646963747265616479</key>
+	<string>your setup is ready</string>
+	<key>m6d61636f732e636f70792e73657474696e6773736574757076657264696374756e617661696c61626c65</key>
+	<string>some setup checks are unavailable</string>
+	<key>m6d61636f732e636f70792e73657474696e6773747279616761696e696e666c69676874</key>
+	<string>trying again…</string>
+	<key>m6d61636f732e636f70792e736574757061636b6e6f776c656467656d656e746661696c6564</key>
+	<string>your journal didn't get the reply. try again.</string>
+	<key>m6d61636f732e636f70792e7365747570636f6e6e65637465646578706c616e6174696f6e</key>
+	<string>the solstone app on this mac and your journal are connected. what you turn on goes into your journal.</string>
+	<key>m6d61636f732e636f70792e7365747570636f6e6e6563746a6f75726e616c63686f696365</key>
+	<string>connect to a journal you already have</string>
+	<key>m6d61636f732e636f70792e7365747570636f6e6e656374746f796f75726a6f75726e616c</key>
+	<string>connect to your journal</string>
+	<key>m6d61636f732e636f70792e7365747570636f756c646e7466696e697368</key>
+	<string>couldn't finish setup. try again.</string>
+	<key>m6d61636f732e636f70792e7365747570636f756c646e74696e7374616c6c6a6f75726e616c617070</key>
+	<string>couldn't install the journal app in Applications. download it, drag it into Applications and enter an administrator's name and password when your mac asks. then try again.</string>
+	<key>m6d61636f732e636f70792e7365747570636f756c646e747265616368796f75726a6f75726e616c</key>
+	<string>couldn't reach your journal. try again.</string>
+	<key>m6d61636f732e636f70792e7365747570636f756c646e747665726966796d61726b</key>
+	<string>couldn't verify your journal's mark. try again.</string>
+	<key>m6d61636f732e636f70792e73657475706372656174656a6f75726e616c63686f696365</key>
+	<string>create your journal on this mac</string>
+	<key>m6d61636f732e636f70792e73657475706a6f75726e616c63617264626f6479</key>
+	<string>everything the solstone app takes in goes into your journal. your journal lives on a computer you choose.</string>
+	<key>m6d61636f732e636f70792e73657475706a6f75726e616c7374696c6c6265696e677365747570</key>
+	<string>your journal is still being set up.</string>
+	<key>m6d61636f732e636f70792e73657475706d6963726f70686f6e657374617475736f6666</key>
+	<string>microphone off</string>
+	<key>m6d61636f732e636f70792e73657475706d6963726f70686f6e657374617475736f6e</key>
+	<string>microphone on</string>
+	<key>m6d61636f732e636f70792e73657475706d6963726f70686f6e65737461747573706175736564</key>
+	<string>microphone paused</string>
+	<key>m6d61636f732e636f70792e73657475706f70656e696e67796f75726a6f75726e616c</key>
+	<string>opening your journal…</string>
+	<key>m6d61636f732e636f70792e73657475706f70656e7468656a6f75726e616c617070746f636f6e74696e7565</key>
+	<string>open the journal app to continue.</string>
+	<key>m6d61636f732e636f70792e736574757073637265656e616e64636f6d7075746572736f756e64</key>
+	<string>screen and computer sound</string>
+	<key>m6d61636f732e636f70792e736574757073637265656e6578706c61696e6572</key>
+	<string>your screen and its computer sound go into your journal, with the apps you use and their window titles. they stay off until you turn them on.</string>
+	<key>m6d61636f732e636f70792e736574757073637265656e686561646c696e65</key>
+	<string>share your screen and computer sound</string>
+	<key>m6d61636f732e636f70792e736574757073637265656e6c6566746f7574</key>
+	<string>1Password, Bitwarden and the other password manager apps listed in settings are left out, but a password manager inside your browser isn't.</string>
+	<key>m6d61636f732e636f70792e736574757073637265656e73686f777368657265</key>
+	<string>your screen shows here once it's on.</string>
+	<key>m6d61636f732e636f70792e736574757073637265656e7374617475736f6666</key>
+	<string>screen off</string>
+	<key>m6d61636f732e636f70792e736574757073637265656e7374617475736f6e</key>
+	<string>screen on</string>
+	<key>m6d61636f732e636f70792e736574757073637265656e737461747573706175736564</key>
+	<string>screen paused</string>
+	<key>m6d61636f732e636f70792e736574757073637265656e73746f72616765</key>
+	<string>what you share stays on this mac until it goes into your journal on your own devices. your journal is always private, only yours.</string>
+	<key>m6d61636f732e636f70792e73657475707475726e6f6e73637265656e</key>
+	<string>turn on screen and computer sound</string>
+	<key>m6d61636f732e636f70792e736574757077656c636f6d65686561646c696e65</key>
+	<string>welcome to solstone.</string>
+	<key>m6d61636f732e636f70792e73686f72746375746572726f72636d646f726374726c</key>
+	<string>use command or control with another key.</string>
+	<key>m6d61636f732e636f70792e73686f72746375746572726f72636f6e666c696374</key>
+	<string>this shortcut is used by macos. choose another.</string>
+	<key>m6d61636f732e636f70792e73686f72746375746572726f72756e617661696c61626c65</key>
+	<string>this shortcut is unavailable. choose another.</string>
+	<key>m6d61636f732e636f70792e73686f72746375746d656e757265636f76657279</key>
+	<string>shortcut unavailable. open settings to choose another.</string>
+	<key>m6d61636f732e636f70792e73686f72746375747065726d697373696f6e6e6f7465</key>
+	<string>no extra macos permission is needed.</string>
+	<key>m6d61636f732e636f70792e73686f72746375747072657373</key>
+	<string>press a shortcut</string>
+	<key>m6d61636f732e636f70792e73686f727463757473656374696f6e6465736372697074696f6e</key>
+	<string>pause or resume from any app</string>
+	<key>m6d61636f732e636f70792e73686f727463757473656374696f6e7469746c65</key>
+	<string>keyboard shortcut</string>
+	<key>m6d61636f732e636f70792e73686f7274637574736574</key>
+	<string>set shortcut</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f7773657263616e6e6f747374617274</key>
+	<string>browser pages can't start right now.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f7773657264656c69766572796661696c6564</key>
+	<string>kept on this mac, not reaching your journal right now</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f77736572646973636172646661696c6564</key>
+	<string>couldn't finish discarding. what's left is still on this mac.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f77736572647261696e696e67</key>
+	<string>browser pages are off. nothing new is taken in from your browsers; turning them off doesn't hold back what's already kept on this mac.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f7773657266756c6c</key>
+	<string>the room on this mac for what you share from your browsers is full.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f77736572686561646c696e657265616479</key>
+	<string>on · browser pages only</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f77736572686561646c696e6577616974696e67</key>
+	<string>on · waiting for a browser to connect</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f77736572696e74616b656f6666</key>
+	<string>browser pages are off. nothing new is taken in from your browsers.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f777365726c6f7374616e6468656c64</key>
+	<string>some browser pages couldn't be kept, so they won't go into your journal. new browser pages aren't being taken in right now.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f777365726e65656473617070757064617465</key>
+	<string>needs a solstone app update</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f777365726e65656473657874757064617465</key>
+	<string>needs an extension update</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f777365726e65776572657874656e73696f6e</key>
+	<string>the solstone extension in a browser needs a newer solstone app. look under updates.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f77736572706175736564</key>
+	<string>paused with the rest of the solstone app, unless the solstone extension is set to keep going. pausing doesn't hold back what's already taken in.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f77736572726567697374726174696f6e62726f6b656e</key>
+	<string>your browsers can't find the solstone app on this mac.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f777365727361666172696f6666</key>
+	<string>off in Safari. check solstone under extensions to turn it on.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f777365727361666172696f6e</key>
+	<string>on in Safari</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f7773657273616661726973657474696e6773616374696f6e</key>
+	<string>open Safari settings</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f7773657273616661726973657474696e67736661696c6564</key>
+	<string>couldn't open Safari settings. in Safari, open settings, then extensions.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f77736572736166617269756e617661696c61626c65</key>
+	<string>can't check the solstone extension in Safari</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f77736572736e6f686973746f7279</key>
+	<string>no browser connected yet</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f777365727374616c65</key>
+	<string>some browser pages have waited more than a week to go into your journal. they're still kept on this mac.</string>
+	<key>m6d61636f732e636f70792e736f757263657362726f77736572756e6b6e6f776e</key>
+	<string>browser status isn't known yet.</string>
+	<key>m6d61636f732e636f70792e736f75726365736772616e746f726368616e6765</key>
+	<string>grant it below, or turn on the other source instead.</string>
+	<key>m6d61636f732e636f70792e736f757263657368656c70</key>
+	<string>what you turn on here goes into your journal.</string>
+	<key>m6d61636f732e636f70792e736f75726365736e6f6e65</key>
+	<string>every source is off</string>
+	<key>m6d61636f732e636f70792e736f75726365736e6f6e6532</key>
+	<string>both sources are off</string>
+	<key>m6d61636f732e636f70792e736f75726365736e6f6e656772616e746564</key>
+	<string>what you turned on isn't granted yet</string>
+	<key>m6d61636f732e636f70792e736f75726365736e6f6e65726561736f6e</key>
+	<string>nothing new is taken in until you turn one back on. turning sources off doesn't hold back what's already kept on this mac.</string>
+	<key>m6d61636f732e636f70792e736f75726365736e6f6e65726561736f6e32</key>
+	<string>nothing is going into your journal until you turn one back on.</string>
+	<key>m6d61636f732e636f70792e736f75726365736f70656e616374696f6e</key>
+	<string>open sources →</string>
+	<key>m6d61636f732e636f70792e736f757263657372657374617274</key>
+	<string>restart now</string>
+	<key>m6d61636f732e636f70792e736f7572636573726573746172747265616479</key>
+	<string>granted. solstone needs to restart before what's on your screen can go into your journal.</string>
+	<key>m6d61636f732e636f70792e736f757263657373637265656e64656e696564</key>
+	<string>screen permission not granted. microphone can run on its own.</string>
+	<key>m6d61636f732e636f70792e736f75726365737365676d656e74736578706c61696e6572</key>
+	<string>screens and audio you turn on here go into your journal in five-minute segments. until your journal confirms receipt, they wait on this mac. by default, the confirmed local copy is removed.</string>
+	<key>m6d61636f732e636f70792e736f7572636573756e617661696c61626c65</key>
+	<string>the source you turned on didn't start</string>
+	<key>m6d61636f732e636f70792e736f7572636573756e617661696c61626c65726561736f6e</key>
+	<string>the device may be in use by another app, or unplugged.</string>
+	<key>m6d61636f732e636f70792e737465706f66</key>
+	<string>step %1$@ of %2$@</string>
+	<key>m6d61636f732e636f70792e74686561707069736e74617661696c61626c65</key>
+	<string>the app isn't available</string>
+	<key>m6d61636f732e636f70792e74686561707073636f6e6e656374696f6e636f756c646e746265</key>
+	<string>the app's connection couldn't be checked</string>
+	<key>m6d61636f732e636f70792e7468656170707366696c6573636f756c646e746265</key>
+	<string>the app's files couldn't be checked</string>
+	<key>m6d61636f732e636f70792e74686562726f777365727365747570636f756c646e7462656368616e676564</key>
+	<string>the browser setup couldn't be changed</string>
+	<key>m6d61636f732e636f70792e7468657365747570636f756c646e746265636865636b6564</key>
+	<string>the setup couldn't be checked</string>
+	<key>m6d61636f732e636f70792e746869736d616369737365747570666f7261</key>
+	<string>this mac is set up for a journal at %1$@, so linking again takes a pairing link from that journal. get one from its network app and paste it below.</string>
+	<key>m6d61636f732e636f70792e7472696564</key>
+	<string>tried %1$@</string>
+	<key>m6d61636f732e636f70792e7472696564616e64</key>
+	<string>tried %1$@ and %2$@</string>
+	<key>m6d61636f732e636f70792e796f75726a6f75726e616c656e64656472657175657374736561726c796c6173742e6e6174697665</key>
+	<string>your journal ended %1$@ requests early · last %2$@</string>
+	<key>m6d61636f732e636f70792e796f75726a6f75726e616c7475726e656461776179726571756573747361746974732e6e6174697665</key>
+	<string>your journal turned away %1$@ requests at its limit · last %2$@</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e61626f75742e6f70656e736f757263656c6f63616c6669727374</key>
+	<string>open source, local-first.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e61626f75742e70656e64696e6773657474696e6773746162</key>
+	<string>journal</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e61626f75742e736574757077656c636f6d65626f647931</key>
+	<string>the solstone app takes in what you share with it, and all of it goes into your journal.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e61626f75742e74657874636f6e74656e74</key>
+	<string>copy</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e61626f75742e74657874636f6e74656e7432</key>
+	<string>couldn't copy. select the text and copy it.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e6170702e61626f7574736f6c73746f6e65</key>
+	<string>about solstone</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e6170702e656d70747974657874</key>
+	<string>none yet</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e6170702e6a7573746e6f77</key>
+	<string>just now</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e6170702e6d6963726f70686f6e656d6f64656f6666</key>
+	<string>off</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e6170702e6e6f74706169726564</key>
+	<string>not paired</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e6170702e6f66666c696e657469746c65</key>
+	<string>can't reach your journal</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e6170702e73657474696e6773646961676e6f73746963736f6e</key>
+	<string>on</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e6170702e736f75726365737469746c65</key>
+	<string>sources</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e636865636b616761696e</key>
+	<string>check again</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e63686f6f7365646576696365</key>
+	<string>choose a device</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6465636964696e677469746c65</key>
+	<string>saving your choice</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6465636973696f6e72656675736564626f6479</key>
+	<string>your journal couldn't apply this choice. your current connection still works.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6465636973696f6e726566757365647469746c65</key>
+	<string>choice needs attention</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6465636973696f6e756e6b6e6f776e626f6479</key>
+	<string>your journal hasn't confirmed the result yet.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6465636973696f6e756e6b6e6f776e7469746c65</key>
+	<string>checking your choice</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e646566657263686f696365</key>
+	<string>not now</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6a6f75726e616c6d61726b636f6e6669726d627574746f6e</key>
+	<string>yes, this is my journal</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6a6f75726e616c6d61726b636f6e6669726d7175657374696f6e</key>
+	<string>does this match your journal?</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6a6f75726e616c6d61726b6d69736d61746368627574746f6e</key>
+	<string>that doesn't match</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6a6f75726e616c6d61726b756e766572696669656463616e63656c627574746f6e</key>
+	<string>cancel pairing</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6a6f75726e616c6d61726b756e7665726966696564636f6e74696e7565627574746f6e</key>
+	<string>continue anyway</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6a6f75726e616c6d61726b756e76657269666965647469746c65</key>
+	<string>couldn't verify</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6b656570626f7468</key>
+	<string>keep both</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6c697374756e617661696c61626c65626f6479</key>
+	<string>couldn't load the devices in your journal. try again when your journal is reachable.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6c697374756e617661696c61626c657469746c65</key>
+	<string>devices unavailable</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6d656e7562617262726f77736572736e6f6e65636f6e6e6563746564</key>
+	<string>browsers · none connected now</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6d656e7562617262726f77736572736f6666</key>
+	<string>browsers · off</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e6f66666c696e65626f6479</key>
+	<string>anything waiting to send stays on this device. try again when your journal is reachable.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7069636b6572656d707479</key>
+	<string>no other paired devices</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7265706c616365636f6e6669726d626f6479</key>
+	<string>this device continues its name and history. the selected device will lose access to your journal.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7265706c616365636f6e6669726d7469746c652e617267756d656e74</key>
+	<string>replace "%1$@"?</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7265706c616365636f6e6669726d7469746c6566616c6c6261636b</key>
+	<string>replace the selected device?</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7265706c616365646576696365</key>
+	<string>replace device</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7265706c6163656f66666572626f6479</key>
+	<string>you can keep both, or choose a device for this one to replace.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7265706c6163656f666665727469746c65</key>
+	<string>is this replacing one of your devices?</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657474696e67736a6f75726e616c6f70656e</key>
+	<string>open journal</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657474696e67736c6f676578706f727473617665</key>
+	<string>save a copy…</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657474696e67736c6f676578706f72747469746c65</key>
+	<string>recent logs</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657474696e6773746162617474656e74696f6e61313179</key>
+	<string>needs attention</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657474696e677374616275706461746573646f6e6561313179</key>
+	<string>solstone is up to date</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657475706170706c6162656c</key>
+	<string>the solstone app</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657475706261636b</key>
+	<string>back</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7365747570636f6e6e6563746564746f796f75726a6f75726e616c</key>
+	<string>connected to your journal</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7365747570636f6e74696e7565</key>
+	<string>continue</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657475706a6f75726e616c6361726468656164696e67</key>
+	<string>your journal</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657475706d6963726f70686f6e65686561646c696e65</key>
+	<string>share your conversations</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73657475706f70656e796f75726a6f75726e616c</key>
+	<string>open your journal</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e736574757073637265656e6672616d6563617074696f6e</key>
+	<string>your screen, a moment ago</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e736574757077656c636f6d65626f647932</key>
+	<string>your journal is always private, only yours.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e736574757077696e646f777469746c65</key>
+	<string>set up solstone</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e736f757263657362726f77736572636f6e6e65637465646e6f77</key>
+	<string>connected now</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e736f757263657362726f7773657264697363617264</key>
+	<string>discard waiting browser pages</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e736f757263657362726f7773657264697363617264636f6d6d6974</key>
+	<string>discard pages</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e736f757263657362726f7773657264697363617264636f6e6669726d</key>
+	<string>browser pages still waiting to be sent will be removed from this device.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e736f757263657362726f7773657268656c64</key>
+	<string>new browser pages aren't being taken in right now.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e736f757263657362726f777365727061676573</key>
+	<string>browser pages</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73746f72616765756e617661696c61626c65626f6479</key>
+	<string>this device couldn't read its saved connection. anything waiting to send hasn't been removed.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e73746f72616765756e617661696c61626c657469746c65</key>
+	<string>saved connection unavailable</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7461726765746d697373696e67626f6479</key>
+	<string>that device is no longer listed in your journal. choose another device, or keep both.</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e7461726765746d697373696e677469746c65</key>
+	<string>device no longer available</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e746563686e6963616c64657461696c73</key>
+	<string>technical details</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e636f70792e747279616761696e</key>
+	<string>try again</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e616464</key>
+	<string>add</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e616c69676e6974656d73</key>
+	<string>start</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e6578636c7564656461707073</key>
+	<string>excluded apps</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e67657468656c70</key>
+	<string>get help</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e68656c70</key>
+	<string>help</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e7265706f72746170726f626c656d</key>
+	<string>report a problem</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e7365766572697479</key>
+	<string>ok</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e74657874636f6e74656e74</key>
+	<string>retry</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657474696e67732e77696e646f777469746c6573</key>
+	<string>window titles</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657475702e63616e63656c</key>
+	<string>cancel</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657475702e70616972</key>
+	<string>pair</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657475702e737461727461746c6f67696e</key>
+	<string>start at login</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657475702e77697a61726470617573656661696c757265</key>
+	<string>pause</string>
+	<key>m6d61636f732e6465736b746f702e7368617265642e73657475702e77697a61726470617573656661696c75726532</key>
+	<string>resume</string>
+	<key>m6d61636f732e6465736b746f706163746976697479736f757263652e6163746976697479636f756c646e7462657361766564636865636b6672656573706163656f6e746869736d6163</key>
+	<string>activity couldn't be saved. check free space on this mac.</string>
+	<key>m6d61636f732e6465736b746f706163746976697479736f757263652e616374697669747969736f6666</key>
+	<string>activity is off</string>
+	<key>m6d61636f732e6465736b746f706163746976697479736f757263652e616374697669747969736f6e</key>
+	<string>activity is on</string>
+	<key>m6d61636f732e6465736b746f706163746976697479736f757263652e61637469766974796973706175736564</key>
+	<string>activity is paused</string>
+	<key>m6d61636f732e6465736b746f70676c616e63652e636f6e6e6563746564</key>
+	<string>connected · %1$@</string>
+	<key>m6d61636f732e6465736b746f70676c616e63652e636f6e6e6563746564616c6c6361756768747570</key>
+	<string>connected · all caught up</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e6164647370646673617564696f696d61676573616e6474657874796f7563686f6f7365686572656f7264726f70</key>
+	<string>adds PDFs, audio, images and text you choose here or drop on this window.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67796f75726a6f75726e616c</key>
+	<string>checking your journal.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e63686f6f736566696c6573</key>
+	<string>choose files…</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e636f756c646e7472656164696d706f7274736f6e746869736465766963656e6f7468696e676861736265656e72</key>
+	<string>couldn't read imports on this device. nothing has been removed. restart the solstone app to try again.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e66696c6573</key>
+	<string>files</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696d706f7274</key>
+	<string>import</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696d706f7274736e656564796f75</key>
+	<string>imports need you</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696d706f727473776169746f6e74686973646576696365756e74696c796f75636f6e6e656374616a6f75726e61</key>
+	<string>imports wait on this device until you connect a journal.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696d706f72747377616974756e74696c796f75636f6e6669726d796f75726a6f75726e616c736d61726b</key>
+	<string>imports wait until you confirm your journal's mark.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696d706f72747377616974756e74696c796f75726a6f75726e616c697375706461746564</key>
+	<string>imports wait until your journal is updated.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696e796f75726a6f75726e616c</key>
+	<string>in your journal.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e697473616c7265616479676f6e6566726f6d74686973646576696365</key>
+	<string>it's already gone from this device.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e697473616c7265616479696e796f75726a6f75726e616c</key>
+	<string>it's already in your journal.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e6974736c61726765727468616e796f75726a6f75726e616c74616b6573</key>
+	<string>it's larger than your journal takes</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e69747373656e64696e676e6f77736f6e6f7468696e676368616e676564</key>
+	<string>it's sending now, so nothing changed.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e6e6f74676f696e67746f796f75726a6f75726e616c72696768746e6f77656163686f6e6573617973776879</key>
+	<string>not going to your journal right now. each one says why.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e6e6f7468696e676368616e67656469746d6179686176656d6f7665646f6e636865636b7468656c697374</key>
+	<string>nothing changed. it may have moved on; check the list.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e6e6f7468696e6777617373617665646f6e74686973646576696365</key>
+	<string>nothing was saved on this device.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e6e6f7468696e67796574</key>
+	<string>nothing yet.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e696d706f7274746f736565776879</key>
+	<string>open import to see why</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e73637265656e73686f7473</key>
+	<string>open screenshots</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74</key>
+	<string>recent</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e72656d6f7665</key>
+	<string>remove</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e72656d6f766532</key>
+	<string>remove %1$@?</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e73617665646f6e74686973646576696365</key>
+	<string>saved on this device: %1$@</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e736176696e676f6e746869736465766963656f66</key>
+	<string>saving on this device: %1$@ of %2$@</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e73637265656e73686f7473636f6d65696e6f6e74686569726f776e</key>
+	<string>screenshots come in on their own.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e73656e64696e67</key>
+	<string>sending</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e73656e64696e67746f796f75726a6f75726e616c</key>
+	<string>sending to your journal.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e736574757073637265656e73686f7473</key>
+	<string>set up screenshots</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e736f6d657468696e67796f7577657265616464696e676469646e7466696e697368736176696e67616464697461</key>
+	<string>something you were adding didn't finish saving. add it again.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e746865636f70796973616c7265616479676f6e65736f746869736f6e6c79636c65617273697466726f6d686572</key>
+	<string>the copy is already gone, so this only clears it from here.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e746865636f70796f6e7468697364657669636569736d697373696e67</key>
+	<string>the copy on this device is missing</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e746865726569736e74656e6f756768726f6f6d6f6e74686973646576696365</key>
+	<string>there isn't enough room on this device</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e74686973636f756c646e746265726561646164646974616761696e</key>
+	<string>this couldn't be read. add it again</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7468697364657669636563616e74636f6e766572747468697370686f746f</key>
+	<string>this device can't convert this photo</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7468697372656d6f766573746865636f70796f6e74686973646576696365736f6974776f6e747265616368796f</key>
+	<string>this removes the copy on this device, so it won't reach your journal.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7468697372656d6f766573746865636f70796f6e74686973646576696365796f75726a6f75726e616c6d617973</key>
+	<string>this removes the copy on this device. your journal may still bring in the copy it already has.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f77</key>
+	<string>try now</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67</key>
+	<string>waiting</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67746f676f746f796f75726a6f75726e616c</key>
+	<string>waiting to go to your journal.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e796f75726a6f75726e616c63616e7474616b65746869736b696e646f6666696c65</key>
+	<string>your journal can't take this kind of file</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e796f75726a6f75726e616c73746f70706564616363657074696e6774686973646576696365696d706f72747377</key>
+	<string>your journal stopped accepting this device. imports wait here until you pair again.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6368726f6d652e636c6f736564</key>
+	<string>closed</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6368726f6d652e6f70656e</key>
+	<string>open</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6368726f6d652e73696465626172</key>
+	<string>sidebar</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6163746976697479636f756c646e7462657361766564636865636b6672656573706163656f6e746869736d6163</key>
+	<string>activity couldn't be saved. check free space on this mac.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e616374697669747969737374696c6c6f6e</key>
+	<string>activity is still on.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e616464746865736f6c73746f6e65657874656e73696f6e746f6162726f777365726f6e746869736d6163</key>
+	<string>add the solstone extension to a browser on this mac.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6173637265656e636f756c646e747374617274</key>
+	<string>a screen couldn't start.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6173637265656e69736e74636f6d696e677468726f756768</key>
+	<string>a screen isn't coming through.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e617564696f</key>
+	<string>audio</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e62726f77736572706167657373746172746f6e6365796f7570616972746869736d616377697468616a6f75726e</key>
+	<string>browser pages start once you pair this mac with a journal.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e63686f6f7365617661756c74746f7374617274</key>
+	<string>choose a vault to start.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e636f6e6669726d7468656d61726b77616974696e67</key>
+	<string>confirm the mark · %1$@ waiting</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e636f6e6e6563746564</key>
+	<string>connected</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e676f6f6461667465726e6f6f6e</key>
+	<string>good afternoon</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e676f6f646576656e696e67</key>
+	<string>good evening</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e676f6f646d6f726e696e67</key>
+	<string>good morning</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6c6573737468616e616d696e757465</key>
+	<string>less than a minute</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6d6963726f70686f6e6561636365737369736f6666666f72746865736f6c73746f6e65617070</key>
+	<string>microphone access is off for the solstone app.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6d696e61676f</key>
+	<string>%1$@ min ago</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6e65656473617474656e74696f6e</key>
+	<string>%1$@ needs attention</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6e6f7468696e67796574</key>
+	<string>nothing yet</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6e6f747265616368696e67796f75726a6f75726e616c72696768746e6f77</key>
+	<string>not reaching your journal right now</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6f66666c696e6577616974696e67</key>
+	<string>offline · %1$@ waiting</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6f6e7468657369746573796f75616c6c6f77746865736f6c73746f6e65657874656e73696f6e74616b6573696e</key>
+	<string>on the sites you allow, the solstone extension takes in the page's text and rough layout, and all of it goes into your journal.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6f70656e73657474696e6773</key>
+	<string>open settings</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e70616972616761696e</key>
+	<string>pair again</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e70616972616761696e77616974696e67</key>
+	<string>pair again · %1$@ waiting</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e7061757365646c6573737468616e616d696e7574656c656674</key>
+	<string>paused, less than a minute left</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e7061757365646d696e6c656674</key>
+	<string>paused, %1$@ min left</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e706175736564756e74696c796f75726573756d65</key>
+	<string>paused until you resume</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e7265616479746f7365747570</key>
+	<string>ready to set up</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e73637265656e7265636f7264696e6769736f6666666f72746865736f6c73746f6e65617070</key>
+	<string>screen recording is off for the solstone app.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e73657474696e677570</key>
+	<string>setting up</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e73696e6365</key>
+	<string>%1$@, since %2$@</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e73796e63696e67</key>
+	<string>%1$@ syncing</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e73796e6370617573656477616974696e67</key>
+	<string>sync paused · %1$@ waiting</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e746865736f6c73746f6e656170706e656564736d6963726f70686f6e65616363657373</key>
+	<string>the solstone app needs microphone access.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e746865736f6c73746f6e656170706e6565647373637265656e7265636f7264696e67616363657373</key>
+	<string>the solstone app needs screen recording access.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e746865736f6c73746f6e6561707074616b6573696e796f7572746d757873657373696f6e73616e64616c6c6f66</key>
+	<string>the solstone app takes in your tmux sessions, and all of it goes into your journal. needs tmux on this mac, and works in any terminal session, including when you SSH into this mac.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e746d757869736e74696e7374616c6c6564</key>
+	<string>tmux isn't installed.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e7475726e69746f6e616e7974696d65</key>
+	<string>turn it on any time.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e77616974696e67</key>
+	<string>%1$@ waiting</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e7768696c657468697369736f6e746865736f6c73746f6e6561707074616b6573696e736f756e6466726f6d796f</key>
+	<string>while this is on, the solstone app takes in sound from your microphones, and all of it goes into your journal.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e7768696c657468697369736f6e746865736f6c73746f6e6561707074616b6573696e77686174736f6e796f7572</key>
+	<string>while this is on, the solstone app takes in what's on your screen, the sound your mac plays, and which apps and windows you're using, and all of it goes into your journal.</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e77697468636f6d7075746572736f756e64</key>
+	<string>with computer sound</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e77697468636f6d7075746572736f756e64616e646163746976697479</key>
+	<string>with computer sound and activity</string>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e796573746572646179</key>
+	<string>yesterday</string>
+	<key>m6d61636f732e6465736b746f707368656c6c76696577732e6164646d6f7265</key>
+	<string>add more</string>
+	<key>m6d61636f732e6465736b746f707368656c6c76696577732e6164646d6f7265736f7572636573</key>
+	<string>add more, sources</string>
+	<key>m6d61636f732e6465736b746f707368656c6c76696577732e616c72656164796f6e686f6d65</key>
+	<string>already on home</string>
+	<key>m6d61636f732e6465736b746f707368656c6c76696577732e636c6f7365</key>
+	<string>close</string>
+	<key>m6d61636f732e6465736b746f707368656c6c76696577732e686f6d65</key>
+	<string>‹ home</string>
+	<key>m6d61636f732e6465736b746f707368656c6c76696577732e686f6d6532</key>
+	<string>home</string>
+	<key>m6d61636f732e6465736b746f70736f757263652e676f6573616c6f6e67776974686974</key>
+	<string>goes along with it</string>
+	<key>m6d61636f732e6465736b746f70736f757263652e6c61737474616b656e696e</key>
+	<string>last taken in</string>
+	<key>m6d61636f732e6465736b746f70736f757263652e6c6566746f7574</key>
+	<string>left out</string>
+	<key>m6d61636f732e6465736b746f70736f757263652e6d6963726f70686f6e6573</key>
+	<string>microphones</string>
+	<key>m6d61636f732e6465736b746f70736f757263652e736f666172</key>
+	<string>so far</string>
+	<key>m6d61636f732e6465736b746f70736f757263652e746869736c6973746170706c696573746f</key>
+	<string>this list applies to activity too</string>
+	<key>m6d61636f732e6465736b746f70736f757263652e746869736c6973746170706c696573746f32</key>
+	<string>this list applies to activity and browsers too</string>
+	<key>m6d61636f732e6465736b746f70736f757263652e746869736c6973746170706c696573746f33</key>
+	<string>this list applies to screen and activity too</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e616c6c6361756768747570</key>
+	<string>all caught up</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e636f6e6669726d7468656d61726b</key>
+	<string>confirm the mark</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e636f6e6e656374616a6f75726e616c</key>
+	<string>connect a journal</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e636f6e6e656374696e67</key>
+	<string>connecting…</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e636f6e6e656374696f6e</key>
+	<string>connection</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e65766572797468696e676973696e796f7572</key>
+	<string>everything is in your journal</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e6e6f7468696e6777616974696e67746f73796e63</key>
+	<string>nothing waiting to sync</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e6f6e74686973646576696365</key>
+	<string>on this device</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e72656d6f7665</key>
+	<string>remove %1$@?</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e7468697372656d6f766573746865636f70796f6e74686973646576696365736f77686174796f75726a6f75726e</key>
+	<string>this removes the copy on this device, so what your journal didn't take won't reach it.</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e77616974696e67746f73796e63</key>
+	<string>waiting to sync</string>
+	<key>m6d61636f732e6465736b746f7073746174757370616e652e796f75726a6f75726e616c636f756c646e7474616b65616c6c6f6674686973</key>
+	<string>your journal couldn't take all of this.</string>
+	<key>m6d61636f732e646961676e6f73746963732e6261636b6c6f67</key>
+	<string>pending=%1$@ · oldest_pending_folder_age_s=%2$@ · preserved_failure_folders=%3$@ (delivery unknown)</string>
+	<key>m6d61636f732e646961676e6f73746963732e756e617661696c61626c65</key>
+	<string>unavailable</string>
+	<key>m6d61636f732e696d706f72746c6f6769632e796f75726a6f75726e616c636f756c646e7461636365707474686973</key>
+	<string>your journal couldn't accept this.</string>
+	<key>m6d61636f732e6a6f75726e616c75706461746564657374696e6174696f6e766965772e6f70656e696e676a6f75726e616c</key>
+	<string>opening journal…</string>
+	<key>m6d61636f732e6a6f75726e616c75706461746564657374696e6174696f6e766965772e6f70656e6a6f75726e616c617070</key>
+	<string>open journal app</string>
+	<key>m6d61636f732e6c6973742e616e6470616972</key>
+	<string>%1$@ and %2$@</string>
+	<key>m6d61636f732e6c6f67732e70726576696577737562736574</key>
+	<string>showing the newest %1$@ of %2$@ entries. saving writes all of them.</string>
+	<key>m6d61636f732e6d656e752e71756974736f6c73746f6e65</key>
+	<string>quit solstone</string>
+	<key>m6d61636f732e6d656e752e796f75726a6f75726e616c6e65656473616e65776c696e6b</key>
+	<string>your journal needs a new link →</string>
+	<key>m6d61636f732e6d6967726174696f6e2e636865636b696e67666f727468656a6f75726e616c617070</key>
+	<string>checking for the journal app</string>
+	<key>m6d61636f732e6d6967726174696f6e2e636865636b696e677468656a6f75726e616c617070</key>
+	<string>checking the journal app</string>
+	<key>m6d61636f732e6d6967726174696f6e2e636865636b696e6774686573617665646a6f75726e616c6b6579</key>
+	<string>checking the saved journal key</string>
+	<key>m6d61636f732e6d6967726174696f6e2e636f756c646e7466696e646170706c69636174696f6e73736f6c73746f6e656469646e6f74</key>
+	<string>couldn't find /Applications. solstone did not change your journal link.</string>
+	<key>m6d61636f732e6d6967726174696f6e2e67657474696e676a6f75726e616c7265616479</key>
+	<string>getting journal ready</string>
+	<key>m6d61636f732e6d6967726174696f6e2e67657474696e677468656a6f75726e616c617070</key>
+	<string>getting the journal app</string>
+	<key>m6d61636f732e6d6967726174696f6e2e696e7374616c6c696e677468656a6f75726e616c617070</key>
+	<string>installing the journal app</string>
+	<key>m6d61636f732e6d6967726174696f6e2e6a6f75726e616c6469646e7466696e6973687365747570696e74696d65</key>
+	<string>journal didn't finish setup in time. solstone did not change your journal link.</string>
+	<key>m6d61636f732e6d6967726174696f6e2e6a6f75726e616c68616e646f6666636f756c646e7466696e697368736f6c73746f6e65646964</key>
+	<string>journal handoff couldn't finish. solstone did not change your journal link.</string>
+	<key>m6d61636f732e6d6967726174696f6e2e6a6f75726e616c68616e646f666673746f70706564736f6c73746f6e656469646e6f746368616e6765</key>
+	<string>journal handoff stopped. solstone did not change your journal link.</string>
+	<key>m6d61636f732e6d6967726174696f6e2e6a6f75726e616c69737374696c6c6f70656e717569746a6f75726e616c616e64</key>
+	<string>journal is still open. quit journal and try again.</string>
+	<key>m6d61636f732e6d6967726174696f6e2e6c696e6b696e67736f6c73746f6e65746f7468656a6f75726e616c617070</key>
+	<string>linking solstone to the journal app</string>
+	<key>m6d61636f732e6d6967726174696f6e2e6f70656e696e676a6f75726e616c</key>
+	<string>opening journal</string>
+	<key>m6d61636f732e6d6967726174696f6e2e707265706172696e67796f75726a6f75726e616c</key>
+	<string>preparing your journal</string>
+	<key>m6d61636f732e6d6967726174696f6e2e7265616479746f6d6f7665796f75726a6f75726e616c696e746f697473</key>
+	<string>ready to move your journal into its own app</string>
+	<key>m6d61636f732e6d6967726174696f6e2e73656e64696e676b6570747365676d656e7473746f796f75726a6f75726e616c</key>
+	<string>sending kept segments to your journal</string>
+	<key>m6d61636f732e6d6967726174696f6e2e736f6c73746f6e65636f756c646e7466696e64796f75726a6f75726e616c666f6c646572</key>
+	<string>solstone couldn't find your journal folder. open settings and choose your journal again.</string>
+	<key>m6d61636f732e6d6967726174696f6e2e7468656a6f75726e616c61707069736e74617661696c61626c65796574</key>
+	<string>the journal app isn't available yet. solstone is keeping everything safe on this mac</string>
+	<key>m6d61636f732e6d6967726174696f6e2e746869736a6f75726e616c6469646e74616363657074736f6c73746f6e6573</key>
+	<string>this journal didn't accept solstone's saved key. solstone did not change your link.</string>
+	<key>m6d61636f732e6d6967726174696f6e2e77616974696e67666f726a6f75726e616c746f66696e6973687365747570</key>
+	<string>waiting for journal to finish setup</string>
+	<key>m6d61636f732e6d6967726174696f6e2e796f75726a6f75726e616c61707069737265616479</key>
+	<string>your journal app is ready</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e636f756c646e747265616368796f75726a6f75726e616c61746d616b657375726569747372756e6e696e677468</key>
+	<string>couldn't reach your journal at %1$@. make sure it's running, then try again.</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e636f756c646e747265616368796f75726a6f75726e616c6d616b657375726569747372756e6e696e677468656e</key>
+	<string>couldn't reach your journal. make sure it's running, then try again.</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e6c6f7374746865636f6e6e656374696f6e746f796f75726a6f75726e616c6265666f72656974616e7377657265</key>
+	<string>lost the connection to your journal before it answered. try again.</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e67636f756c646e747265616368796f75726a6f75726e616c636865636b796f7572636f6e6e6563</key>
+	<string>pairing couldn't reach your journal. check your connection and try again.</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e67636f756c646e7473746172746f6e746869736d6163747279616761696e</key>
+	<string>pairing couldn't start on this mac. try again.</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b61646472657373747970656973756e737570706f72746564</key>
+	<string>pairing link address type is unsupported: %1$@</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b636f6e7461696e73616e696e76616c6964636861726163746572</key>
+	<string>pairing link contains an invalid character: %1$@</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b636f6e7461696e73696e76616c6964656e636f64656464617461</key>
+	<string>pairing link contains invalid encoded data</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b646174616c656e6774686973696e76616c69646279746573</key>
+	<string>pairing link data length is invalid: %1$@ bytes</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b66696e6765727072696e74747970656973756e737570706f72746564</key>
+	<string>pairing link fingerprint type is unsupported: %1$@</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b69736d697373696e67697473636f6465</key>
+	<string>pairing link is missing its code</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b6d757374757365676f736f6c73746f6e65617070</key>
+	<string>pairing link must use go.solstone.app</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b6d757374757365676f736f6c73746f6e65617070676f74</key>
+	<string>pairing link must use go.solstone.app, got %1$@</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b6d7573747573656874747073</key>
+	<string>pairing link must use https</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b6d7573747573656874747073676f74</key>
+	<string>pairing link must use https, got %1$@</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b706174686d757374626570676f74</key>
+	<string>pairing link path must be /p, got %1$@</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b72656c61796f726967696e6973696e76616c6964</key>
+	<string>pairing link relay origin is invalid</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e70616972696e676c696e6b76657273696f6e6973756e737570706f72746564</key>
+	<string>pairing link version is unsupported: %1$@</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e746869736c696e6b6973666f7261646966666572656e746a6f75726e616c6765746166726573686c696e6b6672</key>
+	<string>this link is for a different journal. get a fresh link from the journal you want.</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e7468697370616972696e6777696e646f77636c6f7365646f72657870697265646765746166726573686c696e6b</key>
+	<string>this pairing window closed or expired. get a fresh link from your journal's network app and try again.</string>
+	<key>m6d61636f732e70616972696e67636f6f7264696e61746f722e796f75726a6f75726e616c6469646e746163636570747468697370616972696e676c696e6b6765746166726573</key>
+	<string>your journal didn't accept this pairing link. get a fresh link from its network app and try again.</string>
+	<key>m6d61636f732e70617573652e6d656e75686f757273</key>
+	<string>paused, %1$@ hr left</string>
+	<key>m6d61636f732e70617573652e6d656e75686f7572736d696e75746573</key>
+	<string>paused, %1$@ hr %2$@ min left</string>
+	<key>m6d61636f732e70617573652e6d656e756d696e75746573</key>
+	<string>paused, %1$@ min left</string>
+	<key>m6d61636f732e70617573652e6d656e757365636f6e6473</key>
+	<string>paused, %1$@ sec left</string>
+	<key>m6d61636f732e70617573656d616e616765722e687273</key>
+	<string>%1$@ hrs</string>
+	<key>m6d61636f732e70617573656d616e616765722e6872736d696e73</key>
+	<string>%1$@ hrs %2$@ mins</string>
+	<key>m6d61636f732e70617573656d616e616765722e6e316872</key>
+	<string>1 hr</string>
+	<key>m6d61636f732e70617573656d616e616765722e73656373</key>
+	<string>%1$@ secs</string>
+	<key>m6d61636f732e73637265656e73686f742e616363657373746f796f7572666f6c646572</key>
+	<string>access to your %1$@ folder is off for the solstone app.</string>
+	<key>m6d61636f732e73637265656e73686f742e616c6c6f666974</key>
+	<string>all of it</string>
+	<key>m6d61636f732e73637265656e73686f742e616c6c6f77</key>
+	<string>allow</string>
+	<key>m6d61636f732e73637265656e73686f742e6173637265656e73686f74616c7265616479696e</key>
+	<string>a screenshot already in your journal stays there if you delete it from the folder.</string>
+	<key>m6d61636f732e73637265656e73686f742e6173637265656e73686f74636f70696564746f</key>
+	<string>a screenshot copied to the clipboard isn't saved, so it doesn't come in.</string>
+	<key>m6d61636f732e73637265656e73686f742e636865636b696e67</key>
+	<string>checking…</string>
+	<key>m6d61636f732e73637265656e73686f742e63686f6f736561666f6c646572</key>
+	<string>choose a folder…</string>
+	<key>m6d61636f732e73637265656e73686f742e63686f6f7365686f776661726261636b</key>
+	<string>choose how far back to start, then bring them in.</string>
+	<key>m6d61636f732e73637265656e73686f742e636f756c646e74636f756e74796f7572</key>
+	<string>couldn't count your screenshots.</string>
+	<key>m6d61636f732e73637265656e73686f742e666f6c646572</key>
+	<string>folder</string>
+	<key>m6d61636f732e73637265656e73686f742e66726f6d</key>
+	<string>from %1$@</string>
+	<key>m6d61636f732e73637265656e73686f742e66726f6d6265666f7265746f646179</key>
+	<string>from before today</string>
+	<key>m6d61636f732e73637265656e73686f742e6c617374636865636b6564</key>
+	<string>last checked</string>
+	<key>m6d61636f732e73637265656e73686f742e6d6f726561626f757474686973</key>
+	<string>more about this</string>
+	<key>m6d61636f732e73637265656e73686f742e6e6f7468696e6766726f6d6265666f7265746f646179</key>
+	<string>nothing from before today</string>
+	<key>m6d61636f732e73637265656e73686f742e6f66696e796f75726a6f75726e616c</key>
+	<string>%1$@ of %2$@ in your journal</string>
+	<key>m6d61636f732e73637265656e73686f742e6f6673637265656e73686f7473696e796f7572</key>
+	<string>%1$@ of %2$@ screenshots in your journal</string>
+	<key>m6d61636f732e73637265656e73686f742e6f6e6c7977686174746865736f6c73746f6e65</key>
+	<string>only what the solstone app can tell is a screenshot comes in.</string>
+	<key>m6d61636f732e73637265656e73686f742e6f70656e73797374656d73657474696e6773</key>
+	<string>open system settings</string>
+	<key>m6d61636f732e73637265656e73686f742e6f7468657266696c6573696e73746179</key>
+	<string>other files in %1$@ stay where they are.</string>
+	<key>m6d61636f732e73637265656e73686f742e6f7468657266696c65736f6e796f7572</key>
+	<string>other files on your %1$@ stay where they are.</string>
+	<key>m6d61636f732e73637265656e73686f742e73637265656e73686f747332</key>
+	<string>screenshots</string>
+	<key>m6d61636f732e73637265656e73686f742e73637265656e73686f7473616c7265616479696e796f7572</key>
+	<string>screenshots already in your journal aren't brought in again.</string>
+	<key>m6d61636f732e73637265656e73686f742e73637265656e73686f74736e6f7773617665746f</key>
+	<string>screenshots now save to %1$@. the solstone app needs access to that folder.</string>
+	<key>m6d61636f732e73637265656e73686f742e73637265656e73686f74736f6e746869736d6163</key>
+	<string>screenshots on this mac save to your %1$@. the solstone app needs access to that folder.</string>
+	<key>m6d61636f732e73637265656e73686f742e73637265656e73686f7473796f7574616b657768696c65</key>
+	<string>screenshots you take while it's paused don't come in.</string>
+	<key>m6d61636f732e73637265656e73686f742e737461727466726f6d746f646179</key>
+	<string>start from today</string>
+	<key>m6d61636f732e73637265656e73686f742e7468656c617374333064617973</key>
+	<string>the last 30 days</string>
+	<key>m6d61636f732e73637265656e73686f742e7468656c617374366d6f6e746873</key>
+	<string>the last 6 months</string>
+	<key>m6d61636f732e73637265656e73686f742e7468656c61737479656172</key>
+	<string>the last year</string>
+	<key>m6d61636f732e73637265656e73686f742e77616974696e67666f72616a6f75726e616c</key>
+	<string>waiting for a journal update. your screenshots wait on this mac.</string>
+	<key>m6d61636f732e73637265656e73686f742e77616974696e67746f676f746f</key>
+	<string>waiting to go to your journal</string>
+	<key>m6d61636f732e73637265656e73686f742e7768617473616c7265616479696e</key>
+	<string>what's already in your journal stays when you pause or turn this off.</string>
+	<key>m6d61636f732e73637265656e73686f742e7768696c657468697369736f6e</key>
+	<string>while this is on, the solstone app takes in the screenshots you take on this mac, and your journal keeps each one at the minute you took it.</string>
+	<key>m6d61636f732e73637265656e73686f742e796f756c6c736565686f77</key>
+	<string>you'll see how many screenshots there are before any come in.</string>
+	<key>m6d61636f732e73657474696e67732e6163746976697479</key>
+	<string>activity</string>
+	<key>m6d61636f732e73657474696e67732e6163746976697479666f6c6c6f7773796f75726578636c7573696f6e736974636f6e74696e7565737768696c65</key>
+	<string>activity follows your exclusions. it continues while screen and audio step aside for protected video. a title does not mean you watched or read it.</string>
+	<key>m6d61636f732e73657474696e67732e61646472657373</key>
+	<string>address</string>
+	<key>m6d61636f732e73657474696e67732e616464726573736573696e636c75646574686573697465616e6470617468776974686f7574</key>
+	<string>addresses include the site and path, without query strings or fragments.</string>
+	<key>m6d61636f732e73657474696e67732e616476616e636564</key>
+	<string>advanced</string>
+	<key>m6d61636f732e73657474696e67732e6167656e74696e737472756374696f6e73</key>
+	<string>agent instructions</string>
+	<key>m6d61636f732e73657474696e67732e616c7265616479616c6c6f77656472656f70656e736f6c73746f6e65</key>
+	<string>already allowed? reopen solstone</string>
+	<key>m6d61636f732e73657474696e67732e616c7265616479706169726564</key>
+	<string>already paired ✓</string>
+	<key>m6d61636f732e73657474696e67732e616c736f636865636b7361666172696368726f6d6565646765616e646272617665</key>
+	<string>also check Safari, Chrome, Edge and Brave</string>
+	<key>m6d61636f732e73657474696e67732e617564696f70726f63657373696e67</key>
+	<string>audio processing</string>
+	<key>m6d61636f732e73657474696e67732e62616e6b636f6d</key>
+	<string>bank.com</string>
+	<key>m6d61636f732e73657474696e67732e626f6f73746d6963726f70686f6e65696e7075746c6576656c6368616e67657374616b65656666656374</key>
+	<string>boost microphone input level. changes take effect immediately.</string>
+	<key>m6d61636f732e73657474696e67732e62726f77736572616464726573736573</key>
+	<string>browser addresses</string>
+	<key>m6d61636f732e73657474696e67732e62726f77736572616464726573736573617265756e617661696c61626c65</key>
+	<string>browser addresses are unavailable</string>
+	<key>m6d61636f732e73657474696e67732e636865636b65646f6e66697265666f78313537736574746f656e676c697368</key>
+	<string>checked on Firefox 157 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a web page can end its own title the way Firefox marks a private window, and then an ordinary Firefox window showing it is kept out too. Safari, Chrome, Edge and Brave don't show private mode in that title; the option below checks them another way. other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps above.</string>
+	<key>m6d61636f732e73657474696e67732e63686f6f7365616e6f70656e617070</key>
+	<string>choose an open app…</string>
+	<key>m6d61636f732e73657474696e67732e636f6e6e656374</key>
+	<string>connect</string>
+	<key>m6d61636f732e73657474696e67732e63757272656e746c796f70656e61707073</key>
+	<string>currently open apps</string>
+	<key>m6d61636f732e73657474696e67732e63757272656e746c797573696e67</key>
+	<string>currently using</string>
+	<key>m6d61636f732e73657474696e67732e6465627567</key>
+	<string>debug</string>
+	<key>m6d61636f732e73657474696e67732e64657461696c73</key>
+	<string>details</string>
+	<key>m6d61636f732e73657474696e67732e646973636f6e6e656374</key>
+	<string>disconnect</string>
+	<key>m6d61636f732e73657474696e67732e646973636f6e6e6563746564</key>
+	<string>disconnected</string>
+	<key>m6d61636f732e73657474696e67732e646973636f6e6e656374746869736d616366726f6d796f75726a6f75726e616c6b65657073</key>
+	<string>disconnect this mac from %1$@? your journal keeps everything. you can pair again anytime.</string>
+	<key>m6d61636f732e73657474696e67732e666f756e64796f75726a6f75726e616c6f6e746869736d6163</key>
+	<string>found your journal on this mac</string>
+	<key>m6d61636f732e73657474696e67732e6761696e</key>
+	<string>gain</string>
+	<key>m6d61636f732e73657474696e67732e67656e6572616c</key>
+	<string>general</string>
+	<key>m6d61636f732e73657474696e67732e6772616e74616363657373746f7365656f70656e61707073</key>
+	<string>grant access to see open apps</string>
+	<key>m6d61636f732e73657474696e67732e6869646577696e646f777377686f73657469746c65636f6e7461696e7374686573656b6579776f726473</key>
+	<string>hide windows whose title contains these keywords.</string>
+	<key>m6d61636f732e73657474696e67732e68747470736c696e6b736f6c73746f6e65617070</key>
+	<string>https://link.solstone.app</string>
+	<key>m6d61636f732e73657474696e67732e69636f6e737461746573</key>
+	<string>icon states</string>
+	<key>m6d61636f732e73657474696e67732e69666974636f6e6e65637473616761696e6974636f6d65736261636b</key>
+	<string>if it connects again, it comes back at its default setting. to keep it off, turn it off instead.</string>
+	<key>m6d61636f732e73657474696e67732e6966736f6c73746f6e6569736f6e696e73797374656d73657474696e6773</key>
+	<string>if solstone is on in System Settings and reopening doesn't help, remove solstone from that list with the minus button, then turn this option off and on again.</string>
+	<key>m6d61636f732e73657474696e67732e6b65657061637469766974796f6e7768696c65706175736564</key>
+	<string>keep activity on while paused</string>
+	<key>m6d61636f732e73657474696e67732e6b656570636f6e6669726d65647365676d656e7473666f72646562756767696e67</key>
+	<string>keep confirmed segments for debugging</string>
+	<key>m6d61636f732e73657474696e67732e6b6565707072697661746577696e646f77736f75746f66796f75726a6f75726e616c</key>
+	<string>keep private windows out of your journal: Firefox set to English</string>
+	<key>m6d61636f732e73657474696e67732e6b65657073736f6c73746f6e6572756e6e696e676c6f63616c6c7962757473746f707373656e64696e67</key>
+	<string>keeps solstone running locally but stops sending to your journal</string>
+	<key>m6d61636f732e73657474696e67732e6b6570746f6e746869736d6163</key>
+	<string>kept on this mac</string>
+	<key>m6d61636f732e73657474696e67732e6b6579</key>
+	<string>key</string>
+	<key>m6d61636f732e73657474696e67732e6c656176656f7574</key>
+	<string>leave out</string>
+	<key>m6d61636f732e73657474696e67732e6c6f63616c616464726573736e616d65706f72746f726874747073</key>
+	<string>local address, name:port, or https://...</string>
+	<key>m6d61636f732e73657474696e67732e6c6f6f6b696e67666f72796f75726a6f75726e616c6f6e746869736d6163</key>
+	<string>looking for your journal on this mac</string>
+	<key>m6d61636f732e73657474696e67732e6d61636f736973626c6f636b696e677468657365796f7563616e7475726e</key>
+	<string>macOS is blocking these. you can turn them back on anytime.</string>
+	<key>m6d61636f732e73657474696e67732e6d62</key>
+	<string>%1$@ MB</string>
+	<key>m6d61636f732e73657474696e67732e6d6232</key>
+	<string>%1$@ MB</string>
+	<key>m6d61636f732e73657474696e67732e6d6963726f70686f6e656761696e</key>
+	<string>microphone gain</string>
+	<key>m6d61636f732e73657474696e67732e6d6963726f70686f6e657072696f72697479</key>
+	<string>microphone priority</string>
+	<key>m6d61636f732e73657474696e67732e6d756269</key>
+	<string>mubi</string>
+	<key>m6d61636f732e73657474696e67732e6e316d696e7574657365676d656e7473</key>
+	<string>1-minute segments</string>
+	<key>m6d61636f732e73657474696e67732e6e6565646168616e647265616368</key>
+	<string>need a hand? reach us. we're happy to help.</string>
+	<key>m6d61636f732e73657474696e67732e6e6f617070736578636c75646564</key>
+	<string>no apps excluded</string>
+	<key>m6d61636f732e73657474696e67732e6e6f7061747465726e736164646564</key>
+	<string>no patterns added</string>
+	<key>m6d61636f732e73657474696e67732e6e6f74636f6e66696775726564</key>
+	<string>not configured</string>
+	<key>m6d61636f732e73657474696e67732e6e6f7468696e67617661696c61626c6572696768746e6f77</key>
+	<string>nothing available right now</string>
+	<key>m6d61636f732e73657474696e67732e6e6f7468696e676d6f766564796f75726a6f75726e616c776173616c7761797368657265</key>
+	<string>nothing moved. your journal was always here. you know it by its mark.</string>
+	<key>m6d61636f732e73657474696e67732e6e6f74696669636174696f6e73</key>
+	<string>notifications</string>
+	<key>m6d61636f732e73657474696e67732e6e6f74696669636174696f6e736172657475726e65646f6666666f72736f6c73746f6e65</key>
+	<string>notifications are turned off for solstone</string>
+	<key>m6d61636f732e73657474696e67732e6e6f77656273697465736c6566746f7574</key>
+	<string>no websites left out</string>
+	<key>m6d61636f732e73657474696e67732e6f6e736f6c73746f6e6563616e72656164746865736562726f777365727377696e646f77</key>
+	<string>on: solstone can read these browsers' window titles, so their private windows are kept out of your journal.</string>
+	<key>m6d61636f732e73657474696e67732e6f70656e696e66696e646572</key>
+	<string>open in Finder</string>
+	<key>m6d61636f732e73657474696e67732e6f70656e6e6f74696669636174696f6e73657474696e6773</key>
+	<string>open notification settings</string>
+	<key>m6d61636f732e73657474696e67732e6f70656e73797374656d73657474696e6773</key>
+	<string>open System Settings</string>
+	<key>m6d61636f732e73657474696e67732e706169726564</key>
+	<string>paired ✓</string>
+	<key>m6d61636f732e73657474696e67732e70616972696e67</key>
+	<string>pairing</string>
+	<key>m6d61636f732e73657474696e67732e70616972696e676c696e6b</key>
+	<string>pairing link</string>
+	<key>m6d61636f732e73657474696e67732e70616972746f616a6f75726e616c6f6e616e6f74686572646576696365</key>
+	<string>pair to a journal on another device</string>
+	<key>m6d61636f732e73657474696e67732e70616972746f616e6f746865726a6f75726e616c</key>
+	<string>pair to another journal</string>
+	<key>m6d61636f732e73657474696e67732e70617374656b657966726f6d796f75726a6f75726e616c</key>
+	<string>paste key from your journal</string>
+	<key>m6d61636f732e73657474696e67732e706175736573796e63</key>
+	<string>pause sync</string>
+	<key>m6d61636f732e73657474696e67732e7072657365727665647365676d656e7473</key>
+	<string>preserved segments</string>
+	<key>m6d61636f732e73657474696e67732e7072697661746562726f7773696e67</key>
+	<string>private browsing</string>
+	<key>m6d61636f732e73657474696e67732e70726f746563746564766964656f</key>
+	<string>protected video</string>
+	<key>m6d61636f732e73657474696e67732e726561647374686577696e646f777469746c65616e646d61746368657370726976617465</key>
+	<string>reads the window title and matches private windows in Firefox set to English. Safari, Chrome, Edge and Brave don't show private mode in that title; the option below checks them another way. other browsers are not matched, so their private windows reach your journal. to keep every window of a browser out of your journal, add that browser to the excluded apps.</string>
+	<key>m6d61636f732e73657474696e67732e7265636865636b616c6c64617973696e636c7564696e6770726576696f75736c7973796e636564</key>
+	<string>re-check all days, including previously synced ones</string>
+	<key>m6d61636f732e73657474696e67732e72656464697466616365626f6f6b657463</key>
+	<string>reddit, facebook, etc.</string>
+	<key>m6d61636f732e73657474696e67732e72656d6f7665617070</key>
+	<string>remove app</string>
+	<key>m6d61636f732e73657474696e67732e72656d6f76657061747465726e</key>
+	<string>remove pattern</string>
+	<key>m6d61636f732e73657474696e67732e726573796e63616c6c</key>
+	<string>resync all</string>
+	<key>m6d61636f732e73657474696e67732e736166617269</key>
+	<string>Safari</string>
+	<key>m6d61636f732e73657474696e67732e7365676d656e74736172656b6570746f6e746869736d6163756e74696c</key>
+	<string>segments are kept on this mac until your journal is back</string>
+	<key>m6d61636f732e73657474696e67732e73657475706775696465736f6c73746f6e65617070696e7374616c6c</key>
+	<string>setup guide: solstone.app/install</string>
+	<key>m6d61636f732e73657474696e67732e736574757074686570616964706c616e</key>
+	<string>set up the paid plan ↗</string>
+	<key>m6d61636f732e73657474696e67732e73696c656e6365736261636b67726f756e646d757369637768656e6e6f626f64797374616c6b696e67</key>
+	<string>silences background music when nobody's talking</string>
+	<key>m6d61636f732e73657474696e67732e73746f706c656176696e676f7574</key>
+	<string>stop leaving out</string>
+	<key>m6d61636f732e73657474696e67732e73746f72616765666f6c646572</key>
+	<string>storage folder</string>
+	<key>m6d61636f732e73657474696e67732e73746f7261676573657474696e6773</key>
+	<string>storage settings →</string>
+	<key>m6d61636f732e73657474696e67732e7374726f6e676572626f6f737463616e7069636b75706d6f72656261636b67726f756e64</key>
+	<string>stronger boost can pick up more background noise in quiet rooms.</string>
+	<key>m6d61636f732e73657474696e67732e737570706f7274736f6c73746f6e65617070</key>
+	<string>support@solstone.app</string>
+	<key>m6d61636f732e73657474696e67732e737769746368</key>
+	<string>switch</string>
+	<key>m6d61636f732e73657474696e67732e7377697463686564</key>
+	<string>switched ✓</string>
+	<key>m6d61636f732e73657474696e67732e73796e63</key>
+	<string>sync</string>
+	<key>m6d61636f732e73657474696e67732e73797374656d73657474696e6773</key>
+	<string>System Settings</string>
+	<key>m6d61636f732e73657474696e67732e73797374656d73657474696e67736e6f74696669636174696f6e73736f6c73746f6e65</key>
+	<string>System Settings → Notifications → solstone</string>
+	<key>m6d61636f732e73657474696e67732e74657374636f6e6e656374696f6e</key>
+	<string>test connection</string>
+	<key>m6d61636f732e73657474696e67732e74686569727072697661746577696e646f77737265616368796f75726a6f75726e616c</key>
+	<string>their private windows reach your journal.</string>
+	<key>m6d61636f732e73657474696e67732e746869736973736f6c73746f6e65666f726d61636f73746865736f6c73746f6e65</key>
+	<string>this is solstone for macos.
+the solstone app takes in what you share with it, and all of it goes into your journal.
+installed at: %1$@
+files: ~/Library/Application Support/Solstone/captures/
+logs: /usr/bin/log show --predicate '%2$@' --last 1h
+your journal's address: %3$@
+
+if intake isn't running, check settings → permissions.
+if it's not syncing, check settings → journal.
+source: https://github.com/solpbc/solstone-macos</string>
+	<key>m6d61636f732e73657474696e67732e746869736c696e6b6973666f7261646966666572656e746a6f75726e616c</key>
+	<string>this link is for a different journal. switch to it?</string>
+	<key>m6d61636f732e73657474696e67732e74686973726561647374686577696e646f777469746c65616e646b65657073</key>
+	<string>this reads the window title and keeps Firefox private windows out of your journal. a new Firefox window is kept out of your journal for a moment while it is checked.</string>
+	<key>m6d61636f732e73657474696e67732e7469746c657061747465726e73</key>
+	<string>title patterns</string>
+	<key>m6d61636f732e73657474696e67732e7475726e6f6e62616e6e657273</key>
+	<string>turn on banners</string>
+	<key>m6d61636f732e73657474696e67732e756e73796e6365647365676d656e74736172656e6576657264656c65746564</key>
+	<string>unsynced segments are never deleted.</string>
+	<key>m6d61636f732e73657474696e67732e757365316d696e7574657365676d656e7473696e73746561646f6635</key>
+	<string>use 1-minute segments instead of 5-minute for testing</string>
+	<key>m6d61636f732e73657474696e67732e76696577737461747573</key>
+	<string>view status →</string>
+	<key>m6d61636f732e73657474696e67732e77616e74736f6c73746f6e65736e6f746573746f73686f777570</key>
+	<string>want solstone's notes to show up with a banner and sound?</string>
+	<key>m6d61636f732e73657474696e67732e7765627369746573796f756c656176656f7574</key>
+	<string>websites you leave out</string>
+	<key>m6d61636f732e73657474696e67732e7768656e6f6e7365676d656e7473796f75726a6f75726e616c686173636f6e6669726d6564</key>
+	<string>when on, segments your journal has confirmed are moved to a separate folder on this mac instead of being removed. they build up until you delete them yourself.</string>
+	<key>m6d61636f732e73657474696e67732e7768657265</key>
+	<string>where</string>
+	<key>m6d61636f732e73657474696e67732e77696e646f777366726f6d746865736561707073617265616c776179736578636c75646564</key>
+	<string>windows from these apps are always excluded.</string>
+	<key>m6d61636f732e73657474696e67732e77696e646f777469746c6573617265756e617661696c61626c65</key>
+	<string>window titles are unavailable</string>
+	<key>m6d61636f732e73657474696e67732e776f726b696e677769746861636f64696e676167656e7468616e646974</key>
+	<string>working with a coding agent? hand it this context.</string>
+	<key>m6d61636f732e73657474696e67732e78</key>
+	<string>%1$@x</string>
+	<key>m6d61636f732e73657474696e67732e796f7563616e7265766965776f727265766f6b657468657365616e7974696d65</key>
+	<string>you can review or revoke these anytime in</string>
+	<key>m6d61636f732e73657474696e67732e796f75726a6f75726e616c697367657474696e676974736f776e617070</key>
+	<string>your journal is getting its own app</string>
+	<key>m6d61636f732e73657474696e67732e796f75726d656d6f7269657361726573656e746f6e6c79746f796f7572</key>
+	<string>your memories are sent only to your configured journal. nothing else, nowhere else.</string>
+	<key>m6d61636f732e73657474696e6773766965772e61637469766974796b65657073676f696e677768656e796f757061757365616e647768656e73637265656e616e</key>
+	<string>activity keeps going when you pause, and when screen and computer sound are off.</string>
+	<key>m6d61636f732e73657474696e6773766965772e616464736170706e616d657377696e646f777469746c6573616e646163746976656f7269646c6574696d65746f</key>
+	<string>adds app names, window titles and active or idle time to your journal, and browser addresses if you allow %1$@. it starts and pauses with screen and computer sound.</string>
+	<key>m6d61636f732e73657474696e6773766965772e616c6c6f77666f726163746976697479</key>
+	<string>allow %1$@ for activity</string>
+	<key>m6d61636f732e73657474696e6773766965772e6170706e616d65</key>
+	<string>app name</string>
+	<key>m6d61636f732e73657474696e6773766965772e6174797065646e616d65776f726b736f6e6c797768656e69746d617463686573746865617070736e616d656578</key>
+	<string>a typed name works only when it matches the app's name exactly, as it shows under currently open apps.</string>
+	<key>m6d61636f732e73657474696e6773766965772e63616c63756c6174696e67</key>
+	<string>calculating</string>
+	<key>m6d61636f732e73657474696e6773766965772e636865636b65646f6e73616661726932376368726f6d6531353465646765313534616e64627261766531393673</key>
+	<string>checked on Safari 27, Chrome 154, Edge 154 and Brave 1.96 set to English; a browser update or another language can change a title, and then a private window there may reach your journal. a new window from these browsers is kept out of your journal for a moment while it is checked. turning this off stops the reads; to remove the access too, turn solstone off in System Settings, under Privacy &amp; Security, in %1$@.</string>
+	<key>m6d61636f732e73657474696e6773766965772e64697361626c656d6963726f70686f6e65</key>
+	<string>disable microphone</string>
+	<key>m6d61636f732e73657474696e6773766965772e706175736573637265656e616e64617564696f7768696c6570726f746563746564766964656f69736f6e736372</key>
+	<string>pause screen and audio while protected video is on screen</string>
+	<key>m6d61636f732e73657474696e6773766965772e70617573657373637265656e616e64617564696f7768696c65737570706f7274656473747265616d696e677669</key>
+	<string>pauses screen and audio while supported streaming video apps or websites are visible, so the video doesn't go black. a short note of the service and window title goes into your journal.</string>
+	<key>m6d61636f732e73657474696e6773766965772e73696c656e63656d75736963696e636f6d7075746572736f756e64</key>
+	<string>silence music in computer sound</string>
+	<key>m6d61636f732e73657474696e6773766965772e73696c656e636573706f7274696f6e736f66636f6d7075746572736f756e6477686572656d7573696369736465</key>
+	<string>silences portions of computer sound where music is detected but no speech.</string>
+	<key>m6d61636f732e73657474696e6773766965772e746869736e65656473736f6c73746f6e65757365736974746f7265616474686577696e646f777469746c657374</key>
+	<string>this needs %1$@. solstone uses it to read the window titles these browsers give to accessibility tools, and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity. turning this on asks for it.</string>
+	<key>m6d61636f732e73657474696e6773766965772e7475726e696e67746869736f6e61736b73666f72736f6c73746f6e65757365736974746f726561647468657365</key>
+	<string>turning this on asks for %1$@. solstone uses it to read these browsers' window titles and to check that the access works. allowing it also lets activity add browser addresses to your journal, unless you turn that off under activity.</string>
+	<key>m6d61636f732e73657474696e6773766965772e77616974696e67666f72616c6c6f77736f6c73746f6e65696e73797374656d73657474696e6773697461736b73</key>
+	<string>waiting for %1$@. allow solstone in System Settings; it asks for your mac's password. until then, private windows in Safari, Chrome, Edge and Brave reach your journal.</string>
+	<key>m6d61636f732e73657475702e646f776e6c6f61646661696c6564</key>
+	<string>download failed.</string>
+	<key>m6d61636f732e73657475702e646f776e6c6f616470726f677265737369736e74617661696c61626c65</key>
+	<string>download progress isn't available.</string>
+	<key>m6d61636f732e73657475702e6c6f63616c7468696e6b696e67</key>
+	<string>local thinking</string>
+	<key>m6d61636f732e73657475702e6e31356d696e75746573</key>
+	<string>15 minutes</string>
+	<key>m6d61636f732e73657475702e6e31686f7572</key>
+	<string>1 hour</string>
+	<key>m6d61636f732e73657475702e6e33306d696e75746573</key>
+	<string>30 minutes</string>
+	<key>m6d61636f732e73657475702e6e6f7473746172746564</key>
+	<string>not started</string>
+	<key>m6d61636f732e73657475702e6f66</key>
+	<string>%1$@ of %2$@</string>
+	<key>m6d61636f732e73657475702e6f7270616972746f616a6f75726e616c6f6e616e6f74686572</key>
+	<string>or pair to a journal on another device</string>
+	<key>m6d61636f732e73657475702e70616972696e676c696e6b706c616365686f6c646572</key>
+	<string>paste pairing link</string>
+	<key>m6d61636f732e73657475702e7370656563687265636f676e6974696f6e</key>
+	<string>speech recognition</string>
+	<key>m6d61636f732e73657475702e746865736f6c73746f6e656170706973616c7265616479636f6e6e6563746564746f</key>
+	<string>the solstone app is already connected to a journal.</string>
+	<key>m6d61636f732e73657475702e746865736f6c73746f6e656170706973616c726561647966696e697368696e67616e6f74686572</key>
+	<string>the solstone app is already finishing another setup.</string>
+	<key>m6d61636f732e73657475702e756e74696c69726573756d65</key>
+	<string>until I resume</string>
+	<key>m6d61636f732e7365747570646f776e6c6f6164666f6f7465722e63616e63656c6c6564</key>
+	<string>cancelled</string>
+	<key>m6d61636f732e7365747570646f776e6c6f6164666f6f7465722e646f776e6c6f6164696e67</key>
+	<string>downloading…</string>
+	<key>m6d61636f732e7365747570646f776e6c6f6164666f6f7465722e7265616479</key>
+	<string>ready</string>
+	<key>m6d61636f732e7365747570646f776e6c6f616470726573656e746174696f6e2e63616e63656c6c6564</key>
+	<string>cancelled</string>
+	<key>m6d61636f732e736574757073637265656e6672616d652e73637265656e</key>
+	<string>screen</string>
+	<key>m6d61636f732e73686f72746375742e6b6579</key>
+	<string>Key%1$@</string>
+	<key>m6d61636f732e73686f72746375742e7370616365</key>
+	<string>Space</string>
+	<key>m6d61636f732e736f6c73746f6e65636170747572656170702e73657474696e6773</key>
+	<string>settings…</string>
+	<key>m6d61636f732e736f75726365732e7374617475736f6e</key>
+	<string>on · %1$@</string>
+	<key>m6d61636f732e736f75726365732e737461747573706175736564</key>
+	<string>paused · %1$@</string>
+	<key>m6d61636f732e7374617475732e64656c697665726564656d707479</key>
+	<string>last added to your journal %1$@ · nothing waiting</string>
+	<key>m6d61636f732e7374617475732e64656c69766572656477616974696e67</key>
+	<string>last added to your journal %1$@ · %2$@ waiting</string>
+	<key>m6d61636f732e7374617475732e6e65766572656d707479</key>
+	<string>nothing added yet · nothing waiting</string>
+	<key>m6d61636f732e7374617475732e6e6576657277616974696e67</key>
+	<string>nothing added yet · %1$@ waiting</string>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e6d6f726577616974696e67</key>
+	<string>%1$@ more waiting</string>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e6e6f7468696e6769736c6f737473796e63726573756d65737768656e6974736261636b</key>
+	<string>nothing is lost · sync resumes when it's back</string>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e6e6f7468696e6769737265616368696e67796f75726a6f75726e616c796574</key>
+	<string>nothing is reaching your journal yet</string>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e706175736564</key>
+	<string>paused · %1$@</string>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e7265747279696e677468656c61737475706c6f6164</key>
+	<string>retrying the last upload</string>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e73796e636564746f</key>
+	<string>synced to %1$@</string>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e73796e63726573756d65736f6e6365796f75726a6f75726e616c63616e7265616474686174646179</key>
+	<string>sync resumes once your journal can read that day</string>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e73796e63726573756d65737768656e7468656a6f75726e616c636f6e6e656374696f6e69737265616479</key>
+	<string>sync resumes when the journal connection is ready</string>
+	<key>m6d61636f732e7374617475736865616c746873756d6d6172792e796f75726a6f75726e616c697366696e65</key>
+	<string>your journal is fine</string>
+	<key>m6d61636f732e73746f726167652e6e65787473617665</key>
+	<string>next save in %1$@:%2$@</string>
+	<key>m6d61636f732e7465726d696e616c636f6e74696e75697479706c616e2e737461747573</key>
+	<string>status %1$@</string>
+	<key>m6d61636f732e7465726d696e616c74616b656f7665722e6a6f75726e616c756e726561636861626c65</key>
+	<string>journal unreachable</string>
+	<key>m6d61636f732e75692e6163636573736962696c697479</key>
+	<string>Accessibility</string>
+	<key>m6d61636f732e75692e616464726573736573</key>
+	<string>addresses</string>
+	<key>m6d61636f732e75692e616464746865736f6c73746f6e65657874656e73696f6e</key>
+	<string>add the solstone extension to a browser on this mac. what you share goes into your journal.</string>
+	<key>m6d61636f732e75692e616c77617973</key>
+	<string>always</string>
+	<key>m6d61636f732e75692e62726f7773657273</key>
+	<string>browsers</string>
+	<key>m6d61636f732e75692e636865636b696e67</key>
+	<string>checking</string>
+	<key>m6d61636f732e75692e63686f6f7365</key>
+	<string>choose</string>
+	<key>m6d61636f732e75692e63686f6f7365796f75726f6273696469616e7661756c74</key>
+	<string>choose your Obsidian vault</string>
+	<key>m6d61636f732e75692e636c61696d65646e6f747665726966696564</key>
+	<string>claimed, not verified</string>
+	<key>m6d61636f732e75692e636c656172</key>
+	<string>clear</string>
+	<key>m6d61636f732e75692e636f6e66696775726564</key>
+	<string>configured</string>
+	<key>m6d61636f732e75692e636f6e6e656374696e67</key>
+	<string>connecting</string>
+	<key>m6d61636f732e75692e636f756c646e746f70656e796f7572</key>
+	<string>couldn't open your journal in your browser. try again.</string>
+	<key>m6d61636f732e75692e646576696365636f6e74726f6c616e6464617461</key>
+	<string>Device Control and Data Access</string>
+	<key>m6d61636f732e75692e646961676e6f7374696373</key>
+	<string>diagnostics</string>
+	<key>m6d61636f732e75692e646973636172646564</key>
+	<string>discarded</string>
+	<key>m6d61636f732e75692e6572726f72</key>
+	<string>error</string>
+	<key>m6d61636f732e75692e66696e697368</key>
+	<string>finish</string>
+	<key>m6d61636f732e75692e66726f6d616e6f74686572646576696365</key>
+	<string>from another device</string>
+	<key>m6d61636f732e75692e6772616e746564</key>
+	<string>granted</string>
+	<key>m6d61636f732e75692e686f7774686973776f726b73</key>
+	<string>how this works</string>
+	<key>m6d61636f732e75692e696e7374616c6c6564</key>
+	<string>installed</string>
+	<key>m6d61636f732e75692e6c61737475706461746564</key>
+	<string>, last updated %1$@</string>
+	<key>m6d61636f732e75692e6c696e6b6564</key>
+	<string>linked</string>
+	<key>m6d61636f732e75692e6d61636f736861736f6666666f72</key>
+	<string>macOS has %1$@ off for solstone.</string>
+	<key>m6d61636f732e75692e6d6f76656974</key>
+	<string>move it</string>
+	<key>m6d61636f732e75692e6d6f7665736f6c73746f6e65666f72746d7578</key>
+	<string>move solstone for tmux in?</string>
+	<key>m6d61636f732e75692e6d6f76696e67736f6c73746f6e65666f72746d7578</key>
+	<string>moving solstone for tmux in</string>
+	<key>m6d61636f732e75692e6e65777465726d696e616c686973746f727966726f6d</key>
+	<string>new terminal history from here, and what's already in your journal stays (%1$@)</string>
+	<key>m6d61636f732e75692e6e6f6964656e7469747970726573656e746564</key>
+	<string>no identity presented</string>
+	<key>m6d61636f732e75692e6e6f746368616e676564</key>
+	<string>not changed</string>
+	<key>m6d61636f732e75692e6e6f7468696e67746869736d6163686173</key>
+	<string>nothing this mac has kept went to that journal through this link. you may have pasted the wrong link, or something isn't right. try again, or reach us and we'll help.</string>
+	<key>m6d61636f732e75692e6e6f746f6e746869736d61632e6e6174697665</key>
+	<string>%1$@ not on this mac yet</string>
+	<key>m6d61636f732e75692e6f6273696469616e</key>
+	<string>Obsidian</string>
+	<key>m6d61636f732e75692e6f6273696469616e69736f6e</key>
+	<string>Obsidian is on · %1$@</string>
+	<key>m6d61636f732e75692e6f6273696469616e69736f6e32</key>
+	<string>Obsidian is on</string>
+	<key>m6d61636f732e75692e6f6273696469616e6973706175736564796f7572</key>
+	<string>Obsidian is paused. your notes wait on this mac.</string>
+	<key>m6d61636f732e75692e6f6273696469616e6e65656473617474656e74696f6e</key>
+	<string>Obsidian needs attention</string>
+	<key>m6d61636f732e75692e6f666e6f746573696e796f7572</key>
+	<string>%1$@ of %2$@ notes in your journal</string>
+	<key>m6d61636f732e75692e6f766572346d626e6f742e6e6174697665</key>
+	<string>%1$@ over 4 MB, not sent</string>
+	<key>m6d61636f732e75692e706169727468697361707077697468</key>
+	<string>pair this app with your journal</string>
+	<key>m6d61636f732e75692e706172746f66746869737661756c74</key>
+	<string>part of this vault can't be read. the rest of the vault keeps going into your journal.</string>
+	<key>m6d61636f732e75692e706175736564</key>
+	<string>paused</string>
+	<key>m6d61636f732e75692e7061757365646f726576657279736f75726365</key>
+	<string>paused, or every source off</string>
+	<key>m6d61636f732e75692e70726f626c656d</key>
+	<string>problem: %1$@</string>
+	<key>m6d61636f732e75692e72656c6179</key>
+	<string>relay</string>
+	<key>m6d61636f732e75692e726570616972</key>
+	<string>repair</string>
+	<key>m6d61636f732e75692e7265706169726564</key>
+	<string>repaired</string>
+	<key>m6d61636f732e75692e73637265656e706175736564666f727765627369746573</key>
+	<string>screen paused for websites you left out</string>
+	<key>m6d61636f732e75692e736f6c73746f6e65666f72746d75786973</key>
+	<string>solstone for tmux is still installed on this mac, so terminal stays off for now.</string>
+	<key>m6d61636f732e75692e736f6c73746f6e65666f72746d7578697332</key>
+	<string>solstone for tmux is still running.</string>
+	<key>m6d61636f732e75692e736f6c73746f6e656973616c726561647972756e6e696e67</key>
+	<string>solstone is already running. look for it in your menu bar.</string>
+	<key>m6d61636f732e75692e736f6c73746f6e656973746865617070</key>
+	<string>solstone is the app in your menu bar, and it has no commands to run here.
+to open it: open -a solstone
+for journal commands, choose "open admin terminal" in the journal app's menu.</string>
+	<key>m6d61636f732e75692e736f6d656e6f746573636f756c646e74</key>
+	<string>some notes couldn't go into your journal. the solstone app tries them again the next time it restarts.</string>
+	<key>m6d61636f732e75692e736f6d657468696e67616e737765726564696e73746561646f66</key>
+	<string>something answered instead of your journal</string>
+	<key>m6d61636f732e75692e736f6d657468696e67616e737765726564746869736d6163</key>
+	<string>something answered this mac through the relay, and it isn't the journal this mac is paired with. this is less certain than a direct connection.</string>
+	<key>m6d61636f732e75692e736f6d657468696e67616e737765726564746869736d616332</key>
+	<string>something answered this mac at %1$@, and it isn't the journal this mac is paired with. this could be another device now using that address, or your journal, if its identity was reset. if the mark under "what answered" matches the one your journal shows now, pair this mac again.</string>
+	<key>m6d61636f732e75692e736f6d657468696e67736f6c73746f6e65666f72746d7578</key>
+	<string>something solstone for tmux left couldn't be read.</string>
+	<key>m6d61636f732e75692e7374617274696e67</key>
+	<string>starting…</string>
+	<key>m6d61636f732e75692e74616b6573696e796f7572746d7578</key>
+	<string>takes in your tmux sessions, and all of it goes into your journal. needs tmux on this mac, and works in any terminal session, including when you SSH into this mac.</string>
+	<key>m6d61636f732e75692e7465726d696e616c</key>
+	<string>terminal</string>
+	<key>m6d61636f732e75692e7465726d696e616c706175736564</key>
+	<string>terminal: paused</string>
+	<key>m6d61636f732e75692e7465726d696e616c72756e6e696e67</key>
+	<string>terminal: running</string>
+	<key>m6d61636f732e75692e7465726d696e616c73746f707065646279616e</key>
+	<string>terminal: stopped by an error, restarting</string>
+	<key>m6d61636f732e75692e7465726d696e616c746d757869736e74</key>
+	<string>terminal: tmux isn't installed</string>
+	<key>m6d61636f732e75692e74686174666f6c64657269736e74</key>
+	<string>that folder isn't an Obsidian vault, so nothing was sent.</string>
+	<key>m6d61636f732e75692e746865636865636b6f66796f7572</key>
+	<string>the check of your journal's mark didn't finish. that doesn't mean the marks disagree.</string>
+	<key>m6d61636f732e75692e7468656a6f75726e616c72756e6e696e676f6e</key>
+	<string>the journal running on this mac isn't yours, so the solstone app won't connect to it, open it or show its mark. on a shared mac, it's usually someone else's journal.</string>
+	<key>m6d61636f732e75692e7468657265636f72646f666d6f76696e67</key>
+	<string>the record of moving solstone for tmux can't be read: %1$@. please contact support, and don't delete it.</string>
+	<key>m6d61636f732e75692e746865736f6c73746f6e6561707063616e</key>
+	<string>the solstone app can't read this vault. check that the folder is still there, and its access in System Settings, under Privacy &amp; Security.</string>
+	<key>m6d61636f732e75692e746865736f6c73746f6e65617070636f756c646e</key>
+	<string>the solstone app couldn't read that folder. check its access in System Settings, under Privacy &amp; Security.</string>
+	<key>m6d61636f732e75692e746865736f6c73746f6e6561707074616b6573</key>
+	<string>the solstone app takes in the notes in one vault on this mac. all of them go into your journal, then each one as it changes. your vault stays as it is.</string>
+	<key>m6d61636f732e75692e746865736f6c73746f6e65657874656e73696f6e73686f7773</key>
+	<string>the solstone extension shows the same icons in your browser's toolbar, for what you share from that browser.</string>
+	<key>m6d61636f732e75692e746865736f6c73746f6e65657874656e73696f6e776f726b73</key>
+	<string>the solstone extension works in Chrome, Edge, Firefox and Safari.</string>
+	<key>m6d61636f732e75692e746865736f6c73746f6e65666f72746d7578</key>
+	<string>the solstone for tmux login item on this mac isn't one solstone installed, so nothing was changed.</string>
+	<key>m6d61636f732e75692e7468697361707069736e74</key>
+	<string>this app isn't paired yet, so nothing goes into your journal until you pair it.</string>
+	<key>m6d61636f732e75692e74686973666f6c646572736e616d65</key>
+	<string>this folder's name can't be used. rename it, then try again.</string>
+	<key>m6d61636f732e75692e746869736d6f766573736f6c73746f6e65666f72</key>
+	<string>this moves solstone for tmux into this app, and solstone for tmux stops for good. what it still has waiting goes into your journal through this app, and anything that can't go stays on this mac.</string>
+	<key>m6d61636f732e75692e746869736e65656473617474656e74696f6e706c65617365</key>
+	<string>this needs attention: please contact support</string>
+	<key>m6d61636f732e75692e7475726e696e67746869736f666672656d6f766573</key>
+	<string>turning this off removes nothing from your journal.</string>
+	<key>m6d61636f732e75692e7475726e6f6666</key>
+	<string>turn off</string>
+	<key>m6d61636f732e75692e756e6b6e6f776e6a6f75726e616c7365656e6174</key>
+	<string>unknown journal seen at %1$@</string>
+	<key>m6d61636f732e75692e756e6b6e6f776e6a6f75726e616c7365656e7468726f756768</key>
+	<string>unknown journal seen through the relay</string>
+	<key>m6d61636f732e75692e7661756c74736f6e746869736d6163</key>
+	<string>vaults on this mac</string>
+	<key>m6d61636f732e75692e7669657764657461696c73</key>
+	<string>view details</string>
+	<key>m6d61636f732e75692e77616974696e67</key>
+	<string>waiting: %1$@</string>
+	<key>m6d61636f732e75692e77616974696e67666f72616a6f75726e616c</key>
+	<string>waiting for a journal update. your notes wait on this mac.</string>
+	<key>m6d61636f732e75692e77616974696e67746f73796e632e6e6174697665</key>
+	<string>%1$@ waiting to sync</string>
+	<key>m6d61636f732e75692e77686174616e737765726564</key>
+	<string>what answered</string>
+	<key>m6d61636f732e75692e796f757263757272656e7470616972696e677374617973</key>
+	<string>your current pairing stays in use. nothing this mac has kept went to that journal through this link.</string>
+	<key>m6d61636f732e75692e796f75726a6f75726e616c616c7265616479686173</key>
+	<string>your journal already has a vault named %1$@ %2$@%3$@. if you continue, changes from both devices go into your journal.</string>
+	<key>m6d61636f732e7569636f70792e616c6c6f776669727374736f736f6c73746f6e6563616e74656c6c7768696368776562736974656177696e646f</key>
+	<string>allow %1$@ first, so solstone can tell which website a window shows.</string>
+	<key>m6d61636f732e7569636f70792e616e64</key>
+	<string>%1$@ and %2$@</string>
+	<key>m6d61636f732e7569636f70792e6272617665</key>
+	<string>Brave</string>
+	<key>m6d61636f732e7569636f70792e63616e7466696e64746865736f6c73746f6e65617070</key>
+	<string>can't find the solstone app</string>
+	<key>m6d61636f732e7569636f70792e636865636b6564696e7361666172696368726f6d6565646765616e64627261766566697265666f786f74686572</key>
+	<string>checked in Safari, Chrome, Edge and Brave. Firefox, other browsers, beta and preview versions of these, and web apps added to the Dock from Safari aren't checked; to keep one out, add it to excluded apps. when you switch tabs or pages, the solstone app stops taking in your screen for a moment while it checks, and for a few seconds when the page is one you leave out. while a Chrome, Edge or Brave window shows two pages side by side, solstone can't tell which websites it shows, so after a moment that browser stays out of what the solstone app takes in from your screen until the window shows one page again. a website shown inside another website's page isn't recognized. neither is a website open in a Chrome, Edge or Brave side panel or sidebar. a left-out website's tab title can still show in a browser's tab bar. a minimized browser window's picture in the Dock can still show. a page that changes without changing its window title, or a page open for less than half a second, can be missed, and in Chrome, Edge or Brave its picture can stay on screen, and go into your journal, for a few seconds after you leave it. the solstone extension uses this list too: in Safari, where it comes with this app, and from version 0.5.0 in other browsers. a website you leave out in the extension shows up here, and one you stop leaving out there comes off this list, so Safari, Chrome, Edge and Brave windows showing it go into your journal again, on your screen and in activity. with an older extension, leave the site out in the extension as well. while any website is left out, Picture in Picture from Safari, and from other apps that use macOS's own player, stays out of what the solstone app takes in from your screen. Picture in Picture from Chrome, Edge or Brave counts as a window of that browser: while it shows something from a website you leave out, that browser stays out of what the solstone app takes in from your screen.</string>
+	<key>m6d61636f732e7569636f70792e636865636b696e67666f72</key>
+	<string>checking for %1$@…</string>
+	<key>m6d61636f732e7569636f70792e6368726f6d65</key>
+	<string>Chrome</string>
+	<key>m6d61636f732e7569636f70792e636f6d7075746572736f756e64</key>
+	<string>computer sound</string>
+	<key>m6d61636f732e7569636f70792e636f707974686566756c6c6c696e6b66726f6d796f757263686174616e646f70656e6974616761696e</key>
+	<string>copy the full link from your chat and open it again.</string>
+	<key>m6d61636f732e7569636f70792e65646765</key>
+	<string>Edge</string>
+	<key>m6d61636f732e7569636f70792e6c6566746f75746f6673637265656e</key>
+	<string>%1$@ left out of screen →</string>
+	<key>m6d61636f732e7569636f70792e6d6963726f70686f6e657065726d697373696f6e6e6f746772616e74656473637265656e616e64636f6d707574</key>
+	<string>microphone permission not granted. screen and computer sound can run on their own.</string>
+	<key>m6d61636f732e7569636f70792e6d6963726f70686f6e6573637265656e616e64636f6d7075746572736f756e64</key>
+	<string>microphone, screen and computer sound</string>
+	<key>m6d61636f732e7569636f70792e6d6963726f70686f6e65756e617661696c61626c6573637265656e616e64636f6d7075746572736f756e646172</key>
+	<string>microphone unavailable. screen and computer sound are running.</string>
+	<key>m6d61636f732e7569636f70792e6e6f74636f6e6e6563746564796574</key>
+	<string>not connected yet</string>
+	<key>m6d61636f732e7569636f70792e73616661726969736c6566746f75746f6677686174746865736f6c73746f6e6561707074616b6573696e66726f</key>
+	<string>Safari is left out of what the solstone app takes in from your screen</string>
+	<key>m6d61636f732e7569636f70792e7361666172696c6566746f75746f6673637265656e</key>
+	<string>Safari left out of screen →</string>
+	<key>m6d61636f732e7569636f70792e73637265656e616e64617564696f636f756c646e747374617274636865636b7065726d697373696f6e73696e73</key>
+	<string>screen and audio couldn't start. check permissions in settings, then try again.</string>
+	<key>m6d61636f732e7569636f70792e73637265656e616e64617564696f73746f70706564616e64636f756c646e747374617274616761696e6f6e7468</key>
+	<string>screen and audio stopped and couldn't start again on their own.</string>
+	<key>m6d61636f732e7569636f70792e73637265656e616e64636f6d7075746572736f756e64756e617661696c61626c656d6963726f70686f6e656973</key>
+	<string>screen and computer sound unavailable. microphone is running.</string>
+	<key>m6d61636f732e7569636f70792e736f6c73746f6e6563616e747265616470616765616464726573736573696e72696768746e6f77736f73746179</key>
+	<string>solstone can't read page addresses in %1$@ right now, so %2$@ stays out of what it takes in from your screen until it can.</string>
+	<key>m6d61636f732e7569636f70792e746869736a6f75726e616c6c696e6b69736e7476616c6964</key>
+	<string>this journal link isn't valid.</string>
+	<key>m6d61636f732e7569636f70792e746f636865636b736f6c73746f6e657265616473746865616464726573736f6674686570616765656163687361</key>
+	<string>to check, solstone reads the address of the page each Safari, Chrome, Edge and Brave window shows, with %1$@, and compares it with this list on this mac. the address goes into activity unless you turn browser addresses off.</string>
+	<key>m6d61636f732e7569636f70792e746f6c6561766577656273697465736f7574736f6c73746f6e656e65656473736f697463616e72656164776869</key>
+	<string>to leave websites out, solstone needs %1$@, so it can read which website each Safari, Chrome, Edge and Brave window shows. once it's allowed, activity also adds browser addresses to your journal, except for websites you leave out. you can turn addresses off under activity.</string>
+	<key>m6d61636f732e7569636f70792e7475726e65646f6666696e736166617269</key>
+	<string>turned off in Safari</string>
+	<key>m6d61636f732e7569636f70792e756e74696c697473616c6c6f776564746865736577656273697465736172656e746b6570746f75746f66796f75</key>
+	<string>until it's allowed, these websites aren't kept out of your journal.</string>
+	<key>m6d61636f732e7569636f70792e7768696c656177656273697465796f756c656176656f757473686f7773696e616e797361666172696368726f6d</key>
+	<string>while a website you leave out shows in any Safari, Chrome, Edge or Brave window on your screen, even one behind other windows, that browser stays out of what the solstone app takes in from your screen, and the website's title and address stay out of activity. the rest of your screen keeps going into your journal. leaving out bank.com leaves out login.bank.com too.</string>
+	<key>m6d61636f732e7569636f70792e77697468616374697669747963616e61646462726f77736572616464726573736573746f796f75726a6f75726e</key>
+	<string>with %1$@, activity can add browser addresses to your journal, and window titles when screen recording is unavailable. checking browsers for the websites you leave out uses the same access, whether this setting is on or off.</string>
+	<key>m6d61636f732e756e6b6e6f776e6a6f75726e616c6e6f746963652e72656c696e6b</key>
+	<string>re-link</string>
+	<key>m6d61636f732e757064617465732e63686f6f736575706461746573696e7468656a6f75726e616c61707073</key>
+	<string>choose updates in the journal app's sidebar.</string>
+	<key>m6d61636f732e757064617465732e6a6f75726e616c75706461746568656c70</key>
+	<string>journal update help</string>
+	<key>m6d61636f732e757064617465732e6c617374636865636b6564</key>
+	<string>last checked %1$@</string>
+	<key>m6d61636f732e757064617465732e6c61756e63686572726f72</key>
+	<string>couldn't open the journal app for this journal. follow journal update help.</string>
+	<key>m6d61636f732e757064617465732e6c61756e63686572726f7232</key>
+	<string>couldn't open the journal app. follow journal update help.</string>
+	<key>m6d61636f732e757064617465732e7061697265646a6f75726e616c</key>
+	<string>paired journal %1$@</string>
+	<key>m6d61636f732e757064617465732e736f6c73746f6e65616e64796f75726a6f75726e616c75706461746573657061726174656c797468656972</key>
+	<string>solstone and your journal update separately. their version numbers can differ.</string>
+	<key>m6d61636f732e757064617465732e757064617465796f75726a6f75726e616c6f6e746865636f6d707574657274686174</key>
+	<string>update your journal on the computer that runs it.</string>
+	<key>m6d61636f732e75706c6f61642e696e76616c696475726c</key>
+	<string>Invalid URL</string>
+	<key>m6d61636f732e75706c6f61642e6e6f74636f6e66696775726564</key>
+	<string>Not configured</string>
+	<key>m6d61636f732e75706c6f6164636c69656e742e63616e747265616368796f75726a6f75726e616c61747468697361646472657373636865636b74686174697473</key>
+	<string>can't reach your journal at this address. check that it's running and reachable.</string>
+	<key>m6d61636f732e75706c6f6164636c69656e742e636f6e6e656374696f6e74696d65646f7574</key>
+	<string>Connection timed out</string>
+	<key>m6d61636f732e75706c6f6164636c69656e742e636f756c646e747072657061726566696c6573666f7275706c6f6164</key>
+	<string>couldn't prepare files for upload</string>
+	<key>m6d61636f732e75706c6f6164636c69656e742e696e76616c69646a6f75726e616c726573706f6e7365</key>
+	<string>invalid journal response</string>
+	<key>m6d61636f732e75706c6f6164636c69656e742e6a6f75726e616c6572726f72</key>
+	<string>journal error (%1$@)</string>
+	<key>m6d61636f732e75706c6f6164636c69656e742e6a6f75726e616c6e6f74666f756e64</key>
+	<string>journal not found</string>
+	<key>m6d61636f732e75706c6f6164636c69656e742e6e6f66696c6573746f75706c6f6164</key>
+	<string>No files to upload</string>
+	<key>m6d61636f732e75706c6f6164636c69656e742e6e6f696e7465726e6574636f6e6e656374696f6e</key>
+	<string>No internet connection</string>
+	<key>m6d61636f732e75706c6f6164636c69656e742e75706c6f6164657863656564736a6f75726e616c6c696d697473</key>
+	<string>upload exceeds journal limits</string>
+	<key>m6d61636f732e76657273696f6e2e6a6f75726e616c756e6b6e6f776e</key>
+	<string>journal unknown</string>
+	<key>m6d61636f732e76657273696f6e2e6c6173746b6e6f776e</key>
+	<string>%1$@ (last known)</string>
+	<key>m6d61636f732e76657273696f6e2e756e6b6e6f776e</key>
+	<string>unknown</string>
+</dict>
+</plist>

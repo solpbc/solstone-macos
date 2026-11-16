@@ -1,0 +1,21 @@
+{
+  "description": "Failed to create segment directory: { $error }",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "error",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "052835fab9725e1ad5f42d6ff0d7407093056ecfddaf99f673e1fd33a48b4fe3",
+  "risk": "routine",
+  "auto_merge": true
+}

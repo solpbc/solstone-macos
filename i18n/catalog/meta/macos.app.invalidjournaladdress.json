@@ -1,0 +1,16 @@
+{
+  "description": "invalid journal address",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/JournalIngestPresentation.swift.",
+  "surfaces": [
+    "app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 23,
+  "source_revision": "2d0ebd3ca1e8b18efae8e820e3244ea69f86a7c25a7d24c59bcbc7ea445cd2c5",
+  "risk": "routine",
+  "auto_merge": true
+}

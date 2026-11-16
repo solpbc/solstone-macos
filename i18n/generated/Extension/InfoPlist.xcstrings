@@ -1,0 +1,26 @@
+{
+  "sourceLanguage": "en-US",
+  "version": "1.0",
+  "strings": {
+    "CFBundleDisplayName": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "solstone"
+          }
+        }
+      }
+    },
+    "CFBundleName": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "solstone"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "description": "on · confirm your journal's mark →",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 34,
+  "source_revision": "76569ca3e09741651a763e9e6537289ee3e986faf1400652ed957b1e2a0d52ca",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "some setup checks are unavailable",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 33,
+  "source_revision": "fa6f73eb5e842dab447b80647d98a97752910a0e7ddd962180c5c9f594a95358",
+  "risk": "routine",
+  "auto_merge": true
+}

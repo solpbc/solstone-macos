@@ -95,8 +95,8 @@ final class JournalVersionMetadata {
     private(set) var factsGeneration: UInt64 = 0
     @ObservationIgnored var onAboutChanged: (@MainActor @Sendable (Bool) -> Void)?
     var displayValue: String {
-        guard let version else { return "unknown" }
-        return isCurrent ? version : "\(version) (last known)"
+        guard let version else { return MacStrings.macos_version_unknown() }
+        return isCurrent ? version : MacStrings.macos_version_lastknown(version)
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -245,14 +245,14 @@ final class JournalVersionMetadata {
     }
 
     func ownerFacingJournalLine(now date: Date) -> String {
-        guard let version else { return "journal unknown" }
+        guard let version else { return MacStrings.macos_version_journalunknown() }
         let hasObservation = versionObservedAt != nil
         let age: String? = {
             guard !isCurrent, let versionObservedAt, versionObservedAt <= date else { return nil }
             return coarseRelativeTime(versionObservedAt, now: date)
         }()
-        return SolstoneCoreAbout.renderLine(
-            name: "journal",
+        return SolstoneCoreAbout.displayLine(
+            name: MacStrings.macos_desktop_shared_about_pendingsettingstab(),
             version: version,
             build: hasObservation ? hostBuild : nil,
             os: hasObservation ? hostOS : nil,

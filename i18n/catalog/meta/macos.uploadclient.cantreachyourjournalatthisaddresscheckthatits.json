@@ -1,0 +1,16 @@
+{
+  "description": "can't reach your journal at this address. check that it's running and reachable.",
+  "context": "Shown by Sources/solstone/UploadClient.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f4481e3e6268380cee45a9a6346136b303291fd895aeea32c409e64767f833e8",
+  "risk": "routine",
+  "auto_merge": true
+}

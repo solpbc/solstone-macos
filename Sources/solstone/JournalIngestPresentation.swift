@@ -10,7 +10,7 @@ func journalConnectionVerdictPresentation(
     if pairingMismatch {
         return JournalConnectionVerdict(
             severity: .attention,
-            message: "can't reach your journal right now",
+            message: MacStrings.macos_app_cantreachyourjournalrightnow(),
             caption: nil,
             axToken: PairingConnectionAXState.mismatch.axToken,
             failureCause: .mismatch
@@ -23,29 +23,29 @@ func journalConnectionVerdictPresentation(
 func classifiedObserverHealthOwnerCopy(_ reason: ObserverHealthFailureReason) -> String {
     switch reason {
     case .pairingRevoked, .httpStatus(403):
-        return "pairing was revoked. pair again to reconnect."
+        return MacStrings.macos_app_pairingwasrevokedpairagaintoreconnect()
     case .journalNotServing, .httpStatus(404), .httpStatus(426):
-        return "your journal isn't taking this in"
+        return MacStrings.macos_app_yourjournalisnttakingthisin()
     case .journalRefused:
-        return "your journal refused this sync."
+        return MacStrings.macos_app_yourjournalrefusedthissync()
     case .journalRejectedDay(let day, _):
-        return "your journal couldn't read \(ownerDayLabel(day))"
+        return MacStrings.macos_app_yourjournalcouldntread("\(ownerDayLabel(day))")
     case .httpStatus:
-        return "journal connection error"
+        return MacStrings.macos_app_journalconnectionerror()
     case .urlErrorCode:
-        return "can't reach your journal"
+        return MacStrings.macos_desktop_shared_app_offlinetitle()
     case .uploadInvalidURL:
-        return "invalid journal address"
+        return MacStrings.macos_app_invalidjournaladdress()
     case .uploadNoFiles:
-        return "nothing to add yet"
+        return MacStrings.macos_app_nothingtoaddyet()
     case .uploadInvalidResponse:
-        return "couldn't understand your journal"
+        return MacStrings.macos_app_couldntunderstandyourjournal()
     case .configChanged:
-        return "settings changed, starting over"
+        return MacStrings.macos_app_settingschangedstartingover()
     case .notConfigured:
-        return "your journal isn't linked"
+        return MacStrings.macos_app_settingslastdeliverynotlinked()
     case .uploadFailed:
-        return "couldn't add this to your journal"
+        return MacStrings.macos_app_couldntaddthistoyourjournal()
     }
 }
 
@@ -132,20 +132,20 @@ struct JournalSyncStatusSymbol: Equatable, Sendable {
 
 /// Activity describes this sync pass; only the delivery receipt proves an addition.
 func journalSyncStatusText(_ status: UploadCoordinator.Status, paused: Bool, ready: Bool, held: Bool) -> String {
-    if paused { return "sync paused" }
+    if paused { return MacStrings.macos_app_syncpaused() }
     if held { return UICopy.JOURNAL_MARK_HELD }
-    if !ready { return "waiting for a connection" }
+    if !ready { return MacStrings.macos_app_waitingforaconnection() }
     switch status {
     case .notSynced:
-        return "sync hasn't checked yet"
+        return MacStrings.macos_app_synchasntcheckedyet()
     case .synced:
-        return "sync check complete"
+        return MacStrings.macos_app_synccheckcomplete()
     case .syncing, .uploading:
-        return "syncing to your journal…"
+        return MacStrings.macos_app_syncingtoyourjournal2()
     case .retrying:
-        return "waiting to retry"
+        return MacStrings.macos_app_waitingtoretry()
     case .awaitingTunnel:
-        return "waiting for a connection"
+        return MacStrings.macos_app_waitingforaconnection()
     case .offline(let error):
         return error
     case .blocked(let reason):

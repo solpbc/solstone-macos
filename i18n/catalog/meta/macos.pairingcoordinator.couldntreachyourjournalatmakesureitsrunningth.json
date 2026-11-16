@@ -1,0 +1,28 @@
+{
+  "description": "couldn't reach your journal at {address}. make sure it's running, then try again.",
+  "context": "Shown by Sources/solstone/PairingCoordinator.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "49df7ee2d3d3ce2f579f89188db3fbc9ab5b6c77c0d9eda65664572c8e972db8",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

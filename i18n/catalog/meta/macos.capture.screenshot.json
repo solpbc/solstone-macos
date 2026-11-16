@@ -1,0 +1,21 @@
+{
+  "description": "Failed to create screenshot capturer for display { $display }",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "display",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "706c0eb123ffbde0e8af828316f0798171a33229fd26a63ff9c817e15d6649e7",
+  "risk": "routine",
+  "auto_merge": true
+}

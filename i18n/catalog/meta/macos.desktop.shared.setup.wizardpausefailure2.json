@@ -1,0 +1,16 @@
+{
+  "description": "resume",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/SetupProofViews.swift. The same sentence is on Windows as windows.desktop.shared.setup.wizardpausefailure2. Keep the two translations consistent.",
+  "surfaces": [
+    "setup"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 6,
+  "source_revision": "75aeda114072ab7e6ab458709e2365efcbd8a73062209a37861074f51a5ad149",
+  "risk": "routine",
+  "auto_merge": true
+}

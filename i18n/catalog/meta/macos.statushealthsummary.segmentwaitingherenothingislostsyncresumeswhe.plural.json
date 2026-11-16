@@ -1,0 +1,27 @@
+{
+  "description": "{ $count } segment waiting here · nothing is lost, sync resumes when it's back",
+  "context": "Native presentation. Preserve the complete sentence and reorder its named arguments as needed.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "count",
+      "type": "cardinal",
+      "numeric_style": "ungrouped",
+      "min": 0
+    }
+  ],
+  "format_intent": "cardinal",
+  "max_length": 1000,
+  "source_revision": "7a747b7087040726062e3208b89b81a1437f921aae861c66e65748ce9d727792",
+  "risk": "routine",
+  "auto_merge": true,
+  "selector": {
+    "name": "count",
+    "type": "cardinal"
+  }
+}

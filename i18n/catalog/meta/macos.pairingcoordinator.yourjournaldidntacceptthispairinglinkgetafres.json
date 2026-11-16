@@ -1,0 +1,16 @@
+{
+  "description": "your journal didn't accept this pairing link. get a fresh link from its network app and try again.",
+  "context": "Shown by Sources/solstone/PairingCoordinator.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "9c998994b1d6a023ed7a81b8369f1929eb817ca8ce2dfda8b9e54e243678d747",
+  "risk": "routine",
+  "auto_merge": true
+}

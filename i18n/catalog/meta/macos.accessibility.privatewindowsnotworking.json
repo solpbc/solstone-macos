@@ -1,0 +1,16 @@
+{
+  "description": "checking Safari, Chrome, Edge and Brave is not working, so their private windows reach your journal",
+  "context": "Native app presentation. Translate the whole message; named values may be reordered.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f929a8de91c9561f48703e06dfa18aada29ab00e2568ef01f3e7029853c5b29f",
+  "risk": "routine",
+  "auto_merge": true
+}

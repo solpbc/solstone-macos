@@ -216,7 +216,7 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
     ] + connectionRows + [
         DiagnosticReportRow(
             id: .localCaptures,
-            label: "segments on this mac",
+            label: MacStrings.macos_app_segmentsonthismac(),
             value: diagnosticBacklogValue(input.backlog, now: input.now) + "\n" + setAsideLine
         ),
         DiagnosticReportRow(
@@ -273,9 +273,9 @@ internal func buildDiagnosticReport(_ input: DiagnosticReportInput) -> Diagnosti
 
 internal func diagnosticBacklogValue(_ backlog: SyncService.DiagnosticBacklog?, now: Date) -> String {
     guard let backlog, let count = backlog.pendingCaptures,
-          let preserved = backlog.preservedFailureFolders else { return "unavailable" }
-    let age = backlog.oldestPendingFolder.map { String(Int(max(0, now.timeIntervalSince($0)))) } ?? "unavailable"
-    return "pending=\(count) · oldest_pending_folder_age_s=\(age) · preserved_failure_folders=\(preserved) (delivery unknown)"
+          let preserved = backlog.preservedFailureFolders else { return MacStrings.macos_diagnostics_unavailable() }
+    let age = backlog.oldestPendingFolder.map { String(Int(max(0, now.timeIntervalSince($0)))) } ?? MacStrings.macos_diagnostics_unavailable()
+    return MacStrings.macos_diagnostics_backlog("\(count)", age, "\(preserved)")
 }
 
 internal func performDiagnosticCopy(
@@ -429,7 +429,7 @@ internal func diagnosticEvidenceValue(_ read: DiagnosticEvidenceRead) -> String 
             return UICopy.SETTINGS_DIAGNOSTICS_NO_RECENT_CODES
         }
         return envelope.entries.map { entry in
-            "\(entry.code.rawValue) · first \(diagnosticUTCString(entry.firstAt)) · last \(diagnosticUTCString(entry.lastAt)) · repeat \(entry.repeatCount)"
+            MacStrings.macos_app_firstlastrepeat("\(entry.code.rawValue)", "\(diagnosticUTCString(entry.firstAt))", "\(diagnosticUTCString(entry.lastAt))", "\(entry.repeatCount)")
         }.joined(separator: "\n")
     }
 }

@@ -1,0 +1,16 @@
+{
+  "description": "disconnect this mac from your journal? your journal keeps everything. you can pair again anytime.",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 97,
+  "source_revision": "75e7646a3cca3a2f7c019ba4881e281dbb805ee7a653025c7c8f9a609442ac29",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "your journal on this mac sent back something the solstone app couldn't use. try again, or paste a pairing link from your journal's networ...",
+  "context": "the solstone app on macOS, shown to the owner. source: Sources/solstone/UICopy.swift.",
+  "surfaces": [
+    "copy"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 149,
+  "source_revision": "6f0d442c7cc076bba777548059f141554af6b61ae1cbb891be6cf9f1c6de8acf",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,28 @@
+{
+  "description": "pairing link path must be /p, got {path}",
+  "context": "Shown by Sources/solstone/PairingCoordinator.swift. Arguments preserve the existing presentation values.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "value0",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "8a8bfbd598821569d9a444aff45e1e471e4422c94be220cc9ba6748101ef2b65",
+  "risk": "routine",
+  "auto_merge": true,
+  "protected_slots": [
+    {
+      "name": "slot0",
+      "kind": "whitespace",
+      "value": " "
+    }
+  ]
+}

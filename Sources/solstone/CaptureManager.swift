@@ -1811,7 +1811,7 @@ public final class CaptureManager {
     internal func enterNoDisplayRecovery() async {
         clearScreenFailure()
         _ = await finalizeActiveSegmentForTransition(stopAudio: true)
-        transitionToError("all displays disconnected", error: CaptureError.noDisplaysAvailable, trigger: "no_displays")
+        transitionToError(MacStrings.macos_capture_alldisplays(), error: CaptureError.noDisplaysAvailable, trigger: "no_displays")
     }
 
     private func transitionToError(_ message: String, error: Error, trigger: String) {
@@ -2000,11 +2000,11 @@ public final class CaptureManager {
         public var errorDescription: String? {
             switch self {
             case .noDisplaysAvailable:
-                return "No displays available for capture"
+                return MacStrings.macos_capture_nodisplays()
             case .noSourcesAvailable:
                 return UICopy.SOURCES_UNAVAILABLE
             case .notInitialized:
-                return "Capture manager not initialized"
+                return MacStrings.macos_capture_notinitialized()
             }
         }
     }
@@ -2165,7 +2165,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
                 timeZone: captureZoneForNewSegment()
             )
         } catch {
-            transitionToError("Failed to create segment directory: \(error.localizedDescription)", error: error, trigger: "rotation_failed")
+            transitionToError(MacStrings.macos_capture_directory(error.localizedDescription), error: error, trigger: "rotation_failed")
             Logger.capture.error("Failed to rotate segment: \(error, privacy: .public)")
             return .failed(transitionFailure(for: error))
         }
@@ -2214,7 +2214,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
             await stopPersistentAudioForDiscard()
             await markDiscardedSegmentFailedAndRecover(newSegmentDir)
             transitionToError(
-                "Segment rotation timed out",
+                MacStrings.macos_capture_rotationtimeout(),
                 error: TimeoutError(seconds: rotationTimeoutSeconds),
                 trigger: "rotation_timeout"
             )
@@ -2227,7 +2227,7 @@ extension CaptureManager: CaptureLifecycleDelegate {
             }
             return .timedOut
         } catch {
-            transitionToError("Failed to start new segment: \(error.localizedDescription)", error: error, trigger: "rotation_failed")
+            transitionToError(MacStrings.macos_capture_newsegment(error.localizedDescription), error: error, trigger: "rotation_failed")
             Logger.capture.error("Failed to start new segment: \(error, privacy: .public)")
             currentSegment = nil
             if let oldResult {
