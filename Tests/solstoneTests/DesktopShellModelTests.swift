@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+import UpdateKit
 @testable import solstone
 
 @Suite("Desktop shell model")
@@ -435,9 +436,10 @@ struct DesktopShellModelTests {
     // MARK: menu rows
 
     private func menu(_ tiles: [DeckTile], pill: JournalPill = .connected, paused: String? = nil,
-                      canPause: Bool = true, canResume: Bool = false, hasJournal: Bool = true, canOpen: Bool = true) -> [ShellMenuRow] {
+                      canPause: Bool = true, canResume: Bool = false, hasJournal: Bool = true, canOpen: Bool = true,
+                      update: DurableUpdateStatus = .upToDate) -> [ShellMenuRow] {
         shellMenuRows(tiles: tiles, pill: pill, pausedLine: paused, canPause: canPause, canResume: canResume,
-                      hasJournal: hasJournal, canOpenJournal: canOpen)
+                      hasJournal: hasJournal, canOpenJournal: canOpen, update: update)
     }
 
     @Test func menuLeadsWithEachSourceThatNeedsAttentionAndNamesNoOther() {
@@ -456,7 +458,41 @@ struct DesktopShellModelTests {
     @Test func menuWithNothingWrongHasNoAttentionRows() {
         let rows = menu(deriveDeck(DeckInputs()))
         #expect(rows.first == .status(menuStatusLine(.connected)))
-        #expect(rows.map(\.title) == [menuStatusLine(.connected), "pause", "", "open settings", "open journal", "", "about solstone", "", "quit solstone"])
+        #expect(rows.map(\.title) == [menuStatusLine(.connected), "pause", "", "open settings", "open journal", "", "about solstone", ShellMenuRow.checkForUpdates.title, "", "quit solstone"])
+    }
+
+    @Test func aStagedUpdateIsNamedUnderTheFaultsAndTakesTheCheckRowsPlace() {
+        var inputs = DeckInputs()
+        inputs.screenAccess = .denied
+        let rows = menu(deriveDeck(inputs, sources: DeckSource.allCases), update: .staged(version: "2.0.70", releaseNotes: nil))
+        #expect(Array(rows.prefix(3)) == [.attention(.screen), .update(.ready), .status(menuStatusLine(.connected))])
+        #expect(!rows.contains(.checkForUpdates))
+    }
+
+    @Test func withNoUpdateWaitingTheCheckRowSitsUnderAbout() throws {
+        for status in [DurableUpdateStatus.upToDate, .idle] {
+            let rows = menu(deriveDeck(DeckInputs()), update: status)
+            let about = try #require(rows.firstIndex(of: .about))
+            #expect(rows[about + 1] == .checkForUpdates)
+            #expect(!rows.contains { if case .update = $0 { return true } else { return false } })
+        }
+    }
+
+    @Test func eachUpdateStateTheIconBadgesHasWordsInTheMenu() {
+        let statuses: [DurableUpdateStatus] = [
+            .deferred(version: "2.0.70"), .staged(version: "2.0.70", releaseNotes: nil),
+            .failedWithAvailable(version: "2.0.70"), .available(version: "2.0.70", releaseNotes: nil),
+            .failed, .upToDate, .idle,
+        ]
+        for status in statuses {
+            // The icon's dot and the updates row's badge come from this one reason; the menu must name it too.
+            let badged = updateAttentionReason(for: status) != nil
+            #expect((ShellMenuUpdateNotice(status) != nil) == badged)
+            #expect((updatesSidebarBadge(for: status) == .attention) == badged)
+        }
+        #expect(ShellMenuUpdateNotice(.available(version: "2.0.70", releaseNotes: nil)) == .available)
+        #expect(ShellMenuUpdateNotice(.deferred(version: "2.0.70")) == .available)
+        #expect(ShellMenuUpdateNotice(.failed) == .checkFailed)
     }
 
     @Test func pausedMenuShowsTheTimeLeftAndResumeInPlaceOfPause() throws {

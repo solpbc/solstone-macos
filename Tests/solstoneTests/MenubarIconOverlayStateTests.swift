@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import AppKit
 import Testing
 @testable import solstone
 
@@ -15,6 +16,37 @@ struct MenubarIconOverlayStateTests {
         #expect(cases.count == MenubarIconOverlayState.allCases.count)
         for (state, token) in cases {
             #expect(state.axToken == token)
+        }
+    }
+
+    /// A menu-style MenuBarExtra shows only the label's image, so the badge has to be inside it:
+    /// with a badge the image is drawn (not a template), and with none it is the template glyph.
+    @MainActor
+    @Test func theBadgeIsDrawnIntoTheMenuBarImage() throws {
+        for icon in MenubarIconState.allCases {
+            let plain = menubarIconImage(icon: icon, badge: MenubarIconOverlayState.none.badgeTreatment)
+            #expect(plain.isTemplate)
+            let badged = menubarIconImage(icon: icon, badge: MenubarIconOverlayState.attention.badgeTreatment)
+            #expect(!badged.isTemplate)
+            #expect(badged.size == plain.size)
+            let rep = try #require(NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: Int(badged.size.width * 2), pixelsHigh: Int(badged.size.height * 2),
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+            ))
+            rep.size = badged.size
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            badged.draw(in: NSRect(origin: .zero, size: badged.size))
+            NSGraphicsContext.restoreGraphicsState()
+            // The badge sits at the bottom-trailing corner: its centre is drawn, not left clear.
+            let halo = try #require(MenubarIconOverlayState.attention.badgeTreatment).haloDiameter
+            let scale = CGFloat(rep.pixelsWide) / badged.size.width
+            let centre = rep.colorAt(
+                x: Int((badged.size.width - halo / 2) * scale),
+                y: Int((badged.size.height - halo / 2) * scale)
+            )
+            #expect((centre?.alphaComponent ?? 0) > 0.5)
         }
     }
 

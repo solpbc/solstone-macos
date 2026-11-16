@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- the menu bar icon now shows its orange dot when something needs you. before, the dot wasn't drawn.
+- when the dot is about an update, the menu bar menu now says so: "update ready · installs when you quit and reopen" once it's downloaded, or "update available" before that. with nothing to report, it has "check for updates…". before, the menu never mentioned updates.
+- while the window is too narrow to show the sidebar, the sidebar button shows a dot when something in it needs you.
+
 ## [2.0.70] - 2026-11-15
 
 ### Fixed

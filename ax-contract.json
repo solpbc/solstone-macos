@@ -102,8 +102,10 @@
       "menubar.audio.health",
       "menubar.navigation.about",
       "menubar.navigation.browsers",
+      "menubar.navigation.checkForUpdates",
       "menubar.navigation.openJournal",
       "menubar.navigation.settings",
+      "menubar.navigation.update",
       "menubar.pause.fifteenMinutes",
       "menubar.pause.indefinite",
       "menubar.pause.menu",
@@ -140,6 +142,7 @@
       "settings.deck.pill.state",
       "settings.deck.resume",
       "settings.deck.shelf",
+      "settings.deck.shelf.state",
       "settings.deck.status",
       "settings.deck.status.import",
       "settings.deck.status.lead",
@@ -470,6 +473,10 @@
     "settings.deck.pill.state" : {
       "kind" : "enum",
       "vocabulary" : "JournalPill"
+    },
+    "settings.deck.shelf.state" : {
+      "kind" : "enum",
+      "vocabulary" : "SidebarBadgeState"
     },
     "settings.deck.tile.{source}.state" : {
       "kind" : "enum",

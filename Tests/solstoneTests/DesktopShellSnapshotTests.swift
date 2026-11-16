@@ -6,7 +6,7 @@ import JournalMarkKit
 import os
 import SwiftUI
 import Testing
-import UpdateKit
+@testable import UpdateKit
 @testable import solstone
 
 /// Renders the desktop shell in every state, light and dark, for review by eye. The images are
@@ -175,6 +175,31 @@ struct DesktopShellSnapshotTests {
                 initialHomePane: pane, initialPhonePushed: pushed, initialStorageUsedMB: 42
             )
             try render(view, size: CGSize(width: width, height: 760), to: "width-\(name)", dark: dark)
+        }
+    }
+
+    /// A staged update below full width: the deck with the shelf tucked away (its button carries the
+    /// dot), and the updates page the menu's `update ready` line and `check for updates…` open on.
+    @Test(arguments: [
+        ("880-deck", CGFloat(880), SettingsView.Tab.home),
+        ("880-updates", CGFloat(880), SettingsView.Tab.updates),
+        ("phone-deck", CGFloat(420), SettingsView.Tab.home),
+        ("phone-updates", CGFloat(420), SettingsView.Tab.updates),
+    ])
+    func stagedUpdate(_ name: String, _ width: CGFloat, _ tab: SettingsView.Tab) throws {
+        for dark in [false, true] {
+            let updates = updateController()
+            updates.applyDebugFixture(
+                activity: .idle,
+                availableUpdate: AvailableUpdate(version: "2.0.70", releaseNotes: nil),
+                lastCheck: ReconciledUpdateStatus.LastCheck(checkedAt: Date(), outcome: .staged)
+            )
+            #expect(updates.durableUpdateStatus == .staged(version: "2.0.70", releaseNotes: nil))
+            // The shelf button sits on the window buttons' line, above the content; the room on top
+            // brings it, and its dot, into the render.
+            let view = SettingsView(appState: state(.good), updateController: updates, selectedTab: tab, initialStorageUsedMB: 42)
+                .padding(.top, 30)
+            try render(view, size: CGSize(width: width, height: 790), to: "update-staged-\(name)", dark: dark)
         }
     }
 

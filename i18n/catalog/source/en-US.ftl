@@ -938,6 +938,8 @@ macos.desktopshellmodel.audio = audio
 
 macos.desktopshellmodel.browserpagesstartonceyoupairthismacwithajourn = browser pages start once you pair this mac with a journal.
 
+macos.desktopshellmodel.checkforupdates = check for updates…
+
 macos.desktopshellmodel.chooseavaulttostart = choose a vault to start.
 
 macos.desktopshellmodel.confirmthemarkwaiting = confirm the mark ·{ $slot0 }{ $value0 }{ $slot1 }waiting
@@ -999,6 +1001,8 @@ macos.desktopshellmodel.thesolstoneapptakesinyourtmuxsessionsandallof = the sols
 macos.desktopshellmodel.tmuxisntinstalled = tmux isn't installed.
 
 macos.desktopshellmodel.turnitonanytime = turn it on any time.
+
+macos.desktopshellmodel.updateready = update ready · installs when you quit and reopen
 
 macos.desktopshellmodel.waiting = { $value0 }{ $slot0 }waiting
 

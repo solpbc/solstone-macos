@@ -35,7 +35,9 @@ struct UpdateNotificationPermissionsTests {
         // the UpdateKit announcement input for permissions-only attention is idle.
         let presentation = state.menubarPresentation(durableUpdateStatus: controller.durableUpdateStatus)
         #expect(presentation.observation == .permissions)
-        #expect(presentation.attention == .permissions)
+        // A missing permission reaches the icon through its source's tile, never as an update.
+        #expect(presentation.attention != .updateAvailable)
+        #expect(presentation.attention != .updateCheckFailed)
 
         controller.evaluatePendingUpdateAnnouncement()
 

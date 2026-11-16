@@ -284,6 +284,18 @@ struct AppStateAttentionTests {
         }
     }
 
+    @Test func aMissingPermissionReachesTheIconOnlyThroughItsTile() {
+        let state = makeState(config: configuredExternal())
+        state.initialPermissionCheckComplete = true
+        state.capture.publishScreenRecordingPermission(.notGranted)
+        state.microphoneAuthorizationCause = .notDetermined
+        state.isRecording = false
+        #expect(state.permissionsNeedAttention)
+
+        let presentation = state.menubarPresentation(durableUpdateStatus: .upToDate)
+        #expect(presentation.attention != .permissions)
+    }
+
     @Test func visitedSettingsTabsPersistAndRestore() {
         let key = "SolstoneVisitedSettingsTabs"
         UserDefaults.standard.removeObject(forKey: key)

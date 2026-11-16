@@ -413,7 +413,10 @@ extension AppState {
 #endif
         return classifyMenubarPresentation(
             observation: observationRowState,
-            permissionsNeedAttention: permissionsNeedAttention,
+            // A missing permission reaches the icon through its source's tile: denied or
+            // restricted is a fault there, which the menu names. One not asked yet is `ready to
+            // set up`, not a fault, and a dot for it would have no words in the menu.
+            permissionsNeedAttention: false,
             journalNeedsAttention: serviceNeedsAttention,
             durableUpdateStatus: durableUpdateStatus,
             privateWindowsNeedAttention: privateWindowAccessibilityEnabled

@@ -3,6 +3,7 @@
 
 import CoreGraphics
 import Foundation
+import UpdateKit
 
 // The window, the menu bar panel and the native menu all draw the same five sources from
 // these derivations. Nothing here reads app state: callers pass plain facts in, so every
@@ -704,9 +705,28 @@ func sourceTotalColumns(_ view: SourceTotals.View?, source: DeckSource, now: Dat
 
 // MARK: - the menu bar menu
 
+/// The menu's words for the update the icon's dot is about: one that is downloaded and installs
+/// at quit, one that is found but not downloaded yet, or a check that failed.
+enum ShellMenuUpdateNotice: Equatable, Sendable {
+    case ready
+    case available
+    case checkFailed
+
+    init?(_ status: DurableUpdateStatus) {
+        switch status {
+        case .staged: self = .ready
+        case .available, .deferred, .failedWithAvailable: self = .available
+        case .failed: self = .checkFailed
+        case .upToDate, .idle: return nil
+        }
+    }
+}
+
 /// One row of the menu bar menu, top to bottom.
 enum ShellMenuRow: Equatable, Sendable {
     case attention(DeckSource)
+    case update(ShellMenuUpdateNotice)
+    case checkForUpdates
     case status(String)
     case pause
     case resume
@@ -719,6 +739,10 @@ enum ShellMenuRow: Equatable, Sendable {
     var title: String {
         switch self {
         case .attention(let source): return MacStrings.macos_desktopshellmodel_needsattention("\(source.label)")
+        case .update(.ready): return MacStrings.macos_desktopshellmodel_updateready()
+        case .update(.available): return MacStrings.macos_copy_settingsattentionupdateavailable()
+        case .update(.checkFailed): return MacStrings.macos_copy_settingsattentionupdatecheckfailed()
+        case .checkForUpdates: return MacStrings.macos_desktopshellmodel_checkforupdates()
         case .status(let line): return line
         case .pause: return MacStrings.macos_desktop_shared_setup_wizardpausefailure()
         case .resume: return MacStrings.macos_desktop_shared_setup_wizardpausefailure2()
@@ -731,8 +755,10 @@ enum ShellMenuRow: Equatable, Sendable {
     }
 }
 
-/// The menu's rows from the deck, the pill and the pause state. No source rows except a fault,
-/// and no switches: the window is where sources are turned on and off.
+/// The menu's rows from the deck, the pill, the pause state and the update. No source rows
+/// except a fault, and no switches: the window is where sources are turned on and off. An update
+/// the icon's dot is about is named under the faults, because the shelf row that carries its
+/// badge is hidden below full width; with none waiting, `check for updates…` sits by `about`.
 func shellMenuRows(
     tiles: [DeckTile],
     pill: JournalPill,
@@ -740,15 +766,20 @@ func shellMenuRows(
     canPause: Bool,
     canResume: Bool,
     hasJournal: Bool,
-    canOpenJournal: Bool
+    canOpenJournal: Bool,
+    update: DurableUpdateStatus = .idle
 ) -> [ShellMenuRow] {
     var rows: [ShellMenuRow] = tiles.filter { $0.state == .needsAttention }.map { .attention($0.source) }
+    let notice = ShellMenuUpdateNotice(update)
+    if let notice { rows.append(.update(notice)) }
     rows.append(.status(pausedLine ?? menuStatusLine(pill)))
     if canPause { rows.append(.pause) } else if canResume { rows.append(.resume) }
     rows.append(.divider)
     rows.append(.openSettings)
     if hasJournal { rows.append(.openJournal(enabled: canOpenJournal)) }
-    rows.append(contentsOf: [.divider, .about, .divider, .quit])
+    rows.append(contentsOf: [.divider, .about])
+    if notice == nil { rows.append(.checkForUpdates) }
+    rows.append(contentsOf: [.divider, .quit])
     return rows
 }
 

@@ -3551,6 +3551,13 @@
       "locales": []
     },
     {
+      "id": "macos.desktopshellmodel.checkforupdates",
+      "source": "965b205de51fb17bb5842d202e0e63440fa006d5d04edfa568e58e04a35c2d0f",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
       "id": "macos.desktopshellmodel.chooseavaulttostart",
       "source": "ea6034ba2213086faafc2a0ebdffb80f091ec5b61a317aaa2be5bae620e1fdfa",
       "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
@@ -3791,6 +3798,13 @@
     {
       "id": "macos.desktopshellmodel.turnitonanytime",
       "source": "0c37b1ad747673591574ca6e6aed61a52317627c5b1f9f8855d3f1b1242f2ad9",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.desktopshellmodel.updateready",
+      "source": "4146893b4b2c9ea5c459f8dbe3bdfe8f0bb20287bdef57eb76d44596c635a011",
       "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
       "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
       "locales": []

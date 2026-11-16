@@ -2384,6 +2384,11 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
+    static func macos_desktopshellmodel_checkforupdates() -> String {
+        render("m6d61636f732e6465736b746f707368656c6c6d6f64656c2e636865636b666f7275706461746573", [])
+    }
+
+    @usableFromInline
     static func macos_desktopshellmodel_chooseavaulttostart() -> String {
         render("m6d61636f732e6465736b746f707368656c6c6d6f64656c2e63686f6f7365617661756c74746f7374617274", [])
     }
@@ -2556,6 +2561,11 @@ nonisolated enum MacStrings {
     @usableFromInline
     static func macos_desktopshellmodel_turnitonanytime() -> String {
         render("m6d61636f732e6465736b746f707368656c6c6d6f64656c2e7475726e69746f6e616e7974696d65", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopshellmodel_updateready() -> String {
+        render("m6d61636f732e6465736b746f707368656c6c6d6f64656c2e7570646174657265616479", [])
     }
 
     @usableFromInline

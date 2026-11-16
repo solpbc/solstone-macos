@@ -436,59 +436,88 @@ internal struct MenubarIconGlyphView: View {
     var body: some View {
         let overlayPresentation = overlay.presentation
 
-        bundleImage(icon.iconName, isTemplate: true)
+        // A menu-style MenuBarExtra keeps only the label's image and drops any overlay drawn on
+        // it, so the badge is drawn into the one image the menu bar shows.
+        Image(nsImage: menubarIconImage(icon: icon, badge: overlayPresentation.badgeTreatment))
             .overlay(alignment: .bottomTrailing) {
-                overlayBadge(overlayPresentation.badgeTreatment)
+                Color.clear
+                    .frame(width: 1, height: 1)
                     .accessibilityIdentifier(AXID.Menubar.statusIconOverlayState)
                     .accessibilityValue(overlayPresentation.axToken)
             }
             .accessibilityIdentifier(AXID.Menubar.statusIconState)
             .accessibilityValue(icon.axToken)
     }
-
-    @ViewBuilder
-    private func overlayBadge(_ treatment: MenubarBadgeTreatment?) -> some View {
-        if let treatment {
-            MenubarBadgeView(treatment: treatment)
-        }
-    }
 }
 
-private struct MenubarBadgeView: View {
-    let treatment: MenubarBadgeTreatment
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(color(for: treatment.haloTint))
-                .frame(width: treatment.haloDiameter, height: treatment.haloDiameter)
-            markView
+/// The menu bar icon as one image. With no badge it is the template glyph, which the menu bar
+/// tints itself. With a badge, the glyph and the badge's halo take the menu bar's own ink at draw
+/// time, so they follow its appearance, and the mark keeps its colour.
+@MainActor
+internal func menubarIconImage(icon: MenubarIconState, badge: MenubarBadgeTreatment?) -> NSImage {
+    let glyph = SolstoneResourceImage.mustLoad(named: icon.iconName, in: SolstoneResources.bundle, isTemplate: true)
+    guard let badge else { return glyph }
+    let image = NSImage(size: glyph.size, flipped: false) { rect in
+        let ink = NSColor.labelColor
+        if let tinted = tintedCopy(of: glyph, color: ink) {
+            tinted.draw(in: rect)
         }
-    }
-
-    @ViewBuilder
-    private var markView: some View {
-        switch treatment.mark {
+        let halo = NSRect(
+            x: rect.maxX - badge.haloDiameter,
+            y: rect.minY,
+            width: badge.haloDiameter,
+            height: badge.haloDiameter
+        )
+        menubarBadgeColor(badge.haloTint, ink: ink).setFill()
+        NSBezierPath(ovalIn: halo).fill()
+        switch badge.mark {
         case let .symbol(name, pointSize, tint):
-            Image(systemName: name)
-                .font(.system(size: pointSize))
-                .foregroundStyle(color(for: tint))
+            let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [menubarBadgeColor(tint, ink: ink)]))
+            if let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) {
+                let size = symbol.size
+                symbol.draw(in: NSRect(
+                    x: halo.midX - size.width / 2,
+                    y: halo.midY - size.height / 2,
+                    width: size.width,
+                    height: size.height
+                ))
+            }
         case let .dot(diameter, tint):
-            Circle()
-                .fill(color(for: tint))
-                .frame(width: diameter, height: diameter)
+            menubarBadgeColor(tint, ink: ink).setFill()
+            NSBezierPath(ovalIn: NSRect(
+                x: halo.midX - diameter / 2,
+                y: halo.midY - diameter / 2,
+                width: diameter,
+                height: diameter
+            )).fill()
         }
+        return true
     }
+    image.isTemplate = false
+    return image
+}
 
-    private func color(for tint: MenubarBadgeTreatment.Tint) -> Color {
-        switch tint {
-        case .adaptiveInk:
-            return .primary
-        case .solOrange:
-            return SolstoneColors.solOrange
-        case .accentColor:
-            return .accentColor
-        }
+private func tintedCopy(of template: NSImage, color: NSColor) -> NSImage? {
+    let copy = NSImage(size: template.size, flipped: false) { rect in
+        template.draw(in: rect)
+        color.set()
+        rect.fill(using: .sourceAtop)
+        return true
+    }
+    return copy
+}
+
+private func menubarBadgeColor(_ tint: MenubarBadgeTreatment.Tint, ink: NSColor) -> NSColor {
+    switch tint {
+    case .adaptiveInk:
+        return ink
+    case .solOrange:
+        let c = SolstoneColors.solOrangeComponents
+        return NSColor(srgbRed: c.red, green: c.green, blue: c.blue, alpha: c.alpha)
+    case .accentColor:
+        return .controlAccentColor
     }
 }
 

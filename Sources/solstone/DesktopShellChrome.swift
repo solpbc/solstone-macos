@@ -33,7 +33,7 @@ extension SettingsView {
                             .shadow(color: .black.opacity(0.18), radius: 18, y: 6)
                             .transition(.opacity)
                     }
-                    ShelfToggleButton(isOpen: $shelfOpen)
+                    ShelfToggleButton(isOpen: $shelfOpen, needsAttention: shelfRowItems.contains { $0.badge == .attention })
                         // On the window buttons' line, just past them.
                         .padding(.leading, 82)
                         .padding(.top, -22)
@@ -231,9 +231,12 @@ struct ShelfRowButton: View {
     }
 }
 
-/// The shelf's button beside the window buttons, at the narrower widths.
+/// The shelf's button beside the window buttons, at the narrower widths. While the shelf is
+/// tucked away, a row's attention dot rides on this button, so a notice that badges a hidden row
+/// (an update, an unknown journal, a shortcut needing repair) is never silent at this width.
 struct ShelfToggleButton: View {
     @Binding var isOpen: Bool
+    var needsAttention = false
 
     var body: some View {
         Button {
@@ -243,11 +246,32 @@ struct ShelfToggleButton: View {
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
                 .padding(5)
+                .overlay(alignment: .topTrailing) {
+                    if needsAttention && !isOpen {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(SetupChromeColor.solOrange)
+                            .background(Circle().fill(.background).padding(-1))
+                            .offset(x: -1, y: 1)
+                            .accessibilityHidden(true)
+                    }
+                }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         .accessibilityLabel(MacStrings.macos_desktopshellchrome_sidebar())
-        .accessibilityValue(isOpen ? MacStrings.macos_desktopshellchrome_open() : MacStrings.macos_desktopshellchrome_closed())
+        .accessibilityValue(accessibilityValue)
         .accessibilityIdentifier(AXID.Deck.shelfButton)
+        .overlay(alignment: .topLeading) {
+            AXStateCompanion(
+                id: AXID.Deck.shelfButtonState,
+                value: (needsAttention ? SettingsView.SidebarBadgeState.attention : .blank).axToken
+            )
+        }
+    }
+
+    private var accessibilityValue: String {
+        let state = isOpen ? MacStrings.macos_desktopshellchrome_open() : MacStrings.macos_desktopshellchrome_closed()
+        return needsAttention ? "\(state), \(UICopy.SETTINGS_TAB_ATTENTION_A11Y)" : state
     }
 }

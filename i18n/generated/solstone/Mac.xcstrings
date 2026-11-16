@@ -4792,6 +4792,16 @@
         }
       }
     },
+    "m6d61636f732e6465736b746f707368656c6c6d6f64656c2e636865636b666f7275706461746573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "check for updates…"
+          }
+        }
+      }
+    },
     "m6d61636f732e6465736b746f707368656c6c6d6f64656c2e63686f6f7365617661756c74746f7374617274": {
       "localizations": {
         "en-US": {
@@ -5226,6 +5236,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "turn it on any time."
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f707368656c6c6d6f64656c2e7570646174657265616479": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "update ready · installs when you quit and reopen"
           }
         }
       }

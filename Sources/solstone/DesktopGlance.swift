@@ -40,7 +40,8 @@ struct ShellMenuContent: View {
             canPause: controls.pause,
             canResume: controls.resume,
             hasJournal: appState.deckHasJournal,
-            canOpenJournal: appState.canOpenJournal
+            canOpenJournal: appState.canOpenJournal,
+            update: updateController.durableUpdateStatus
         )
     }
 
@@ -51,6 +52,15 @@ struct ShellMenuContent: View {
             Button(row.title) {
                 openSolstoneWindow(appState: appState, route: "source:\(source.rawValue)")
             }
+        case .update:
+            Button(row.title) { openSolstoneWindow(appState: appState, route: ShelfRow.updates.rawValue) }
+                .accessibilityIdentifier(AXID.Menubar.updateNotice)
+        case .checkForUpdates:
+            Button(row.title) {
+                openSolstoneWindow(appState: appState, route: ShelfRow.updates.rawValue)
+                updateController.checkForUpdates()
+            }
+            .accessibilityIdentifier(AXID.Menubar.checkForUpdates)
         case .status:
             Text(row.title)
                 .accessibilityIdentifier(AXID.Menubar.statusRowState)
