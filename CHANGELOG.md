@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.71] - 2026-11-16
+
 ### Fixed
 
 - the menu bar icon now shows its orange dot when something needs you. before, the dot wasn't drawn.
