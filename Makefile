@@ -309,7 +309,7 @@ release-preflight: signing-check
 #   BUILD    required, integer — sets CFBundleVersion (must be newer than
 #            Info.plist and every build on the production and staging feeds)
 #
-# Side effects: solstone Info.plist updated via plutil; the staged CHANGELOG.md
+# Side effects: solstone Info.plist version strings updated; the staged CHANGELOG.md
 # Unreleased notes become the new dated version and one empty Unreleased
 # section remains above them. Does NOT commit.
 bump-release:
@@ -321,8 +321,7 @@ bump-release:
 		{ echo "error: BUILD=$(BUILD) must be strictly greater than current $$CURRENT_BUILD (Sparkle uses CFBundleVersion for 'is newer?')"; exit 1; }
 	@python3 scripts/release_identity.py check-build --app sol --build "$(BUILD)"
 	@python3 scripts/cut_changelog.py CHANGELOG.md "$(VERSION)" --check-only
-	@/usr/bin/plutil -replace CFBundleShortVersionString -string "$(VERSION)" Sources/solstone/Info.plist
-	@/usr/bin/plutil -replace CFBundleVersion -string "$(BUILD)" Sources/solstone/Info.plist
+	@$(RELEASE_IDENTITY) set-plist-version --app sol --version "$(VERSION)" --build "$(BUILD)"
 	@echo "✓ Info.plist: CFBundleShortVersionString=$(VERSION), CFBundleVersion=$(BUILD)"
 	@python3 scripts/cut_changelog.py CHANGELOG.md "$(VERSION)"
 	@echo "✓ CHANGELOG.md: cut staged [Unreleased] notes into [$(VERSION)]"

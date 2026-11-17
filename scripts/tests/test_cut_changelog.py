@@ -127,7 +127,7 @@ class CutChangelogTest(unittest.TestCase):
 
         self.assertLess(
             target.index("cut_changelog.py CHANGELOG.md \"$(VERSION)\" --check-only"),
-            target.index("/usr/bin/plutil -replace"),
+            target.index("set-plist-version --app sol"),
         )
 
 

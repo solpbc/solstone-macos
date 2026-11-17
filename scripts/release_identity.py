@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import plistlib
+import re
+import stat
 import subprocess
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -97,6 +101,29 @@ def read_info_plist(plist_path: str | Path) -> tuple[str, int]:
     if not short_version:
         die(f"{path}: CFBundleShortVersionString is missing or empty")
     return short_version, parse_bundle_version(plist.get("CFBundleVersion", ""), str(path))
+
+
+def set_plist_version(path: Path, version: str, build: str) -> None:
+    original = path.read_bytes()
+    expected = plistlib.loads(original)
+    updated = original
+    for key, value in (("CFBundleShortVersionString", version), ("CFBundleVersion", build)):
+        pattern = rb"(<key>" + key.encode() + rb"</key>\s*<string>)[^<]*(</string>)"
+        updated, count = re.subn(
+            pattern, lambda match: match[1] + value.encode() + match[2], updated
+        )
+        if count != 1 or key not in expected:
+            die(f"{path}: expected one XML string for {key}")
+        expected[key] = value
+    if plistlib.loads(updated) != expected:
+        die(f"{path}: plist version edit changed other values")
+
+    mode = stat.S_IMODE(path.stat().st_mode)
+    with tempfile.TemporaryDirectory(dir=path.parent) as scratch:
+        temporary = Path(scratch) / path.name
+        temporary.write_bytes(updated)
+        temporary.chmod(mode)
+        os.replace(temporary, path)
 
 
 @dataclass(frozen=True)
@@ -256,6 +283,11 @@ def main(argv: list[str] | None = None) -> int:
     check_parser.add_argument("--app", choices=sorted(APP_CONFIG), required=True)
     check_parser.add_argument("--build", required=True)
 
+    set_parser = subparsers.add_parser("set-plist-version")
+    set_parser.add_argument("--app", choices=sorted(APP_CONFIG), required=True)
+    set_parser.add_argument("--version", required=True)
+    set_parser.add_argument("--build", required=True)
+
     args = parser.parse_args(argv)
     if args.command == "identity":
         if args.app == "sol" and args.build is not None:
@@ -280,6 +312,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "check-build":
         check_build_unconsumed(args.app, parse_bundle_version(args.build, "--build"))
         print(f"BUILD={args.build} is newer than both {args.app} feeds")
+        return 0
+
+    if args.command == "set-plist-version":
+        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", args.version):
+            die("VERSION must be semver")
+        if not re.fullmatch(r"[0-9]+", args.build):
+            die("BUILD must be a non-negative integer")
+        try:
+            set_plist_version(Path(APP_CONFIG[args.app]["plist_path"]), args.version, args.build)
+        except (OSError, plistlib.InvalidFileException, ET.ParseError, ValueError) as exc:
+            die(str(exc))
         return 0
 
     raise AssertionError(args.command)

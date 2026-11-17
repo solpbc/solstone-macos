@@ -3,6 +3,7 @@ import json
 import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
 
 
@@ -19,6 +20,22 @@ def load_release_identity():
     return module
 
 class ReleaseIdentityTest(unittest.TestCase):
+    def test_version_bump_preserves_the_rest_of_the_plist(self):
+        module = load_release_identity()
+        original = (REPO_ROOT / module.APP_CONFIG["sol"]["plist_path"]).read_bytes()
+        self.assertIn(b"<!-- Localized values generated", original)
+        before, build = module.read_info_plist(REPO_ROOT / module.APP_CONFIG["sol"]["plist_path"])
+        with tempfile.TemporaryDirectory() as scratch:
+            path = pathlib.Path(scratch) / "Info.plist"
+            path.write_bytes(original)
+            module.set_plist_version(path, "99.1.2", "9876")
+            self.assertEqual(module.read_info_plist(path), ("99.1.2", 9876))
+            self.assertEqual(
+                path.read_bytes(),
+                original.replace(f"<string>{before}</string>".encode(), b"<string>99.1.2</string>", 1)
+                .replace(f"<string>{build}</string>".encode(), b"<string>9876</string>", 1),
+            )
+
     def test_journal_build_qualified_identity_examples(self):
         module = load_release_identity()
 
