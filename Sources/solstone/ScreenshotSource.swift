@@ -17,7 +17,8 @@ final class ScreenshotSource {
     private let serverURL: @Sendable () async -> String?
     private let runsLoop: Bool
 
-    private var loop: Task<Void, Never>?
+    private let worker = FolderSyncWorker()
+    private var shuttingDown = false
 
     init(
         engine: ScreenshotEngine,
@@ -63,24 +64,23 @@ final class ScreenshotSource {
     }
 
     func start() async {
+        shuttingDown = false
         snapshot = await engine.snapshot(now: Date(), pause: pauseFact(), paired: paired())
-        guard runsLoop else { return }
-        loop = Task { [weak self] in
-            while let self, !Task.isCancelled {
-                await self.refresh()
-                let delay: Duration = self.snapshot.busy ? .seconds(1) : .seconds(15)
-                try? await Task.sleep(for: delay)
-            }
+        guard runsLoop, !shuttingDown else { return }
+        worker.start { [weak self] in
+            guard let self else { return nil }
+            await self.refresh()
+            return self.snapshot.busy ? .seconds(1) : .seconds(15)
         }
     }
 
     func shutdown() {
-        loop?.cancel()
-        loop = nil
+        shuttingDown = true
+        worker.stop()
     }
 
     func nudge() {
-        Task { await refresh() }
+        worker.wake()
     }
 
     func allow() async {
@@ -132,11 +132,14 @@ final class ScreenshotSource {
         await refresh()
     }
 
+    private func canDeliver() -> Bool { !shuttingDown && !syncPaused() }
+
     private func refresh() async {
         let url = await serverURL()
         snapshot = await engine.tick(
             now: Date(), pause: pauseFact(),
-            serverURL: url, paired: paired(), syncPaused: syncPaused()
+            serverURL: url, paired: paired(), syncPaused: syncPaused(),
+            isDeliveryAllowed: { [weak self] in await self?.canDeliver() == true }
         )
     }
 }

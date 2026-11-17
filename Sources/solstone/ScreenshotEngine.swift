@@ -20,6 +20,25 @@ struct ScreenshotStoredItem: Codable, Equatable, Sendable {
     var fileName: String?
     var inFrozen: Bool
     var fileExtension: String
+    /// The frozen slot was first seen through metadata only. Its path ID stays stable
+    /// when the real hash becomes known, including when that hash is already queued.
+    var cloudSlot: Bool?
+    var cloudHash: String?
+
+    var hash: String? {
+        if cloudSlot == true { return cloudHash }
+        return id.hasPrefix("path:") ? nil : id
+    }
+
+    func matchesMetadata(of file: ScreenshotCandidate) -> Bool {
+        path == file.path && capturedAt == file.when && byteCount == file.byteCount
+            && (cloudSlot != true || id == file.cloudIdentity)
+    }
+}
+
+struct ScreenshotDownloadAttempt: Codable, Equatable, Sendable {
+    var identity: String
+    var started: Date
 }
 
 struct ScreenshotLedger: Codable, Equatable, Sendable {
@@ -47,6 +66,9 @@ struct ScreenshotLedger: Codable, Equatable, Sendable {
     var pauseWindows: [ScreenshotPauseWindow] = []
     var lastChecked: Date?
     var seenCandidates: [ScreenshotCandidateRecord] = []
+    /// A request is written here before the provider is called. Retain it through source
+    /// and pairing setup changes while this path is still materializing.
+    var downloadAttempts: [String: ScreenshotDownloadAttempt]?
 }
 
 /// A scan row kept so confirm can freeze the count without listing again.
@@ -62,6 +84,7 @@ struct ScreenshotCandidateRecord: Codable, Equatable, Sendable {
     var pixelCount: Int64?
     var unreadable: Bool
     var fileExtension: String
+    var cloudOnly: Bool?
 
     init(_ file: ScreenshotCandidate) {
         path = file.path
@@ -75,13 +98,14 @@ struct ScreenshotCandidateRecord: Codable, Equatable, Sendable {
         pixelCount = file.pixelCount
         unreadable = file.unreadable
         fileExtension = file.fileExtension
+        cloudOnly = file.cloudOnly ? true : nil
     }
 
     var candidate: ScreenshotCandidate {
         ScreenshotCandidate(
             path: path, marked: marked, platformDate: platformDate, fileDate: fileDate,
             byteCount: byteCount, stable: stable, header: header, sha256: sha256,
-            pixelCount: pixelCount, unreadable: unreadable, fileExtension: fileExtension
+            pixelCount: pixelCount, unreadable: unreadable, fileExtension: fileExtension, cloudOnly: cloudOnly ?? false
         )
     }
 }
@@ -98,8 +122,12 @@ actor ScreenshotEngine {
     /// What `ledger.json` holds now. A tick that changed only `lastChecked` (or nothing) leaves
     /// the file alone: the check time is shown from memory, and a restart checks again at once.
     private var saved: ScreenshotLedger?
-    private var capability: Bool?
-    private var capabilityAskedAt: Date?
+    private var capability = FolderSyncCapability("screenshots", policy: .untilSupported(recheck: capabilityRecheck))
+    private var sending = false
+    private var deliveryPaused = false
+    private var deferredPaths: Set<String> = []
+    private var downloading: Set<String> = []
+    private let downloadTimeout: TimeInterval
     /// Moves when a new pairing starts the setup again, so a send that was already on its way
     /// leaves no outcome behind it.
     private var setupGeneration = 0
@@ -114,6 +142,7 @@ actor ScreenshotEngine {
         transport: any ScreenshotTransport,
         totals: SourceTotals? = nil,
         timeZone: @escaping @Sendable () -> TimeZone = { .current },
+        downloadTimeout: TimeInterval = 60,
         onDelivered: @escaping @Sendable () async -> Void = {}
     ) {
         self.directory = directory
@@ -121,6 +150,7 @@ actor ScreenshotEngine {
         self.transport = transport
         self.totals = totals
         self.timeZone = timeZone
+        self.downloadTimeout = downloadTimeout
         self.onDelivered = onDelivered
         fileURL = directory.appendingPathComponent("ledger.json")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -136,6 +166,7 @@ actor ScreenshotEngine {
     }
 
     func allow(now: Date, pause: ScreenshotPauseFact, paired: Bool) async -> ScreenshotSnapshot {
+        setupGeneration += 1
         let system = reader.systemFolder()
         ledger.consented = true
         ledger.enabled = true
@@ -153,6 +184,7 @@ actor ScreenshotEngine {
     }
 
     func choose(_ folder: ScreenshotFolder, now: Date, pause: ScreenshotPauseFact, paired: Bool) async -> ScreenshotSnapshot {
+        setupGeneration += 1
         let system = reader.systemFolder()
         ledger.consented = true
         ledger.enabled = true
@@ -170,6 +202,7 @@ actor ScreenshotEngine {
     }
 
     func turnOff() {
+        setupGeneration += 1
         ledger.enabled = false
         ledger.confirmed = false
         ledger.items.removeAll { $0.inFrozen && ($0.outcome == .pending || $0.outcome == .held) }
@@ -189,6 +222,7 @@ actor ScreenshotEngine {
 
     func turnBackOn(now: Date) {
         guard ledger.consented else { return }
+        setupGeneration += 1
         ledger.enabled = true
         ledger.confirmed = false
         ledger.access = ledger.access == .moved ? .moved : .ok
@@ -202,8 +236,7 @@ actor ScreenshotEngine {
     /// gone yet stays waiting, and goes after the confirm.
     func restartFirstSetup(now: Date) {
         setupGeneration += 1
-        capability = nil
-        capabilityAskedAt = nil
+        capability.reset()
         ledger.confirmed = false
         ledger.wasOn = false
         ledger.liveFrom = nil
@@ -230,8 +263,9 @@ actor ScreenshotEngine {
         for index in ledger.items.indices { ledger.items[index].inFrozen = false }
         var seen = Set<String>()
         for file in ledger.seenCandidates.map(\.candidate) {
+            if alreadyDelivered(file, hashes: delivered) { continue }
             guard let item = makeItem(file, spanStart: start, delivered: delivered, frozen: true) else { continue }
-            guard seen.insert(item.id).inserted else { continue }
+            guard seen.insert(file.countIdentity).inserted else { continue }
             guard let index = ledger.items.firstIndex(where: { $0.id == item.id }) else {
                 ledger.items.append(item)
                 continue
@@ -251,6 +285,8 @@ actor ScreenshotEngine {
 
     func retryUnreadable() {
         for index in ledger.items.indices where ledger.items[index].outcome == .unreadable {
+            let path = ledger.items[index].path
+            ledger.downloadAttempts?.removeValue(forKey: path)
             ledger.items[index].outcome = .pending
         }
         save()
@@ -261,12 +297,14 @@ actor ScreenshotEngine {
         pause: ScreenshotPauseFact,
         serverURL: String?,
         paired: Bool,
-        syncPaused: Bool
+        syncPaused: Bool,
+        isDeliveryAllowed: @escaping @Sendable () async -> Bool = { true }
     ) async -> ScreenshotSnapshot {
+        deliveryPaused = syncPaused
         if ledger.confirmed { reconcilePause(now: now, fact: pause) }
         if ledger.consented { scan(now: now) }
         if let serverURL, !syncPaused {
-            await sendReady(serverURL: serverURL, now: now)
+            await sendReady(serverURL: serverURL, now: now, isDeliveryAllowed: isDeliveryAllowed)
         }
         save()
         return snapshot(now: now, pause: pause, paired: paired)
@@ -308,6 +346,12 @@ actor ScreenshotEngine {
 
     private func absorb(_ files: [ScreenshotCandidate], now: Date) {
         let marked = files.filter(\.marked)
+        deferredPaths = Set(files.lazy.filter(\.cloudOnly).map(\.path))
+        let offeredPaths = Set(files.map(\.path))
+        if let started = ledger.downloadAttempts {
+            let retained = started.filter { offeredPaths.contains($0.key) }
+            ledger.downloadAttempts = retained.isEmpty ? nil : retained
+        }
         ledger.seenCandidates = marked.map(ScreenshotCandidateRecord.init)
         guard ledger.confirmed else { return }
         // Read before the items are mutated: reading the ledger inside its own mutation is an
@@ -319,41 +363,79 @@ actor ScreenshotEngine {
             return ScreenshotPause.excludes(when, windows: windows)
         }
         var byHash: [String: ScreenshotCandidate] = [:]
+        var byPath: [String: ScreenshotCandidate] = [:]
         for file in marked {
-            if let hash = file.sha256 { byHash[hash] = file }
+            byPath[file.path] = file
+            if let hash = file.sha256, !file.cloudOnly { byHash[hash] = file }
         }
         for index in ledger.items.indices {
             let item = ledger.items[index]
             guard item.outcome == .pending || item.outcome == .held else { continue }
-            if item.id.hasPrefix("path:") {
-                if let file = marked.first(where: { $0.path == item.path }) {
-                    if let replacement = makeItem(file, spanStart: .distantPast, delivered: [], frozen: item.inFrozen),
-                       replacement.id != item.id {
+            if deferredPaths.contains(item.path) {
+                if let file = byPath[item.path], !item.matchesMetadata(of: file) {
+                    ledger.items[index].outcome = .deleted
+                } else if let attempt = ledger.downloadAttempts?[item.path],
+                          now.timeIntervalSince(attempt.started) >= downloadTimeout {
+                    ledger.items[index].outcome = .unreadable
+                }
+                continue
+            }
+            let file = byPath[item.path]
+            if item.cloudSlot == true, item.cloudHash == nil {
+                if let file, file.stable {
+                    if item.matchesMetadata(of: file), let resolved = makeItem(file, spanStart: .distantPast, delivered: [], frozen: item.inFrozen) {
+                        ledger.items[index] = resolved
+                        ledger.items[index].id = item.id
+                        ledger.items[index].cloudSlot = true
+                        ledger.items[index].cloudHash = resolved.hash
+                    } else {
                         ledger.items[index].outcome = .deleted
-                        if !ledger.items.contains(where: { $0.id == replacement.id }) {
-                            ledger.items.append(replacement)
-                        }
                     }
-                } else if !marked.contains(where: { $0.path == item.path && !$0.stable }) {
+                } else if file == nil {
                     ledger.items[index].outcome = .deleted
                 }
                 continue
             }
-            if let file = byHash[item.id] {
-                if file.stable { ledger.items[index].path = file.path }
+            if let hash = item.hash, let replacement = byHash[hash] {
+                if replacement.stable { ledger.items[index].path = replacement.path }
                 continue
             }
-            let samePathUnstable = marked.contains { $0.path == item.path && !$0.stable }
-            if !samePathUnstable { ledger.items[index].outcome = .deleted }
+            if item.hash == nil, let file,
+               let replacement = makeItem(file, spanStart: .distantPast, delivered: [], frozen: item.inFrozen),
+               replacement.id != item.id {
+                ledger.items[index].outcome = .deleted
+                if !ledger.items.contains(where: { $0.id == replacement.id }) {
+                    ledger.items.append(replacement)
+                }
+            } else if file == nil || (file?.stable == true && item.hash != nil) {
+                ledger.items[index].outcome = .deleted
+            }
         }
-        let known = Set(ledger.items.map(\.id))
+        let delivered = deliveredHashes
+        // A metadata-only slot can resolve to bytes that were already delivered.
+        for index in ledger.items.indices where ledger.items[index].outcome == .pending {
+            if let hash = ledger.items[index].hash, delivered.contains(hash) {
+                ledger.items[index].outcome = .delivered
+                let path = ledger.items[index].path
+                ledger.downloadAttempts?.removeValue(forKey: path)
+            }
+        }
+        var known = Set(ledger.items.map(\.id))
+        var knownHashes = Set(ledger.items.compactMap(\.hash))
+        let knownByPath = Dictionary(grouping: ledger.items, by: \.path)
         for file in marked where file.stable {
-            guard let item = makeItem(file, spanStart: .distantPast, delivered: known, frozen: false) else { continue }
-            guard !known.contains(item.id) else { continue }
+            if knownByPath[file.path]?.contains(where: { item in
+                item.matchesMetadata(of: file)
+                    && (file.cloudOnly || (item.cloudSlot == true && item.outcome == .unreadable))
+            }) == true { continue }
+            guard let item = makeItem(file, spanStart: .distantPast, delivered: knownHashes, frozen: false),
+                  !known.contains(item.id) else { continue }
             if let when = file.when, let from = ledger.liveFrom, when < from { continue }
             if let when = file.when, ScreenshotPause.excludes(when, windows: windows) { continue }
             if item.outcome == .refused || item.outcome == .unreadable || item.outcome == .pending {
                 ledger.items.append(item)
+                known.insert(item.id)
+                if let hash = item.hash { knownHashes.insert(hash) }
             }
         }
     }
@@ -367,6 +449,14 @@ actor ScreenshotEngine {
         guard file.marked, file.stable else { return nil }
         if let when = file.when, when < spanStart { return nil }
         if let hash = file.sha256, delivered.contains(hash) { return nil }
+        if file.cloudOnly, let when = file.when {
+            return ScreenshotStoredItem(
+                id: file.cloudIdentity, path: file.path, outcome: .pending,
+                capturedAt: when, takenFrom: file.takenFrom, byteCount: file.byteCount,
+                fileName: nil, inFrozen: frozen, fileExtension: file.fileExtension,
+                cloudSlot: true, cloudHash: nil
+            )
+        }
         guard let hash = file.sha256, let when = file.when, !file.unreadable else {
             return ScreenshotStoredItem(
                 id: "path:\(file.path)", path: file.path, outcome: .unreadable,
@@ -387,65 +477,150 @@ actor ScreenshotEngine {
 
     // MARK: - send
 
-    private func sendReady(serverURL: String, now: Date) async {
-        guard ledger.confirmed, ledger.enabled, ledger.access == .ok else { return }
+    private func sendReady(
+        serverURL: String, now: Date, isDeliveryAllowed: @escaping @Sendable () async -> Bool
+    ) async {
         let generation = setupGeneration
-        if capability != true {
-            let due = capabilityAskedAt.map { now.timeIntervalSince($0) >= Self.capabilityRecheck } ?? true
-            if capability == nil || due {
-                if let listed = try? await transport.capabilities(serverURL: serverURL) {
-                    guard generation == setupGeneration else { return }
-                    capability = listed.contains("screenshots")
-                    capabilityAskedAt = now
-                }
+        guard !sending, deliveryIsCurrent(generation) else { return }
+        sending = true
+        defer { sending = false }
+        if capability.needsCheck(at: now) {
+            if let listed = try? await capability.check(using: transport, serverURL: serverURL) {
+                guard deliveryIsCurrent(generation) else { return }
+                capability.record(listed, at: now)
             }
-            guard capability == true else { return }
         }
+        guard capability.supported == true else { return }
         var sent = 0
         var delivered = false
+        var deferred: Set<String> = []
         defer { if delivered { Task { await onDelivered() } } }
         while sent < 8 {
-            guard ledger.confirmed, let index = nextSendable() else { return }
+            guard await isDeliveryAllowed(), deliveryIsCurrent(generation),
+                  let index = nextSendable(excluding: deferred) else { return }
             let item = ledger.items[index]
-            guard let capturedAt = item.capturedAt, let takenFrom = item.takenFrom, let fileName = item.fileName else {
-                ledger.items[index].outcome = .unreadable
+            if deferredPaths.contains(item.path) {
+                deferred.insert(item.path)
+                if let file = ledger.seenCandidates.first(where: { $0.path == item.path })?.candidate,
+                   item.matchesMetadata(of: file), startDownload(file, at: now, generation: generation, isDeliveryAllowed: isDeliveryAllowed) {
+                    sent += 1
+                }
                 continue
             }
+            guard let hash = item.hash, let capturedAt = item.capturedAt,
+                  let takenFrom = item.takenFrom, let fileName = item.fileName else { return }
             let stamp = ScreenshotStamp(date: capturedAt, timeZone: timeZone())
             let upload = ScreenshotUpload(
                 sourcePath: item.path, fileName: fileName, day: stamp.day, segment: stamp.segment,
-                capturedAt: stamp.rfc3339, takenFrom: takenFrom, hash: item.id
+                capturedAt: stamp.rfc3339, takenFrom: takenFrom, hash: hash
             )
-            let answer = await transport.send(upload, serverURL: serverURL)
-            // The send let other work run on this actor. A new pairing's restart drops what this
-            // send was for, and turning off or a rescan can move the item, so look it up again.
-            guard generation == setupGeneration,
-                  let current = ledger.items.firstIndex(where: { $0.id == item.id }) else { return }
+            let answer = await transport.send(upload, serverURL: serverURL) { [weak self] in
+                guard await isDeliveryAllowed() else { return false }
+                return await self?.canSend(item, generation: generation) == true
+            }
+            guard generation == setupGeneration else { return }
+            let matching = ledger.items.indices.filter { index in
+                let candidate = ledger.items[index]
+                return candidate.hash == hash && (candidate.outcome == .pending || candidate.outcome == .held)
+            }
             switch answer {
-            case .delivered:
-                ledger.items[current].outcome = .delivered
-                delivered = true
-                _ = totals?.applyScreenshot(hash: item.id)
-            case .invalid:
-                ledger.items[current].outcome = .refused
+            case .delivered, .invalid:
+                guard !matching.isEmpty else { return }
+                for index in matching {
+                    ledger.items[index].outcome = answer == .delivered ? .delivered : .refused
+                    let path = ledger.items[index].path
+                    ledger.downloadAttempts?.removeValue(forKey: path)
+                }
+                if answer == .delivered {
+                    delivered = true
+                    _ = totals?.applyScreenshot(hash: hash)
+                }
             case .ahead, .retry:
-                ledger.items[current].outcome = .held
+                if deliveryIsCurrent(generation) {
+                    for index in matching { ledger.items[index].outcome = .held }
+                }
                 return
             }
             sent += 1
         }
     }
 
-    private func nextSendable() -> Int? {
+    private func nextSendable(excluding deferred: Set<String>) -> Int? {
         ledger.items.indices.first { index in
             let item = ledger.items[index]
             guard item.outcome == .pending || item.outcome == .held else { return false }
-            guard item.fileName != nil, item.capturedAt != nil, !item.id.hasPrefix("path:") else { return false }
+            guard item.capturedAt != nil, !deferred.contains(item.path),
+                  item.fileName != nil || deferredPaths.contains(item.path) else { return false }
             if let when = item.capturedAt, !item.inFrozen, ScreenshotPause.excludes(when, windows: ledger.pauseWindows) {
                 return false
             }
             return true
         }
+    }
+
+    private func deliveryIsCurrent(_ generation: Int) -> Bool {
+        generation == setupGeneration && ledger.confirmed && ledger.enabled && ledger.access == .ok
+            && !countFailed && !deliveryPaused && !Task.isCancelled
+    }
+
+    private func canSend(_ selected: ScreenshotStoredItem, generation: Int) -> Bool {
+        guard deliveryIsCurrent(generation), !deferredPaths.contains(selected.path),
+              let item = ledger.items.first(where: { $0.id == selected.id }),
+              item.path == selected.path, item.hash == selected.hash,
+              item.outcome == .pending || item.outcome == .held else { return false }
+        return item.inFrozen || item.capturedAt.map { !ScreenshotPause.excludes($0, windows: ledger.pauseWindows) } == true
+    }
+
+    private func startDownload(
+        _ file: ScreenshotCandidate, at now: Date, generation: Int,
+        isDeliveryAllowed: @escaping @Sendable () async -> Bool
+    ) -> Bool {
+        guard file.marked, file.stable, file.cloudOnly,
+              ledger.downloadAttempts?[file.path]?.identity != file.cloudIdentity,
+              !downloading.contains(file.path) else { return false }
+        let attempt = ScreenshotDownloadAttempt(identity: file.cloudIdentity, started: now)
+        let previous = ledger.downloadAttempts
+        ledger.downloadAttempts = previous ?? [:]
+        ledger.downloadAttempts?[file.path] = attempt
+        guard save() else {
+            ledger.downloadAttempts = previous
+            return false
+        }
+        downloading.insert(file.path)
+        // The provider can be busy. The engine can still scan, honor a pause, or send a local item.
+        Task.detached { [weak self, reader] in
+            guard await isDeliveryAllowed(), await self?.canDownload(file, generation: generation) == true else {
+                await self?.finishDownload(path: file.path, attempt: attempt, requested: false, failed: false)
+                return
+            }
+            do {
+                try reader.startDownload(file)
+                await self?.finishDownload(path: file.path, attempt: attempt, requested: true, failed: false)
+            } catch {
+                await self?.finishDownload(path: file.path, attempt: attempt, requested: true, failed: true)
+            }
+        }
+        return true
+    }
+
+    private func canDownload(_ file: ScreenshotCandidate, generation: Int) -> Bool {
+        guard deliveryIsCurrent(generation), deferredPaths.contains(file.path) else { return false }
+        return ledger.items.contains { item in
+            item.matchesMetadata(of: file) && (item.outcome == .pending || item.outcome == .held)
+                && (item.inFrozen || item.capturedAt.map { !ScreenshotPause.excludes($0, windows: ledger.pauseWindows) } == true)
+        }
+    }
+
+    private func finishDownload(path: String, attempt: ScreenshotDownloadAttempt, requested: Bool, failed: Bool) {
+        downloading.remove(path)
+        guard ledger.downloadAttempts?[path] == attempt else { return }
+        if !requested {
+            ledger.downloadAttempts?.removeValue(forKey: path)
+        } else if failed {
+            // The next complete scan settles the selected slot using the existing unreadable state.
+            ledger.downloadAttempts?[path]?.started = .distantPast
+        }
+        save()
     }
 
     // MARK: - pause
@@ -469,7 +644,15 @@ actor ScreenshotEngine {
 
     /// What has gone to the journal. A new pairing's restart clears it.
     private var deliveredHashes: Set<String> {
-        Set(ledger.items.lazy.filter { $0.outcome == .delivered }.map(\.id))
+        Set(ledger.items.lazy.filter { $0.outcome == .delivered }.compactMap(\.hash))
+    }
+
+    private func alreadyDelivered(_ file: ScreenshotCandidate, hashes: Set<String>) -> Bool {
+        if let hash = file.sha256 { return hashes.contains(hash) }
+        guard file.cloudOnly else { return false }
+        return ledger.items.contains {
+            $0.outcome == .delivered && $0.matchesMetadata(of: file)
+        }
     }
 
     // MARK: - facts
@@ -492,15 +675,14 @@ actor ScreenshotEngine {
                 let delivered = deliveredHashes
                 let included = ledger.seenCandidates.map(\.candidate).filter { file in
                     guard file.marked, file.stable else { return false }
-                    if let hash = file.sha256, delivered.contains(hash) { return false }
+                    if alreadyDelivered(file, hashes: delivered) { return false }
                     if let when = file.when, when < start { return false }
                     return true
                 }
                 var identities = Set<String>()
                 var total = 0
                 for file in included {
-                    let id = file.sha256 ?? "path:\(file.path)"
-                    if identities.insert(id).inserted { total += 1 }
+                    if identities.insert(file.countIdentity).inserted { total += 1 }
                 }
                 count = .ready(total)
             }
@@ -513,7 +695,7 @@ actor ScreenshotEngine {
             accessHeld: ledger.accessHeld ?? true,
             ownerPaused: pause.paused && ledger.confirmed,
             paired: paired,
-            waitingForJournal: ledger.confirmed && paired && capability == false,
+            waitingForJournal: ledger.confirmed && paired && capability.supported == false,
             folderName: name,
             folderIsDesktop: ledger.consented ? ledger.isDesktop : system.isDesktop,
             folderFromOwner: ledger.ownerChose,
@@ -533,17 +715,20 @@ actor ScreenshotEngine {
         )
     }
 
-    private func save() {
+    @discardableResult
+    private func save() -> Bool {
         var unchecked = ledger
         unchecked.lastChecked = saved?.lastChecked
         // Before the owner allows the folder there is nothing to keep.
-        guard unchecked != (saved ?? ScreenshotLedger()) else { return }
+        guard unchecked != (saved ?? ScreenshotLedger()) else { return true }
         do {
             let data = try JSONEncoder().encode(ledger)
             try data.write(to: fileURL, options: .atomic)
             saved = ledger
+            return true
         } catch {
             screenshotLog.error("screenshots ledger not saved: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 }

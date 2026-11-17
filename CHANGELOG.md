@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- checking your screenshots folder no longer triggers iCloud downloads.
+
 ## [2.0.71] - 2026-11-16
 
 ### Fixed

@@ -17,18 +17,15 @@ struct ObsidianJournalVault: Decodable, Equatable, Sendable {
     }
 }
 
-enum ObsidianSendOutcome: Equatable, Sendable {
-    case delivered
-    case ahead
-    case invalid
-    case retry
-}
-
 /// The journal side of delivery. A protocol so tests run without a network.
-protocol ObsidianJournalTransport: Sendable {
-    func capabilities(serverURL: String) async throws -> [String]
+protocol ObsidianJournalTransport: FolderSyncJournalTransport {
     func vaults(serverURL: String) async throws -> [ObsidianJournalVault]
-    func send(file: ObsidianOutboxFile, serverURL: String, stagingDirectory: URL) async -> ObsidianSendOutcome
+    func send(
+        file: ObsidianOutboxFile,
+        serverURL: String,
+        stagingDirectory: URL,
+        isCurrent: @Sendable () async -> Bool
+    ) async -> FolderSyncAnswer
 }
 
 enum ObsidianDelivery {
@@ -39,7 +36,7 @@ enum ObsidianDelivery {
     /// The answers table. The journal replaces a note file with its own memory, so a good
     /// answer names a different file or none, and there's no part to prove against the upload.
     /// Anything not named here is retried.
-    static func classify(statusCode: Int, body: Data) -> ObsidianSendOutcome {
+    static func classify(statusCode: Int, body: Data) -> FolderSyncAnswer {
         if (200...299).contains(statusCode) {
             return (try? JSONDecoder().decode(Answer.self, from: body)) != nil ? .delivered : .retry
         }
@@ -53,32 +50,22 @@ enum ObsidianDelivery {
 }
 
 extension UploadClient: ObsidianJournalTransport {
-    func capabilities(serverURL: String) async throws -> [String] {
-        try await journalCapabilities(serverURL: serverURL)
-    }
-
     func vaults(serverURL: String) async throws -> [ObsidianJournalVault] {
         try await obsidianVaults(serverURL: serverURL)
     }
 
-    func send(file: ObsidianOutboxFile, serverURL: String, stagingDirectory: URL) async -> ObsidianSendOutcome {
-        let bodyURL = stagingDirectory.appendingPathComponent("upload-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: bodyURL) }
-        do {
-            let prepared = try prepareUpload(
-                serverURL: serverURL,
-                day: file.window.day,
-                segment: file.window.segment,
-                mediaFiles: [file.url],
-                metadata: nil,
-                source: ObsidianWire.source,
-                bodyURL: bodyURL
-            )
-            return await uploadObsidianStaged(prepared: prepared)
-        } catch {
-            Logger.upload.error("Obsidian upload not prepared: \(error.localizedDescription, privacy: .public)")
-            return .retry
-        }
+    func send(
+        file: ObsidianOutboxFile,
+        serverURL: String,
+        stagingDirectory: URL,
+        isCurrent: @Sendable () async -> Bool
+    ) async -> FolderSyncAnswer {
+        await uploadFolderFile(
+            file.url, serverURL: serverURL, day: file.window.day, segment: file.window.segment,
+            metadata: nil, source: ObsidianWire.source,
+            bodyURL: stagingDirectory.appendingPathComponent("upload-\(UUID().uuidString)"),
+            isCurrent: isCurrent, classify: ObsidianDelivery.classify
+        )
     }
 }
 
@@ -170,13 +157,10 @@ final class ObsidianVaultSource {
     private let runsLoop: Bool
 
     private var active = false
-    private var journalListsCapability: Bool?
+    private var capability = FolderSyncCapability(ObsidianWire.capability, policy: .everyPass)
     private var nextScanAt = Date.distantPast
-    private var nextDeliveryAt = Date.distantPast
-    private var retryDelay: TimeInterval = ObsidianVaultSource.tickSeconds
-    private var loopTask: Task<Void, Never>?
-    private var isSleeping = false
-    private var wakeRequested = false
+    private var backoff = FolderSyncBackoff(initial: tickSeconds, limit: retryCapSeconds)
+    private let worker = FolderSyncWorker()
     private var tickRunning = false
     /// Moves when a new pairing starts the first setup again, so a journal check already on
     /// its way can't clear or warn about the first send for the journal paired before.
@@ -239,11 +223,12 @@ final class ObsidianVaultSource {
             refusal = .unusableName
             return
         case .accepted(let name):
+            setupGeneration += 1
             refusal = nil
             alreadySynced = nil
             await engine.adoptVault(root: url, name: name)
             active = true
-            journalListsCapability = nil
+            capability.reset()
             nextScanAt = .distantPast
             snapshot = await engine.snapshot()
             startLoop()
@@ -283,10 +268,9 @@ final class ObsidianVaultSource {
     func restartFirstSetup() async {
         setupGeneration += 1
         alreadySynced = nil
-        journalListsCapability = nil
+        capability.reset()
         nextScanAt = .distantPast
-        nextDeliveryAt = .distantPast
-        retryDelay = Self.tickSeconds
+        backoff.reset()
         await engine.restartFirstSetup()
         snapshot = await engine.snapshot()
         refreshPhase()
@@ -300,41 +284,20 @@ final class ObsidianVaultSource {
 
     /// Runs one pass soon, without waiting for the next tick.
     func nudge() {
-        guard active, runsLoop else { return }
-        if isSleeping {
-            loopTask?.cancel()
-            loopTask = nil
-            isSleeping = false
-            startLoop()
-        } else {
-            wakeRequested = true
-        }
+        if active { worker.wake() }
     }
 
     private func startLoop() {
-        guard runsLoop, loopTask == nil else { return }
-        loopTask = Task { [weak self] in
-            await self?.runLoop()
+        guard runsLoop else { return }
+        worker.start { [weak self] in
+            guard let self, self.active else { return nil }
+            await self.tick()
+            return .seconds(Self.tickSeconds)
         }
     }
 
     private func stopLoop() {
-        loopTask?.cancel()
-        loopTask = nil
-        isSleeping = false
-    }
-
-    private func runLoop() async {
-        while !Task.isCancelled, active {
-            await tick()
-            if wakeRequested {
-                wakeRequested = false
-                continue
-            }
-            isSleeping = true
-            try? await Task.sleep(for: .seconds(Self.tickSeconds))
-            isSleeping = false
-        }
+        worker.stop()
     }
 
     /// One pass: scan if it's time, then close windows and deliver unless held.
@@ -351,9 +314,12 @@ final class ObsidianVaultSource {
             }
         }
         if !isHeld() {
-            let serverURL = await journalReadyForDelivery()
-            snapshot = await engine.closeDueWindows(now: now)
-            if let serverURL { await sendOutbox(serverURL: serverURL, now: now) }
+            let generation = setupGeneration
+            let serverURL = await journalReadyForDelivery(generation: generation, now: now)
+            if deliveryIsCurrent(generation) {
+                snapshot = await engine.closeDueWindows(now: now)
+                if let serverURL { await sendOutbox(serverURL: serverURL, generation: generation, now: now) }
+            }
         }
         snapshot = await engine.snapshot()
         refreshPhase()
@@ -368,7 +334,7 @@ final class ObsidianVaultSource {
             phase = .needsAttention
         } else if isHeld() {
             phase = .paused
-        } else if journalListsCapability == false {
+        } else if capability.supported == false {
             phase = .waitingForJournalUpdate
         } else {
             phase = .on
@@ -376,24 +342,26 @@ final class ObsidianVaultSource {
     }
 
     /// The paired journal's address, once it takes notes and this vault's first send is cleared.
-    private func journalReadyForDelivery() async -> String? {
-        let generation = setupGeneration
-        guard case .url(let serverURL) = await resolver.resolve(), generation == setupGeneration else { return nil }
+    private func journalReadyForDelivery(generation: Int, now: Date) async -> String? {
+        guard case .url(let serverURL) = await resolver.resolve(), deliveryIsCurrent(generation) else { return nil }
         do {
-            let lists = try await transport.capabilities(serverURL: serverURL).contains(ObsidianWire.capability)
-            guard generation == setupGeneration else { return nil }
-            journalListsCapability = lists
+            if capability.needsCheck(at: now) {
+                let listed = try await capability.check(using: transport, serverURL: serverURL)
+                guard deliveryIsCurrent(generation) else { return nil }
+                capability.record(listed, at: now)
+            }
         } catch {
             Logger.upload.info("Obsidian capability check failed: \(error.localizedDescription, privacy: .public)")
             return nil
         }
-        guard journalListsCapability == true, active else { return nil }
+        guard capability.supported == true else { return nil }
         if alreadySynced != nil { return nil }
         let state = await engine.currentState()
+        guard deliveryIsCurrent(generation) else { return nil }
         if !state.firstSendCleared {
             do {
                 let vaults = try await transport.vaults(serverURL: serverURL)
-                guard active, generation == setupGeneration else { return nil }
+                guard deliveryIsCurrent(generation) else { return nil }
                 let matches = vaults.filter { $0.vault == state.vaultName }
                 if let match = matches.max(by: { ($0.lastSyncedAt ?? "") < ($1.lastSyncedAt ?? "") }) {
                     alreadySynced = AlreadySynced(vault: match.vault, device: match.device, lastSyncedAt: match.lastSyncedAt)
@@ -405,24 +373,30 @@ final class ObsidianVaultSource {
                 return nil
             }
         }
-        return serverURL
+        return deliveryIsCurrent(generation) ? serverURL : nil
     }
 
-    private func sendOutbox(serverURL: String, now: Date) async {
-        guard now >= nextDeliveryAt else { return }
+    private func deliveryIsCurrent(_ generation: Int) -> Bool {
+        active && generation == setupGeneration && !isHeld() && !Task.isCancelled
+    }
+
+    private func sendOutbox(serverURL: String, generation: Int, now: Date) async {
+        guard backoff.isDue(at: now) else { return }
         let stagingDirectory = await engine.stagingDirectory
         for file in await engine.outboxFiles() {
-            guard active, !isHeld() else { return }
-            switch await transport.send(file: file, serverURL: serverURL, stagingDirectory: stagingDirectory) {
+            guard deliveryIsCurrent(generation) else { return }
+            let answer = await transport.send(file: file, serverURL: serverURL, stagingDirectory: stagingDirectory) { [weak self] in
+                await self?.deliveryIsCurrent(generation) == true
+            }
+            guard generation == setupGeneration else { return }
+            switch answer {
             case .delivered:
                 await engine.markDelivered(file)
-                retryDelay = Self.tickSeconds
-                nextDeliveryAt = .distantPast
+                backoff.reset()
             case .invalid:
                 await engine.setAside(file)
             case .ahead, .retry:
-                nextDeliveryAt = clock().addingTimeInterval(retryDelay)
-                retryDelay = min(retryDelay * 2, Self.retryCapSeconds)
+                if deliveryIsCurrent(generation) { backoff.deferUntilRetry(from: clock()) }
                 return
             }
         }

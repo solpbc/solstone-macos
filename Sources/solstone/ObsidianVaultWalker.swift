@@ -43,11 +43,6 @@ enum ObsidianVaultWalkResult: Equatable, Sendable {
 }
 
 enum ObsidianVaultWalker {
-    /// `SF_DATALESS`: the file's content lives elsewhere and reading it would download it.
-    static let datalessFlag: UInt32 = 0x4000_0000
-
-    static func isDataless(flags: UInt32) -> Bool { flags & datalessFlag != 0 }
-
     enum ConfigFolder: Equatable, Sendable {
         case present, absent, unreadable
     }
@@ -60,9 +55,7 @@ enum ObsidianVaultWalker {
             return errno == EPERM || errno == EACCES ? .unreadable : .absent
         }
         guard info.st_mode & S_IFMT == S_IFDIR else { return .absent }
-        guard let handle = opendir(config) else { return .unreadable }
-        closedir(handle)
-        return .present
+        return FolderSyncFiles.canList(config) ? .present : .unreadable
     }
 
     /// Whether Obsidian's own list still points at a vault, from metadata alone so that
@@ -73,106 +66,66 @@ enum ObsidianVaultWalker {
     }
 
     static func walk(root: URL) -> ObsidianVaultWalkResult {
-        let rootPath = root.path
-        guard directoryOpens(rootPath), directoryOpens(rootPath + "/.obsidian") else { return .unreachable }
-        var walk = ObsidianVaultWalk()
-        descend(directory: rootPath, relative: "", into: &walk)
-        // The volume may have gone mid-walk; finding nothing then means nothing.
-        guard !walk.rootUnreachable, directoryOpens(rootPath), directoryOpens(rootPath + "/.obsidian") else { return .unreachable }
-        for path in walk.placeholderOnly where walk.notes[path] != nil {
-            walk.notes[path]?.isPlaceholder = true
-            walk.placeholderOnly.remove(path)
+        FolderSyncFiles.withAccess(to: root) {
+            let path = root.path
+            let config = path + "/.obsidian"
+            guard FolderSyncFiles.canList(path), FolderSyncFiles.canList(config) else { return .unreachable }
+            var walk = ObsidianVaultWalk()
+            descend(directory: path, relative: "", into: &walk)
+            // The volume may have gone mid-walk; finding nothing then means nothing.
+            guard !walk.rootUnreachable, FolderSyncFiles.canList(path), FolderSyncFiles.canList(config) else {
+                return .unreachable
+            }
+            for path in walk.placeholderOnly where walk.notes[path] != nil {
+                walk.notes[path]?.isPlaceholder = true
+                walk.placeholderOnly.remove(path)
+            }
+            return .scanned(walk)
         }
-        return .scanned(walk)
-    }
-
-    private static func directoryOpens(_ path: String) -> Bool {
-        guard let handle = opendir(path) else { return false }
-        closedir(handle)
-        return true
     }
 
     private static func descend(directory: String, relative: String, into walk: inout ObsidianVaultWalk) {
-        func markUnreachable() {
-            if relative.isEmpty {
-                walk.rootUnreachable = true
-            } else {
-                walk.unreachableDirectories.insert(relative)
-                walk.failedDirectories.insert(relative)
-            }
-        }
-        guard let handle = opendir(directory) else {
-            markUnreachable()
-            return
-        }
-        defer { closedir(handle) }
-        while true {
-            errno = 0
-            guard let entry = readdir(handle) else {
-                // A listing cut short says nothing about the names it didn't reach.
-                if errno != 0 { markUnreachable() }
-                return
-            }
-            guard let name = entryName(entry), name != ".", name != ".." else { continue }
-            let path = directory + "/" + name
-            let relativePath = relative.isEmpty ? name : relative + "/" + name
-            var info = stat()
-            guard lstat(path, &info) == 0 else {
-                if errno != ENOENT { markUnreachable() }
-                continue
-            }
-            switch info.st_mode & S_IFMT {
-            case S_IFDIR:
-                guard !name.hasPrefix("."), !skipsDirectory(named: name) else { continue }
-                if isDataless(flags: info.st_flags) {
-                    // Listing a dataless folder would download its listing. Its notes keep their rows.
-                    walk.unreachableDirectories.insert(relativePath)
-                    continue
+        let result = FolderSyncFiles.list(directory) { entry in
+            let name = entry.name
+            let path = relative.isEmpty ? name : relative + "/" + name
+            if entry.isDirectory {
+                guard !name.hasPrefix("."), !skipsDirectory(named: name) else { return }
+                if entry.isDataless {
+                    walk.unreachableDirectories.insert(path)
+                } else {
+                    descend(directory: entry.path, relative: path, into: &walk)
                 }
-                descend(directory: path, relative: relativePath, into: &walk)
-            case S_IFREG:
+            } else if entry.isRegular {
                 if name.hasPrefix(".") {
-                    if let note = iCloudPlaceholderTarget(name) {
+                    if let note = entry.cloudStubTarget, note.lowercased().hasSuffix(".md") {
                         walk.placeholderOnly.insert(relative.isEmpty ? note : relative + "/" + note)
                     }
-                    continue
+                    return
                 }
-                guard name.lowercased().hasSuffix(".md") else { continue }
-                guard ObsidianWire.isSendablePath(relativePath) else {
+                guard name.lowercased().hasSuffix(".md") else { return }
+                guard ObsidianWire.isSendablePath(path) else {
                     walk.unsendableNames += 1
-                    continue
+                    return
                 }
-                walk.notes[relativePath] = ObsidianVaultEntry(
-                    mtimeMs: Int64(info.st_mtimespec.tv_sec) * 1000 + Int64(info.st_mtimespec.tv_nsec) / 1_000_000,
-                    size: Int64(info.st_size),
-                    fileID: UInt64(info.st_ino),
-                    isPlaceholder: isDataless(flags: info.st_flags)
+                walk.notes[path] = ObsidianVaultEntry(
+                    mtimeMs: entry.modifiedMilliseconds,
+                    size: entry.size,
+                    fileID: UInt64(entry.info.st_ino),
+                    isPlaceholder: entry.isDataless
                 )
-            default:
-                continue
             }
         }
-    }
-
-    private static func entryName(_ entry: UnsafeMutablePointer<dirent>) -> String? {
-        let length = Int(entry.pointee.d_namlen)
-        return withUnsafePointer(to: &entry.pointee.d_name) { pointer in
-            pointer.withMemoryRebound(to: UInt8.self, capacity: length) { bytes in
-                String(validating: UnsafeBufferPointer(start: bytes, count: length), as: UTF8.self)
-            }
+        guard result != .complete else { return }
+        if relative.isEmpty {
+            walk.rootUnreachable = true
+        } else {
+            walk.unreachableDirectories.insert(relative)
+            if result != .deferred { walk.failedDirectories.insert(relative) }
         }
     }
 
     private static func skipsDirectory(named name: String) -> Bool {
         let lowered = name.lowercased()
         return lowered == "templates" || lowered == "_templates"
-    }
-
-    /// The note an iCloud placeholder like `.note.md.icloud` stands for, when it stands for a note.
-    private static func iCloudPlaceholderTarget(_ name: String) -> String? {
-        guard name.hasPrefix("."), name.lowercased().hasSuffix(".icloud") else { return nil }
-        let inner = String(name.dropFirst().dropLast(".icloud".count))
-        guard !inner.isEmpty, !inner.hasPrefix("."), inner.lowercased().hasSuffix(".md") else { return nil }
-        return inner
     }
 }

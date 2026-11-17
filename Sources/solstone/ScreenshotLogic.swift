@@ -272,14 +272,7 @@ enum ScreenshotPaths {
 
 // MARK: - what the journal answered
 
-enum ScreenshotAnswer: Equatable, Sendable {
-    case delivered
-    case invalid
-    case ahead
-    case retry
-}
-
-func classifyScreenshot(statusCode: Int, body: Data) -> ScreenshotAnswer {
+func classifyScreenshot(statusCode: Int, body: Data) -> FolderSyncAnswer {
     if (200...299).contains(statusCode) {
         struct Answer: Decodable { let status: IngestProtocolV3.UploadStatus }
         guard (try? JSONDecoder().decode(Answer.self, from: body)) != nil else { return .retry }
@@ -309,6 +302,7 @@ struct ScreenshotCandidate: Equatable, Sendable {
     var pixelCount: Int64?
     var unreadable: Bool
     var fileExtension: String
+    var cloudOnly = false
 
     var when: Date? { platformDate ?? fileDate }
     var takenFrom: String? {
@@ -317,6 +311,15 @@ struct ScreenshotCandidate: Equatable, Sendable {
         return nil
     }
     var identity: String? { sha256 }
+
+    var cloudIdentity: String {
+        let version = fileDate?.timeIntervalSinceReferenceDate.bitPattern ?? 0
+        return "cloud:\(version):\(byteCount):\(path)"
+    }
+
+    var countIdentity: String {
+        sha256 ?? (cloudOnly ? cloudIdentity : "path:\(path)")
+    }
 }
 
 struct ScreenshotFolder: Equatable, Sendable {
@@ -336,11 +339,13 @@ protocol ScreenshotReading: Sendable {
     func systemFolder() -> ScreenshotFolder
     func homePath() -> String
     func list(_ folder: ScreenshotFolder, now: Date) -> ScreenshotList
+    func startDownload(_ file: ScreenshotCandidate) throws
 }
 
-protocol ScreenshotTransport: Sendable {
-    func capabilities(serverURL: String) async throws -> [String]
-    func send(_ upload: ScreenshotUpload, serverURL: String) async -> ScreenshotAnswer
+protocol ScreenshotTransport: FolderSyncJournalTransport {
+    func send(
+        _ upload: ScreenshotUpload, serverURL: String, isCurrent: @Sendable () async -> Bool
+    ) async -> FolderSyncAnswer
 }
 
 struct ScreenshotUpload: Equatable, Sendable {

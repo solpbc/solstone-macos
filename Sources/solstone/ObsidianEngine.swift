@@ -287,7 +287,14 @@ actor ObsidianEngine {
 
     /// Reads and hashes a note. Opens the file for reading only.
     private func read(root: String, path: String) -> NoteRead {
-        let descriptor = open(root + "/" + path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        let result = FolderSyncFiles.withoutMaterialization { readLocal(path: root + "/" + path) }
+        if let result { return result }
+        scanReadFailed = true
+        return .unreadable
+    }
+
+    private func readLocal(path: String) -> NoteRead {
+        let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
         guard descriptor >= 0 else {
             if errno != ENOENT { scanReadFailed = true }
             return .unreadable

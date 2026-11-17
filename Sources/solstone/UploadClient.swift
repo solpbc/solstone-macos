@@ -280,24 +280,31 @@ public struct UploadClient: Sendable {
         )
     }
 
-    /// Uploads one staged screenshot. The answers table is the screenshots contract.
-    func uploadScreenshotStaged(prepared: PreparedIngestV3Upload) async -> ScreenshotAnswer {
+    /// Prepare and send one folder-source item. The source owns its response contract.
+    func uploadFolderFile(
+        _ file: URL,
+        serverURL: String,
+        day: String,
+        segment: String,
+        metadata: [String: IngestJSONValue]?,
+        source: String,
+        bodyURL: URL,
+        isCurrent: @Sendable () async -> Bool,
+        classify: (Int, Data) -> FolderSyncAnswer
+    ) async -> FolderSyncAnswer {
+        guard !Task.isCancelled, await isCurrent() else { return .retry }
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
         do {
+            let prepared = try prepareUpload(
+                serverURL: serverURL, day: day, segment: segment, mediaFiles: [file],
+                metadata: metadata, source: source, bodyURL: bodyURL
+            )
+            guard !Task.isCancelled, await isCurrent() else { return .retry }
             let (data, response) = try await session.upload(for: prepared.request, fromFile: prepared.bodyURL)
             guard let httpResponse = response as? HTTPURLResponse else { return .retry }
-            return classifyScreenshot(statusCode: httpResponse.statusCode, body: data)
+            return classify(httpResponse.statusCode, data)
         } catch {
-            return .retry
-        }
-    }
-
-    /// Uploads a staged note file. Its answer is read by the Obsidian answers table alone.
-    func uploadObsidianStaged(prepared: PreparedIngestV3Upload) async -> ObsidianSendOutcome {
-        do {
-            let (data, response) = try await session.upload(for: prepared.request, fromFile: prepared.bodyURL)
-            guard let httpResponse = response as? HTTPURLResponse else { return .retry }
-            return ObsidianDelivery.classify(statusCode: httpResponse.statusCode, body: data)
-        } catch {
+            Logger.upload.info("Folder source upload failed: \(error.localizedDescription, privacy: .public)")
             return .retry
         }
     }

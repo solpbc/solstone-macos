@@ -77,7 +77,7 @@ enum ScreenshotPrepare {
     /// `.ready` still has to be uploaded. The other results are the answer
     /// itself: a file that cannot be converted, or that comes out too big, is
     /// final; a read that failed can be tried again.
-    static func answer(for result: ScreenshotPrepareResult) -> ScreenshotAnswer? {
+    static func answer(for result: ScreenshotPrepareResult) -> FolderSyncAnswer? {
         switch result {
         case .ready: return nil
         case .undecodable, .overLimit: return .invalid

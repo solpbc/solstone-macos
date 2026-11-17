@@ -336,8 +336,8 @@ struct ObsidianEngineTests {
     }
 
     @Test func datalessFilesAreNeverReadAndKeepTheirRows() async throws {
-        #expect(ObsidianVaultWalker.isDataless(flags: 0x4000_0000))
-        #expect(!ObsidianVaultWalker.isDataless(flags: 0))
+        #expect(FolderSyncFile.isDataless(flags: 0x4000_0000))
+        #expect(!FolderSyncFile.isDataless(flags: 0))
         let fixture = try Fixture()
         try fixture.write("away.md", "text")
         let engine = await fixture.makeEngine()
@@ -1235,7 +1235,7 @@ struct ObsidianEngineTests {
 private final class FakeJournal: ObsidianJournalTransport, @unchecked Sendable {
     let capabilitiesAnswer = Locked<[String]>([])
     let vaultsAnswer = Locked<[ObsidianJournalVault]>([])
-    let outcomes = Locked<[ObsidianSendOutcome]>([])
+    let outcomes = Locked<[FolderSyncAnswer]>([])
     let sent = Locked<[String]>([])
     let serverURLs = Locked<[String]>([])
     let capabilityFails = Locked(false)
@@ -1253,9 +1253,15 @@ private final class FakeJournal: ObsidianJournalTransport, @unchecked Sendable {
         return answer
     }
 
-    func send(file: ObsidianOutboxFile, serverURL: String, stagingDirectory: URL) async -> ObsidianSendOutcome {
+    func send(
+        file: ObsidianOutboxFile,
+        serverURL: String,
+        stagingDirectory: URL,
+        isCurrent: @Sendable () async -> Bool
+    ) async -> FolderSyncAnswer {
+        guard await isCurrent() else { return .retry }
         sent.mutate { $0.append(file.url.lastPathComponent) }
-        var outcome: ObsidianSendOutcome = .delivered
+        var outcome: FolderSyncAnswer = .delivered
         outcomes.mutate {
             if !$0.isEmpty { outcome = $0.removeFirst() }
         }
@@ -1268,7 +1274,7 @@ private final class FakeJournal: ObsidianJournalTransport, @unchecked Sendable {
 struct ObsidianDeliveryTests {
     private let t0 = date("2026-11-08T10:00:00-07:00")
 
-    private func outcome(_ status: Int, _ body: String) -> ObsidianSendOutcome {
+    private func outcome(_ status: Int, _ body: String) -> FolderSyncAnswer {
         ObsidianDelivery.classify(statusCode: status, body: Data(body.utf8))
     }
 
@@ -1301,7 +1307,7 @@ struct ObsidianDeliveryTests {
             store.registerRoute(path: "/app/devices/ingest", body: body)
             let answer = await client.send(
                 file: ObsidianOutboxFile(url: note, window: ObsidianWindow(day: "20261108", segment: "094000_300")),
-                serverURL: "http://journal.example", stagingDirectory: staging
+                serverURL: "http://journal.example", stagingDirectory: staging, isCurrent: { true }
             )
             #expect(answer == .delivered)
         }

@@ -74,7 +74,9 @@ final class ScreenshotReadCache: @unchecked Sendable {
     struct Key: Hashable {
         var path: String
         var size: Int
-        var modified: Date?
+        var modified: Date
+        var device: dev_t
+        var inode: ino_t
     }
 
     struct Entry {
@@ -84,25 +86,26 @@ final class ScreenshotReadCache: @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private var entries: [Key: Entry] = [:]
+    private var entries: [String: (key: Key, entry: Entry)] = [:]
 
     func entry(_ key: Key) -> Entry? {
         lock.lock()
         defer { lock.unlock() }
-        return entries[key]
+        guard let known = entries[key.path], known.key == key else { return nil }
+        return known.entry
     }
 
     func store(_ entry: Entry, for key: Key) {
         lock.lock()
         defer { lock.unlock() }
-        entries[key] = entry
+        entries[key.path] = (key, entry)
     }
 
     /// Forget files the folder no longer offers.
     func keep(paths: Set<String>) {
         lock.lock()
         defer { lock.unlock() }
-        entries = entries.filter { paths.contains($0.key.path) }
+        entries = entries.filter { paths.contains($0.key) }
     }
 
     var count: Int {
@@ -123,36 +126,58 @@ struct ScreenshotMacReader: ScreenshotReading {
 
     func list(_ folder: ScreenshotFolder, now: Date) -> ScreenshotList {
         let url = URL(fileURLWithPath: folder.path, isDirectory: true)
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let children: [URL]
-        do {
-            children = try FileManager.default.contentsOfDirectory(
-                at: url,
-                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .creationDateKey, .fileSizeKey],
-                options: [.skipsHiddenFiles]
-            )
-        } catch let error as NSError {
-            return Self.classify(error)
-        }
         var files: [ScreenshotCandidate] = []
-        for child in children {
-            let values = try? child.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey, .creationDateKey, .fileSizeKey])
-            guard values?.isRegularFile == true else { continue }
-            let path = child.path
-            guard Self.marked(path) else { continue }
-            files.append(Self.read(child, values: values, now: now, cache: cache))
+        var stubPaths: [String] = []
+        let result = FolderSyncFiles.withAccess(to: url) {
+            FolderSyncFiles.withoutMaterialization {
+                FolderSyncFiles.list(folder.path) { entry in
+                    guard entry.isRegular else { return }
+                    if let target = entry.cloudStubTarget {
+                        // A stub can keep a known path waiting. It does not prove a screenshot.
+                        stubPaths.append(url.appendingPathComponent(target).path)
+                    }
+                    guard !entry.isHidden else { return }
+                    guard Self.marked(entry.path) else {
+                        if entry.isDataless { files.append(Self.deferred(path: entry.path)) }
+                        return
+                    }
+                    let child = URL(fileURLWithPath: entry.path)
+                    let values = try? child.resourceValues(forKeys: [.creationDateKey])
+                    files.append(Self.read(child, entry: entry, created: values?.creationDate, now: now, cache: cache))
+                }
+            }
         }
-        cache.keep(paths: Set(files.map(\.path)))
-        return .files(files)
+        switch result {
+        case .complete:
+            let named = Set(files.map(\.path))
+            files.append(contentsOf: stubPaths.filter { !named.contains($0) }.map(Self.deferred))
+            cache.keep(paths: Set(files.map(\.path)))
+            return .files(files)
+        case .denied: return .denied
+        case .missing: return .missing
+        default: return .failed
+        }
     }
 
-    private static func classify(_ error: NSError) -> ScreenshotList {
-        if error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoPermissionError { return .denied }
-        if error.domain == NSPOSIXErrorDomain && (error.code == Int(EPERM) || error.code == Int(EACCES)) { return .denied }
-        if error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError { return .missing }
-        if error.domain == NSPOSIXErrorDomain && error.code == Int(ENOENT) { return .missing }
-        return .failed
+    func startDownload(_ file: ScreenshotCandidate) throws {
+        let selected = FolderSyncFiles.withoutMaterialization {
+            guard let entry = FolderSyncFile.probe(path: file.path), entry.isRegular,
+                  entry.modified == file.fileDate, entry.size == file.byteCount,
+                  Self.marked(entry.path) else { return nil as FolderSyncFile? }
+            return entry
+        } ?? nil
+        guard let selected else { throw CocoaError(.fileReadNoSuchFile) }
+        if selected.isDataless {
+            try FileManager.default.startDownloadingUbiquitousItem(at: URL(fileURLWithPath: file.path))
+        }
+    }
+
+    private static func deferred(path: String) -> ScreenshotCandidate {
+        ScreenshotCandidate(
+            path: path, marked: false, platformDate: nil, fileDate: nil,
+            byteCount: 0, stable: false, header: Data(), sha256: nil, pixelCount: nil,
+            unreadable: false, fileExtension: "", cloudOnly: true
+        )
     }
 
     private static func marked(_ path: String) -> Bool {
@@ -176,60 +201,87 @@ struct ScreenshotMacReader: ScreenshotReading {
         return (MDItemCopyAttribute(item, ScreenshotMac.isScreenCaptureName as CFString) as? Bool) == true
     }
 
-    static func read(_ url: URL, values: URLResourceValues?, now: Date, cache: ScreenshotReadCache? = nil) -> ScreenshotCandidate {
-        let path = url.path
-        let mtime = values?.contentModificationDate
-        let created = values?.creationDate
+    static func read(
+        _ url: URL, entry: FolderSyncFile, created: Date?, now: Date, cache: ScreenshotReadCache? = nil
+    ) -> ScreenshotCandidate {
+        let path = entry.path
+        let mtime = entry.modified
         let platform = spotlightDate(path) ?? created
-        let size = values?.fileSize ?? 0
-        let stable = mtime.map { now.timeIntervalSince($0) >= ScreenshotMac.stableAfter } ?? false
-        let key = ScreenshotReadCache.Key(path: path, size: size, modified: mtime)
-        if stable, let known = cache?.entry(key) {
-            return ScreenshotCandidate(
-                path: path, marked: true, platformDate: platform, fileDate: mtime,
-                byteCount: size, stable: stable, header: known.header, sha256: known.sha256,
-                pixelCount: known.pixels, unreadable: false, fileExtension: url.pathExtension
-            )
-        }
-        var header = Data()
-        var hash: String?
-        var pixels: Int64?
-        var unreadable = false
-        if let file = FileHandle(forReadingAtPath: path) {
-            defer { try? file.close() }
-            var hasher = SHA256()
-            var first = Data()
-            do {
-                while true {
-                    let chunk = try file.read(upToCount: 1 << 20) ?? Data()
-                    if chunk.isEmpty { break }
-                    if first.count < 64 { first.append(chunk.prefix(64 - first.count)) }
-                    hasher.update(data: chunk)
-                }
-                header = first
-                hash = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-                if ScreenshotBytes.kind(header: header) == .jpeg, size <= ScreenshotBytes.maxBytes {
-                    try file.seek(toOffset: 0)
-                    let scan = try file.read(upToCount: min(size, 1 << 20)) ?? header
-                    pixels = ScreenshotBytes.pixelCount(data: scan)
-                } else if size <= ScreenshotBytes.maxBytes {
-                    pixels = ScreenshotBytes.pixelCount(data: header)
-                }
-            } catch {
-                unreadable = true
-            }
-        } else {
-            unreadable = true
-        }
-        if stable, !unreadable, let hash {
-            cache?.store(ScreenshotReadCache.Entry(header: header, sha256: hash, pixels: pixels), for: key)
-        }
-        return ScreenshotCandidate(
-            path: path, marked: true, platformDate: platform, fileDate: mtime,
-            byteCount: size, stable: stable, header: header, sha256: hash,
-            pixelCount: pixels, unreadable: unreadable || hash == nil,
-            fileExtension: url.pathExtension
+        let size = Int(entry.size)
+        let stable = FolderSyncFiles.hasSettled(modified: mtime, now: now, delay: ScreenshotMac.stableAfter)
+        let key = ScreenshotReadCache.Key(
+            path: path, size: size, modified: mtime, device: entry.info.st_dev, inode: entry.info.st_ino
         )
+        let known = stable ? cache?.entry(key) : nil
+        var candidate = ScreenshotCandidate(
+            path: path, marked: true, platformDate: platform, fileDate: mtime,
+            byteCount: size, stable: stable, header: known?.header ?? Data(), sha256: known?.sha256,
+            pixelCount: known?.pixels, unreadable: false, fileExtension: url.pathExtension,
+            cloudOnly: entry.isDataless
+        )
+        guard stable, !entry.isDataless, known == nil else { return candidate }
+        if let bytes = FolderSyncFiles.withoutMaterialization({ readBytes(entry) }) ?? nil {
+            cache?.store(bytes, for: key)
+            candidate.header = bytes.header
+            candidate.sha256 = bytes.sha256
+            candidate.pixelCount = bytes.pixels
+        } else if FolderSyncFile.probe(path: path)?.isDataless == true {
+            candidate.cloudOnly = true
+        } else {
+            candidate.unreadable = true
+        }
+        return candidate
+    }
+
+    private static func readBytes(
+        _ entry: FolderSyncFile, copyingTo output: FileHandle? = nil
+    ) -> ScreenshotReadCache.Entry? {
+        let size = Int(entry.size)
+        let descriptor = open(entry.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard descriptor >= 0 else { return nil }
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? file.close() }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+              info.st_dev == entry.info.st_dev, info.st_ino == entry.info.st_ino,
+              !FolderSyncFile.isDataless(flags: info.st_flags) else { return nil }
+        var hasher = SHA256()
+        var header = Data()
+        var pixels: Int64?
+        do {
+            while let chunk = try file.read(upToCount: 1 << 20), !chunk.isEmpty {
+                if header.count < 64 { header.append(chunk.prefix(64 - header.count)) }
+                hasher.update(data: chunk)
+                try output?.write(contentsOf: chunk)
+            }
+            if output != nil {
+                try output?.close()
+            } else if ScreenshotBytes.kind(header: header) == .jpeg, size <= ScreenshotBytes.maxBytes {
+                try file.seek(toOffset: 0)
+                pixels = ScreenshotBytes.pixelCount(data: try file.read(upToCount: min(size, 1 << 20)) ?? header)
+            } else if size <= ScreenshotBytes.maxBytes {
+                pixels = ScreenshotBytes.pixelCount(data: header)
+            }
+            guard fstat(descriptor, &info) == 0, info.st_size == entry.info.st_size,
+                  info.st_mtimespec.tv_sec == entry.info.st_mtimespec.tv_sec,
+                  info.st_mtimespec.tv_nsec == entry.info.st_mtimespec.tv_nsec else { return nil }
+            let hash = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            return ScreenshotReadCache.Entry(header: header, sha256: hash, pixels: pixels)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Stage the selected source bytes before conversion. The immutable copy is checked
+    /// against the hash that earned this upload's ledger row.
+    static func stage(_ upload: ScreenshotUpload, at destination: URL) -> Bool {
+        FolderSyncFiles.withoutMaterialization {
+            guard let entry = FolderSyncFile.probe(path: upload.sourcePath),
+                  entry.isRegular, !entry.isDataless, marked(entry.path) else { return false }
+            guard FileManager.default.createFile(atPath: destination.path, contents: nil, attributes: [.posixPermissions: 0o600]),
+                  let output = try? FileHandle(forWritingTo: destination) else { return false }
+            return readBytes(entry, copyingTo: output)?.sha256 == upload.hash
+        } ?? false
     }
 
     private static func spotlightDate(_ path: String) -> Date? {
@@ -239,11 +291,15 @@ struct ScreenshotMacReader: ScreenshotReading {
 }
 
 struct ScreenshotLiveTransport: ScreenshotTransport {
+    private let journal = UploadClient()
+
     func capabilities(serverURL: String) async throws -> [String] {
-        try await UploadClient().journalCapabilities(serverURL: serverURL)
+        try await journal.capabilities(serverURL: serverURL)
     }
 
-    func send(_ upload: ScreenshotUpload, serverURL: String) async -> ScreenshotAnswer {
+    func send(
+        _ upload: ScreenshotUpload, serverURL: String, isCurrent: @Sendable () async -> Bool
+    ) async -> FolderSyncAnswer {
         let staging = FileManager.default.temporaryDirectory.appendingPathComponent("solstone-screenshots-\(UUID().uuidString)", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
@@ -251,34 +307,24 @@ struct ScreenshotLiveTransport: ScreenshotTransport {
             return .retry
         }
         defer { try? FileManager.default.removeItem(at: staging) }
-        let named = staging.appendingPathComponent(upload.fileName)
         let scale = await ScreenshotPrepare.displayBackingScale()
-        let preparedFile = ScreenshotPrepare.prepare(
-            source: URL(fileURLWithPath: upload.sourcePath),
-            destination: named,
-            pdfScale: scale
+        guard !Task.isCancelled, await isCurrent() else { return .retry }
+        let source = staging.appendingPathComponent("original")
+        guard ScreenshotMacReader.stage(upload, at: source) else { return .retry }
+        let named = staging.appendingPathComponent(upload.fileName)
+        let prepared = ScreenshotPrepare.prepare(source: source, destination: named, pdfScale: scale)
+        if let answer = ScreenshotPrepare.answer(for: prepared) { return answer }
+        return await journal.uploadFolderFile(
+            named, serverURL: serverURL, day: upload.day, segment: upload.segment,
+            metadata: [
+                "screenshot": .object([
+                    "v": .integer(1),
+                    "captured_at": .string(upload.capturedAt),
+                    "taken_from": .string(upload.takenFrom),
+                ]),
+            ],
+            source: "screenshots", bodyURL: staging.appendingPathComponent("body"),
+            isCurrent: isCurrent, classify: classifyScreenshot
         )
-        if let answer = ScreenshotPrepare.answer(for: preparedFile) { return answer }
-        do {
-            let body = staging.appendingPathComponent("body")
-            let prepared = try UploadClient().prepareUpload(
-                serverURL: serverURL,
-                day: upload.day,
-                segment: upload.segment,
-                mediaFiles: [named],
-                metadata: [
-                    "screenshot": .object([
-                        "v": .integer(1),
-                        "captured_at": .string(upload.capturedAt),
-                        "taken_from": .string(upload.takenFrom),
-                    ]),
-                ],
-                source: "screenshots",
-                bodyURL: body
-            )
-            return await UploadClient().uploadScreenshotStaged(prepared: prepared)
-        } catch {
-            return .retry
-        }
     }
 }

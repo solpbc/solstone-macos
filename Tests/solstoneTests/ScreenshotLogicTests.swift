@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import Darwin
 import Foundation
+import Synchronization
 import Testing
 @testable import solstone
 
@@ -695,6 +697,128 @@ struct ScreenshotEngineTests {
         #expect(after.waiting == 0)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func cloudScreenshotWaitsForSelectionAndResolvesAFrozenDuplicate() async throws {
+        let start = now()
+        let server = "http://127.0.0.1:9"
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        transport.capability = []
+        var selected = shot(path: "/Users/a/Desktop/cloud.png", when: start)
+        let hydrated = selected
+        selected.cloudOnly = true
+        selected.sha256 = nil
+        selected.header = Data()
+        let local = shot(when: start)
+        var excluded = selected
+        excluded.path = "/Users/a/Desktop/excluded.png"
+        excluded.platformDate = start.addingTimeInterval(-100 * 24 * 3600)
+        var unmarked = selected
+        unmarked.path = "/Users/a/Desktop/unmarked.png"
+        unmarked.marked = false
+        reader.files = [selected, local, excluded, unmarked]
+        let downloads = Mutex<[String]>([])
+        let (events, continuation) = AsyncStream.makeStream(of: String.self)
+        defer { continuation.finish() }
+        reader.download = { file in
+            downloads.withLock { $0.append(file.path) }
+            continuation.yield(file.path)
+        }
+        let totals = SourceTotals(directory: dir, clock: SourceTotals.Clock(now: start, timeZone: denver))
+        let engine = ScreenshotEngine(directory: dir, reader: reader, transport: transport, totals: totals)
+        let preview = await engine.allow(now: start, pause: .running, paired: true)
+        #expect(preview.confirmTitle == ScreenshotCopy.confirmTitle(spanFromToday: false, count: 2))
+        _ = await engine.tick(now: start, pause: .running, serverURL: server, paired: true, syncPaused: false)
+        await engine.confirm(now: start)
+        _ = await engine.tick(now: start, pause: .running, serverURL: server, paired: true, syncPaused: true)
+        _ = await engine.tick(now: start, pause: .running, serverURL: server, paired: true, syncPaused: false)
+        #expect(downloads.withLock { $0.isEmpty })
+        #expect(transport.sent.isEmpty)
+        transport.capability = ["screenshots"]
+        let ready = start.addingTimeInterval(ScreenshotEngine.capabilityRecheck + 1)
+        let waiting = await engine.tick(now: ready, pause: .running, serverURL: server, paired: true, syncPaused: false)
+        var requests = events.makeAsyncIterator()
+        #expect(await requests.next() == selected.path)
+        #expect(waiting.waiting == 1)
+        #expect(waiting.unreadableLine == nil)
+        let restarted = ScreenshotEngine(directory: dir, reader: reader, transport: transport, totals: totals)
+        let stillWaiting = await restarted.tick(
+            now: ready.addingTimeInterval(1), pause: .running, serverURL: server, paired: true, syncPaused: false
+        )
+        #expect(stillWaiting.waiting == 1)
+        reader.files[0] = hydrated
+        let done = await restarted.tick(
+            now: ready.addingTimeInterval(2), pause: .running, serverURL: server, paired: true, syncPaused: false
+        )
+        let ledger = try JSONDecoder().decode(ScreenshotLedger.self, from: Data(contentsOf: dir.appendingPathComponent("ledger.json")))
+        #expect(ledger.items.filter(\.inFrozen).map(\.outcome) == [.delivered, .delivered])
+        #expect(done.waiting == 0)
+        #expect(done.unreadableLine == nil)
+        #expect(downloads.withLock { $0 } == [selected.path])
+        #expect(transport.sent.map(\.hash) == [local.sha256])
+        #expect(totals.view()?.screenshotsTotal == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cloudDownloadTimesOutAcrossRelaunchAndCanBeRetried() async throws {
+        let start = now()
+        let server = "http://127.0.0.1:9"
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        let hydrated = shot(when: start)
+        var cloud = hydrated
+        cloud.cloudOnly = true
+        cloud.sha256 = nil
+        reader.files = [cloud]
+        let (events, continuation) = AsyncStream.makeStream(of: String.self)
+        defer { continuation.finish() }
+        reader.download = { continuation.yield($0.path) }
+        let engine = ScreenshotEngine(directory: dir, reader: reader, transport: transport, downloadTimeout: 10)
+        _ = await engine.allow(now: start, pause: .running, paired: true)
+        await engine.confirm(now: start)
+        _ = await engine.tick(now: start, pause: .running, serverURL: server, paired: true, syncPaused: false)
+        var requests = events.makeAsyncIterator()
+        #expect(await requests.next() == cloud.path)
+        let restarted = ScreenshotEngine(directory: dir, reader: reader, transport: transport, downloadTimeout: 10)
+        let expired = await restarted.tick(
+            now: start.addingTimeInterval(11), pause: .running, serverURL: server, paired: true, syncPaused: false
+        )
+        #expect(expired.unreadableLine == ScreenshotCopy.unreadableLine(1))
+        #expect(expired.waiting == 0)
+        #expect(transport.sent.isEmpty)
+        await restarted.retryUnreadable()
+        _ = await restarted.tick(
+            now: start.addingTimeInterval(12), pause: .running, serverURL: server, paired: true, syncPaused: false
+        )
+        #expect(await requests.next() == cloud.path)
+        reader.files = [hydrated]
+        let done = await restarted.tick(
+            now: start.addingTimeInterval(13), pause: .running, serverURL: server, paired: true, syncPaused: false
+        )
+        #expect(done.unreadableLine == nil)
+        #expect(done.waiting == 0)
+        #expect(transport.sent.map(\.hash) == [hydrated.sha256])
+    }
+
+    @Test func incompleteListingCannotConfirmAnEmptyCount() async throws {
+        let reader = FakeShots()
+        reader.incomplete = true
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: FakeShotTransport())
+        let failed = await engine.allow(now: now(), pause: .running, paired: true)
+        #expect(failed.showChooser)
+        #expect(!failed.confirmEnabled)
+        await engine.confirm(now: now())
+        reader.incomplete = false
+        let complete = await engine.tick(now: now(), pause: .running, serverURL: nil, paired: true, syncPaused: true)
+        #expect(complete.showChooser)
+        #expect(complete.confirmEnabled)
+        #expect(complete.confirmTitle == ScreenshotCopy.confirmTitle(spanFromToday: false, count: 0))
+    }
+
     @Test func aJournalThatUpdatesIsAskedAgain() async throws {
         let reader = FakeShots()
         let transport = FakeShotTransport()
@@ -744,6 +868,35 @@ struct ScreenshotEngineTests {
         #expect(snap.subline == ScreenshotCopy.fromFolder("Desktop"))
     }
 
+    @Test func aPopulatedPredecessorLedgerDrainsItsHeldItem() async throws {
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let start = now()
+        let old = """
+        {"version":1,"consented":true,"enabled":true,"confirmed":true,"wasOn":true,"path":"/Users/a/Desktop",
+        "folderName":"Desktop","isDesktop":true,"ownerChose":false,"systemPathAtConsent":"/Users/a/Desktop",
+        "access":"ok","accessHeld":true,"movedName":"Desktop","span":"last30Days","items":[
+        {"id":"held","path":"/Users/a/Desktop/one.png","outcome":"held","capturedAt":\(start.timeIntervalSinceReferenceDate),
+        "takenFrom":"platform","byteCount":32,"fileName":"screenshot_screen.png","inFrozen":true,"fileExtension":"png"},
+        {"id":"done","path":"/Users/a/Desktop/two.png","outcome":"delivered","capturedAt":\(start.timeIntervalSinceReferenceDate),
+        "takenFrom":"platform","byteCount":32,"fileName":"screenshot_screen.png","inFrozen":true,"fileExtension":"png"}],
+        "pauseWindows":[],"seenCandidates":[]}
+        """
+        let file = dir.appendingPathComponent("ledger.json")
+        try old.write(to: file, atomically: true, encoding: .utf8)
+        let reader = FakeShots()
+        reader.files = [shot(hash: "held", when: start), shot(path: "/Users/a/Desktop/two.png", hash: "done", when: start)]
+        let transport = FakeShotTransport()
+        let engine = ScreenshotEngine(directory: dir, reader: reader, transport: transport)
+        let snapshot = await engine.tick(
+            now: start, pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false
+        )
+        let result = try JSONDecoder().decode(ScreenshotLedger.self, from: Data(contentsOf: file))
+        #expect(snapshot.waiting == 0)
+        #expect(transport.sent.map(\.hash) == ["held"])
+        #expect(result.items.filter(\.inFrozen).map(\.outcome) == [.delivered, .delivered])
+    }
+
     @Test func anOldTotalsFileStillDecodesAndAHashCountsOnce() throws {
         let dir = try directory()
         let json = """
@@ -771,25 +924,33 @@ private final class FakeShots: ScreenshotReading, @unchecked Sendable {
     var files: [ScreenshotCandidate] = []
     var listCount = 0
     var denied = false
+    var incomplete = false
+    var download: @Sendable (ScreenshotCandidate) throws -> Void = { _ in }
+
+    func startDownload(_ file: ScreenshotCandidate) throws { try download(file) }
 
     func systemFolder() -> ScreenshotFolder { folder }
     func homePath() -> String { "/Users/a" }
     func list(_ folder: ScreenshotFolder, now: Date) -> ScreenshotList {
         listCount += 1
         if denied { return .denied }
+        if incomplete { return .failed }
         return .files(files)
     }
 }
 
 private final class FakeShotTransport: ScreenshotTransport, @unchecked Sendable {
     var capability = ["screenshots"]
-    var answers: [ScreenshotAnswer] = [.delivered]
+    var answers: [FolderSyncAnswer] = [.delivered]
     var sent: [ScreenshotUpload] = []
     var onSend: (@Sendable () async -> Void)?
 
     func capabilities(serverURL: String) async throws -> [String] { capability }
 
-    func send(_ upload: ScreenshotUpload, serverURL: String) async -> ScreenshotAnswer {
+    func send(
+        _ upload: ScreenshotUpload, serverURL: String, isCurrent: @Sendable () async -> Bool
+    ) async -> FolderSyncAnswer {
+        guard await isCurrent() else { return .retry }
         sent.append(upload)
         await onSend?()
         if answers.isEmpty { return .delivered }
@@ -804,24 +965,55 @@ struct ScreenshotReadCacheTests {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("shot.png")
         let then = Date().addingTimeInterval(-60).rounded()
-        func write(_ byte: UInt8, modified: Date) throws -> URLResourceValues {
+        func write(_ byte: UInt8, modified: Date) throws -> FolderSyncFile {
             var bytes = ScreenshotBytes.pngHeader(width: 2, height: 3)
             bytes.append(contentsOf: [UInt8](repeating: byte, count: 64))
             try bytes.write(to: url)
             try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
-            // A fresh URL, as each listing gives: a URL keeps the resource values it read first.
-            return try URL(fileURLWithPath: url.path).resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey, .fileSizeKey])
+            return try #require(FolderSyncFile.probe(path: url.path))
         }
         let cache = ScreenshotReadCache()
-        let first = ScreenshotMacReader.read(url, values: try write(1, modified: then), now: Date(), cache: cache)
-        let sameKey = ScreenshotMacReader.read(url, values: try write(2, modified: then), now: Date(), cache: cache)
+        let first = ScreenshotMacReader.read(url, entry: try write(1, modified: then), created: nil, now: Date(), cache: cache)
+        let sameKey = ScreenshotMacReader.read(url, entry: try write(2, modified: then), created: nil, now: Date(), cache: cache)
         #expect(first.sha256 != nil)
         #expect(sameKey.sha256 == first.sha256)
         #expect(cache.count == 1)
-        let changed = ScreenshotMacReader.read(url, values: try write(2, modified: then.addingTimeInterval(5)), now: Date(), cache: cache)
+        let changed = ScreenshotMacReader.read(url, entry: try write(2, modified: then.addingTimeInterval(5)), created: nil, now: Date(), cache: cache)
         #expect(changed.sha256 != first.sha256)
         cache.keep(paths: [])
         #expect(cache.count == 0)
+    }
+
+    @Test func stagingUsesTheSelectedMarkedBytesAndRejectsAReplacement() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("shots-stage-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("shot.png")
+        let selected = ScreenshotBytes.pngHeader(width: 2, height: 3)
+        try selected.write(to: source)
+        let mark = try PropertyListSerialization.data(fromPropertyList: true, format: .binary, options: 0)
+        try #require(mark.withUnsafeBytes {
+            setxattr(source.path, ScreenshotMac.screenCaptureAttribute, $0.baseAddress, $0.count, 0, 0)
+        } == 0)
+        let entry = try #require(FolderSyncFile.probe(path: source.path))
+        let candidate = ScreenshotMacReader.read(
+            source, entry: entry, created: nil, now: Date().addingTimeInterval(5)
+        )
+        let upload = ScreenshotUpload(
+            sourcePath: source.path, fileName: "screenshot_screen.png", day: "20261117",
+            segment: "133000_1", capturedAt: "2026-11-17T13:30:00Z", takenFrom: "platform",
+            hash: try #require(candidate.sha256)
+        )
+        let staged = dir.appendingPathComponent("correct")
+        #expect(ScreenshotMacReader.stage(upload, at: staged))
+        #expect(try Data(contentsOf: staged) == selected)
+        try ScreenshotBytes.pngHeader(width: 7, height: 8).write(to: source)
+        #expect(!ScreenshotMacReader.stage(upload, at: dir.appendingPathComponent("changed")))
+        try FileManager.default.removeItem(at: source)
+        try FileManager.default.createSymbolicLink(at: source, withDestinationURL: staged)
+        let symlinkStage = dir.appendingPathComponent("symlink")
+        #expect(!ScreenshotMacReader.stage(upload, at: symlinkStage))
+        #expect(!FileManager.default.fileExists(atPath: symlinkStage.path))
     }
 }
 
