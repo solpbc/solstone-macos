@@ -354,7 +354,7 @@ bundle-dist: unlock-signing signing-check $(BUNDLE_BUILD_TARGET)
 
 # The terminal helper is built from a pinned revision of the shared engine, with that
 # revision's own lockfile.
-TERMINAL_CRATE_REV := 15968d30112da51027d81a1f002b7ab6fb09dd38
+TERMINAL_CRATE_REV := 4321d1dec3a9d88baf013931bb5517b91b594ecb
 TERMINAL_RUST_TOOLCHAIN := 1.97.1
 TERMINAL_HELPER_DIR := .build/terminal-helper
 
