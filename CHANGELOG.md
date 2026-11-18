@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.72] - 2026-11-17
+
 ### Fixed
 
-- checking your screenshots folder no longer triggers iCloud downloads.
+- the solstone app no longer downloads screenshots from iCloud just to check your screenshots folder.
 
 ## [2.0.71] - 2026-11-16
 
