@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- if the solstone app closes just after taking in a few seconds that hold only activity, that activity now reaches your journal the next time the app opens. before, it stayed on this mac. thanks @dvanduzer.
 - a session named in `output_sessions`, such as an agent's, is no longer taken in again each time it writes something that leaves the screen as it was. before, a session left as it was overnight could come back in your journal as the same new memory, over and over. thanks @dvanduzer.
 - the solstone app now finds your journal on this mac when the folder name contains a backslash or double quote.
 

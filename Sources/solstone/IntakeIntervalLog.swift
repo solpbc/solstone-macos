@@ -82,14 +82,17 @@ final class IntakeIntervalLog: @unchecked Sendable {
         return screen
     }
 
+    /// `segmentSeconds` is the length the capture measured. A segment finished again after a
+    /// restart takes it when none of its media can say how long it was.
     @discardableResult
-    func write(into directory: URL) -> Bool {
+    func write(into directory: URL, segmentSeconds: Int? = nil) -> Bool {
         lock.lock()
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "audio": Self.encoded(audio),
             "screen": Self.encoded(screen),
         ]
         lock.unlock()
+        if let segmentSeconds, segmentSeconds > 0 { payload["segment_seconds"] = segmentSeconds }
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return false }
         let url = directory.appendingPathComponent(Self.fileName)
         do {
@@ -101,6 +104,15 @@ final class IntakeIntervalLog: @unchecked Sendable {
     }
 
     static let fileName = "intake-intervals.json"
+
+    /// The length the capture measured, or nil when the file, or the value, is missing or unusable.
+    static func segmentSeconds(directory: URL) -> Int? {
+        let url = directory.appendingPathComponent(fileName)
+        guard let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let seconds = root["segment_seconds"] as? Int, seconds > 0 else { return nil }
+        return seconds
+    }
 
     /// Nil when the file is missing or cannot be read. Either one contributes no time.
     static func read(directory: URL) -> (audio: [String: [(Double, Double)]], screen: [String: [(Double, Double)]])? {

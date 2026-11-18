@@ -230,7 +230,13 @@ public actor RemixQueue {
                 if let stamped = stampedOrphanDuration(in: files, timePrefix: job.timePrefix) {
                     resolved = await clampedSegmentDurationSeconds(TimeInterval(stamped))
                 }
-                else { resolved = await resolveOrphanDuration(candidates: screenCandidates + audioCandidates) }
+                else if let probed = await resolveOrphanDuration(candidates: screenCandidates + audioCandidates) {
+                    resolved = probed
+                } else if let recorded = IntakeIntervalLog.segmentSeconds(directory: job.segmentDirectory) {
+                    // A finished capture with no media left in it (desktop activity alone)
+                    // keeps the length its capture measured.
+                    resolved = await clampedSegmentDurationSeconds(TimeInterval(recorded))
+                } else { resolved = nil }
                 guard let resolved else {
                     await preserveTerminalFailure(job, stage: SegmentSetAsideStage.duration.rawValue, error: NSError(domain: "SolstoneSegmentDuration", code: 1),
                         sourceFiles: audioSourceFiles(in: files, timePrefix: job.timePrefix))

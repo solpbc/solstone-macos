@@ -147,6 +147,55 @@ struct AudioTerminalEvidenceTests {
         #expect(try await terminalDecode(final.appendingPathComponent("120000_1_audio.m4a")).count == 48_000 + (source["generated_frames"] as? Int ?? 0))
     }
 
+    @MainActor
+    @Test func finishedCaptureRecordsItsMeasuredLengthInTheIntervalsFile() async throws {
+        let root = try makeTempDirectory("audio-recorded-length")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("120000.incomplete")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let manager = PerSourceAudioManager(outputDirectory: dir, timePrefix: "120000")
+        let segment = SegmentWriter(outputDirectory: dir, timePrefix: "120000",
+            screenshotCapturerFactory: { _, _, _, _, _, _, _, _ in FakeScreenshotCapturer() },
+            audioManagerFactory: { _, _, _, _ in manager })
+        try await segment.start(sources: .screen, displayInfos: [DisplayInfo(displayID: 42, width: 100, height: 100,
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100))])
+        let result = try #require(await segment.finishCapture())
+        let measured = try #require(result.capturedDurationSeconds)
+        #expect(IntakeIntervalLog.segmentSeconds(directory: dir) == measured)
+    }
+
+    /// A capture finished, then the app went away before its folder was finalized, and nothing
+    /// but desktop activity was left in it. The restart finishes it with the measured length.
+    @Test(arguments: [true, false])
+    func recoveredSegmentWithOnlyDesktopActivityUsesTheRecordedLength(recorded: Bool) async throws {
+        let root = try makeTempDirectory("audio-activity-only-recovery")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("120000.incomplete")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let activity = Data(#"{"end_ts":1000,"kind":"activity","method":"nsworkspace","t":"desktop_activity","ts":0,"v":1}"#.utf8 + [0x0A])
+        let activityName = "_0b6f0e0c-6d1f-4c49-9d77-2f7f3c1e9a10_desktop_activity.jsonl"
+        try activity.write(to: dir.appendingPathComponent("120000\(activityName)"))
+        let log = IntakeIntervalLog()
+        #expect(log.write(into: dir, segmentSeconds: recorded ? 10 : nil))
+        let outcomes = LockedArray<String>([])
+        let queue = RemixQueue()
+        await queue.setOnSegmentComplete { _, outcome in
+            if case .failed(let stage) = outcome { outcomes.append(stage) } else { outcomes.append("kept") }
+        }
+        await queue.enqueue(.init(segmentDirectory: dir, timePrefix: "120000", capturedDurationSeconds: nil,
+            audioInputs: [], silenceMusic: true, micMetadataJSON: nil))
+        await queue.waitForCompletion()
+        if recorded {
+            #expect(outcomes.all == ["kept"])
+            let kept = root.appendingPathComponent("120000_10")
+            #expect(try Data(contentsOf: kept.appendingPathComponent("120000_10\(activityName)")) == activity)
+        } else {
+            // Without a measured length nothing is invented: the folder is set aside as before.
+            #expect(outcomes.all == [SegmentSetAsideStage.duration.rawValue])
+            #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("120000.failed/120000\(activityName)").path))
+        }
+    }
+
     @Test(arguments: ["invalid", "zero", "negative", "timeout", "throw"])
     func unusableDurationsPersistUnknownFailureWithoutChangingSourceBytes(kind: String) async throws {
         let root = try makeTempDirectory("audio-unusable-duration")

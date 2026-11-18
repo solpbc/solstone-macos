@@ -812,7 +812,7 @@ public final class SegmentWriter {
             }
         }
         intakeLog.endAll(at: HostClock.seconds(ticks: mach_absolute_time()))
-        intakeLog.write(into: outputDirectory)
+        intakeLog.write(into: outputDirectory, segmentSeconds: capturedDurationSeconds)
         siteFrameGate?.intakeLog = nil
         Logger.capture.info("Capture finished, queued for background remix: \(self.outputDirectory.lastPathComponent, privacy: .public)")
 
