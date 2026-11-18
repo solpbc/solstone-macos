@@ -36,6 +36,21 @@ struct OnDiskJournalDiscoveryTests {
         """) == nil)
     }
 
+    @Test func literalConfigFindsTheChosenFolderBeforeTheDefault() async {
+        let path = #"/Volumes/Archive/my\folder "2026""#
+        let raw = "# Setup\r\njournal = '\(path)' # chosen folder\r\n[other]\r\njournal = '/ignored'"
+        let config = FakeConfigReader(raw: raw)
+        let reader = FakeOnDiskJournalFileReader()
+        JournalEvidence.configDirectory.apply(to: reader, root: path)
+        reader.directories.formUnion([defaultJournalPath(), childPath(defaultJournalPath(), "config")])
+
+        let result = await discoverOnDiskJournal(configReader: config, fileReader: reader)
+        let ownRoots = await OwnJournalAccess.ownJournalRoots(configReader: config, savedPath: nil)
+
+        #expect(result == .found(path: path))
+        #expect(ownRoots.first == path)
+    }
+
     @Test func missingOrInvalidConfigFallsThroughToDefaultJournal() async {
         for raw in [nil, "junk", #"server = "https://example.invalid""#] {
             let reader = FakeOnDiskJournalFileReader()

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- the solstone app now finds your journal on this mac when the folder name contains a backslash or double quote.
+
 ## [2.0.72] - 2026-11-17
 
 ### Fixed

@@ -157,7 +157,7 @@ func discoverLocalJournalPanelModel(
 }
 
 func parseJournalPathFromConfigToml(_ raw: String) -> String? {
-    for rawLine in raw.split(separator: "\n", omittingEmptySubsequences: false) {
+    for rawLine in raw.split(whereSeparator: { $0 == "\n" || $0 == "\r\n" }) {
         let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
         if line.isEmpty || line.hasPrefix("#") {
             continue
@@ -177,7 +177,7 @@ func parseJournalPathFromConfigToml(_ raw: String) -> String? {
         }
 
         let value = parts[1].trimmingCharacters(in: .whitespaces)
-        guard let parsed = parseBasicTOMLString(value) else {
+        guard let parsed = parseTOMLPathString(value) else {
             return nil
         }
         return standardizedJournalPath(parsed)
@@ -221,8 +221,8 @@ func discoverOnDiskJournal(
     return .none
 }
 
-private func parseBasicTOMLString(_ value: String) -> String? {
-    guard value.first == "\"" else {
+private func parseTOMLPathString(_ value: String) -> String? {
+    guard let quote = value.first, quote == "\"" || quote == "'" else {
         return nil
     }
 
@@ -232,7 +232,7 @@ private func parseBasicTOMLString(_ value: String) -> String? {
 
     while index < value.endIndex {
         let character = value[index]
-        if character == "\\" {
+        if quote == "\"", character == "\\" {
             let escapeIndex = value.index(after: index)
             guard escapeIndex < value.endIndex else {
                 return nil
@@ -250,7 +250,7 @@ private func parseBasicTOMLString(_ value: String) -> String? {
             continue
         }
 
-        if character == "\"" {
+        if character == quote {
             index = value.index(after: index)
             closed = true
             break
@@ -265,7 +265,7 @@ private func parseBasicTOMLString(_ value: String) -> String? {
     }
 
     let trailing = value[index...].trimmingCharacters(in: .whitespaces)
-    guard trailing.isEmpty else {
+    guard !result.isEmpty, trailing.isEmpty || trailing.hasPrefix("#") else {
         return nil
     }
 
