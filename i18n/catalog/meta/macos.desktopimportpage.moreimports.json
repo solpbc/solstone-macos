@@ -1,0 +1,16 @@
+{
+  "description": "more imports",
+  "context": "Shown by Sources/solstone/DesktopImportPage.swift beside choose files. Opens the journal's own import page, with its other import kinds, in the app's journal window.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "7de9a06c950f205d3d25ee4d45bcb8a612a294696a1c7d90b271f33f63df7a82",
+  "risk": "routine",
+  "auto_merge": true
+}

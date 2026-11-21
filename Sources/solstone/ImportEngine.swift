@@ -96,8 +96,9 @@ actor ImportEngine {
 
     // MARK: - adding
 
-    /// Copies each file into the store before returning, one add at a time.
-    func add(_ urls: [URL]) async -> ImportAddResult {
+    /// Copies each file into the store before returning, one add at a time. A handoff from the
+    /// journal window is kept with each item and sent with its save.
+    func add(_ urls: [URL], handoff: ImportHandoff? = nil) async -> ImportAddResult {
         ensureStarted()
         if store.unreadable {
             return ImportAddResult(outcomes: urls.map { ($0.lastPathComponent, .refused(.noSpace)) })
@@ -108,7 +109,7 @@ actor ImportEngine {
             return await Task.detached {
                 importIntake(
                     urls, store: store, freeSpace: freeSpace, convertHEIC: convertHEIC,
-                    maxBytes: maxBytes, runningMarker: runningMarker
+                    maxBytes: maxBytes, runningMarker: runningMarker, handoff: handoff
                 )
             }.value
         }
@@ -121,6 +122,12 @@ actor ImportEngine {
         }
         intake = .finished(accepted: result.outcomes.count - refused.count, refused: refused)
         return result
+    }
+
+    /// Where a handed-over item is, for the journal window that handed it over.
+    func handoffStatus(_ id: String) -> ImportHandoffStatus {
+        ensureStarted()
+        return store.handoffStatus(id, missingCopyReason: MacStrings.macos_desktopimportpage_thecopyonthisdeviceismissing())
     }
 
     func dismissInterrupted() {
@@ -263,6 +270,7 @@ func importIntake(
     convertHEIC: (URL, URL) throws -> Void,
     maxBytes: Int64,
     runningMarker: URL,
+    handoff: ImportHandoff? = nil,
     copyChunk: Int = 64 * 1024,
     spaceCheckEvery: Int64 = 4 * 1024 * 1024
 ) -> ImportAddResult {
@@ -315,7 +323,7 @@ func importIntake(
 
     func publish(_ id: String, name: String, mime: String, payload: URL, abandon: (ImportIntakeRefusal) -> ImportAddOutcome) -> ImportAddOutcome {
         guard let size = (try? fm.attributesOfItem(atPath: payload.path))?[.size] as? NSNumber,
-              store.publish(id, displayName: name, mime: mime, size: size.int64Value) else { return abandon(.noSpace) }
+              store.publish(id, displayName: name, mime: mime, size: size.int64Value, handoff: handoff) else { return abandon(.noSpace) }
         return .added(id: id)
     }
 

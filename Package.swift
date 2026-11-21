@@ -111,7 +111,8 @@ let package = Package(
                 "Info.plist",
                 "entitlements.plist",
                 "app.solstone.observer.watchdog.plist",
-                "host-contract.provenance.json"
+                "host-contract.provenance.json",
+                "import-host-contract.provenance.json"
             ],
             resources: [
                 .process("Localization"),

@@ -724,6 +724,7 @@ internal final class JournalWindowWebViewSeam {
     private var lastLoadedGeneration: UInt64?
 
     var bindingCount: Int { bindings.count }
+    var currentBaseURL: URL? { session.currentBaseURL }
 
     init(
         session: JournalWindowSession,

@@ -11,7 +11,7 @@ internal enum JournalWebHostContract {
         case unsupported
     }
 
-    static func packagedBytes(appBundle: Bundle = .main) -> Data? {
+    static func packagedBytes(appBundle: Bundle = .main, resource: String = "host-contract") -> Data? {
         let resourceBundle: Bundle
         if appBundle.bundleURL.pathExtension.lowercased() == "app" {
             // Both app packaging routes put the SwiftPM bundle in Contents/Resources.
@@ -26,7 +26,7 @@ internal enum JournalWebHostContract {
             resourceBundle = .module
         }
         guard let url = resourceBundle.url(
-            forResource: "host-contract",
+            forResource: resource,
             withExtension: "json",
             subdirectory: "Resources"
         ) else {

@@ -46,6 +46,7 @@ struct JournalWindowSceneRoot: View {
     private let settingsRouter: JournalWindowSession.SettingsRouter?
     private let openExternalURL: JournalWindowExternalURLOpener
     private let websiteDataStore: JournalWindowWebsiteDataStoreProvider
+    private let importIntake: @MainActor () -> (any JournalImportIntake)?
     @Environment(\.openWindow) private var openWindow
 
     init(
@@ -60,9 +61,11 @@ struct JournalWindowSceneRoot: View {
         },
         websiteDataStore: @escaping JournalWindowWebsiteDataStoreProvider = {
             JournalWindowWebsiteDataStore.sharedNonPersistent
-        }
+        },
+        importIntake: (@MainActor () -> (any JournalImportIntake)?)? = nil
     ) {
         self.appState = appState
+        self.importIntake = importIntake ?? { [appState] in appState.importSource }
         self.resolveHomeBase = resolveHomeBase ?? { [appState] in
             await appState.resolveJournalWindowBase()
         }
@@ -123,7 +126,8 @@ struct JournalWindowSceneRoot: View {
                             !appState.tunnelLifecycleOwner.ordinaryRouteRevoked
                     },
                     openExternalURL: openExternalURL,
-                    websiteDataStore: websiteDataStore
+                    websiteDataStore: websiteDataStore,
+                    importIntake: importIntake
                 )
             } else {
                 Color.clear
@@ -172,6 +176,7 @@ private struct JournalWindowView: View {
     let routeRevoked: Bool
     let openExternalURL: JournalWindowExternalURLOpener
     let websiteDataStore: JournalWindowWebsiteDataStoreProvider
+    let importIntake: @MainActor () -> (any JournalImportIntake)?
     @State private var session: JournalWindowSession
 
     init(
@@ -185,13 +190,15 @@ private struct JournalWindowView: View {
         openSettings: @escaping JournalWindowSession.SettingsRouter,
         routeAuthority: @escaping JournalWindowSession.RouteAuthorityProvider,
         openExternalURL: @escaping JournalWindowExternalURLOpener,
-        websiteDataStore: @escaping JournalWindowWebsiteDataStoreProvider
+        websiteDataStore: @escaping JournalWindowWebsiteDataStoreProvider,
+        importIntake: @escaping @MainActor () -> (any JournalImportIntake)?
     ) {
         self.intent = intent
         self.homeBaseChangeToken = homeBaseChangeToken
         self.routeRevoked = routeRevoked
         self.openExternalURL = openExternalURL
         self.websiteDataStore = websiteDataStore
+        self.importIntake = importIntake
         _session = State(
             initialValue: JournalWindowSession(
                 resolveHomeBase: resolveHomeBase,
@@ -211,7 +218,8 @@ private struct JournalWindowView: View {
                     session: session,
                     loadCommand: session.loadCommand,
                     openExternalURL: openExternalURL,
-                    websiteDataStore: websiteDataStore
+                    websiteDataStore: websiteDataStore,
+                    importIntake: importIntake
                 )
             }
 
@@ -315,13 +323,17 @@ struct JournalWebView: NSViewRepresentable {
     let loadCommand: JournalWindowLoadCommand?
     let openExternalURL: JournalWindowExternalURLOpener
     let websiteDataStore: JournalWindowWebsiteDataStoreProvider
+    var importIntake: @MainActor () -> (any JournalImportIntake)? = { nil }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(session: session, openExternalURL: openExternalURL)
+        Coordinator(session: session, openExternalURL: openExternalURL, importIntake: importIntake)
     }
 
     func makeNSView(context: Context) -> WKWebView {
-        let webView = WKWebView(frame: .zero, configuration: Self.makeConfiguration(dataStore: websiteDataStore()))
+        let configuration = Self.makeConfiguration(dataStore: websiteDataStore(), importHost: context.coordinator.importHost)
+        let webView = JournalDropWebView(frame: .zero, configuration: configuration)
+        webView.importHost = context.coordinator.importHost
+        context.coordinator.importHost?.webView = webView
         webView.setAccessibilityIdentifier(AXID.Journal.Browser.webView)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
@@ -348,18 +360,25 @@ struct JournalWebView: NSViewRepresentable {
         webView.stopLoading()
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
+        webView.configuration.userContentController.removeAllScriptMessageHandlers()
         coordinator.tearDown()
     }
 
     static func makeConfiguration(
         dataStore: WKWebsiteDataStore,
         hostContractBytes: Data? = JournalWebHostContract.packagedBytes(),
-        logSink: any ClassifiedLogSinking = LoggerClassifiedLogSink.journal
+        logSink: any ClassifiedLogSinking = LoggerClassifiedLogSink.journal,
+        importHost: JournalImportHost? = nil
     ) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         configuration.userContentController = WKUserContentController()
         configuration.userContentController.removeAllUserScripts()
+        if let importHost {
+            // Page world, so the journal page can reach it; the host answers only the top
+            // document on the live origin, and its script is installed per load for that origin.
+            configuration.userContentController.addScriptMessageHandler(importHost, contentWorld: .page, name: JournalImportHost.handlerName)
+        }
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.allowsAirPlayForMediaPlayback = false
@@ -374,20 +393,28 @@ struct JournalWebView: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let seam: JournalWindowWebViewSeam
         let panels = JournalWebPanels()
+        let importHost: JournalImportHost?
         private var pendingLoadGeneration: UInt64?
         private var isTornDown = false
 
         init(
             session: JournalWindowSession,
-            openExternalURL: @escaping JournalWindowExternalURLOpener
+            openExternalURL: @escaping JournalWindowExternalURLOpener,
+            importIntake: @escaping @MainActor () -> (any JournalImportIntake)? = { nil },
+            importContract: JournalImportContract? = JournalImportContract.packaged()
         ) {
-            seam = JournalWindowWebViewSeam(session: session, openExternalURL: openExternalURL)
+            let seam = JournalWindowWebViewSeam(session: session, openExternalURL: openExternalURL)
+            self.seam = seam
+            importHost = importContract.map { contract in
+                JournalImportHost(contract: contract, intake: importIntake, liveBaseURL: { [weak seam] in seam?.currentBaseURL })
+            }
         }
 
         func tearDown() {
             isTornDown = true
             panels.tearDown()
             seam.tearDown()
+            importHost?.tearDown()
         }
 
         /// Every app-initiated load first sets the loopback capability cookie in
@@ -404,6 +431,7 @@ struct JournalWebView: NSViewRepresentable {
                       self.pendingLoadGeneration == command.generation
                 else { return }
                 logJournalWindowLoad(command.url)
+                self.importHost?.install(on: webView.configuration.userContentController, for: command.baseURL)
                 let navigation = webView.load(URLRequest(url: command.url))
                 self.seam.registerAppInitiatedLoad(navigation: navigation, generation: command.generation)
             }
@@ -450,6 +478,7 @@ struct JournalWebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            importHost?.mainFrameCommitted()
             seam.didCommit(navigation: navigation, committedDocumentURL: webView.url)
         }
 
@@ -532,6 +561,29 @@ struct JournalWebView: NSViewRepresentable {
             case .cancelled:
                 return nil
             }
+        }
+
+        /// A file input on a journal page, for a journal without the import handoff and for the
+        /// folder chooser that grants the journal a folder.
+        func webView(
+            _ webView: WKWebView,
+            runOpenPanelWith parameters: WKOpenPanelParameters,
+            initiatedByFrame frame: WKFrameInfo
+        ) async -> [URL]? {
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            panel.canChooseDirectories = parameters.allowsDirectories
+            panel.canChooseFiles = !parameters.allowsDirectories
+            panel.resolvesAliases = true
+            let response: NSApplication.ModalResponse
+            if let window = webView.window {
+                response = await panel.beginSheetModal(for: window)
+            } else {
+                response = await withCheckedContinuation { continuation in
+                    panel.begin { continuation.resume(returning: $0) }
+                }
+            }
+            return response == .OK ? panel.urls : nil
         }
 
         private func loadInCurrentWindow(_ command: JournalWindowLoadCommand, webView: WKWebView) {

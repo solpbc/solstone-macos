@@ -124,8 +124,8 @@ private func settle(
     journalVersion: String
 ) -> ImportItemStep {
     switch outcome {
-    case .delivered:
-        _ = store.recordDelivered(id, instance: instance)
+    case .delivered(let importID):
+        _ = store.recordDelivered(id, instance: instance, importID: importID)
         return .done
     case .needsAttention(let error, let reasonCode, let kind):
         _ = store.recordAttention(id, error: error, reasonCode: reasonCode ?? "", kind: kind, instance: instance, journalVersion: journalVersion)
@@ -147,7 +147,8 @@ private func settle(
 struct ImportLiveTransport: ImportTransport {
     static let savePath = "/app/import/api/save"
     static let startPath = "/app/import/api/start"
-    static let importedVia = "desktop"
+    /// The journal labels the import's origin from this; older journals show no label for it.
+    static let importedVia = "macos"
     static let chunkSize = 64 * 1024
 
     func save(_ item: ImportItemDescriptor, serverURL: String) async -> ImportOutcome {
@@ -202,6 +203,14 @@ struct ImportMultipartBody: Sendable {
         let mime = item.mime.filter { $0 != "\r" && $0 != "\n" }
         var head = "--\(boundary)\r\nContent-Disposition: form-data; name=\"client_item_id\"\r\n\r\n\(item.id)\r\n"
         head += "--\(boundary)\r\nContent-Disposition: form-data; name=\"imported_via\"\r\n\r\n\(ImportLiveTransport.importedVia)\r\n"
+        if let handoff = item.handoff {
+            func field(_ name: String, _ value: String) -> String {
+                "--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n"
+            }
+            head += field("area", handoff.area)
+            if !ImportHandoff.unhintedAreas.contains(handoff.area) { head += field("source_hint", handoff.area) }
+            head += field("context", handoff.context)
+        }
         head += "--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n"
         if !mime.isEmpty { head += "Content-Type: \(mime)\r\n" }
         head += "\r\n"

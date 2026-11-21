@@ -92,6 +92,18 @@ final class ImportSource {
         return result
     }
 
+    /// Files the journal window handed over: kept with the page's area and context.
+    func addHandedOver(_ urls: [URL], handoff: ImportHandoff) async -> ImportAddResult {
+        let result = await engine.add(urls, handoff: handoff)
+        await refresh(sending: false)
+        nudge()
+        return result
+    }
+
+    func handoffStatus(_ id: String) async -> ImportHandoffStatus {
+        await engine.handoffStatus(id)
+    }
+
     @discardableResult
     func retry(_ id: String) async -> ImportActionResult {
         let result = await engine.retry(id)

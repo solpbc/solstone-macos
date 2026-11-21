@@ -832,11 +832,12 @@ macos.desktopglance.connected = connected ·{ $slot0 }{ $value0 }
 
 macos.desktopglance.connectedallcaughtup = connected · all caught up
 
-macos.desktopimportpage.addspdfsaudioimagesandtextyouchoosehereordrop = adds PDFs, audio, images and text you choose here or drop on this window.
+macos.desktopimportpage.addspdfsaudioimagesandtextyouchoosehereordrop = adds files you choose here or drop on this window.
 
 macos.desktopimportpage.checkingyourjournal = checking your journal.
 
 macos.desktopimportpage.choosefiles = choose files…
+macos.desktopimportpage.moreimports = more imports
 
 macos.desktopimportpage.couldntreadimportsonthisdevicenothinghasbeenr = couldn't read imports on this device. nothing has been removed. restart the solstone app to try again.
 
@@ -2257,3 +2258,4 @@ macos.shared.sa4time = { $detail } · { $relative }
 macos.shared.sa4state = { $detail } · { $state }
 
 macos.shared.sa4statetime = { $state } · { $relative }
+macos.journalimporthost.allfiles = all files

@@ -15,7 +15,7 @@ private final class FakeImportTransport: ImportTransport, @unchecked Sendable {
     private(set) var saveCalls: [String] = []
     private(set) var startCalls: [String] = []
     var defaultSave: ImportOutcome = .saved(path: "/journal/imports/x/p", timestamp: "20261111_120000")
-    var defaultStart: ImportOutcome = .delivered
+    var defaultStart: ImportOutcome = .delivered(importID: "20261111_120000")
     private var hold: CheckedContinuation<Void, Never>?
     private var holdNext = false
     private var heldStarted: CheckedContinuation<Void, Never>?
@@ -125,25 +125,23 @@ struct ImportEngineTests {
         #expect(importVersionGate(nil) == .unknown)
     }
 
-    @Test func typesFollowWhatTheJournalImports() {
+    @Test func everyFileIsTakenAndTheJournalDecidesWhatItIs() {
         #expect(importIntakeDecision(.pdf) == .accept(mime: "application/pdf"))
         #expect(importIntakeDecision(.plainText) == .accept(mime: "text/plain"))
-        #expect(importIntakeDecision(.png) == .accept(mime: "image/png"))
-        #expect(importIntakeDecision(.jpeg) == .accept(mime: "image/jpeg"))
-        #expect(importIntakeDecision(.webP) == .accept(mime: "image/webp"))
-        #expect(importIntakeDecision(.gif) == .accept(mime: "image/gif"))
-        #expect(importIntakeDecision(.mp3) != .refuse(.unsupportedType))
         #expect(importIntakeDecision(.heic) == .convertToJPEG)
-        for refused: UTType in [.tiff, .bmp, .svg, .mpeg4Movie, .quickTimeMovie, .html] {
-            #expect(importIntakeDecision(refused) == .refuse(.unsupportedType), "\(refused.identifier)")
+        #expect(importIntakeDecision(.zip) == .accept(mime: "application/zip"))
+        for type: UTType in [.tiff, .svg, .mpeg4Movie, .quickTimeMovie, .html, .zip] {
+            if case .accept = importIntakeDecision(type) {} else { Issue.record("\(type.identifier) refused") }
         }
-        #expect(importIntakeDecision(UTType(filenameExtension: "md")) == .refuse(.unsupportedType))
+        #expect(importIntakeDecision(nil) == .accept(mime: "application/octet-stream"))
     }
 
     @Test func namesKeepTheirKindAndFitTheJournal() {
         #expect(importIntakeName("scan", mime: "application/pdf") == "scan.pdf")
         #expect(importIntakeName("photo.heic", mime: "image/heic", convertedToJPEG: true) == "photo.jpg")
         #expect(importIntakeName(nil, mime: "text/plain") == "file.txt")
+        #expect(importIntakeName("extensionless", mime: "application/octet-stream") == "extensionless")
+        #expect(importIntakeName("conversations.zip", mime: "application/zip") == "conversations.zip")
         let long = String(repeating: "é", count: 70) + ".pdf"
         let wire = importWireFilename(long)
         #expect(wire.utf8.count <= 128)
@@ -167,10 +165,10 @@ struct ImportEngineTests {
         if case .saved = try answer("save_staged_200", .save) {} else { Issue.record("save_staged_200") }
         if case .saved = try answer("save_replay_200", .save) {} else { Issue.record("save_replay_200") }
         for name in ["start_queued_200", "start_inprocess_200", "start_queued_replay_200", "start_inprocess_replay_200"] {
-            #expect(try answer(name, .start) == .delivered, "\(name)")
+            if case .delivered(let row) = try answer(name, .start) { #expect(row?.isEmpty == false, "\(name)") } else { Issue.record("\(name)") }
         }
-        #expect(try answer("save_already_imported_400", .save) == .delivered)
-        #expect(try answer("start_already_imported_400", .start) == .delivered)
+        if case .delivered = try answer("save_already_imported_400", .save) {} else { Issue.record("save already imported") }
+        if case .delivered = try answer("start_already_imported_400", .start) {} else { Issue.record("start already imported") }
         if case .needsAttention = try answer("save_client_item_conflict_400", .save) {} else { Issue.record("conflict kept") }
         if case .needsAttention = try answer("start_nothing_to_import_409", .start) {} else { Issue.record("nothing to import") }
     }
@@ -216,7 +214,7 @@ struct ImportEngineTests {
         #expect(largestRead <= 4096)
         let text = String(decoding: out.prefix(400), as: UTF8.self)
         #expect(text.contains("name=\"client_item_id\"\r\n\r\nabc\r\n"))
-        #expect(text.contains("name=\"imported_via\"\r\n\r\ndesktop\r\n"))
+        #expect(text.contains("name=\"imported_via\"\r\n\r\nmacos\r\n"))
         #expect(text.contains("filename=\"ab.pdf\""))
         #expect(out.range(of: bytes) != nil)
     }
@@ -376,7 +374,7 @@ struct ImportEngineTests {
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(id).path))
     }
 
-    @Test func addsRefuseWhatTheJournalCantTakeAndLeaveNothingBehind() async throws {
+    @Test func addsTakeAnyFileRefuseWhatCantBeHeldAndLeaveNothingBehind() async throws {
         let dir = try tempDir("add")
         let root = dir.appendingPathComponent("store")
         let transport = FakeImportTransport()
@@ -385,17 +383,17 @@ struct ImportEngineTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let result = await engine.add([
             try file(dir, "ok.txt", "small"),
-            try file(dir, "movie.mov"),
+            try file(dir, "movie.mov", "mov"),
             folder,
             try file(dir, "big.pdf", "much more than eight bytes"),
-            try file(dir, "notes.md"),
+            try file(dir, "notes.md", "md"),
         ])
         #expect(result.outcomes.map(\.name) == ["ok.txt", "movie.mov", "folder", "big.pdf", "notes.md"])
         if case .added = result.outcomes[0].outcome {} else { Issue.record("text added") }
-        #expect(result.outcomes[1].outcome == .refused(.unsupportedType))
+        if case .added = result.outcomes[1].outcome {} else { Issue.record("movie added") }
         #expect(result.outcomes[2].outcome == .refused(.unsupportedType))
         #expect(result.outcomes[3].outcome == .refused(.tooLarge))
-        #expect(result.outcomes[4].outcome == .refused(.unsupportedType))
+        if case .added = result.outcomes[4].outcome {} else { Issue.record("markdown added") }
         let staging = (try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(".staging").path)) ?? []
         #expect(staging.isEmpty)
 

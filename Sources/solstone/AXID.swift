@@ -27,6 +27,7 @@ enum AXID {
         static let importTile = "settings.deck.import"
         static let importPage = "settings.deck.import.page"
         static let importChoose = "settings.deck.import.choose"
+        static let importMore = "settings.deck.import.more"
         static let importRecent = "settings.deck.import.recent"
         static let importIntake = "settings.deck.import.intake"
         static let importStatusRow = "settings.deck.status.import"

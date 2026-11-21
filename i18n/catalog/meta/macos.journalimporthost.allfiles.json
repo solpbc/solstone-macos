@@ -1,0 +1,16 @@
+{
+  "description": "all files",
+  "context": "Shown by Sources/solstone/JournalImportHost.swift as the second item of the file picker's show menu, after the system's names for the file types the journal page suggested. Choosing it shows every file.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "f48d3b266c6a9703d2fcac110548419a52cc2842b9bd528af05294bd6ce1a390",
+  "risk": "routine",
+  "auto_merge": true
+}

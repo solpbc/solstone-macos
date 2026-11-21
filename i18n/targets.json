@@ -1089,7 +1089,9 @@
       "macos.shared.sa4state",
       "macos.shared.sa4statetime",
       "macos.shared.sa4time",
-      "macos.shared.sa5"
+      "macos.shared.sa5",
+      "macos.desktopimportpage.moreimports",
+      "macos.journalimporthost.allfiles"
     ],
     "SetupChrome": [
       "macos.accessibility.downloadaction",

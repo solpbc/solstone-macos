@@ -48,7 +48,7 @@ func importVersionGate(_ version: String?) -> ImportVersionGate {
 // MARK: - what may be added
 
 enum ImportIntakeRefusal: Equatable, Sendable {
-    /// Video, or a type the journal doesn't import.
+    /// Not a file: a folder.
     case unsupportedType
     /// A HEIC photo this Mac couldn't convert.
     case cannotConvert
@@ -71,20 +71,12 @@ let importMaxBytes: Int64 = 4 * 1024 * 1024 * 1024
 /// Space that must stay free after a copy, so an import never starves capture of room.
 let importMinFreeBytes: Int64 = 256 * 1024 * 1024
 
-/// PDF, any audio, plain text and the journal's images are taken; HEIC/HEIF is converted to JPEG;
-/// everything else, video included, is refused. Plain text means plain text, not Markdown or code,
-/// and images mean exactly the four the journal reads as images.
+/// Every file is taken: the journal decides what a file is. A HEIC/HEIF photo is converted to
+/// JPEG so the journal dates it by when it was taken; anything else keeps its own type, and a
+/// type this Mac can't name goes as `application/octet-stream`.
 func importIntakeDecision(_ type: UTType?) -> ImportIntakeDecision {
-    guard let type else { return .refuse(.unsupportedType) }
-    if type == .pdf { return .accept(mime: "application/pdf") }
-    if type == .plainText || type == .utf8PlainText { return .accept(mime: "text/plain") }
-    if type.conforms(to: .audio) { return .accept(mime: type.preferredMIMEType ?? "audio/mpeg") }
-    if type == .png { return .accept(mime: "image/png") }
-    if type == .jpeg { return .accept(mime: "image/jpeg") }
-    if type == .webP { return .accept(mime: "image/webp") }
-    if type == .gif { return .accept(mime: "image/gif") }
-    if type == .heic || type == .heif { return .convertToJPEG }
-    return .refuse(.unsupportedType)
+    if let type, type == .heic || type == .heif { return .convertToJPEG }
+    return .accept(mime: type?.preferredMIMEType ?? "application/octet-stream")
 }
 
 private let importExtensionForMime: [String: String] = [
@@ -96,18 +88,20 @@ private let importExtensionForMime: [String: String] = [
 ]
 
 /// The name an item is sent under. The journal decides an item's kind from its extension, so a
-/// name without one gets one from its type, and a converted HEIC photo is sent as `.jpg`.
+/// name without one gets one from a type this Mac knows the extension of, and a converted HEIC
+/// photo is sent as `.jpg`.
 func importIntakeName(_ displayName: String?, mime: String, convertedToJPEG: Bool = false) -> String {
     let sendMime = convertedToJPEG ? "image/jpeg" : mime.split(separator: ";").first.map { $0.trimmingCharacters(in: .whitespaces).lowercased() } ?? ""
-    let fallback = String(sendMime.split(separator: "/").last ?? "").filter { $0.isLetter || $0.isNumber }
-    let wanted = importExtensionForMime[sendMime] ?? (fallback.isEmpty ? "bin" : fallback)
+    // Only a type with a known extension gets one; any other name is sent as the owner named it.
+    let wanted = importExtensionForMime[sendMime]
     let base = (displayName ?? "").split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init)?
         .trimmingCharacters(in: .whitespaces) ?? ""
-    if base.isEmpty { return "file.\(wanted)" }
+    if base.isEmpty { return wanted.map { "file.\($0)" } ?? "file" }
     let dot = base.lastIndex(of: ".")
     let hasExtension = dot.map { $0 > base.startIndex && base.index(after: $0) < base.endIndex } ?? false
     if convertedToJPEG { return (hasExtension ? String(base[..<dot!]) : base) + ".jpg" }
-    return hasExtension ? base : "\(base).\(wanted)"
+    guard !hasExtension, let wanted else { return base }
+    return "\(base).\(wanted)"
 }
 
 /// The filename in the save's `file` part: its last path component, without the characters a
@@ -146,11 +140,35 @@ func importWireFilename(_ raw: String) -> String {
     return kept
 }
 
+// MARK: - an import the journal window handed over
+
+/// What the journal's import page said about the files it handed to this app: the import area
+/// and the context object, kept as JSON text exactly as it will be sent, so nested keys the app
+/// doesn't know survive the queue.
+struct ImportHandoff: Codable, Equatable, Sendable {
+    var area: String
+    var context: String
+
+    /// Areas that are a way of adding, not a kind of file, so they carry no source hint.
+    static let unhintedAreas: Set<String> = ["quick", "recording"]
+}
+
+/// Where one handed-over item is, for the page that handed it over.
+enum ImportHandoffStatus: Equatable, Sendable {
+    case waiting
+    case uploading
+    case attention(reason: String, importID: String?)
+    case delivered(importID: String?)
+    /// Removed, or delivered and no longer remembered.
+    case gone
+}
+
 // MARK: - the journal's answers
 
 enum ImportOutcome: Equatable, Sendable {
     case saved(path: String, timestamp: String)
-    case delivered
+    /// The journal has it, under this import row when its answer named one.
+    case delivered(importID: String?)
     case authStop
     /// Try again later. `cause` is a closed token: `io-<kind>`, `http-<status>`,
     /// `unreadable-answer`, `answer-<word>`, `loopback-refused`.
@@ -188,7 +206,7 @@ func classifyImportResponse(
         case .start:
             if word == "ok", let task = root["task_id"] as? String, !task.isEmpty,
                let importID = root["import_id"] as? String, !importID.isEmpty {
-                return .delivered
+                return .delivered(importID: importID)
             }
             return .retry(cause: importUnexpectedAnswer(word, expected: "ok"))
         }
@@ -198,7 +216,7 @@ func classifyImportResponse(
         return .needsAttention(error: importGenericRefusal, reasonCode: nil, kind: nil)
     }
     if status == 400, root["reason_code"] as? String == "invalid_operation_for_state", root["kind"] as? String == "already_imported" {
-        return .delivered
+        return .delivered(importID: (root["import_id"] as? String).flatMap { $0.isEmpty ? nil : $0 })
     }
     if let error = root["error"] as? String, let reasonCode = root["reason_code"] as? String {
         return .needsAttention(

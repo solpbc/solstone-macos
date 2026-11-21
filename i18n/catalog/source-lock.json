@@ -3181,7 +3181,7 @@
     },
     {
       "id": "macos.desktopimportpage.addspdfsaudioimagesandtextyouchoosehereordrop",
-      "source": "a6083025abbd13f0f4780213aca41257368e33e39e77c49c8a8c6eb9808f614f",
+      "source": "1fca46da0c96f975510fee5544da80d15e9a6a4f739b827621d0710a7543f1f7",
       "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
       "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
       "locales": []
@@ -3280,6 +3280,13 @@
     {
       "id": "macos.desktopimportpage.itssendingnowsonothingchanged",
       "source": "8633ff2c4258780054697aa0ff5a4211ae41c536b17c8b426f20c21cc7f10224",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.desktopimportpage.moreimports",
+      "source": "7de9a06c950f205d3d25ee4d45bcb8a612a294696a1c7d90b271f33f63df7a82",
       "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
       "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
       "locales": []
@@ -4099,6 +4106,13 @@
     {
       "id": "macos.info.nssystemaudiorecordingusagedescription",
       "source": "3cad74fd1f0dee4b9f1b2429a347722fff8e231a2721a20ecd42b34484c7ce09",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.journalimporthost.allfiles",
+      "source": "f48d3b266c6a9703d2fcac110548419a52cc2842b9bd528af05294bd6ce1a390",
       "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
       "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
       "locales": []

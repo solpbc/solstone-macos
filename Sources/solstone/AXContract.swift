@@ -30,6 +30,7 @@ enum AXContract {
         AXID.Deck.importTile,
         AXID.Deck.importPage,
         AXID.Deck.importChoose,
+        AXID.Deck.importMore,
         AXID.Deck.importRecent,
         AXID.Deck.importIntake,
         AXID.Deck.importStatusRow,

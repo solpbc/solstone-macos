@@ -4267,7 +4267,7 @@
         "en-US": {
           "stringUnit": {
             "state": "translated",
-            "value": "adds PDFs, audio, images and text you choose here or drop on this window."
+            "value": "adds files you choose here or drop on this window."
           }
         }
       }
@@ -10474,6 +10474,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "also on"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f727473": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "more imports"
+          }
+        }
+      }
+    },
+    "m6d61636f732e6a6f75726e616c696d706f7274686f73742e616c6c66696c6573": {
+      "localizations": {
+        "en-US": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "all files"
           }
         }
       }

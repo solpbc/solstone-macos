@@ -4972,4 +4972,14 @@ nonisolated enum MacStrings {
     static func macos_shared_sa5() -> String {
         render("m6d61636f732e7368617265642e736135", [])
     }
+
+    @usableFromInline
+    static func macos_desktopimportpage_moreimports() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f727473", [])
+    }
+
+    @usableFromInline
+    static func macos_journalimporthost_allfiles() -> String {
+        render("m6d61636f732e6a6f75726e616c696d706f7274686f73742e616c6c66696c6573", [])
+    }
 }

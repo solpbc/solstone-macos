@@ -2340,7 +2340,14 @@ public final class AppState {
     /// for the mark answer like everything else that sends; the mark check itself uses
     /// `resolveHomeBase` and is never held by this.
     internal func resolveJournalWindowBase() async -> ResolvedHomeBase {
-        Self.journalWindowBase(
+        #if DEBUG || SOLSTONE_TEST_SUPPORT
+        // Test host only, compiled out of production: runs a fixture page, such as the journal's
+        // import host conformance kit, through the real journal window.
+        if let fixture = ProcessInfo.processInfo.environment["SOLSTONE_JOURNAL_WINDOW_FIXTURE_URL"], !fixture.isEmpty {
+            return .url(fixture)
+        }
+        #endif
+        return Self.journalWindowBase(
             homeBase: await resolveHomeBase(),
             tunnelManaged: tunnelLifecycleOwner.isTunnelManaged,
             pairingHeld: tunnelLifecycleOwner.cachedJournalMarkIdentity != nil,
@@ -3578,6 +3585,18 @@ public final class AppState {
             destination: destination
         )
         NotificationCenter.default.post(name: .openJournalWindow, object: nil)
+    }
+
+    /// `more imports`: the journal's own import page, in the app's journal window, the same Mac's
+    /// journal included. Only the older saved-address setup, which has no tunnel, uses the browser.
+    public func openJournalImportPage() {
+        guard let destination = JournalWindowDestination(path: "/app/import/") else { return }
+        if tunnelLifecycleOwner.sameMachineStoredPairingState == .noneHeld,
+           BundledJournalEndpoint.isBundledServiceURL(config.serverURL) {
+            openSameMacJournalInBrowser(destination)
+        } else {
+            openJournalWindowDirectly(destination)
+        }
     }
 
     public func openJournalWindowDirectly(_ destination: JournalWindowDestination = .root) {

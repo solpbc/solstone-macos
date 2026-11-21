@@ -55,6 +55,7 @@ struct ImportItemDescriptor: Equatable, Sendable {
     var displayName: String
     var mime: String
     var size: Int64
+    var handoff: ImportHandoff?
 }
 
 /// One item's record. Field for field the Android app's import row.
@@ -78,6 +79,8 @@ struct ImportItemRecord: Codable, Equatable, Sendable {
     var attentionKind: String?
     var attentionInstanceID: String?
     var attentionJournalVersion: String?
+    /// Set when the journal window handed this item over, and sent with its save.
+    var handoff: ImportHandoff?
 
     var isJournalAttention: Bool {
         state == "attention" && attentionInstanceID != nil && attentionJournalVersion != nil
@@ -117,6 +120,10 @@ final class ImportCustodyStore: @unchecked Sendable {
     private var file = ImportCustodyFile()
     private var inFlight: Set<String> = []
     private var stagedKinds: [String: String] = [:]
+    /// Handed-over items this launch delivered, newest last, with the journal row each became.
+    /// The record itself is deleted on delivery; this is what the journal window still asks about.
+    private var receipts: [(id: String, importID: String?)] = []
+    private static let receiptLimit = 1024
     private(set) var unreadable = false
 
     private var recordURL: URL { root.appendingPathComponent("custody.json") }
@@ -217,7 +224,7 @@ final class ImportCustodyStore: @unchecked Sendable {
 
     /// Makes a staged add real: flush its copy and folder, move the folder into place, flush the
     /// path down to the store, then write its record. All under the lock, with nothing between.
-    func publish(_ id: String, displayName: String, mime: String, size: Int64) -> Bool {
+    func publish(_ id: String, displayName: String, mime: String, size: Int64, handoff: ImportHandoff? = nil) -> Bool {
         lock.withLock {
             guard !unreadable, !isUnsafeID(id), let kind = stagedKinds[id] else { return false }
             let staging = stagingRoot.appendingPathComponent(id, isDirectory: true)
@@ -238,7 +245,7 @@ final class ImportCustodyStore: @unchecked Sendable {
                     state: "pending", createdAt: clock(), progressPath: nil, progressTimestamp: nil,
                     progressInstanceID: nil, backoffInstanceID: nil, attemptCount: 0, nextAttemptAt: nil,
                     attentionError: nil, attentionReasonCode: nil, attentionKind: nil,
-                    attentionInstanceID: nil, attentionJournalVersion: nil
+                    attentionInstanceID: nil, attentionJournalVersion: nil, handoff: handoff
                 )
                 guard record(id) == nil else {
                     stagedKinds[id] = nil
@@ -388,7 +395,7 @@ final class ImportCustodyStore: @unchecked Sendable {
         }
     }
 
-    func recordDelivered(_ id: String, instance: String) -> ImportChange {
+    func recordDelivered(_ id: String, instance: String, importID: String? = nil) -> ImportChange {
         lock.withLock {
             defer { inFlight.remove(id) }
             guard let row = record(id) else { return .gone }
@@ -399,7 +406,29 @@ final class ImportCustodyStore: @unchecked Sendable {
             next.items[index].state = "delivered"
             next.lastDeliveredAt = clock()
             next.lastDeliveredInstance = instance
-            return persist(next) ? .done : .refused
+            guard persist(next) else { return .refused }
+            if row.handoff != nil {
+                if receipts.count >= Self.receiptLimit { receipts.removeFirst() }
+                receipts.append((id, importID ?? row.progressTimestamp))
+            }
+            return .done
+        }
+    }
+
+    /// Where a handed-over item is, for the journal window that handed it over.
+    func handoffStatus(_ id: String, missingCopyReason: String) -> ImportHandoffStatus {
+        lock.withLock {
+            if let receipt = receipts.last(where: { $0.id == id }) { return .delivered(importID: receipt.importID) }
+            guard !isUnsafeID(id), let row = record(id) else { return .gone }
+            if row.state == "delivered" { return .delivered(importID: row.progressTimestamp) }
+            if inFlight.contains(id) { return .uploading }
+            if row.state == "attention" {
+                if row.isJournalAttention {
+                    return .attention(reason: row.attentionError ?? importGenericRefusal, importID: row.progressTimestamp)
+                }
+                return .attention(reason: missingCopyReason, importID: nil)
+            }
+            return .waiting
         }
     }
 
@@ -513,7 +542,7 @@ final class ImportCustodyStore: @unchecked Sendable {
             return ImportItemDescriptor(
                 id: row.id,
                 payloadURL: root.appendingPathComponent(row.id, isDirectory: true).appendingPathComponent("payload"),
-                displayName: row.displayName, mime: row.mime, size: row.byteSize
+                displayName: row.displayName, mime: row.mime, size: row.byteSize, handoff: row.handoff
             )
         }
     }

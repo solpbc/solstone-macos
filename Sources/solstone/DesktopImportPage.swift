@@ -13,6 +13,7 @@ enum ImportCopy {
     static let tileSubline = MacStrings.macos_desktopimportpage_files()
     static let adds = MacStrings.macos_desktopimportpage_addspdfsaudioimagesandtextyouchoosehereordrop()
     static let choose = MacStrings.macos_desktopimportpage_choosefiles()
+    static let moreImports = MacStrings.macos_desktopimportpage_moreimports()
     static let screenshotsPointer = MacStrings.macos_desktopimportpage_screenshotscomeinontheirown()
     static let setUpScreenshots = MacStrings.macos_desktopimportpage_setupscreenshots()
     static let openScreenshots = MacStrings.macos_desktopimportpage_openscreenshots()
@@ -75,9 +76,6 @@ enum ImportCopy {
         case .notApplicable, .storeUnreadable: return MacStrings.macos_desktopimportpage_nothingchangeditmayhavemovedoncheckthelist()
         }
     }
-
-    /// The types the picker offers: what the journal imports, with HEIC converted.
-    static let pickerTypes: [UTType] = [.pdf, .audio, .plainText, .png, .jpeg, .webP, .gif, .heic, .heif]
 }
 
 /// `import` on the deck: a destination, with no state word and no switch.
@@ -147,9 +145,14 @@ struct DesktopImportPage: View {
             if snapshot.storeUnreadable {
                 Text(ImportCopy.storeUnreadable).font(.callout)
             }
-            Button(ImportCopy.choose) { chooseFiles() }
-                .disabled(snapshot.storeUnreadable)
-                .accessibilityIdentifier(AXID.Deck.importChoose)
+            HStack(spacing: 12) {
+                Button(ImportCopy.choose) { chooseFiles() }
+                    .disabled(snapshot.storeUnreadable)
+                    .accessibilityIdentifier(AXID.Deck.importChoose)
+                Button(ImportCopy.moreImports) { appState.openJournalImportPage() }
+                    .buttonStyle(.link)
+                    .accessibilityIdentifier(AXID.Deck.importMore)
+            }
             HStack {
                 Text(ImportCopy.screenshotsPointer).foregroundStyle(.secondary)
                 Spacer(minLength: 8)
@@ -271,7 +274,6 @@ struct DesktopImportPage: View {
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.allowedContentTypes = ImportCopy.pickerTypes
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         let urls = panel.urls
         Task { await appState.importSource?.add(urls) }
