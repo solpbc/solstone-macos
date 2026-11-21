@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.74] - 2026-11-21
+
 ### Added
 
-- open Obsidian in the solstone app to see which other devices share notes with your journal. you can still choose a vault on this mac.
-- in the solstone app's journal window, choosing a file on your journal's import page now opens this mac's file picker.
+- the Obsidian page in the solstone app now shows which other devices share notes with your journal, once your journal is updated too. you can still choose a vault on this mac.
+- in the solstone app's journal window, your journal's import page can now open this mac's file picker. before, nothing opened.
 - the "more imports" link on the solstone app's import page opens your journal's import page in the journal window.
 
 ### Changed
