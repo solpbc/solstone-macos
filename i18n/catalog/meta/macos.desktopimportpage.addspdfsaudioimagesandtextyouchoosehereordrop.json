@@ -1,5 +1,5 @@
 {
-  "description": "adds PDFs, audio, images and text you choose here or drop on this window.",
+  "description": "adds files you choose here or drop on this window.",
   "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
   "surfaces": [
     "native-app"
