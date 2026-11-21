@@ -3571,6 +3571,13 @@ public final class AppState {
         reevaluateActivationPolicy(debounced: false)
     }
 
+    /// Restores tracking when a scene window becomes visible without an explicit `didOpenWindow(_:)` call.
+    public func ensureWindowTrackedOpen(_ id: SolstoneSceneID) {
+        guard !openSceneIds.contains(id) else { return }
+        Logger.general.notice("Tracked window became visible without openSceneIds entry: \(id.rawValue, privacy: .public)")
+        didOpenWindow(id)
+    }
+
     public func requestOpenJournal(_ destination: JournalWindowDestination) {
         if isSameMacJournalDoor(
             sameMachineStoredPairingState: tunnelLifecycleOwner.sameMachineStoredPairingState,
@@ -3679,15 +3686,67 @@ public final class AppState {
         journalURLOpener(url)
     }
 
-    func handleWindowWillClose(identifier: String?) {
-        let rawID = identifier ?? ""
-        let matchedSceneIDs = SolstoneSceneID.allCases.filter { rawID.contains($0.rawValue) }
-        guard !matchedSceneIDs.isEmpty else { return }
+    @ObservationIgnored
+    private var closingWindowTokens: Set<ObjectIdentifier> = []
 
-        for sceneID in matchedSceneIDs {
+    /// Replaced in tests to supply visible non-sheet window identifiers without requiring `NSApp`.
+    @ObservationIgnored
+    internal var visibleWindowIdentifiersOverride: (@MainActor () -> [String])?
+
+    private func currentVisibleWindowIdentifiers() -> [String] {
+        if let override = visibleWindowIdentifiersOverride {
+            return override()
+        }
+        guard let app = NSApp else { return [] }
+        return app.windows.compactMap { window in
+            guard window.isVisible,
+                  window.sheetParent == nil,
+                  !closingWindowTokens.contains(ObjectIdentifier(window))
+            else { return nil }
+            return window.identifier?.rawValue
+        }
+    }
+
+    func beginWindowClose(
+        windowToken: ObjectIdentifier,
+        identifier: String?,
+        remainingOpenIdentifiers: [String]
+    ) {
+        closingWindowTokens.insert(windowToken)
+        DispatchQueue.main.async { [weak self] in
+            self?.closingWindowTokens.remove(windowToken)
+        }
+        handleWindowWillClose(
+            identifier: identifier,
+            remainingOpenIdentifiers: remainingOpenIdentifiers
+        )
+    }
+
+    func handleWindowWillClose(identifier: String?, remainingOpenIdentifiers: [String] = []) {
+        guard let sceneID = SolstoneSceneID.matching(windowIdentifier: identifier) else { return }
+        let stillHasMatchingWindow = remainingOpenIdentifiers.contains {
+            SolstoneSceneID.matching(windowIdentifier: $0) == sceneID
+        }
+        if !stillHasMatchingWindow {
             openSceneIds.remove(sceneID)
         }
         reevaluateActivationPolicy(debounced: true)
+    }
+
+    @discardableResult
+    func reconcileVisibleTrackedWindows(visibleIdentifiers: [String]) -> Set<SolstoneSceneID> {
+        var restored: Set<SolstoneSceneID> = []
+        for identifier in visibleIdentifiers {
+            guard let sceneID = SolstoneSceneID.matching(windowIdentifier: identifier) else { continue }
+            if openSceneIds.insert(sceneID).inserted {
+                restored.insert(sceneID)
+            }
+        }
+        if !restored.isEmpty {
+            let restoredString = restored.map(\.rawValue).sorted().joined(separator: ",")
+            Logger.general.notice("Reconciled untracked visible window(s) into openSceneIds: [\(restoredString, privacy: .public)]")
+        }
+        return restored
     }
 
     func reevaluateActivationPolicy(debounced: Bool = true) {
@@ -3699,6 +3758,9 @@ public final class AppState {
             return
         }
 
+        if !isTerminating {
+            reconcileVisibleTrackedWindows(visibleIdentifiers: currentVisibleWindowIdentifiers())
+        }
         let now = Date()
         applyPolicy(computeDesiredPolicy(now: now))
         if let delay = launchSuppressionRecheckDelay(now: now) {
@@ -3744,17 +3806,16 @@ public final class AppState {
             return
         }
 
-        NSApp.setActivationPolicy(policy)
+        NSApp?.setActivationPolicy(policy)
         currentPolicy = policy
 
         let name = policy == .regular ? "regular" : "accessory"
         let idsString = self.openSceneIds.map(\.rawValue).sorted().joined(separator: ",")
         Logger.general.info("Activation policy → \(name, privacy: .public) (openScenes=\(self.openSceneIds.count, privacy: .public), ids=[\(idsString, privacy: .public)])")
 
-        if policy == .accessory {
-            let hasVisibleTrackedWindow = NSApp.windows.contains { window in
-                guard window.isVisible, let identifier = window.identifier?.rawValue else { return false }
-                return SolstoneSceneID.allCases.contains { identifier.contains($0.rawValue) }
+        if policy == .accessory && dockMode == .auto && Date() >= loginLaunchSuppressionExpires && !isTerminating {
+            let hasVisibleTrackedWindow = currentVisibleWindowIdentifiers().contains {
+                SolstoneSceneID.matching(windowIdentifier: $0) != nil
             }
             if hasVisibleTrackedWindow {
                 Logger.general.warning("Activation policy drift: set to accessory but visible solstone window still in NSApp.windows")

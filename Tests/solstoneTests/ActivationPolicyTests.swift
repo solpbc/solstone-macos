@@ -25,6 +25,53 @@ struct ActivationPolicyTests {
         #expect(state.openSceneIds.isEmpty)
     }
 
+    @Test func handleWindowWillCloseIgnoresUnrelatedSubstringIdentifiers() {
+        let state = AppState.forSnapshot()
+        state.openSceneIds = [.settings, .journal]
+
+        state.handleWindowWillClose(identifier: "com.apple.systemsettings.sheet")
+        state.handleWindowWillClose(identifier: "settings-sheet")
+        state.handleWindowWillClose(identifier: "journal-sheet")
+
+        #expect(state.openSceneIds == [.settings, .journal])
+    }
+
+    @Test func handleWindowWillCloseKeepsSceneWhenAnotherMatchingWindowRemainsOpen() {
+        let state = AppState.forSnapshot()
+        state.openSceneIds = [.settings]
+
+        state.handleWindowWillClose(
+            identifier: "settings-AppWindow-1",
+            remainingOpenIdentifiers: ["settings-AppWindow-2"]
+        )
+
+        #expect(state.openSceneIds == [.settings])
+    }
+
+    @Test func reconcileVisibleTrackedWindowsRestoresUntrackedVisibleScenes() {
+        let state = AppState.forSnapshot()
+        state.dockMode = .alwaysAccessory
+        state.visibleWindowIdentifiersOverride = { ["settings", "com.apple.systemsettings.sheet"] }
+
+        state.reevaluateActivationPolicy(debounced: false)
+
+        #expect(state.openSceneIds == [.settings])
+        state.dockMode = .auto
+        #expect(state.computeDesiredPolicy() == .regular)
+    }
+
+    @Test func reconcileVisibleTrackedWindowsLeavesClosedScenesEmpty() {
+        let state = AppState.forSnapshot()
+        state.dockMode = .alwaysAccessory
+        state.visibleWindowIdentifiersOverride = { [] }
+
+        state.reevaluateActivationPolicy(debounced: false)
+
+        #expect(state.openSceneIds.isEmpty)
+        state.dockMode = .auto
+        #expect(state.computeDesiredPolicy() == .accessory)
+    }
+
     @Test func alwaysAccessoryOverridesOpenWindows() {
         let state = AppState.forSnapshot()
         state.dockMode = .alwaysAccessory

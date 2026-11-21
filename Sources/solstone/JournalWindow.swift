@@ -134,6 +134,7 @@ struct JournalWindowSceneRoot: View {
             }
         }
         .background(JournalWindowTitleInstaller(title: windowTitle))
+        .background(SceneWindowPresenceTracker(sceneID: .journal, appState: appState))
     }
 }
 

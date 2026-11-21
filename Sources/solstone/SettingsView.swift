@@ -407,7 +407,7 @@ struct SettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             if let window = notification.object as? NSWindow,
-               window.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true {
+               SolstoneSceneID.settings.matches(windowIdentifier: window.identifier?.rawValue) {
                 appState.sharedSources?.opened(detail: false)
             }
         }
@@ -1492,7 +1492,7 @@ struct SettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             guard let window = notification.object as? NSWindow,
-                  window.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
+                  SolstoneSceneID.settings.matches(windowIdentifier: window.identifier?.rawValue)
             else {
                 return
             }
@@ -3738,7 +3738,8 @@ struct SettingsView: View {
 
     var privateWindowPrivacyIsVisible: Bool {
         leftOutShowing && !NSApp.isHidden && NSApp.windows.contains {
-            $0.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
+            $0.sheetParent == nil
+                && SolstoneSceneID.settings.matches(windowIdentifier: $0.identifier?.rawValue)
                 && $0.isVisible && !$0.isMiniaturized
         }
     }

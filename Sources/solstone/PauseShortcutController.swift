@@ -254,7 +254,7 @@ public final class PauseShortcutController {
             let window = notification.object as? NSWindow
             MainActor.assumeIsolated {
                 guard let self, self.isCapturing else { return }
-                if window?.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true {
+                if SolstoneSceneID.settings.matches(windowIdentifier: window?.identifier?.rawValue) {
                     self.cancelCapture()
                 }
             }
@@ -269,7 +269,7 @@ public final class PauseShortcutController {
     }
 
     private func isSettingsKeyWindow() -> Bool {
-        NSApp.keyWindow?.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
+        SolstoneSceneID.settings.matches(windowIdentifier: NSApp.keyWindow?.identifier?.rawValue)
     }
 
     internal func handleCapturedKey(keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags) {

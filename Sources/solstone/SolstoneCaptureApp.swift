@@ -17,6 +17,19 @@ public enum SolstoneSceneID: String, CaseIterable {
     case settings
     case about
     case journal
+
+    /// Matches SwiftUI `Window` (`"<id>"`) and `WindowGroup` (`"<id>-AppWindow-<n>"`) identifiers
+    /// without false-matching unrelated panels or sheets whose identifier merely contains the word.
+    public static func matching(windowIdentifier: String?) -> SolstoneSceneID? {
+        guard let rawID = windowIdentifier, !rawID.isEmpty else { return nil }
+        return allCases.first { sceneID in
+            rawID == sceneID.rawValue || rawID.hasPrefix("\(sceneID.rawValue)-AppWindow-")
+        }
+    }
+
+    public func matches(windowIdentifier: String?) -> Bool {
+        Self.matching(windowIdentifier: windowIdentifier) == self
+    }
 }
 
 public enum DockMode: String {
@@ -43,8 +56,9 @@ func routeOpenSettingsWindow(
 @MainActor
 func orderSolstoneSettingsWindowFront() {
     if let settingsWindow = NSApp.windows.first(where: {
-        $0.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
+        $0.sheetParent == nil && SolstoneSceneID.settings.matches(windowIdentifier: $0.identifier?.rawValue)
     }) {
+        AppState.shared?.ensureWindowTrackedOpen(.settings)
         settingsWindow.makeKeyAndOrderFront(nil)
     }
     NSApp.activate(ignoringOtherApps: true)
@@ -122,11 +136,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 nonisolated(unsafe) let observedObject = notification.object as AnyObject?
                 MainActor.assumeIsolated {
                     guard let window = observedObject as? NSWindow else { return }
+                    guard window.sheetParent == nil else { return }
                     let identifierForLog = window.identifier?.rawValue ?? "<nil>"
                     let identifier = window.identifier?.rawValue
                     Logger.general.debug("Window will close: identifier=\(identifierForLog, privacy: .public)")
                     if let state = AppState.shared {
-                        state.handleWindowWillClose(identifier: identifier)
+                        let remainingOpenIdentifiers: [String] = NSApp.windows.compactMap { other in
+                            guard other !== window,
+                                  other.sheetParent == nil,
+                                  other.isVisible || other.isMiniaturized
+                            else { return nil }
+                            return other.identifier?.rawValue
+                        }
+                        state.beginWindowClose(
+                            windowToken: ObjectIdentifier(window),
+                            identifier: identifier,
+                            remainingOpenIdentifiers: remainingOpenIdentifiers
+                        )
                     } else {
                         Logger.general.error("AppState.shared nil in willCloseNotification")
                     }
@@ -142,9 +168,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { _ in
             MainActor.assumeIsolated {
                 let hasVisibleWindow = NSApp.windows.contains { window in
-                    window.isVisible && SolstoneSceneID.allCases.contains { sceneID in
-                        window.identifier?.rawValue.contains(sceneID.rawValue) == true
-                    }
+                    window.isVisible &&
+                        window.sheetParent == nil &&
+                        SolstoneSceneID.matching(windowIdentifier: window.identifier?.rawValue) != nil
                 }
                 if hasVisibleWindow {
                     NSApp.activate(ignoringOtherApps: true)
@@ -202,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !flag {
             if let state = AppState.shared {
                 if let settingsWindow = NSApp.windows.first(where: {
-                    $0.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true
+                    $0.sheetParent == nil && SolstoneSceneID.settings.matches(windowIdentifier: $0.identifier?.rawValue)
                 }) {
                     state.didOpenWindow(.settings)
                     settingsWindow.makeKeyAndOrderFront(nil)
@@ -288,6 +314,7 @@ struct SolstoneCaptureApp: App {
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
+        .handlesExternalEvents(matching: [])
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button(MacStrings.macos_solstonecaptureapp_settings()) {
@@ -309,12 +336,14 @@ struct SolstoneCaptureApp: App {
                         return pasteboard.setString(text, forType: .string)
                     }
                 )
+                .background(SceneWindowPresenceTracker(sceneID: .about, appState: startup.appState))
             } else {
                 Color.clear
             }
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
+        .handlesExternalEvents(matching: [])
 
         Window(UICopy.JOURNAL_WINDOW_TITLE, id: SolstoneSceneID.journal.rawValue) {
             if let startup {
@@ -325,6 +354,7 @@ struct SolstoneCaptureApp: App {
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)
+        .handlesExternalEvents(matching: [])
     }
 
     static func permissionsMissing(permittedSourcesEmpty: Bool, startDeferredForProtectedVideo: Bool) -> Bool {
@@ -400,11 +430,191 @@ private struct SettingsSceneRoot: View {
     let updateController: UpdateController
 
     var body: some View {
-        if shouldRenderSettingsContent(settingsWindowOpen: appState.openSceneIds.contains(.settings)) {
-            SettingsView(appState: appState, updateController: updateController)
-        } else {
-            Color.clear
+        Group {
+            if shouldRenderSettingsContent(settingsWindowOpen: appState.openSceneIds.contains(.settings)) {
+                SettingsView(appState: appState, updateController: updateController)
+            } else {
+                Color.clear
+            }
         }
+        .background(SceneWindowPresenceTracker(sceneID: .settings, appState: appState))
+    }
+}
+
+/// Keeps `AppState.openSceneIds` in sync whenever AppKit or SwiftUI displays a tracked scene
+/// window without routing through `didOpenWindow(_:)` (for example Window menu, state restoration,
+/// or external window-ordering calls). Mounted outside the open-content gate so closed off-screen
+/// windows stay inert while still noticing the moment they become visible again.
+struct SceneWindowPresenceTracker: NSViewRepresentable {
+    let sceneID: SolstoneSceneID
+    let appState: AppState
+
+    func makeNSView(context: Context) -> SceneWindowPresenceView {
+        let view = SceneWindowPresenceView()
+        view.onWindowVisible = { [weak appState] in
+            appState?.ensureWindowTrackedOpen(sceneID)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: SceneWindowPresenceView, context: Context) {
+        nsView.onWindowVisible = { [weak appState] in
+            appState?.ensureWindowTrackedOpen(sceneID)
+        }
+    }
+
+    static func dismantleNSView(_ nsView: SceneWindowPresenceView, coordinator: ()) {
+        nsView.stopObserving()
+    }
+}
+
+@MainActor
+final class SceneWindowPresenceView: NSView {
+    var onWindowVisible: (@MainActor () -> Void)?
+    private var isClosing = false
+    private var visibilityObservation: NSKeyValueObservation?
+    nonisolated(unsafe) private var notificationTokens: [NSObjectProtocol] = []
+
+    deinit {
+        for token in notificationTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if newWindow == nil {
+            detachObservers()
+            isClosing = false
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        detachObservers()
+        isClosing = false
+        guard let window else { return }
+
+        visibilityObservation = window.observe(\.isVisible, options: [.old, .new]) { [weak self] _, change in
+            let wasVisible = change.oldValue ?? false
+            let isVisible = change.newValue ?? false
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    self?.handleVisibilityChange(wasVisible: wasVisible, isVisible: isVisible)
+                }
+            } else {
+                Task { @MainActor [weak self] in
+                    self?.handleVisibilityChange(wasVisible: wasVisible, isVisible: isVisible)
+                }
+            }
+        }
+
+        let center = NotificationCenter.default
+        notificationTokens.append(
+            center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: nil) { [weak self] _ in
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated {
+                        self?.handleWillClose()
+                    }
+                } else {
+                    Task { @MainActor [weak self] in
+                        self?.handleWillClose()
+                    }
+                }
+            }
+        )
+
+        for name in [
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didBecomeMainNotification,
+            NSWindow.didDeminiaturizeNotification
+        ] {
+            notificationTokens.append(
+                center.addObserver(forName: name, object: window, queue: nil) { [weak self] _ in
+                    if Thread.isMainThread {
+                        MainActor.assumeIsolated {
+                            self?.handleWindowActivated()
+                        }
+                    } else {
+                        Task { @MainActor [weak self] in
+                            self?.handleWindowActivated()
+                        }
+                    }
+                }
+            )
+        }
+
+        notificationTokens.append(
+            center.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: nil) { [weak self] _ in
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated {
+                        self?.handleOcclusionChange()
+                    }
+                } else {
+                    Task { @MainActor [weak self] in
+                        self?.handleOcclusionChange()
+                    }
+                }
+            }
+        )
+
+        if window.isVisible {
+            scheduleVisibilitySync()
+        }
+    }
+
+    func stopObserving() {
+        detachObservers()
+        isClosing = false
+        onWindowVisible = nil
+    }
+
+    private func detachObservers() {
+        visibilityObservation?.invalidate()
+        visibilityObservation = nil
+        for token in notificationTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        notificationTokens.removeAll()
+    }
+
+    private func handleWillClose() {
+        isClosing = true
+    }
+
+    private func handleVisibilityChange(wasVisible: Bool, isVisible: Bool) {
+        if !isVisible {
+            isClosing = false
+            return
+        }
+        if !wasVisible {
+            isClosing = false
+        }
+        if !isClosing {
+            scheduleVisibilitySync()
+        }
+    }
+
+    private func handleWindowActivated() {
+        guard let window, window.isVisible else { return }
+        isClosing = false
+        scheduleVisibilitySync()
+    }
+
+    private func handleOcclusionChange() {
+        guard !isClosing, let window, window.isVisible, window.occlusionState.contains(.visible) else { return }
+        scheduleVisibilitySync()
+    }
+
+    private func scheduleVisibilitySync() {
+        Task { @MainActor [weak self] in
+            self?.notifyIfVisible()
+        }
+    }
+
+    private func notifyIfVisible() {
+        guard !isClosing, let window, window.isVisible else { return }
+        onWindowVisible?()
     }
 }
 
