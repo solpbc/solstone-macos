@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- open Obsidian in the solstone app to see which other devices share notes with your journal. you can still choose a vault on this mac.
+
 ## [2.0.73] - 2026-11-19
 
 ### Fixed

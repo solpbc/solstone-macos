@@ -1080,7 +1080,16 @@
       "macos.capture.resumepausedeadline",
       "macos.capture.resumerecovery",
       "macos.capture.resumeprotectedvideocleared",
-      "macos.diagnostics.unavailable"
+      "macos.diagnostics.unavailable",
+      "macos.shared.sa12",
+      "macos.shared.sa3",
+      "macos.shared.sa3state",
+      "macos.shared.sa3time",
+      "macos.shared.sa4",
+      "macos.shared.sa4state",
+      "macos.shared.sa4statetime",
+      "macos.shared.sa4time",
+      "macos.shared.sa5"
     ],
     "SetupChrome": [
       "macos.accessibility.downloadaction",

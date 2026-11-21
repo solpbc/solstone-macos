@@ -4927,4 +4927,49 @@ nonisolated enum MacStrings {
     static func macos_diagnostics_unavailable() -> String {
         render("m6d61636f732e646961676e6f73746963732e756e617661696c61626c65", [])
     }
+
+    @usableFromInline
+    static func macos_shared_sa12(_ count: Int) -> String {
+        render("m6d61636f732e7368617265642e73613132", [Int64(count), String(count)])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa3(_ device: String, _ state: String, _ relative: String) -> String {
+        render("m6d61636f732e7368617265642e736133", [device, state, relative])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa3state(_ device: String, _ state: String) -> String {
+        render("m6d61636f732e7368617265642e7361337374617465", [device, state])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa3time(_ device: String, _ relative: String) -> String {
+        render("m6d61636f732e7368617265642e73613374696d65", [device, relative])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa4(_ detail: String, _ state: String, _ relative: String) -> String {
+        render("m6d61636f732e7368617265642e736134", [detail, state, relative])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa4state(_ detail: String, _ state: String) -> String {
+        render("m6d61636f732e7368617265642e7361347374617465", [detail, state])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa4statetime(_ state: String, _ relative: String) -> String {
+        render("m6d61636f732e7368617265642e736134737461746574696d65", [state, relative])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa4time(_ detail: String, _ relative: String) -> String {
+        render("m6d61636f732e7368617265642e73613474696d65", [detail, relative])
+    }
+
+    @usableFromInline
+    static func macos_shared_sa5() -> String {
+        render("m6d61636f732e7368617265642e736135", [])
+    }
 }

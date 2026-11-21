@@ -2236,3 +2236,24 @@ macos.capture.resumerecovery = recovery
 macos.capture.resumeprotectedvideocleared = protectedVideoCleared
 
 macos.diagnostics.unavailable = unavailable
+
+macos.shared.sa12 = { $count ->
+    [one] from another device
+   *[other] from { $count } other devices
+}
+
+macos.shared.sa5 = also on
+
+macos.shared.sa3 = { $device } · { $state } · { $relative }
+
+macos.shared.sa3time = { $device } · { $relative }
+
+macos.shared.sa3state = { $device } · { $state }
+
+macos.shared.sa4 = { $detail } · { $state } · { $relative }
+
+macos.shared.sa4time = { $detail } · { $relative }
+
+macos.shared.sa4state = { $detail } · { $state }
+
+macos.shared.sa4statetime = { $state } · { $relative }

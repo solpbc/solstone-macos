@@ -6,10 +6,6 @@ import CryptoKit
 import os
 import SolstoneCore
 
-private struct JournalSystemStatus: Decodable {
-    let capabilities: [String]?
-}
-
 private struct ObsidianVaultList: Decodable {
     let vaults: [ObsidianJournalVault]
 }
@@ -64,7 +60,8 @@ public enum UploadError: Error, LocalizedError, Equatable {
 
 /// Stateless networking client for uploads
 /// All methods are thread-safe and can be called from any actor
-public struct UploadClient: Sendable {
+public struct UploadClient: Sendable, SharedSourceTransport {
+    private let capabilityRead: (@Sendable (String) async throws -> [String])?
     private let session: URLSession
 
     /// Ingest runs long requests, so it keeps its own pool rather than sharing
@@ -80,7 +77,13 @@ public struct UploadClient: Sendable {
     }
 
     public init(sessionConfiguration: URLSessionConfiguration? = nil) {
+        capabilityRead = nil
         self.session = URLSession(configuration: sessionConfiguration ?? Self.defaultSessionConfiguration())
+    }
+
+    init(capabilityRead: @escaping @Sendable (String) async throws -> [String]) {
+        self.capabilityRead = capabilityRead
+        session = URLSession(configuration: Self.defaultSessionConfiguration())
     }
 
     static func isLocalNetworkHost(_ host: String) -> Bool {
@@ -239,7 +242,33 @@ public struct UploadClient: Sendable {
     /// What this journal says it understands, from its status over the paired connection.
     /// An older journal lists nothing, which is an answer rather than a failure.
     func journalCapabilities(serverURL: String) async throws -> [String] {
-        try await get(serverURL: serverURL, path: IngestProtocolV3.systemStatusPath, as: JournalSystemStatus.self).capabilities ?? []
+        if let capabilityRead { return try await capabilityRead(serverURL) }
+        return try await systemStatus(serverURL: serverURL).capabilities ?? []
+    }
+
+    func systemStatus(serverURL: String) async throws -> JournalSystemStatus {
+        try await get(serverURL: serverURL, path: IngestProtocolV3.systemStatusPath, as: JournalSystemStatus.self)
+    }
+
+    func knownSources(serverURL: String) async throws -> SharedSourceSnapshot {
+        try await get(serverURL: serverURL, path: "/app/network/api/sources", as: SharedSourceSnapshot.self)
+    }
+
+    func declareSources(_ sources: [SourceDeclaration], serverURL: String) async throws {
+        guard let url = URL(string: "\(serverURL)/app/network/api/clients/self/sources") else {
+            throw UploadError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(sources)
+        request.attachLoopbackCapability()
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw UploadError.invalidResponse }
+        guard http.statusCode == 204 else {
+            let (status, reason) = parseIngestErrorBody(data)
+            throw UploadError.serverError(IngestServerError(statusCode: http.statusCode, reasonCode: reason, bodyStatus: status))
+        }
     }
 
     /// The Obsidian vaults this journal has from other devices. A journal without the

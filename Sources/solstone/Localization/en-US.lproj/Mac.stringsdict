@@ -258,6 +258,22 @@
 			<string>couldn't read %2$@ screenshots.</string>
 		</dict>
 	</dict>
+	<key>m6d61636f732e7368617265642e73613132</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>from another device</string>
+			<key>other</key>
+			<string>from %2$@ other devices</string>
+		</dict>
+	</dict>
 	<key>m6d61636f732e736f757263652e686f757273</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>

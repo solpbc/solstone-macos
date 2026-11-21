@@ -58,6 +58,8 @@ public final class AppState {
     public let shortcutController: PauseShortcutController
     public let storageManager: StorageManager
     var activitySource: DesktopActivitySource?
+    var sharedSources: SharedSources?
+    private var folderSourceClient = UploadClient()
     var obsidianSource: ObsidianVaultSource?
     var screenshotSource: ScreenshotSource?
     var importSource: ImportSource?
@@ -73,6 +75,7 @@ public final class AppState {
 #if DEBUG || SOLSTONE_TEST_SUPPORT
     /// Snapshot renders set the deck's facts directly, so every state can be drawn without a session.
     var snapshotDeckInputs: DeckInputs?
+    var snapshotObsidianPeers: [SharedSourceDevice]?
     var snapshotJournalPillInputs: JournalPillInputs?
     var snapshotSourceTotals: SourceTotals.View?
     /// The status pane's journal facts as label and value, for renders with no journal behind them.
@@ -2298,11 +2301,13 @@ public final class AppState {
     /// Adopting a journal this Mac already had linked isn't a new pairing.
     internal func restartSourcesFirstSetup() async {
         guard !isAdoptingSameMachineHomeAutomatically else { return }
+        sharedSources?.wipe()
         await obsidianSource?.restartFirstSetup()
         await screenshotSource?.restartFirstSetup()
     }
 
     internal func clearJournalMarkConfirmation() {
+        sharedSources?.wipe()
         // A cleared answer also ends any mark attempt for the old credential, so a
         // later pairing never compares its answer against a stale revision.
         pendingMarkCredentialRevision = nil
@@ -2675,10 +2680,20 @@ public final class AppState {
             let totals = openSourceTotals(appSupport: appSupport)
             Task { await RemixQueue.shared.setSourceTotals(totals) }
         }
+        if automaticObservationPipelineEnabled {
+            let config = URLSessionConfiguration.ephemeral
+            config.urlCache = nil
+            config.timeoutIntervalForRequest = 12
+            let shared = SharedSources(transport: UploadClient(sessionConfiguration: config))
+            shared.currentRoute = { [weak self] in self?.sharedSourceRoute }
+            sharedSources = shared
+            folderSourceClient = UploadClient { url in try await shared.folderCapabilities(serverURL: url) }
+        }
         configureObsidianSource()
         configureScreenshotSource()
         configureImportSource()
         configureTerminalSource()
+        observeSharedSourceInputs()
         syncMicrophonePriorityList()
 
         if automaticObservationPipelineEnabled {
@@ -3105,6 +3120,58 @@ public final class AppState {
 
     // MARK: - Recording Control
 
+    private var admittedSharedSourceIdentity: String? {
+        let owner = tunnelLifecycleOwner
+        guard let revision = owner.currentSourcePairing,
+              owner.cachedPairingIdentity != nil, owner.carriedPairingAdmission == .ready,
+              !owner.ordinaryRouteRevoked, owner.connectionVerdict.failureCause != .revoked,
+              isJournalMarkConfirmed else { return nil }
+        return revision
+    }
+
+    var sharedSourceRoute: SharedSourceRoute? {
+        guard let identity = admittedSharedSourceIdentity,
+              let port = tunnelLifecycleOwner.sourcePort else { return nil }
+        return SharedSourceRoute(identity: identity, port: port, incarnation: tunnelLifecycleOwner.transportIncarnation)
+    }
+
+    var otherObsidianDevices: [SharedSourceDevice] {
+#if DEBUG || SOLSTONE_TEST_SUPPORT
+        if let snapshotObsidianPeers { return snapshotObsidianPeers }
+#endif
+        guard let sharedSources, let identity = admittedSharedSourceIdentity else { return [] }
+        if let source = obsidianSource, source.isOn && !source.vaultConfirmed { return [] }
+        return sharedSources.devices(for: identity)
+    }
+
+    private func observeSharedSourceInputs() {
+        guard let sharedSources else { return }
+        let input = withObservationTracking {
+            let owner = tunnelLifecycleOwner
+            let revision = owner.currentSourcePairing
+            let revoked = owner.connectionVerdict.failureCause == .revoked
+            let wipe = owner.sourcePairingAbsent || owner.ordinaryRouteRevoked
+            let route = sharedSourceRoute
+            var sources: [SourceDeclaration] = []
+            if route != nil {
+                var hasBrowser = false
+#if SOLSTONE_BROWSER_INTAKE_PREVIEW
+                hasBrowser = browserBrandRows(browserHostSnapshot.value, now: Date()).contains { $0.connectedCount > 0 }
+#endif
+                sources = deckInputs.declarations(
+                    vaultConfirmed: obsidianSource?.vaultConfirmed == true,
+                    browserConfigured: hasBrowser, permissionsChecked: initialPermissionCheckComplete
+                )
+            }
+            return (revision: revision, wipe: wipe, route: route, sources: sources, revoked: revoked)
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.observeSharedSourceInputs() }
+        }
+        if input.wipe { sharedSources.wipe() }
+        if input.revoked, let identity = input.revision { sharedSources.revoke(identity: identity) }
+        sharedSources.update(identity: input.revision, route: input.route, sources: input.sources)
+    }
+
     internal func startTunnelLifecycleOwner() {
         _ = pairingCoordinator.refreshPendingActions(markConfirmed: isJournalMarkConfirmed)
         tunnelLifecycleOwner.onNetworkPathChange = { [weak self] in self?.uploadCoordinator.noteNetworkChanged() }
@@ -3191,6 +3258,7 @@ public final class AppState {
               let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
         let source = ObsidianVaultSource.make(
             appSupportDirectory: appSupport,
+            journal: folderSourceClient,
             resolver: ingestBaseURLResolver,
             isHeld: { [weak self] in
                 guard let self else { return true }
@@ -3211,6 +3279,7 @@ public final class AppState {
               let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
         let source = ScreenshotSource.make(
             appSupportDirectory: appSupport,
+            journal: folderSourceClient,
             resolver: ingestBaseURLResolver,
             pauseFact: { [weak self] in
                 guard let self else { return .running }

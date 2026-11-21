@@ -18,6 +18,8 @@ extension SettingsView {
             let tile = deriveDeckTile(source, appState.deckInputs)
             VStack(alignment: .leading, spacing: 16) {
                 paneHeader(source.label, systemImage: source.systemImage)
+                let peers = source == .obsidian ? appState.otherObsidianDevices : []
+                if !peers.isEmpty && tile.state == .off { SharedSourceCard(devices: peers) }
                 pageVerdict(tile)
                 pageReason(tile)
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
@@ -30,6 +32,14 @@ extension SettingsView {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 SourceTotalRows(appState: appState, source: source)
+                if !peers.isEmpty && tile.state != .off {
+                    TimelineView(.everyMinute) { context in
+                        ForEach(peers) { device in
+                            factRow(device.id == peers.first?.id ? MacStrings.macos_shared_sa5() : "",
+                                    device.summary(at: context.date))
+                        }
+                    }
+                }
                 pageBody(source, scrollProxy: scrollProxy)
             }
             // Every checkbox and switch on a page takes sol orange, and every group sits on the
@@ -233,6 +243,7 @@ extension SettingsView {
     }
 
     private func pageAppeared(_ source: DeckSource) {
+        if source == .obsidian, appState.obsidianSource?.isOn == false { appState.sharedSources?.opened(detail: true) }
         switch source {
         case .audio:
             appState.markSettingsTabVisited(.microphones)

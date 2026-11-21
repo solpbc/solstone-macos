@@ -81,6 +81,7 @@ extension SettingsView {
                     ForEach(tiles, id: \.source) { tile in
                         DeckTileView(
                             tile: tile,
+                            peers: peersForTile(tile),
                             selected: shellLayout != .phone && pane == .source(tile.source),
                             compact: shellLayout == .narrow,
                             keyboardFocused: tileFocusFromKeyboard && focusedTile == tile.source,
@@ -221,6 +222,10 @@ extension SettingsView {
         }
     }
 
+    private func peersForTile(_ tile: DeckTile) -> [SharedSourceDevice] {
+        tile.source == .obsidian && tile.state == .off ? appState.otherObsidianDevices : []
+    }
+
     private var addMorePane: some View {
         VStack(alignment: .leading, spacing: 12) {
             paneHeader(MacStrings.macos_desktopshellviews_addmore())
@@ -235,14 +240,18 @@ extension SettingsView {
                         Image(systemName: tile.source.systemImage).frame(width: 18).accessibilityHidden(true)
                         Text(tile.source.label).font(DeckStyle.name(14))
                         Spacer()
-                        DeckStateLine(state: tile.state)
+                        if peersForTile(tile).isEmpty {
+                            DeckStateLine(state: tile.state)
+                        } else {
+                            SharedSourceHeading(count: peersForTile(tile).count)
+                        }
                     }
                     .padding(.vertical, 6)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(tile.source.label)
-                .accessibilityValue(tile.state.word)
+                .accessibilityValue(peersForTile(tile).isEmpty ? tile.state.word : MacStrings.macos_shared_sa12(peersForTile(tile).count))
             }
         }
     }

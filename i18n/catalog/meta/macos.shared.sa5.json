@@ -1,0 +1,16 @@
+{
+  "description": "Label above other paired devices with this source.",
+  "context": "Label above other paired devices with this source.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "18f8a9aa0c250af9f697d1fe8f537e37e9f6fef7bf876f448e95b4f8766225e8",
+  "risk": "routine",
+  "auto_merge": true
+}

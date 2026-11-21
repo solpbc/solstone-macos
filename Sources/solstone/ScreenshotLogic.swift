@@ -379,6 +379,7 @@ struct ScreenshotSnapshot: Equatable, Sendable {
     var action: DeckSourceAction?
     var switchOn: Bool = false
     var pageNotice: String?
+    var configuredForDeclaration = false
     var showChooser = false
     var span: ScreenshotSpan = .last30Days
     var confirmTitle = ScreenshotCopy.checking
@@ -446,6 +447,7 @@ struct ScreenshotFacts: Equatable, Sendable {
 
 func presentScreenshots(_ facts: ScreenshotFacts) -> ScreenshotSnapshot {
     var snapshot = ScreenshotSnapshot()
+    snapshot.configuredForDeclaration = facts.consented && facts.enabled && facts.confirmed
     snapshot.span = facts.span
     snapshot.takesIn = ScreenshotCopy.takesIn
     // The folder is a fact in every state, so choosing another folder is reachable from it

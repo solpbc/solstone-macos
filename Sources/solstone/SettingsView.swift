@@ -405,7 +405,14 @@ struct SettingsView: View {
                 storageUsedMB = Int(bytes / (1024 * 1024))
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            if let window = notification.object as? NSWindow,
+               window.identifier?.rawValue.contains(SolstoneSceneID.settings.rawValue) == true {
+                appState.sharedSources?.opened(detail: false)
+            }
+        }
         .onAppear {
+            appState.sharedSources?.opened(detail: false)
             appState.syncMicrophonePriorityList()
             applyPendingSettingsTab()
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW

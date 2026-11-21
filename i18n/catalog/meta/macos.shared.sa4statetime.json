@@ -1,0 +1,25 @@
+{
+  "description": "Source state and relative time when the vault has no name.",
+  "context": "Source state and relative time when the vault has no name.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "state",
+      "type": "string"
+    },
+    {
+      "name": "relative",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "2bed4162912dcf5b1460d8b76ab4591c0a8535446cdeac608bc8f526631c241a",
+  "risk": "routine",
+  "auto_merge": true
+}

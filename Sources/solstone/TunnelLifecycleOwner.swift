@@ -189,6 +189,24 @@ final class TunnelLifecycleOwner {
         return localPort
     }
 
+    // Populated by the tunnel's ordinary credential load. Rendering source facts must
+    // never cause a credential read.
+    private(set) var sourcePairingRevision: String?
+    private var sourcePairingGeneration: UInt64?
+    private var installedSourceGeneration: UInt64?
+
+    var currentSourcePairing: String? {
+        guard sourcePairingGeneration == credentialStore.pairingGeneration else { return nil }
+        return sourcePairingRevision
+    }
+
+    var sourcePort: Int? {
+        guard let port = localPort, establishedLoopbackPort == port,
+              installedSourceGeneration == credentialStore.pairingGeneration else { return nil }
+        return port
+    }
+    private(set) var sourcePairingAbsent = false
+
     var cachedPairingIdentity: TunnelPairingIdentity? {
         guard case .loaded(let pairing) = cachedPairingOutcome else {
             return nil
@@ -1096,6 +1114,7 @@ final class TunnelLifecycleOwner {
         transport = candidate
         establishedLoopbackPort = connection.localPort
         installedPairing = pairing
+        installedSourceGeneration = pairingGeneration
         installedRelayEligible = liveRelayEligible
         observe(candidate, generation: transportIncarnation, initialBurstID: burstID)
         if let oldTransport, oldTransport !== candidate { Task { await oldTransport.disconnect() } }
@@ -2023,6 +2042,13 @@ final class TunnelLifecycleOwner {
 
     private func setCachedPairingOutcome(_ outcome: PairingLoadOutcome) {
         cachedPairingOutcome = outcome
+        sourcePairingGeneration = credentialStore.pairingGeneration
+        if case .absent = outcome { sourcePairingAbsent = true } else { sourcePairingAbsent = false }
+        if case .loaded(let pairing) = outcome {
+            sourcePairingRevision = PairingCredentialRevision(from: pairing).revision
+        } else {
+            sourcePairingRevision = nil
+        }
         switch outcome {
         case .loaded(let pairing):
             journalVersion.setIdentity(journalVersionMetadataIdentity(for: pairing))
@@ -2069,6 +2095,8 @@ final class TunnelLifecycleOwner {
     }
 
     private func invalidatePairingCache() {
+        sourcePairingAbsent = false
+        sourcePairingRevision = nil
         cachedPairingOutcome = nil
     }
 

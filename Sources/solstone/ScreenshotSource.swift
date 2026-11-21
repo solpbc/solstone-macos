@@ -38,6 +38,7 @@ final class ScreenshotSource {
 
     static func make(
         appSupportDirectory: URL,
+        journal: UploadClient = UploadClient(),
         resolver: HomeBaseURLResolver,
         pauseFact: @escaping @MainActor () -> ScreenshotPauseFact,
         paired: @escaping @MainActor () -> Bool,
@@ -49,7 +50,7 @@ final class ScreenshotSource {
             engine: ScreenshotEngine(
                 directory: appSupportDirectory.appendingPathComponent("Solstone/screenshots", isDirectory: true),
                 reader: ScreenshotMacReader(),
-                transport: ScreenshotLiveTransport(),
+                transport: ScreenshotLiveTransport(journal: journal),
                 totals: sourceTotals,
                 onDelivered: reportDelivery
             ),

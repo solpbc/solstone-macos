@@ -147,6 +147,7 @@ final class ObsidianVaultSource {
     var refusal: Refusal?
 
     var isOn: Bool { active }
+    var vaultConfirmed: Bool { active && alreadySynced == nil && snapshot.state.firstSendCleared }
 
     private let engine: ObsidianEngine
     private let transport: any ObsidianJournalTransport
@@ -404,10 +405,10 @@ final class ObsidianVaultSource {
 }
 
 extension ObsidianVaultSource {
-    static func make(appSupportDirectory: URL, resolver: HomeBaseURLResolver, isHeld: @escaping @MainActor () -> Bool, sourceTotals: SourceTotals? = nil) -> ObsidianVaultSource {
+    static func make(appSupportDirectory: URL, journal: UploadClient = UploadClient(), resolver: HomeBaseURLResolver, isHeld: @escaping @MainActor () -> Bool, sourceTotals: SourceTotals? = nil) -> ObsidianVaultSource {
         ObsidianVaultSource(
             engine: ObsidianEngine(directory: appSupportDirectory.appendingPathComponent("Solstone/obsidian", isDirectory: true), sourceTotals: sourceTotals),
-            transport: UploadClient(),
+            transport: journal,
             resolver: resolver,
             isHeld: isHeld
         )

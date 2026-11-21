@@ -26,6 +26,7 @@ enum DeckStyle {
 /// Compact puts the name beside the glyph, so the deck fits the narrower window without scrolling.
 struct DeckTileView: View {
     let tile: DeckTile
+    var peers: [SharedSourceDevice] = []
     var selected = false
     var compact = false
     /// Drawn only when focus came from the keyboard, at the card's own radius.
@@ -35,6 +36,14 @@ struct DeckTileView: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        if peers.isEmpty {
+            card(at: .now)
+        } else {
+            TimelineView(.everyMinute) { context in card(at: context.date) }
+        }
+    }
+
+    private func card(at now: Date) -> some View {
         ZStack(alignment: .topTrailing) {
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: 5) {
@@ -57,8 +66,17 @@ struct DeckTileView: View {
                             .font(DeckStyle.name(17))
                             .foregroundStyle(SetupChromeColor.ink(for: scheme))
                     }
-                    DeckStateLine(state: tile.state)
-                    if let subline = tile.subline {
+                    if let peer = peers.first {
+                        SharedSourceHeading(count: peers.count)
+                        Text(peer.summary(at: now))
+                            .font(.system(size: 11))
+                            .foregroundStyle(SetupChromeColor.softInk(for: scheme))
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    } else {
+                        DeckStateLine(state: tile.state)
+                    }
+                    if peers.isEmpty, let subline = tile.subline {
                         Text(subline)
                             .font(.system(size: 11))
                             .foregroundStyle(SetupChromeColor.faintInk(for: scheme))
@@ -72,7 +90,7 @@ struct DeckTileView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(tile.source.label)
-            .accessibilityValue(tile.accessibilityValue)
+            .accessibilityValue(peers.first.map { MacStrings.macos_shared_sa12(peers.count) + ". " + $0.summary(at: now) } ?? tile.accessibilityValue)
             .accessibilityIdentifier(AXID.Deck.tile(tile.source))
             .overlay(alignment: .topLeading) {
                 AXStateCompanion(id: AXID.Deck.tileState(tile.source), value: tile.state.axToken)

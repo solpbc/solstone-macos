@@ -135,6 +135,24 @@ struct DesktopShellSnapshotTests {
 
     private let windowSize = CGSize(width: 1040, height: 700)
 
+    @Test(arguments: [false, true])
+    func sharedObsidianPage(configured: Bool) throws {
+        let app = state(.good)
+        app.snapshotDeckInputs?.obsidianState = configured ? .on : .off
+        app.snapshotObsidianPeers = [
+            .init(id: "desk", name: "work laptop", type: "laptop", rows: [
+                .init(detail: "field notes", state: "paused", time: .now.addingTimeInterval(-240)),
+                .init(detail: "archive", state: "on", time: nil),
+            ])
+        ]
+        for dark in [false, true] {
+            let view = SettingsView(appState: app, updateController: updateController(), selectedTab: .home,
+                                    initialHomePane: .source(.obsidian), initialStorageUsedMB: 42)
+            try render(view, size: CGSize(width: 1160, height: 800),
+                       to: configured ? "obsidian-also-on" : "obsidian-other", dark: dark)
+        }
+    }
+
     @Test(arguments: Scene.allCases)
     func deck(_ scene: Scene) throws {
         for dark in [false, true] {

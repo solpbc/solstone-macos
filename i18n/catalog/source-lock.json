@@ -5910,6 +5910,69 @@
       "locales": []
     },
     {
+      "id": "macos.shared.sa12",
+      "source": "581ea08db64d53a71e034ad28888842a656cb04e5d87f3706ac0fe2f25294cc5",
+      "contract": "e22d6d7545584e9888c94fe309dd2b067b8abd37839d85dba255137f1d1e2c91",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.shared.sa3",
+      "source": "c4ada1fc6d05cb33bf074d92506cd65be20e01f29c2ce62ea24afe9665ba136b",
+      "contract": "bb99c9af72264d6168fb95e78ce895c43f5574268344ce610cce2867c1668d46",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.shared.sa3state",
+      "source": "a312ef10394fe113d9a229da486df2380aca8660ead49f19dfa0365066f8f26a",
+      "contract": "e61c0c01574f6561fddb7a48a277d37a25eb1902f25f85d61b76b194dac57f8b",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.shared.sa3time",
+      "source": "7a7455a1045cf13def40cfba233fb24414f4435a2dfe39aa4f1fe9a1046965dc",
+      "contract": "32b623a94f0604c47857b0ad808a9967ce35a5190619835aadf7b6d8755b0745",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.shared.sa4",
+      "source": "85a6ec6c9412edb669d7f432300e2d8ebfd403179beaab992bfb548b63ce5b5d",
+      "contract": "c732e8095c917e7ee8b5871b7b48f8f956505927bc4c0322b5bb1e6f671c8b05",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.shared.sa4state",
+      "source": "242ef59c7098a28d6d907dbb81fc274d63433ed12538e54ba0c15e34b9148bf3",
+      "contract": "a60e2070d9cde2758da44c1f4b0cdbfd86381faf4a8ecfa1f20f78290eec92b0",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.shared.sa4statetime",
+      "source": "2bed4162912dcf5b1460d8b76ab4591c0a8535446cdeac608bc8f526631c241a",
+      "contract": "5f2a727f6b75adf0a756fc034efeb3d596e37fd8eec53291a9450e6aba30f2d4",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.shared.sa4time",
+      "source": "a66728f0f1c7fcb753666a1907bcbd22ef66b895d738681c7a41b6e4780d3059",
+      "contract": "3fe0c9fe618688e82e73bc4b9250f3e8e87515142fd395231315154195f7f154",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
+      "id": "macos.shared.sa5",
+      "source": "18f8a9aa0c250af9f697d1fe8f537e37e9f6fef7bf876f448e95b4f8766225e8",
+      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
+      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "locales": []
+    },
+    {
       "id": "macos.shortcut.key",
       "source": "b6f0794912ddc08ed46a37037e9c400a23b9284df15556fa2ff5a7464925365a",
       "contract": "072c2b94c866a3004a73a692d92265d702f07209b78b77ab27a66412aaca7e9c",

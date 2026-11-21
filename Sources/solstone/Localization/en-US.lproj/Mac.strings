@@ -1585,6 +1585,22 @@ source: https://github.com/solpbc/solstone-macos</string>
 	<string>cancelled</string>
 	<key>m6d61636f732e736574757073637265656e6672616d652e73637265656e</key>
 	<string>screen</string>
+	<key>m6d61636f732e7368617265642e736133</key>
+	<string>%1$@ · %2$@ · %3$@</string>
+	<key>m6d61636f732e7368617265642e7361337374617465</key>
+	<string>%1$@ · %2$@</string>
+	<key>m6d61636f732e7368617265642e73613374696d65</key>
+	<string>%1$@ · %2$@</string>
+	<key>m6d61636f732e7368617265642e736134</key>
+	<string>%1$@ · %2$@ · %3$@</string>
+	<key>m6d61636f732e7368617265642e7361347374617465</key>
+	<string>%1$@ · %2$@</string>
+	<key>m6d61636f732e7368617265642e736134737461746574696d65</key>
+	<string>%1$@ · %2$@</string>
+	<key>m6d61636f732e7368617265642e73613474696d65</key>
+	<string>%1$@ · %2$@</string>
+	<key>m6d61636f732e7368617265642e736135</key>
+	<string>also on</string>
 	<key>m6d61636f732e73686f72746375742e6b6579</key>
 	<string>Key%1$@</string>
 	<key>m6d61636f732e73686f72746375742e7370616365</key>

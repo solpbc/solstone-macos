@@ -1,0 +1,25 @@
+{
+  "description": "Source facts. Device is its name, detail is the vault name, state is paused or needs attention, and relative is a time.",
+  "context": "Source facts. Device is its name, detail is the vault name, state is paused or needs attention, and relative is a time.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "detail",
+      "type": "string"
+    },
+    {
+      "name": "relative",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "a66728f0f1c7fcb753666a1907bcbd22ef66b895d738681c7a41b6e4780d3059",
+  "risk": "routine",
+  "auto_merge": true
+}

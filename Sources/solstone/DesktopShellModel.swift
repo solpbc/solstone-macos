@@ -215,6 +215,35 @@ struct DeckInputs: Equatable, Sendable {
     var screenshot = ScreenshotSnapshot.notSetUp
 }
 
+extension DeckInputs {
+    func declarations(vaultConfirmed: Bool, browserConfigured: Bool, permissionsChecked: Bool) -> [SourceDeclaration] {
+        DeckSource.allCases.compactMap { source in
+            switch source {
+            case .obsidian: guard vaultConfirmed else { return nil }
+            case .screenshots: guard screenshot.configuredForDeclaration else { return nil }
+            case .audio: guard microphoneOn && permissionsChecked else { return nil }
+            case .screen: guard screenOn && permissionsChecked else { return nil }
+            case .browsers: guard browsersOn && browserConfigured else { return nil }
+            case .terminal: guard terminalOn else { return nil }
+            }
+            let state: String
+            switch deriveDeckTile(source, self).state {
+            case .on: state = "on"
+            case .paused: state = "paused"
+            case .needsAttention: state = "needs_attention"
+            default: return nil
+            }
+            var row = SourceDeclaration(source: source.rawValue, state: state)
+            if source == .obsidian, let name = obsidianVaultName,
+               name.utf8.count <= 256, name.rangeOfCharacter(from: .controlCharacters) == nil,
+               !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                row.detail = name
+            }
+            return row
+        }
+    }
+}
+
 // MARK: - tiles
 
 func deriveDeckTile(_ source: DeckSource, _ i: DeckInputs) -> DeckTile {

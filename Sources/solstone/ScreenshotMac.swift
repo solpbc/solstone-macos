@@ -291,7 +291,7 @@ struct ScreenshotMacReader: ScreenshotReading {
 }
 
 struct ScreenshotLiveTransport: ScreenshotTransport {
-    private let journal = UploadClient()
+    var journal = UploadClient()
 
     func capabilities(serverURL: String) async throws -> [String] {
         try await journal.capabilities(serverURL: serverURL)
