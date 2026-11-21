@@ -36,7 +36,7 @@ extension SettingsView {
                     TimelineView(.everyMinute) { context in
                         ForEach(peers) { device in
                             factRow(device.id == peers.first?.id ? MacStrings.macos_shared_sa5() : "",
-                                    device.summary(at: context.date))
+                                    device.factLine(at: context.date))
                         }
                     }
                 }

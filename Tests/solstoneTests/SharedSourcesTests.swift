@@ -180,6 +180,24 @@ struct SharedSourcesTests {
         #expect(SharedSources(defaults: rig.defaults, transport: rig.journal).devices(for: "first credential").isEmpty)
     }
 
+    @Test func drawnLinesBreakOnlyAfterASeparator() throws {
+        let now = Date()
+        let row = SharedSourceDetail(detail: "field notes", state: "needs_attention", time: now.addingTimeInterval(-240))
+        let device = SharedSourceDevice(id: "a", name: "the work laptop in the downstairs office", type: "laptop", rows: [row])
+        let tile = device.tileLine(at: now)
+        let fact = device.factLine(at: now)
+        let state = DeckStateWord.needsAttention.word.replacingOccurrences(of: " ", with: "\u{a0}")
+        for line in [tile, fact, try #require(row.drawnLine(at: now))] {
+            #expect(!line.contains(" \u{b7}"))
+            #expect(line.contains(state))
+        }
+        // The tile shortens a long name and keeps every part whole; the page keeps the full name.
+        let tileName = try #require(tile.components(separatedBy: "\u{a0}\u{b7}").first)
+        #expect(tileName.count <= SharedSourceDevice.tileNameLimit)
+        #expect(tile.indices.filter { tile[$0] == " " }.allSatisfy { tile[tile.index(before: $0)] == "\u{b7}" })
+        #expect(fact.replacingOccurrences(of: "\u{a0}", with: " ") == device.summary(at: now))
+    }
+
     @Test func cachedPeersStayHiddenUntilTheOwnerAnswersTheJournalMark() async {
         let rig = SourceRig()
         defer { rig.clean() }

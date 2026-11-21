@@ -68,11 +68,10 @@ struct DeckTileView: View {
                     }
                     if let peer = peers.first {
                         SharedSourceHeading(count: peers.count)
-                        Text(peer.summary(at: now))
+                        Text(peer.tileLine(at: now))
                             .font(.system(size: 11))
                             .foregroundStyle(SetupChromeColor.softInk(for: scheme))
-                            .lineLimit(2)
-                            .truncationMode(.middle)
+                            .fixedSize(horizontal: false, vertical: true)
                     } else {
                         DeckStateLine(state: tile.state)
                     }
