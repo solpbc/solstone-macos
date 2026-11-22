@@ -142,7 +142,8 @@ def record_key(name: str) -> str:
 def fetch_bytes(url: str) -> bytes:
     # curl, as the rest of the release tooling uses: the edge refuses urllib's agent.
     proc = subprocess.run(
-        ["curl", "-fsSL", "--retry", "3", "-H", "Cache-Control: no-cache", url], capture_output=True
+        ["curl", "-fsSL", "--retry", "3", "--retry-all-errors", "-H", "Cache-Control: no-cache", url],
+        capture_output=True,
     )
     if proc.returncode != 0:
         die(f"{url}: curl exited {proc.returncode}: {proc.stderr.decode(errors='replace').strip()}")
@@ -219,7 +220,20 @@ def verify_ed_signature(app: str, dmg: pathlib.Path, signature_b64: str) -> None
 
 
 def download(url: str, dest: pathlib.Path) -> None:
-    run(["curl", "-fsSL", "--retry", "3", "-H", "Cache-Control: no-cache", "-o", str(dest), url])
+    run(
+        [
+            "curl",
+            "-fsSL",
+            "--retry",
+            "3",
+            "--retry-all-errors",
+            "-H",
+            "Cache-Control: no-cache",
+            "-o",
+            str(dest),
+            url,
+        ]
+    )
 
 
 def cmd_resolve(args: argparse.Namespace) -> None:

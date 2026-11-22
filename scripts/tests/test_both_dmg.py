@@ -4,9 +4,11 @@ from __future__ import annotations
 import os
 import pathlib
 import plistlib
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
 REPO_ROOT = SCRIPTS.parent
@@ -120,6 +122,27 @@ class MakefileNeverRebuildsTest(unittest.TestCase):
         self.assertIn('"$(BOTH_STAGING)"', block)
         self.assertIn('--volname "install solstone"', block)
         self.assertNotIn("codesign", block)
+
+
+class CurlRetryTest(unittest.TestCase):
+    def test_fetch_bytes_retries_all_errors(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"ok", stderr=b"")
+        with mock.patch.object(both_dmg.subprocess, "run", return_value=completed) as run_mock:
+            body = both_dmg.fetch_bytes("https://updates.solstone.app/macos/appcast.xml")
+        self.assertEqual(body, b"ok")
+        argv = run_mock.call_args.args[0]
+        self.assertIn("--retry", argv)
+        self.assertIn("--retry-all-errors", argv)
+
+    def test_download_retries_all_errors(self):
+        with mock.patch.object(both_dmg, "run") as run_mock:
+            both_dmg.download(
+                "https://updates.solstone.app/macos/releases/test.dmg",
+                pathlib.Path("/tmp/test.dmg"),
+            )
+        argv = run_mock.call_args.args[0]
+        self.assertIn("--retry", argv)
+        self.assertIn("--retry-all-errors", argv)
 
 
 if __name__ == "__main__":
