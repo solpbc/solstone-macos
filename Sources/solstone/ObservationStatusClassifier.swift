@@ -422,7 +422,9 @@ extension AppState {
             privateWindowsNeedAttention: privateWindowAccessibilityEnabled
                 && privateWindowAccessibilityMonitor.needsAttention,
             // The icon is the one place a source's fault rolls up: any tile in `needs attention`.
-            screenFailureNeedsAttention: capture.screenFailure != nil || deckHasFault(deckTiles),
+            // `ready to review` is non-fault and does not raise the fault indicator.
+            screenFailureNeedsAttention: capture.screenFailure != nil
+                || deckHasFault(deckTiles, importHasFault: importSource?.snapshot.hasFault ?? false),
             safariExtensionNeedsAttention: safariExtensionAttention
         )
     }

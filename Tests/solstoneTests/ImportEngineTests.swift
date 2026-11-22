@@ -12,19 +12,25 @@ private final class FakeImportTransport: ImportTransport, @unchecked Sendable {
     private let lock = NSLock()
     private var saves: [String: [ImportOutcome]] = [:]
     private var starts: [ImportOutcome] = []
+    private var inspects: [String: [ImportInspectOutcome]] = [:]
     private(set) var saveCalls: [String] = []
     private(set) var startCalls: [String] = []
+    private(set) var inspectCalls: [String] = []
     var defaultSave: ImportOutcome = .saved(path: "/journal/imports/x/p", timestamp: "20261111_120000")
     var defaultStart: ImportOutcome = .delivered(importID: "20261111_120000")
+    var defaultInspect: ImportInspectOutcome = .stillPending
     private var hold: CheckedContinuation<Void, Never>?
     private var holdNext = false
+    private var holdNextInspectFlag = false
     private var heldStarted: CheckedContinuation<Void, Never>?
 
     func answerSave(_ id: String, _ outcomes: ImportOutcome...) { lock.withLock { saves[id, default: []] += outcomes } }
     func answerStart(_ outcomes: ImportOutcome...) { lock.withLock { starts += outcomes } }
+    func answerInspect(_ importID: String, _ outcomes: ImportInspectOutcome...) { lock.withLock { inspects[importID, default: []] += outcomes } }
     var calls: Int { lock.withLock { saveCalls.count + startCalls.count } }
 
     func holdNextSave() { lock.withLock { holdNext = true } }
+    func holdNextInspect() { lock.withLock { holdNextInspectFlag = true } }
     func waitUntilHeld() async {
         await withCheckedContinuation { c in
             let already: Bool = lock.withLock {
@@ -68,6 +74,33 @@ private final class FakeImportTransport: ImportTransport, @unchecked Sendable {
         lock.withLock {
             startCalls.append(path)
             return starts.isEmpty ? defaultStart : starts.removeFirst()
+        }
+    }
+
+    func inspect(importID: String, serverURL: String) async -> ImportInspectOutcome {
+        let shouldHold: Bool = lock.withLock {
+            inspectCalls.append(importID)
+            defer { holdNextInspectFlag = false }
+            return holdNextInspectFlag
+        }
+        if shouldHold {
+            await withCheckedContinuation { c in
+                let started: CheckedContinuation<Void, Never>? = lock.withLock {
+                    hold = c
+                    let s = heldStarted
+                    heldStarted = nil
+                    return s
+                }
+                started?.resume()
+            }
+        }
+        return lock.withLock {
+            if var queued = inspects[importID], !queued.isEmpty {
+                let next = queued.removeFirst()
+                inspects[importID] = queued
+                return next
+            }
+            return defaultInspect
         }
     }
 }
@@ -488,5 +521,368 @@ struct ImportEngineTests {
         #expect(await engine.snapshot(facts).interruptedAdd)
         await engine.dismissInterrupted()
         #expect(await !engine.snapshot(facts).interruptedAdd)
+    }
+
+    // MARK: - preview confirmation, safe reconciliation, 24h receipts, and totals
+
+    @Test func importIDValidatorRequiresStrictASCII() {
+        #expect(isValidImportID("20261122_123456"))
+        #expect(!isValidImportID(nil))
+        #expect(!isValidImportID(""))
+        #expect(!isValidImportID("20261122_12345"))
+        #expect(!isValidImportID("20261122_1234567"))
+        #expect(!isValidImportID("20261122-123456"))
+        #expect(!isValidImportID("../20261122_123456"))
+        // Arabic-Indic digits must be rejected even though Unicode \d matches them.
+        #expect(!isValidImportID("٢٠٢٦١١٢٢_١٢٣٤٥٦"))
+    }
+
+    @Test func previewRequired409ClassifiesOnlyExplicitConfirmationKindsAsReadyToReview() {
+        func classify409(_ body: [String: Any]) -> ImportOutcome {
+            let data = try! JSONSerialization.data(withJSONObject: body)
+            return classifyImportResponse(.start, status: 409, body: data)
+        }
+        for kind in ["body_confirmation_required", "confirmation_required", "health_confirmation_required"] {
+            let outcome = classify409([
+                "reason_code": "import_preview_required",
+                "kind": kind,
+                "import_id": "20261122_120000",
+                "error": "review before starting",
+            ])
+            #expect(outcome == .readyToReview(importID: "20261122_120000", error: "review before starting", reasonCode: "import_preview_required", kind: kind))
+        }
+        for nonConfirmKind in ["plan_failed", "nothing_to_import", "source_changed", "invalid_request", "not_found", "already_running", "unknown_kind"] {
+            let outcome = classify409([
+                "reason_code": "import_preview_required",
+                "kind": nonConfirmKind,
+                "import_id": "20261122_120000",
+                "error": "could not start",
+            ])
+            if case .needsAttention(_, let code, let k) = outcome {
+                #expect(code == "import_preview_required")
+                #expect(k == nonConfirmKind)
+            } else {
+                Issue.record("expected needsAttention for \(nonConfirmKind), got \(outcome)")
+            }
+        }
+        // Absent kind -> needsAttention.
+        if case .needsAttention(_, let code, let k) = classify409(["reason_code": "import_preview_required", "error": "nope"]) {
+            #expect(code == "import_preview_required")
+            #expect(k == nil)
+        } else {
+            Issue.record("expected needsAttention when kind is absent")
+        }
+    }
+
+    @Test func confirmationRequiredEntersReadyToReviewFallsBackToSaveTimestampAndRejectsInvalidID() async throws {
+        let dir = try tempDir("review-state")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let engine = makeEngine(root, transport, clock: clock)
+
+        // 1. body_confirmation_required with valid import_id -> readyToReview, bytes kept, not auto-retried.
+        let id1 = try addedID(await engine.add([try file(dir, "export.zip", "health-bytes")]))
+        transport.defaultSave = .saved(path: "/imports/export.zip", timestamp: "20261122_120100")
+        transport.answerStart(.readyToReview(importID: "20261122_120100", error: "review within an hour", reasonCode: "import_preview_required", kind: "body_confirmation_required"))
+        var snap = await engine.tick(facts)
+        let row1 = try #require(snap.rows.first { $0.id == id1 })
+        #expect(row1.kind == .readyToReview)
+        #expect(row1.importID == "20261122_120100")
+        #expect(row1.reviewKind == "body_confirmation_required")
+        #expect(!row1.retryable)
+        #expect(row1.savedAtJournal)
+        #expect(snap.readyToReviewCount == 1)
+        #expect(snap.countsAsWaiting == 0)
+        #expect(!snap.hasFault)
+        #expect(!snap.needsOwner)
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(id1).appendingPathComponent("payload").path))
+
+        // Must NOT auto-retry on subsequent ticks or journal version bump.
+        let callsAfterReview = transport.calls
+        var bumped = facts
+        bumped.version = "2.0.99"
+        _ = await engine.tick(facts)
+        _ = await engine.tick(bumped)
+        #expect(transport.calls == callsAfterReview)
+
+        // 2. confirmation_required omitting response import_id falls back to persisted /save timestamp.
+        let id2 = try addedID(await engine.add([try file(dir, "notes.enex", "evernote")]))
+        transport.defaultSave = .saved(path: "/imports/notes.enex", timestamp: "20261122_120200")
+        transport.answerStart(.readyToReview(importID: nil, error: "preview needed", reasonCode: "import_preview_required", kind: "confirmation_required"))
+        snap = await engine.tick(facts)
+        let row2 = try #require(snap.rows.first { $0.id == id2 })
+        #expect(row2.kind == .readyToReview)
+        #expect(row2.importID == "20261122_120200")
+
+        // 3. confirmation_required with invalid/missing import_id in BOTH response and /save timestamp -> needsAttention.
+        let id3 = try addedID(await engine.add([try file(dir, "weird.bin", "weird")]))
+        transport.defaultSave = .saved(path: "/imports/weird.bin", timestamp: "not-a-timestamp")
+        transport.answerStart(.readyToReview(importID: nil, error: "preview needed", reasonCode: "import_preview_required", kind: "body_confirmation_required"))
+        snap = await engine.tick(facts)
+        let row3 = try #require(snap.rows.first { $0.id == id3 })
+        if case .refused = row3.kind {} else { Issue.record("invalid import_id must enter needsAttention, got \(row3.kind)") }
+        #expect(snap.hasFault)
+    }
+
+    @Test func planFailedAndOtherPreviewRefusalsStayNonRetryableNeedsAttentionAndNeverAutoRetryOnVersionBump() async throws {
+        let dir = try tempDir("plan-failed")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let engine = makeEngine(root, transport)
+        let id = try addedID(await engine.add([try file(dir, "unknown.bin", "blob")]))
+        transport.answerStart(.needsAttention(error: "can't read this file", reasonCode: "import_preview_required", kind: "plan_failed"))
+        var snap = await engine.tick(facts)
+        let row = try #require(snap.rows.first { $0.id == id })
+        #expect(row.kind == .refused("can't read this file"))
+        #expect(!row.retryable)
+        #expect(snap.hasFault)
+        #expect(snap.readyToReviewCount == 0)
+
+        // Version bump on the same journal instance must NOT auto-retry `import_preview_required` refusals.
+        let before = transport.calls
+        var upgraded = facts
+        upgraded.version = "2.1.0"
+        snap = await engine.tick(upgraded)
+        #expect(transport.calls == before)
+        #expect(snap.rows.first?.kind == .refused("can't read this file"))
+    }
+
+    @Test func inspectClassifierFollowsContractV2FailClosedRules() {
+        func check(_ status: Int, _ json: String, loopback: Bool = false) -> ImportInspectOutcome {
+            classifyImportInspectResponse(status: status, body: Data(json.utf8), loopbackRefused: loopback)
+        }
+        for terminal in ["running", "success", "failed", "unconfirmed", "noted", "unavailable"] {
+            #expect(check(200, #"{"status":"\#(terminal)"}"#) == .confirmed, "\(terminal)")
+        }
+        #expect(check(200, #"{"status":"pending","saved_start":{"active":true,"state":"eligible"}}"#) == .confirmed)
+        #expect(check(200, #"{"status":"pending","saved_start":{"active":false,"state":"consumed"}}"#) == .confirmed)
+        // Must NEVER delete on pending + eligible/unknown/absent saved_start.
+        #expect(check(200, #"{"status":"pending","saved_start":{"active":false,"state":"eligible"}}"#) == .stillPending)
+        #expect(check(200, #"{"status":"pending","saved_start":{"active":false,"state":"unknown"}}"#) == .stillPending)
+        #expect(check(200, #"{"status":"pending"}"#) == .stillPending)
+        #expect(check(200, #"{"status":"pending","saved_start":null}"#) == .stillPending)
+        // 404 -> expired; 401/403 -> authStop; loopback 403 -> unchanged.
+        #expect(check(404, #"{}"#) == .expired)
+        #expect(check(401, #"{}"#) == .authStop)
+        #expect(check(403, #"{}"#) == .authStop)
+        #expect(check(403, #"{}"#, loopback: true) == .unchanged)
+        // 400/429/5xx/malformed JSON -> unchanged (preserve bytes).
+        #expect(check(400, #"{}"#) == .unchanged)
+        #expect(check(429, #"{}"#) == .unchanged)
+        #expect(check(503, #"{}"#) == .unchanged)
+        #expect(check(200, "not-json") == .unchanged)
+    }
+
+    @Test func safeReconciliationConfirmsExpiresHaltsOnAuthAndResetsOnRePair() async throws {
+        let dir = try tempDir("reconcile")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let engine = makeEngine(root, transport, clock: clock)
+
+        // Stage two ready-to-review items (even while waiting == 0 afterward).
+        let idA = try addedID(await engine.add([try file(dir, "health-a.zip", "aaa")]))
+        clock.advance(1)
+        let idB = try addedID(await engine.add([try file(dir, "health-b.zip", "bbb")]))
+        transport.answerSave(idA, .saved(path: "/p/a", timestamp: "20261122_100001"))
+        transport.answerSave(idB, .saved(path: "/p/b", timestamp: "20261122_100002"))
+        transport.answerStart(
+            .readyToReview(importID: "20261122_100001", error: "review", reasonCode: "import_preview_required", kind: "body_confirmation_required"),
+            .readyToReview(importID: "20261122_100002", error: "review", reasonCode: "import_preview_required", kind: "body_confirmation_required")
+        )
+        var snap = await engine.tick(facts)
+        #expect(snap.countsAsWaiting == 0)
+        #expect(snap.readyToReviewCount == 2)
+
+        // Still pending + transient error on sibling -> both kept with local bytes intact.
+        transport.answerInspect("20261122_100001", .stillPending)
+        transport.answerInspect("20261122_100002", .unchanged)
+        snap = await engine.reconcile(facts)
+        #expect(snap.readyToReviewCount == 2)
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(idA).appendingPathComponent("payload").path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(idB).appendingPathComponent("payload").path))
+
+        // 401/403 on first item halts batch immediately without inspecting second or deleting bytes.
+        let callsBeforeAuth = transport.inspectCalls.count
+        transport.answerInspect("20261122_100001", .authStop)
+        snap = await engine.reconcile(facts)
+        #expect(transport.inspectCalls.count == callsBeforeAuth + 1)
+        #expect(snap.waiting == .pairingRefused)
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(idA).appendingPathComponent("payload").path))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(idB).appendingPathComponent("payload").path))
+
+        // Reconnect clears auth hold; now A confirms (deletes bytes + saves 24h receipt) and B expires (keeps bytes!).
+        await engine.tunnelReconnected()
+        transport.answerInspect("20261122_100001", .confirmed)
+        transport.answerInspect("20261122_100002", .expired)
+        snap = await engine.reconcile(facts)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(idA).path))
+        #expect(snap.recentReceipts.count == 1)
+        #expect(snap.recentReceipts[0].filename == "health-a.zip")
+        #expect(snap.recentReceipts[0].importID == "20261122_100001")
+        let rowB = try #require(snap.rows.first { $0.id == idB })
+        #expect(rowB.kind == .reviewExpired)
+        #expect(rowB.reviewExpired)
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(idB).appendingPathComponent("payload").path))
+
+        // sendAgain re-uploads B via /save + /start (fresh timestamp).
+        transport.answerSave(idB, .saved(path: "/p/b2", timestamp: "20261122_110002"))
+        transport.answerStart(.readyToReview(importID: "20261122_110002", error: "review", reasonCode: "import_preview_required", kind: "body_confirmation_required"))
+        #expect(await engine.sendAgain(idB) == .done)
+        snap = await engine.tick(facts)
+        #expect(snap.rows.first { $0.id == idB }?.kind == .readyToReview)
+        #expect(snap.rows.first { $0.id == idB }?.importID == "20261122_110002")
+
+        // Re-pair to Journal B resets readyToReview back to waiting (never querying Journal B with Journal A's import_id).
+        var journalB = facts
+        journalB.instance = "journal-b"
+        let inspectCountBeforeRepair = transport.inspectCalls.count
+        snap = await engine.reconcile(journalB)
+        #expect(transport.inspectCalls.count == inspectCountBeforeRepair)
+        #expect(snap.rows.first { $0.id == idB }?.kind == .waiting)
+        #expect(snap.rows.first { $0.id == idB }?.importID == nil)
+        #expect(snap.recentReceipts.isEmpty) // Journal A's receipts hidden when paired to Journal B.
+    }
+
+    @Test func reconciliationDiscardsStaleResponseWhenSendAgainRunsMidRequest() async throws {
+        let dir = try tempDir("reconcile-race")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let engine = makeEngine(root, transport)
+        let id = try addedID(await engine.add([try file(dir, "race.zip", "payload-bytes")]))
+        transport.answerSave(id, .saved(path: "/p/r", timestamp: "20261122_120999"))
+        transport.answerStart(.readyToReview(importID: "20261122_120999", error: "review", reasonCode: "import_preview_required", kind: "body_confirmation_required"))
+        _ = await engine.tick(facts)
+
+        transport.holdNextInspect()
+        transport.answerInspect("20261122_120999", .confirmed)
+        let reconcileTask = Task { await engine.reconcile(facts) }
+        await transport.waitUntilHeld()
+        // Owner triggers sendAgain while GET is in flight.
+        #expect(await engine.sendAgain(id) == .done)
+        transport.release()
+        let snap = await reconcileTask.value
+        // Stale confirmed response MUST be discarded: item stays waiting and local bytes remain on disk!
+        #expect(snap.rows.first { $0.id == id }?.kind == .waiting)
+        #expect(snap.recentReceipts.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(id).appendingPathComponent("payload").path))
+    }
+
+    @Test func recentReceiptsCapAtFiveNewestPruneAfter24HoursPersistAcrossReloadAndKeepHighCapHandoffLookup() async throws {
+        let dir = try tempDir("receipts")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let engine = makeEngine(root, transport, clock: clock)
+
+        // Deliver 8 items (mix of main-window picks and journal-page handoffs).
+        var handoffIDs: [String] = []
+        for i in 1...8 {
+            clock.advance(60)
+            let url = try file(dir, "file-\(i).pdf", "content-\(i)")
+            let handoff = i % 2 == 0 ? ImportHandoff(area: "quick", context: "{}") : nil
+            let itemID = try addedID(await engine.add([url], handoff: handoff))
+            if handoff != nil { handoffIDs.append(itemID) }
+            let ts = String(format: "20261122_12%04d", i)
+            transport.answerSave(itemID, .saved(path: "/p/\(i)", timestamp: ts))
+            transport.answerStart(.delivered(importID: i == 7 ? nil : ts))
+            _ = await engine.tick(facts)
+        }
+
+        // High-cap in-memory handoff lookup remembers ALL handed-over items (even beyond UI cap 5).
+        for hid in handoffIDs {
+            if case .delivered = await engine.handoffStatus(hid) {} else {
+                Issue.record("expected high-cap handoff receipt for \(hid)")
+            }
+        }
+
+        // UI recentReceipts caps at 5 newest (file-8 down to file-4) covering both main-window & handoff picks.
+        var snap = await engine.snapshot(facts)
+        #expect(snap.recentReceipts.map(\.filename) == ["file-8.pdf", "file-7.pdf", "file-6.pdf", "file-5.pdf", "file-4.pdf"])
+        #expect(snap.recentReceipts[0].importID == "20261122_120008")
+        // file-7 had nil import_id from start -> falls back to save timestamp unless save timestamp is also non-valid;
+        // verify reload persistence!
+        let reloaded = makeEngine(root, transport, clock: clock)
+        snap = await reloaded.snapshot(facts)
+        #expect(snap.recentReceipts.map(\.filename) == ["file-8.pdf", "file-7.pdf", "file-6.pdf", "file-5.pdf", "file-4.pdf"])
+
+        // Unpaired or unconfirmed hides recent receipts and `more imports`.
+        var unpaired = facts
+        unpaired.paired = false
+        var unconfirmed = facts
+        unconfirmed.markConfirmed = false
+        #expect(await reloaded.snapshot(unpaired).recentReceipts.isEmpty)
+        #expect(!(await reloaded.snapshot(unpaired).canOpenJournalImport))
+        #expect(await reloaded.snapshot(unconfirmed).recentReceipts.isEmpty)
+        #expect(!(await reloaded.snapshot(unconfirmed).canOpenJournalImport))
+
+        // Advance >24h -> all older receipts pruned.
+        clock.advance(24 * 3600 + 60)
+        #expect(await reloaded.snapshot(facts).recentReceipts.isEmpty)
+    }
+
+    @Test func legacyCustodyJSONWithoutNewFieldsDecodesCleanly() throws {
+        let dir = try tempDir("legacy-custody")
+        let legacyJSON = """
+        {
+          "version": 1,
+          "items": [
+            {
+              "id": "legacy-1",
+              "payloadKind": "file",
+              "displayName": "old.pdf",
+              "mime": "application/pdf",
+              "byteSize": 5,
+              "state": "pending",
+              "createdAt": 0,
+              "attemptCount": 0
+            }
+          ]
+        }
+        """
+        try Data(legacyJSON.utf8).write(to: dir.appendingPathComponent("custody.json"))
+        let payloadDir = dir.appendingPathComponent("legacy-1", isDirectory: true)
+        try FileManager.default.createDirectory(at: payloadDir, withIntermediateDirectories: true)
+        try Data("hello".utf8).write(to: payloadDir.appendingPathComponent("payload"))
+
+        let store = ImportCustodyStore(root: dir, fsync: { _ in })
+        #expect(!store.unreadable)
+        let list = store.items(instance: "j", journalVersion: "2.0.75")
+        #expect(list.count == 1)
+        #expect(list[0].displayName == "old.pdf")
+        #expect(list[0].importID == nil)
+        #expect(!list[0].reviewExpired)
+        #expect(store.recentReceipts(forInstance: "j").isEmpty)
+    }
+
+    @Test func sourceTotalsIncrementsOncePerIntakeAndNeverDoubleCountsOnSendAgain() async throws {
+        let dir = try tempDir("totals-intake")
+        let root = dir.appendingPathComponent("store")
+        let totalsDir = dir.appendingPathComponent("totals")
+        let clock = ImportTestClock()
+        let totals = SourceTotals(directory: totalsDir, clock: .init(now: clock.now(), timeZone: TimeZone(secondsFromGMT: 0)!))
+        let transport = FakeImportTransport()
+        let engine = ImportEngine(
+            directory: root, transport: transport, clock: { clock.now() },
+            freeSpace: { 100 * 1024 * 1024 * 1024 }, storeFsync: { _ in }, sourceTotals: totals
+        )
+
+        let id = try addedID(await engine.add([try file(dir, "export.zip", "health")]))
+        #expect(totals.view()?.importsTotal == 1)
+        #expect(totals.view()?.importsLast != nil)
+
+        transport.answerSave(id, .saved(path: "/p/1", timestamp: "20261122_130001"))
+        transport.answerStart(.readyToReview(importID: "20261122_130001", error: "review", reasonCode: "import_preview_required", kind: "body_confirmation_required"))
+        _ = await engine.tick(facts)
+        transport.answerInspect("20261122_130001", .expired)
+        _ = await engine.reconcile(facts)
+        #expect(await engine.sendAgain(id) == .done)
+        transport.answerSave(id, .saved(path: "/p/2", timestamp: "20261122_130002"))
+        transport.answerStart(.delivered(importID: "20261122_130002"))
+        _ = await engine.tick(facts)
+
+        // Still 1 — never double-counted on sendAgain or delivery!
+        #expect(totals.view()?.importsTotal == 1)
     }
 }

@@ -1,5 +1,5 @@
 {
-  "description": "open import to see why",
+  "description": "open import to see why.",
   "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
   "surfaces": [
     "native-app"
@@ -10,7 +10,7 @@
   "arguments": [],
   "format_intent": "text",
   "max_length": 1000,
-  "source_revision": "dd295d231d17d9f0e25581327a69d2195b53a759b277eaa48eb5f48ea880729f",
+  "source_revision": "9fb1b863852ee507f198d89887c2bc1b415f883d48463563bc8a01dc929ccef7",
   "risk": "routine",
   "auto_merge": true
 }

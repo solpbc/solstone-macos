@@ -1,0 +1,16 @@
+{
+  "description": "review in your journal",
+  "context": "Primary action button opening an import awaiting review in the journal.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "c2bebf641190076c985e116ddc61bb39a58fc0b45d52c225afd1728a61634f73",
+  "risk": "routine",
+  "auto_merge": true
+}

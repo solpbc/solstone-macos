@@ -89,6 +89,10 @@ final class SourceTotals: @unchecked Sendable {
         var screenshotsLast: String?
         var screenshotsHashes: Set<String> = []
         var screenshotsStarted: String = ""
+        var importsTotal: Int = 0
+        var importsLast: String? = nil
+        var importsIDs: Set<String> = []
+        var importsStarted: String = ""
     }
 
     enum ObsidianEvent: Equatable, Sendable {
@@ -263,6 +267,17 @@ final class SourceTotals: @unchecked Sendable {
         }
     }
 
+    /// One imported file, counted once per intake by its queue ID (never double-counted on retry or send-again).
+    func applyImport(id: String) -> SourceTotalsOutcome {
+        mutate { model in
+            if model.imports.ids.contains(id) { return false }
+            model.imports.ids.insert(id)
+            model.imports.total += 1
+            model.imports.last = Self.iso(clock.now)
+            return true
+        }
+    }
+
     static func localDay(_ date: Date, zone: TimeZone) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = zone
@@ -431,6 +446,7 @@ final class SourceTotals: @unchecked Sendable {
         var browsers: PageSource
         var obsidian: NoteSource
         var screenshots: ShotSource
+        var imports: ImportTotalSource
 
         static func fresh(day: String) -> Model {
             Model(
@@ -439,7 +455,8 @@ final class SourceTotals: @unchecked Sendable {
                 terminal: TerminalSource(totalSeconds: 0, started: day, last: nil, coverage: [], carried: false),
                 browsers: PageSource(total: 0, started: day, last: nil, tabs: [:]),
                 obsidian: NoteSource(total: 0, started: day, last: nil, notes: [], baseline: false),
-                screenshots: ShotSource(total: 0, started: day, last: nil, hashes: [])
+                screenshots: ShotSource(total: 0, started: day, last: nil, hashes: []),
+                imports: ImportTotalSource(total: 0, started: day, last: nil, ids: [])
             )
         }
 
@@ -471,7 +488,11 @@ final class SourceTotals: @unchecked Sendable {
                 screenshotsTotal: screenshots.total,
                 screenshotsLast: screenshots.last,
                 screenshotsHashes: screenshots.hashes,
-                screenshotsStarted: screenshots.started
+                screenshotsStarted: screenshots.started,
+                importsTotal: imports.total,
+                importsLast: imports.last,
+                importsIDs: imports.ids,
+                importsStarted: imports.started
             )
         }
     }
@@ -483,6 +504,13 @@ final class SourceTotals: @unchecked Sendable {
         var hashes: Set<String>
     }
 
+    private struct ImportTotalSource: Equatable {
+        var total: Int
+        var started: String
+        var last: String?
+        var ids: Set<String>
+    }
+
     private static func encode(_ model: Model) throws -> Data {
         let root: [String: Any] = [
             "version": version,
@@ -492,6 +520,7 @@ final class SourceTotals: @unchecked Sendable {
             "browsers": pageJSON(model.browsers),
             "obsidian": noteJSON(model.obsidian),
             "screenshots": shotJSON(model.screenshots),
+            "imports": importJSON(model.imports),
         ]
         return try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
     }
@@ -535,6 +564,15 @@ final class SourceTotals: @unchecked Sendable {
         ]
     }
 
+    private static func importJSON(_ source: ImportTotalSource) -> [String: Any] {
+        [
+            "total": source.total,
+            "started": source.started,
+            "last": source.last ?? NSNull(),
+            "ids": source.ids.sorted(),
+        ]
+    }
+
     private static func noteJSON(_ source: NoteSource) -> [String: Any] {
         [
             "total": source.total,
@@ -555,7 +593,8 @@ final class SourceTotals: @unchecked Sendable {
               let browsers = pages(root["browsers"]),
               let obsidian = notes(root["obsidian"]) else { return nil }
         let screenshots = shots(root["screenshots"]) ?? ShotSource(total: 0, started: audio.started, last: nil, hashes: [])
-        return Model(audio: audio, screen: screen, terminal: terminal, browsers: browsers, obsidian: obsidian, screenshots: screenshots)
+        let imports = importsSource(root["imports"]) ?? ImportTotalSource(total: 0, started: audio.started, last: nil, ids: [])
+        return Model(audio: audio, screen: screen, terminal: terminal, browsers: browsers, obsidian: obsidian, screenshots: screenshots, imports: imports)
     }
 
     private static func shots(_ value: Any?) -> ShotSource? {
@@ -567,6 +606,18 @@ final class SourceTotals: @unchecked Sendable {
             started: started,
             last: instant(object["last"]),
             hashes: Set(object["hashes"] as? [String] ?? [])
+        )
+    }
+
+    private static func importsSource(_ value: Any?) -> ImportTotalSource? {
+        guard let object = value as? [String: Any],
+              let total = integer(object["total"]),
+              let started = object["started"] as? String else { return nil }
+        return ImportTotalSource(
+            total: total,
+            started: started,
+            last: instant(object["last"]),
+            ids: Set(object["ids"] as? [String] ?? [])
         )
     }
 

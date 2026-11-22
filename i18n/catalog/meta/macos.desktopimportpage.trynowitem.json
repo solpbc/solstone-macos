@@ -1,0 +1,21 @@
+{
+  "description": "try now, { $name }",
+  "context": "Accessible label for the try now button on a specific import row.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "name",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "349a1e50edb4a1ac4bde268c33fd42b7529e4e7cb74fb25b90b71d9cbaba9ef8",
+  "risk": "routine",
+  "auto_merge": true
+}

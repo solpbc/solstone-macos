@@ -7,10 +7,19 @@ import SolstoneCore
 
 private let importLog = Logger(subsystem: "app.solstone.observer", category: "import")
 
-/// Sends one save and one start. The live one streams the file; tests fake it.
+/// Sends one save, one start, and one inspect. The live one streams the file; tests fake it.
 protocol ImportTransport: Sendable {
     func save(_ item: ImportItemDescriptor, serverURL: String) async -> ImportOutcome
     func start(path: String, timestamp: String, serverURL: String) async -> ImportOutcome
+    func inspect(importID: String, serverURL: String) async -> ImportInspectOutcome
+}
+
+enum ImportReconcileResult: Equatable, Sendable {
+    case clean
+    /// The journal returned 401/403; the batch halted without deleting local bytes.
+    case authStop
+    /// Pairing or admission changed mid-batch.
+    case pairingLeft
 }
 
 enum ImportRunResult: Equatable, Sendable {
@@ -112,7 +121,10 @@ private func deliverOne(
     guard let progress else { return .done }
     guard await stillCurrent() else { return .pairingLeft }
     let outcome = await transport.start(path: progress.path, timestamp: progress.timestamp, serverURL: serverURL)
-    return settle(store: store, id: id, outcome: outcome, stage: "start", instance: instance, journalVersion: journalVersion)
+    return settle(
+        store: store, id: id, outcome: outcome, stage: "start",
+        savedTimestamp: progress.timestamp, instance: instance, journalVersion: journalVersion
+    )
 }
 
 private func settle(
@@ -120,12 +132,29 @@ private func settle(
     id: String,
     outcome: ImportOutcome,
     stage: String,
+    savedTimestamp: String? = nil,
     instance: String,
     journalVersion: String
 ) -> ImportItemStep {
     switch outcome {
     case .delivered(let importID):
         _ = store.recordDelivered(id, instance: instance, importID: importID)
+        return .done
+    case .readyToReview(let responseImportID, let error, let reasonCode, let kind):
+        if let importID = validImportID(responseImportID) ?? validImportID(savedTimestamp) {
+            _ = store.recordReadyToReview(
+                id, importID: importID, error: error, reasonCode: reasonCode, kind: kind, instance: instance
+            )
+        } else {
+            _ = store.recordAttention(
+                id,
+                error: error.isEmpty ? importGenericRefusal : error,
+                reasonCode: reasonCode,
+                kind: kind,
+                instance: instance,
+                journalVersion: journalVersion
+            )
+        }
         return .done
     case .needsAttention(let error, let reasonCode, let kind):
         _ = store.recordAttention(id, error: error, reasonCode: reasonCode ?? "", kind: kind, instance: instance, journalVersion: journalVersion)
@@ -140,6 +169,44 @@ private func settle(
     }
 }
 
+/// Safely reconciles `ready to review` items against `GET /app/import/api/<id>`.
+/// Re-verifies `(id, saved_import_id, saved_instance_id)` under the store lock before mutating,
+/// persists any 24h recent receipt durably before deleting local bytes, preserves bytes on
+/// `pending + eligible/unknown/absent`, marks `404` as `reviewExpired` keeping local bytes,
+/// halts immediately on `401`/`403`, and ignores transient/malformed errors per item.
+func reconcileReviewImports(
+    transport: any ImportTransport,
+    store: ImportCustodyStore,
+    serverURL: String,
+    instance: String,
+    stillCurrent: @Sendable () async -> Bool
+) async -> ImportReconcileResult {
+    defer { store.finish() }
+    for candidate in store.reviewCandidates(instance: instance) {
+        guard await stillCurrent() else { return .pairingLeft }
+        let outcome = await transport.inspect(importID: candidate.importID, serverURL: serverURL)
+        switch outcome {
+        case .confirmed:
+            _ = store.reconcileConfirmed(
+                candidate.id,
+                expectedImportID: candidate.importID,
+                expectedInstanceID: candidate.instanceID
+            )
+        case .expired:
+            _ = store.reconcileExpired(
+                candidate.id,
+                expectedImportID: candidate.importID,
+                expectedInstanceID: candidate.instanceID
+            )
+        case .stillPending, .unchanged:
+            break
+        case .authStop:
+            return .authStop
+        }
+    }
+    return .clean
+}
+
 // MARK: - the live transport
 
 /// Streams a save's multipart body from the copy on disk, never holding the file in memory, over
@@ -147,6 +214,7 @@ private func settle(
 struct ImportLiveTransport: ImportTransport {
     static let savePath = "/app/import/api/save"
     static let startPath = "/app/import/api/start"
+    static let inspectPrefix = "/app/import/api/"
     /// The journal labels the import's origin from this; older journals show no label for it.
     static let importedVia = "macos"
     static let chunkSize = 64 * 1024
@@ -178,6 +246,24 @@ struct ImportLiveTransport: ImportTransport {
         request.attachLoopbackCapability()
         let answer = await ImportStreamedRequest.send(request, body: nil)
         return Self.classify(.start, answer)
+    }
+
+    func inspect(importID: String, serverURL: String) async -> ImportInspectOutcome {
+        guard isValidImportID(importID),
+              let url = URL(string: serverURL + Self.inspectPrefix + importID) else {
+            return .unchanged
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.attachLoopbackCapability()
+        let answer = await ImportStreamedRequest.send(request, body: nil)
+        switch answer {
+        case .failed:
+            return .unchanged
+        case .answered(let status, let loopbackRefused, let data):
+            return classifyImportInspectResponse(status: status, body: data, loopbackRefused: status == 403 && loopbackRefused)
+        }
     }
 
     private static func classify(_ operation: ImportOperation, _ answer: ImportStreamedRequest.Answer) -> ImportOutcome {

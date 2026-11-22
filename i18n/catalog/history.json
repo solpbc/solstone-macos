@@ -7463,6 +7463,18 @@
       "selector": null
     },
     {
+      "id": "macos.desktopimportpage.allimporthistory",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e616c6c696d706f7274686973746f7279",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
       "id": "macos.desktopimportpage.checkingyourjournal",
       "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67796f75726a6f75726e616c",
       "namespace": "macos.desktopimportpage",
@@ -7489,6 +7501,18 @@
     {
       "id": "macos.desktopimportpage.couldntreadimportsonthisdevicenothinghasbeenr",
       "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e636f756c646e7472656164696d706f7274736f6e746869736465766963656e6f7468696e676861736265656e72",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.expired",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e65787069726564",
       "namespace": "macos.desktopimportpage",
       "owner": "macos",
       "tombstone": false,
@@ -7583,6 +7607,26 @@
       "selector": null
     },
     {
+      "id": "macos.desktopimportpage.inyourjournalrelative",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e696e796f75726a6f75726e616c72656c6174697665",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "relative",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
       "id": "macos.desktopimportpage.itsalreadygonefromthisdevice",
       "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e697473616c7265616479676f6e6566726f6d74686973646576696365",
       "namespace": "macos.desktopimportpage",
@@ -7643,6 +7687,18 @@
       "selector": null
     },
     {
+      "id": "macos.desktopimportpage.moreimportssubline",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e6d6f7265696d706f7274737375626c696e65",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
       "id": "macos.desktopimportpage.notgoingtoyourjournalrightnoweachonesayswhy",
       "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e6e6f74676f696e67746f796f75726a6f75726e616c72696768746e6f77656163686f6e6573617973776879",
       "namespace": "macos.desktopimportpage",
@@ -7691,6 +7747,18 @@
       "selector": null
     },
     {
+      "id": "macos.desktopimportpage.openimporttoreview",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e696d706f7274746f726576696577",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
       "id": "macos.desktopimportpage.openimporttoseewhy",
       "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e696d706f7274746f736565776879",
       "namespace": "macos.desktopimportpage",
@@ -7715,6 +7783,43 @@
       "selector": null
     },
     {
+      "id": "macos.desktopimportpage.pillready.plural",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e70696c6c72656164792e706c7572616c",
+      "namespace": "macos.desktopimportpage.pillready",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.desktopimportpage.readytoreview",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e7265616479746f726576696577",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
       "id": "macos.desktopimportpage.recent",
       "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74",
       "namespace": "macos.desktopimportpage",
@@ -7723,6 +7828,60 @@
       "replacement": null,
       "format_intent": "text",
       "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.recentrowa11y",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74726f7761313179",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "relative",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.recentrowplaina11y",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74726f77706c61696e61313179",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "relative",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
       "protected_slots": [],
       "selector": null
     },
@@ -7762,6 +7921,74 @@
           "value": " "
         }
       ],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.reviewdetail",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.reviewdetailhour",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c686f7572",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.reviewexpired",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e72657669657765787069726564",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.reviewinyourjournal",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e726576696577696e796f75726a6f75726e616c",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.reviewiteminyourjournal",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e7265766965776974656d696e796f75726a6f75726e616c",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
       "selector": null
     },
     {
@@ -7846,6 +8073,18 @@
       "selector": null
     },
     {
+      "id": "macos.desktopimportpage.sendagaintoreview",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e73656e64616761696e746f726576696577",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
       "id": "macos.desktopimportpage.sending",
       "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e73656e64696e67",
       "namespace": "macos.desktopimportpage",
@@ -7866,6 +8105,26 @@
       "replacement": null,
       "format_intent": "text",
       "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.senditemagaintoreview",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e73656e646974656d616761696e746f726576696577",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
       "protected_slots": [],
       "selector": null
     },
@@ -7892,6 +8151,58 @@
       "arguments": [],
       "protected_slots": [],
       "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.stateannouncement",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e7374617465616e6e6f756e63656d656e74",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "state",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.statusreadyheadline.plural",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e7374617475737265616479686561646c696e652e706c7572616c",
+      "namespace": "macos.desktopimportpage.statusreadyheadline",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
     },
     {
       "id": "macos.desktopimportpage.thecopyisalreadygonesothisonlyclearsitfromher",
@@ -7978,6 +8289,133 @@
       "selector": null
     },
     {
+      "id": "macos.desktopimportpage.tilefiles.plural",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6566696c65732e706c7572616c",
+      "namespace": "macos.desktopimportpage.tilefiles",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.desktopimportpage.tileitems.plural",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e74696c656974656d732e706c7572616c",
+      "namespace": "macos.desktopimportpage.tileitems",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.desktopimportpage.tileready.plural",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6572656164792e706c7572616c",
+      "namespace": "macos.desktopimportpage.tileready",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.desktopimportpage.tilevalue",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6576616c7565",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "state",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        },
+        {
+          "name": "subline",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.tilewaiting.plural",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e74696c6577616974696e672e706c7572616c",
+      "namespace": "macos.desktopimportpage.tilewaiting",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
       "id": "macos.desktopimportpage.trynow",
       "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f77",
       "namespace": "macos.desktopimportpage",
@@ -7990,8 +8428,64 @@
       "selector": null
     },
     {
+      "id": "macos.desktopimportpage.trynowitem",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f776974656d",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
       "id": "macos.desktopimportpage.waiting",
       "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.waitingforjournal",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f726a6f75726e616c",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.waitingforreconnect",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f727265636f6e6e656374",
+      "namespace": "macos.desktopimportpage",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.desktopimportpage.waitingforyourreview",
+      "resource": "m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f72796f7572726576696577",
       "namespace": "macos.desktopimportpage",
       "owner": "macos",
       "tombstone": false,
@@ -8351,6 +8845,38 @@
           "type": "cardinal",
           "numeric_style": "ungrouped",
           "min": 0.0,
+          "max": null
+        }
+      ],
+      "protected_slots": [],
+      "selector": {
+        "name": "count",
+        "type": "cardinal",
+        "enum_values": [],
+        "enum_default": null
+      }
+    },
+    {
+      "id": "macos.desktopshellmodel.items.plural",
+      "resource": "m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6974656d732e706c7572616c",
+      "namespace": "macos.desktopshellmodel.items",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "cardinal",
+      "arguments": [
+        {
+          "name": "count",
+          "type": "cardinal",
+          "numeric_style": "ungrouped",
+          "min": 0.0,
+          "max": null
+        },
+        {
+          "name": "display",
+          "type": "string",
+          "numeric_style": null,
+          "min": null,
           "max": null
         }
       ],
@@ -10045,6 +10571,18 @@
     {
       "id": "macos.journalimporthost.allfiles",
       "resource": "m6d61636f732e6a6f75726e616c696d706f7274686f73742e616c6c66696c6573",
+      "namespace": "macos.journalimporthost",
+      "owner": "macos",
+      "tombstone": false,
+      "replacement": null,
+      "format_intent": "text",
+      "arguments": [],
+      "protected_slots": [],
+      "selector": null
+    },
+    {
+      "id": "macos.journalimporthost.filetypefilter",
+      "resource": "m6d61636f732e6a6f75726e616c696d706f7274686f73742e66696c657479706566696c746572",
       "namespace": "macos.journalimporthost",
       "owner": "macos",
       "tombstone": false,

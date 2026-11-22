@@ -189,18 +189,74 @@ struct JournalImportHostTests {
 
     @Test func statusCarriesTheStateAndTheJournalRow() async throws {
         let intake = FakeIntake()
-        intake.statuses = ["a": .waiting, "b": .uploading, "c": .delivered(importID: "20261120_190754"), "d": .attention(reason: "nope", importID: nil)]
+        intake.statuses = [
+            "a": .waiting(sizeBytes: 1_024),
+            "b": .uploading(sizeBytes: 2_048),
+            "c": .delivered(importID: "20261120_190754"),
+            "d": .attention(reason: "nope", importID: nil, reviewRequired: false, reviewExpired: false, reasonCode: "plan_failed", kind: "plan_failed", retryable: true),
+            "r": .attention(reason: "waiting in your journal until you start it.", importID: "20261120_190755", reviewRequired: true, reviewExpired: false, reasonCode: "import_preview_required", kind: "body_confirmation_required", retryable: false),
+            "x": .attention(reason: "waiting copy expired — send again to review", importID: "20261120_190756", reviewRequired: false, reviewExpired: true, reasonCode: "import_preview_required", kind: "body_confirmation_required", retryable: true),
+        ]
         let host = try host(intake)
         func status(_ item: String) async throws -> [String: Any] {
             try decode(await host.handle(body: json(["type": "host.status", "item": item]), from: top))
         }
-        #expect(try await status("a")["state"] as? String == "waiting")
-        #expect(try await status("b")["state"] as? String == "uploading")
+        let waiting = try await status("a")
+        #expect(waiting["state"] as? String == "waiting")
+        #expect(waiting["device_noun"] as? String == "mac")
+        #expect((waiting["size_bytes"] as? NSNumber)?.int64Value == 1_024)
+
+        let uploading = try await status("b")
+        #expect(uploading["state"] as? String == "uploading")
+        #expect(uploading["device_noun"] as? String == "mac")
+        #expect((uploading["size_bytes"] as? NSNumber)?.int64Value == 2_048)
+
         let delivered = try await status("c")
         #expect(delivered["state"] as? String == "delivered")
         #expect(delivered["import_id"] as? String == "20261120_190754")
-        #expect(try await status("d")["reason"] as? String == "nope")
+
+        let fault = try await status("d")
+        #expect(fault["state"] as? String == "attention")
+        #expect(fault["reason"] as? String == "nope")
+        #expect(fault["review_required"] as? Bool == false)
+        #expect(fault["review_expired"] as? Bool == false)
+        #expect(fault["reason_code"] as? String == "plan_failed")
+        #expect(fault["kind"] as? String == "plan_failed")
+        #expect(fault["retryable"] as? Bool == true)
+
+        let review = try await status("r")
+        #expect(review["state"] as? String == "attention")
+        #expect(review["review_required"] as? Bool == true)
+        #expect(review["review_expired"] as? Bool == false)
+        #expect(review["reason_code"] as? String == "import_preview_required")
+        #expect(review["kind"] as? String == "body_confirmation_required")
+        #expect(review["import_id"] as? String == "20261120_190755")
+        #expect(review["retryable"] as? Bool == false)
+
+        let expired = try await status("x")
+        #expect(expired["state"] as? String == "attention")
+        #expect(expired["review_required"] as? Bool == false)
+        #expect(expired["review_expired"] as? Bool == true)
+        #expect(expired["import_id"] as? String == "20261120_190756")
+        #expect(expired["retryable"] as? Bool == true)
+
         #expect(try await status("e")["state"] as? String == "gone")
+    }
+
+    @Test func scriptPollsCalmlyDuringReviewRequiredAndStopsOnDeliveredOrGone() throws {
+        let host = try host(FakeIntake())
+        let script = try #require(host.userScript(for: base))
+        #expect(script.source.contains("status.review_required === true"))
+        #expect(script.source.contains("status.state === 'delivered' || status.state === 'gone'"))
+        #expect(script.source.contains("allReview ? 2000 : 400"))
+    }
+
+    @Test func filterChooserPopupHasAccessibleFileTypesLabel() throws {
+        let panel = NSOpenPanel()
+        let chooser = JournalImportFilterChooser(panel: panel, types: [.plainText, .pdf])
+        let popup = try #require(chooser.filterPopup)
+        #expect(popup.accessibilityLabel() == MacStrings.macos_journalimporthost_filetypefilter())
+        #expect(popup.accessibilityLabel() == "file types")
     }
 
     @Test func pickerFiltersMapToTypesAndUnknownOnesAreLeftOut() {
@@ -248,17 +304,70 @@ struct ImportHandoffQueueTests {
         let id = try #require(store.begin())
         try Data("bytes".utf8).write(to: store.stagingPayloadURL(id))
         #expect(store.publish(id, displayName: "notes", mime: "application/octet-stream", size: 5, handoff: handoff))
-        #expect(store.handoffStatus(id, missingCopyReason: "missing") == .waiting)
+        #expect(store.handoffStatus(id, missingCopyReason: "missing") == .waiting(sizeBytes: 5))
 
         let reopened = ImportCustodyStore(root: dir, fsync: { _ in })
         #expect(reopened.item(id)?.handoff == handoff)
         #expect(reopened.beginExchange(id, instance: "j", journalVersion: "2.0.86") == .done)
-        #expect(reopened.handoffStatus(id, missingCopyReason: "missing") == .uploading)
+        #expect(reopened.handoffStatus(id, missingCopyReason: "missing") == .uploading(sizeBytes: 5))
         #expect(reopened.recordDelivered(id, instance: "j", importID: "20261120_190754") == .done)
         reopened.finish()
         #expect(reopened.item(id) == nil)
         #expect(reopened.handoffStatus(id, missingCopyReason: "missing") == .delivered(importID: "20261120_190754"))
         #expect(reopened.handoffStatus("unknown", missingCopyReason: "missing") == .gone)
+    }
+
+    @Test func readyToReviewHandoffTransitionsToDeliveredOrExpired() throws {
+        let dir = try tempDir()
+        let handoff = ImportHandoff(area: "chatgpt", context: "{}")
+        let store = ImportCustodyStore(root: dir, fsync: { _ in })
+
+        let id1 = try #require(store.begin())
+        try Data("bytes1".utf8).write(to: store.stagingPayloadURL(id1))
+        #expect(store.publish(id1, displayName: "export.zip", mime: "application/zip", size: 6, handoff: handoff))
+        #expect(store.beginExchange(id1, instance: "j", journalVersion: "2.0.90") == .done)
+        #expect(store.recordReadyToReview(
+            id1,
+            importID: "20261122_140000",
+            error: "needs review",
+            reasonCode: "import_preview_required",
+            kind: "body_confirmation_required",
+            instance: "j"
+        ) == .done)
+        #expect(store.handoffStatus(id1, missingCopyReason: "missing") == .attention(
+            reason: MacStrings.macos_desktopimportpage_reviewdetail(),
+            importID: "20261122_140000",
+            reviewRequired: true,
+            reviewExpired: false,
+            reasonCode: "import_preview_required",
+            kind: "body_confirmation_required",
+            retryable: false
+        ))
+        #expect(store.reconcileConfirmed(id1, expectedImportID: "20261122_140000", expectedInstanceID: "j") == .done)
+        #expect(store.handoffStatus(id1, missingCopyReason: "missing") == .delivered(importID: "20261122_140000"))
+
+        let id2 = try #require(store.begin())
+        try Data("bytes2".utf8).write(to: store.stagingPayloadURL(id2))
+        #expect(store.publish(id2, displayName: "second.zip", mime: "application/zip", size: 6, handoff: handoff))
+        #expect(store.beginExchange(id2, instance: "j", journalVersion: "2.0.90") == .done)
+        #expect(store.recordReadyToReview(
+            id2,
+            importID: "20261122_140100",
+            error: "needs review",
+            reasonCode: "import_preview_required",
+            kind: "confirmation_required",
+            instance: "j"
+        ) == .done)
+        #expect(store.reconcileExpired(id2, expectedImportID: "20261122_140100", expectedInstanceID: "j") == .done)
+        #expect(store.handoffStatus(id2, missingCopyReason: "missing") == .attention(
+            reason: MacStrings.macos_desktopimportpage_reviewexpired(),
+            importID: "20261122_140100",
+            reviewRequired: false,
+            reviewExpired: true,
+            reasonCode: "import_preview_required",
+            kind: "confirmation_required",
+            retryable: true
+        ))
     }
 
     @Test func theSaveCarriesTheAreaHintAndContext() throws {

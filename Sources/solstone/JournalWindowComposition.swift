@@ -99,6 +99,7 @@ internal enum JournalWindowOverlayAction: Equatable {
     case retry
     case openSettings
     case connectJournal
+    case confirmMark
 }
 
 func journalWindowVerdictClass(
@@ -453,6 +454,8 @@ internal final class JournalWindowSession {
     typealias RecoveryDispatch = @MainActor (JournalConnectionRecoveryAction) async -> Void
     typealias SettingsRouter = @MainActor () -> Void
     typealias RouteAuthorityProvider = @MainActor () -> Bool
+    typealias MarkHeldProvider = @MainActor () -> Bool
+    typealias MarkConfirmRouter = @MainActor () -> Void
 
     private let resolveHomeBase: ResolveHomeBase
     private let connectionVerdict: ConnectionVerdictProvider
@@ -460,6 +463,8 @@ internal final class JournalWindowSession {
     private let recover: RecoveryDispatch
     private let openSettings: SettingsRouter
     private let routeAuthority: RouteAuthorityProvider
+    private let markHeld: MarkHeldProvider
+    private let confirmMark: MarkConfirmRouter
     private var composition = JournalWindowComposition()
 
     var state: JournalWindowAXState { composition.state }
@@ -472,10 +477,12 @@ internal final class JournalWindowSession {
     var committedDestination: JournalWindowDestination? { composition.committedDestination }
     var showsWebView: Bool { composition.showsWebView }
 
-    var headline: String { liveVerdict.message }
-    var caption: String? { liveVerdict.caption }
+    var isMarkHeld: Bool { markHeld() }
+    var headline: String { isMarkHeld ? MacStrings.macos_copy_journalmarkheld() : liveVerdict.message }
+    var caption: String? { isMarkHeld ? MacStrings.macos_copy_journalmarkheldcaption() : liveVerdict.caption }
     var overlayAction: JournalWindowOverlayAction {
-        journalWindowOverlayAction(failureCause: liveVerdict.failureCause, axToken: liveVerdict.axToken)
+        if isMarkHeld { return .confirmMark }
+        return journalWindowOverlayAction(failureCause: liveVerdict.failureCause, axToken: liveVerdict.axToken)
     }
     var overlayButtonTitle: String? {
         switch overlayAction {
@@ -487,6 +494,8 @@ internal final class JournalWindowSession {
             return UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION
         case .connectJournal:
             return UICopy.SETTINGS_SETUP_JOURNAL_LINK_ACTION
+        case .confirmMark:
+            return MacStrings.macos_desktopstatuspane_confirmthemark()
         }
     }
     var isPairingBusy: Bool { pairingBusy() }
@@ -500,7 +509,9 @@ internal final class JournalWindowSession {
         pairingBusy: @escaping PairingBusyProvider = { false },
         recover: @escaping RecoveryDispatch = { _ in },
         openSettings: @escaping SettingsRouter = {},
-        routeAuthority: @escaping RouteAuthorityProvider = { true }
+        routeAuthority: @escaping RouteAuthorityProvider = { true },
+        markHeld: @escaping MarkHeldProvider = { false },
+        confirmMark: @escaping MarkConfirmRouter = {}
     ) {
         self.resolveHomeBase = resolveHomeBase
         self.connectionVerdict = connectionVerdict
@@ -508,6 +519,8 @@ internal final class JournalWindowSession {
         self.recover = recover
         self.openSettings = openSettings
         self.routeAuthority = routeAuthority
+        self.markHeld = markHeld
+        self.confirmMark = confirmMark
     }
 
     @discardableResult
@@ -568,6 +581,8 @@ internal final class JournalWindowSession {
         switch overlayAction {
         case .openSettings, .connectJournal:
             openSettings()
+        case .confirmMark:
+            confirmMark()
         case .none, .retry:
             break
         }

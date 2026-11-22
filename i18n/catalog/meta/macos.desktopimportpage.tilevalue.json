@@ -1,0 +1,25 @@
+{
+  "description": "{ $state }. { $subline }.",
+  "context": "VoiceOver value for the home import tile when active, awaiting review, or needing attention.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "state",
+      "type": "string"
+    },
+    {
+      "name": "subline",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "3b4cc87adf19c050fb5af44dde9a1a066cb29dfd6cf7dba4d1a891d668657d89",
+  "risk": "routine",
+  "auto_merge": true
+}

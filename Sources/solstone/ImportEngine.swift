@@ -51,12 +51,16 @@ actor ImportEngine {
     private let clock: @Sendable () -> Date
     private let freeSpace: @Sendable () -> Int64
     private let convertHEIC: @Sendable (URL, URL) throws -> Void
+    private let sourceTotals: SourceTotals?
     private let onDelivered: @Sendable (String) async -> Void
+    private let onPairingRefused: @Sendable (String) async -> Void
     private let maxBytes: Int64
     private var started = false
     private var running = false
+    private var reconciling = false
     private var latest = ImportFacts()
     private var authHold: (instance: String, until: Date)?
+    private var reconcileAuthRefusedInstance: String?
     private var intake: ImportIntakeLine?
     private var addChain: Task<Void, Never>?
     private var runningMarker: URL { store.root.appendingPathComponent(".intake-running") }
@@ -71,7 +75,9 @@ actor ImportEngine {
         convertHEIC: @escaping @Sendable (URL, URL) throws -> Void = importConvertHEICToJPEG,
         maxBytes: Int64 = importMaxBytes,
         storeFsync: @escaping @Sendable (URL) throws -> Void = importFullFsync,
-        onDelivered: @escaping @Sendable (String) async -> Void = { _ in }
+        sourceTotals: SourceTotals? = nil,
+        onDelivered: @escaping @Sendable (String) async -> Void = { _ in },
+        onPairingRefused: @escaping @Sendable (String) async -> Void = { _ in }
     ) {
         let store = ImportCustodyStore(root: directory, clock: clock, fsync: storeFsync)
         self.store = store
@@ -80,7 +86,9 @@ actor ImportEngine {
         self.freeSpace = freeSpace ?? { importAvailableCapacity(directory) }
         self.convertHEIC = convertHEIC
         self.maxBytes = maxBytes
+        self.sourceTotals = sourceTotals
         self.onDelivered = onDelivered
+        self.onPairingRefused = onPairingRefused
     }
 
     private func ensureStarted() {
@@ -116,6 +124,11 @@ actor ImportEngine {
         addChain = Task { _ = await job.value }
         intake = .copying(done: 0, total: urls.count)
         let result = await job.value
+        for entry in result.outcomes {
+            if case .added(let id) = entry.outcome {
+                _ = sourceTotals?.applyImport(id: id)
+            }
+        }
         let refused = result.outcomes.compactMap { item -> ImportRefusedItem? in
             if case .refused(let reason) = item.outcome { return ImportRefusedItem(name: item.name, reason: reason) }
             return nil
@@ -127,7 +140,12 @@ actor ImportEngine {
     /// Where a handed-over item is, for the journal window that handed it over.
     func handoffStatus(_ id: String) -> ImportHandoffStatus {
         ensureStarted()
-        return store.handoffStatus(id, missingCopyReason: MacStrings.macos_desktopimportpage_thecopyonthisdeviceismissing())
+        return store.handoffStatus(
+            id,
+            missingCopyReason: MacStrings.macos_desktopimportpage_thecopyonthisdeviceismissing(),
+            reviewReadyReason: MacStrings.macos_desktopimportpage_reviewdetail(),
+            reviewExpiredReason: MacStrings.macos_desktopimportpage_reviewexpired()
+        )
     }
 
     func dismissInterrupted() {
@@ -178,12 +196,56 @@ actor ImportEngine {
 
     private func noteFacts(_ facts: ImportFacts) {
         if let hold = authHold, hold.instance != facts.instance { authHold = nil }
+        if let refused = reconcileAuthRefusedInstance, refused != facts.instance { reconcileAuthRefusedInstance = nil }
+        if facts.paired, let instance = facts.instance {
+            store.resetReviewItemsForDifferentInstance(instance)
+        }
         latest = facts
+    }
+
+    private func canReconcile(_ facts: ImportFacts) -> (serverURL: String, instance: String)? {
+        guard facts.paired, facts.markConfirmed, !facts.pairingRefused,
+              let serverURL = facts.serverURL, let instance = facts.instance else { return nil }
+        if reconcileAuthRefusedInstance == instance { return nil }
+        if let hold = authHold, hold.instance == instance, hold.until > clock() { return nil }
+        return (serverURL, instance)
+    }
+
+    private func isStillReconcilable(_ instance: String) -> Bool {
+        canReconcile(latest)?.instance == instance
+    }
+
+    /// Reconciles `ready to review` items via `GET /app/import/api/<id>` even when `waiting == 0`.
+    func reconcile(_ facts: ImportFacts) async -> ImportSnapshot {
+        ensureStarted()
+        noteFacts(facts)
+        guard !reconciling, !store.unreadable, let target = canReconcile(facts) else { return snapshot(facts) }
+        guard !store.reviewCandidates(instance: target.instance).isEmpty else { return snapshot(facts) }
+        reconciling = true
+        let before = store.lastDeliveredAt()
+        let result = await reconcileReviewImports(
+            transport: transport,
+            store: store,
+            serverURL: target.serverURL,
+            instance: target.instance,
+            stillCurrent: { [weak self] in await self?.isStillReconcilable(target.instance) ?? false }
+        )
+        reconciling = false
+        if result == .authStop {
+            authHold = (target.instance, clock().addingTimeInterval(Self.authHoldInterval))
+            reconcileAuthRefusedInstance = target.instance
+            await onPairingRefused(target.instance)
+        }
+        if store.lastDeliveredAt() != before {
+            await onDelivered(target.instance)
+        }
+        return snapshot(latest)
     }
 
     /// The tunnel connected again: a held auth stop gets its next try now.
     func tunnelReconnected() {
         authHold = nil
+        reconcileAuthRefusedInstance = nil
     }
 
     var isRunning: Bool { running }
@@ -194,6 +256,18 @@ actor ImportEngine {
         ensureStarted()
         guard !store.unreadable else { return .storeUnreadable }
         switch store.retry(id) {
+        case .done: return .done
+        case .inFlight: return .busy
+        case .delivered: return .alreadyDelivered
+        case .gone: return .gone
+        case .refused: return .notApplicable
+        }
+    }
+
+    func sendAgain(_ id: String) -> ImportActionResult {
+        ensureStarted()
+        guard !store.unreadable else { return .storeUnreadable }
+        switch store.sendAgain(id) {
         case .done: return .done
         case .inFlight: return .busy
         case .delivered: return .alreadyDelivered
@@ -220,14 +294,20 @@ actor ImportEngine {
     func snapshot(_ facts: ImportFacts) -> ImportSnapshot {
         ensureStarted()
         noteFacts(facts)
-        let gate = facts.instance == nil ? ImportVersionGate.unknown : importVersionGate(facts.version)
-        let items = store.items(instance: facts.instance, journalVersion: facts.version)
+        var effectiveFacts = facts
+        if let instance = facts.instance, reconcileAuthRefusedInstance == instance {
+            effectiveFacts.pairingRefused = true
+        }
+        let gate = effectiveFacts.instance == nil ? ImportVersionGate.unknown : importVersionGate(effectiveFacts.version)
+        let items = store.items(instance: effectiveFacts.instance, journalVersion: effectiveFacts.version)
+        let canOpen = effectiveFacts.paired && effectiveFacts.markConfirmed && !effectiveFacts.pairingRefused
         // An auth stop holds imports for a while and clears on its own, so it reads as waiting:
         // this Mac's pairing itself is unchanged.
-        let reason = importWaitingReason(facts, gate: gate, sending: items.contains { $0.inFlight })
+        let reason = importWaitingReason(effectiveFacts, gate: gate, sending: items.contains { $0.inFlight })
         let rows = items.map { item -> ImportRow in
             let kind: ImportRowKind
             if item.inFlight { kind = .sending }
+            else if item.state == "ready_to_review" { kind = item.reviewExpired ? .reviewExpired : .readyToReview }
             else if item.scope == .here { kind = .refused(item.error ?? importGenericRefusal) }
             else if item.scope == .elsewhere { kind = .goingAgain }
             else if item.scope == .local { kind = .missingCopy }
@@ -235,26 +315,34 @@ actor ImportEngine {
             let refusedHere: Bool
             if case .refused = kind { refusedHere = true } else { refusedHere = false }
             return ImportRow(
-                id: item.id, name: item.displayName, kind: kind,
-                retryable: refusedHere && importRetryableReasons.contains(item.reasonCode ?? "")
-                    && !importNotRetryableKinds.contains(item.kind ?? ""),
-                savedAtJournal: item.hasSavedProgress || item.inFlight
+                id: item.id,
+                name: item.displayName,
+                kind: kind,
+                retryable: refusedHere && isImportAttentionRetryable(reasonCode: item.reasonCode, kind: item.kind),
+                savedAtJournal: item.hasSavedProgress || item.inFlight,
+                importID: item.importID,
+                reasonCode: item.reasonCode,
+                reviewKind: item.kind,
+                reviewExpired: item.reviewExpired
             )
         }
         let going = rows.filter { row in
             switch row.kind {
             case .waiting, .sending, .goingAgain: return true
-            case .refused, .missingCopy: return false
+            case .readyToReview, .reviewExpired, .refused, .missingCopy: return false
             }
         }.count
         var snapshot = ImportSnapshot()
         snapshot.rows = rows
+        snapshot.recentReceipts = canOpen ? store.recentReceipts(forInstance: effectiveFacts.instance, now: clock()) : []
         snapshot.waiting = reason
+        snapshot.offline = effectiveFacts.offline
+        snapshot.canOpenJournalImport = canOpen
         snapshot.countsAsWaiting = gate == .tooOld ? 0 : going
-        snapshot.needsOwner = !rows.isEmpty && (gate == .tooOld || going == 0)
-        snapshot.deliveredToCurrentJournal = facts.instance != nil && store.lastDeliveredInstance() == facts.instance
-        snapshot.interruptedAdd = FileManager.default.fileExists(atPath: interruptedMarker.path)
         snapshot.storeUnreadable = store.unreadable
+        snapshot.needsOwner = snapshot.hasFault
+        snapshot.deliveredToCurrentJournal = effectiveFacts.instance != nil && store.lastDeliveredInstance() == effectiveFacts.instance
+        snapshot.interruptedAdd = FileManager.default.fileExists(atPath: interruptedMarker.path)
         snapshot.intake = intake
         return snapshot
     }

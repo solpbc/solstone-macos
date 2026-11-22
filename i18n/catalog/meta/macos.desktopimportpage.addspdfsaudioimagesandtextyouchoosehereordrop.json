@@ -1,5 +1,5 @@
 {
-  "description": "adds files you choose here or drop on this window.",
+  "description": "adds any file you choose here or drop on this window. your journal works out what it is.",
   "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
   "surfaces": [
     "native-app"
@@ -10,7 +10,7 @@
   "arguments": [],
   "format_intent": "text",
   "max_length": 1000,
-  "source_revision": "1fca46da0c96f975510fee5544da80d15e9a6a4f739b827621d0710a7543f1f7",
+  "source_revision": "a4bf27766a52084e9ac78ee6b1c51d8bf14b8cb253685d16a6388dc33c867f5e",
   "risk": "routine",
   "auto_merge": true
 }

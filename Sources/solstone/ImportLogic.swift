@@ -153,11 +153,42 @@ struct ImportHandoff: Codable, Equatable, Sendable {
     static let unhintedAreas: Set<String> = ["quick", "recording"]
 }
 
+/// Strict ASCII `^[0-9]{8}_[0-9]{6}$` check for journal import timestamps/IDs.
+func isValidImportID(_ value: String?) -> Bool {
+    guard let value else { return false }
+    let bytes = Array(value.utf8)
+    guard bytes.count == 15, bytes[8] == 0x5F else { return false }
+    for index in 0..<15 where index != 8 {
+        guard bytes[index] >= 0x30 && bytes[index] <= 0x39 else { return false }
+    }
+    return true
+}
+
+func validImportID(_ value: String?) -> String? {
+    isValidImportID(value) ? value : nil
+}
+
+/// Only explicit confirmation-required `import_preview_required` kinds enter `ready to review`.
+func isConfirmationRequiredKind(_ kind: String?) -> Bool {
+    guard let kind, !kind.isEmpty else { return false }
+    return kind == "body_confirmation_required"
+        || kind == "confirmation_required"
+        || kind.hasSuffix("_confirmation_required")
+}
+
 /// Where one handed-over item is, for the page that handed it over.
 enum ImportHandoffStatus: Equatable, Sendable {
-    case waiting
-    case uploading
-    case attention(reason: String, importID: String?)
+    case waiting(sizeBytes: Int64 = 0)
+    case uploading(sizeBytes: Int64 = 0)
+    case attention(
+        reason: String,
+        importID: String?,
+        reviewRequired: Bool = false,
+        reviewExpired: Bool = false,
+        reasonCode: String? = nil,
+        kind: String? = nil,
+        retryable: Bool = false
+    )
     case delivered(importID: String?)
     /// Removed, or delivered and no longer remembered.
     case gone
@@ -169,11 +200,26 @@ enum ImportOutcome: Equatable, Sendable {
     case saved(path: String, timestamp: String)
     /// The journal has it, under this import row when its answer named one.
     case delivered(importID: String?)
+    /// Saved in the journal and awaiting owner preview & confirmation before starting.
+    case readyToReview(importID: String?, error: String, reasonCode: String, kind: String)
     case authStop
     /// Try again later. `cause` is a closed token: `io-<kind>`, `http-<status>`,
     /// `unreadable-answer`, `answer-<word>`, `loopback-refused`.
     case retry(cause: String)
     case needsAttention(error: String, reasonCode: String?, kind: String?)
+}
+
+enum ImportInspectOutcome: Equatable, Sendable {
+    /// Confirmed or retired in the journal: persist 24h receipt first, then delete local bytes.
+    case confirmed
+    /// Still pending and eligible/unknown: keep `ready to review` and preserve local bytes.
+    case stillPending
+    /// 404: waiting copy in journal expired; keep local bytes for `send again to review`.
+    case expired
+    /// 401/403: halt batch and record pairing refusal; never delete local bytes.
+    case authStop
+    /// 400/429/5xx/malformed/transport: leave unchanged and continue sibling items.
+    case unchanged
 }
 
 enum ImportOperation: Sendable { case save, start }
@@ -216,7 +262,21 @@ func classifyImportResponse(
         return .needsAttention(error: importGenericRefusal, reasonCode: nil, kind: nil)
     }
     if status == 400, root["reason_code"] as? String == "invalid_operation_for_state", root["kind"] as? String == "already_imported" {
-        return .delivered(importID: (root["import_id"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+        return .delivered(importID: validImportID(root["import_id"] as? String))
+    }
+    if operation == .start,
+       status == 409,
+       let reasonCode = root["reason_code"] as? String,
+       reasonCode == "import_preview_required",
+       let kind = root["kind"] as? String,
+       isConfirmationRequiredKind(kind) {
+        let error = (root["error"] as? String).map { String($0.prefix(300)) } ?? ""
+        return .readyToReview(
+            importID: validImportID(root["import_id"] as? String),
+            error: error,
+            reasonCode: String(reasonCode.prefix(64)),
+            kind: String(kind.prefix(64))
+        )
     }
     if let error = root["error"] as? String, let reasonCode = root["reason_code"] as? String {
         return .needsAttention(
@@ -226,6 +286,40 @@ func classifyImportResponse(
         )
     }
     return .needsAttention(error: importGenericRefusal, reasonCode: nil, kind: nil)
+}
+
+/// Classifies `GET /app/import/api/<id>` for safe reconciliation of `ready to review` items.
+/// Fails closed (preserving local bytes) on `pending + unknown/absent saved_start`, malformed JSON,
+/// `400`, `429`, `5xx`, or transport failure.
+func classifyImportInspectResponse(
+    status: Int,
+    body: Data,
+    loopbackRefused: Bool = false
+) -> ImportInspectOutcome {
+    if loopbackRefused { return .unchanged }
+    if status == 401 || status == 403 { return .authStop }
+    if status == 404 { return .expired }
+    guard status == 200 else { return .unchanged }
+    guard let root = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+        return .unchanged
+    }
+    let statusWord = (root["status"] as? String)?.lowercased()
+    let savedStart = root["saved_start"] as? [String: Any]
+    let savedStartActive = savedStart?["active"] as? Bool == true
+    let savedStartState = (savedStart?["state"] as? String)?.lowercased()
+    let retiredStatuses: Set<String> = ["running", "success", "failed", "unconfirmed", "noted", "unavailable"]
+    if let statusWord, retiredStatuses.contains(statusWord) {
+        return .confirmed
+    }
+    if savedStartActive || savedStartState == "consumed" {
+        return .confirmed
+    }
+    if statusWord == "pending" {
+        if savedStart == nil || savedStartState == nil || savedStartState == "eligible" || savedStartState == "unknown" {
+            return .stillPending
+        }
+    }
+    return .unchanged
 }
 
 private func importUnexpectedAnswer(_ word: String?, expected: String) -> String {
@@ -257,6 +351,8 @@ struct ImportFacts: Equatable, Sendable {
     var syncPaused = false
     /// The pairing was revoked or refused, or the journal refused it here.
     var pairingRefused = false
+    /// Whether the paired journal is currently offline or unreachable.
+    var offline = false
     /// The journal's identity, when this Mac knows it; nil means no instance.
     var instance: String?
     var version: String?
@@ -275,9 +371,22 @@ func importWaitingReason(_ facts: ImportFacts, gate: ImportVersionGate, sending:
     }
 }
 
+/// Persisted lightweight UI receipt for a delivered or confirmed import (24h, cap 5, per-instance).
+struct ImportRecentReceipt: Codable, Equatable, Sendable, Identifiable {
+    var id: String
+    var filename: String
+    var importID: String?
+    var instanceID: String
+    var deliveredAt: Date
+}
+
 enum ImportRowKind: Equatable, Sendable {
     case waiting
     case sending
+    /// Saved in the journal and awaiting owner preview & confirmation before starting.
+    case readyToReview
+    /// Waiting copy in the journal expired; local copy is still held for one-tap re-send.
+    case reviewExpired
     /// The journal it would go to now refused it.
     case refused(String)
     /// Another journal, or an older version of this one, refused it; it is going again.
@@ -294,17 +403,36 @@ struct ImportRow: Equatable, Sendable, Identifiable {
     var retryable: Bool
     /// The journal already holds a staged copy, so removing it here may not keep it out.
     var savedAtJournal: Bool
+    /// Valid ASCII `YYYYMMDD_HHMMSS` journal import ID when known.
+    var importID: String? = nil
+    var reasonCode: String? = nil
+    var reviewKind: String? = nil
+    var reviewExpired: Bool = false
 }
 
 /// Refusals a retry could plausibly change. Every other refusal offers only `remove`.
 let importRetryableReasons: Set<String> = [
-    "import_queue_unreachable", "import_metadata_failed", "import_not_found", "import_preview_required",
+    "import_queue_unreachable", "import_metadata_failed", "import_not_found",
 ]
-let importNotRetryableKinds: Set<String> = ["client_item_conflict"]
+let importNotRetryableKinds: Set<String> = [
+    "client_item_conflict", "plan_failed", "nothing_to_import", "invalid_request", "not_found",
+]
+
+func isImportAttentionRetryable(reasonCode: String?, kind: String?) -> Bool {
+    if let kind, importNotRetryableKinds.contains(kind) { return false }
+    if reasonCode == "import_preview_required" {
+        return kind == "source_changed" || kind == "already_running"
+    }
+    return importRetryableReasons.contains(reasonCode ?? "")
+}
 
 struct ImportSnapshot: Equatable, Sendable {
     var rows: [ImportRow] = []
+    var recentReceipts: [ImportRecentReceipt] = []
     var waiting: ImportWaitingReason = .unpaired
+    var offline = false
+    /// Whether `more imports` and journal import links should appear (paired, confirmed, not refused).
+    var canOpenJournalImport = false
     /// What can still go on its own. Zero while the journal is too old.
     var countsAsWaiting = 0
     /// Rows exist and none can go on its own, or the journal is too old for them.
@@ -314,6 +442,57 @@ struct ImportSnapshot: Equatable, Sendable {
     var storeUnreadable = false
     /// The last add's progress or result.
     var intake: ImportIntakeLine?
+
+    /// Items awaiting owner review (normal or expired). Non-fault; never increments waiting.
+    var readyToReviewCount: Int { reviewRows.count }
+
+    /// Real faults: refused, missing copy, journal too old with queued rows, or unreadable store.
+    var hasFault: Bool {
+        if storeUnreadable { return true }
+        let hasFaultRow = rows.contains { row in
+            switch row.kind {
+            case .refused, .missingCopy: return true
+            case .waiting, .sending, .goingAgain, .readyToReview, .reviewExpired: return false
+            }
+        }
+        if hasFaultRow { return true }
+        return waiting == .journalTooOld && rows.contains { row in
+            switch row.kind {
+            case .waiting, .sending, .goingAgain: return true
+            case .readyToReview, .reviewExpired, .refused, .missingCopy: return false
+            }
+        }
+    }
+
+    var reviewRows: [ImportRow] {
+        rows.filter { $0.kind == .readyToReview || $0.kind == .reviewExpired }
+    }
+
+    /// Non-review rows (`on this device`), sorted actionable-first: attention, sending, waiting.
+    var onDeviceRows: [ImportRow] {
+        let filtered = rows.filter { $0.kind != .readyToReview && $0.kind != .reviewExpired }
+        func rank(_ kind: ImportRowKind) -> Int {
+            switch kind {
+            case .refused, .missingCopy: return 0
+            case .sending: return 1
+            case .waiting, .goingAgain: return 2
+            case .readyToReview, .reviewExpired: return 3
+            }
+        }
+        return filtered.enumerated().sorted { lhs, rhs in
+            let a = rank(lhs.element.kind)
+            let b = rank(rhs.element.kind)
+            return a != b ? a < b : lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
+    var hasSending: Bool {
+        rows.contains { $0.kind == .sending }
+    }
+
+    var hasActiveOrHeldItems: Bool {
+        !rows.isEmpty || storeUnreadable
+    }
 }
 
 enum ImportIntakeLine: Equatable, Sendable {

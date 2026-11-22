@@ -358,11 +358,21 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
 
     static func statusFields(_ status: ImportHandoffStatus) -> [String: Any] {
         switch status {
-        case .waiting: return ["state": "waiting"]
-        case .uploading: return ["state": "uploading"]
-        case .attention(let reason, let importID):
-            var fields: [String: Any] = ["state": "attention", "reason": reason]
+        case .waiting(let sizeBytes):
+            return ["state": "waiting", "device_noun": "mac", "size_bytes": sizeBytes]
+        case .uploading(let sizeBytes):
+            return ["state": "uploading", "device_noun": "mac", "size_bytes": sizeBytes]
+        case .attention(let reason, let importID, let reviewRequired, let reviewExpired, let reasonCode, let kind, let retryable):
+            var fields: [String: Any] = [
+                "state": "attention",
+                "reason": reason,
+                "review_required": reviewRequired,
+                "review_expired": reviewExpired,
+                "retryable": retryable,
+            ]
             if let importID { fields["import_id"] = importID }
+            if let reasonCode, !reasonCode.isEmpty { fields["reason_code"] = reasonCode }
+            if let kind, !kind.isEmpty { fields["kind"] = kind }
             return fields
         case .delivered(let importID):
             var fields: [String: Any] = ["state": "delivered"]
@@ -379,8 +389,9 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
     }
 
     /// The page half. Mirrors the reference host: one capability object on the top document,
-    /// replies parsed from the native handler, item status read until it settles, and a drop no
-    /// card claimed sent as a quick import.
+    /// replies parsed from the native handler, item status read until it settles (continuing calm
+    /// ~2s polling on `attention` while `review_required === true` until `delivered` or `gone`),
+    /// and a drop no card claimed sent as a quick import.
     static let scriptBody = #"""
     (contract, origin, handler, auth) => {
       if (window !== window.top || location.origin !== origin) return;
@@ -402,10 +413,25 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
                 ...status, type: contract.status, item, name: record.name, id: record.id,
               }}));
             }
-            if (['attention', 'delivered', 'gone'].includes(status.state)) items.delete(item);
+            if (status.state === 'delivered' || status.state === 'gone') {
+              items.delete(item);
+            } else if (status.state === 'attention') {
+              if (status.review_required === true) {
+                record.review = true;
+              } else {
+                items.delete(item);
+              }
+            } else {
+              record.review = false;
+            }
           } catch (_) { /* Read it again while the document is open. */ }
         }
-        timer = items.size ? setTimeout(update, 400) : undefined;
+        if (items.size) {
+          const allReview = Array.from(items.values()).every(r => r.review === true);
+          timer = setTimeout(update, allReview ? 2000 : 400);
+        } else {
+          timer = undefined;
+        }
       }
       Object.defineProperty(window, contract.capability, {value: Object.freeze({
         version: contract.version, types,
@@ -481,10 +507,11 @@ enum JournalImportPicker {
 
 /// The panel's show menu: the page's types, or every file.
 @MainActor
-private final class JournalImportFilterChooser: NSObject {
+internal final class JournalImportFilterChooser: NSObject {
     private weak var panel: NSOpenPanel?
     private let types: [UTType]
     private(set) var accessoryView: NSView?
+    private(set) var filterPopup: NSPopUpButton?
 
     init(panel: NSOpenPanel, types: [UTType]) {
         self.panel = panel
@@ -498,10 +525,12 @@ private final class JournalImportFilterChooser: NSObject {
             if !names.contains(name) { names.append(name) }
         }
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.setAccessibilityLabel(MacStrings.macos_journalimporthost_filetypefilter())
         popup.addItems(withTitles: [names.joined(separator: ", "), MacStrings.macos_journalimporthost_allfiles()])
         popup.target = self
         popup.action = #selector(choose(_:))
         popup.sizeToFit()
+        filterPopup = popup
         let stack = NSStackView(views: [popup])
         stack.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
         accessoryView = stack

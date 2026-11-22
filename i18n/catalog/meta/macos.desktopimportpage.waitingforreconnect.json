@@ -1,0 +1,16 @@
+{
+  "description": "waiting for your journal to reconnect.",
+  "context": "Queue hold notice when imports wait for the paired journal to reconnect.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "8d27a89b42c01f542f85abcdef4f83f160ad167c36e2617363af6c999ff30280",
+  "risk": "routine",
+  "auto_merge": true
+}

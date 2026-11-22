@@ -1,5 +1,5 @@
 {
-  "description": "sending to your journal.",
+  "description": "sending to your journal…",
   "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
   "surfaces": [
     "native-app"
@@ -10,7 +10,7 @@
   "arguments": [],
   "format_intent": "text",
   "max_length": 1000,
-  "source_revision": "bf094c4c36a233d3790bb81be46ae344f7ae0400d10a036d8a1cd3796e1ea17c",
+  "source_revision": "34597557dc2c2c015053f1c47749a0545cec827bafa7065176c790f2a833ca34",
   "risk": "routine",
   "auto_merge": true
 }

@@ -1,5 +1,5 @@
 {
-  "description": "waiting to go to your journal.",
+  "description": "waiting to go to your journal",
   "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
   "surfaces": [
     "native-app"
@@ -10,7 +10,7 @@
   "arguments": [],
   "format_intent": "text",
   "max_length": 1000,
-  "source_revision": "fa4f1e681e4d94e0046c73c89b464ebe14ea41310561d129d87a23cfcc765f8d",
+  "source_revision": "364835adb846e149608d4ca75b3e6f5f7f974e57b68f83f933140c8abc06667a",
   "risk": "routine",
   "auto_merge": true
 }

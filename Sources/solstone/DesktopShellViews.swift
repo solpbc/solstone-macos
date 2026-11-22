@@ -84,13 +84,13 @@ extension SettingsView {
                             peers: peersForTile(tile),
                             selected: shellLayout != .phone && pane == .source(tile.source),
                             compact: shellLayout == .narrow,
-                            keyboardFocused: tileFocusFromKeyboard && focusedTile == tile.source,
+                            keyboardFocused: tileFocusFromKeyboard && focusedTile == .source(tile.source),
                             onOpen: { openPane(.source(tile.source)) },
                             onSwitch: { on in switchSource(tile.source, on: on) }
                         )
                         .focusable()
                         .focusEffectDisabled()
-                        .focused($focusedTile, equals: tile.source)
+                        .focused($focusedTile, equals: .source(tile.source))
                         .onKeyPress(.space) {
                             if let on = tile.switchOn { switchSource(tile.source, on: !on) }
                             return .handled
@@ -100,7 +100,25 @@ extension SettingsView {
                             return .handled
                         }
                     }
-                    ImportTile(selected: shellLayout != .phone && pane == .importPage, compact: shellLayout == .narrow) { openPane(.importPage) }
+                    ImportTile(
+                        snapshot: appState.importSource?.snapshot ?? ImportSnapshot(),
+                        selected: shellLayout != .phone && pane == .importPage,
+                        compact: shellLayout == .narrow,
+                        keyboardFocused: tileFocusFromKeyboard && focusedTile == .importTile
+                    ) {
+                        openPane(.importPage)
+                    }
+                    .focusable()
+                    .focusEffectDisabled()
+                    .focused($focusedTile, equals: .importTile)
+                    .onKeyPress(.return) {
+                        openPane(.importPage)
+                        return .handled
+                    }
+                    .onKeyPress(.space) {
+                        openPane(.importPage)
+                        return .handled
+                    }
                     AddMoreTile(selected: shellLayout != .phone && pane == .addMore, compact: shellLayout == .narrow) { openPane(.addMore) }
                 }
                 .padding(4)
@@ -140,20 +158,16 @@ extension SettingsView {
     }
 
     private func moveTileFocus(_ direction: MoveCommandDirection, tiles: [DeckTile]) {
-        let order = tiles.map(\.source)
-        guard !order.isEmpty else { return }
-        let columns = shellLayout.deckColumns
-        let index = focusedTile.flatMap { order.firstIndex(of: $0) } ?? -1
-        var next = index
+        let order: [DeckTileFocus] = tiles.map { .source($0.source) } + [.importTile]
+        let mapped: DeckFocusDirection
         switch direction {
-        case .left: next = index - 1
-        case .right: next = index + 1
-        case .up: next = index - columns
-        case .down: next = index + columns
-        @unknown default: break
+        case .left: mapped = .left
+        case .right: mapped = .right
+        case .up: mapped = .up
+        case .down: mapped = .down
+        @unknown default: return
         }
-        if index < 0 { next = 0 }
-        if order.indices.contains(next) { focusedTile = order[next] }
+        focusedTile = moveDeckTileFocus(from: focusedTile, direction: mapped, order: order, columns: shellLayout.deckColumns)
     }
 
     // MARK: - the pane

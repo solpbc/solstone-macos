@@ -32,13 +32,17 @@ final class ImportSource {
         appSupportDirectory: URL,
         resolver: HomeBaseURLResolver,
         facts: @escaping @MainActor () -> ImportFacts,
-        reportDelivery: @escaping @Sendable (String) async -> Void = { _ in }
+        sourceTotals: SourceTotals? = nil,
+        reportDelivery: @escaping @Sendable (String) async -> Void = { _ in },
+        reportPairingRefused: @escaping @Sendable (String) async -> Void = { _ in }
     ) -> ImportSource {
         ImportSource(
             engine: ImportEngine(
                 directory: appSupportDirectory.appendingPathComponent("Solstone/import", isDirectory: true),
                 transport: ImportLiveTransport(),
-                onDelivered: reportDelivery
+                sourceTotals: sourceTotals,
+                onDelivered: reportDelivery,
+                onPairingRefused: reportPairingRefused
             ),
             facts: facts,
             serverURL: {
@@ -50,10 +54,14 @@ final class ImportSource {
 
     func start() async {
         await refresh(sending: false)
+        await reconcileNow()
         guard runsLoop else { return }
         loop = Task { [weak self] in
             while let self, !Task.isCancelled {
                 self.nudge()
+                if self.snapshot.readyToReviewCount > 0 {
+                    await self.reconcileNow()
+                }
                 await self.refresh(sending: false)
                 let busy = await self.engine.isRunning
                 try? await Task.sleep(for: busy ? .seconds(1) : .seconds(15))
@@ -76,10 +84,22 @@ final class ImportSource {
         Task { await refresh(sending: true) }
     }
 
+    /// Reconciles `ready to review` items via `GET /app/import/api/<id>` even when `waiting == 0`.
+    func reconcile() {
+        Task { await reconcileNow() }
+    }
+
+    func reconcileNow() async {
+        var current = facts()
+        current.serverURL = await serverURL()
+        snapshot = await engine.reconcile(current)
+    }
+
     /// The tunnel connected again.
     func tunnelReconnected() {
         Task {
             await engine.tunnelReconnected()
+            await reconcileNow()
             await refresh(sending: true)
         }
     }
@@ -107,6 +127,14 @@ final class ImportSource {
     @discardableResult
     func retry(_ id: String) async -> ImportActionResult {
         let result = await engine.retry(id)
+        await refresh(sending: false)
+        nudge()
+        return result
+    }
+
+    @discardableResult
+    func sendAgain(_ id: String) async -> ImportActionResult {
+        let result = await engine.sendAgain(id)
         await refresh(sending: false)
         nudge()
         return result

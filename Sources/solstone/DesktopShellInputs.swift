@@ -179,7 +179,8 @@ extension AppState {
         i.upload = deckUploadPhase(uploadCoordinator.status)
         let imports = importSource?.snapshot
         i.pending = uploadCoordinator.pendingCount + (imports?.countsAsWaiting ?? 0)
-        if deckHasJournal, imports?.needsOwner == true {
+        i.readyToReview = deckHasJournal ? (imports?.readyToReviewCount ?? 0) : 0
+        if deckHasJournal, imports?.hasFault == true {
             i.held = .importsNeedYou
         } else if deckHasJournal, !uploadCoordinator.unwrittenSegments.isEmpty {
             i.held = .segmentsNotWritten

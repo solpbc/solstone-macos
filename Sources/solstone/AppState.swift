@@ -259,6 +259,9 @@ public final class AppState {
 
     /// Set by SetupView to tell SettingsView which tab to open to
     public var pendingSettingsTab: String?
+    /// Set when a surface outside SettingsView (such as JournalWindow's mark-held overlay) asks
+    /// to open Settings and present journal mark confirmation even if SettingsView was unmounted.
+    public var pendingReaskJournalMark = false
     public var pendingPairingLink: String?
     public var pendingPairingLinkError: String?
     var bringSolstoneToFront: @MainActor () -> Void = {}
@@ -1926,6 +1929,9 @@ public final class AppState {
             journalMarkConfirmationStore.confirm(journal)
             uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
             _ = pairingCoordinator.refreshPendingActions(markConfirmed: true)
+            journalHomeBaseChangeToken += 1
+            importSource?.reconcile()
+            importSource?.nudge()
             guard isPairedIngestReady else { return }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             if let owner = browserIntakeOwner {
@@ -2028,6 +2034,7 @@ public final class AppState {
                 await self.refreshNotificationAuthorizationStatus()
                 self.shortcutController.handleApplicationDidBecomeActive()
                 self.ingestStep5IfNeeded()
+                self.importSource?.reconcile()
                 if self.setupModel.phase != nil {
                     await self.setupModel.reconcileSourcePermissions()
                 }
@@ -2234,6 +2241,9 @@ public final class AppState {
             }
             uploadCoordinator.updatePairedIngestIdentity(currentPairedIngestIdentity())
             _ = pairingCoordinator.refreshPendingActions(markConfirmed: true)
+            journalHomeBaseChangeToken += 1
+            importSource?.reconcile()
+            importSource?.nudge()
             guard isPairedIngestReady else { return }
 #if SOLSTONE_BROWSER_INTAKE_PREVIEW
             if let owner = browserIntakeOwner {
@@ -3321,6 +3331,13 @@ public final class AppState {
         case .revoked, .mismatch: facts.pairingRefused = true
         default: facts.pairingRefused = tunnelLifecycleOwner.ordinaryRouteRevoked
         }
+        let connection = deckConnection(classifyJournalConnection(
+            isPairedIngestReady: isPairedIngestReady,
+            presentedConnection: tunnelLifecycleOwner.presentedConnection,
+            uploadStatus: uploadCoordinator.status,
+            lastHealthReason: uploadCoordinator.lastHealthReason
+        ))
+        facts.offline = connection == .offline || connection == .blocked
         facts.instance = currentJournalIdentity().fingerprint?.value
         facts.version = tunnelLifecycleOwner.journalVersion.version
         return facts
@@ -3333,10 +3350,14 @@ public final class AppState {
             appSupportDirectory: appSupport,
             resolver: ingestBaseURLResolver,
             facts: { [weak self] in self?.importFacts ?? ImportFacts() },
+            sourceTotals: sourceTotals ?? openSourceTotals(appSupport: appSupport),
             reportDelivery: { [weak self] instance in
                 await MainActor.run {
                     self?.uploadCoordinator.noteBrowserDelivery(captured: JournalConnectionFingerprint(value: instance))
                 }
+            },
+            reportPairingRefused: { [weak self] _ in
+                await self?.reevaluateTunnelPairing()
             }
         )
         importSource = source
@@ -3606,6 +3627,40 @@ public final class AppState {
         }
     }
 
+    /// Deep-links straight to `/app/import/<id>` in the app's journal window (including same-Mac
+    /// local journals), validating strict ASCII `^[0-9]{8}_[0-9]{6}$`.
+    @discardableResult
+    public func openJournalImport(id: String) -> Bool {
+        guard isValidImportID(id),
+              let destination = JournalWindowDestination(path: "/app/import/\(id)") else {
+            return false
+        }
+        if tunnelLifecycleOwner.sameMachineStoredPairingState == .noneHeld,
+           BundledJournalEndpoint.isBundledServiceURL(config.serverURL) {
+            openSameMacJournalInBrowser(destination)
+        } else {
+            openJournalWindowDirectly(destination)
+        }
+        return true
+    }
+
+    /// Opens Settings on the journal tab and presents mark confirmation, even if SettingsView is
+    /// currently unmounted (closed).
+    public func requestConfirmJournalMark(
+        openWindow: ((String) -> Void)? = nil,
+        activate: () -> Void = { NSApp?.activate(ignoringOtherApps: true) }
+    ) {
+        pendingSettingsTab = "journal"
+        pendingReaskJournalMark = true
+        if let openWindow {
+            routeOpenSettingsWindow(appState: self, openWindow: openWindow, activate: activate)
+        } else {
+            NotificationCenter.default.post(name: .openSettingsWindow, object: nil)
+        }
+        orderSolstoneSettingsWindowFront()
+        NotificationCenter.default.post(name: .reaskJournalMark, object: nil)
+    }
+
     public func openJournalWindowDirectly(_ destination: JournalWindowDestination = .root) {
         nextJournalOpenIntentID += 1
         journalOpenIntent = JournalOpenIntent(
@@ -3729,6 +3784,9 @@ public final class AppState {
         }
         if !stillHasMatchingWindow {
             openSceneIds.remove(sceneID)
+        }
+        if sceneID == .journal {
+            importSource?.reconcile()
         }
         reevaluateActivationPolicy(debounced: true)
     }

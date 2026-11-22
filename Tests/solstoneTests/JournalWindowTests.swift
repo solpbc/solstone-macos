@@ -1183,6 +1183,7 @@ struct JournalWindowWireUpTests {
             "AXID.Journal.Browser.retry",
             "AXID.Journal.Browser.openSettings",
             "AXID.Journal.Browser.connectJournal",
+            "AXID.Journal.Browser.confirmMark",
             "UICopy.JOURNAL_WINDOW_LOADING",
             "UICopy.JOURNAL_WINDOW_ERROR",
             "UICopy.JOURNAL_WINDOW_RETRY",
@@ -1260,6 +1261,8 @@ struct JournalWindowHonestyTests {
                 return UICopy.SETTINGS_SETUP_JOURNAL_APP_ACTION
             case .connectJournal:
                 return UICopy.SETTINGS_SETUP_JOURNAL_LINK_ACTION
+            case .confirmMark:
+                return MacStrings.macos_desktopstatuspane_confirmthemark()
             }
         }
 
@@ -1306,6 +1309,78 @@ struct JournalWindowHonestyTests {
         )
         #expect(gap.overlayAction == .none)
         #expect(gap.overlayButtonTitle == nil)
+    }
+
+    @Test func markHeldOverlayOffersConfirmMarkEvenWhenConnectionIsConnected() {
+        var confirmed = 0
+        let session = JournalWindowSession(
+            resolveHomeBase: { .held },
+            connectionVerdict: { journalWindowConnectedVerdict() },
+            markHeld: { true },
+            confirmMark: { confirmed += 1 }
+        )
+        #expect(session.headline == MacStrings.macos_copy_journalmarkheld())
+        #expect(session.caption == MacStrings.macos_copy_journalmarkheldcaption())
+        #expect(session.overlayAction == .confirmMark)
+        #expect(session.overlayButtonTitle == MacStrings.macos_desktopstatuspane_confirmthemark())
+        session.performHonestyRoute()
+        #expect(confirmed == 1)
+    }
+
+    @Test func openJournalImportDeepLinksValidASCIIAndRejectsMalformedIDs() {
+        let state = AppState.forSnapshot()
+        let probe = JournalURLOpenProbe()
+        let observer = observeOpenJournalWindow(probe)
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        #expect(!state.openJournalImport(id: "../etc/passwd"))
+        #expect(!state.openJournalImport(id: "٢٠٢٦١١٢٢_١٤٠٠٠٠"))
+        #expect(!state.openJournalImport(id: "20261122_140000/extra"))
+        #expect(state.journalOpenIntent == nil)
+        #expect(!probe.posted)
+
+        #expect(state.openJournalImport(id: "20261122_140000"))
+        #expect(state.journalOpenIntent?.destination.path == "/app/import/20261122_140000")
+        #expect(probe.posted)
+    }
+
+    @Test func findJournalWindowMatchesSceneIDAndExcludesSheets() {
+        _ = NSApplication.shared
+        let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        other.identifier = NSUserInterfaceItemIdentifier("settings-AppWindow-1")
+
+        let journal = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        journal.identifier = NSUserInterfaceItemIdentifier("journal-AppWindow-2")
+
+        #expect(findJournalWindow(in: [other, journal]) === journal)
+        #expect(findJournalWindow(in: [other]) == nil)
+    }
+
+    @Test func routeOpenJournalWindowInvokesBringFrontBeforeActivate() {
+        let state = AppState.forSnapshot()
+        state.dockMode = .alwaysAccessory
+        var events: [String] = []
+        routeOpenJournalWindow(
+            appState: state,
+            openWindow: { id in events.append("open:\(id)") },
+            bringFront: { events.append("bringFront") },
+            activate: { events.append("activate") }
+        )
+        #expect(events == ["open:journal", "bringFront", "activate"])
+    }
+
+    @Test func requestConfirmJournalMarkQueuesMarkConfirmationWhenSettingsClosed() {
+        let state = AppState.forSnapshot()
+        var opened: [String] = []
+        var activated = 0
+        state.requestConfirmJournalMark(
+            openWindow: { opened.append($0) },
+            activate: { activated += 1 }
+        )
+        #expect(state.pendingSettingsTab == "journal")
+        #expect(state.pendingReaskJournalMark)
+        #expect(opened == [SolstoneSceneID.settings.rawValue])
+        #expect(activated == 1)
     }
 
     @Test func verdictClassIsExhaustiveOverFailureCausesAndNilTokens() {

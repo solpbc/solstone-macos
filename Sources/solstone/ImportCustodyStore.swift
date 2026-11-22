@@ -35,9 +35,17 @@ struct ImportListItem: Equatable, Sendable {
     var error: String?
     var reasonCode: String?
     var kind: String?
+    var importID: String?
+    var reviewExpired: Bool
     var scope: ImportAttentionScope
     var inFlight: Bool
     var hasSavedProgress: Bool
+}
+
+struct ImportReviewCandidate: Equatable, Sendable {
+    var id: String
+    var importID: String
+    var instanceID: String
 }
 
 struct ImportCandidate: Equatable, Sendable {
@@ -65,7 +73,7 @@ struct ImportItemRecord: Codable, Equatable, Sendable {
     var displayName: String
     var mime: String
     var byteSize: Int64
-    /// `pending`, `attention` or `delivered`.
+    /// `pending`, `ready_to_review`, `attention` or `delivered`.
     var state: String
     var createdAt: Date
     var progressPath: String?
@@ -81,9 +89,20 @@ struct ImportItemRecord: Codable, Equatable, Sendable {
     var attentionJournalVersion: String?
     /// Set when the journal window handed this item over, and sent with its save.
     var handoff: ImportHandoff?
+    /// Optional review fields (upgrade-safe for pre-existing custody.json files).
+    var reviewImportID: String? = nil
+    var reviewKind: String? = nil
+    var reviewReasonCode: String? = nil
+    var reviewError: String? = nil
+    var reviewInstanceID: String? = nil
+    var reviewExpired: Bool? = nil
 
     var isJournalAttention: Bool {
         state == "attention" && attentionInstanceID != nil && attentionJournalVersion != nil
+    }
+
+    var isPreviewRequiredAttention: Bool {
+        state == "attention" && attentionReasonCode == "import_preview_required"
     }
 }
 
@@ -92,6 +111,8 @@ private struct ImportCustodyFile: Codable {
     var items: [ImportItemRecord] = []
     var lastDeliveredAt: Date?
     var lastDeliveredInstance: String?
+    /// Optional 24h recent UI receipts (upgrade-safe for pre-existing custody.json files).
+    var recentReceipts: [ImportRecentReceipt]?
 }
 
 /// Flushes a file or directory to the disk itself, not only to the drive's cache.
@@ -124,6 +145,8 @@ final class ImportCustodyStore: @unchecked Sendable {
     /// The record itself is deleted on delivery; this is what the journal window still asks about.
     private var receipts: [(id: String, importID: String?)] = []
     private static let receiptLimit = 1024
+    static let recentReceiptLimit = 5
+    static let recentReceiptWindow: TimeInterval = 24 * 60 * 60
     private(set) var unreadable = false
 
     private var recordURL: URL { root.appendingPathComponent("custody.json") }
@@ -324,6 +347,12 @@ final class ImportCustodyStore: @unchecked Sendable {
                         $0.backoffInstanceID = nil
                         $0.attemptCount = 0
                         $0.nextAttemptAt = nil
+                        $0.reviewImportID = nil
+                        $0.reviewKind = nil
+                        $0.reviewReasonCode = nil
+                        $0.reviewError = nil
+                        $0.reviewInstanceID = nil
+                        $0.reviewExpired = nil
                     }
                 }
             }
@@ -332,16 +361,44 @@ final class ImportCustodyStore: @unchecked Sendable {
 
     // MARK: - delivery
 
+    private static func isAttentionEligible(_ row: ImportItemRecord, instance: String, journalVersion: String) -> Bool {
+        guard row.isJournalAttention else { return false }
+        if row.isPreviewRequiredAttention {
+            // Never auto-retry preview-required refusals on reconnect or journal version bump.
+            return row.attentionInstanceID != instance
+        }
+        return row.attentionInstanceID != instance || row.attentionJournalVersion != journalVersion
+    }
+
+    private static func prunedRecentReceipts(_ entries: [ImportRecentReceipt], now: Date) -> [ImportRecentReceipt] {
+        let cutoff = now.addingTimeInterval(-recentReceiptWindow)
+        var seen: Set<String> = []
+        var fresh: [(index: Int, receipt: ImportRecentReceipt)] = []
+        for (index, entry) in entries.enumerated() where entry.deliveredAt >= cutoff {
+            guard seen.insert(entry.id).inserted else { continue }
+            var sanitized = entry
+            sanitized.importID = validImportID(entry.importID)
+            fresh.append((index, sanitized))
+        }
+        fresh.sort { a, b in
+            if a.receipt.deliveredAt != b.receipt.deliveredAt {
+                return a.receipt.deliveredAt > b.receipt.deliveredAt
+            }
+            return a.index < b.index
+        }
+        return Array(fresh.prefix(recentReceiptLimit).map(\.receipt))
+    }
+
     func eligible(instance: String, journalVersion: String, now: Date) -> [ImportCandidate] {
         lock.withLock {
             guard !unreadable else { return [] }
             return ordered.compactMap { row in
-                guard row.state != "delivered" else { return nil }
+                guard row.state != "delivered" && row.state != "ready_to_review" else { return nil }
                 let eligible: Bool
                 if row.state == "pending" {
                     if row.backoffInstanceID == instance, let next = row.nextAttemptAt { eligible = now >= next } else { eligible = true }
                 } else if row.isJournalAttention {
-                    eligible = row.attentionInstanceID != instance || row.attentionJournalVersion != journalVersion
+                    eligible = Self.isAttentionEligible(row, instance: instance, journalVersion: journalVersion)
                 } else {
                     eligible = false
                 }
@@ -363,7 +420,7 @@ final class ImportCustodyStore: @unchecked Sendable {
             if row.state == "delivered" { return .delivered }
             if row.state == "pending" {
                 // fine
-            } else if row.isJournalAttention && (row.attentionInstanceID != instance || row.attentionJournalVersion != journalVersion) {
+            } else if Self.isAttentionEligible(row, instance: instance, journalVersion: journalVersion) {
                 guard update(id, {
                     $0.state = "pending"
                     $0.attentionError = nil
@@ -395,6 +452,39 @@ final class ImportCustodyStore: @unchecked Sendable {
         }
     }
 
+    func recordReadyToReview(
+        _ id: String,
+        importID: String,
+        error: String,
+        reasonCode: String,
+        kind: String,
+        instance: String
+    ) -> ImportChange {
+        lock.withLock {
+            defer { inFlight.remove(id) }
+            guard let validID = validImportID(importID) else { return .refused }
+            guard let row = record(id) else { return .gone }
+            guard row.state == "pending" || row.isJournalAttention else { return .refused }
+            return update(id) {
+                $0.state = "ready_to_review"
+                $0.reviewImportID = validID
+                $0.reviewKind = kind
+                $0.reviewReasonCode = reasonCode
+                $0.reviewError = error.isEmpty ? nil : error
+                $0.reviewInstanceID = instance
+                $0.reviewExpired = false
+                $0.attentionError = nil
+                $0.attentionReasonCode = nil
+                $0.attentionKind = nil
+                $0.attentionInstanceID = nil
+                $0.attentionJournalVersion = nil
+                $0.backoffInstanceID = nil
+                $0.attemptCount = 0
+                $0.nextAttemptAt = nil
+            } ? .done : .refused
+        }
+    }
+
     func recordDelivered(_ id: String, instance: String, importID: String? = nil) -> ImportChange {
         lock.withLock {
             defer { inFlight.remove(id) }
@@ -402,33 +492,197 @@ final class ImportCustodyStore: @unchecked Sendable {
             if row.state == "delivered" { return .done }
             guard row.state == "pending" || row.isJournalAttention,
                   let index = file.items.firstIndex(where: { $0.id == id }) else { return .refused }
+            let now = clock()
+            let resolvedImportID = validImportID(importID) ?? validImportID(row.progressTimestamp)
             var next = file
             next.items[index].state = "delivered"
-            next.lastDeliveredAt = clock()
+            next.lastDeliveredAt = now
             next.lastDeliveredInstance = instance
+            let uiReceipt = ImportRecentReceipt(
+                id: row.id,
+                filename: row.displayName,
+                importID: resolvedImportID,
+                instanceID: instance,
+                deliveredAt: now
+            )
+            next.recentReceipts = Self.prunedRecentReceipts([uiReceipt] + (next.recentReceipts ?? []), now: now)
             guard persist(next) else { return .refused }
             if row.handoff != nil {
                 if receipts.count >= Self.receiptLimit { receipts.removeFirst() }
-                receipts.append((id, importID ?? row.progressTimestamp))
+                receipts.append((id, resolvedImportID ?? importID ?? row.progressTimestamp))
             }
             return .done
         }
     }
 
+    // MARK: - review reconciliation
+
+    func reviewCandidates(instance: String) -> [ImportReviewCandidate] {
+        lock.withLock {
+            guard !unreadable else { return [] }
+            return ordered.compactMap { row in
+                guard row.state == "ready_to_review",
+                      row.reviewExpired != true,
+                      !inFlight.contains(row.id),
+                      row.reviewInstanceID == instance,
+                      let importID = validImportID(row.reviewImportID) else { return nil }
+                return ImportReviewCandidate(id: row.id, importID: importID, instanceID: instance)
+            }
+        }
+    }
+
+    /// Re-verifies `(id, expectedImportID, expectedInstanceID)` under the store lock before
+    /// durably writing the 24h recent receipt and marking the item delivered. Local bytes are
+    /// removed afterward by `finish()`, preserving durability if interrupted.
+    func reconcileConfirmed(_ id: String, expectedImportID: String, expectedInstanceID: String) -> ImportChange {
+        lock.withLock {
+            guard !unreadable else { return .refused }
+            guard let index = file.items.firstIndex(where: { $0.id == id }) else { return .gone }
+            let row = file.items[index]
+            guard !inFlight.contains(id),
+                  row.state == "ready_to_review",
+                  row.reviewExpired != true,
+                  row.reviewImportID == expectedImportID,
+                  row.reviewInstanceID == expectedInstanceID else { return .refused }
+            let now = clock()
+            let resolvedImportID = validImportID(expectedImportID)
+            var next = file
+            next.items[index].state = "delivered"
+            next.lastDeliveredAt = now
+            next.lastDeliveredInstance = expectedInstanceID
+            let uiReceipt = ImportRecentReceipt(
+                id: row.id,
+                filename: row.displayName,
+                importID: resolvedImportID,
+                instanceID: expectedInstanceID,
+                deliveredAt: now
+            )
+            next.recentReceipts = Self.prunedRecentReceipts([uiReceipt] + (next.recentReceipts ?? []), now: now)
+            guard persist(next) else { return .refused }
+            if row.handoff != nil {
+                if receipts.count >= Self.receiptLimit { receipts.removeFirst() }
+                receipts.append((id, resolvedImportID))
+            }
+            return .done
+        }
+    }
+
+    /// Re-verifies `(id, expectedImportID, expectedInstanceID)` under the store lock before
+    /// marking the staged copy expired. Keeps local bytes intact for `sendAgain`.
+    func reconcileExpired(_ id: String, expectedImportID: String, expectedInstanceID: String) -> ImportChange {
+        lock.withLock {
+            guard !unreadable else { return .refused }
+            guard let row = record(id) else { return .gone }
+            guard !inFlight.contains(id),
+                  row.state == "ready_to_review",
+                  row.reviewExpired != true,
+                  row.reviewImportID == expectedImportID,
+                  row.reviewInstanceID == expectedInstanceID else { return .refused }
+            return update(id) {
+                $0.reviewExpired = true
+            } ? .done : .refused
+        }
+    }
+
+    /// When paired to a different journal instance, resets `ready_to_review` and `reviewExpired`
+    /// items back to `pending` so they deliver cleanly to the new journal.
+    func resetReviewItemsForDifferentInstance(_ currentInstance: String) {
+        lock.withLock {
+            guard !unreadable else { return }
+            let needsReset = file.items.contains { row in
+                row.state == "ready_to_review"
+                    && !inFlight.contains(row.id)
+                    && row.reviewInstanceID != currentInstance
+            }
+            guard needsReset else { return }
+            var next = file
+            for index in next.items.indices {
+                let row = next.items[index]
+                guard row.state == "ready_to_review",
+                      !inFlight.contains(row.id),
+                      row.reviewInstanceID != currentInstance else { continue }
+                next.items[index].state = "pending"
+                next.items[index].progressPath = nil
+                next.items[index].progressTimestamp = nil
+                next.items[index].progressInstanceID = nil
+                next.items[index].backoffInstanceID = nil
+                next.items[index].attemptCount = 0
+                next.items[index].nextAttemptAt = nil
+                next.items[index].reviewImportID = nil
+                next.items[index].reviewKind = nil
+                next.items[index].reviewReasonCode = nil
+                next.items[index].reviewError = nil
+                next.items[index].reviewInstanceID = nil
+                next.items[index].reviewExpired = nil
+                next.items[index].attentionError = nil
+                next.items[index].attentionReasonCode = nil
+                next.items[index].attentionKind = nil
+                next.items[index].attentionInstanceID = nil
+                next.items[index].attentionJournalVersion = nil
+            }
+            _ = persist(next)
+        }
+    }
+
     /// Where a handed-over item is, for the journal window that handed it over.
-    func handoffStatus(_ id: String, missingCopyReason: String) -> ImportHandoffStatus {
+    func handoffStatus(
+        _ id: String,
+        missingCopyReason: String,
+        reviewReadyReason: String = MacStrings.macos_desktopimportpage_reviewdetail(),
+        reviewExpiredReason: String = MacStrings.macos_desktopimportpage_reviewexpired()
+    ) -> ImportHandoffStatus {
         lock.withLock {
             if let receipt = receipts.last(where: { $0.id == id }) { return .delivered(importID: receipt.importID) }
             guard !isUnsafeID(id), let row = record(id) else { return .gone }
-            if row.state == "delivered" { return .delivered(importID: row.progressTimestamp) }
-            if inFlight.contains(id) { return .uploading }
+            if row.state == "delivered" {
+                return .delivered(importID: validImportID(row.reviewImportID) ?? validImportID(row.progressTimestamp) ?? row.progressTimestamp)
+            }
+            if inFlight.contains(id) { return .uploading(sizeBytes: row.byteSize) }
+            if row.state == "ready_to_review" {
+                if row.reviewExpired == true {
+                    return .attention(
+                        reason: reviewExpiredReason,
+                        importID: validImportID(row.reviewImportID),
+                        reviewRequired: false,
+                        reviewExpired: true,
+                        reasonCode: row.reviewReasonCode,
+                        kind: row.reviewKind,
+                        retryable: true
+                    )
+                }
+                return .attention(
+                    reason: reviewReadyReason,
+                    importID: validImportID(row.reviewImportID),
+                    reviewRequired: true,
+                    reviewExpired: false,
+                    reasonCode: row.reviewReasonCode ?? "import_preview_required",
+                    kind: row.reviewKind,
+                    retryable: false
+                )
+            }
             if row.state == "attention" {
                 if row.isJournalAttention {
-                    return .attention(reason: row.attentionError ?? importGenericRefusal, importID: row.progressTimestamp)
+                    return .attention(
+                        reason: row.attentionError ?? importGenericRefusal,
+                        importID: validImportID(row.progressTimestamp),
+                        reviewRequired: false,
+                        reviewExpired: false,
+                        reasonCode: row.attentionReasonCode,
+                        kind: row.attentionKind,
+                        retryable: isImportAttentionRetryable(reasonCode: row.attentionReasonCode, kind: row.attentionKind)
+                    )
                 }
-                return .attention(reason: missingCopyReason, importID: nil)
+                return .attention(
+                    reason: missingCopyReason,
+                    importID: nil,
+                    reviewRequired: false,
+                    reviewExpired: false,
+                    reasonCode: nil,
+                    kind: row.attentionKind,
+                    retryable: false
+                )
             }
-            return .waiting
+            return .waiting(sizeBytes: row.byteSize)
         }
     }
 
@@ -444,6 +698,12 @@ final class ImportCustodyStore: @unchecked Sendable {
                 $0.attentionKind = kind
                 $0.attentionError = error
                 $0.attentionReasonCode = reasonCode
+                $0.reviewImportID = nil
+                $0.reviewKind = nil
+                $0.reviewReasonCode = nil
+                $0.reviewError = nil
+                $0.reviewInstanceID = nil
+                $0.reviewExpired = nil
             } ? .done : .refused
         }
     }
@@ -509,8 +769,46 @@ final class ImportCustodyStore: @unchecked Sendable {
         }
     }
 
+    /// Re-queues an item whose waiting copy in the journal expired, clearing its saved timestamp
+    /// so it re-uploads cleanly via `/save` + `/start`.
+    func sendAgain(_ id: String) -> ImportChange {
+        lock.withLock {
+            guard !unreadable else { return .refused }
+            guard let row = record(id) else { return .gone }
+            if inFlight.contains(id) { return .inFlight }
+            if row.state == "delivered" { return .delivered }
+            guard row.state == "ready_to_review" else { return .refused }
+            return update(id) {
+                $0.state = "pending"
+                $0.progressPath = nil
+                $0.progressTimestamp = nil
+                $0.progressInstanceID = nil
+                $0.backoffInstanceID = nil
+                $0.attemptCount = 0
+                $0.nextAttemptAt = nil
+                $0.reviewImportID = nil
+                $0.reviewKind = nil
+                $0.reviewReasonCode = nil
+                $0.reviewError = nil
+                $0.reviewInstanceID = nil
+                $0.reviewExpired = nil
+                $0.attentionError = nil
+                $0.attentionReasonCode = nil
+                $0.attentionKind = nil
+                $0.attentionInstanceID = nil
+                $0.attentionJournalVersion = nil
+            } ? .done : .refused
+        }
+    }
+
     func hasSavedProgress(_ id: String) -> Bool {
-        lock.withLock { record(id).map { $0.progressPath != nil && $0.progressTimestamp != nil } ?? false }
+        lock.withLock {
+            guard let row = record(id) else { return false }
+            if row.state == "ready_to_review" {
+                return row.reviewExpired != true
+            }
+            return row.progressPath != nil && row.progressTimestamp != nil
+        }
     }
 
     // MARK: - reading
@@ -521,15 +819,36 @@ final class ImportCustodyStore: @unchecked Sendable {
                 let scope: ImportAttentionScope
                 if row.state != "attention" { scope = .none }
                 else if !row.isJournalAttention { scope = .local }
+                else if row.isPreviewRequiredAttention && row.attentionInstanceID == instance { scope = .here }
                 else if row.attentionInstanceID == instance && row.attentionJournalVersion == journalVersion { scope = .here }
                 else { scope = .elsewhere }
+                let isReview = row.state == "ready_to_review"
+                let expired = isReview && row.reviewExpired == true
                 return ImportListItem(
-                    id: row.id, displayName: row.displayName, state: row.state, error: row.attentionError,
-                    reasonCode: row.attentionReasonCode, kind: row.attentionKind, scope: scope,
+                    id: row.id,
+                    displayName: row.displayName,
+                    state: row.state,
+                    error: isReview ? row.reviewError : row.attentionError,
+                    reasonCode: isReview ? row.reviewReasonCode : row.attentionReasonCode,
+                    kind: isReview ? row.reviewKind : row.attentionKind,
+                    importID: isReview ? validImportID(row.reviewImportID) : validImportID(row.progressTimestamp),
+                    reviewExpired: expired,
+                    scope: scope,
                     inFlight: inFlight.contains(row.id),
-                    hasSavedProgress: row.progressPath != nil && row.progressTimestamp != nil
+                    hasSavedProgress: isReview ? !expired : (row.progressPath != nil && row.progressTimestamp != nil)
                 )
             }
+        }
+    }
+
+    /// Lightweight UI receipts pruned to last 24h (max 5 newest), filtered to the currently paired
+    /// and confirmed journal instance. Empty when unpaired or unconfirmed.
+    func recentReceipts(forInstance instance: String?, now: Date? = nil) -> [ImportRecentReceipt] {
+        lock.withLock {
+            guard !unreadable, let instance else { return [] }
+            let reference = now ?? clock()
+            let pruned = Self.prunedRecentReceipts(file.recentReceipts ?? [], now: reference)
+            return pruned.filter { $0.instanceID == instance }
         }
     }
 

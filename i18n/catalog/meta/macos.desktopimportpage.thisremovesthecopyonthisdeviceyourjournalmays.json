@@ -1,5 +1,5 @@
 {
-  "description": "this removes the copy on this device. your journal may still bring in the copy it already has.",
+  "description": "this removes the copy on this device. the waiting copy in your journal stays there until you discard it or it expires.",
   "context": "Shown by Sources/solstone/DesktopImportPage.swift. Arguments preserve the existing presentation values.",
   "surfaces": [
     "native-app"
@@ -10,7 +10,7 @@
   "arguments": [],
   "format_intent": "text",
   "max_length": 1000,
-  "source_revision": "f04df4a14c7d6c8b19e083b2f926da6099fcdfb942e73cff819d320271716d1a",
+  "source_revision": "08ce8b8d493997d6c962e942363bbd51aa56c48403981ef3c63c3a14204ecc1e",
   "risk": "routine",
   "auto_merge": true
 }

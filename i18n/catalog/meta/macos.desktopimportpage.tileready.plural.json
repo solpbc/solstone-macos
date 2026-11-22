@@ -1,0 +1,27 @@
+{
+  "description": "1 ready in your journal",
+  "context": "Home import tile sub-line counting imports ready for review in the journal.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "count",
+      "type": "cardinal",
+      "numeric_style": "ungrouped",
+      "min": 0
+    }
+  ],
+  "format_intent": "cardinal",
+  "max_length": 1000,
+  "source_revision": "bb7f809dc81ff7b7389377d9aa9fe89a5be21f6c05e070b69ddd2cd2a5976ce3",
+  "risk": "routine",
+  "auto_merge": true,
+  "selector": {
+    "name": "count",
+    "type": "cardinal"
+  }
+}

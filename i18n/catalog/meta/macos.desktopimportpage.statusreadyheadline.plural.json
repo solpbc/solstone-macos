@@ -1,0 +1,27 @@
+{
+  "description": "1 import ready to review",
+  "context": "Status pane lead headline when imports are ready to review.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "count",
+      "type": "cardinal",
+      "numeric_style": "ungrouped",
+      "min": 0
+    }
+  ],
+  "format_intent": "cardinal",
+  "max_length": 1000,
+  "source_revision": "4492fc25c4582fb461db1bca153adccf79334cef651f149b3c81ed8a98c82cce",
+  "risk": "routine",
+  "auto_merge": true,
+  "selector": {
+    "name": "count",
+    "type": "cardinal"
+  }
+}

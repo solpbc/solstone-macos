@@ -182,6 +182,15 @@ struct JournalPillButton: View {
             HStack(spacing: 6) {
                 if pill.isCaughtUp {
                     Circle().fill(SetupChromeColor.successDot(for: scheme)).frame(width: 7, height: 7)
+                } else if case .readyToReview = pill {
+                    ZStack {
+                        Circle()
+                            .stroke(SetupChromeColor.orangeText(for: scheme), lineWidth: 1.5)
+                            .frame(width: 9, height: 9)
+                        Circle()
+                            .fill(SetupChromeColor.solOrange)
+                            .frame(width: 3.5, height: 3.5)
+                    }
                 } else {
                     Circle().stroke(SetupChromeColor.softInk(for: scheme), lineWidth: 1.2).frame(width: 7, height: 7)
                 }

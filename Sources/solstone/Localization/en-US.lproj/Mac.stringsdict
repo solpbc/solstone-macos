@@ -82,6 +82,102 @@
 			<string>%2$@ are left out of what the solstone app takes in from your screen</string>
 		</dict>
 	</dict>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e70696c6c72656164792e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 ready to review</string>
+			<key>other</key>
+			<string>%2$@ ready to review</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7374617475737265616479686561646c696e652e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 import ready to review</string>
+			<key>other</key>
+			<string>%2$@ imports ready to review</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e74696c6566696c65732e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 file</string>
+			<key>other</key>
+			<string>%2$@ files</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e74696c656974656d732e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 item</string>
+			<key>other</key>
+			<string>%2$@ items</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e74696c6572656164792e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 ready in your journal</string>
+			<key>other</key>
+			<string>%2$@ ready in your journal</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e74696c6577616974696e672e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 waiting</string>
+			<key>other</key>
+			<string>%2$@ waiting</string>
+		</dict>
+	</dict>
 	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e686f75727361676f2e706c7572616c</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -96,6 +192,22 @@
 			<string>1 hour ago</string>
 			<key>other</key>
 			<string>%2$@ hours ago</string>
+		</dict>
+	</dict>
+	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6974656d732e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>1 item</string>
+			<key>other</key>
+			<string>%2$@ items</string>
 		</dict>
 	</dict>
 	<key>m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6d696e757465732e706c7572616c</key>

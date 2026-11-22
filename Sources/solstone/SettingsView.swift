@@ -191,7 +191,7 @@ struct SettingsView: View {
     @State var shelfOpen = false
     @State var tileFocusFromKeyboard = false
     @State var homePane: HomePane?
-    @FocusState var focusedTile: DeckSource?
+    @FocusState var focusedTile: DeckTileFocus?
     @Environment(\.dismiss) private var dismiss
 
     @State var storageUsedMB: Int?
@@ -496,6 +496,7 @@ struct SettingsView: View {
             privateWindowAnnouncements.reset(to: privateWindowAccessibilityState)
         }
         .onReceive(NotificationCenter.default.publisher(for: .reaskJournalMark)) { _ in
+            appState.pendingReaskJournalMark = false
             navigate(.service)
             journalMarkDriver.reaskUnconfirmed(appState: appState)
         }
@@ -567,7 +568,11 @@ struct SettingsView: View {
             showPairingFlow = true
         }
         if let pending = appState.pendingSettingsTab {
-            if pending.hasPrefix("source:"), let source = DeckSource(rawValue: String(pending.dropFirst("source:".count))) {
+            if pending == "import" {
+                shelf = .home
+                homePane = .importPage
+                phonePushed = true
+            } else if pending.hasPrefix("source:"), let source = DeckSource(rawValue: String(pending.dropFirst("source:".count))) {
                 shelf = .home
                 homePane = .source(source)
                 phonePushed = true
@@ -575,6 +580,11 @@ struct SettingsView: View {
                 navigate(tab)
             }
             appState.pendingSettingsTab = nil
+        }
+        if appState.pendingReaskJournalMark {
+            appState.pendingReaskJournalMark = false
+            navigate(.service)
+            journalMarkDriver.reaskUnconfirmed(appState: appState)
         }
     }
 

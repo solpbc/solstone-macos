@@ -120,6 +120,30 @@ struct SourceTotalsTests {
         #expect(reopened.view()?.audioSegments == ["d/a"])
     }
 
+    @Test func importsCounterIsDeduplicatedAndUpgradeSafeForLegacyFiles() throws {
+        let directory = try makeTempDirectory("source-totals-imports-upgrade")
+        let legacyJSON = """
+        {
+          "version": 1,
+          "audio": {"total_seconds": 0, "remainder_ms": 0, "started": "2026-03-03", "last": null, "segments": []},
+          "screen": {"total_seconds": 0, "remainder_ms": 0, "started": "2026-03-03", "last": null, "segments": []},
+          "terminal": {"total_seconds": 0, "started": "2026-03-03", "last": null, "coverage": [], "carried": false},
+          "browsers": {"total": 0, "started": "2026-03-03", "last": null, "tabs": {}},
+          "obsidian": {"total": 0, "started": "2026-03-03", "last": null, "notes": [], "baseline": false}
+        }
+        """
+        try Data(legacyJSON.utf8).write(to: directory.appendingPathComponent(SourceTotals.fileName))
+        let store = SourceTotals(directory: directory, clock: .init(now: moment("2026-11-22T12:00:00Z"), timeZone: utc))
+        #expect(store.view()?.importsTotal == 0)
+        #expect(store.view()?.importsStarted == "2026-03-03")
+        #expect(store.applyImport(id: "imp-1") == .applied)
+        #expect(store.applyImport(id: "imp-1") == .unchanged)
+        #expect(store.applyImport(id: "imp-2") == .applied)
+        let reopened = SourceTotals(directory: directory, clock: .init(now: moment("2026-11-22T12:05:00Z"), timeZone: utc))
+        #expect(reopened.view()?.importsTotal == 2)
+        #expect(reopened.view()?.importsLast == "2026-11-22T12:00:00.000Z")
+    }
+
     @Test func audioUnionSubtractsOnlyTheSilenceThisRemixApplied() {
         let mic = ["mic": [(0.0, 10.0), (2.0, 4.0)], "system": [(5.0, 15.0)]]
         let both: Set<String> = ["mic", "system"]

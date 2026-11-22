@@ -55,13 +55,16 @@ func routeOpenSettingsWindow(
 
 @MainActor
 func orderSolstoneSettingsWindowFront() {
-    if let settingsWindow = NSApp.windows.first(where: {
+    if let settingsWindow = NSApp?.windows.first(where: {
         $0.sheetParent == nil && SolstoneSceneID.settings.matches(windowIdentifier: $0.identifier?.rawValue)
     }) {
         AppState.shared?.ensureWindowTrackedOpen(.settings)
+        if settingsWindow.isMiniaturized {
+            settingsWindow.deminiaturize(nil)
+        }
         settingsWindow.makeKeyAndOrderFront(nil)
     }
-    NSApp.activate(ignoringOtherApps: true)
+    NSApp?.activate(ignoringOtherApps: true)
 }
 
 @MainActor
@@ -159,6 +162,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         )
+
+        for resignName in [NSWindow.didResignMainNotification, NSWindow.didResignKeyNotification] {
+            notificationObservers.append(
+                NotificationCenter.default.addObserver(
+                    forName: resignName,
+                    object: nil,
+                    queue: .main
+                ) { notification in
+                    nonisolated(unsafe) let observedObject = notification.object as AnyObject?
+                    MainActor.assumeIsolated {
+                        guard let window = observedObject as? NSWindow,
+                              window.sheetParent == nil,
+                              SolstoneSceneID.journal.matches(windowIdentifier: window.identifier?.rawValue) else { return }
+                        AppState.shared?.importSource?.reconcile()
+                    }
+                }
+            )
+        }
 
         // When the status menu opens, bring any visible app windows to front.
         menuTrackingObserver = NotificationCenter.default.addObserver(

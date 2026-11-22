@@ -1,0 +1,16 @@
+{
+  "description": "waiting for your journal",
+  "context": "Home import tile sub-line when waiting imports are held offline or unpaired.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "aed7b9720bdbea424dadfcc1eded216c855d92d0700f24a19d1d2cbc53aceb35",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,21 @@
+{
+  "description": "in your journal · { $relative }",
+  "context": "Delivered receipt sub-line with relative time since delivery.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "relative",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "7a8b88a1e8ada60dc2f5f68b5889ed722bdf46662a6d4ec128047e2863b3d9bc",
+  "risk": "routine",
+  "auto_merge": true
+}

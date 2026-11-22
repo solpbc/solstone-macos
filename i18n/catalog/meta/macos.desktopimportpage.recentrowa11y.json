@@ -1,0 +1,25 @@
+{
+  "description": "{ $name }, in your journal, { $relative }. open in your journal.",
+  "context": "Accessible label for a recent delivered import row that opens the import in the journal.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "name",
+      "type": "string"
+    },
+    {
+      "name": "relative",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "e4277ee17270df29b6d7d5053bc2733bd955ce44884468232a49529dfb85a890",
+  "risk": "routine",
+  "auto_merge": true
+}

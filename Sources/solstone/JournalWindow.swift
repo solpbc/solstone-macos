@@ -27,13 +27,32 @@ internal enum JournalWindowWebsiteDataStore {
 func shouldRenderJournalContent(journalWindowOpen: Bool) -> Bool { journalWindowOpen }
 
 @MainActor
+func findJournalWindow(in windows: [NSWindow]) -> NSWindow? {
+    windows.first { window in
+        window.sheetParent == nil && SolstoneSceneID.journal.matches(windowIdentifier: window.identifier?.rawValue)
+    }
+}
+
+@MainActor
+func bringJournalWindowToFront(in windows: [NSWindow]? = nil) {
+    let candidates = windows ?? NSApp?.windows ?? []
+    guard let window = findJournalWindow(in: candidates) else { return }
+    if window.isMiniaturized {
+        window.deminiaturize(nil)
+    }
+    window.makeKeyAndOrderFront(nil)
+}
+
+@MainActor
 func routeOpenJournalWindow(
     appState: AppState,
     openWindow: (String) -> Void,
+    bringFront: () -> Void = { bringJournalWindowToFront() },
     activate: () -> Void
 ) {
     openWindow(SolstoneSceneID.journal.rawValue)
     appState.didOpenWindow(.journal)
+    bringFront()
     activate()
 }
 
@@ -125,6 +144,15 @@ struct JournalWindowSceneRoot: View {
                         appState.currentDurablePairingAdmissionIsReady &&
                             !appState.tunnelLifecycleOwner.ordinaryRouteRevoked
                     },
+                    markHeld: { [appState] in
+                        appState.needsJournalMarkConfirmation
+                    },
+                    confirmMark: {
+                        appState.requestConfirmJournalMark(
+                            openWindow: { openWindow(id: $0) },
+                            activate: { NSApp.activate(ignoringOtherApps: true) }
+                        )
+                    },
                     openExternalURL: openExternalURL,
                     websiteDataStore: websiteDataStore,
                     importIntake: importIntake
@@ -190,6 +218,8 @@ private struct JournalWindowView: View {
         recover: @escaping JournalWindowSession.RecoveryDispatch,
         openSettings: @escaping JournalWindowSession.SettingsRouter,
         routeAuthority: @escaping JournalWindowSession.RouteAuthorityProvider,
+        markHeld: @escaping JournalWindowSession.MarkHeldProvider,
+        confirmMark: @escaping JournalWindowSession.MarkConfirmRouter,
         openExternalURL: @escaping JournalWindowExternalURLOpener,
         websiteDataStore: @escaping JournalWindowWebsiteDataStoreProvider,
         importIntake: @escaping @MainActor () -> (any JournalImportIntake)?
@@ -207,7 +237,9 @@ private struct JournalWindowView: View {
                 pairingBusy: pairingBusy,
                 recover: recover,
                 openSettings: openSettings,
-                routeAuthority: routeAuthority
+                routeAuthority: routeAuthority,
+                markHeld: markHeld,
+                confirmMark: confirmMark
             )
         )
     }
@@ -309,6 +341,11 @@ private struct JournalWindowView: View {
                     session.performHonestyRoute()
                 }
                 .accessibilityIdentifier(AXID.Journal.Browser.connectJournal)
+            case .confirmMark:
+                Button(overlayButtonTitle ?? MacStrings.macos_desktopstatuspane_confirmthemark()) {
+                    session.performHonestyRoute()
+                }
+                .accessibilityIdentifier(AXID.Journal.Browser.confirmMark)
             case .none:
                 EmptyView()
             }

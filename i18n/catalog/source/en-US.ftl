@@ -832,7 +832,7 @@ macos.desktopglance.connected = connected ·{ $slot0 }{ $value0 }
 
 macos.desktopglance.connectedallcaughtup = connected · all caught up
 
-macos.desktopimportpage.addspdfsaudioimagesandtextyouchoosehereordrop = adds files you choose here or drop on this window.
+macos.desktopimportpage.addspdfsaudioimagesandtextyouchoosehereordrop = adds any file you choose here or drop on this window. your journal works out what it is.
 
 macos.desktopimportpage.checkingyourjournal = checking your journal.
 
@@ -871,7 +871,7 @@ macos.desktopimportpage.nothingwassavedonthisdevice = nothing was saved on this 
 
 macos.desktopimportpage.nothingyet = nothing yet.
 
-macos.desktopimportpage.openimporttoseewhy = open import to see why
+macos.desktopimportpage.openimporttoseewhy = open import to see why.
 
 macos.desktopimportpage.openscreenshots = open screenshots
 
@@ -889,7 +889,7 @@ macos.desktopimportpage.screenshotscomeinontheirown = screenshots come in on the
 
 macos.desktopimportpage.sending = sending
 
-macos.desktopimportpage.sendingtoyourjournal = sending to your journal.
+macos.desktopimportpage.sendingtoyourjournal = sending to your journal…
 
 macos.desktopimportpage.setupscreenshots = set up screenshots
 
@@ -907,13 +907,13 @@ macos.desktopimportpage.thisdevicecantconvertthisphoto = this device can't conve
 
 macos.desktopimportpage.thisremovesthecopyonthisdevicesoitwontreachyo = this removes the copy on this device, so it won't reach your journal.
 
-macos.desktopimportpage.thisremovesthecopyonthisdeviceyourjournalmays = this removes the copy on this device. your journal may still bring in the copy it already has.
+macos.desktopimportpage.thisremovesthecopyonthisdeviceyourjournalmays = this removes the copy on this device. the waiting copy in your journal stays there until you discard it or it expires.
 
 macos.desktopimportpage.trynow = try now
 
 macos.desktopimportpage.waiting = waiting
 
-macos.desktopimportpage.waitingtogotoyourjournal = waiting to go to your journal.
+macos.desktopimportpage.waitingtogotoyourjournal = waiting to go to your journal
 
 macos.desktopimportpage.yourjournalcanttakethiskindoffile = your journal can't take this kind of file
 
@@ -2259,3 +2259,82 @@ macos.shared.sa4state = { $detail } · { $state }
 
 macos.shared.sa4statetime = { $state } · { $relative }
 macos.journalimporthost.allfiles = all files
+
+macos.desktopimportpage.moreimportssubline = guides, options, and import history in your journal
+
+macos.desktopimportpage.waitingforyourreview = waiting for your review
+
+macos.desktopimportpage.readytoreview = ready to review
+
+macos.desktopimportpage.expired = expired
+
+macos.desktopimportpage.reviewdetail = saved in your journal. preview and confirm to start.
+
+macos.desktopimportpage.reviewdetailhour = saved in your journal. review within an hour before your journal removes the waiting copy.
+
+macos.desktopimportpage.reviewexpired = the waiting copy in your journal expired. this device still holds the file.
+
+macos.desktopimportpage.reviewinyourjournal = review in your journal
+
+macos.desktopimportpage.sendagaintoreview = send again to review
+
+macos.desktopimportpage.waitingforreconnect = waiting for your journal to reconnect.
+
+macos.desktopimportpage.waitingforjournal = waiting for your journal
+
+macos.desktopimportpage.allimporthistory = all import history in your journal
+
+macos.desktopimportpage.openimporttoreview = open import to review and start.
+
+macos.journalimporthost.filetypefilter = file types
+
+macos.desktopimportpage.reviewiteminyourjournal = review { $name } in your journal
+
+macos.desktopimportpage.senditemagaintoreview = send { $name } again to review
+
+macos.desktopimportpage.inyourjournalrelative = in your journal · { $relative }
+
+macos.desktopimportpage.recentrowa11y = { $name }, in your journal, { $relative }. open in your journal.
+
+macos.desktopimportpage.recentrowplaina11y = { $name }, in your journal, { $relative }.
+
+macos.desktopimportpage.tilevalue = { $state }. { $subline }.
+
+macos.desktopimportpage.trynowitem = try now, { $name }
+
+macos.desktopimportpage.stateannouncement = { $name }, { $state }
+
+macos.desktopimportpage.tilewaiting.plural = { $count ->
+    [one] 1 waiting
+   *[other] { $count } waiting
+}
+
+macos.desktopimportpage.tilefiles.plural = { $count ->
+    [one] 1 file
+   *[other] { $count } files
+}
+
+macos.desktopimportpage.tileready.plural = { $count ->
+    [one] 1 ready in your journal
+   *[other] { $count } ready in your journal
+}
+
+macos.desktopimportpage.tileitems.plural = { $count ->
+    [one] 1 item
+   *[other] { $count } items
+}
+
+macos.desktopimportpage.pillready.plural = { $count ->
+    [one] 1 ready to review
+   *[other] { $count } ready to review
+}
+
+macos.desktopimportpage.statusreadyheadline.plural = { $count ->
+    [one] 1 import ready to review
+   *[other] { $count } imports ready to review
+}
+
+macos.desktopshellmodel.items.plural = { $count ->
+    [one] 1 item
+   *[other] { $display } items
+}

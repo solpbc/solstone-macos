@@ -1,0 +1,21 @@
+{
+  "description": "review { $name } in your journal",
+  "context": "Accessible button label to review a specific file in the journal.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "name",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "3599f7010c4b07f95ead133dcf180da2d239a199c8d99a205b66d7be037308a8",
+  "risk": "routine",
+  "auto_merge": true
+}

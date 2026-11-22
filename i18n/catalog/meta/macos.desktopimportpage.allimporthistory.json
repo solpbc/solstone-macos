@@ -1,0 +1,16 @@
+{
+  "description": "all import history in your journal",
+  "context": "Footer link under recent delivered imports opening full import history in the journal.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "c6a2f1c801f821a3f133465688943056da9de68e008adb87ec8afd8609a3b8ff",
+  "risk": "routine",
+  "auto_merge": true
+}

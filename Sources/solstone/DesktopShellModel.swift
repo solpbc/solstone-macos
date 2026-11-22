@@ -430,9 +430,133 @@ private func deriveObsidianTile(_ i: DeckInputs) -> DeckTile {
     }
 }
 
-/// Whether any tile says `needs attention`, for the menu bar icon: the one place a fault rolls up.
-func deckHasFault(_ tiles: [DeckTile]) -> Bool {
-    tiles.contains { $0.state == .needsAttention }
+/// Whether any tile (including import) says `needs attention`, for the menu bar icon: the one
+/// place a fault rolls up. `ready to review` is non-fault and never rolls up here.
+func deckHasFault(_ tiles: [DeckTile], importHasFault: Bool = false) -> Bool {
+    importHasFault || tiles.contains { $0.state == .needsAttention }
+}
+
+// MARK: - deck keyboard focus
+
+enum DeckTileFocus: Hashable, Sendable {
+    case source(DeckSource)
+    case importTile
+}
+
+enum DeckFocusDirection: Equatable, Sendable {
+    case left, right, up, down
+}
+
+func moveDeckTileFocus(
+    from current: DeckTileFocus?,
+    direction: DeckFocusDirection,
+    order: [DeckTileFocus],
+    columns: Int
+) -> DeckTileFocus? {
+    guard !order.isEmpty else { return nil }
+    guard let current, let index = order.firstIndex(of: current) else { return order.first }
+    let next: Int
+    switch direction {
+    case .left: next = index - 1
+    case .right: next = index + 1
+    case .up: next = index - columns
+    case .down: next = index + columns
+    }
+    return order.indices.contains(next) ? order[next] : current
+}
+
+// MARK: - import tile
+
+enum ImportTileState: String, CaseIterable, Equatable, Sendable {
+    case idle
+    case waiting
+    case sending
+    case readyToReview
+    case needsAttention
+
+    var axToken: String {
+        switch self {
+        case .idle: return "idle"
+        case .waiting: return "waiting"
+        case .sending: return "sending"
+        case .readyToReview: return "ready_to_review"
+        case .needsAttention: return "needs_attention"
+        }
+    }
+
+    var word: String? {
+        switch self {
+        case .idle: return nil
+        case .waiting: return ImportCopy.waiting
+        case .sending: return ImportCopy.sending
+        case .readyToReview: return ImportCopy.readyToReview
+        case .needsAttention: return DeckStateWord.needsAttention.word
+        }
+    }
+}
+
+struct ImportTilePresentation: Equatable, Sendable {
+    var state: ImportTileState
+    var subline: String
+
+    var accessibilityValue: String {
+        if let word = state.word {
+            return MacStrings.macos_desktopimportpage_tilevalue(word, subline)
+        }
+        return subline
+    }
+}
+
+/// Worst-signal-wins derivation for the home `import` tile:
+/// `needs attention` > `ready to review` > `sending` > `waiting` > calm idle (`files`).
+func deriveImportTile(_ snapshot: ImportSnapshot) -> ImportTilePresentation {
+    if snapshot.storeUnreadable {
+        return ImportTilePresentation(state: .needsAttention, subline: ImportCopy.tileSubline)
+    }
+    let faultRows = snapshot.rows.filter { row in
+        switch row.kind {
+        case .refused, .missingCopy: return true
+        case .waiting, .sending, .goingAgain, .readyToReview, .reviewExpired: return false
+        }
+    }
+    if !faultRows.isEmpty {
+        let subline = faultRows.count == 1
+            ? faultRows[0].name
+            : MacStrings.macos_desktopimportpage_tileitems_plural(faultRows.count)
+        return ImportTilePresentation(state: .needsAttention, subline: subline)
+    }
+    if snapshot.waiting == .journalTooOld && !snapshot.rows.isEmpty {
+        let subline = snapshot.rows.count == 1
+            ? snapshot.rows[0].name
+            : MacStrings.macos_desktopimportpage_tileitems_plural(snapshot.rows.count)
+        return ImportTilePresentation(state: .needsAttention, subline: subline)
+    }
+    let reviewRows = snapshot.reviewRows
+    if !reviewRows.isEmpty {
+        let subline = reviewRows.count == 1
+            ? reviewRows[0].name
+            : MacStrings.macos_desktopimportpage_tileready_plural(reviewRows.count)
+        return ImportTilePresentation(state: .readyToReview, subline: subline)
+    }
+    let sendingRows = snapshot.rows.filter { $0.kind == .sending }
+    if !sendingRows.isEmpty {
+        let subline = sendingRows.count == 1
+            ? sendingRows[0].name
+            : MacStrings.macos_desktopimportpage_tilefiles_plural(sendingRows.count)
+        return ImportTilePresentation(state: .sending, subline: subline)
+    }
+    let waitingRows = snapshot.rows.filter { $0.kind == .waiting || $0.kind == .goingAgain }
+    if !waitingRows.isEmpty {
+        let heldForJournal = snapshot.offline
+            || snapshot.waiting == .unpaired
+            || snapshot.waiting == .awaitingConfirmation
+            || snapshot.waiting == .pairingRefused
+        let subline = heldForJournal
+            ? ImportCopy.tileWaitingForJournal
+            : MacStrings.macos_desktopimportpage_tilewaiting_plural(waitingRows.count)
+        return ImportTilePresentation(state: .waiting, subline: subline)
+    }
+    return ImportTilePresentation(state: .idle, subline: ImportCopy.tileSubline)
 }
 
 // MARK: - the journal pill
@@ -457,6 +581,8 @@ enum JournalPill: Equatable, Sendable {
     /// A finished pass left segments that will go on their own later.
     case waiting(Int)
     case waitingToSync
+    /// Connected, with nothing waiting to sync and 0 faults, while 1+ imports await owner review.
+    case readyToReview(Int)
     case connected
     /// Connected, with nothing waiting to sync, but something here that waits on the owner.
     case connectedHeld(JournalHeld)
@@ -473,6 +599,7 @@ enum JournalPill: Equatable, Sendable {
         case .syncing(let n): return MacStrings.macos_desktopshellmodel_syncing("\(n)")
         case .waiting(let n): return MacStrings.macos_desktopshellmodel_waiting("\(n)")
         case .waitingToSync: return MacStrings.macos_desktopstatuspane_waitingtosync()
+        case .readyToReview(let n): return MacStrings.macos_desktopimportpage_pillready_plural(n)
         case .connected, .connectedHeld: return MacStrings.macos_desktopshellmodel_connected()
         }
     }
@@ -483,7 +610,7 @@ enum JournalPill: Equatable, Sendable {
     var waiting: Int {
         switch self {
         case .confirmMark(let n), .syncPaused(let n), .pairAgain(let n), .offline(let n), .syncing(let n), .waiting(let n): return n
-        case .needsNewLink, .notPaired, .connecting, .waitingToSync, .connected, .connectedHeld: return 0
+        case .needsNewLink, .notPaired, .connecting, .waitingToSync, .readyToReview, .connected, .connectedHeld: return 0
         }
     }
 
@@ -499,6 +626,7 @@ enum JournalPill: Equatable, Sendable {
         case .syncing: return "syncing"
         case .waiting: return "waiting"
         case .waitingToSync: return "waiting_to_sync"
+        case .readyToReview: return "ready_to_review"
         case .connected: return "connected"
         case .connectedHeld: return "connected_held"
         }
@@ -527,6 +655,8 @@ struct JournalPillInputs: Equatable, Sendable {
     var pending = 0
     /// Set when something on this Mac waits on the owner, so the pill never reads caught up.
     var held: JournalHeld?
+    /// Imports awaiting owner preview & confirmation in the journal (non-fault).
+    var readyToReview = 0
 }
 
 func deriveJournalPill(_ i: JournalPillInputs) -> JournalPill {
@@ -546,6 +676,7 @@ func deriveJournalPill(_ i: JournalPillInputs) -> JournalPill {
     case .synced:
         if i.pending > 0 { return .waiting(i.pending) }
         if let held = i.held { return .connectedHeld(held) }
+        if i.readyToReview > 0 { return .readyToReview(i.readyToReview) }
         return .connected
     }
 }
@@ -610,7 +741,7 @@ struct SourceTotalFacts: Equatable, Sendable {
 }
 
 enum SourceTotalUnit: Sendable {
-    case seconds, pages, notes, screenshots
+    case seconds, pages, notes, screenshots, items
 }
 
 /// The words for one source's total, or nil when the record can't be read (the rows are then absent).
@@ -665,7 +796,29 @@ func totalWords(_ amount: Int, unit: SourceTotalUnit) -> String {
         return MacStrings.macos_desktopshellmodel_notes_plural(amount, "\(grouped(amount))")
     case .screenshots:
         return ScreenshotCopy.total(amount)
+    case .items:
+        return MacStrings.macos_desktopshellmodel_items_plural(amount, "\(grouped(amount))")
     }
+}
+
+/// Lifetime `so far` and `last taken in` facts for the import pane, or nil when unreadable.
+func importTotalFacts(
+    _ view: SourceTotals.View?,
+    now: Date,
+    calendar: Calendar = .current
+) -> SourceTotalFacts? {
+    guard let view else { return nil }
+    let lastDate = view.importsLast.flatMap(SourceTotals.parseInstant)
+    guard view.importsTotal > 0 || lastDate != nil else {
+        return SourceTotalFacts(soFar: MacStrings.macos_desktopshellmodel_nothingyet(), lastTakenIn: nil)
+    }
+    let startedText = startedWords(view.importsStarted, now: now, calendar: calendar)
+    let total = totalWords(view.importsTotal, unit: .items)
+    return SourceTotalFacts(
+        soFar: startedText.map { MacStrings.macos_desktopshellmodel_since(total, "\($0)") } ?? total,
+        totalOnly: total,
+        lastTakenIn: lastDate.map { relativeWords($0, now: now, calendar: calendar) }
+    )
 }
 
 private func startedWords(_ day: String, now: Date, calendar: Calendar) -> String? {
@@ -754,6 +907,7 @@ enum ShellMenuUpdateNotice: Equatable, Sendable {
 /// One row of the menu bar menu, top to bottom.
 enum ShellMenuRow: Equatable, Sendable {
     case attention(DeckSource)
+    case importAttention
     case update(ShellMenuUpdateNotice)
     case checkForUpdates
     case status(String)
@@ -768,6 +922,7 @@ enum ShellMenuRow: Equatable, Sendable {
     var title: String {
         switch self {
         case .attention(let source): return MacStrings.macos_desktopshellmodel_needsattention("\(source.label)")
+        case .importAttention: return MacStrings.macos_desktopshellmodel_needsattention("\(ImportCopy.title)")
         case .update(.ready): return MacStrings.macos_desktopshellmodel_updateready()
         case .update(.available): return MacStrings.macos_copy_settingsattentionupdateavailable()
         case .update(.checkFailed): return MacStrings.macos_copy_settingsattentionupdatecheckfailed()
@@ -796,9 +951,11 @@ func shellMenuRows(
     canResume: Bool,
     hasJournal: Bool,
     canOpenJournal: Bool,
-    update: DurableUpdateStatus = .idle
+    update: DurableUpdateStatus = .idle,
+    importHasFault: Bool = false
 ) -> [ShellMenuRow] {
     var rows: [ShellMenuRow] = tiles.filter { $0.state == .needsAttention }.map { .attention($0.source) }
+    if importHasFault { rows.append(.importAttention) }
     let notice = ShellMenuUpdateNotice(update)
     if let notice { rows.append(.update(notice)) }
     rows.append(.status(pausedLine ?? menuStatusLine(pill)))

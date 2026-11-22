@@ -1,0 +1,16 @@
+{
+  "description": "saved in your journal. review within an hour before your journal removes the waiting copy.",
+  "context": "Detail line for an Apple Health import whose waiting copy expires after an hour.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "bbff647e10bbc0973f26c10260caa090cffc3942ff041087d38a2142923712ec",
+  "risk": "routine",
+  "auto_merge": true
+}

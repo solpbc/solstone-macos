@@ -28,13 +28,13 @@ extension SettingsView {
 
             StatusSourceRows(appState: appState)
 
-            if let imports = appState.importSource?.snapshot, !imports.rows.isEmpty {
-                // Imports still on this Mac get one row, saying why they wait; it opens import.
+            if let imports = appState.importSource?.snapshot, imports.hasActiveOrHeldItems {
+                // Active, awaiting-review, or faulted imports get one row opening the import pane.
                 Button { openPane(.importPage) } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(ImportCopy.title)
-                            Text(ImportCopy.recent(imports)).font(.caption).foregroundStyle(.secondary)
+                            Text(ImportCopy.statusRowSubline(imports)).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -116,6 +116,9 @@ extension SettingsView {
             case .waitingToSync:
                 Text(MacStrings.macos_desktopstatuspane_waitingtosync()).font(DeckStyle.name(22))
                 Text(MacStrings.macos_desktopstatuspane_onthisdevice()).foregroundStyle(.secondary)
+            case .readyToReview(let n):
+                Text(ImportCopy.statusReadyHeadline(n)).font(DeckStyle.name(22))
+                Text(ImportCopy.openImportToReview).foregroundStyle(.secondary)
             case .connectedHeld(.segmentsNotWritten):
                 Text(MacStrings.macos_desktopstatuspane_nothingwaitingtosync()).font(DeckStyle.name(22))
             case .connectedHeld(.importsNeedYou):

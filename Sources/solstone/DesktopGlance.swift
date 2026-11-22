@@ -41,7 +41,8 @@ struct ShellMenuContent: View {
             canResume: controls.resume,
             hasJournal: appState.deckHasJournal,
             canOpenJournal: appState.canOpenJournal,
-            update: updateController.durableUpdateStatus
+            update: updateController.durableUpdateStatus,
+            importHasFault: appState.importSource?.snapshot.hasFault ?? false
         )
     }
 
@@ -51,6 +52,10 @@ struct ShellMenuContent: View {
         case .attention(let source):
             Button(row.title) {
                 openSolstoneWindow(appState: appState, route: "source:\(source.rawValue)")
+            }
+        case .importAttention:
+            Button(row.title) {
+                openSolstoneWindow(appState: appState, route: "import")
             }
         case .update:
             Button(row.title) { openSolstoneWindow(appState: appState, route: ShelfRow.updates.rawValue) }
@@ -102,7 +107,7 @@ struct ShellMenuContent: View {
 func menuStatusLine(_ pill: JournalPill) -> String {
     switch pill {
     case .connected: return MacStrings.macos_desktopglance_connectedallcaughtup()
-    case .waiting: return MacStrings.macos_desktopglance_connected("\(pill.text)")
+    case .waiting, .readyToReview: return MacStrings.macos_desktopglance_connected("\(pill.text)")
     default: return pill.text
     }
 }

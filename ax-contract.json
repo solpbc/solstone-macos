@@ -93,6 +93,7 @@
       "about.identity.title",
       "about.link.sourceCode",
       "about.link.website",
+      "journal.browser.confirmMark",
       "journal.browser.connectJournal",
       "journal.browser.navigation.state",
       "journal.browser.openSettings",
@@ -130,11 +131,14 @@
       "settings.configSave.error",
       "settings.deck.addMore",
       "settings.deck.import",
+      "settings.deck.import.allHistory",
       "settings.deck.import.choose",
       "settings.deck.import.intake",
       "settings.deck.import.more",
       "settings.deck.import.page",
       "settings.deck.import.recent",
+      "settings.deck.import.review",
+      "settings.deck.import.state",
       "settings.deck.journal",
       "settings.deck.pane.back",
       "settings.deck.pane.close",
@@ -471,6 +475,10 @@
       "kind" : "enum",
       "vocabulary" : "MenubarStatusRowState"
     },
+    "settings.deck.import.state" : {
+      "kind" : "enum",
+      "vocabulary" : "ImportTileState"
+    },
     "settings.deck.pill.state" : {
       "kind" : "enum",
       "vocabulary" : "JournalPill"
@@ -773,6 +781,13 @@
       "waiting_for_journal",
       "failed"
     ],
+    "ImportTileState" : [
+      "idle",
+      "waiting",
+      "sending",
+      "ready_to_review",
+      "needs_attention"
+    ],
     "JournalHandoffAXState" : [
       "idle",
       "acquiring",
@@ -798,6 +813,7 @@
       "syncing",
       "waiting",
       "waiting_to_sync",
+      "ready_to_review",
       "connected",
       "connected_held"
     ],

@@ -1,0 +1,16 @@
+{
+  "description": "expired",
+  "context": "State chip for an unstarted import whose staged copy in the journal expired.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "66955023749c19d861e677c73ac155f49a57546420c7453839ca69f7dda345b6",
+  "risk": "routine",
+  "auto_merge": true
+}

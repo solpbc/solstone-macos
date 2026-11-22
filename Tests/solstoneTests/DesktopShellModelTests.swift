@@ -307,11 +307,16 @@ struct DesktopShellModelTests {
     @Test func everyPillTokenIsInTheAXContract() throws {
         let pills: [JournalPill] = [
             .needsNewLink, .notPaired, .confirmMark(waiting: 1), .syncPaused(waiting: 1), .pairAgain(waiting: 1),
-            .offline(waiting: 1), .connecting, .syncing(1), .waiting(1), .waitingToSync, .connected,
+            .offline(waiting: 1), .connecting, .syncing(1), .waiting(1), .waitingToSync, .readyToReview(1), .connected,
             .connectedHeld(.segmentsNotWritten),
         ]
         let listed = try #require(AXContract.vocabularies["JournalPill"])
         for pill in pills { #expect(listed.contains(pill.axToken), "\(pill.axToken)") }
+
+        let tileListed = try #require(AXContract.vocabularies["ImportTileState"])
+        for state in ImportTileState.allCases {
+            #expect(tileListed.contains(state.axToken), "\(state.axToken)")
+        }
     }
 
     @Test func removeWaitsOnlyWhileAPassRuns() {
@@ -524,5 +529,152 @@ struct DesktopShellModelTests {
         let counted = statusSourceRow(view(audioSeconds: 7200, audioLast: "2026-11-10T14:56:00Z"), source: .audio, now: now, calendar: utc)
         #expect(counted.lastTakenIn != nil)
         #expect(counted.soFar != missing.soFar)
+    }
+
+    // MARK: import tile, review pill, and import totals
+
+    @Test func importTileWorstSignalWinsAndPreservesCalmIdle() {
+        var s = ImportSnapshot()
+        let idle = deriveImportTile(s)
+        #expect(idle.state == .idle)
+        #expect(idle.subline == "files")
+        #expect(idle.accessibilityValue == "files")
+
+        // Waiting while paired & online vs offline/unpaired
+        s.waiting = .waiting
+        s.rows = [ImportRow(id: "w1", name: "a.pdf", kind: .waiting, retryable: false, savedAtJournal: false)]
+        let waitingOnline = deriveImportTile(s)
+        #expect(waitingOnline.state == .waiting)
+        #expect(waitingOnline.subline == "1 waiting")
+        #expect(waitingOnline.accessibilityValue == "waiting. 1 waiting.")
+
+        s.offline = true
+        #expect(deriveImportTile(s).subline == "waiting for your journal")
+        s.offline = false
+        s.waiting = .unpaired
+        #expect(deriveImportTile(s).subline == "waiting for your journal")
+        s.waiting = .waiting
+
+        // Sending outranks waiting
+        s.rows.append(ImportRow(id: "s1", name: "notes.txt", kind: .sending, retryable: false, savedAtJournal: false))
+        let sendingOne = deriveImportTile(s)
+        #expect(sendingOne.state == .sending)
+        #expect(sendingOne.subline == "notes.txt")
+
+        s.rows.append(ImportRow(id: "s2", name: "photo.jpg", kind: .sending, retryable: false, savedAtJournal: false))
+        #expect(deriveImportTile(s).subline == "2 files")
+
+        // Ready to review outranks sending & waiting
+        s.rows.append(ImportRow(id: "r1", name: "export.zip", kind: .readyToReview, retryable: false, savedAtJournal: true, importID: "20261122_140000"))
+        let reviewOne = deriveImportTile(s)
+        #expect(reviewOne.state == .readyToReview)
+        #expect(reviewOne.subline == "export.zip")
+        #expect(reviewOne.accessibilityValue == "ready to review. export.zip.")
+
+        s.rows.append(ImportRow(id: "r2", name: "archive.zip", kind: .reviewExpired, retryable: true, savedAtJournal: false, importID: "20261122_140100", reviewExpired: true))
+        #expect(deriveImportTile(s).subline == "2 ready in your journal")
+
+        // Needs attention outranks ready to review
+        s.rows.append(ImportRow(id: "f1", name: "broken.bin", kind: .refused("not supported"), retryable: false, savedAtJournal: false))
+        let faultOne = deriveImportTile(s)
+        #expect(faultOne.state == .needsAttention)
+        #expect(faultOne.subline == "broken.bin")
+
+        s.rows.append(ImportRow(id: "f2", name: "lost.jpg", kind: .missingCopy, retryable: false, savedAtJournal: false))
+        #expect(deriveImportTile(s).subline == "2 items")
+
+        // Unreadable store always needs attention
+        var unreadable = ImportSnapshot()
+        unreadable.storeUnreadable = true
+        #expect(deriveImportTile(unreadable).state == .needsAttention)
+    }
+
+    @Test func deckKeyboardNavigationIncludesImportTile() {
+        let order: [DeckTileFocus] = DeckSource.allCases.map { .source($0) } + [.importTile]
+        #expect(moveDeckTileFocus(from: .source(.screenshots), direction: .right, order: order, columns: 3) == .importTile)
+        #expect(moveDeckTileFocus(from: .importTile, direction: .left, order: order, columns: 3) == .source(.screenshots))
+        #expect(moveDeckTileFocus(from: .importTile, direction: .up, order: order, columns: 3) == .source(.browsers))
+        #expect(moveDeckTileFocus(from: .source(.browsers), direction: .down, order: order, columns: 3) == .importTile)
+        #expect(moveDeckTileFocus(from: .importTile, direction: .up, order: order, columns: 2) == .source(.obsidian))
+        #expect(moveDeckTileFocus(from: .importTile, direction: .right, order: order, columns: 3) == .importTile)
+    }
+
+    @Test func readyToReviewPillAndMenuRollupHonorFaultBoundary() {
+        let reviewPill = deriveJournalPill(JournalPillInputs(readyToReview: 2))
+        #expect(reviewPill == .readyToReview(2))
+        #expect(reviewPill.text == "2 ready to review")
+        #expect(reviewPill.waiting == 0)
+        #expect(!reviewPill.isCaughtUp)
+        #expect(menuStatusLine(reviewPill) == "connected · 2 ready to review")
+
+        // Real faults & earlier states beat readyToReview
+        #expect(deriveJournalPill(JournalPillInputs(held: .importsNeedYou, readyToReview: 2)) == .connectedHeld(.importsNeedYou))
+        #expect(deriveJournalPill(JournalPillInputs(pending: 1, readyToReview: 2)) == .waiting(1))
+        #expect(deriveJournalPill(JournalPillInputs(connection: .offline, readyToReview: 2)) == .offline(waiting: 0))
+        #expect(deriveJournalPill(JournalPillInputs(markHeld: true, readyToReview: 2)) == .confirmMark(waiting: 0))
+
+        // Real import fault rolls up to deckHasFault and menu attention row; readyToReview does NOT
+        let cleanTiles = deriveDeck(DeckInputs())
+        #expect(!deckHasFault(cleanTiles, importHasFault: false))
+        #expect(deckHasFault(cleanTiles, importHasFault: true))
+
+        var reviewOnly = ImportSnapshot()
+        reviewOnly.rows = [ImportRow(id: "r1", name: "a.zip", kind: .readyToReview, retryable: false, savedAtJournal: true, importID: "20261122_140000")]
+        #expect(!reviewOnly.hasFault)
+        #expect(reviewOnly.readyToReviewCount == 1)
+
+        let faultMenu = shellMenuRows(
+            tiles: cleanTiles, pill: .connectedHeld(.importsNeedYou), pausedLine: nil,
+            canPause: true, canResume: false, hasJournal: true, canOpenJournal: true,
+            update: .upToDate, importHasFault: true
+        )
+        #expect(faultMenu.first == .importAttention)
+
+        let reviewMenu = shellMenuRows(
+            tiles: cleanTiles, pill: reviewPill, pausedLine: nil,
+            canPause: true, canResume: false, hasJournal: true, canOpenJournal: true,
+            update: .upToDate, importHasFault: false
+        )
+        #expect(!reviewMenu.contains(.importAttention))
+        #expect(reviewMenu.first == .status("connected · 2 ready to review"))
+    }
+
+    @Test func onDeviceRowsSortActionableFirstAndExcludeReviewRows() {
+        var s = ImportSnapshot()
+        s.rows = [
+            ImportRow(id: "w1", name: "waiting.txt", kind: .waiting, retryable: false, savedAtJournal: false),
+            ImportRow(id: "r1", name: "review.zip", kind: .readyToReview, retryable: false, savedAtJournal: true, importID: "20261122_140000"),
+            ImportRow(id: "s1", name: "sending.pdf", kind: .sending, retryable: false, savedAtJournal: false),
+            ImportRow(id: "f1", name: "refused.bin", kind: .refused("bad"), retryable: false, savedAtJournal: false),
+            ImportRow(id: "m1", name: "missing.jpg", kind: .missingCopy, retryable: false, savedAtJournal: false),
+        ]
+        #expect(s.reviewRows.map(\.id) == ["r1"])
+        #expect(s.onDeviceRows.map(\.id) == ["f1", "m1", "s1", "w1"])
+    }
+
+    @Test func importTotalFactsFormatsItemsAndHidesWhenUnreadable() throws {
+        let now = try #require(SourceTotals.parseInstant("2026-11-22T15:00:00Z"))
+        #expect(importTotalFacts(nil, now: now, calendar: utc) == nil)
+
+        let empty = try #require(importTotalFacts(view(), now: now, calendar: utc))
+        #expect(empty.soFar == "nothing yet")
+        #expect(empty.lastTakenIn == nil)
+
+        var oneView = view()
+        oneView.importsTotal = 1
+        oneView.importsLast = "2026-11-22T14:58:00Z"
+        oneView.importsStarted = "2026-11-22"
+        let one = try #require(importTotalFacts(oneView, now: now, calendar: utc))
+        #expect(one.totalOnly == "1 item")
+        #expect(one.lastTakenIn == "2 min ago")
+
+        var manyView = view()
+        manyView.importsTotal = 1_234
+        manyView.importsLast = "2026-11-22T12:00:00Z"
+        manyView.importsStarted = "2026-03-03"
+        let many = try #require(importTotalFacts(manyView, now: now, calendar: utc))
+        #expect(many.totalOnly == "1,234 items")
+        #expect(many.soFar.contains("1,234 items"))
+        #expect(many.lastTakenIn == "3 hours ago")
     }
 }
