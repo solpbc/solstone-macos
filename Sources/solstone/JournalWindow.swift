@@ -402,12 +402,19 @@ struct JournalWebView: NSViewRepresentable {
             session: JournalWindowSession,
             openExternalURL: @escaping JournalWindowExternalURLOpener,
             importIntake: @escaping @MainActor () -> (any JournalImportIntake)? = { nil },
-            importContract: JournalImportContract? = JournalImportContract.packaged()
+            importContract: JournalImportContract? = JournalImportContract.packaged(),
+            authContract: JournalAuthContract? = JournalAuthContract.packaged()
         ) {
             let seam = JournalWindowWebViewSeam(session: session, openExternalURL: openExternalURL)
             self.seam = seam
+            let authHost = authContract.map { contract in
+                JournalAuthHost(contract: contract, openExternalURL: { url in
+                    openExternalURL(url)
+                    return true
+                })
+            }
             importHost = importContract.map { contract in
-                JournalImportHost(contract: contract, intake: importIntake, liveBaseURL: { [weak seam] in seam?.currentBaseURL })
+                JournalImportHost(contract: contract, authHost: authHost, intake: importIntake, liveBaseURL: { [weak seam] in seam?.currentBaseURL })
             }
         }
 
@@ -500,6 +507,7 @@ struct JournalWebView: NSViewRepresentable {
         }
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            importHost?.tearDown()
             seam.contentProcessTerminated()
         }
 

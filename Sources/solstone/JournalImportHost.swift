@@ -85,6 +85,7 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
     private static let maxAcceptEntries = 64
 
     let contract: JournalImportContract
+    let authHost: JournalAuthHost?
     private let intake: @MainActor () -> (any JournalImportIntake)?
     private let liveBaseURL: @MainActor () -> URL?
     private let presentPicker: @MainActor (JournalImportPickerRequest, NSWindow?) async -> [URL]?
@@ -97,12 +98,14 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
 
     init(
         contract: JournalImportContract,
+        authHost: JournalAuthHost? = JournalAuthContract.packaged().map { JournalAuthHost(contract: $0) },
         intake: @escaping @MainActor () -> (any JournalImportIntake)?,
         liveBaseURL: @escaping @MainActor () -> URL?,
         presentPicker: @escaping @MainActor (JournalImportPickerRequest, NSWindow?) async -> [URL]? = JournalImportPicker.present,
         clock: @escaping () -> Date = Date.init
     ) {
         self.contract = contract
+        self.authHost = authHost
         self.intake = intake
         self.liveBaseURL = liveBaseURL
         self.presentPicker = presentPicker
@@ -126,8 +129,9 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
               let originLiteral = try? String(data: JSONSerialization.data(withJSONObject: [origin], options: [.withoutEscapingSlashes]), encoding: .utf8),
               let handlerLiteral = try? String(data: JSONSerialization.data(withJSONObject: [Self.handlerName]), encoding: .utf8)
         else { return nil }
+        let authLiteral = authHost?.contract.json ?? "null"
         // Array literals keep each value a valid JS expression; the script takes element 0.
-        let source = "(\(Self.scriptBody))(\(contract.json), \(originLiteral)[0], \(handlerLiteral)[0]);"
+        let source = "(\(Self.scriptBody))(\(contract.json), \(originLiteral)[0], \(handlerLiteral)[0], \(authLiteral));"
         return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page)
     }
 
@@ -138,14 +142,16 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
         if let script = userScript(for: baseURL) { controller.addUserScript(script) }
     }
 
-    /// A new top document: whatever the last one said about drops no longer holds.
+    /// A new top document: whatever the last one said about drops or auth sessions no longer holds.
     func mainFrameCommitted() {
         pageAcceptsHandoff = false
+        authHost?.tearDown()
     }
 
     func tearDown() {
         drops.removeAll()
         pageAcceptsHandoff = false
+        authHost?.tearDown()
     }
 
     // MARK: - drops
@@ -227,6 +233,9 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
         case contract.pick:
             return Self.encode(await pick(message))
         default:
+            if let authHost, authHost.handles(type: type) {
+                return Self.encode(await authHost.handle(message, type: type))
+            }
             let id = message["id"] as? String ?? ""
             return Self.encode(["type": contract.unsupported, "id": id])
         }
@@ -373,11 +382,13 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
     /// replies parsed from the native handler, item status read until it settles, and a drop no
     /// card claimed sent as a quick import.
     static let scriptBody = #"""
-    (contract, origin, handler) => {
+    (contract, origin, handler, auth) => {
       if (window !== window.top || location.origin !== origin) return;
       const native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers[handler];
       if (!native) return;
       const post = async message => JSON.parse(await native.postMessage(JSON.stringify(message)));
+      const authTypes = auth ? [auth.prepare, auth.authorize, auth.cancel] : [];
+      const types = Object.freeze([contract.pick, ...authTypes]);
       const items = new Map();
       let timer;
       async function update() {
@@ -397,9 +408,10 @@ final class JournalImportHost: NSObject, WKScriptMessageHandlerWithReply {
         timer = items.size ? setTimeout(update, 400) : undefined;
       }
       Object.defineProperty(window, contract.capability, {value: Object.freeze({
-        version: contract.version, types: Object.freeze([contract.pick]),
+        version: contract.version, types,
         async send(message) {
           if (!message || typeof message.id !== 'string' || typeof message.type !== 'string') throw new TypeError();
+          if (authTypes.includes(message.type)) return await post(message);
           if (message.type !== contract.pick) return {type: contract.unsupported, id: message.id};
           const reply = await post(message);
           for (const entry of reply.items || []) items.set(entry.item, {id: message.id, name: entry.name});
