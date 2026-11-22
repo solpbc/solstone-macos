@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.75] - 2026-11-22
+
 ### Fixed
 
 - opening a pairing link while the solstone app is already paired with your journal no longer leaves the app window blank or opens an empty window. opening a journal link no longer opens an extra empty window.
