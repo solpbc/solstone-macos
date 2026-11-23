@@ -429,7 +429,9 @@ internal func statusAccessibilityLabel(
     }
 
     var components = [baseLabel]
-    if let sourceStatus { components.append(sourceStatus) }
+    if let sourceStatus = accessibilitySourceStatus(sourceStatus, for: presentation.observation) {
+        components.append(sourceStatus)
+    }
     for note in siteNotes {
         switch note {
         case .safariKeptOut: components.append(siteKeptOutLabel ?? UICopy.MENUBAR_A11Y_SAFARI_KEPT_OUT)
@@ -444,6 +446,41 @@ internal func statusAccessibilityLabel(
         components.append(attentionSuffix(attention, verdict: journalVerdict))
     }
     return components.joined(separator: " · ")
+}
+
+/// Drops state words that `baseLabel` already speaks so VoiceOver reads
+/// "solstone · paused · microphone" instead of "solstone · paused · paused · microphone".
+private func accessibilitySourceStatus(
+    _ sourceStatus: String?,
+    for observation: MenubarStatusRowState
+) -> String? {
+    guard let sourceStatus else { return nil }
+    let mediaSources: [CaptureSources] = [.microphone, .screen, [.microphone, .screen]]
+    switch observation {
+    case .paused, .protectedVideo:
+        for sources in mediaSources where sourceStatus == UICopy.sourceStatus(sources, isPaused: true) {
+            return UICopy.sourceNames(sources)
+        }
+        if sourceStatus == MacStrings.macos_desktopactivitysource_activityispaused() {
+            return MacStrings.macos_settings_activity()
+        }
+        if sourceStatus == MacStrings.macos_ui_terminalpaused() {
+            return UICopy.Terminal.sourceTitle
+        }
+        return sourceStatus
+    case .observing, .offline, .syncPaused:
+        for sources in mediaSources where sourceStatus == UICopy.sourceStatus(sources, isPaused: false) {
+            return UICopy.sourceNames(sources)
+        }
+        if sourceStatus == MacStrings.macos_desktopactivitysource_activityison() {
+            return MacStrings.macos_settings_activity()
+        }
+        return sourceStatus
+    case .starting:
+        return sourceStatus == UICopy.SOURCES_STARTING ? nil : sourceStatus
+    default:
+        return sourceStatus
+    }
 }
 
 private struct SettingsSceneRoot: View {

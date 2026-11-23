@@ -669,6 +669,65 @@ struct MenuContentTests {
             #expect(!label.contains(verdict.message))
         }
     }
+
+    @Test func statusAccessibilityLabelDoesNotRepeatStateWordFromSourceStatus() {
+        let mediaCombinations: [CaptureSources] = [.microphone, .screen, [.microphone, .screen]]
+
+        for observation in [MenubarStatusRowState.paused, .protectedVideo] {
+            for sources in mediaCombinations {
+                let label = statusAccessibilityLabel(
+                    presentation: MenubarPresentation(observation: observation, attention: nil),
+                    errorMessage: nil,
+                    sourceStatus: UICopy.sourceStatus(sources, isPaused: true)
+                )
+                #expect(label == "\(UICopy.MENUBAR_A11Y_PAUSED) · \(UICopy.sourceNames(sources))")
+            }
+
+            let activityPaused = statusAccessibilityLabel(
+                presentation: MenubarPresentation(observation: observation, attention: nil),
+                errorMessage: nil,
+                sourceStatus: MacStrings.macos_desktopactivitysource_activityispaused()
+            )
+            #expect(activityPaused == "\(UICopy.MENUBAR_A11Y_PAUSED) · \(MacStrings.macos_settings_activity())")
+
+            let terminalPaused = statusAccessibilityLabel(
+                presentation: MenubarPresentation(observation: observation, attention: nil),
+                errorMessage: nil,
+                sourceStatus: MacStrings.macos_ui_terminalpaused()
+            )
+            #expect(terminalPaused == "\(UICopy.MENUBAR_A11Y_PAUSED) · \(UICopy.Terminal.sourceTitle)")
+        }
+
+        let activeObservations: [(MenubarStatusRowState, String)] = [
+            (.observing, UICopy.MENUBAR_A11Y_OBSERVING_CONNECTED),
+            (.offline, UICopy.MENUBAR_A11Y_OBSERVING_SAVED_LOCALLY),
+            (.syncPaused, UICopy.MENUBAR_A11Y_OBSERVING_SYNC_PAUSED),
+        ]
+        for (observation, base) in activeObservations {
+            for sources in mediaCombinations {
+                let label = statusAccessibilityLabel(
+                    presentation: MenubarPresentation(observation: observation, attention: nil),
+                    errorMessage: nil,
+                    sourceStatus: UICopy.sourceStatus(sources, isPaused: false)
+                )
+                #expect(label == "\(base) · \(UICopy.sourceNames(sources))")
+            }
+
+            let activityOn = statusAccessibilityLabel(
+                presentation: MenubarPresentation(observation: observation, attention: nil),
+                errorMessage: nil,
+                sourceStatus: MacStrings.macos_desktopactivitysource_activityison()
+            )
+            #expect(activityOn == "\(base) · \(MacStrings.macos_settings_activity())")
+        }
+
+        let startingLabel = statusAccessibilityLabel(
+            presentation: MenubarPresentation(observation: .starting, attention: nil),
+            errorMessage: nil,
+            sourceStatus: UICopy.SOURCES_STARTING
+        )
+        #expect(startingLabel == UICopy.MENUBAR_A11Y_STARTING)
+    }
 }
 
 private func presentationAttention(
