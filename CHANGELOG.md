@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.76] - 2026-11-23
+
+### Changed
+
+- when your journal needs you to look over an import before it starts, such as an Apple Health export, the solstone app's import page now keeps it under "waiting for your review", with a button that opens it in your journal. before, it showed as needing attention, and "try now" sent it again.
+- the import tile on the solstone app's home now shows when an import is waiting, sending, ready to review or needs attention.
+- the import page now lists your latest imports under "recent". each one opens in your journal.
+
 ## [2.0.75] - 2026-11-22
 
 ### Fixed
