@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- when an audio or screen recording finishes with no sound or frames saved, the solstone app no longer creates an empty file for it, so none goes into your journal.
+
 ## [2.0.76] - 2026-11-23
 
 ### Changed

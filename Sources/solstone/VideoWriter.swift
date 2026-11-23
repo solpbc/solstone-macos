@@ -197,11 +197,16 @@ public final class VideoWriter: @unchecked Sendable {
         lock.unlock()
 
         if didStartFail {
+            try? FileManager.default.removeItem(at: writer.outputURL)
             completion(.failure(NSError(domain: "VideoWriter", code: -5, userInfo: [NSLocalizedDescriptionKey: "Video writer failed to start (first-frame session start failed)"])))
             return
         }
 
-        guard shouldFinish else {
+        guard shouldFinish, finalFrameCount > 0 else {
+            if shouldFinish, writer.status == .writing {
+                writer.cancelWriting()
+            }
+            try? FileManager.default.removeItem(at: writer.outputURL)
             completion(.failure(NSError(domain: "VideoWriter", code: -2, userInfo: [NSLocalizedDescriptionKey: "No frames written"])))
             return
         }

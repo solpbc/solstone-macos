@@ -42,6 +42,40 @@ struct VideoWriterFirstFrameContainmentTests {
         }
     }
 
+    @Test func startedWriterWithZeroAppendedFramesFailsAndRemovesOutput() async throws {
+        let root = try makeTempDirectory("video-zero-appended-frames")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let outputURL = root.appendingPathComponent("screen.mp4")
+        let writer = try VideoWriter.create(
+            url: outputURL,
+            width: 16,
+            height: 16,
+            frameRate: 1,
+            duration: 0
+        )
+        let pixelBuffer = try makeNV12PixelBuffer(width: 16, height: 16)
+        // duration: 0 starts the writer and session on the first frame, then returns
+        // before appending because elapsed (0) >= duration (0), leaving frameCount == 0.
+        writer.appendFrame(pixelBuffer, presentationTime: .zero)
+
+        let result: Result<(URL, Int), Error> = await withCheckedContinuation { continuation in
+            writer.finish { result in
+                continuation.resume(returning: result)
+            }
+        }
+
+        switch result {
+        case .success:
+            Issue.record("expected failure when no frames were appended")
+        case .failure(let error):
+            let nsError = error as NSError
+            #expect(nsError.domain == "VideoWriter")
+            #expect(nsError.code == -2)
+            #expect(!FileManager.default.fileExists(atPath: outputURL.path))
+        }
+    }
+
     private func makeNV12PixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(

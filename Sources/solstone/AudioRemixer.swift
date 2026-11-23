@@ -174,7 +174,7 @@ public final class AudioRemixer: Sendable {
             }
             try await Task.sleep(nanoseconds: 1_000_000)
         }
-        if outcomes.allSatisfy({ $0.state == "unreadable" }) {
+        if outcomes.allSatisfy({ $0.framesCopied == 0 }) {
             writer.cancelWriting()
             throw AudioRemixerError.unreadableSources(sourceIDs: outcomes.map(\.sourceID))
         }

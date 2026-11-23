@@ -38,6 +38,42 @@ struct AudioRemixerTests {
         }
     }
 
+    @Test func remixWithZeroSampleM4AThrowsUnreadableSourcesWithoutCreatingOutput() async throws {
+        let root = try makeTempDirectory("audio-remixer-zero-sample")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let emptySource = root.appendingPathComponent("120000_audio_system.m4a")
+        let output = root.appendingPathComponent("120000_audio.m4a")
+        let writer = try AVAssetWriter(url: emptySource, fileType: .m4a)
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: 48_000,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 64_000,
+        ])
+        writer.add(input)
+        #expect(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+        input.markAsFinished()
+        await writer.finishWriting()
+        #expect(writer.status == .completed)
+
+        let remixer = AudioRemixer()
+        do {
+            _ = try await remixer.remix(
+                inputs: [makeInput(url: emptySource, sourceID: "system")],
+                to: output,
+                silenceMusic: false
+            )
+            Issue.record("expected unreadableSources for zero-sample input")
+        } catch AudioRemixerError.unreadableSources(let sourceIDs) {
+            #expect(sourceIDs == ["system"])
+            #expect(!FileManager.default.fileExists(atPath: output.path))
+        } catch {
+            Issue.record("unexpected error: \(error)")
+        }
+    }
+
     private func makeInput(url: URL, sourceID: String) -> AudioRemixerInput {
         AudioRemixerInput(
             url: url,
