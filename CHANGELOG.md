@@ -7,9 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.77] - 2026-11-23
+
 ### Fixed
 
-- when an audio or screen recording finishes with no sound or frames saved, the solstone app no longer creates an empty file for it, so none goes into your journal.
+- when an audio or screen segment ends with no audio or frames in it, the solstone app no longer leaves an empty file for it, so none goes into your journal.
 - VoiceOver no longer repeats the status word when reading the solstone app's menu bar icon.
 
 ## [2.0.76] - 2026-11-23
