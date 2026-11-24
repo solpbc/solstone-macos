@@ -727,6 +727,21 @@ struct MenuContentTests {
             sourceStatus: UICopy.SOURCES_STARTING
         )
         #expect(startingLabel == UICopy.MENUBAR_A11Y_STARTING)
+
+        for everyOff in [UICopy.SOURCES_NONE, UICopy.SOURCES_OFF] {
+            let stoppedLabel = statusAccessibilityLabel(
+                presentation: MenubarPresentation(observation: .stopped, attention: nil),
+                errorMessage: nil,
+                sourceStatus: everyOff
+            )
+            #expect(stoppedLabel == UICopy.SOURCES_OFF)
+        }
+        let stoppedUngranted = statusAccessibilityLabel(
+            presentation: MenubarPresentation(observation: .stopped, attention: nil),
+            errorMessage: nil,
+            sourceStatus: UICopy.SOURCES_NONE_GRANTED
+        )
+        #expect(stoppedUngranted == "\(UICopy.SOURCES_OFF) · \(UICopy.SOURCES_NONE_GRANTED)")
     }
 }
 

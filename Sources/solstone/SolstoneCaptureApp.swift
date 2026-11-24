@@ -478,6 +478,9 @@ private func accessibilitySourceStatus(
         return sourceStatus
     case .starting:
         return sourceStatus == UICopy.SOURCES_STARTING ? nil : sourceStatus
+    case .stopped:
+        // "off" already says no source is on.
+        return [UICopy.SOURCES_NONE, UICopy.SOURCES_OFF].contains(sourceStatus) ? nil : sourceStatus
     default:
         return sourceStatus
     }
