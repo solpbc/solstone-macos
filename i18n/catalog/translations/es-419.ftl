@@ -268,7 +268,7 @@ macos.copy.journaladdressestriedlabel = direcciones probadas
 
 macos.copy.journalappdownload = descargar la app del diario
 
-macos.copy.journalconnectedthroughlabel = conectado a través de
+macos.copy.journalconnectedthroughlabel = conectado por
 
 macos.copy.journalconnectedthroughrelay = el servidor de retransmisión
 
@@ -280,7 +280,7 @@ macos.copy.journalmarkconfirmsubtext = tu diario muestra esta misma marca en su 
 
 macos.copy.journalmarkheld = en espera de que confirmes la marca de tu diario
 
-macos.copy.journalmarkheldcaption = nada en espera va a tu diario hasta que lo hagas.
+macos.copy.journalmarkheldcaption = nada en espera entra a tu diario hasta que lo hagas.
 
 macos.copy.journalmarkmismatchbody = activar el micrófono
 
@@ -406,7 +406,7 @@ macos.copy.screenintakestopped = una pantalla no está llegando. abre la configu
 
 macos.copy.settingsattentionjournal = falta la configuración inicial del diario
 
-macos.copy.settingsattentionpermissions = faltan permisos
+macos.copy.settingsattentionpermissions = se necesitan permisos
 
 macos.copy.settingsattentionprivatewindows = no se pueden revisar las ventanas privadas en Safari, Chrome, Edge y Brave
 
@@ -630,7 +630,7 @@ macos.copy.shortcutsectiontitle = atajo de teclado
 
 macos.copy.shortcutset = definir atajo
 
-macos.copy.sourcesbrowsercannotstart = las páginas del navegador no pueden iniciarse ahora.
+macos.copy.sourcesbrowsercannotstart = las páginas del navegador no pueden iniciarse en este momento.
 
 macos.copy.sourcesbrowserdeliveryfailed = se conserva en esta mac, no llega a tu diario ahora
 
@@ -772,7 +772,7 @@ macos.desktop.shared.copy.journalmarkconfirmquestion = ¿esto coincide con tu di
 
 macos.desktop.shared.copy.journalmarkmismatchbutton = eso no coincide
 
-macos.desktop.shared.copy.journalmarkunverifiedcancelbutton = cancelar vinculación
+macos.desktop.shared.copy.journalmarkunverifiedcancelbutton = cancelar la vinculación
 
 macos.desktop.shared.copy.journalmarkunverifiedcontinuebutton = continuar de todos modos
 
@@ -780,7 +780,7 @@ macos.desktop.shared.copy.journalmarkunverifiedtitle = no se pudo verificar
 
 macos.desktop.shared.copy.keepboth = conservar ambos
 
-macos.desktop.shared.copy.listunavailablebody = no se pudieron cargar los dispositivos en tu diario. vuelve a intentarlo cuando tu diario esté accesible.
+macos.desktop.shared.copy.listunavailablebody = no se pudieron cargar los dispositivos en tu diario. vuelve a intentarlo cuando se pueda conectar con tu diario.
 
 macos.desktop.shared.copy.listunavailabletitle = dispositivos no disponibles
 
@@ -788,7 +788,7 @@ macos.desktop.shared.copy.menubarbrowsersnoneconnected = navegadores · ninguno 
 
 macos.desktop.shared.copy.menubarbrowsersoff = navegadores · desactivados
 
-macos.desktop.shared.copy.offlinebody = lo que espera para enviarse se queda en este dispositivo. vuelve a intentarlo cuando tu diario esté accesible.
+macos.desktop.shared.copy.offlinebody = todo lo que espera enviarse se queda en este dispositivo. vuelve a intentarlo cuando se pueda conectar con tu diario.
 
 macos.desktop.shared.copy.pickerempty = no hay otros dispositivos vinculados
 
@@ -830,13 +830,13 @@ macos.desktop.shared.copy.setupopenyourjournal = abrir tu diario
 
 macos.desktop.shared.copy.setupscreenframecaption = tu pantalla, hace un momento
 
-macos.desktop.shared.copy.setupwelcomebody2 = tu diario siempre es privado, solo tuyo.
+macos.desktop.shared.copy.setupwelcomebody2 = tu diario es siempre privado, solo tuyo.
 
 macos.desktop.shared.copy.setupwindowtitle = configurar solstone
 
 macos.desktop.shared.copy.sourcesbrowserconnectednow = conectado ahora
 
-macos.desktop.shared.copy.sourcesbrowserdiscard = descartar páginas del navegador en espera
+macos.desktop.shared.copy.sourcesbrowserdiscard = descartar las páginas del navegador en espera
 
 macos.desktop.shared.copy.sourcesbrowserdiscardcommit = descartar páginas
 
@@ -846,11 +846,11 @@ macos.desktop.shared.copy.sourcesbrowserheld = en este momento no se están reci
 
 macos.desktop.shared.copy.sourcesbrowserpages = páginas del navegador
 
-macos.desktop.shared.copy.storageunavailablebody = este dispositivo no pudo leer su conexión guardada. lo que espera para enviarse no se ha quitado.
+macos.desktop.shared.copy.storageunavailablebody = este dispositivo no pudo leer su conexión guardada. lo que está en espera de enviarse no se ha quitado.
 
 macos.desktop.shared.copy.storageunavailabletitle = conexión guardada no disponible
 
-macos.desktop.shared.copy.targetmissingbody = ese dispositivo ya no está en la lista de tu diario. elige otro dispositivo, o conserva ambos.
+macos.desktop.shared.copy.targetmissingbody = ese dispositivo ya no aparece en tu diario. elige otro dispositivo, o conserva ambos.
 
 macos.desktop.shared.copy.targetmissingtitle = dispositivo ya no disponible
 
@@ -924,17 +924,17 @@ macos.desktopactivitysource.activityispaused = la actividad está en pausa
 
 macos.desktopglance.connected = conectado ·{ $slot0 }{ $value0 }
 
-macos.desktopglance.connectedallcaughtup = conectado · al día
+macos.desktopglance.connectedallcaughtup = conectado · todo al día
 
 macos.desktopimportpage.addspdfsaudioimagesandtextyouchoosehereordrop = agrega cualquier archivo que elijas aquí o sueltes en esta ventana. tu diario averigua qué es.
 
-macos.desktopimportpage.allimporthistory = todo el historial de importaciones en tu diario
+macos.desktopimportpage.allimporthistory = todo el historial de importación en tu diario
 
 macos.desktopimportpage.checkingyourjournal = revisando tu diario.
 
 macos.desktopimportpage.choosefiles = elegir archivos…
 
-macos.desktopimportpage.couldntreadimportsonthisdevicenothinghasbeenr = no se pudieron leer las importaciones en este dispositivo. no se ha quitado nada. reinicia la app de solstone para volver a intentarlo.
+macos.desktopimportpage.couldntreadimportsonthisdevicenothinghasbeenr = no se pudieron leer las importaciones en este dispositivo. no se quitó nada. reinicia la app de solstone para volver a intentarlo.
 
 macos.desktopimportpage.expired = vencido
 
@@ -964,9 +964,9 @@ macos.desktopimportpage.itssendingnowsonothingchanged = se está enviando ahora,
 
 macos.desktopimportpage.moreimports = más importaciones
 
-macos.desktopimportpage.moreimportssubline = guías, opciones y el historial de importaciones en tu diario
+macos.desktopimportpage.moreimportssubline = guías, opciones y el historial de importación en tu diario
 
-macos.desktopimportpage.notgoingtoyourjournalrightnoweachonesayswhy = no van a tu diario en este momento. cada uno dice por qué.
+macos.desktopimportpage.notgoingtoyourjournalrightnoweachonesayswhy = por ahora no van a tu diario. cada uno dice por qué.
 
 macos.desktopimportpage.nothingchangeditmayhavemovedoncheckthelist = no cambió nada. puede que haya avanzado; revisa la lista.
 
@@ -974,7 +974,7 @@ macos.desktopimportpage.nothingwassavedonthisdevice = no se guardó nada en este
 
 macos.desktopimportpage.nothingyet = todavía no hay nada.
 
-macos.desktopimportpage.openimporttoreview = abre la importación para revisar e iniciar.
+macos.desktopimportpage.openimporttoreview = abre la importación para revisar y empezar.
 
 macos.desktopimportpage.openimporttoseewhy = abre la importación para ver por qué.
 
@@ -998,9 +998,9 @@ macos.desktopimportpage.remove = quitar
 
 macos.desktopimportpage.remove2 = ¿quitar{ $slot0 }{ $value0 }?
 
-macos.desktopimportpage.reviewdetail = se guardó en tu diario. previsualiza y confirma para iniciar.
+macos.desktopimportpage.reviewdetail = se guardó en tu diario. previsualiza y confirma para empezar.
 
-macos.desktopimportpage.reviewdetailhour = se guardó en tu diario. revisa en menos de una hora antes de que tu diario quite la copia en espera.
+macos.desktopimportpage.reviewdetailhour = se guardó en tu diario. revisa en menos de una hora, antes de que tu diario quite la copia en espera.
 
 macos.desktopimportpage.reviewexpired = la copia en espera en tu diario venció. este dispositivo todavía guarda el archivo.
 
@@ -1044,9 +1044,9 @@ macos.desktopimportpage.thiscouldntbereadadditagain = no se pudo leer esto. agr�
 
 macos.desktopimportpage.thisdevicecantconvertthisphoto = este dispositivo no puede convertir esta foto
 
-macos.desktopimportpage.thisremovesthecopyonthisdevicesoitwontreachyo = esto quita la copia en este dispositivo, así que no llegará a tu diario.
+macos.desktopimportpage.thisremovesthecopyonthisdevicesoitwontreachyo = esto quita la copia de este dispositivo, así que no llegará a tu diario.
 
-macos.desktopimportpage.thisremovesthecopyonthisdeviceyourjournalmays = esto quita la copia en este dispositivo. la copia en espera en tu diario se queda ahí hasta que la descartes o venza.
+macos.desktopimportpage.thisremovesthecopyonthisdeviceyourjournalmays = esto quita la copia de este dispositivo. la copia en espera en tu diario se queda ahí hasta que la descartes o venza.
 
 macos.desktopimportpage.tilefiles.plural = { $count ->
     [one] 1 archivo
@@ -1074,9 +1074,9 @@ macos.desktopimportpage.tilewaiting.plural = { $count ->
    *[other] { $count } en espera
 }
 
-macos.desktopimportpage.trynow = probar ahora
+macos.desktopimportpage.trynow = intentar ahora
 
-macos.desktopimportpage.trynowitem = probar ahora, { $name }
+macos.desktopimportpage.trynowitem = intentar ahora, { $name }
 
 macos.desktopimportpage.waiting = en espera
 
@@ -1090,7 +1090,7 @@ macos.desktopimportpage.waitingtogotoyourjournal = en espera de ir a tu diario
 
 macos.desktopimportpage.yourjournalcanttakethiskindoffile = tu diario no puede recibir este tipo de archivo
 
-macos.desktopimportpage.yourjournalstoppedacceptingthisdeviceimportsw = tu diario dejó de aceptar este dispositivo. las importaciones esperan aquí hasta que lo vincules de nuevo.
+macos.desktopimportpage.yourjournalstoppedacceptingthisdeviceimportsw = tu diario dejó de aceptar este dispositivo. las importaciones esperan aquí hasta que vuelvas a vincular.
 
 macos.desktopshellchrome.closed = cerrado
 
@@ -1160,7 +1160,7 @@ macos.desktopshellmodel.notes.plural = { $count ->
 
 macos.desktopshellmodel.nothingyet = todavía no hay nada
 
-macos.desktopshellmodel.notreachingyourjournalrightnow = no llega a tu diario en este momento
+macos.desktopshellmodel.notreachingyourjournalrightnow = ahora no se conecta con tu diario
 
 macos.desktopshellmodel.offlinewaiting = sin conexión ·{ $slot0 }{ $value0 }{ $slot1 }en espera
 
@@ -1374,13 +1374,13 @@ macos.migration.waitingforjournaltofinishsetup = en espera de que journal termin
 
 macos.migration.yourjournalappisready = la app de tu diario está lista
 
-macos.pairingcoordinator.couldntreachyourjournalatmakesureitsrunningth = no se pudo llegar a tu diario en{ $slot0 }{ $value0 }. asegúrate de que esté en ejecución y vuelve a intentarlo.
+macos.pairingcoordinator.couldntreachyourjournalatmakesureitsrunningth = no se pudo conectar con tu diario en{ $slot0 }{ $value0 }. asegúrate de que esté en ejecución y vuelve a intentarlo.
 
-macos.pairingcoordinator.couldntreachyourjournalmakesureitsrunningthen = no se pudo llegar a tu diario. asegúrate de que esté en ejecución y vuelve a intentarlo.
+macos.pairingcoordinator.couldntreachyourjournalmakesureitsrunningthen = no se pudo conectar con tu diario. asegúrate de que esté en ejecución, luego vuelve a intentarlo.
 
 macos.pairingcoordinator.losttheconnectiontoyourjournalbeforeitanswere = se perdió la conexión con tu diario antes de que respondiera. vuelve a intentarlo.
 
-macos.pairingcoordinator.pairingcouldntreachyourjournalcheckyourconnec = la vinculación no pudo llegar a tu diario. revisa tu conexión y vuelve a intentarlo.
+macos.pairingcoordinator.pairingcouldntreachyourjournalcheckyourconnec = la vinculación no pudo conectar con tu diario. revisa tu conexión y vuelve a intentarlo.
 
 macos.pairingcoordinator.pairingcouldntstartonthismactryagain = la vinculación no pudo iniciar en esta mac. vuelve a intentarlo.
 
@@ -1456,7 +1456,7 @@ macos.screenshot.allofit = todo
 
 macos.screenshot.allow = permitir
 
-macos.screenshot.ascreenshotalreadyin = una captura de pantalla que ya está en tu diario permanece ahí si la eliminas de la carpeta.
+macos.screenshot.ascreenshotalreadyin = una captura de pantalla que ya está en tu diario se queda ahí si la eliminas de la carpeta.
 
 macos.screenshot.ascreenshotcopiedto = una captura de pantalla copiada al portapapeles no se guarda, así que no entra.
 
@@ -1472,7 +1472,7 @@ macos.screenshot.folder = carpeta
 
 macos.screenshot.from = desde { $line }
 
-macos.screenshot.frombeforetoday = desde antes de hoy
+macos.screenshot.frombeforetoday = de antes de hoy
 
 macos.screenshot.lastchecked = última revisión
 
@@ -1502,7 +1502,7 @@ macos.screenshot.screenshotsonthismac = las capturas de pantalla en esta mac se 
 
 macos.screenshot.screenshotsyoutakewhile = las capturas de pantalla que tomas mientras está en pausa no entran.
 
-macos.screenshot.startfromtoday = iniciar desde hoy
+macos.screenshot.startfromtoday = empezar desde hoy
 
 macos.screenshot.thelast30days = los últimos 30 días
 
@@ -1514,7 +1514,7 @@ macos.screenshot.waitingforajournal = en espera de una actualización del diario
 
 macos.screenshot.waitingtogoto = en espera de ir a tu diario
 
-macos.screenshot.whatsalreadyin = lo que ya está en tu diario permanece cuando pausas o desactivas esto.
+macos.screenshot.whatsalreadyin = lo que ya está en tu diario se queda cuando pausas o desactivas esto.
 
 macos.screenshot.whilethisison = mientras esto está activado, la app de solstone recibe las capturas de pantalla que tomas en esta mac, y tu diario conserva cada una en el minuto en que la tomaste.
 
@@ -1642,7 +1642,7 @@ macos.settings.mubi = mubi
 
 macos.settings.n1minutesegments = segmentos de 1 minuto
 
-macos.settings.needahandreach = ¿necesitas ayuda? contáctanos. con gusto te ayudamos.
+macos.settings.needahandreach = ¿necesitas una mano? contáctanos. nos alegra ayudar.
 
 macos.settings.noappsexcluded = ninguna app excluida
 
@@ -1814,7 +1814,7 @@ macos.setup.n1hour = 1 hora
 
 macos.setup.n30minutes = 30 minutos
 
-macos.setup.notstarted = no iniciado
+macos.setup.notstarted = sin iniciar
 
 macos.setup.of = { $done } de { $totalstr }
 
@@ -2134,7 +2134,7 @@ macos.ui.turnoff = desactivar
 
 macos.ui.unknownjournalseenat = diario desconocido visto en { $address }
 
-macos.ui.unknownjournalseenthrough = diario desconocido visto por el servidor de retransmisión
+macos.ui.unknownjournalseenthrough = diario desconocido visto a través del servidor de retransmisión
 
 macos.ui.vaultsonthismac = bóvedas en esta mac
 
@@ -2352,7 +2352,7 @@ macos.upload.invalidurl = URL no válida
 
 macos.upload.notconfigured = Sin configurar
 
-macos.uploadclient.cantreachyourjournalatthisaddresscheckthatits = no se puede alcanzar tu diario en esta dirección. revisa que esté en ejecución y que se pueda alcanzar.
+macos.uploadclient.cantreachyourjournalatthisaddresscheckthatits = no se puede conectar con tu diario en esta dirección. revisa que esté en ejecución y que se pueda conectar con él.
 
 macos.uploadclient.connectiontimedout = Se agotó el tiempo de conexión
 
