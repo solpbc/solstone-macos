@@ -636,7 +636,7 @@ internal final class JournalWindowSession {
 
     private func logLoadCommand(_ command: JournalWindowLoadCommand?) {
         guard let command else { return }
-        logPublicHostPort(of: command.url.absoluteString, tag: MacStrings.macos_app_journalwindowload())
+        logPublicHostPort(of: command.url.absoluteString, tag: "journal-window: load")
     }
 
     private func logPublicHostPort(of raw: String, tag: String) {

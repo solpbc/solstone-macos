@@ -48,8 +48,9 @@ def generate(compiler, channel):
     config = json.loads((ROOT/'i18n/targets.json').read_text())
     with tempfile.TemporaryDirectory(prefix='mac-catalog-') as temp:
         temp = Path(temp)
-        subprocess.run([compiler, 'emit', str(ROOT/'i18n/catalog'), '--channel', channel, '--out', str(temp/'ir.json')], check=True)
-        subprocess.run([compiler, 'targets', str(ROOT/'i18n/catalog'), '--channel', channel, '--target', 'apple', '--out', str(temp/'targets')], check=True)
+        extra = ['--fallback-stale'] if channel == 'development' else []
+        subprocess.run([compiler, 'emit', str(ROOT/'i18n/catalog'), '--channel', channel, *extra, '--out', str(temp/'ir.json')], check=True)
+        subprocess.run([compiler, 'targets', str(ROOT/'i18n/catalog'), '--channel', channel, *extra, '--target', 'apple', '--out', str(temp/'targets')], check=True)
         ir = json.loads((temp/'ir.json').read_text())
         messages = {m['id']: m for m in ir['messages']}
         xc = json.loads((temp/'targets/apple/macos.xcstrings').read_text())
@@ -199,7 +200,8 @@ nonisolated enum MacStrings {
             compile_xcstrings(table, info_table, destination)
         generate_info('Sources/solstone/Info.plist', config['info'], 'InfoPlist.xcstrings', 'AppResources')
         generate_info('Sources/solstone-safari-extension/Info.plist', config['extension_info'], 'Extension/InfoPlist.xcstrings', 'ExtensionResources')
-    write_json(ROOT/'i18n/generated-lock.json',snapshot())
+    if channel == 'production':
+        write_json(ROOT/'i18n/generated-lock.json',snapshot())
     print('generated native resources for '+', '.join(config['targets']))
 
 if __name__=='__main__':

@@ -780,7 +780,7 @@
       "resource": "m6d61636f732e6170702e6a6f75726e616c77696e646f776c6f6164",
       "namespace": "macos.app",
       "owner": "macos",
-      "tombstone": false,
+      "tombstone": true,
       "replacement": null,
       "format_intent": "text",
       "arguments": [],

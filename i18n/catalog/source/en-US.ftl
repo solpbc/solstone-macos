@@ -48,7 +48,6 @@ macos.app.journalconnectionerror = journal connection error
 
 macos.app.journalhealthyonthismac = journal healthy on this mac
 
-macos.app.journalwindowload = journal-window: load
 
 macos.app.mago = { $value }m ago
 

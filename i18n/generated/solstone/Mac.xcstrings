@@ -282,16 +282,6 @@
         }
       }
     },
-    "m6d61636f732e6170702e6a6f75726e616c77696e646f776c6f6164": {
-      "localizations": {
-        "en-US": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "journal-window: load"
-          }
-        }
-      }
-    },
     "m6d61636f732e6170702e6d61676f": {
       "localizations": {
         "en-US": {

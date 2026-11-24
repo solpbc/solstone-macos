@@ -58,8 +58,6 @@
 	<string>journal connection error</string>
 	<key>m6d61636f732e6170702e6a6f75726e616c6865616c7468796f6e746869736d6163</key>
 	<string>journal healthy on this mac</string>
-	<key>m6d61636f732e6170702e6a6f75726e616c77696e646f776c6f6164</key>
-	<string>journal-window: load</string>
 	<key>m6d61636f732e6170702e6d61676f</key>
 	<string>%1$@m ago</string>
 	<key>m6d61636f732e6170702e6d696e61676f2e6e6174697665</key>

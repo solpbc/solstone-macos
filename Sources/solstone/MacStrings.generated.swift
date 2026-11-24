@@ -184,11 +184,6 @@ nonisolated enum MacStrings {
     }
 
     @usableFromInline
-    static func macos_app_journalwindowload() -> String {
-        render("m6d61636f732e6170702e6a6f75726e616c77696e646f776c6f6164", [])
-    }
-
-    @usableFromInline
     static func macos_app_mago(_ value: String) -> String {
         render("m6d61636f732e6170702e6d61676f", [value])
     }

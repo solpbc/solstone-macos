@@ -1110,10 +1110,14 @@ github-release:
 check-sparkle:
 	python3 scripts/sparkle_dependency.py verify
 
-.PHONY: check-catalog catalog
+I18N_CHANNEL ?= production
+.PHONY: check-catalog catalog catalog-dev
 check-catalog:
 	python3 scripts/i18n.py --check
 
 catalog:
 	@test -n "$(I18N_COMPILER)" || { echo "set I18N_COMPILER to the pinned i18n-catalog executable" >&2; exit 1; }
-	python3 scripts/i18n.py --compiler "$(I18N_COMPILER)"
+	python3 scripts/i18n.py --compiler "$(I18N_COMPILER)" --channel "$(I18N_CHANNEL)"
+
+catalog-dev:
+	@$(MAKE) catalog I18N_CHANNEL=development

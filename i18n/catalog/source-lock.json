@@ -492,20 +492,6 @@
       ]
     },
     {
-      "id": "macos.app.journalwindowload",
-      "source": "b0fad1a9c4044cf964e543f5d8a769fd5a13932a63a309620b4dbe72ccb9865e",
-      "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
-      "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
-      "locales": [
-        {
-          "locale": "es-419",
-          "source": "b0fad1a9c4044cf964e543f5d8a769fd5a13932a63a309620b4dbe72ccb9865e",
-          "contract": "8a5ccf516e1ddd1e6845a51578bf3090e7732eef71f84117434e952b20202586",
-          "protected": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
-        }
-      ]
-    },
-    {
       "id": "macos.app.mago",
       "source": "c52b3b4e57d1822a952659c83a6f828ba61e4260f38d09300e65be94a116dbb7",
       "contract": "9cf396ba34ede9eab732feebd7a1d0477ae59ea3abe03341b4db03d24af554fd",

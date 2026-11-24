@@ -68,7 +68,6 @@ macos.app.journalconnectionerror = error de conexión del diario
 
 macos.app.journalhealthyonthismac = el diario está bien en esta mac
 
-macos.app.journalwindowload = ventana del diario: cargar
 
 macos.app.mago = hace { $value } m
 
