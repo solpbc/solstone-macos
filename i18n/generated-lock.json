@@ -1135,7 +1135,7 @@
   "i18n/catalog/meta/macos.version.unknown.json": "aa79d35896b99c09da0288ff007baa644de343cbe0fc6879fbe9cc194203b3af",
   "i18n/catalog/source/en-US.ftl": "1f5628d763290783041c4eb4125ece6901c780b316d7e090c8cc3e8ca73c7aa6",
   "i18n/catalog/source-lock.json": "26ea79403b0c868bd530c198c9a544e27f82a24149ca3721cb1a433c7a7cc450",
-  "i18n/compiler.json": "403fa9105f1a9bc434b74f3d8fca8a8cd23732c4a4ee3ff7b18d445711a9a22c",
+  "i18n/compiler.json": "053eb20417364949db02bd8a9d02db72c6b8818d17f578b2288d31e8e8e3d6db",
   "i18n/generated/AppResources/en-US.lproj/InfoPlist.strings": "124b9fbe8dc16ba52c2a3af7560085e135846153616a4b78fe89e050f5662e21",
   "i18n/generated/Extension/InfoPlist.xcstrings": "1ea12330e20f768887b2d768f1354f9f3ffbce7ba3b3fcc50bea63537acd6934",
   "i18n/generated/ExtensionResources/en-US.lproj/InfoPlist.strings": "307e4254efb03c48ea27e723a5c249ed94daf19f677779533cf1ee27d66b78eb",
@@ -1148,7 +1148,7 @@
   "i18n/generated/locales.json": "ebdecb468907e4848289e5c1994bf8a7e36f63e2a5c3794346fd62a3a6736ede",
   "i18n/generated/solstone/Mac.xcstrings": "e711a5de9a8c6046cf83487c4bfdbc1288417115e35aa9fe97507457a5ed562b",
   "i18n/targets.json": "d46579d5c91be5ca2ffba8ec90cf9b8ff99b2897be4f665895594192d241414a",
-  "scripts/i18n.py": "b4eeb1b7a582933d1033023793ad9615d9491705e8641c2d602d3dc11f87b462",
+  "scripts/i18n.py": "8ecf92446ce0f82bd81aa2232301e2676a37f6d225e4e15d2132972bb3768133",
   "Sources/solstone/Info.plist#localized-values": "219082ca0c268b4325e4dc06199f663debee1a65f581b2edbe154a29dee8fd4e",
   "Sources/solstone-safari-extension/Info.plist#localized-values": "b327e27292d0f1a26390da9a33f2d137c95df4ed9a74c164de3203a7ce7a65e9"
 }

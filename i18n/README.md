@@ -17,3 +17,9 @@ Add a translation only after its language is admitted in the pinned registry. Up
 make ci checks the catalog, compiler pin and generated files against the committed byte lock. A generated-output-only edit fails. Regeneration updates the lock. This is a generated-resource consistency check; it does not scan source code for English.
 
 About protocol records and external application-title matchers retain their wire/input formats. Presentation has separate catalog calls. Sparkle owns its own interface translations; UpdateKit's copy belongs here. Browser-extension resources and journal web content keep their own catalogs.
+
+## Draft locales
+
+`es-419` is registered in the pinned locale registry as a draft locale (`development` released, `production` withheld). Draft translations live in `catalog/translations/es-419.ftl` (or sharded files under `catalog/translations/es-419/`), and production builds exclude them. Unapproved legal and statutory messages stay absent from draft translation files and fall back to English in development builds. When editing English prose, run `i18n-catalog lock` to refresh `source-lock.json`, copy each changed `source` hash into its sidecar `source_revision`, and do not pass `--acknowledge es-419`: leaving the prior acknowledgment untouched marks edited draft entries stale until a translator updates them.
+
+When regenerating production resources on a host without `xcrun` (for example after adding a draft translation that does not change emitted `.xcstrings` bytes), `scripts/i18n.py` verifies that the emitted `.xcstrings` files and existing compiled resources match `i18n/generated-lock.json` before updating the lock; any change to `.xcstrings` bytes requires macOS with `xcrun`.
