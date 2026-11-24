@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - VoiceOver no longer says "off" twice when reading the solstone app's menu bar icon while every source is off.
 - after a brief connection drop, the solstone app now tries a waiting import again within seconds instead of waiting 15 minutes.
+- while an import is on its way to your journal, the solstone app now keeps your mac from going to sleep on its own, pauses if you put it to sleep, and picks up again on wake.
 
 ## [2.0.77] - 2026-11-23
 

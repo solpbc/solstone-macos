@@ -31,6 +31,8 @@ enum ImportRunResult: Equatable, Sendable {
     case authStop
     /// The pairing or the gate changed during the run; it stopped sending.
     case pairingLeft
+    /// The Mac is going to sleep or delivery was cancelled; waiting items stay pending for wake.
+    case pausedForSleep
     /// The journal's version doesn't take imports, or isn't known; nothing was sent.
     case held
 }
@@ -38,6 +40,11 @@ enum ImportRunResult: Equatable, Sendable {
 /// One owner event-log line for an import left to retry. The id is this Mac's own random one.
 func importRetryLine(id: String, stage: String, cause: String) -> String {
     "kind=import id=\(id) step=\(stage) outcome=retry cause=\(cause)"
+}
+
+private func shouldPauseForSleep(_ isSleeping: @Sendable () async -> Bool) async -> Bool {
+    if Task.isCancelled { return true }
+    return await isSleeping()
 }
 
 /// Delivers held imports to the paired journal, oldest first. Each item's exchange (save, then
@@ -53,6 +60,7 @@ func deliverImports(
     journalVersion: String,
     gate: ImportVersionGate,
     stillCurrent: @Sendable () async -> Bool,
+    isSleeping: @Sendable () async -> Bool = { false },
     now: @Sendable () -> Date,
     log: @Sendable (String) -> Void = { importLog.notice("\($0, privacy: .public)") }
 ) async -> ImportRunResult {
@@ -61,6 +69,10 @@ func deliverImports(
     var result = ImportRunResult.clean
     defer { store.finish() }
     for candidate in store.eligible(instance: instance, journalVersion: journalVersion, now: now()) {
+        if await shouldPauseForSleep(isSleeping) {
+            result = .pausedForSleep
+            break
+        }
         guard await stillCurrent() else {
             result = .pairingLeft
             break
@@ -68,7 +80,8 @@ func deliverImports(
         guard store.beginExchange(candidate.id, instance: instance, journalVersion: journalVersion) == .done else { continue }
         let step = await deliverOne(
             transport: transport, store: store, id: candidate.id, saved: candidate.progress,
-            serverURL: serverURL, instance: instance, journalVersion: journalVersion, stillCurrent: stillCurrent
+            serverURL: serverURL, instance: instance, journalVersion: journalVersion,
+            stillCurrent: stillCurrent, isSleeping: isSleeping
         )
         store.endExchange(candidate.id)
         switch step {
@@ -82,6 +95,8 @@ func deliverImports(
             result = .authStop
         case .pairingLeft:
             result = .pairingLeft
+        case .pausedForSleep:
+            result = .pausedForSleep
         }
         if result != .clean { break }
     }
@@ -94,6 +109,7 @@ private enum ImportItemStep {
     case retry(stage: String, cause: String)
     case authStop
     case pairingLeft
+    case pausedForSleep
 }
 
 private func deliverOne(
@@ -104,7 +120,8 @@ private func deliverOne(
     serverURL: String,
     instance: String,
     journalVersion: String,
-    stillCurrent: @Sendable () async -> Bool
+    stillCurrent: @Sendable () async -> Bool,
+    isSleeping: @Sendable () async -> Bool
 ) async -> ImportItemStep {
     var progress = saved
     if progress == nil {
@@ -114,13 +131,21 @@ private func deliverOne(
             guard await stillCurrent() else { return .pairingLeft }
             if store.recordSaved(id, path: path, timestamp: timestamp, instance: instance) == .gone { return .done }
             progress = (path, timestamp)
+            if await shouldPauseForSleep(isSleeping) { return .pausedForSleep }
         } else {
+            if case .retry = outcome, await shouldPauseForSleep(isSleeping) {
+                return .pausedForSleep
+            }
             return settle(store: store, id: id, outcome: outcome, stage: "save", instance: instance, journalVersion: journalVersion)
         }
     }
     guard let progress else { return .done }
+    if await shouldPauseForSleep(isSleeping) { return .pausedForSleep }
     guard await stillCurrent() else { return .pairingLeft }
     let outcome = await transport.start(path: progress.path, timestamp: progress.timestamp, serverURL: serverURL)
+    if case .retry = outcome, await shouldPauseForSleep(isSleeping) {
+        return .pausedForSleep
+    }
     return settle(
         store: store, id: id, outcome: outcome, stage: "start",
         savedTimestamp: progress.timestamp, instance: instance, journalVersion: journalVersion
@@ -339,6 +364,8 @@ final class ImportStreamedRequest: NSObject, URLSessionDataDelegate, @unchecked 
     private let lock = NSLock()
     private let body: ImportMultipartBody?
     private var input: InputStream?
+    private var task: URLSessionTask?
+    private var cancelled = false
     private var handedOver = false
     private var data = Data()
     private var response: HTTPURLResponse?
@@ -354,24 +381,53 @@ final class ImportStreamedRequest: NSObject, URLSessionDataDelegate, @unchecked 
         let config = configuration ?? UploadClient.defaultSessionConfiguration()
         let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
-        return await withCheckedContinuation { continuation in
-            delegate.finish = { continuation.resume(returning: $0) }
-            let task: URLSessionTask
-            if body != nil {
-                task = session.uploadTask(withStreamedRequest: request)
-            } else {
-                task = session.dataTask(with: request)
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let task: URLSessionTask
+                if body != nil {
+                    task = session.uploadTask(withStreamedRequest: request)
+                } else {
+                    task = session.dataTask(with: request)
+                }
+                delegate.start(task: task) { continuation.resume(returning: $0) }
             }
-            task.resume()
+        } onCancel: {
+            delegate.cancel()
         }
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
-        let first: Bool = lock.withLock {
-            defer { handedOver = true }
-            return !handedOver
+    private func start(task: URLSessionTask, finish: @escaping (Answer) -> Void) {
+        let alreadyCancelled: Bool = lock.withLock {
+            if cancelled { return true }
+            self.task = task
+            self.finish = finish
+            return false
         }
-        guard first, let body else {
+        if alreadyCancelled {
+            finish(.failed(cause: "io-cancelled"))
+            return
+        }
+        task.resume()
+        let cancelledDuringResume: Bool = lock.withLock { cancelled }
+        if cancelledDuringResume {
+            task.cancel()
+        }
+    }
+
+    private func cancel() {
+        let activeTask: URLSessionTask? = lock.withLock {
+            cancelled = true
+            return task
+        }
+        activeTask?.cancel()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, needNewBodyStream completionHandler: @escaping (InputStream?) -> Void) {
+        let proceed: Bool = lock.withLock {
+            defer { handedOver = true }
+            return !handedOver && !cancelled
+        }
+        guard proceed, let body else {
             completionHandler(nil)
             return
         }
@@ -382,7 +438,17 @@ final class ImportStreamedRequest: NSObject, URLSessionDataDelegate, @unchecked 
             completionHandler(nil)
             return
         }
-        lock.withLock { self.input = input }
+        let abortedAfterStreams: Bool = lock.withLock {
+            if cancelled { return true }
+            self.input = input
+            return false
+        }
+        if abortedAfterStreams {
+            input.close()
+            output.close()
+            completionHandler(nil)
+            return
+        }
         // The writer blocks while the session reads, so it has a thread of its own.
         let box = ImportStreamBox(output)
         let writer = Thread {
@@ -428,7 +494,19 @@ final class ImportStreamedRequest: NSObject, URLSessionDataDelegate, @unchecked 
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let (answer, done): (Answer, ((Answer) -> Void)?) = lock.withLock {
-            defer { finish = nil; input?.close() }
+            defer {
+                finish = nil
+                self.task = nil
+                input?.close()
+                input = nil
+            }
+            if let response, error == nil {
+                let marked = response.value(forHTTPHeaderField: "X-SPL-Loopback-Refused") != nil
+                return (.answered(status: response.statusCode, loopbackRefused: marked, data: data), finish)
+            }
+            if cancelled {
+                return (.failed(cause: "io-cancelled"), finish)
+            }
             if let response {
                 let marked = response.value(forHTTPHeaderField: "X-SPL-Loopback-Refused") != nil
                 return (.answered(status: response.statusCode, loopbackRefused: marked, data: data), finish)

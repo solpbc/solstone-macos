@@ -1,11 +1,88 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 sol pbc
 
+import AppKit
 import Foundation
 import ImageIO
 import Testing
 import UniformTypeIdentifiers
 @testable import solstone
+
+/// Records begin/end counts and currently active count for `ImportEngine`'s delivery activity hold.
+private final class ImportActivitySpy: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var begins = 0
+    private(set) var ends = 0
+    private(set) var active = 0
+    private(set) var maxActive = 0
+    private(set) var reasons: [String] = []
+
+    func begin(_ reason: String) -> @Sendable () -> Void {
+        lock.withLock {
+            begins += 1
+            active += 1
+            maxActive = max(maxActive, active)
+            reasons.append(reason)
+        }
+        return { [weak self] in
+            self?.lock.withLock {
+                self?.ends += 1
+                self?.active -= 1
+            }
+        }
+    }
+
+    var counts: (begins: Int, ends: Int, active: Int) {
+        lock.withLock { (begins, ends, active) }
+    }
+}
+
+/// In-process URLProtocol that stalls a request until cancelled, proving `ImportStreamedRequest`
+/// forwards Swift `Task` cancellation into `URLSessionTask.cancel()` without opening a socket.
+private final class StallingImportURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var startedContinuation: CheckedContinuation<Void, Never>?
+    nonisolated(unsafe) private static var didStart = false
+    nonisolated(unsafe) private static var didStop = false
+
+    static func reset() {
+        lock.withLock {
+            startedContinuation = nil
+            didStart = false
+            didStop = false
+        }
+    }
+
+    static var stopped: Bool { lock.withLock { didStop } }
+
+    static func waitUntilStarted() async {
+        await withCheckedContinuation { c in
+            let already: Bool = lock.withLock {
+                if didStart { return true }
+                startedContinuation = c
+                return false
+            }
+            if already { c.resume() }
+        }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let notify: CheckedContinuation<Void, Never>? = Self.lock.withLock {
+            Self.didStart = true
+            let c = Self.startedContinuation
+            Self.startedContinuation = nil
+            return c
+        }
+        notify?.resume()
+    }
+
+    override func stopLoading() {
+        Self.lock.withLock { Self.didStop = true }
+    }
+}
 
 /// A transport whose answers the test sets, and which can hold a save until the test lets it go.
 private final class FakeImportTransport: ImportTransport, @unchecked Sendable {
@@ -21,15 +98,19 @@ private final class FakeImportTransport: ImportTransport, @unchecked Sendable {
     var defaultInspect: ImportInspectOutcome = .stillPending
     private var hold: CheckedContinuation<Void, Never>?
     private var holdNext = false
+    private var holdNextCancellableFlag = false
     private var holdNextInspectFlag = false
     private var heldStarted: CheckedContinuation<Void, Never>?
+    private var onSaveEnter: (@Sendable () -> Void)?
 
     func answerSave(_ id: String, _ outcomes: ImportOutcome...) { lock.withLock { saves[id, default: []] += outcomes } }
     func answerStart(_ outcomes: ImportOutcome...) { lock.withLock { starts += outcomes } }
     func answerInspect(_ importID: String, _ outcomes: ImportInspectOutcome...) { lock.withLock { inspects[importID, default: []] += outcomes } }
     var calls: Int { lock.withLock { saveCalls.count + startCalls.count } }
 
-    func holdNextSave() { lock.withLock { holdNext = true } }
+    func setOnSaveEnter(_ hook: (@Sendable () -> Void)?) { lock.withLock { onSaveEnter = hook } }
+    func holdNextSave() { lock.withLock { holdNext = true; holdNextCancellableFlag = false } }
+    func holdNextSaveCancellable() { lock.withLock { holdNext = true; holdNextCancellableFlag = true } }
     func holdNextInspect() { lock.withLock { holdNextInspectFlag = true } }
     func waitUntilHeld() async {
         await withCheckedContinuation { c in
@@ -44,20 +125,55 @@ private final class FakeImportTransport: ImportTransport, @unchecked Sendable {
     func release() { lock.withLock { let h = hold; hold = nil; return h }?.resume() }
 
     func save(_ item: ImportItemDescriptor, serverURL: String) async -> ImportOutcome {
-        let shouldHold: Bool = lock.withLock {
+        let (shouldHold, cancellable, hook): (Bool, Bool, (@Sendable () -> Void)?) = lock.withLock {
             saveCalls.append(item.id)
-            defer { holdNext = false }
-            return holdNext
+            let h = holdNext
+            let c = holdNextCancellableFlag
+            holdNext = false
+            holdNextCancellableFlag = false
+            return (h, c, onSaveEnter)
         }
+        hook?()
         if shouldHold {
-            await withCheckedContinuation { c in
-                let started: CheckedContinuation<Void, Never>? = lock.withLock {
-                    hold = c
-                    let s = heldStarted
-                    heldStarted = nil
-                    return s
+            if cancellable {
+                var wasCancelled = false
+                await withTaskCancellationHandler {
+                    await withCheckedContinuation { c in
+                        let (alreadyCancelled, started): (Bool, CheckedContinuation<Void, Never>?) = lock.withLock {
+                            if Task.isCancelled { return (true, nil) }
+                            hold = c
+                            let s = heldStarted
+                            heldStarted = nil
+                            return (false, s)
+                        }
+                        if alreadyCancelled {
+                            c.resume()
+                        } else {
+                            started?.resume()
+                        }
+                    }
+                } onCancel: {
+                    let h: CheckedContinuation<Void, Never>? = lock.withLock {
+                        let current = hold
+                        hold = nil
+                        return current
+                    }
+                    h?.resume()
                 }
-                started?.resume()
+                wasCancelled = Task.isCancelled
+                if wasCancelled {
+                    return .retry(cause: "io-cancelled")
+                }
+            } else {
+                await withCheckedContinuation { c in
+                    let started: CheckedContinuation<Void, Never>? = lock.withLock {
+                        hold = c
+                        let s = heldStarted
+                        heldStarted = nil
+                        return s
+                    }
+                    started?.resume()
+                }
             }
         }
         return lock.withLock {
@@ -1081,5 +1197,307 @@ struct ImportEngineTests {
 
         // Still 1 — never double-counted on sendAgain or delivery!
         #expect(totals.view()?.importsTotal == 1)
+    }
+
+    // MARK: - App Nap / idle-sleep hold and sleep/wake lifecycle
+
+    private func makeEngine(
+        _ root: URL,
+        _ transport: FakeImportTransport,
+        clock: ImportTestClock = ImportTestClock(),
+        activity: ImportActivitySpy
+    ) -> ImportEngine {
+        ImportEngine(
+            directory: root, transport: transport, clock: { clock.now() },
+            freeSpace: { 100 * 1024 * 1024 * 1024 }, storeFsync: { _ in },
+            beginActivity: { activity.begin($0) }
+        )
+    }
+
+    @Test func deliveryActivityHoldSkipsIdleAndReleasesExactlyOnceOnEveryExitPath() async throws {
+        let dir = try tempDir("activity-exits")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let spy = ImportActivitySpy()
+        let engine = makeEngine(root, transport, clock: clock, activity: spy)
+
+        // Empty queue takes no activity hold.
+        _ = await engine.tick(facts)
+        #expect(spy.counts == (0, 0, 0))
+
+        // Closed gate takes no activity hold even with an item queued.
+        let id1 = try addedID(await engine.add([try file(dir, "1.pdf")]))
+        var paused = facts
+        paused.syncPaused = true
+        _ = await engine.tick(paused)
+        #expect(spy.counts == (0, 0, 0))
+
+        // Normal delivery holds the activity while transport runs and releases on exit.
+        let sawActiveDuringSave = NSLock()
+        nonisolated(unsafe) var activeDuringSave = 0
+        transport.setOnSaveEnter {
+            sawActiveDuringSave.withLock { activeDuringSave = spy.counts.active }
+        }
+        _ = await engine.tick(facts)
+        transport.setOnSaveEnter(nil)
+        #expect(sawActiveDuringSave.withLock { activeDuringSave } == 1)
+        #expect(spy.counts == (1, 1, 0))
+        _ = id1
+
+        // Transient retry releases hold, and subsequent ticks while backed off take no hold.
+        let idRetry = try addedID(await engine.add([try file(dir, "2.pdf")]))
+        transport.answerSave(idRetry, .retry(cause: "http-503"))
+        _ = await engine.tick(facts)
+        #expect(spy.counts == (2, 2, 0))
+        _ = await engine.tick(facts)
+        #expect(spy.counts == (2, 2, 0))
+        await engine.tunnelReconnected()
+        _ = await engine.tick(facts)
+        #expect(spy.counts == (3, 3, 0))
+
+        // Auth stop releases hold.
+        let idAuth = try addedID(await engine.add([try file(dir, "3.pdf")]))
+        transport.answerSave(idAuth, .authStop)
+        _ = await engine.tick(facts)
+        #expect(spy.counts == (4, 4, 0))
+        await engine.tunnelReconnected()
+        _ = await engine.tick(facts)
+        #expect(spy.counts == (5, 5, 0))
+
+        // Refusal (needsAttention) releases hold.
+        let idRefused = try addedID(await engine.add([try file(dir, "4.pdf")]))
+        transport.answerSave(idRefused, .needsAttention(error: "no", reasonCode: "client_item_conflict", kind: "client_item_conflict"))
+        _ = await engine.tick(facts)
+        #expect(spy.counts == (6, 6, 0))
+
+        // Ready to review releases hold.
+        let idReview = try addedID(await engine.add([try file(dir, "5.zip")]))
+        transport.answerSave(idReview, .saved(path: "/p/5", timestamp: "20261124_110005"))
+        transport.answerStart(.readyToReview(importID: "20261124_110005", error: "review", reasonCode: "import_preview_required", kind: "body_confirmation_required"))
+        _ = await engine.tick(facts)
+        #expect(spy.counts == (7, 7, 0))
+
+        // Re-pair mid-save releases hold.
+        let idRepair = try addedID(await engine.add([try file(dir, "6.pdf")]))
+        transport.holdNextSave()
+        let repairRun = Task { await engine.tick(facts) }
+        await transport.waitUntilHeld()
+        #expect(spy.counts == (8, 7, 1))
+        var other = facts
+        other.instance = "journal-b"
+        _ = await engine.snapshot(other)
+        transport.release()
+        _ = await repairRun.value
+        #expect(spy.counts == (8, 8, 0))
+        _ = idRepair
+
+        // Direct task cancellation mid-save releases hold immediately and exactly once.
+        let idCancel = try addedID(await engine.add([try file(dir, "7.pdf")]))
+        transport.holdNextSaveCancellable()
+        let cancelRun = Task { await engine.tick(facts) }
+        await transport.waitUntilHeld()
+        #expect(spy.counts == (9, 8, 1))
+        cancelRun.cancel()
+        _ = await cancelRun.value
+        #expect(spy.counts == (9, 9, 0))
+        _ = idCancel
+    }
+
+    @Test func willSleepPausesActiveDeliveryReleasesHoldWithoutBackoffAndWakeResumesCleanly() async throws {
+        let dir = try tempDir("sleep-pause-resume")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let spy = ImportActivitySpy()
+        let engine = makeEngine(root, transport, clock: clock, activity: spy)
+
+        let id = try addedID(await engine.add([try file(dir, "big.zip", "payload")]))
+        transport.holdNextSaveCancellable()
+        let delivery = Task { await engine.tick(facts) }
+        await transport.waitUntilHeld()
+        #expect(spy.counts == (1, 0, 1))
+
+        // Owner closes the lid -> willSleep immediately releases the hold and cancels in-flight save.
+        await engine.willSleep()
+        #expect(spy.counts == (1, 1, 0))
+        let pausedSnap = await delivery.value
+        #expect(pausedSnap.rows.first?.id == id)
+        #expect(pausedSnap.rows.first?.kind == .waiting)
+        // Sleep pause must NOT record retry backoff.
+        #expect(await engine.nextRetryDelay(for: facts) == nil)
+
+        // While asleep, tick() does not send or re-acquire a power assertion.
+        let savesBeforeSleepTick = transport.saveCalls.count
+        _ = await engine.tick(facts)
+        #expect(transport.saveCalls.count == savesBeforeSleepTick)
+        #expect(spy.counts == (1, 1, 0))
+
+        // On wake, delivery resumes cleanly without waiting on any backoff and releases its hold on completion.
+        await engine.didWake()
+        let resumedSnap = await engine.tick(facts)
+        #expect(transport.saveCalls.count == savesBeforeSleepTick + 1)
+        #expect(transport.startCalls.count == 1)
+        #expect(resumedSnap.rows.isEmpty)
+        #expect(spy.counts == (2, 2, 0))
+    }
+
+    @Test func sleepRightAfterSavePreservesSavedProgressAndWakeRunsStartOnly() async throws {
+        let dir = try tempDir("sleep-after-save")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let spy = ImportActivitySpy()
+        let engine = makeEngine(root, transport, clock: clock, activity: spy)
+
+        let id = try addedID(await engine.add([try file(dir, "archive.zip", "bytes")]))
+        transport.answerSave(id, .saved(path: "/imports/archive.zip", timestamp: "20261124_120000"))
+        // Non-cancellable hold simulates save completing right as willSleep fires.
+        transport.holdNextSave()
+        let delivery = Task { await engine.tick(facts) }
+        await transport.waitUntilHeld()
+
+        await engine.willSleep()
+        #expect(spy.counts == (1, 1, 0))
+        transport.release()
+        let snapAfterSleep = await delivery.value
+        #expect(transport.saveCalls == [id])
+        #expect(transport.startCalls.isEmpty)
+        #expect(snapAfterSleep.rows.first?.savedAtJournal == true)
+
+        // On wake, only /start runs (no duplicate /save).
+        await engine.didWake()
+        let finalSnap = await engine.tick(facts)
+        #expect(transport.saveCalls == [id])
+        #expect(transport.startCalls == ["/imports/archive.zip"])
+        #expect(finalSnap.rows.isEmpty)
+        #expect(spy.counts == (2, 2, 0))
+    }
+
+    @Test func immediateWakeWhileSleepPauseIsDrainingWaitsAndResumesWithoutSkipping() async throws {
+        let dir = try tempDir("wake-drain-race")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let spy = ImportActivitySpy()
+        let engine = makeEngine(root, transport, clock: clock, activity: spy)
+
+        let id = try addedID(await engine.add([try file(dir, "race.zip", "bytes")]))
+        transport.answerSave(id, .retry(cause: "io-cancelled"))
+        // Non-cancellable hold lets us trigger didWake() BEFORE the cancelled save finishes unwinding.
+        transport.holdNextSave()
+        let firstTick = Task { await engine.tick(facts) }
+        await transport.waitUntilHeld()
+
+        await engine.willSleep()
+        #expect(spy.counts == (1, 1, 0))
+
+        // Start didWake() while firstTick is still unwinding.
+        let wakeTask = Task { await engine.didWake() }
+        try await Task.sleep(for: .milliseconds(20))
+        // Now let the sleep-cancelled transport call unwind.
+        transport.release()
+        _ = await firstTick.value
+        await wakeTask.value
+
+        // Engine is guaranteed idle and awake now; tick() resumes and delivers cleanly.
+        let resumedSnap = await engine.tick(facts)
+        #expect(transport.saveCalls == [id, id])
+        #expect(transport.startCalls.count == 1)
+        #expect(resumedSnap.rows.isEmpty)
+        #expect(spy.counts == (2, 2, 0))
+    }
+
+    @Test @MainActor func importSourceWorkspaceSleepAndWakeNotificationsPauseAndResumeDelivery() async throws {
+        let dir = try tempDir("source-sleep-wake")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let spy = ImportActivitySpy()
+        let engine = makeEngine(root, transport, clock: clock, activity: spy)
+        let center = NotificationCenter()
+
+        let id = try addedID(await engine.add([try file(dir, "video.mov", "bytes")]))
+        transport.holdNextSaveCancellable()
+
+        let testFacts = facts
+        let source = ImportSource(
+            engine: engine,
+            facts: { testFacts },
+            serverURL: { testFacts.serverURL },
+            runsLoop: false,
+            workspaceCenter: center
+        )
+        await source.start()
+        source.nudge()
+        await transport.waitUntilHeld()
+        #expect(spy.counts == (1, 0, 1))
+
+        // Workspace willSleep pauses active delivery and releases the hold.
+        center.post(name: NSWorkspace.willSleepNotification, object: nil)
+        let pauseDeadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < pauseDeadline {
+            let running = await engine.isRunning
+            if spy.counts.active == 0 && !running && source.snapshot.rows.first?.kind == .waiting { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(spy.counts == (1, 1, 0))
+        #expect(source.snapshot.rows.first?.id == id)
+        #expect(source.snapshot.rows.first?.kind == .waiting)
+
+        // Workspace didWake resumes delivery cleanly and finishes it.
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        let resumeDeadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < resumeDeadline {
+            if source.snapshot.rows.isEmpty && spy.counts.active == 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(transport.saveCalls == [id, id])
+        #expect(transport.startCalls.count == 1)
+        #expect(source.snapshot.rows.isEmpty)
+        #expect(spy.counts == (2, 2, 0))
+
+        // shutdown() removes observers so further notifications are ignored.
+        source.shutdown()
+        let callsAfterShutdown = transport.calls
+        center.post(name: NSWorkspace.didWakeNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(transport.calls == callsAfterShutdown)
+    }
+
+    @Test func streamedRequestCancelsURLSessionTaskOnSwiftTaskCancellation() async throws {
+        StallingImportURLProtocol.reset()
+        let dir = try tempDir("stream-cancel")
+        let payload = dir.appendingPathComponent("payload")
+        // Larger than the 64 KiB bound buffer so the body writer thread blocks on backpressure.
+        try Data(repeating: 0x5A, count: 512 * 1024).write(to: payload)
+        let item = ImportItemDescriptor(
+            id: "cancel-stream-1",
+            payloadURL: payload,
+            displayName: "large.bin",
+            mime: "application/octet-stream",
+            size: 512 * 1024
+        )
+        let body = ImportMultipartBody(boundary: "CANCELTEST", item: item)
+        var request = URLRequest(url: URL(string: "http://import-cancel.invalid/app/import/api/save")!)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=CANCELTEST", forHTTPHeaderField: "Content-Type")
+        request.setValue(String(body.contentLength), forHTTPHeaderField: "Content-Length")
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StallingImportURLProtocol.self]
+
+        let sendTask = Task {
+            await ImportStreamedRequest.send(request, body: body, configuration: config)
+        }
+        await StallingImportURLProtocol.waitUntilStarted()
+        sendTask.cancel()
+        let answer = await sendTask.value
+        #expect(StallingImportURLProtocol.stopped)
+        if case .failed(let cause) = answer {
+            #expect(cause == "io-cancelled")
+        } else {
+            Issue.record("expected .failed(cause: \"io-cancelled\"), got \(answer)")
+        }
     }
 }

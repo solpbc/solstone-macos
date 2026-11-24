@@ -3,7 +3,52 @@
 
 import Foundation
 import ImageIO
+import os
 import UniformTypeIdentifiers
+
+private let importEngineLog = Logger(subsystem: "app.solstone.observer", category: "import")
+
+/// Acquires an OS activity hold preventing App Nap and idle system sleep while an import upload
+/// is running. Does not block forced/lid-close sleep or display sleep. The returned release
+/// closure is thread-safe and idempotent.
+func importBeginDeliveryActivity(reason: String) -> @Sendable () -> Void {
+    final class TokenBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var token: NSObjectProtocol?
+        init(_ token: NSObjectProtocol) { self.token = token }
+        func end() {
+            let active: NSObjectProtocol? = lock.withLock {
+                defer { token = nil }
+                return token
+            }
+            if let active {
+                ProcessInfo.processInfo.endActivity(active)
+            }
+        }
+        deinit { end() }
+    }
+    let token = ProcessInfo.processInfo.beginActivity(
+        options: [.userInitiated, .suddenTerminationDisabled, .automaticTerminationDisabled],
+        reason: reason
+    )
+    let box = TokenBox(token)
+    return { box.end() }
+}
+
+/// Ensures an activity release closure runs at most once across sleep, cancel, shutdown and defer.
+private final class ImportActivityReleaseOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var release: (@Sendable () -> Void)?
+    init(_ release: @escaping @Sendable () -> Void) { self.release = release }
+    func end() {
+        let action: (@Sendable () -> Void)? = lock.withLock {
+            defer { release = nil }
+            return release
+        }
+        action?()
+    }
+    deinit { end() }
+}
 
 /// What adding one file did.
 enum ImportAddOutcome: Equatable, Sendable {
@@ -54,10 +99,15 @@ actor ImportEngine {
     private let sourceTotals: SourceTotals?
     private let onDelivered: @Sendable (String) async -> Void
     private let onPairingRefused: @Sendable (String) async -> Void
+    private let beginActivity: @Sendable (String) -> (@Sendable () -> Void)
     private let maxBytes: Int64
     private var started = false
     private var running = false
     private var reconciling = false
+    private var sleeping = false
+    private var activeDeliveryTask: Task<ImportRunResult, Never>?
+    private var activeActivityRelease: (@Sendable () -> Void)?
+    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
     private var latest = ImportFacts()
     private var authHold: (instance: String, until: Date)?
     private var reconcileAuthRefusedInstance: String?
@@ -66,6 +116,7 @@ actor ImportEngine {
     private var runningMarker: URL { store.root.appendingPathComponent(".intake-running") }
     private var interruptedMarker: URL { store.root.appendingPathComponent(".intake-interrupted") }
     static let authHoldInterval: TimeInterval = 15 * 60
+    static let deliveryActivityReason = "Sending import to your journal"
 
     init(
         directory: URL,
@@ -77,7 +128,8 @@ actor ImportEngine {
         storeFsync: @escaping @Sendable (URL) throws -> Void = importFullFsync,
         sourceTotals: SourceTotals? = nil,
         onDelivered: @escaping @Sendable (String) async -> Void = { _ in },
-        onPairingRefused: @escaping @Sendable (String) async -> Void = { _ in }
+        onPairingRefused: @escaping @Sendable (String) async -> Void = { _ in },
+        beginActivity: @escaping @Sendable (String) -> (@Sendable () -> Void) = importBeginDeliveryActivity
     ) {
         let store = ImportCustodyStore(root: directory, clock: clock, fsync: storeFsync)
         self.store = store
@@ -89,6 +141,7 @@ actor ImportEngine {
         self.sourceTotals = sourceTotals
         self.onDelivered = onDelivered
         self.onPairingRefused = onPairingRefused
+        self.beginActivity = beginActivity
     }
 
     private func ensureStarted() {
@@ -158,7 +211,7 @@ actor ImportEngine {
 
     // MARK: - delivery
 
-    private func gateOpen(_ facts: ImportFacts) -> (serverURL: String, instance: String, version: String)? {
+    private func pairingGateOpen(_ facts: ImportFacts) -> (serverURL: String, instance: String, version: String)? {
         guard facts.paired, facts.markConfirmed, !facts.syncPaused, !facts.pairingRefused,
               let serverURL = facts.serverURL, let instance = facts.instance, let version = facts.version,
               importVersionGate(version) == .supported else { return nil }
@@ -166,24 +219,59 @@ actor ImportEngine {
         return (serverURL, instance, version)
     }
 
-    private func isCurrent(_ instance: String) -> Bool {
-        gateOpen(latest)?.instance == instance
+    private func gateOpen(_ facts: ImportFacts) -> (serverURL: String, instance: String, version: String)? {
+        guard !sleeping else { return nil }
+        return pairingGateOpen(facts)
     }
+
+    private func isCurrent(_ instance: String) -> Bool {
+        pairingGateOpen(latest)?.instance == instance
+    }
+
+    private var isSleeping: Bool { sleeping }
 
     /// Runs one delivery pass when the gate is open and none is running.
     func tick(_ facts: ImportFacts) async -> ImportSnapshot {
         ensureStarted()
         noteFacts(facts)
         guard !running, !store.unreadable, let open = gateOpen(facts) else { return snapshot(facts) }
+        guard !store.eligible(instance: open.instance, journalVersion: open.version, now: clock()).isEmpty else {
+            return snapshot(facts)
+        }
+        guard !Task.isCancelled else { return snapshot(facts) }
         running = true
+        let hold = ImportActivityReleaseOnce(beginActivity(Self.deliveryActivityReason))
+        let releaseHold: @Sendable () -> Void = { hold.end() }
+        activeActivityRelease = releaseHold
+        let deliveryTask = Task<ImportRunResult, Never> { [transport, store, clock] in
+            await deliverImports(
+                transport: transport, store: store, serverURL: open.serverURL, instance: open.instance,
+                journalVersion: open.version, gate: .supported,
+                stillCurrent: { [weak self] in await self?.isCurrent(open.instance) ?? false },
+                isSleeping: { [weak self] in await self?.isSleeping ?? false },
+                now: clock
+            )
+        }
+        activeDeliveryTask = deliveryTask
         let before = store.lastDeliveredAt()
-        let result = await deliverImports(
-            transport: transport, store: store, serverURL: open.serverURL, instance: open.instance,
-            journalVersion: open.version, gate: .supported,
-            stillCurrent: { [weak self] in await self?.isCurrent(open.instance) ?? false },
-            now: clock
-        )
-        running = false
+        let result: ImportRunResult
+        do {
+            defer {
+                activeDeliveryTask = nil
+                activeActivityRelease = nil
+                releaseHold()
+                running = false
+                let waiters = idleWaiters
+                idleWaiters.removeAll()
+                for waiter in waiters { waiter.resume() }
+            }
+            result = await withTaskCancellationHandler {
+                await deliveryTask.value
+            } onCancel: {
+                releaseHold()
+                deliveryTask.cancel()
+            }
+        }
         if result == .authStop {
             authHold = (open.instance, clock().addingTimeInterval(Self.authHoldInterval))
         }
@@ -192,6 +280,47 @@ actor ImportEngine {
             await onDelivered(open.instance)
         }
         return snapshot(latest)
+    }
+
+    /// The Mac is going to sleep (lid close or owner-requested Sleep): pause active delivery,
+    /// release the activity hold right away, and block new delivery passes until wake.
+    func willSleep() {
+        let wasActive = running
+        sleeping = true
+        if let release = activeActivityRelease {
+            activeActivityRelease = nil
+            release()
+        }
+        activeDeliveryTask?.cancel()
+        if wasActive {
+            importEngineLog.notice("kind=import event=sleep-pause active=true")
+        }
+    }
+
+    /// The Mac woke from sleep: wait for any sleep-cancelled delivery pass to finish unwinding,
+    /// clear pending retry backoff, and re-open delivery.
+    func didWake() async {
+        let wasSleeping = sleeping
+        sleeping = false
+        if running, activeDeliveryTask?.isCancelled == true {
+            await withCheckedContinuation { continuation in
+                idleWaiters.append(continuation)
+            }
+        }
+        ensureStarted()
+        store.clearRetryBackoff()
+        if wasSleeping {
+            importEngineLog.notice("kind=import event=wake-resume")
+        }
+    }
+
+    /// Releases any active activity hold and cancels in-flight delivery on app shutdown.
+    func shutdown() {
+        if let release = activeActivityRelease {
+            activeActivityRelease = nil
+            release()
+        }
+        activeDeliveryTask?.cancel()
     }
 
     private func noteFacts(_ facts: ImportFacts) {
@@ -204,7 +333,7 @@ actor ImportEngine {
     }
 
     private func canReconcile(_ facts: ImportFacts) -> (serverURL: String, instance: String)? {
-        guard facts.paired, facts.markConfirmed, !facts.pairingRefused,
+        guard !sleeping, facts.paired, facts.markConfirmed, !facts.pairingRefused,
               let serverURL = facts.serverURL, let instance = facts.instance else { return nil }
         if reconcileAuthRefusedInstance == instance { return nil }
         if let hold = authHold, hold.instance == instance, hold.until > clock() { return nil }
