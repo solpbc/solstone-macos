@@ -720,6 +720,51 @@ final class ImportCustodyStore: @unchecked Sendable {
         }
     }
 
+    /// Earliest future scheduled retry time among pending items backed off against `instance`.
+    /// Items already due (`nextAttemptAt <= now`) are excluded so a closed gate cannot busy-loop.
+    func nextRetryDate(instance: String, after now: Date) -> Date? {
+        lock.withLock {
+            guard !unreadable else { return nil }
+            var earliest: Date?
+            for row in file.items {
+                guard row.state == "pending",
+                      !inFlight.contains(row.id),
+                      row.backoffInstanceID == instance,
+                      let next = row.nextAttemptAt,
+                      next > now else { continue }
+                if let current = earliest {
+                    if next < current { earliest = next }
+                } else {
+                    earliest = next
+                }
+            }
+            return earliest
+        }
+    }
+
+    /// Clears transient retry backoff on pending, non-in-flight items so a network recovery or wake
+    /// tries waiting imports right away. Preserves saved progress, attention state and review state.
+    func clearRetryBackoff() {
+        lock.withLock {
+            guard !unreadable else { return }
+            let needsReset = file.items.contains { row in
+                row.state == "pending"
+                    && !inFlight.contains(row.id)
+                    && (row.backoffInstanceID != nil || row.attemptCount != 0 || row.nextAttemptAt != nil)
+            }
+            guard needsReset else { return }
+            var next = file
+            for index in next.items.indices {
+                let row = next.items[index]
+                guard row.state == "pending", !inFlight.contains(row.id) else { continue }
+                next.items[index].backoffInstanceID = nil
+                next.items[index].attemptCount = 0
+                next.items[index].nextAttemptAt = nil
+            }
+            _ = persist(next)
+        }
+    }
+
     func endExchange(_ id: String) {
         lock.withLock { _ = inFlight.remove(id) }
     }

@@ -14,18 +14,25 @@ final class ImportSource {
     private let facts: @MainActor () -> ImportFacts
     private let serverURL: @Sendable () async -> String?
     private let runsLoop: Bool
+    private let retrySleep: @Sendable (Duration) async throws -> Void
     private var loop: Task<Void, Never>?
+    private var retryWakeTask: Task<Void, Never>?
+    private var isShutDown = false
+
+    static let idlePollInterval: TimeInterval = 15
 
     init(
         engine: ImportEngine,
         facts: @escaping @MainActor () -> ImportFacts,
         serverURL: @escaping @Sendable () async -> String?,
-        runsLoop: Bool = true
+        runsLoop: Bool = true,
+        retrySleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.engine = engine
         self.facts = facts
         self.serverURL = serverURL
         self.runsLoop = runsLoop
+        self.retrySleep = retrySleep
     }
 
     static func make(
@@ -53,6 +60,7 @@ final class ImportSource {
     }
 
     func start() async {
+        isShutDown = false
         await refresh(sending: false)
         await reconcileNow()
         guard runsLoop else { return }
@@ -64,7 +72,7 @@ final class ImportSource {
                 }
                 await self.refresh(sending: false)
                 let busy = await self.engine.isRunning
-                try? await Task.sleep(for: busy ? .seconds(1) : .seconds(15))
+                try? await Task.sleep(for: busy ? .seconds(1) : .seconds(Self.idlePollInterval))
             }
         }
     }
@@ -75,8 +83,11 @@ final class ImportSource {
 #endif
 
     func shutdown() {
+        isShutDown = true
         loop?.cancel()
         loop = nil
+        retryWakeTask?.cancel()
+        retryWakeTask = nil
     }
 
     /// Starts a delivery run if none is going; the snapshot is read again when it ends.
@@ -161,9 +172,33 @@ final class ImportSource {
         var current = facts()
         current.serverURL = await serverURL()
         if sending {
+            retryWakeTask?.cancel()
+            retryWakeTask = nil
             snapshot = await engine.tick(current)
+            await scheduleRetryWakeIfNeeded(for: current)
         } else {
             snapshot = await engine.snapshot(current)
+        }
+    }
+
+    private func scheduleRetryWakeIfNeeded(for facts: ImportFacts) async {
+        guard runsLoop, !isShutDown else { return }
+        guard !(await engine.isRunning),
+              let delay = await engine.nextRetryDelay(for: facts),
+              delay > 0,
+              delay < Self.idlePollInterval,
+              !isShutDown else { return }
+        retryWakeTask?.cancel()
+        let wait = max(delay, 0.1)
+        let sleep = retrySleep
+        retryWakeTask = Task { @MainActor [weak self] in
+            do {
+                try await sleep(.seconds(wait))
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled, !self.isShutDown else { return }
+            self.nudge()
         }
     }
 }

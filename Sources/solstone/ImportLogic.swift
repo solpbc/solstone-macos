@@ -331,10 +331,24 @@ private func importUnexpectedAnswer(_ word: String?, expected: String) -> String
     return "answer-unknown"
 }
 
-/// The retry schedule: 15 minutes doubling, capped at 4 hours.
+/// The retry schedule for transient delivery failures: short first steps so a brief
+/// relay or network blip recovers quickly, then backing off to a 4-hour cap.
+private let importRetryBackoffSchedule: [TimeInterval] = [
+    5,
+    15,
+    60,
+    5 * 60,
+    15 * 60,
+    30 * 60,
+    60 * 60,
+    2 * 3600,
+    4 * 3600,
+]
+
 func importRetryBackoff(attempt: Int) -> TimeInterval {
-    let exponent = min(max(attempt - 1, 0), 4)
-    return min(15 * 60 * Double(1 << exponent), 4 * 3600)
+    guard attempt > 1 else { return importRetryBackoffSchedule[0] }
+    let index = min(attempt - 1, importRetryBackoffSchedule.count - 1)
+    return importRetryBackoffSchedule[index]
 }
 
 // MARK: - what the page shows

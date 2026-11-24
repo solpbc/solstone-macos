@@ -221,10 +221,20 @@ struct ImportEngineTests {
         } else { Issue.record("no kind stays attention") }
     }
 
-    @Test func theBackoffIsCappedAndNeverTraps() {
-        #expect(importRetryBackoff(attempt: 1) == 15 * 60)
-        #expect(importRetryBackoff(attempt: 2) == 30 * 60)
+    @Test func theBackoffStartsShortEscalatesAndNeverTraps() {
+        #expect(importRetryBackoff(attempt: Int.min) == 5)
+        #expect(importRetryBackoff(attempt: 0) == 5)
+        #expect(importRetryBackoff(attempt: 1) == 5)
+        #expect(importRetryBackoff(attempt: 2) == 15)
+        #expect(importRetryBackoff(attempt: 3) == 60)
+        #expect(importRetryBackoff(attempt: 4) == 5 * 60)
+        #expect(importRetryBackoff(attempt: 5) == 15 * 60)
+        #expect(importRetryBackoff(attempt: 6) == 30 * 60)
+        #expect(importRetryBackoff(attempt: 7) == 60 * 60)
+        #expect(importRetryBackoff(attempt: 8) == 2 * 3600)
+        #expect(importRetryBackoff(attempt: 9) == 4 * 3600)
         #expect(importRetryBackoff(attempt: 100) == 4 * 3600)
+        #expect(importRetryBackoff(attempt: Int.max) == 4 * 3600)
     }
 
     // MARK: - the body
@@ -283,14 +293,201 @@ struct ImportEngineTests {
         _ = await first.tick(facts)
         #expect(transport.startCalls.count == 1)
 
-        // A relaunch over the same folder sends only the start, after the backoff.
-        clock.advance(16 * 60)
+        // Before the 5-second first step elapses, the failed start is still held.
+        clock.advance(4)
+        _ = await first.tick(facts)
+        #expect(transport.startCalls.count == 1)
+
+        // A relaunch over the same folder sends only the start, once the short first backoff elapses.
+        clock.advance(2)
         let second = makeEngine(root, transport, clock: clock)
         let snapshot = await second.tick(facts)
         #expect(transport.saveCalls.count == 1)
         #expect(transport.startCalls.count == 2)
         #expect(snapshot.rows.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(id).path))
+    }
+
+    @Test func transientSaveFailureEscalatesThroughShortFirstStepsAndTunnelReconnectClearsBackoff() async throws {
+        let dir = try tempDir("short-backoff")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let engine = makeEngine(root, transport, clock: clock)
+        let id = try addedID(await engine.add([try file(dir, "clip.pdf")]))
+        transport.answerSave(id, .retry(cause: "http-502"), .retry(cause: "http-503"), .retry(cause: "http-503"))
+
+        // Attempt 1 fails -> 5s backoff.
+        _ = await engine.tick(facts)
+        #expect(transport.saveCalls.count == 1)
+        #expect(await engine.nextRetryDelay(for: facts) == 5)
+        clock.advance(4)
+        _ = await engine.tick(facts)
+        #expect(transport.saveCalls.count == 1)
+
+        // At 5s, attempt 2 runs and fails -> 15s backoff.
+        clock.advance(1)
+        _ = await engine.tick(facts)
+        #expect(transport.saveCalls.count == 2)
+        #expect(await engine.nextRetryDelay(for: facts) == 15)
+        clock.advance(14)
+        _ = await engine.tick(facts)
+        #expect(transport.saveCalls.count == 2)
+
+        // At 15s, attempt 3 runs and fails -> 60s backoff.
+        clock.advance(1)
+        _ = await engine.tick(facts)
+        #expect(transport.saveCalls.count == 3)
+        #expect(await engine.nextRetryDelay(for: facts) == 60)
+
+        // When the delivery gate is closed (paused or offline) or the timer already elapsed,
+        // nextRetryDelay reports nil so ImportSource never busy-loops on a closed gate.
+        var paused = facts
+        paused.syncPaused = true
+        #expect(await engine.nextRetryDelay(for: paused) == nil)
+        var offline = facts
+        offline.serverURL = nil
+        #expect(await engine.nextRetryDelay(for: offline) == nil)
+        clock.advance(60)
+        #expect(await engine.nextRetryDelay(for: facts) == nil)
+        clock.advance(-60)
+
+        // A tunnel reconnect clears pending retry backoff so the waiting import delivers immediately.
+        await engine.tunnelReconnected()
+        #expect(await engine.nextRetryDelay(for: facts) == nil)
+        let snapshot = await engine.tick(facts)
+        #expect(transport.saveCalls.count == 4)
+        #expect(transport.startCalls.count == 1)
+        #expect(snapshot.rows.isEmpty)
+    }
+
+    @Test @MainActor func importSourceSchedulesShortRetryWakeInsteadOfWaitingForIdlePoll() async throws {
+        let dir = try tempDir("source-retry-wake")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let engine = makeEngine(root, transport, clock: clock)
+
+        final class SleepGate: @unchecked Sendable {
+            private let lock = NSLock()
+            private var delays: [Duration] = []
+            private var continuation: CheckedContinuation<Void, any Error>?
+            private var waiting: CheckedContinuation<Void, Never>?
+            private var cancelled = false
+
+            var recordedDelays: [Duration] { lock.withLock { delays } }
+
+            func sleep(_ duration: Duration) async throws {
+                try await withTaskCancellationHandler {
+                    try await withCheckedThrowingContinuation { c in
+                        let (alreadyCancelled, notify): (Bool, CheckedContinuation<Void, Never>?) = lock.withLock {
+                            if cancelled { return (true, nil) }
+                            delays.append(duration)
+                            continuation = c
+                            let w = waiting
+                            waiting = nil
+                            return (false, w)
+                        }
+                        if alreadyCancelled {
+                            c.resume(throwing: CancellationError())
+                        } else {
+                            notify?.resume()
+                        }
+                    }
+                } onCancel: {
+                    let c: CheckedContinuation<Void, any Error>? = lock.withLock {
+                        cancelled = true
+                        let current = continuation
+                        continuation = nil
+                        return current
+                    }
+                    c?.resume(throwing: CancellationError())
+                }
+            }
+
+            func waitForSleep() async {
+                await withCheckedContinuation { c in
+                    let already: Bool = lock.withLock {
+                        if continuation != nil { return true }
+                        waiting = c
+                        return false
+                    }
+                    if already { c.resume() }
+                }
+            }
+
+            func release() {
+                let c: CheckedContinuation<Void, any Error>? = lock.withLock {
+                    let current = continuation
+                    continuation = nil
+                    return current
+                }
+                c?.resume()
+            }
+        }
+
+        let gate = SleepGate()
+        let fileURL = try file(dir, "blip.pdf")
+        let id = try addedID(await engine.add([fileURL]))
+        transport.answerSave(id, .retry(cause: "http-503"))
+
+        let testFacts = facts
+        let source = ImportSource(
+            engine: engine,
+            facts: { testFacts },
+            serverURL: { testFacts.serverURL },
+            runsLoop: true,
+            retrySleep: { try await gate.sleep($0) }
+        )
+        defer { source.shutdown() }
+        await source.start()
+
+        // The initial loop nudge fails once and immediately schedules a 5-second retry wake.
+        await gate.waitForSleep()
+        #expect(transport.saveCalls.count == 1)
+        #expect(gate.recordedDelays == [.seconds(5)])
+
+        // Advance past the 5s backoff and release the retry wake -> delivers without waiting 15s.
+        clock.advance(5)
+        gate.release()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while transport.startCalls.isEmpty && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(transport.saveCalls.count == 2)
+        #expect(transport.startCalls.count == 1)
+    }
+
+    @Test func tunnelReconnectClearsPendingRetryBackoffWhilePreservingSavedProgressAndReviewState() async throws {
+        let dir = try tempDir("reconnect-preserve")
+        let root = dir.appendingPathComponent("store")
+        let transport = FakeImportTransport()
+        let clock = ImportTestClock()
+        let engine = makeEngine(root, transport, clock: clock)
+
+        let startRetryID = try addedID(await engine.add([try file(dir, "saved.pdf")]))
+        clock.advance(1)
+        let reviewID = try addedID(await engine.add([try file(dir, "health.zip")]))
+
+        transport.answerSave(startRetryID, .saved(path: "/p/saved", timestamp: "20261124_100001"))
+        transport.answerSave(reviewID, .saved(path: "/p/review", timestamp: "20261124_100002"))
+        transport.answerStart(
+            .retry(cause: "http-503"),
+            .readyToReview(importID: "20261124_100002", error: "review", reasonCode: "import_preview_required", kind: "body_confirmation_required")
+        )
+        _ = await engine.tick(facts)
+        #expect(transport.saveCalls.count == 2)
+        #expect(transport.startCalls.count == 2)
+        #expect(await engine.nextRetryDelay(for: facts) == 5)
+
+        // Tunnel reconnect clears retry backoff, preserves saved progress (no second /save),
+        // and leaves ready_to_review untouched.
+        await engine.tunnelReconnected()
+        let snap = await engine.tick(facts)
+        #expect(transport.saveCalls.count == 2)
+        #expect(transport.startCalls.count == 3)
+        #expect(snap.rows.map(\.id) == [reviewID])
+        #expect(snap.rows.first?.kind == .readyToReview)
     }
 
     @Test func oneItemThatKeepsFailingDoesNotHoldUpTheNext() async throws {

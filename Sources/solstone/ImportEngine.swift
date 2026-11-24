@@ -242,10 +242,22 @@ actor ImportEngine {
         return snapshot(latest)
     }
 
-    /// The tunnel connected again: a held auth stop gets its next try now.
+    /// The tunnel connected again: a held auth stop and any pending retry backoff get their next try now.
     func tunnelReconnected() {
+        ensureStarted()
         authHold = nil
         reconcileAuthRefusedInstance = nil
+        store.clearRetryBackoff()
+    }
+
+    /// Seconds until the earliest backed-off pending item becomes eligible while `facts` keeps the
+    /// delivery gate open, or `nil` when the gate is closed or no future retry timer is pending.
+    func nextRetryDelay(for facts: ImportFacts) -> TimeInterval? {
+        ensureStarted()
+        guard !store.unreadable, let open = gateOpen(facts) else { return nil }
+        let now = clock()
+        guard let next = store.nextRetryDate(instance: open.instance, after: now) else { return nil }
+        return next.timeIntervalSince(now)
     }
 
     var isRunning: Bool { running }
