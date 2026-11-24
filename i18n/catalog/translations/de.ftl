@@ -30,7 +30,7 @@ macos.accessibility.privatewindowskept = private Fenster in Safari, Chrome, Edge
 
 macos.accessibility.privatewindowsnotworking = das Prüfen von Safari, Chrome, Edge und Brave funktioniert nicht. deshalb erreichen ihre privaten Fenster dein Journal
 
-macos.accessibility.removeitem = entfernen { $name }
+macos.accessibility.removeitem = { $name } entfernen
 
 macos.app.allgoodonsyncedto = alles gut · an, abgeglichen mit { $journalslot }
 
@@ -271,7 +271,7 @@ macos.copy.journalmarkconfirmedline = das ist dein Journal
 
 macos.copy.journalmarkconfirmsubtext = dein Journal zeigt dieselbe mark in seiner Netzwerk-App. sie sollte genau übereinstimmen.
 
-macos.copy.journalmarkheld = wartet auf deine Bestätigung der mark deines Journals
+macos.copy.journalmarkheld = wartet darauf, dass du die mark deines Journals bestätigst
 
 macos.copy.journalmarkheldcaption = nichts, was wartet, geht in dein Journal, bis du es tust.
 
@@ -405,7 +405,7 @@ macos.copy.settingsattentionprivatewindows = private Fenster in Safari, Chrome, 
 
 macos.copy.settingsattentionupdateavailable = Aktualisierung verfügbar
 
-macos.copy.settingsattentionupdatecheckfailed = die Suche nach Aktualisierungen ist nicht gelungen
+macos.copy.settingsattentionupdatecheckfailed = die Prüfung auf Aktualisierungen ist nicht gelungen
 
 macos.copy.settingsdiagnosticsappversion = App-Version
 
@@ -719,7 +719,7 @@ macos.copy.yourjournalturnedawayrequestsatits.native = dein Journal hat{ $slot0 
 
 macos.desktop.shared.about.opensourcelocalfirst = quelloffen, lokal zuerst.
 
-macos.desktop.shared.about.pendingsettingstab = journal
+macos.desktop.shared.about.pendingsettingstab = Journal
 
 macos.desktop.shared.about.setupwelcomebody1 = die solstone-App nimmt entgegen, was du mit ihr teilst, und all das geht in dein Journal.
 
@@ -781,7 +781,7 @@ macos.desktop.shared.copy.menubarbrowsersnoneconnected = Browser · jetzt keiner
 
 macos.desktop.shared.copy.menubarbrowsersoff = Browser · aus
 
-macos.desktop.shared.copy.offlinebody = was auf den Versand wartet, bleibt auf diesem Gerät. versuch es noch einmal, wenn dein Journal erreichbar ist.
+macos.desktop.shared.copy.offlinebody = was auf das Senden wartet, bleibt auf diesem Gerät. versuch es noch einmal, wenn dein Journal erreichbar ist.
 
 macos.desktop.shared.copy.pickerempty = keine anderen gekoppelten Geräte
 
@@ -793,7 +793,7 @@ macos.desktop.shared.copy.replaceconfirmtitlefallback = das gewählte Gerät ers
 
 macos.desktop.shared.copy.replacedevice = Gerät ersetzen
 
-macos.desktop.shared.copy.replaceofferbody = du kannst beide behalten oder ein Gerät wählen, das dieses ersetzt.
+macos.desktop.shared.copy.replaceofferbody = du kannst beide behalten oder ein Gerät wählen, das von diesem ersetzt wird.
 
 macos.desktop.shared.copy.replaceoffertitle = ersetzt das eines deiner Geräte?
 
@@ -811,7 +811,7 @@ macos.desktop.shared.copy.setupapplabel = die solstone-App
 
 macos.desktop.shared.copy.setupback = zurück
 
-macos.desktop.shared.copy.setupconnectedtoyourjournal = mit deinem Journal verbunden
+macos.desktop.shared.copy.setupconnectedtoyourjournal = verbunden mit deinem Journal
 
 macos.desktop.shared.copy.setupcontinue = fortfahren
 
@@ -839,7 +839,7 @@ macos.desktop.shared.copy.sourcesbrowserheld = neue Browserseiten werden gerade 
 
 macos.desktop.shared.copy.sourcesbrowserpages = Browserseiten
 
-macos.desktop.shared.copy.storageunavailablebody = dieses Gerät konnte seine gespeicherte Verbindung nicht lesen. was auf den Versand wartet, wurde nicht entfernt.
+macos.desktop.shared.copy.storageunavailablebody = dieses Gerät konnte seine gespeicherte Verbindung nicht lesen. was auf das Senden wartet, wurde nicht entfernt.
 
 macos.desktop.shared.copy.storageunavailabletitle = gespeicherte Verbindung nicht verfügbar
 
@@ -919,15 +919,15 @@ macos.desktopglance.connected = verbunden ·{ $slot0 }{ $value0 }
 
 macos.desktopglance.connectedallcaughtup = verbunden · auf dem neuesten Stand
 
-macos.desktopimportpage.addspdfsaudioimagesandtextyouchoosehereordrop = fügt jede Datei, die du hier auswählst oder auf dieses Fenster ziehst, hinzu. dein Journal findet heraus, was sie ist.
+macos.desktopimportpage.addspdfsaudioimagesandtextyouchoosehereordrop = fügt jede Datei hinzu, die du hier wählst oder auf dieses Fenster ablegst. dein Journal findet heraus, was es ist.
 
-macos.desktopimportpage.allimporthistory = gesamter Importverlauf in deinem Journal
+macos.desktopimportpage.allimporthistory = der gesamte Importverlauf in deinem Journal
 
 macos.desktopimportpage.checkingyourjournal = dein Journal wird geprüft.
 
-macos.desktopimportpage.choosefiles = Dateien auswählen…
+macos.desktopimportpage.choosefiles = Dateien wählen…
 
-macos.desktopimportpage.couldntreadimportsonthisdevicenothinghasbeenr = Importe auf diesem Gerät konnten nicht gelesen werden. nichts wurde entfernt. starte die solstone-App neu, um es noch einmal zu versuchen.
+macos.desktopimportpage.couldntreadimportsonthisdevicenothinghasbeenr = die Importe auf diesem Gerät konnten nicht gelesen werden. nichts wurde entfernt. starte die solstone-App neu, um es noch einmal zu versuchen.
 
 macos.desktopimportpage.expired = abgelaufen
 
@@ -957,9 +957,9 @@ macos.desktopimportpage.itssendingnowsonothingchanged = es wird gerade gesendet,
 
 macos.desktopimportpage.moreimports = weitere Importe
 
-macos.desktopimportpage.moreimportssubline = Anleitungen, Optionen und Importverlauf in deinem Journal
+macos.desktopimportpage.moreimportssubline = Anleitungen, Optionen und der Importverlauf in deinem Journal
 
-macos.desktopimportpage.notgoingtoyourjournalrightnoweachonesayswhy = geht gerade nicht in dein Journal. jeder sagt, warum.
+macos.desktopimportpage.notgoingtoyourjournalrightnoweachonesayswhy = geht gerade nicht in dein Journal. jedes sagt, warum.
 
 macos.desktopimportpage.nothingchangeditmayhavemovedoncheckthelist = nichts hat sich geändert. es ist vielleicht schon weiter; prüfe die Liste.
 
@@ -982,7 +982,7 @@ macos.desktopimportpage.readytoreview = bereit zum Prüfen
 
 macos.desktopimportpage.recent = zuletzt
 
-macos.desktopimportpage.recentrowa11y = { $name }, in deinem Journal, { $relative }. öffne in deinem Journal.
+macos.desktopimportpage.recentrowa11y = { $name }, in deinem Journal, { $relative }. in deinem Journal öffnen.
 
 macos.desktopimportpage.recentrowplaina11y = { $name }, in deinem Journal, { $relative }.
 
@@ -990,7 +990,7 @@ macos.desktopimportpage.remove = entfernen
 
 macos.desktopimportpage.remove2 = entfernen{ $slot0 }{ $value0 }?
 
-macos.desktopimportpage.reviewdetail = in deinem Journal gespeichert. zeige die Vorschau an und bestätige, um zu starten.
+macos.desktopimportpage.reviewdetail = in deinem Journal gespeichert. Vorschau anzeigen und bestätigen, um zu starten.
 
 macos.desktopimportpage.reviewdetailhour = in deinem Journal gespeichert. prüfe innerhalb einer Stunde, bevor dein Journal die wartende Kopie entfernt.
 
@@ -1004,7 +1004,7 @@ macos.desktopimportpage.savedonthisdevice = gespeichert auf diesem Gerät:{ $slo
 
 macos.desktopimportpage.savingonthisdeviceof = wird gespeichert auf diesem Gerät:{ $slot0 }{ $value0 }{ $slot1 }von{ $slot2 }{ $value1 }
 
-macos.desktopimportpage.screenshotscomeinontheirown = Bildschirmfotos kommen von selbst.
+macos.desktopimportpage.screenshotscomeinontheirown = Bildschirmfotos kommen von selbst herein.
 
 macos.desktopimportpage.sendagaintoreview = erneut zum Prüfen senden
 
@@ -1016,7 +1016,7 @@ macos.desktopimportpage.senditemagaintoreview = { $name } erneut zum Prüfen sen
 
 macos.desktopimportpage.setupscreenshots = Bildschirmfotos einrichten
 
-macos.desktopimportpage.somethingyouwereaddingdidntfinishsavingaddita = etwas, das du hinzugefügt hast, wurde nicht fertig gespeichert. füge es erneut hinzu.
+macos.desktopimportpage.somethingyouwereaddingdidntfinishsavingaddita = etwas, das du hinzugefügt hast, wurde nicht fertig gespeichert. füge es noch einmal hinzu.
 
 macos.desktopimportpage.stateannouncement = { $name }: { $state }
 
@@ -1035,7 +1035,7 @@ macos.desktopimportpage.thiscouldntbereadadditagain = das konnte nicht gelesen w
 
 macos.desktopimportpage.thisdevicecantconvertthisphoto = dieses Gerät kann dieses Foto nicht umwandeln
 
-macos.desktopimportpage.thisremovesthecopyonthisdevicesoitwontreachyo = das entfernt die Kopie auf diesem Gerät, sodass sie dein Journal nicht erreicht.
+macos.desktopimportpage.thisremovesthecopyonthisdevicesoitwontreachyo = das entfernt die Kopie auf diesem Gerät, also erreicht sie dein Journal nicht.
 
 macos.desktopimportpage.thisremovesthecopyonthisdeviceyourjournalmays = das entfernt die Kopie auf diesem Gerät. die wartende Kopie in deinem Journal bleibt dort, bis du sie verwirfst oder sie abläuft.
 
@@ -1073,7 +1073,7 @@ macos.desktopimportpage.waitingforreconnect = wartet, bis dein Journal wieder ve
 
 macos.desktopimportpage.waitingforyourreview = wartet auf deine Prüfung
 
-macos.desktopimportpage.waitingtogotoyourjournal = wartet darauf, zu deinem Journal zu gehen
+macos.desktopimportpage.waitingtogotoyourjournal = wartet darauf, in dein Journal zu gehen
 
 macos.desktopimportpage.yourjournalcanttakethiskindoffile = dein Journal kann diese Art von Datei nicht entgegennehmen
 
@@ -1107,7 +1107,7 @@ macos.desktopshellmodel.confirmthemarkwaiting = mark bestätigen ·{ $slot0 }{ $
 
 macos.desktopshellmodel.connected = verbunden
 
-macos.desktopshellmodel.goodafternoon = guten Tag
+macos.desktopshellmodel.goodafternoon = guten Nachmittag
 
 macos.desktopshellmodel.goodevening = guten Abend
 
@@ -1147,7 +1147,7 @@ macos.desktopshellmodel.notreachingyourjournalrightnow = erreicht dein Journal g
 
 macos.desktopshellmodel.offlinewaiting = offline ·{ $slot0 }{ $value0 }{ $slot1 }wartet
 
-macos.desktopshellmodel.onthesitesyouallowthesolstoneextensiontakesin = auf den Websites, die du erlaubst, nimmt die solstone-Erweiterung den Text der Seite und das grobe Layout entgegen, und all das geht in dein Journal.
+macos.desktopshellmodel.onthesitesyouallowthesolstoneextensiontakesin = auf den Websites, die du erlaubst, nimmt die solstone-Erweiterung den Text und das grobe Layout der Seite entgegen, und alles davon geht in dein Journal.
 
 macos.desktopshellmodel.opensettings = Einstellungen öffnen
 
@@ -1218,25 +1218,25 @@ macos.desktopsource.goesalongwithit = geht damit einher
 
 macos.desktopsource.lasttakenin = letzte Annahme
 
-macos.desktopsource.leftout = außen vor
+macos.desktopsource.leftout = ausgelassen
 
 macos.desktopsource.microphones = Mikrofone
 
 macos.desktopsource.sofar = bisher
 
-macos.desktopsource.thislistappliesto = diese Liste gilt auch für Bildschirmaktivität
+macos.desktopsource.thislistappliesto = diese Liste gilt auch für die Bildschirmaktivität
 
 macos.desktopsource.thislistappliesto2 = diese Liste gilt auch für Bildschirmaktivität und Browser
 
 macos.desktopsource.thislistappliesto3 = diese Liste gilt auch für Bildschirm und Bildschirmaktivität
 
-macos.desktopstatuspane.allcaughtup = auf dem neuesten Stand
+macos.desktopstatuspane.allcaughtup = alles auf dem neuesten Stand
 
 macos.desktopstatuspane.confirmthemark = mark bestätigen
 
 macos.desktopstatuspane.connectajournal = Journal verbinden
 
-macos.desktopstatuspane.connecting = verbindet…
+macos.desktopstatuspane.connecting = wird verbunden…
 
 macos.desktopstatuspane.connection = Verbindung
 
@@ -1290,7 +1290,7 @@ macos.journalmarkgeneric.not = nicht
 
 macos.journalmarkgeneric.presented = vorgelegt
 
-macos.journalmarkgeneric.unavailable = unverfügbar
+macos.journalmarkgeneric.unavailable = nicht verfügbar
 
 macos.journalmarkgeneric.your = dein
 
@@ -1463,7 +1463,7 @@ macos.screenshot.ofinyourjournal = { $done } von { $total } in deinem Journal
 
 macos.screenshot.ofscreenshotsinyour = { $done } von { $total } Bildschirmfotos in deinem Journal
 
-macos.screenshot.onlywhatthesolstone = nur was die solstone-App als Bildschirmfoto erkennt, wird entgegengenommen.
+macos.screenshot.onlywhatthesolstone = es kommt nur herein, was die solstone-App als Bildschirmfoto erkennt.
 
 macos.screenshot.opensystemsettings = Systemeinstellungen öffnen
 
@@ -1473,31 +1473,31 @@ macos.screenshot.otherfilesonyour = andere Dateien auf deinem { $name } bleiben,
 
 macos.screenshot.screenshots2 = Bildschirmfotos
 
-macos.screenshot.screenshotsalreadyinyour = Bildschirmfotos, die schon in deinem Journal sind, werden nicht erneut entgegengenommen.
+macos.screenshot.screenshotsalreadyinyour = Bildschirmfotos, die schon in deinem Journal sind, werden nicht erneut hereingeholt.
 
 macos.screenshot.screenshotsnowsaveto = Bildschirmfotos werden jetzt in { $name } gespeichert. die solstone-App braucht Zugriff auf den Ordner.
 
 macos.screenshot.screenshotsonthismac = Bildschirmfotos auf diesem Mac werden in deinem { $name } gespeichert. die solstone-App braucht Zugriff auf den Ordner.
 
-macos.screenshot.screenshotsyoutakewhile = Bildschirmfotos, die du während der Pause machst, werden nicht entgegengenommen.
+macos.screenshot.screenshotsyoutakewhile = Bildschirmfotos, die du machst, während es pausiert ist, kommen nicht herein.
 
 macos.screenshot.startfromtoday = ab heute starten
 
-macos.screenshot.thelast30days = letzte 30 Tage
+macos.screenshot.thelast30days = die letzten 30 Tage
 
-macos.screenshot.thelast6months = letzte 6 Monate
+macos.screenshot.thelast6months = die letzten 6 Monate
 
-macos.screenshot.thelastyear = letztes Jahr
+macos.screenshot.thelastyear = das letzte Jahr
 
 macos.screenshot.waitingforajournal = wartet auf eine Aktualisierung des Journals. deine Bildschirmfotos warten auf diesem Mac.
 
-macos.screenshot.waitingtogoto = wartet darauf, zu deinem Journal zu gehen
+macos.screenshot.waitingtogoto = wartet darauf, in dein Journal zu gehen
 
 macos.screenshot.whatsalreadyin = was schon in deinem Journal ist, bleibt, wenn du pausierst oder das ausschaltest.
 
 macos.screenshot.whilethisison = solange das an ist, nimmt die solstone-App die Bildschirmfotos entgegen, die du auf diesem Mac machst, und dein Journal behält jedes zur Minute, in der du es gemacht hast.
 
-macos.screenshot.youllseehow = du siehst vorher, wie viele Bildschirmfotos es gibt, bevor welche entgegengenommen werden.
+macos.screenshot.youllseehow = du siehst, wie viele Bildschirmfotos es gibt, bevor welche hereinkommen.
 
 macos.screenshotcopy.screenshots.plural = { $count ->
     [one] 1 Bildschirmfoto
@@ -1577,7 +1577,7 @@ macos.settings.grantaccesstoseeopenapps = Zugriff gewähren, um offene Apps zu s
 
 macos.settings.hidewindowswhosetitlecontainsthesekeywords = Fenster mit diesen Stichwörtern im Titel ausblenden.
 
-macos.settings.httpslinksolstoneapp = { $url}
+macos.settings.httpslinksolstoneapp = { $url }
 
 macos.settings.iconstates = Symbolstatus
 
@@ -1830,11 +1830,11 @@ macos.shared.sa4 = { $detail } · { $state } · { $relative }
 
 macos.shared.sa4state = { $detail } · { $state }
 
-macos.shared.sa4statetime = { $state } · { $relative }
+macos.shared.sa4statetime = { $state } · { $relative }
 
 macos.shared.sa4time = { $detail } · { $relative }
 
-macos.shared.sa5 = auch an
+macos.shared.sa5 = auch auf
 
 macos.shortcut.key = Taste{ $code }
 
@@ -1962,7 +1962,7 @@ macos.ui.couldntopenyour = dein Journal ließ sich im Browser nicht öffnen. ver
 
 macos.ui.devicecontrolanddata = Gerätesteuerung und Datenzugriff
 
-macos.ui.diagnostics = Diagnostik
+macos.ui.diagnostics = Diagnose
 
 macos.ui.discarded = verworfen
 
@@ -1984,7 +1984,7 @@ macos.ui.linked = verknüpft
 
 macos.ui.macoshasofffor = Mac hat { $value } für solstone aus.
 
-macos.ui.moveit = hereinholen
+macos.ui.moveit = es verschieben
 
 macos.ui.movesolstonefortmux = solstone für tmux hereinholen?
 
@@ -2066,7 +2066,7 @@ macos.ui.terminaltmuxisnt = Terminal: tmux ist nicht installiert
 
 macos.ui.thatfolderisnt = dieser Ordner ist kein Obsidian-Tresor, also wurde nichts gesendet.
 
-macos.ui.thecheckofyour = die Prüfung der mark deines Journals ist nicht fertig geworden. das heißt nicht, dass die marks voneinander abweichen.
+macos.ui.thecheckofyour = die Prüfung für die mark deines Journals ist nicht fertig geworden. das heißt nicht, dass die marks voneinander abweichen.
 
 macos.ui.thejournalrunningon = das Journal, das auf diesem Mac läuft, ist nicht deins, also verbindet sich die solstone-App nicht damit, öffnet es nicht und zeigt seine mark nicht. auf einem geteilten Mac ist es meist das Journal einer anderen Person.
 
@@ -2102,7 +2102,7 @@ macos.ui.unknownjournalseenthrough = unbekanntes Journal über das Relay gesehen
 
 macos.ui.vaultsonthismac = Tresore auf diesem Mac
 
-macos.ui.viewdetails = Details ansehen
+macos.ui.viewdetails = Details anzeigen
 
 macos.ui.waiting = wartet: { $answer }
 
@@ -2130,7 +2130,7 @@ macos.uicopy.checkingfor = sucht nach{ $slot0 }{ $value0 }…
 
 macos.uicopy.chrome = Chrome
 
-macos.uicopy.computersound = Computeraudio
+macos.uicopy.computersound = Computerton
 
 macos.uicopy.copythefulllinkfromyourchatandopenitagain = kopiere den vollständigen Link aus deinem Chat und öffne ihn erneut.
 
@@ -2163,7 +2163,7 @@ macos.uicopy.thingsneedattention.plural = { $count ->
    *[other] { $count } Sachen brauchen Aufmerksamkeit
 }
 
-macos.uicopy.thisjournallinkisntvalid = dieser Link zum Journal ist nicht gültig.
+macos.uicopy.thisjournallinkisntvalid = dieser Journal-Link ist nicht gültig.
 
 macos.uicopy.tochecksolstonereadstheaddressofthepageeachsa = zum Prüfen liest solstone die Adresse der Seite, die jedes Fenster von Safari, Chrome, Edge und Brave zeigt, mit{ $slot0 }{ $value0 }, und vergleicht sie mit dieser Liste auf diesem Mac. die Adresse geht in die Bildschirmaktivität, es sei denn, du schaltest die Browseradressen aus.
 
