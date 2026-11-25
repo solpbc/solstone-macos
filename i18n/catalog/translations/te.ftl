@@ -435,7 +435,7 @@ macos.copy.settingsdiagnosticsshow = డయాగ్నస్టిక్స్ 
 
 macos.copy.settingslastdeliverylabel = మీ జర్నల్‌కు చివరిసారి చేర్చినది
 
-macos.copy.settingslastdeliverynever = ఇంకా ఏమీ చేర్చలేదు
+macos.copy.settingslastdeliverynever = ఇంకా ఏమీ చేర్చబడలేదు
 
 macos.copy.settingslocaljournalfoundexisting = ఈ mac‌లో ఉన్న జర్నల్ దొరికింది
 
@@ -853,7 +853,7 @@ macos.desktop.shared.copy.tryagain = మళ్ళీ ప్రయత్నిం
 
 macos.desktop.shared.settings.add = చేర్చండి
 
-macos.desktop.shared.settings.alignitems = ప్రారంభించండి
+macos.desktop.shared.settings.alignitems =start
 
 macos.desktop.shared.settings.excludedapps = మినహాయించబడిన యాప్‌లు
 
@@ -863,13 +863,13 @@ macos.desktop.shared.settings.help = సహాయం
 
 macos.desktop.shared.settings.reportaproblem = సమస్యను నివేదించండి
 
-macos.desktop.shared.settings.severity = సరే
+macos.desktop.shared.settings.severity =ok
 
 macos.desktop.shared.settings.textcontent = మళ్ళీ ప్రయత్నించండి
 
 macos.desktop.shared.settings.updates = అప్‌డేట్‌లు
 
-macos.desktop.shared.settings.windowtitles = విండో టైటిల్‌లు
+macos.desktop.shared.settings.windowtitles = విండో శీర్షికలు
 
 macos.desktop.shared.setup.cancel = రద్దు చేయండి
 
@@ -925,13 +925,13 @@ macos.desktopimportpage.allimporthistory = మీ జర్నల్‌లో �
 
 macos.desktopimportpage.checkingyourjournal = మీ జర్నల్‌ను సరిచూస్తోంది.
 
-macos.desktopimportpage.choosefiles = ఫైళ్లు ఎంచుకోండి…
+macos.desktopimportpage.choosefiles = ఫైల్‌లు ఎంచుకోండి…
 
 macos.desktopimportpage.couldntreadimportsonthisdevicenothinghasbeenr = ఈ పరికరంలోని ఇంపోర్ట్‌లను చదవలేకపోయింది. ఏమీ తీసివేయబడలేదు. మళ్ళీ ప్రయత్నించడానికి solstone యాప్‌ను రీస్టార్ట్ చేయండి.
 
 macos.desktopimportpage.expired = గడువు అయింది
 
-macos.desktopimportpage.files = ఫైళ్లు
+macos.desktopimportpage.files = ఫైల్‌లు
 
 macos.desktopimportpage.import = ఇంపోర్ట్
 
@@ -967,9 +967,9 @@ macos.desktopimportpage.nothingwassavedonthisdevice = ఈ పరికరంల�
 
 macos.desktopimportpage.nothingyet = ఇంకా ఏమీ లేదు.
 
-macos.desktopimportpage.openimporttoreview = సమీక్షించి స్టార్ట్ చేయడానికి ఇంపోర్ట్ తెరవండి.
+macos.desktopimportpage.openimporttoreview = సమీక్షించి ప్రారంభించడానికి ఇంపోర్ట్ తెరవండి.
 
-macos.desktopimportpage.openimporttoseewhy = ఎందుకో చూడడానికి ఇంపోర్ట్ తెరవండి.
+macos.desktopimportpage.openimporttoseewhy = ఎందుకో చూడటానికి ఇంపోర్ట్ తెరవండి.
 
 macos.desktopimportpage.openscreenshots = స్క్రీన్‌షాట్‌లు తెరవండి
 
@@ -990,7 +990,7 @@ macos.desktopimportpage.remove = తీసివేయండి
 
 macos.desktopimportpage.remove2 = { $slot0 }{ $value0 } తీసివేయాలా?
 
-macos.desktopimportpage.reviewdetail = మీ జర్నల్‌లో సేవ్ అయింది. స్టార్ట్ చేయడానికి ప్రివ్యూ చూసి నిర్ధారించండి.
+macos.desktopimportpage.reviewdetail = మీ జర్నల్‌లో సేవ్ అయింది. ప్రారంభించడానికి ప్రివ్యూ చూసి నిర్ధారించండి.
 
 macos.desktopimportpage.reviewdetailhour = మీ జర్నల్‌లో సేవ్ అయింది. వేచి ఉన్న కాపీని మీ జర్నల్ తీసివేసే ముందు ఒక గంటలోపు సమీక్షించండి.
 
@@ -1033,7 +1033,7 @@ macos.desktopimportpage.thereisntenoughroomonthisdevice = ఈ పరికరం
 
 macos.desktopimportpage.thiscouldntbereadadditagain = దీన్ని చదవలేకపోయింది. మళ్ళీ చేర్చండి
 
-macos.desktopimportpage.thisdevicecantconvertthisphoto = ఈ పరికరం ఈ ఫోటోను కన్వర్ట్ చేయలేకపోతోంది
+macos.desktopimportpage.thisdevicecantconvertthisphoto = ఈ పరికరం ఈ ఫోటోను కన్వర్ట్ చేయలేకపోయింది
 
 macos.desktopimportpage.thisremovesthecopyonthisdevicesoitwontreachyo = ఇది ఈ పరికరంలోని కాపీని తీసివేస్తుంది, కాబట్టి అది మీ జర్నల్‌కు చేరదు.
 
@@ -1087,7 +1087,7 @@ macos.desktopshellchrome.sidebar = సైడ్‌బార్
 
 macos.desktopshellmodel.activitycouldntbesavedcheckfreespaceonthismac = స్క్రీన్ కార్యకలాపం సేవ్ కాలేదు. ఈ mac‌లో ఖాళీ చోటు సరిచూడండి.
 
-macos.desktopshellmodel.activityisstillon = స్క్రీన్ కార్యకలాపం ఇంకా ఆన్‌లో ఉంది.
+macos.desktopshellmodel.activityisstillon = కార్యకలాపం ఇంకా ఆన్‌లో ఉంది.
 
 macos.desktopshellmodel.addthesolstoneextensiontoabrowseronthismac = ఈ mac‌లోని బ్రౌజర్‌కు solstone ఎక్స్‌టెన్షన్‌ను చేర్చండి.
 
@@ -1234,7 +1234,7 @@ macos.desktopstatuspane.allcaughtup = తాజాగా ఉంది
 
 macos.desktopstatuspane.confirmthemark = మార్క్‌ను నిర్ధారించండి
 
-macos.desktopstatuspane.connectajournal = జర్నల్‌ను కనెక్ట్ చేయండి
+macos.desktopstatuspane.connectajournal = ఒక జర్నల్‌ను కనెక్ట్ చేయండి
 
 macos.desktopstatuspane.connecting = కనెక్ట్ అవుతోంది…
 
@@ -1310,7 +1310,7 @@ macos.localaccess.noreason = కారణం ఇవ్వలేదు
 
 macos.logs.previewsubset = కొత్త { $shown } / { $total } ఎంట్రీలు చూపిస్తోంది. సేవ్ అన్నిటినీ రాస్తుంది.
 
-macos.menu.quitsolstone = solstone క్విట్ చేయండి
+macos.menu.quitsolstone = solstone నుండి నిష్క్రమించండి
 
 macos.menu.yourjournalneedsanewlink = మీ జర్నల్‌కు కొత్త లింక్ కావాలి →
 
@@ -1358,7 +1358,7 @@ macos.migration.yourjournalappisready = మీ జర్నల్ యాప్ �
 
 macos.pairingcoordinator.couldntreachyourjournalatmakesureitsrunningth = { $slot0 }{ $value0 } వద్ద మీ జర్నల్‌తో కనెక్ట్ కాలేదు. అది నడుస్తోందో సరిచూడండి, తర్వాత మళ్ళీ ప్రయత్నించండి.
 
-macos.pairingcoordinator.couldntreachyourjournalmakesureitsrunningthen = మీ జర్నల్‌తో కనెక్ట్ కాలేదు. అది నడుస్తోందో సరిచూడండి, తర్వాత మళ్ళీ ప్రయత్నించండి.
+macos.pairingcoordinator.couldntreachyourjournalmakesureitsrunningthen = మీ జర్నల్‌తో కనెక్ట్ కాలేకపోయింది. అది నడుస్తోందని నిర్ధారించుకుని, మళ్ళీ ప్రయత్నించండి.
 
 macos.pairingcoordinator.losttheconnectiontoyourjournalbeforeitanswere = అది సమాధానం ఇవ్వకముందే మీ జర్నల్‌తో కనెక్షన్ పోయింది. మళ్ళీ ప్రయత్నించండి.
 
@@ -1491,7 +1491,7 @@ macos.screenshot.thelastyear = గత సంవత్సరం
 
 macos.screenshot.waitingforajournal = జర్నల్ అప్‌డేట్ కోసం వేచి ఉంది. మీ స్క్రీన్‌షాట్‌లు ఈ mac‌లో వేచి ఉన్నాయి.
 
-macos.screenshot.waitingtogoto = మీ జర్నల్‌కు చేరేందుకు వేచి ఉంది
+macos.screenshot.waitingtogoto = మీ జర్నల్‌కు వెళ్లేందుకు వేచి ఉంది
 
 macos.screenshot.whatsalreadyin = మీరు పాజ్ చేసినా, లేదా దీన్ని ఆఫ్ చేసినా, మీ జర్నల్‌లో ఇప్పటికే ఉన్నది అలాగే ఉంటుంది.
 
@@ -1519,7 +1519,7 @@ macos.screenshots.cannotread = { $count ->
    *[other] { $count } స్క్రీన్‌షాట్‌లను చదవలేకపోయింది.
 }
 
-macos.settings.activity = స్క్రీన్ కార్యకలాపం
+macos.settings.activity = కార్యకలాపం
 
 macos.settings.activityfollowsyourexclusionsitcontinueswhile = స్క్రీన్ కార్యకలాపం మీ మినహాయింపులను అనుసరిస్తుంది. రక్షిత వీడియో కోసం స్క్రీన్ మరియు ఆడియో పక్కకు తప్పుకున్నప్పుడు అది కొనసాగుతుంది. టైటిల్ ఉందని మీరు దాన్ని చూశారని లేదా చదివారని అర్థం కాదు.
 
@@ -1783,11 +1783,11 @@ macos.setup.downloadprogressisntavailable = డౌన్‌లోడ్ ప్�
 
 macos.setup.localthinking = లోకల్ ఆలోచన
 
-macos.setup.n15minutes = 15 ని
+macos.setup.n15minutes = 15 నిమిషాలు
 
-macos.setup.n1hour = 1 గం
+macos.setup.n1hour = 1 గంట
 
-macos.setup.n30minutes = 30 ని
+macos.setup.n30minutes = 30 నిమిషాలు
 
 macos.setup.notstarted = స్టార్ట్ కాలేదు
 
@@ -2098,7 +2098,7 @@ macos.ui.turnoff = ఆఫ్ చేయండి
 
 macos.ui.unknownjournalseenat = { $address } వద్ద తెలియని జర్నల్ కనబడింది
 
-macos.ui.unknownjournalseenthrough = రిలే ద్వారా తెలియని జర్నల్ కనబడింది
+macos.ui.unknownjournalseenthrough = రిలే ద్వారా తెలియని జర్నల్ కనిపించింది
 
 macos.ui.vaultsonthismac = ఈ mac లోని వాల్ట్‌లు
 
