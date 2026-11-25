@@ -12,7 +12,7 @@ macos.about.displayjournalname = journal
 
 macos.about.displayunknown = { $name } sconosciuto
 
-macos.about.displayversion = { $name }: { $version }
+macos.about.displayversion = { $name } { $version }
 
 macos.about.solstone = solstone
 
@@ -98,7 +98,7 @@ macos.app.repairedatlaunch = { $value }: riparato all'avvio
 
 macos.app.segmentkeptonthismac.native.plural = { $count ->
     [one] { $count } segmento tenuto su questo mac
-    [many] di segmenti tenuti su questo mac
+    [many] { $count } di segmenti tenuti su questo mac
    *[other] { $count } segmenti tenuti su questo mac
 }
 
@@ -158,13 +158,13 @@ macos.appplacementrepair.solstoneisrunningfromalocationitmightnotfinda = solston
 
 macos.audio.recovered = { $count ->
     [one] { $names } ha avuto un'interruzione prima ed è di nuovo disponibile. parte di questo segmento può mancare.
-    [many] hanno avuto un'interruzione prima e sono di nuovo disponibili. parte di questo segmento può mancare.
+    [many] { $names } hanno avuto un'interruzione prima e sono di nuovo disponibili. parte di questo segmento può mancare.
    *[other] { $names } hanno avuto un'interruzione prima e sono di nuovo disponibili. parte di questo segmento può mancare.
 }
 
 macos.audio.recovering = { $count ->
     [one] { $names } non arriva in questo momento. l'app di solstone sta riprovando da sola.
-    [many] non arrivano in questo momento. l'app di solstone sta riprovando da sola.
+    [many] { $names } non arrivano in questo momento. l'app di solstone sta riprovando da sola.
    *[other] { $names } non arrivano in questo momento. l'app di solstone sta riprovando da sola.
 }
 
@@ -172,13 +172,13 @@ macos.browser.held = trattenuto
 
 macos.browser.hoursago = { $count ->
     [one] 1 ora fa
-    [many] di ore fa
+    [many] { $count } di ore fa
    *[other] { $count } ore fa
 }
 
 macos.browser.leftoutspoken = { $count ->
     [one] { $names } resta fuori da ciò che l'app di solstone prende dal tuo schermo
-    [many] restano fuori da ciò che l'app di solstone prende dal tuo schermo
+    [many] { $names } restano fuori da ciò che l'app di solstone prende dal tuo schermo
    *[other] { $names } restano fuori da ciò che l'app di solstone prende dal tuo schermo
 }
 
@@ -366,7 +366,7 @@ macos.copy.microphonesemptyconnectdescription = connetti un microfono. per il bl
 
 macos.copy.microphonesemptyopenpermissions = apri i permessi
 
-macos.copy.microphonesemptyopensound = apri le impostazioni del suono
+macos.copy.microphonesemptyopensound = apri le impostazioni audio
 
 macos.copy.microphonesemptytitle = nessun microfono disponibile
 
@@ -722,7 +722,7 @@ macos.copy.yourjournalendedrequestsearlylast.native = il tuo diario ha terminato
 
 macos.copy.yourjournalturnedawayrequestsatits.native = il tuo diario ha respinto{ $slot0 }{ $value0 }{ $slot1 }richieste al suo limite · ultimo{ $slot2 }{ $value1 }
 
-macos.desktop.shared.about.opensourcelocalfirst = open source e local-first.
+macos.desktop.shared.about.opensourcelocalfirst = open source, local-first.
 
 macos.desktop.shared.about.pendingsettingstab = journal
 
@@ -754,7 +754,7 @@ macos.desktop.shared.copy.choosedevice = scegli un dispositivo
 
 macos.desktop.shared.copy.decidingtitle = salvataggio della tua scelta
 
-macos.desktop.shared.copy.decisionrefusedbody = al tuo diario non è stato possibile applicare questa scelta. la tua connessione attuale funziona ancora.
+macos.desktop.shared.copy.decisionrefusedbody = non è stato possibile applicare questa scelta al tuo diario. la tua connessione attuale funziona ancora.
 
 macos.desktop.shared.copy.decisionrefusedtitle = la scelta richiede attenzione
 
@@ -766,9 +766,9 @@ macos.desktop.shared.copy.deferchoice = non ora
 
 macos.desktop.shared.copy.journalmarkconfirmbutton = sì, questo è il mio diario
 
-macos.desktop.shared.copy.journalmarkconfirmquestion = questo corrisponde al tuo diario?
+macos.desktop.shared.copy.journalmarkconfirmquestion = corrisponde al tuo diario?
 
-macos.desktop.shared.copy.journalmarkmismatchbutton = quello non corrisponde
+macos.desktop.shared.copy.journalmarkmismatchbutton = non corrisponde
 
 macos.desktop.shared.copy.journalmarkunverifiedcancelbutton = annulla l'accoppiamento
 
@@ -844,11 +844,11 @@ macos.desktop.shared.copy.sourcesbrowserheld = non si stanno prendendo nuove pag
 
 macos.desktop.shared.copy.sourcesbrowserpages = pagine del browser
 
-macos.desktop.shared.copy.storageunavailablebody = a questo dispositivo non è stato possibile leggere la sua connessione salvata. non è stato rimosso nulla di ciò che è in attesa di invio.
+macos.desktop.shared.copy.storageunavailablebody = non è stato possibile leggere la connessione salvata di questo dispositivo. ciò che è in attesa di invio non è stato rimosso.
 
 macos.desktop.shared.copy.storageunavailabletitle = connessione salvata non disponibile
 
-macos.desktop.shared.copy.targetmissingbody = quel dispositivo non è più nell'elenco del tuo diario. scegli un altro dispositivo, oppure tieni entrambi.
+macos.desktop.shared.copy.targetmissingbody = quel dispositivo non è più elencato nel tuo diario. scegli un altro dispositivo, oppure tieni entrambi.
 
 macos.desktop.shared.copy.targetmissingtitle = dispositivo non più disponibile
 
@@ -958,7 +958,7 @@ macos.desktopimportpage.itsalreadyinyourjournal = è già nel tuo diario.
 
 macos.desktopimportpage.itslargerthanyourjournaltakes = è più grande di quanto il tuo diario prende
 
-macos.desktopimportpage.itssendingnowsonothingchanged = è in invio ora, quindi non è cambiato niente.
+macos.desktopimportpage.itssendingnowsonothingchanged = è in invio ora, quindi niente è cambiato.
 
 macos.desktopimportpage.moreimports = altre importazioni
 
@@ -972,7 +972,7 @@ macos.desktopimportpage.nothingwassavedonthisdevice = non è stato salvato nient
 
 macos.desktopimportpage.nothingyet = ancora niente.
 
-macos.desktopimportpage.openimporttoreview = apri l'importazione per rivedere e avviare.
+macos.desktopimportpage.openimporttoreview = apri l'importazione per rivedere e iniziare.
 
 macos.desktopimportpage.openimporttoseewhy = apri l'importazione per vedere perché.
 
@@ -996,7 +996,7 @@ macos.desktopimportpage.remove = rimuovi
 
 macos.desktopimportpage.remove2 = rimuovi{ $slot0 }{ $value0 }?
 
-macos.desktopimportpage.reviewdetail = salvata nel tuo diario. mostra l'anteprima e conferma per avviare.
+macos.desktopimportpage.reviewdetail = salvato nel tuo diario. mostra l'anteprima e conferma per iniziare.
 
 macos.desktopimportpage.reviewdetailhour = salvata nel tuo diario. rivedi entro un'ora prima che il tuo diario rimuova la copia in attesa.
 
@@ -1014,11 +1014,11 @@ macos.desktopimportpage.screenshotscomeinontheirown = gli screenshot arrivano da
 
 macos.desktopimportpage.sendagaintoreview = invia di nuovo per rivedere
 
-macos.desktopimportpage.sending = in invio
+macos.desktopimportpage.sending = invio in corso
 
-macos.desktopimportpage.sendingtoyourjournal = invio al tuo diario…
+macos.desktopimportpage.sendingtoyourjournal = invio al tuo diario in corso…
 
-macos.desktopimportpage.senditemagaintoreview = invia { $name } di nuovo per rivedere
+macos.desktopimportpage.senditemagaintoreview = invia di nuovo { $name } per rivedere
 
 macos.desktopimportpage.setupscreenshots = configura gli screenshot
 
@@ -1032,7 +1032,7 @@ macos.desktopimportpage.statusreadyheadline.plural = { $count ->
    *[other] { $count } importazioni pronte per rivedere
 }
 
-macos.desktopimportpage.thecopyisalreadygonesothisonlyclearsitfromher = la copia è già sparita, quindi questo la toglie solo da qui.
+macos.desktopimportpage.thecopyisalreadygonesothisonlyclearsitfromher = la copia è già sparita, quindi questo la cancella solo da qui.
 
 macos.desktopimportpage.thecopyonthisdeviceismissing = manca la copia su questo dispositivo
 
@@ -1044,7 +1044,7 @@ macos.desktopimportpage.thisdevicecantconvertthisphoto = questo dispositivo non 
 
 macos.desktopimportpage.thisremovesthecopyonthisdevicesoitwontreachyo = questo rimuove la copia su questo dispositivo, quindi non arriverà nel tuo diario.
 
-macos.desktopimportpage.thisremovesthecopyonthisdeviceyourjournalmays = questo rimuove la copia su questo dispositivo. la copia in attesa nel tuo diario resta lì finché non la scarti o scade.
+macos.desktopimportpage.thisremovesthecopyonthisdeviceyourjournalmays = questo rimuove la copia su questo dispositivo. la copia in attesa nel tuo diario resta lì finché non la scarti o non scade.
 
 macos.desktopimportpage.tilefiles.plural = { $count ->
     [one] 1 file
@@ -1144,7 +1144,7 @@ macos.desktopshellmodel.minago = { $value0 }{ $slot0 }min fa
 
 macos.desktopshellmodel.minutes.plural = { $count ->
     [one] 1 minuto
-    [many] di minuti
+    [many] { $display } di minuti
    *[other] { $display } minuti
 }
 
@@ -1152,13 +1152,13 @@ macos.desktopshellmodel.needsattention = { $value0 }{ $slot0 }richiede attenzion
 
 macos.desktopshellmodel.notes.plural = { $count ->
     [one] 1 nota
-    [many] di note
+    [many] { $display } di note
    *[other] { $display } note
 }
 
 macos.desktopshellmodel.nothingyet = ancora niente
 
-macos.desktopshellmodel.notreachingyourjournalrightnow = non è possibile connettersi al tuo diario in questo momento
+macos.desktopshellmodel.notreachingyourjournalrightnow = non si connette al tuo diario in questo momento
 
 macos.desktopshellmodel.offlinewaiting = non in linea ·{ $slot0 }{ $value0 }{ $slot1 }in attesa
 
@@ -1168,7 +1168,7 @@ macos.desktopshellmodel.opensettings = apri le impostazioni
 
 macos.desktopshellmodel.pages.plural = { $count ->
     [one] 1 pagina
-    [many] di pagine
+    [many] { $display } di pagine
    *[other] { $display } pagine
 }
 
@@ -1202,7 +1202,7 @@ macos.desktopshellmodel.thesolstoneapptakesinyourtmuxsessionsandallof = l'app di
 
 macos.desktopshellmodel.tmuxisntinstalled = tmux non è installato.
 
-macos.desktopshellmodel.turnitonanytime = attiva in qualsiasi momento.
+macos.desktopshellmodel.turnitonanytime = attivalo quando vuoi.
 
 macos.desktopshellmodel.updateready = aggiornamento pronto · si installa quando esci e riapri
 
@@ -1212,7 +1212,7 @@ macos.desktopshellmodel.whilethisisonthesolstoneapptakesinsoundfromyo = mentre q
 
 macos.desktopshellmodel.whilethisisonthesolstoneapptakesinwhatsonyour = mentre questo è attivo, l'app di solstone prende ciò che c'è sul tuo schermo, il suono che il tuo mac riproduce e quali app e finestre stai usando, e tutto va nel tuo diario.
 
-macos.desktopshellmodel.withcomputersound = con il suono del computer
+macos.desktopshellmodel.withcomputersound = con audio del computer
 
 macos.desktopshellmodel.withcomputersoundandactivity = con il suono del computer e l'attività
 
@@ -1230,7 +1230,7 @@ macos.desktopshellviews.home = ‹ inizio
 
 macos.desktopshellviews.home2 = inizio
 
-macos.desktopsource.goesalongwithit = va insieme a esso
+macos.desktopsource.goesalongwithit = va insieme
 
 macos.desktopsource.lasttakenin = ultimo ingresso
 
@@ -1274,7 +1274,7 @@ macos.diagnostics.backlog = pending={ $count } · oldest_pending_folder_age_s={ 
 
 macos.diagnostics.unavailable = non disponibile
 
-macos.importlogic.yourjournalcouldntacceptthis = al tuo diario non è stato possibile accettare questo.
+macos.importlogic.yourjournalcouldntacceptthis = non è stato possibile accettare questo nel tuo diario.
 
 macos.info.cfbundledisplayname = solstone
 
@@ -1300,21 +1300,21 @@ macos.journallocalhttpclient.status = stato{ $slot0 }{ $value0 }:{ $slot1 }{ $va
 
 macos.journallocalhttpclient.theanswerheldno = la risposta non aveva alcun link usabile
 
-macos.journalmarkgeneric.mark = mark
+macos.journalmarkgeneric.mark = marca
 
-macos.journalmarkgeneric.not = not
+macos.journalmarkgeneric.not = non
 
-macos.journalmarkgeneric.presented = presented
+macos.journalmarkgeneric.presented = presentato
 
 macos.journalmarkgeneric.unavailable = non disponibile
 
-macos.journalmarkgeneric.your = your
+macos.journalmarkgeneric.your = tuo
 
 macos.journalmarkgeneric.yourjournalmarknotreadyet = il tuo diario, marca non ancora letta
 
 macos.journalmarkgeneric.yourjournalnotsetupyet = il tuo diario, non ancora configurato
 
-macos.journalmarkgeneric.yourjournalsmarkunavailablerightnow = la marca del tuo diario, non disponibile ora
+macos.journalmarkgeneric.yourjournalsmarkunavailablerightnow = la marca del tuo diario, non disponibile in questo momento
 
 macos.journalupdatedestinationview.openingjournal = apertura del diario…
 
@@ -1462,7 +1462,7 @@ macos.screenshot.checking = controllo…
 
 macos.screenshot.chooseafolder = scegli una cartella…
 
-macos.screenshot.choosehowfarback = scegli quanto indietro iniziare, poi falli arrivare.
+macos.screenshot.choosehowfarback = scegli da quanto indietro iniziare, poi portali.
 
 macos.screenshot.couldntcountyour = non è stato possibile contare i tuoi screenshot.
 
@@ -1498,9 +1498,9 @@ macos.screenshot.screenshotsnowsaveto = gli screenshot ora si salvano in { $name
 
 macos.screenshot.screenshotsonthismac = gli screenshot su questo mac si salvano nel tuo { $name }. l'app di solstone ha bisogno dell'accesso a quella cartella.
 
-macos.screenshot.screenshotsyoutakewhile = gli screenshot che fai mentre è in pausa non arrivano.
+macos.screenshot.screenshotsyoutakewhile = gli screenshot che fai mentre è in pausa non entrano.
 
-macos.screenshot.startfromtoday = a partire da oggi
+macos.screenshot.startfromtoday = inizia da oggi
 
 macos.screenshot.thelast30days = gli ultimi 30 giorni
 
@@ -1640,7 +1640,7 @@ macos.settings.mubi = mubi
 
 macos.settings.n1minutesegments = segmenti da 1 minuto
 
-macos.settings.needahandreach = ti serve una mano? raggiungici. siamo felici di aiutarti.
+macos.settings.needahandreach = ti serve una mano? contattaci. siamo felici di aiutarti.
 
 macos.settings.noappsexcluded = nessuna app esclusa
 
@@ -2166,7 +2166,7 @@ macos.uicopy.chrome = Chrome
 
 macos.uicopy.computersound = suono del computer
 
-macos.uicopy.copythefulllinkfromyourchatandopenitagain = copia il link completo dalla tua chat e riaprilo.
+macos.uicopy.copythefulllinkfromyourchatandopenitagain = copia il link completo dalla tua chat e aprilo di nuovo.
 
 macos.uicopy.edge = Edge
 
@@ -2370,6 +2370,6 @@ macos.uploadclient.uploadexceedsjournallimits = il caricamento supera i limiti d
 
 macos.version.journalunknown = diario sconosciuto
 
-macos.version.lastknown = { $version } (ultimo noto)
+macos.version.lastknown = { $version } (ultima conosciuta)
 
 macos.version.unknown = sconosciuto
