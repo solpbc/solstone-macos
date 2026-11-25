@@ -1,0 +1,25 @@
+{
+  "description": "resuming from { $sent } of { $total }",
+  "context": "Import page item row detail line while resyncing an interrupted large import before the next chunk is confirmed.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "sent",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "610c9d51dc5d4efeab193e49d80741bcef20363b250ec63b1aa2fdf79c7009a2",
+  "risk": "routine",
+  "auto_merge": true
+}

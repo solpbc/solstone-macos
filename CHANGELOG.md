@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- once your journal is updated too, large imports in the solstone app go into your journal in pieces and pick up where they left off after a connection drop, sleep or app restart. the import tile and page show live progress.
+
 ## [2.0.78] - 2026-11-25
 
 ### Fixed

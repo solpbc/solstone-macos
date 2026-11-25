@@ -858,6 +858,12 @@
 	<string>adds any file you choose here or drop on this window. your journal works out what it is.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e616c6c696d706f7274686973746f7279</key>
 	<string>all import history in your journal</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e63616e63656c6974656d</key>
+	<string>cancel %1$@</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67636f6d706c65746566696c65</key>
+	<string>checking the complete file</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e6766696c65</key>
+	<string>checking file</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67796f75726a6f75726e616c</key>
 	<string>checking your journal.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e63686f6f736566696c6573</key>
@@ -878,6 +884,10 @@
 	<string>imports wait until you confirm your journal's mark.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696d706f72747377616974756e74696c796f75726a6f75726e616c697375706461746564</key>
 	<string>imports wait until your journal is updated.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696e73756666696369656e747370616365</key>
+	<string>not enough space where your journal lives for this %1$@ file. free up space there or cancel unfinished imports, then try again.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696e746567726974796d69736d61746368</key>
+	<string>the file didn't arrive intact. try sending it again.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696e796f75726a6f75726e616c</key>
 	<string>in your journal.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e696e796f75726a6f75726e616c72656c6174697665</key>
@@ -908,6 +918,16 @@
 	<string>open import to see why.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e6f70656e73637265656e73686f7473</key>
 	<string>open screenshots</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e706175736564</key>
+	<string>paused</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c</key>
+	<string>paused at %1$@ of %2$@. it'll pick up from here once sending resumes.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c6f66666c696e65</key>
+	<string>paused at %1$@ of %2$@. it'll pick up from here when your journal reconnects.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7061757365647375626c696e65</key>
+	<string>paused at %1$@ of %2$@</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e70726f67726573736279746573</key>
+	<string>%1$@ of %2$@ (%3$@%%)</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7265616479746f726576696577</key>
 	<string>ready to review</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e726563656e74</key>
@@ -920,6 +940,8 @@
 	<string>remove</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e72656d6f766532</key>
 	<string>remove %1$@?</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e726573756d696e6766726f6d</key>
+	<string>resuming from %1$@ of %2$@</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c</key>
 	<string>saved in your journal. preview and confirm to start.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e72657669657764657461696c686f7572</key>
@@ -964,12 +986,16 @@
 	<string>this removes the copy on this device, so it won't reach your journal.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7468697372656d6f766573746865636f70796f6e74686973646576696365796f75726a6f75726e616c6d617973</key>
 	<string>this removes the copy on this device. the waiting copy in your journal stays there until you discard it or it expires.</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f6772657373</key>
+	<string>%1$@ of %2$@</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e74696c6576616c7565</key>
 	<string>%1$@. %2$@.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f77</key>
 	<string>try now</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e7472796e6f776974656d</key>
 	<string>try now, %1$@</string>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e75706c6f616465787069726564</key>
+	<string>this unfinished import is no longer waiting in your journal. try again to start over.</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67</key>
 	<string>waiting</string>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e77616974696e67666f726a6f75726e616c</key>

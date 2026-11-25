@@ -2337,3 +2337,34 @@ macos.desktopshellmodel.items.plural = { $count ->
     [one] 1 item
    *[other] { $display } items
 }
+
+macos.desktopimportpage.paused = paused
+
+macos.desktopimportpage.checkingfile = checking file
+
+macos.desktopimportpage.tileprogress = { $sent } of { $total }
+
+macos.desktopimportpage.tileprogressmore.plural = { $count ->
+    [one] { $sent } of { $total } · 1 more waiting
+   *[other] { $sent } of { $total } · { $count } more waiting
+}
+
+macos.desktopimportpage.progressbytes = { $sent } of { $total } ({ $percent }%)
+
+macos.desktopimportpage.checkingcompletefile = checking the complete file
+
+macos.desktopimportpage.pauseddetail = paused at { $sent } of { $total }. it'll pick up from here once sending resumes.
+
+macos.desktopimportpage.pauseddetailoffline = paused at { $sent } of { $total }. it'll pick up from here when your journal reconnects.
+
+macos.desktopimportpage.pausedsubline = paused at { $sent } of { $total }
+
+macos.desktopimportpage.resumingfrom = resuming from { $sent } of { $total }
+
+macos.desktopimportpage.insufficientspace = not enough space where your journal lives for this { $total } file. free up space there or cancel unfinished imports, then try again.
+
+macos.desktopimportpage.integritymismatch = the file didn't arrive intact. try sending it again.
+
+macos.desktopimportpage.uploadexpired = this unfinished import is no longer waiting in your journal. try again to start over.
+
+macos.desktopimportpage.cancelitem = cancel { $name }

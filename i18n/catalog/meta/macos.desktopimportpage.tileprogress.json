@@ -1,0 +1,25 @@
+{
+  "description": "{ $sent } of { $total }",
+  "context": "Home import tile subline showing confirmed transferred bytes and total size of a large import (e.g. 1.2 GB of 4.0 GB).",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "sent",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "4109c26cdeaa8541837e789ee748c920de77c1a6e75a8f58989d843f459b88ef",
+  "risk": "routine",
+  "auto_merge": true
+}

@@ -1,0 +1,16 @@
+{
+  "description": "the file didn't arrive intact. try sending it again.",
+  "context": "Actionable error shown on an import item row when the journal reports a whole-file checksum mismatch on commit.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "90d7865d6707f67e9009e71d0e5249f7aa9ed0affdaf82b95a062153d19ed921",
+  "risk": "routine",
+  "auto_merge": true
+}

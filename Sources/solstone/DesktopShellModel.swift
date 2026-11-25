@@ -470,6 +470,7 @@ func moveDeckTileFocus(
 enum ImportTileState: String, CaseIterable, Equatable, Sendable {
     case idle
     case waiting
+    case paused
     case sending
     case readyToReview
     case needsAttention
@@ -478,6 +479,7 @@ enum ImportTileState: String, CaseIterable, Equatable, Sendable {
         switch self {
         case .idle: return "idle"
         case .waiting: return "waiting"
+        case .paused: return "paused"
         case .sending: return "sending"
         case .readyToReview: return "ready_to_review"
         case .needsAttention: return "needs_attention"
@@ -488,6 +490,7 @@ enum ImportTileState: String, CaseIterable, Equatable, Sendable {
         switch self {
         case .idle: return nil
         case .waiting: return ImportCopy.waiting
+        case .paused: return ImportCopy.paused
         case .sending: return ImportCopy.sending
         case .readyToReview: return ImportCopy.readyToReview
         case .needsAttention: return DeckStateWord.needsAttention.word
@@ -497,10 +500,14 @@ enum ImportTileState: String, CaseIterable, Equatable, Sendable {
 
 struct ImportTilePresentation: Equatable, Sendable {
     var state: ImportTileState
+    /// Optional override for the visible status label (e.g. `checking file` during whole-file check).
+    var statusLabel: String? = nil
     var subline: String
 
+    var displayedWord: String? { statusLabel ?? state.word }
+
     var accessibilityValue: String {
-        if let word = state.word {
+        if let word = displayedWord {
             return MacStrings.macos_desktopimportpage_tilevalue(word, subline)
         }
         return subline
@@ -508,7 +515,7 @@ struct ImportTilePresentation: Equatable, Sendable {
 }
 
 /// Worst-signal-wins derivation for the home `import` tile:
-/// `needs attention` > `ready to review` > `sending` > `waiting` > calm idle (`files`).
+/// `needs attention` > `ready to review` > `sending` > `paused` > `waiting` > calm idle (`files`).
 func deriveImportTile(_ snapshot: ImportSnapshot) -> ImportTilePresentation {
     if snapshot.storeUnreadable {
         return ImportTilePresentation(state: .needsAttention, subline: ImportCopy.tileSubline)
@@ -540,12 +547,45 @@ func deriveImportTile(_ snapshot: ImportSnapshot) -> ImportTilePresentation {
     }
     let sendingRows = snapshot.rows.filter { $0.kind == .sending }
     if !sendingRows.isEmpty {
+        if let activeResumable = sendingRows.first(where: { $0.progress != nil }),
+           let progress = activeResumable.progress {
+            if progress.phase == .checking {
+                let subline = sendingRows.count == 1
+                    ? activeResumable.name
+                    : MacStrings.macos_desktopimportpage_tilefiles_plural(sendingRows.count)
+                return ImportTilePresentation(state: .sending, statusLabel: ImportCopy.checkingFile, subline: subline)
+            }
+            let queuedBehind = snapshot.rows.filter {
+                $0.kind == .waiting || $0.kind == .paused || $0.kind == .goingAgain
+            }.count + max(0, sendingRows.count - 1)
+            let sent = importFormatBytes(progress.bytesSent)
+            let total = importFormatBytes(progress.bytesTotal)
+            let subline = queuedBehind > 0
+                ? ImportCopy.tileProgressMore(count: queuedBehind, sent: sent, total: total)
+                : ImportCopy.tileProgress(sent: sent, total: total)
+            return ImportTilePresentation(state: .sending, subline: subline)
+        }
         let subline = sendingRows.count == 1
             ? sendingRows[0].name
             : MacStrings.macos_desktopimportpage_tilefiles_plural(sendingRows.count)
         return ImportTilePresentation(state: .sending, subline: subline)
     }
-    let waitingRows = snapshot.rows.filter { $0.kind == .waiting || $0.kind == .paused || $0.kind == .goingAgain }
+    let pausedRows = snapshot.rows.filter { $0.kind == .paused }
+    if !pausedRows.isEmpty {
+        if let first = pausedRows.first(where: { $0.progress != nil }),
+           let progress = first.progress {
+            let moreWaiting = max(0, pausedRows.count - 1)
+                + snapshot.rows.filter { $0.kind == .waiting || $0.kind == .goingAgain }.count
+            let sent = importFormatBytes(progress.bytesSent)
+            let total = importFormatBytes(progress.bytesTotal)
+            let subline = moreWaiting > 0
+                ? ImportCopy.tileProgressMore(count: moreWaiting, sent: sent, total: total)
+                : ImportCopy.tileProgress(sent: sent, total: total)
+            return ImportTilePresentation(state: .paused, subline: subline)
+        }
+        return ImportTilePresentation(state: .paused, subline: pausedRows[0].name)
+    }
+    let waitingRows = snapshot.rows.filter { $0.kind == .waiting || $0.kind == .goingAgain }
     if !waitingRows.isEmpty {
         let heldForJournal = snapshot.offline
             || snapshot.waiting == .unpaired

@@ -1,0 +1,25 @@
+{
+  "description": "paused at { $sent } of { $total }. it'll pick up from here once sending resumes.",
+  "context": "Import page item row detail line when a large import is paused while not offline (e.g. transient retry, sleep, or sync paused).",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "sent",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "23933c09e444c3aaea7e492384e929682d75094fbdac6bedd3e7c723215da489",
+  "risk": "routine",
+  "auto_merge": true
+}

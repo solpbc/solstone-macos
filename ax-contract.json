@@ -784,6 +784,7 @@
     "ImportTileState" : [
       "idle",
       "waiting",
+      "paused",
       "sending",
       "ready_to_review",
       "needs_attention"

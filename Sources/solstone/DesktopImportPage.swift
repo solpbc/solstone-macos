@@ -34,9 +34,14 @@ enum ImportCopy {
     static let allImportHistory = MacStrings.macos_desktopimportpage_allimporthistory()
     static let onThisDevice = MacStrings.macos_desktopstatuspane_onthisdevice()
     static let waiting = MacStrings.macos_desktopimportpage_waiting()
+    static let paused = MacStrings.macos_desktopimportpage_paused()
     static let sending = MacStrings.macos_desktopimportpage_sending()
+    static let checkingFile = MacStrings.macos_desktopimportpage_checkingfile()
+    static let checkingCompleteFile = MacStrings.macos_desktopimportpage_checkingcompletefile()
     static let sendingDetail = MacStrings.macos_desktopimportpage_sendingtoyourjournal()
     static let waitingDetail = MacStrings.macos_desktopimportpage_waitingtogotoyourjournal()
+    static let integrityMismatch = MacStrings.macos_desktopimportpage_integritymismatch()
+    static let uploadExpired = MacStrings.macos_desktopimportpage_uploadexpired()
     static let missingCopy = MacStrings.macos_desktopimportpage_thecopyonthisdeviceismissing()
     static let tryNow = MacStrings.macos_desktopimportpage_trynow()
     static let remove = MacStrings.macos_desktopimportpage_remove()
@@ -58,7 +63,46 @@ enum ImportCopy {
     static func reviewItemA11y(_ name: String) -> String { MacStrings.macos_desktopimportpage_reviewiteminyourjournal(name) }
     static func sendItemAgainA11y(_ name: String) -> String { MacStrings.macos_desktopimportpage_senditemagaintoreview(name) }
     static func tryNowItemA11y(_ name: String) -> String { MacStrings.macos_desktopimportpage_trynowitem(name) }
+    static func cancelItemA11y(_ name: String) -> String { MacStrings.macos_desktopimportpage_cancelitem(name) }
     static func removeItemA11y(_ name: String) -> String { MacStrings.macos_accessibility_removeitem(name) }
+    static func tileProgress(sent: String, total: String) -> String {
+        MacStrings.macos_desktopimportpage_tileprogress(sent, total)
+    }
+    static func tileProgressMore(count: Int, sent: String, total: String) -> String {
+        MacStrings.macos_desktopimportpage_tileprogressmore_plural(count, sent, total)
+    }
+    static func progressBytes(sent: String, total: String, percent: Int) -> String {
+        MacStrings.macos_desktopimportpage_progressbytes(sent, total, MacStrings.number(percent))
+    }
+    static func pausedDetail(progress: ImportResumableProgress, offline: Bool) -> String {
+        let sent = importFormatBytes(progress.bytesSent)
+        let total = importFormatBytes(progress.bytesTotal)
+        return offline
+            ? MacStrings.macos_desktopimportpage_pauseddetailoffline(sent, total)
+            : MacStrings.macos_desktopimportpage_pauseddetail(sent, total)
+    }
+    static func pausedSubline(sent: String, total: String) -> String {
+        MacStrings.macos_desktopimportpage_pausedsubline(sent, total)
+    }
+    static func resumingFrom(sent: String, total: String) -> String {
+        MacStrings.macos_desktopimportpage_resumingfrom(sent, total)
+    }
+    static func faultDetail(for row: ImportRow, serverSentence: String) -> String {
+        switch row.reasonCode {
+        case "insufficient_journal_space":
+            let totalBytes = row.progress?.bytesTotal ?? row.byteSize
+            if totalBytes > 0 {
+                return MacStrings.macos_desktopimportpage_insufficientspace(importFormatBytes(totalBytes))
+            }
+            return serverSentence
+        case "whole_file_checksum_mismatch":
+            return integrityMismatch
+        case "upload_not_found":
+            return uploadExpired
+        default:
+            return serverSentence
+        }
+    }
     static func inYourJournalRelative(_ relative: String) -> String { MacStrings.macos_desktopimportpage_inyourjournalrelative(relative) }
     static func pillReady(_ count: Int) -> String { MacStrings.macos_desktopimportpage_pillready_plural(count) }
     static func statusReadyHeadline(_ count: Int) -> String { MacStrings.macos_desktopimportpage_statusreadyheadline_plural(count) }
@@ -105,7 +149,24 @@ enum ImportCopy {
     static func statusRowSubline(_ snapshot: ImportSnapshot) -> String {
         if snapshot.hasFault { return importsNeedYou }
         if snapshot.readyToReviewCount > 0 { return pillReady(snapshot.readyToReviewCount) }
-        if snapshot.hasSending { return sendingDetail }
+        if let active = snapshot.rows.first(where: { $0.kind == .sending }) {
+            if let progress = active.progress {
+                if progress.phase == .checking { return checkingCompleteFile }
+                return progressBytes(
+                    sent: importFormatBytes(progress.bytesSent),
+                    total: importFormatBytes(progress.bytesTotal),
+                    percent: progress.percent
+                )
+            }
+            return sendingDetail
+        }
+        if let paused = snapshot.rows.first(where: { $0.kind == .paused }),
+           let progress = paused.progress {
+            return pausedSubline(
+                sent: importFormatBytes(progress.bytesSent),
+                total: importFormatBytes(progress.bytesTotal)
+            )
+        }
         if let hold = queueHoldLine(snapshot) { return hold }
         return waitingDetail
     }
@@ -135,6 +196,7 @@ enum ImportCopy {
 /// Distinct shape + color markers for every import state (never color alone).
 enum ImportMarkerKind: Equatable {
     case waiting
+    case paused
     case sending
     case readyToReview
     case expired
@@ -153,6 +215,15 @@ struct ImportStateMarker: View {
                 Circle()
                     .stroke(SetupChromeColor.softInk(for: scheme), lineWidth: 1.5)
                     .frame(width: 8, height: 8)
+            case .paused:
+                HStack(spacing: 2) {
+                    Capsule()
+                        .fill(SetupChromeColor.softInk(for: scheme))
+                        .frame(width: 2.2, height: 8)
+                    Capsule()
+                        .fill(SetupChromeColor.softInk(for: scheme))
+                        .frame(width: 2.2, height: 8)
+                }
             case .sending:
                 ZStack {
                     Circle()
@@ -198,9 +269,33 @@ struct ImportStateMarker: View {
     }
 }
 
+private struct ImportProgressBar: View {
+    let fraction: Double
+    let active: Bool
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        GeometryReader { geo in
+            let clamped = min(1.0, max(0.0, fraction))
+            let width = geo.size.width * clamped
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(SetupChromeColor.hairline(for: scheme))
+                if clamped > 0 {
+                    Capsule()
+                        .fill(active ? SetupChromeColor.solOrange : SetupChromeColor.softInk(for: scheme))
+                        .frame(width: min(geo.size.width, max(4, width)))
+                }
+            }
+        }
+        .frame(height: 4)
+        .accessibilityHidden(true)
+    }
+}
+
 /// `import` on the deck: calm when idle (`import` / `files`, no switch, no `on`/`off`), live
-/// worst-signal-wins status (`needs attention` > `ready to review` > `sending` > `waiting`) while
-/// active or awaiting the owner.
+/// worst-signal-wins status (`needs attention` > `ready to review` > `sending` > `paused` > `waiting`)
+/// while active or awaiting the owner.
 struct ImportTile: View {
     var snapshot = ImportSnapshot()
     var selected = false
@@ -224,7 +319,7 @@ struct ImportTile: View {
                     Spacer(minLength: 8)
                     name
                 }
-                if let word = presentation.state.word {
+                if let word = presentation.displayedWord {
                     HStack(spacing: 5) {
                         ImportStateMarker(kind: markerKind(for: presentation.state))
                         Text(word)
@@ -236,8 +331,9 @@ struct ImportTile: View {
                 Text(presentation.subline)
                     .font(.system(size: 11))
                     .foregroundStyle(SetupChromeColor.faintInk(for: scheme))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, minHeight: compact ? 66 : 104, alignment: .topLeading)
             .padding(compact ? 11 : 13)
@@ -275,6 +371,7 @@ struct ImportTile: View {
     private func markerKind(for state: ImportTileState) -> ImportMarkerKind {
         switch state {
         case .idle, .waiting: return .waiting
+        case .paused: return .paused
         case .sending: return .sending
         case .readyToReview: return .readyToReview
         case .needsAttention: return .needsAttention
@@ -285,7 +382,7 @@ struct ImportTile: View {
         switch state {
         case .needsAttention: return DeckStyle.attentionInk
         case .readyToReview: return SetupChromeColor.orangeText(for: scheme)
-        case .idle, .waiting, .sending: return SetupChromeColor.softInk(for: scheme)
+        case .idle, .waiting, .paused, .sending: return SetupChromeColor.softInk(for: scheme)
         }
     }
 
@@ -294,7 +391,7 @@ struct ImportTile: View {
         case .needsAttention: return DeckStyle.attentionInk
         case .readyToReview: return SetupChromeColor.orangeText(for: scheme)
         case .sending: return SetupChromeColor.ink(for: scheme)
-        case .idle, .waiting: return SetupChromeColor.softInk(for: scheme)
+        case .idle, .waiting, .paused: return SetupChromeColor.softInk(for: scheme)
         }
     }
 
@@ -303,7 +400,7 @@ struct ImportTile: View {
         switch state {
         case .needsAttention: return DeckStyle.attentionInk
         case .readyToReview: return SetupChromeColor.orangeText(for: scheme)
-        case .idle, .waiting, .sending: return SetupChromeColor.hairline(for: scheme)
+        case .idle, .waiting, .paused, .sending: return SetupChromeColor.hairline(for: scheme)
         }
     }
 
@@ -311,7 +408,7 @@ struct ImportTile: View {
         if selected { return 2 }
         switch state {
         case .needsAttention, .readyToReview: return 1.25
-        case .idle, .waiting, .sending: return 1
+        case .idle, .waiting, .paused, .sending: return 1
         }
     }
 }
@@ -639,7 +736,7 @@ struct DesktopImportPage: View {
                 if index > 0 {
                     Divider().overlay(SetupChromeColor.hairline(for: scheme))
                 }
-                onDeviceRow(row)
+                onDeviceRow(row, offline: snapshot.offline)
             }
         }
         .padding(13)
@@ -648,37 +745,97 @@ struct DesktopImportPage: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(SetupChromeColor.hairline(for: scheme), lineWidth: 1))
     }
 
-    private func onDeviceRow(_ row: ImportRow) -> some View {
+    private func onDeviceRow(_ row: ImportRow, offline: Bool) -> some View {
         let detail: String
         let marker: ImportMarkerKind
         let chipLabel: String
         let isFault: Bool
+        let showProgressBar: Bool
+        let progressFraction: Double
+        let progressActive: Bool
+        let canCancelActiveResumable: Bool
         switch row.kind {
         case .sending:
-            detail = ImportCopy.sendingDetail
             marker = .sending
-            chipLabel = ImportCopy.sending
             isFault = false
-        case .waiting, .paused, .goingAgain:
+            if let progress = row.progress {
+                showProgressBar = true
+                progressActive = true
+                if progress.phase == .checking {
+                    chipLabel = ImportCopy.checkingFile
+                    detail = ImportCopy.checkingCompleteFile
+                    progressFraction = 1.0
+                    canCancelActiveResumable = false
+                } else {
+                    chipLabel = ImportCopy.sending
+                    let sent = importFormatBytes(progress.bytesSent)
+                    let total = importFormatBytes(progress.bytesTotal)
+                    detail = progress.resuming
+                        ? ImportCopy.resumingFrom(sent: sent, total: total)
+                        : ImportCopy.progressBytes(sent: sent, total: total, percent: progress.percent)
+                    progressFraction = progress.fraction
+                    canCancelActiveResumable = true
+                }
+            } else {
+                detail = ImportCopy.sendingDetail
+                chipLabel = ImportCopy.sending
+                showProgressBar = false
+                progressFraction = 0
+                progressActive = true
+                canCancelActiveResumable = false
+            }
+        case .paused:
+            marker = .paused
+            chipLabel = ImportCopy.paused
+            isFault = false
+            canCancelActiveResumable = false
+            if let progress = row.progress {
+                detail = ImportCopy.pausedDetail(progress: progress, offline: offline)
+                showProgressBar = true
+                progressFraction = progress.fraction
+                progressActive = false
+            } else {
+                detail = ImportCopy.waitingDetail
+                showProgressBar = false
+                progressFraction = 0
+                progressActive = false
+            }
+        case .waiting, .goingAgain:
             detail = ImportCopy.waitingDetail
             marker = .waiting
             chipLabel = ImportCopy.waiting
             isFault = false
+            showProgressBar = false
+            progressFraction = 0
+            progressActive = false
+            canCancelActiveResumable = false
         case .refused(let sentence):
-            detail = sentence
+            detail = ImportCopy.faultDetail(for: row, serverSentence: sentence)
             marker = .needsAttention
             chipLabel = DeckStateWord.needsAttention.word
             isFault = true
+            showProgressBar = false
+            progressFraction = 0
+            progressActive = false
+            canCancelActiveResumable = false
         case .missingCopy:
             detail = ImportCopy.missingCopy
             marker = .needsAttention
             chipLabel = DeckStateWord.needsAttention.word
             isFault = true
+            showProgressBar = false
+            progressFraction = 0
+            progressActive = false
+            canCancelActiveResumable = false
         case .readyToReview, .reviewExpired:
             detail = ImportCopy.reviewDetailLine(for: row)
             marker = row.kind == .reviewExpired ? .expired : .readyToReview
             chipLabel = row.kind == .reviewExpired ? ImportCopy.expired : ImportCopy.readyToReview
             isFault = false
+            showProgressBar = false
+            progressFraction = 0
+            progressActive = false
+            canCancelActiveResumable = false
         }
         let refusedHere: Bool = { if case .refused = row.kind { return true } else { return false } }()
 
@@ -699,12 +856,44 @@ struct DesktopImportPage: View {
                 )
             }
 
+            if showProgressBar {
+                ImportProgressBar(fraction: progressFraction, active: progressActive)
+                    .padding(.vertical, 2)
+            }
+
             Text(detail)
                 .font(.caption)
                 .foregroundStyle(isFault ? DeckStyle.attentionInk : SetupChromeColor.softInk(for: scheme))
                 .fixedSize(horizontal: false, vertical: true)
 
-            if row.kind != .sending {
+            if row.kind == .sending {
+                if canCancelActiveResumable {
+                    HStack(spacing: 8) {
+                        quietRowButton(ImportCopy.cancel, accessibilityLabel: ImportCopy.cancelItemA11y(row.name)) {
+                            Task { changeLine = ImportCopy.change(await appState.importSource?.cancel(row.id) ?? .gone) }
+                        }
+                    }
+                }
+            } else if row.kind == .paused {
+                HStack(spacing: 8) {
+                    Button {
+                        Task { changeLine = ImportCopy.change(await appState.importSource?.resume(row.id) ?? .gone) }
+                    } label: {
+                        Text(ImportCopy.tryNow)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(SetupChromeColor.ink(for: scheme))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4.5)
+                            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(SetupChromeColor.sheet(for: scheme)))
+                            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(SetupChromeColor.hairline2(for: scheme), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(ImportCopy.tryNowItemA11y(row.name))
+                    quietRowButton(ImportCopy.cancel, accessibilityLabel: ImportCopy.cancelItemA11y(row.name)) {
+                        Task { changeLine = ImportCopy.change(await appState.importSource?.cancel(row.id) ?? .gone) }
+                    }
+                }
+            } else {
                 HStack(spacing: 8) {
                     if refusedHere && row.retryable {
                         Button {

@@ -1,0 +1,29 @@
+{
+  "description": "{ $sent } of { $total } ({ $percent }%)",
+  "context": "Import page item row progress line showing journal-confirmed bytes sent, total size, and percentage.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "sent",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    },
+    {
+      "name": "percent",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "bb6612bb5d4c4ce2a62cc11bc274472124d229aeb3d4e14b936e678e4931e310",
+  "risk": "routine",
+  "auto_merge": true
+}

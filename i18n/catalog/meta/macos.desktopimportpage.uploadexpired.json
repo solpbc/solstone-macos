@@ -1,0 +1,16 @@
+{
+  "description": "this unfinished import is no longer waiting in your journal. try again to start over.",
+  "context": "Actionable error shown on an import item row when an open resumable upload session is gone on the journal (expired or cancelled there).",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "9ca61151536b158ff837609de327dc3cb1be301f5809c1280a656587ac016cbb",
+  "risk": "routine",
+  "auto_merge": true
+}

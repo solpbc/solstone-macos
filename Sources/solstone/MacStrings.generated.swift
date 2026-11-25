@@ -5122,4 +5122,74 @@ nonisolated enum MacStrings {
     static func macos_desktopshellmodel_items_plural(_ count: Int, _ display: String) -> String {
         render("m6d61636f732e6465736b746f707368656c6c6d6f64656c2e6974656d732e706c7572616c", [Int64(count), display, String(count)])
     }
+
+    @usableFromInline
+    static func macos_desktopimportpage_paused() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e706175736564", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_checkingfile() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e6766696c65", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_tileprogress(_ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f6772657373", [sent, total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_tileprogressmore_plural(_ count: Int, _ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f67726573736d6f72652e706c7572616c", [Int64(count), sent, total, String(count)])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_progressbytes(_ sent: String, _ total: String, _ percent: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e70726f67726573736279746573", [sent, total, percent])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_checkingcompletefile() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e636865636b696e67636f6d706c65746566696c65", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_pauseddetail(_ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c", [sent, total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_pauseddetailoffline(_ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e70617573656464657461696c6f66666c696e65", [sent, total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_pausedsubline(_ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e7061757365647375626c696e65", [sent, total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_resumingfrom(_ sent: String, _ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e726573756d696e6766726f6d", [sent, total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_insufficientspace(_ total: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e696e73756666696369656e747370616365", [total])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_integritymismatch() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e696e746567726974796d69736d61746368", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_uploadexpired() -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e75706c6f616465787069726564", [])
+    }
+
+    @usableFromInline
+    static func macos_desktopimportpage_cancelitem(_ name: String) -> String {
+        render("m6d61636f732e6465736b746f70696d706f7274706167652e63616e63656c6974656d", [name])
+    }
 }

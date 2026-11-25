@@ -1,0 +1,21 @@
+{
+  "description": "not enough space where your journal lives for this { $total } file. free up space there or cancel unfinished imports, then try again.",
+  "context": "Actionable error shown on an import item row when the journal rejects a large import with 507 insufficient_journal_space.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "total",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "9cc51a606e0cc41204ce47ed2bb4798257e0e94d0232f9dd2507f0f731842065",
+  "risk": "routine",
+  "auto_merge": true
+}

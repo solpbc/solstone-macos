@@ -22,13 +22,15 @@ struct ImportPageSnapshotTests {
     }
 
     enum Scene: String, CaseIterable {
-        case empty, waiting, review, refused, unpaired, oldJournal, unreadable
+        case empty, waiting, resumableProgress, resumablePausedAndFaults, review, refused, unpaired, oldJournal, unreadable
     }
 
     enum HomeScene: String, CaseIterable {
         case homeReview = "home-review"
         case homeStatusReview = "home-status-review"
         case homeAttention = "home-attention"
+        case homeResumableSending = "home-resumable-sending"
+        case homeResumablePaused = "home-resumable-paused"
         case homeIdle = "home-idle"
     }
 
@@ -79,6 +81,68 @@ struct ImportPageSnapshotTests {
             ]
             s.countsAsWaiting = 2
             s.intake = .finished(accepted: 2, refused: [ImportRefusedItem(name: "holiday.mov", reason: .unsupportedType)])
+        case .resumableProgress:
+            let fourGiB: Int64 = 4 * 1024 * 1024 * 1024
+            let twoGiB: Int64 = 2 * 1024 * 1024 * 1024
+            s.waiting = .sending
+            s.rows = [
+                ImportRow(
+                    id: "res-1",
+                    name: "google-takeout-2026.zip",
+                    kind: .sending,
+                    retryable: false,
+                    savedAtJournal: false,
+                    byteSize: fourGiB,
+                    progress: ImportResumableProgress(bytesSent: 1_288_490_188, bytesTotal: fourGiB, phase: .sending)
+                ),
+                ImportRow(
+                    id: "res-2",
+                    name: "apple-health-export.zip",
+                    kind: .sending,
+                    retryable: false,
+                    savedAtJournal: false,
+                    byteSize: twoGiB,
+                    progress: ImportResumableProgress(bytesSent: twoGiB, bytesTotal: twoGiB, phase: .checking)
+                ),
+                ImportRow(id: "res-3", name: "meeting-recording.m4a", kind: .waiting, retryable: false, savedAtJournal: false),
+            ]
+            s.countsAsWaiting = 3
+            s.recentReceipts = sampleReceipts()
+        case .resumablePausedAndFaults:
+            let fourGiB: Int64 = 4 * 1024 * 1024 * 1024
+            s.waiting = .waiting
+            s.offline = true
+            s.rows = [
+                ImportRow(
+                    id: "p-1",
+                    name: "archive-2026.zip",
+                    kind: .paused,
+                    retryable: false,
+                    savedAtJournal: false,
+                    byteSize: fourGiB,
+                    progress: ImportResumableProgress(bytesSent: 1_288_490_188, bytesTotal: fourGiB, phase: .paused)
+                ),
+                ImportRow(
+                    id: "f-507",
+                    name: "studio-video.mov",
+                    kind: .refused("not enough space"),
+                    retryable: true,
+                    savedAtJournal: false,
+                    reasonCode: "insufficient_journal_space",
+                    byteSize: fourGiB
+                ),
+                ImportRow(
+                    id: "f-422",
+                    name: "notes-backup.zip",
+                    kind: .refused("checksum mismatch"),
+                    retryable: true,
+                    savedAtJournal: false,
+                    reasonCode: "whole_file_checksum_mismatch",
+                    byteSize: 512 * 1024 * 1024
+                ),
+            ]
+            s.countsAsWaiting = 1
+            s.needsOwner = true
         case .review:
             s.waiting = .waiting
             s.deliveredToCurrentJournal = true
@@ -219,6 +283,18 @@ struct ImportPageSnapshotTests {
         case .homeAttention:
             importSnapshot = Self.snapshot(.refused)
             pill.held = .importsNeedYou
+            pane = .importPage
+        case .homeResumableSending:
+            importSnapshot = Self.snapshot(.resumableProgress)
+            pill.pending = importSnapshot.countsAsWaiting
+            pane = .importPage
+        case .homeResumablePaused:
+            var pausedSnap = Self.snapshot(.resumablePausedAndFaults)
+            pausedSnap.rows = pausedSnap.rows.filter { $0.kind == .paused }
+            pausedSnap.needsOwner = false
+            importSnapshot = pausedSnap
+            pill.connection = .offline
+            pill.pending = 1
             pane = .importPage
         case .homeIdle:
             importSnapshot = Self.snapshot(.empty)

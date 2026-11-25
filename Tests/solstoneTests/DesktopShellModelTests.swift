@@ -589,6 +589,104 @@ struct DesktopShellModelTests {
         #expect(deriveImportTile(unreadable).state == .needsAttention)
     }
 
+    @Test func importTileShowsResumableProgressCheckingAndPausedWithWorstSignalPriority() {
+        let fourGiB: Int64 = 4 * 1024 * 1024 * 1024
+        let onePointTwoGiB: Int64 = 1_288_490_188
+
+        // Active resumable sending (single file) -> "sending" + "1.2 GB of 4.0 GB"
+        var s = ImportSnapshot()
+        s.waiting = .sending
+        s.rows = [
+            ImportRow(
+                id: "big-1",
+                name: "takeout-2026.zip",
+                kind: .sending,
+                retryable: false,
+                savedAtJournal: false,
+                byteSize: fourGiB,
+                progress: ImportResumableProgress(bytesSent: onePointTwoGiB, bytesTotal: fourGiB, phase: .sending)
+            ),
+        ]
+        let activeSingle = deriveImportTile(s)
+        #expect(activeSingle.state == .sending)
+        #expect(activeSingle.displayedWord == "sending")
+        #expect(activeSingle.subline == "1.2 GB of 4.0 GB")
+        #expect(activeSingle.accessibilityValue == "sending. 1.2 GB of 4.0 GB.")
+
+        // Active resumable sending with 2 more waiting -> "1.2 GB of 4.0 GB · 2 more waiting"
+        s.rows.append(ImportRow(id: "w-1", name: "a.pdf", kind: .waiting, retryable: false, savedAtJournal: false))
+        s.rows.append(ImportRow(id: "w-2", name: "b.pdf", kind: .waiting, retryable: false, savedAtJournal: false))
+        let activeQueued = deriveImportTile(s)
+        #expect(activeQueued.state == .sending)
+        #expect(activeQueued.subline == "1.2 GB of 4.0 GB · 2 more waiting")
+
+        // Checking phase at commit -> displayedWord "checking file" while state stays .sending
+        s.rows = [
+            ImportRow(
+                id: "big-1",
+                name: "takeout-2026.zip",
+                kind: .sending,
+                retryable: false,
+                savedAtJournal: false,
+                byteSize: fourGiB,
+                progress: ImportResumableProgress(bytesSent: fourGiB, bytesTotal: fourGiB, phase: .checking)
+            ),
+        ]
+        let checking = deriveImportTile(s)
+        #expect(checking.state == .sending)
+        #expect(checking.displayedWord == "checking file")
+        #expect(checking.subline == "takeout-2026.zip")
+        #expect(checking.accessibilityValue == "checking file. takeout-2026.zip.")
+
+        // Paused mid-transfer (non-fault) outranks plain waiting, loses to sending / review / fault
+        s.waiting = .waiting
+        s.offline = true
+        s.rows = [
+            ImportRow(
+                id: "big-1",
+                name: "takeout-2026.zip",
+                kind: .paused,
+                retryable: false,
+                savedAtJournal: false,
+                byteSize: fourGiB,
+                progress: ImportResumableProgress(bytesSent: onePointTwoGiB, bytesTotal: fourGiB, phase: .paused)
+            ),
+            ImportRow(id: "w-1", name: "a.pdf", kind: .waiting, retryable: false, savedAtJournal: false),
+        ]
+        let paused = deriveImportTile(s)
+        #expect(paused.state == .paused)
+        #expect(paused.state.axToken == "paused")
+        #expect(paused.displayedWord == "paused")
+        #expect(paused.subline == "1.2 GB of 4.0 GB · 1 more waiting")
+
+        // Actionable fault detail mapping for 507 / 422 / 404
+        let spaceRow = ImportRow(
+            id: "e1", name: "big.zip", kind: .refused("server msg"), retryable: true,
+            savedAtJournal: false, reasonCode: "insufficient_journal_space", byteSize: fourGiB
+        )
+        #expect(ImportCopy.faultDetail(for: spaceRow, serverSentence: "server msg")
+            == "not enough space where your journal lives for this 4.0 GB file. free up space there or cancel unfinished imports, then try again.")
+        let corruptRow = ImportRow(
+            id: "e2", name: "big.zip", kind: .refused("server msg"), retryable: true,
+            savedAtJournal: false, reasonCode: "whole_file_checksum_mismatch", byteSize: fourGiB
+        )
+        #expect(ImportCopy.faultDetail(for: corruptRow, serverSentence: "server msg")
+            == "the file didn't arrive intact. try sending it again.")
+        let goneRow = ImportRow(
+            id: "e3", name: "big.zip", kind: .refused("server msg"), retryable: true,
+            savedAtJournal: false, reasonCode: "upload_not_found", byteSize: fourGiB
+        )
+        #expect(ImportCopy.faultDetail(for: goneRow, serverSentence: "server msg")
+            == "this unfinished import is no longer waiting in your journal. try again to start over.")
+
+        // Paused detail copy differs honestly between offline and connected pause
+        let progress = ImportResumableProgress(bytesSent: onePointTwoGiB, bytesTotal: fourGiB, phase: .paused)
+        #expect(ImportCopy.pausedDetail(progress: progress, offline: true)
+            == "paused at 1.2 GB of 4.0 GB. it'll pick up from here when your journal reconnects.")
+        #expect(ImportCopy.pausedDetail(progress: progress, offline: false)
+            == "paused at 1.2 GB of 4.0 GB. it'll pick up from here once sending resumes.")
+    }
+
     @Test func deckKeyboardNavigationIncludesImportTile() {
         let order: [DeckTileFocus] = DeckSource.allCases.map { .source($0) } + [.importTile]
         #expect(moveDeckTileFocus(from: .source(.screenshots), direction: .right, order: order, columns: 3) == .importTile)

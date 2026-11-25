@@ -1,0 +1,16 @@
+{
+  "description": "checking the complete file",
+  "context": "Import page item row detail line shown while the journal verifies whole-file integrity after the final chunk arrives.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "9a9c57cffa4ed1eb8c63b6b14996cc8ca3d3147057f1e671c6ee27ca64cbdad5",
+  "risk": "routine",
+  "auto_merge": true
+}

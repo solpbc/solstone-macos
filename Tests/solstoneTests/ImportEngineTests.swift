@@ -67,6 +67,15 @@ private final class StallingImportURLProtocol: URLProtocol, @unchecked Sendable 
         }
     }
 
+    static func waitUntilStopped(timeout: Duration = .seconds(2)) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            if stopped { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return stopped
+    }
+
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -1722,7 +1731,7 @@ struct ImportEngineTests {
         await StallingImportURLProtocol.waitUntilStarted()
         sendTask.cancel()
         let answer = await sendTask.value
-        #expect(StallingImportURLProtocol.stopped)
+        #expect(await StallingImportURLProtocol.waitUntilStopped())
         if case .failed(let cause) = answer {
             #expect(cause == "io-cancelled")
         } else {

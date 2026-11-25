@@ -1119,7 +1119,21 @@
       "macos.desktopimportpage.tileitems.plural",
       "macos.desktopimportpage.pillready.plural",
       "macos.desktopimportpage.statusreadyheadline.plural",
-      "macos.desktopshellmodel.items.plural"
+      "macos.desktopshellmodel.items.plural",
+      "macos.desktopimportpage.paused",
+      "macos.desktopimportpage.checkingfile",
+      "macos.desktopimportpage.tileprogress",
+      "macos.desktopimportpage.tileprogressmore.plural",
+      "macos.desktopimportpage.progressbytes",
+      "macos.desktopimportpage.checkingcompletefile",
+      "macos.desktopimportpage.pauseddetail",
+      "macos.desktopimportpage.pauseddetailoffline",
+      "macos.desktopimportpage.pausedsubline",
+      "macos.desktopimportpage.resumingfrom",
+      "macos.desktopimportpage.insufficientspace",
+      "macos.desktopimportpage.integritymismatch",
+      "macos.desktopimportpage.uploadexpired",
+      "macos.desktopimportpage.cancelitem"
     ],
     "SetupChrome": [
       "macos.accessibility.downloadaction",

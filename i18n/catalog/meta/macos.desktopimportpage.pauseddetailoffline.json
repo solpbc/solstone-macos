@@ -1,0 +1,25 @@
+{
+  "description": "paused at { $sent } of { $total }. it'll pick up from here when your journal reconnects.",
+  "context": "Import page item row detail line when a large import is paused because the paired journal is currently offline.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "sent",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "bdbc2c475e8f9e72b69b221a7c485e90da7cc2bd1ee64f45533e0132995af0fc",
+  "risk": "routine",
+  "auto_merge": true
+}

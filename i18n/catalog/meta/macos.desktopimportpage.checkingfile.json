@@ -1,0 +1,16 @@
+{
+  "description": "checking file",
+  "context": "Short status label on the home import tile and item chip while verifying a completed large upload before staging.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "1c85e9355218d43ec2eae188f7da35d97fbf1493a49f328496be835a7cd3d564",
+  "risk": "routine",
+  "auto_merge": true
+}

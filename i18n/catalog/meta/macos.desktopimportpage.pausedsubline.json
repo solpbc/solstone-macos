@@ -1,0 +1,25 @@
+{
+  "description": "paused at { $sent } of { $total }",
+  "context": "Compact paused summary line showing confirmed bytes transferred so far.",
+  "surfaces": [
+    "native-app"
+  ],
+  "bundles": [
+    "macos"
+  ],
+  "arguments": [
+    {
+      "name": "sent",
+      "type": "string"
+    },
+    {
+      "name": "total",
+      "type": "string"
+    }
+  ],
+  "format_intent": "text",
+  "max_length": 1000,
+  "source_revision": "4be2e5e45845b3b92822958d6352bb5be49b34f7906bf61811ad283b78adf719",
+  "risk": "routine",
+  "auto_merge": true
+}

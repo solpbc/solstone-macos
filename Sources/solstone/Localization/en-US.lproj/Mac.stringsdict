@@ -146,6 +146,22 @@
 			<string>%2$@ items</string>
 		</dict>
 	</dict>
+	<key>m6d61636f732e6465736b746f70696d706f7274706167652e74696c6570726f67726573736d6f72652e706c7572616c</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@quantity@</string>
+		<key>quantity</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>lld</string>
+			<key>one</key>
+			<string>%2$@ of %3$@ · 1 more waiting</string>
+			<key>other</key>
+			<string>%2$@ of %3$@ · %4$@ more waiting</string>
+		</dict>
+	</dict>
 	<key>m6d61636f732e6465736b746f70696d706f7274706167652e74696c6572656164792e706c7572616c</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
