@@ -407,7 +407,7 @@ actor ScreenshotEngine {
                 if !ledger.items.contains(where: { $0.id == replacement.id }) {
                     ledger.items.append(replacement)
                 }
-            } else if file == nil || (file?.stable == true && item.hash != nil) {
+            } else if file == nil || (file?.stable == true && file?.unreadable == false && item.hash != nil) {
                 ledger.items[index].outcome = .deleted
             }
         }
@@ -425,8 +425,9 @@ actor ScreenshotEngine {
         let knownByPath = Dictionary(grouping: ledger.items, by: \.path)
         for file in marked where file.stable {
             if knownByPath[file.path]?.contains(where: { item in
-                item.matchesMetadata(of: file)
-                    && (file.cloudOnly || (item.cloudSlot == true && item.outcome == .unreadable))
+                (file.unreadable && (item.outcome == .pending || item.outcome == .held))
+                    || (item.matchesMetadata(of: file)
+                        && (file.cloudOnly || (item.cloudSlot == true && item.outcome == .unreadable)))
             }) == true { continue }
             guard let item = makeItem(file, spanStart: .distantPast, delivered: knownHashes, frozen: false),
                   !known.contains(item.id) else { continue }

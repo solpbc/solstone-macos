@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - once your journal is updated too, large imports in the solstone app go into your journal in pieces and pick up where they left off after a connection drop, sleep or app restart. the import tile and page show live progress.
 
+### Fixed
+
+- if the solstone app cannot read a waiting screenshot on your mac for a moment, that screenshot now stays waiting and the app tries again later. before, the app could treat the screenshot as deleted so it would not go into your journal.
+
 ## [2.0.78] - 2026-11-25
 
 ### Fixed

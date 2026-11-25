@@ -417,6 +417,36 @@ struct ScreenshotEngineTests {
         #expect(snap.state == .on)
     }
 
+    @Test func aTransientReadFailureKeepsAWaitingScreenshotInsteadOfMarkingItDeleted() async throws {
+        let reader = FakeShots()
+        let transport = FakeShotTransport()
+        let start = now()
+        let original = shot(hash: "keep-me", when: start)
+        reader.files = [original]
+        let engine = ScreenshotEngine(directory: try directory(), reader: reader, transport: transport, timeZone: { self.denver })
+        _ = await engine.allow(now: start, pause: .running, paired: true)
+        await engine.confirm(now: start)
+        let queued = await engine.tick(now: start, pause: .running, serverURL: nil, paired: true, syncPaused: true)
+        #expect(queued.waiting == 1)
+
+        reader.files = [ScreenshotCandidate(
+            path: original.path, marked: true, platformDate: start, fileDate: start,
+            byteCount: original.byteCount, stable: true, header: Data(), sha256: nil,
+            pixelCount: nil, unreadable: true, fileExtension: "png"
+        )]
+        let transient = await engine.tick(now: start.addingTimeInterval(5), pause: .running, serverURL: nil, paired: true, syncPaused: true)
+        #expect(transient.waiting == 1)
+        #expect(transient.unreadableLine == nil)
+        #expect(transport.sent.isEmpty)
+
+        reader.files = [original]
+        let recovered = await engine.tick(
+            now: start.addingTimeInterval(10), pause: .running, serverURL: "http://127.0.0.1:9", paired: true, syncPaused: false
+        )
+        #expect(recovered.waiting == 0)
+        #expect(transport.sent.map(\.hash) == ["keep-me"])
+    }
+
     @Test func pauseSkipsTheWindowAndResumeDoesNotCatchIt() async throws {
         let reader = FakeShots()
         let transport = FakeShotTransport()
