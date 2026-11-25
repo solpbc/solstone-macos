@@ -314,19 +314,21 @@ private enum ResumableTransferResult {
 
 private func readExactChunk(from handle: FileHandle, offset: Int64, length: Int) -> Data? {
     guard offset >= 0, length > 0 else { return nil }
-    do {
-        try handle.seek(toOffset: UInt64(offset))
-        var buffer = Data()
-        buffer.reserveCapacity(length)
-        while buffer.count < length {
-            guard let part = try handle.read(upToCount: length - buffer.count), !part.isEmpty else {
-                return nil
+    return autoreleasepool {
+        do {
+            try handle.seek(toOffset: UInt64(offset))
+            var buffer = Data()
+            buffer.reserveCapacity(length)
+            while buffer.count < length {
+                guard let part = try handle.read(upToCount: length - buffer.count), !part.isEmpty else {
+                    return nil
+                }
+                buffer.append(part)
             }
-            buffer.append(part)
+            return buffer
+        } catch {
+            return nil
         }
-        return buffer
-    } catch {
-        return nil
     }
 }
 
@@ -1281,9 +1283,13 @@ struct ImportMultipartBody: Sendable {
         var sent: Int64 = 0
         while sent < fileLength {
             let want = Int(min(Int64(chunk), fileLength - sent))
-            guard let data = try? read(handle, want), !data.isEmpty, data.count <= want else { return false }
-            guard write(data) else { return false }
-            sent += Int64(data.count)
+            let written: Int? = autoreleasepool {
+                guard let data = try? read(handle, want), !data.isEmpty, data.count <= want else { return nil }
+                guard write(data) else { return nil }
+                return data.count
+            }
+            guard let written else { return false }
+            sent += Int64(written)
         }
         return write(suffix)
     }

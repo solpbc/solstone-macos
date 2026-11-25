@@ -2,6 +2,7 @@
 // Copyright (c) 2026 sol pbc
 
 import CryptoKit
+import Darwin
 import Foundation
 import UniformTypeIdentifiers
 
@@ -274,6 +275,8 @@ enum ImportFileHashResult: Equatable, Sendable {
 
 /// Streams a custody file in fixed 64 KiB reads to compute its whole-file lowercase 64-hex SHA-256
 /// with O(1) memory, verifying exact byte count and checking `shouldStop` between reads.
+/// Uses POSIX `open`/`read` into a single reusable buffer so large files never accumulate
+/// autoreleased `NSData` pages on a cooperative Swift thread.
 func importFileSHA256(
     at url: URL,
     expectedSize: Int64,
@@ -281,23 +284,29 @@ func importFileSHA256(
     shouldStop: () -> Bool = { Task.isCancelled }
 ) -> ImportFileHashResult {
     guard expectedSize >= 0 else { return .unreadable }
-    guard let handle = try? FileHandle(forReadingFrom: url) else { return .unreadable }
-    defer { try? handle.close() }
+    let fd = Darwin.open(url.path, O_RDONLY)
+    guard fd >= 0 else { return .unreadable }
+    defer { _ = Darwin.close(fd) }
     var hasher = SHA256()
+    var buffer = [UInt8](repeating: 0, count: max(1, bufferBytes))
     var totalRead: Int64 = 0
     while true {
         if shouldStop() { return .cancelled }
-        let chunk: Data
-        do {
-            guard let read = try handle.read(upToCount: bufferBytes) else { break }
-            chunk = read
-        } catch {
-            return .unreadable
+        let n: Int = buffer.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else { return -1 }
+            while true {
+                let got = Darwin.read(fd, base, raw.count)
+                if got < 0 && errno == EINTR { continue }
+                return got
+            }
         }
-        if chunk.isEmpty { break }
-        totalRead += Int64(chunk.count)
+        if n < 0 { return .unreadable }
+        if n == 0 { break }
+        totalRead += Int64(n)
         if totalRead > expectedSize { return .unreadable }
-        hasher.update(data: chunk)
+        buffer.withUnsafeBytes { raw in
+            hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: raw.prefix(n)))
+        }
     }
     guard totalRead == expectedSize else { return .unreadable }
     let hex = hasher.finalize().map { String(format: "%02x", $0) }.joined()

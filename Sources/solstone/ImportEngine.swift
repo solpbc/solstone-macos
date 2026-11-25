@@ -727,6 +727,7 @@ func importIntake(
     }
 
     /// Copies `source` to `target`, stopping at the size limit or the free-space floor.
+    /// Drains an autorelease pool each iteration so multi-gigabyte copies stay O(1) in RAM.
     func copy(_ source: URL, to target: URL) -> ImportIntakeRefusal? {
         guard let input = try? FileHandle(forReadingFrom: source) else { return .unreadable }
         defer { try? input.close() }
@@ -735,27 +736,31 @@ func importIntake(
         var copied: Int64 = 0
         var sinceCheck = spaceCheckEvery
         while true {
-            let chunk: Data
-            do {
-                guard let read = try input.read(upToCount: copyChunk) else { break }
-                chunk = read
-            } catch {
-                return .unreadable
+            let step: (count: Int, refusal: ImportIntakeRefusal?) = autoreleasepool {
+                let chunk: Data
+                do {
+                    guard let read = try input.read(upToCount: copyChunk) else { return (0, nil) }
+                    chunk = read
+                } catch {
+                    return (0, .unreadable)
+                }
+                if chunk.isEmpty { return (0, nil) }
+                if copied + Int64(chunk.count) > maxBytes { return (0, .tooLarge) }
+                if sinceCheck >= spaceCheckEvery {
+                    if freeSpace() - spaceCheckEvery < importMinFreeBytes { return (0, .noSpace) }
+                    sinceCheck = 0
+                }
+                do {
+                    try output.write(contentsOf: chunk)
+                } catch {
+                    return (0, .noSpace)
+                }
+                return (chunk.count, nil)
             }
-            if chunk.isEmpty { break }
-            if copied + Int64(chunk.count) > maxBytes { return .tooLarge }
-            if sinceCheck >= spaceCheckEvery {
-                if freeSpace() - spaceCheckEvery < importMinFreeBytes { return .noSpace }
-                sinceCheck = 0
-            }
-            do {
-                try output.write(contentsOf: chunk)
-            } catch {
-                return .noSpace
-            }
-            copied += Int64(chunk.count)
-            sinceCheck += Int64(chunk.count)
+            if let refusal = step.refusal { return refusal }
+            if step.count == 0 { return nil }
+            copied += Int64(step.count)
+            sinceCheck += Int64(step.count)
         }
-        return nil
     }
 }
