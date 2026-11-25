@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.78] - 2026-11-25
+
 ### Fixed
 
 - VoiceOver no longer says "off" twice when reading the solstone app's menu bar icon while every source is off.
